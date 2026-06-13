@@ -26,7 +26,7 @@ jobs:
       contents: read
       packages: write
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.tags.outputs.version }}
 
     strategy:
       fail-fast: false
@@ -34,10 +34,12 @@ jobs:
         arch: [aarch64, amd64]
         include:
           - arch: aarch64
-            base_image: ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.20
+            base_image: >
+              ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.20
             platform: linux/arm64
           - arch: amd64
-            base_image: ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.20
+            base_image: >
+              ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.20
             platform: linux/amd64
 
     steps:
@@ -61,6 +63,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set image tags
+        id: tags
+        run: |
+          VERSION=$(grep '^version:' \
+            blink_clip_downloader/config.yaml | \
+            awk '{print $2}' | tr -d '"')
+          OWNER=${{ github.repository_owner }}
+          TAG_VER="ghcr.io/${OWNER}/blink_clip_downloader"
+          TAG_VER="${TAG_VER}:${VERSION}-${{ matrix.arch }}"
+          TAG_LAT="ghcr.io/${OWNER}/blink_clip_downloader"
+          TAG_LAT="${TAG_LAT}:latest-${{ matrix.arch }}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag_version=${TAG_VER}" >> $GITHUB_OUTPUT
+          echo "tag_latest=${TAG_LAT}" >> $GITHUB_OUTPUT
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -69,12 +86,12 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-${{ matrix.arch }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest-${{ matrix.arch }}
+            ${{ steps.tags.outputs.tag_version }}
+            ${{ steps.tags.outputs.tag_latest }}
           build-args: |
             BUILD_FROM=${{ matrix.base_image }}
             BUILD_ARCH=${{ matrix.arch }}
-            BUILD_VERSION=${{ steps.version.outputs.version }}
+            BUILD_VERSION=${{ steps.tags.outputs.version }}
 
   manifest:
     name: Create multi-arch manifest
@@ -97,7 +114,10 @@ jobs:
       - name: Create and push multi-arch manifest
         run: |
           VERSION=${{ needs.build.outputs.version }}
-          IMAGE_BASE="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+          REGISTRY=${{ env.REGISTRY }}
+          OWNER=${{ github.repository_owner }}
+          IMAGE=${{ env.IMAGE_NAME }}
+          IMAGE_BASE="${REGISTRY}/${OWNER}/${IMAGE}"
 
           # Create versioned manifest
           docker buildx imagetools create \

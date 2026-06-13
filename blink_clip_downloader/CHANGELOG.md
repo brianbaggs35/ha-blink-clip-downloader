@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.6.1
+
+### Improvements
+
+- **Updated Docker build workflow** — Migrated from deprecated `home-assistant/builder` action to modern `docker/build-push-action` with proper multi-arch manifest support.
+- **Fixed YAML lint issues** — Ensured all workflow files comply with yamllint standards.
+
 ## 2.6.0
 
 ### Bug fixes
