@@ -12,7 +12,7 @@ from typing import Any
 import aiofiles
 import aiohttp
 from blinkpy import api as blink_api
-from blinkpy.auth import Auth, BlinkTwoFARequiredError
+from blinkpy.auth import Auth, BlinkTwoFARequiredError, UnauthorizedError
 from blinkpy.blinkpy import Blink
 
 from .config import AppConfig
@@ -86,10 +86,13 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             "username": self._config.username,
             "password": self._config.password,
         }
+        # Try with cached auth first
+        use_cached = False
         if AUTH_FILE.exists():
             try:
                 cached = json.loads(AUTH_FILE.read_text(encoding="utf-8"))
                 login_data.update(cached)
+                use_cached = True
                 _LOGGER.debug("Loaded cached Blink auth credentials")
             except (json.JSONDecodeError, KeyError):
                 _LOGGER.warning("Cached auth file is corrupt; will re-authenticate")
@@ -102,10 +105,27 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             await self._blink.start()
         except BlinkTwoFARequiredError:
             await self._handle_2fa()
-        except Exception:  # noqa: BLE001 pylint: disable=broad-exception-caught
+        except UnauthorizedError as e:
+            # Cached tokens or credentials are invalid
+            if use_cached:
+                _LOGGER.warning(
+                    "Cached auth tokens invalid or expired. "
+                    "Retrying with fresh username/password."
+                )
+                AUTH_FILE.unlink(missing_ok=True)
+                # Retry with fresh credentials (recursive call, non-cached)
+                await asyncio.sleep(0.5)
+                return await self.connect()
+            # No cache was used and auth still failed → credentials are wrong
             self.auth_state = "error"
             self.auth_message = "Authentication failed. Check your Blink credentials."
-            # Delete cached auth to force fresh login on retry
+            _LOGGER.error("Authentication failed: %s", str(e))
+            raise
+        except Exception as e:  # noqa: BLE001 pylint: disable=broad-exception-caught
+            self.auth_state = "error"
+            self.auth_message = "Authentication failed. Check your Blink credentials."
+            _LOGGER.error("Authentication error: %s", str(e))
+            # Delete cached auth to force fresh login on next retry
             AUTH_FILE.unlink(missing_ok=True)
             raise
 
