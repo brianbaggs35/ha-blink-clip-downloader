@@ -7,51 +7,106 @@ name: Build & Publish
       - published
   workflow_dispatch:
 
-env:
-  ARCHITECTURES: >
-    ["amd64","aarch64"]
-  IMAGE_NAME: >
-    ghcr.io/${{ github.repository_owner }}/blink_clip_downloader
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: blink_clip_downloader
+
 jobs:
   build:
-    name: Build ${{ matrix.arch }}
+    name: Build (${{ matrix.arch }})
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
-      id-token: write
       packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     strategy:
       fail-fast: false
       matrix:
-        arch:
-          - amd64
-          - aarch64
+        arch: [aarch64, amd64]
+        include:
+          - arch: aarch64
+            base_image: ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.20
+            platform: linux/arm64
+          - arch: amd64
+            base_image: ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.20
+            platform: linux/amd64
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Read add-on version
+        id: version
+        run: |
+          VERSION=$(grep '^version:' blink_clip_downloader/config.yaml \
+            | awk '{print $2}' \
+            | tr -d '"')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish image
-        uses: home-assistant/builder@2026.03.2
+      - name: Build and push
+        uses: docker/build-push-action@v6
         with:
-          args: >
-            --${{ matrix.arch }}
-            --target /data/blink_clip_downloader
-            --image "${{ env.IMAGE_NAME }}"
-            --docker-hub "ghcr.io"
-            --addon
-            --no-latest
-            --version "${{ github.event.release.tag_name }}"
+          context: blink_clip_downloader
+          file: blink_clip_downloader/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-${{ matrix.arch }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest-${{ matrix.arch }}
+          build-args: |
+            BUILD_FROM=${{ matrix.base_image }}
+            BUILD_ARCH=${{ matrix.arch }}
+            BUILD_VERSION=${{ steps.version.outputs.version }}
+
+  manifest:
+    name: Create multi-arch manifest
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          VERSION=${{ needs.build.outputs.version }}
+          IMAGE_BASE="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}"
+
+          # Create versioned manifest
+          docker buildx imagetools create \
+            -t ${IMAGE_BASE}:${VERSION} \
+            ${IMAGE_BASE}:${VERSION}-amd64 \
+            ${IMAGE_BASE}:${VERSION}-aarch64
+
+          # Create latest manifest
+          docker buildx imagetools create \
+            -t ${IMAGE_BASE}:latest \
+            ${IMAGE_BASE}:latest-amd64 \
+            ${IMAGE_BASE}:latest-aarch64
