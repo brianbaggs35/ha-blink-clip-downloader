@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.6.4
+
+### Bug fixes
+
+- **Fixed HTTP session reuse after failed auth** — When cached tokens fail with `UnauthorizedError`, the HTTP session was remaining in a bad state. Now we properly close the stale session before retrying with fresh credentials, ensuring a clean connection attempt.
+- **Improved auth error logging** — Added distinction between "invalid cached tokens" (auto-retried) and "invalid credentials" (user error) with clearer log messages.
+
 ## 2.6.3
 
 ### Bug fixes

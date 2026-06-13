@@ -113,13 +113,17 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     "Retrying with fresh username/password."
                 )
                 AUTH_FILE.unlink(missing_ok=True)
-                # Retry with fresh credentials (recursive call, non-cached)
+                # Close stale session and create fresh one
+                if self._session is not None:
+                    await self._session.close()
+                    self._session = None
+                # Retry with fresh credentials and fresh session
                 await asyncio.sleep(0.5)
                 return await self.connect()
             # No cache was used and auth still failed → credentials are wrong
             self.auth_state = "error"
             self.auth_message = "Authentication failed. Check your Blink credentials."
-            _LOGGER.error("Authentication failed: %s", str(e))
+            _LOGGER.error("Authentication failed with provided credentials: %s", str(e))
             raise
         except Exception as e:  # noqa: BLE001 pylint: disable=broad-exception-caught
             self.auth_state = "error"
