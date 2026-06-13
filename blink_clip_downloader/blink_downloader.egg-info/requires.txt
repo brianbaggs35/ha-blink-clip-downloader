@@ -1,4 +1,4 @@
-blinkpy>=0.23.0
+blinkpy>=0.25.5
 aiohttp>=3.9.0
 aiofiles>=23.2.1
 aiosqlite>=0.20.0

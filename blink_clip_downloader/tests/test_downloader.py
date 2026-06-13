@@ -10,7 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from blink_downloader.downloader import BlinkDownloader, TwoFARequired
+from blinkpy.auth import BlinkTwoFARequiredError, UnauthorizedError
+
+from blink_downloader.downloader import (
+    AuthenticationError,
+    BlinkDownloader,
+    TwoFARequired,
+)
 from blink_downloader.storage import StorageManager
 from blink_downloader.tracker import ClipTracker
 
@@ -410,6 +416,125 @@ async def test_handle_2fa_sets_error_state_on_timeout(dl, tmp_path):
     assert dl.auth_state == "error"
 
 
+# ---------------------------------------------------------------------------
+# 2FA wrong-code handling (v2.6.6)
+# ---------------------------------------------------------------------------
+
+
+def test_submit_two_fa_code_returns_incrementing_seq(dl):
+    """submit_two_fa_code returns a sequence number for result correlation."""
+    dl._two_fa_event = asyncio.Event()
+    assert dl.submit_two_fa_code("111111") == 1
+    assert dl.submit_two_fa_code("222222") == 2
+
+
+async def test_submit_2fa_code_returns_false_on_two_fa_required(dl):
+    dl._blink = AsyncMock()
+    dl._blink.send_2fa_code = AsyncMock(side_effect=BlinkTwoFARequiredError("nope"))
+    assert await dl._submit_2fa_code("123456") is False
+
+
+async def test_submit_2fa_code_returns_false_on_generic_exception(dl):
+    dl._blink = AsyncMock()
+    dl._blink.send_2fa_code = AsyncMock(side_effect=RuntimeError("boom"))
+    assert await dl._submit_2fa_code("123456") is False
+
+
+async def test_submit_2fa_code_returns_true_on_success(dl):
+    dl._blink = AsyncMock()
+    dl._blink.send_2fa_code = AsyncMock(return_value=True)
+    assert await dl._submit_2fa_code("123456") is True
+
+
+async def test_submit_2fa_code_returns_false_when_send_2fa_code_returns_false(dl):
+    """blinkpy >= 0.25 returns False (no exception) for a wrong/expired code."""
+    dl._blink = AsyncMock()
+    dl._blink.send_2fa_code = AsyncMock(return_value=False)
+    assert await dl._submit_2fa_code("123456") is False
+
+
+async def test_handle_2fa_wrong_code_does_not_raise_and_keeps_waiting(dl, tmp_path):
+    """A wrong code must not propagate BlinkTwoFARequiredError out of _handle_2fa.
+
+    Regression test: previously the resulting BlinkTwoFARequiredError escaped
+    _handle_2fa entirely, leaving auth_state stuck at "needs_2fa" with no
+    way for the web UI to recover.
+    """
+    missing_file = tmp_path / "no_2fa.txt"
+    dl._blink = AsyncMock()
+    dl._blink.send_2fa_code = AsyncMock(side_effect=BlinkTwoFARequiredError("nope"))
+    dl._config.two_fa_timeout = 0.15
+
+    async def _submit_concurrently():
+        while dl._two_fa_event is None:
+            await asyncio.sleep(0)
+        dl.submit_two_fa_code("000000")
+
+    with patch("blink_downloader.downloader.TWO_FA_FILE", missing_file):
+        with pytest.raises(TwoFARequired):
+            await asyncio.gather(dl._handle_2fa(), _submit_concurrently())
+
+    # The wrong-code attempt was recorded …
+    assert dl.two_fa_result_ok is False
+    assert dl.two_fa_result_seq == 1
+    # … but the loop kept running until the (short) timeout expired.
+    assert dl.auth_state == "error"
+
+
+async def test_handle_2fa_wrong_code_returns_false_does_not_raise(dl, tmp_path):
+    """blinkpy >= 0.25 returns False (no exception) for a wrong 2FA code.
+
+    _handle_2fa must record the rejection and keep waiting for a retry,
+    exactly like the BlinkTwoFARequiredError case above.
+    """
+    missing_file = tmp_path / "no_2fa.txt"
+    dl._blink = AsyncMock()
+    dl._blink.send_2fa_code = AsyncMock(return_value=False)
+    dl._config.two_fa_timeout = 0.15
+
+    async def _submit_concurrently():
+        while dl._two_fa_event is None:
+            await asyncio.sleep(0)
+        dl.submit_two_fa_code("000000")
+
+    with patch("blink_downloader.downloader.TWO_FA_FILE", missing_file):
+        with pytest.raises(TwoFARequired):
+            await asyncio.gather(dl._handle_2fa(), _submit_concurrently())
+
+    assert dl.two_fa_result_ok is False
+    assert dl.two_fa_result_seq == 1
+    assert dl.auth_state == "error"
+
+
+async def test_handle_2fa_wrong_code_then_correct_code_succeeds(dl, tmp_path):
+    """A wrong code followed by a correct code completes successfully."""
+    missing_file = tmp_path / "no_2fa.txt"
+    dl._blink = AsyncMock()
+    dl._blink.send_2fa_code = AsyncMock(
+        side_effect=[BlinkTwoFARequiredError("nope"), True]
+    )
+    dl._config.two_fa_timeout = 30.0
+
+    async def _submit_concurrently():
+        while dl._two_fa_event is None:
+            await asyncio.sleep(0)
+        dl.submit_two_fa_code("111111")  # wrong code, seq=1
+
+        while dl.two_fa_result_ok is not False:
+            await asyncio.sleep(0)
+        dl.submit_two_fa_code("222222")  # correct code, seq=2
+
+    with patch("blink_downloader.downloader.TWO_FA_FILE", missing_file):
+        await asyncio.gather(dl._handle_2fa(), _submit_concurrently())
+
+    assert dl._blink.send_2fa_code.await_count == 2
+    assert dl.two_fa_result_ok is True
+    assert dl.two_fa_result_seq == 2
+    # _handle_2fa itself doesn't flip auth_state to "connected" — connect() does.
+    assert dl.auth_state == "needs_2fa"
+    assert "Incorrect" not in dl.auth_message
+
+
 async def test_connect_sets_auth_state_connected(dl, tmp_path):
     """connect() sets auth_state to 'connected' on success."""
     missing_auth = tmp_path / "no_auth.json"
@@ -477,6 +602,128 @@ async def test_connect_proceeds_without_cached_file(dl, tmp_path):
 
     call_kwargs = MockAuth.call_args[1]
     assert call_kwargs["login_data"]["username"] == "test@example.com"
+
+
+async def test_connect_cached_credentials_do_not_override_config(dl, tmp_path):
+    """Cached username/password must not override the current config.
+
+    blinkpy's persisted login_attributes include the username/password that
+    were active when the token was cached. If the user updates their Blink
+    credentials in the add-on configuration (e.g. after a forced password
+    reset that also invalidated the cached refresh token), the *new*
+    credentials must be used — not the stale ones from the cache file.
+    """
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "token": "cached_token",
+                "host": "rest-us",
+                "username": "stale@example.com",
+                "password": "old-password",
+            }
+        )
+    )
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock()
+    mock_blink.account_id = 42
+    mock_blink.auth = MagicMock()
+    mock_blink.auth.login_attributes = {"token": "cached_token"}
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", auth_file),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth") as MockAuth,
+    ):
+        await dl.connect()
+
+    call_kwargs = MockAuth.call_args[1]
+    assert call_kwargs["login_data"]["username"] == "test@example.com"
+    assert call_kwargs["login_data"]["password"] == "hunter2"
+    # Token data from the cache is still merged in.
+    assert call_kwargs["login_data"]["token"] == "cached_token"
+
+
+# ---------------------------------------------------------------------------
+# connect() — failed login on a fresh (non-cached) login
+# ---------------------------------------------------------------------------
+
+
+async def test_connect_unauthorized_without_cache_raises_authentication_error(
+    dl, tmp_path
+):
+    """A 401 on a fresh login raises AuthenticationError with a useful message.
+
+    blinkpy's UnauthorizedError carries no message of its own (str(e) == ""),
+    which previously produced log lines like "Authentication failed with
+    provided credentials: " with nothing useful after the colon.
+    """
+    missing_auth = tmp_path / "no_auth.json"
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock(side_effect=UnauthorizedError)
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", missing_auth),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth"),
+    ):
+        with pytest.raises(AuthenticationError) as excinfo:
+            await dl.connect()
+
+    assert str(excinfo.value)  # non-empty, actionable message
+    assert dl.auth_state == "error"
+
+
+async def test_connect_start_returns_false_without_cache_raises_authentication_error(
+    dl, tmp_path
+):
+    """blinkpy >= 0.25 returns False (no exception) when OAuth login fails.
+
+    A fresh (non-cached) login that fails this way must still raise
+    AuthenticationError with a useful message, just like the old
+    UnauthorizedError path did.
+    """
+    missing_auth = tmp_path / "no_auth.json"
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock(return_value=False)
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", missing_auth),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth"),
+    ):
+        with pytest.raises(AuthenticationError) as excinfo:
+            await dl.connect()
+
+    assert str(excinfo.value)
+    assert dl.auth_state == "error"
+
+
+async def test_connect_start_returns_false_with_cache_retries_fresh(dl, tmp_path):
+    """A stale cached token (start() returns False) triggers one retry with
+    fresh credentials, which then succeeds."""
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps({"token": "stale_token", "host": "rest-us"}))
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock(side_effect=[False, True])
+    mock_blink.account_id = 42
+    mock_blink.auth = MagicMock()
+    mock_blink.auth.login_attributes = {"token": "fresh_token"}
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", auth_file),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth"),
+        patch("blink_downloader.downloader.asyncio.sleep", AsyncMock()),
+    ):
+        await dl.connect()
+
+    assert mock_blink.start.await_count == 2
+    assert dl.auth_state == "connected"
 
 
 # ---------------------------------------------------------------------------

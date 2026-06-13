@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from blink_downloader.app import BlinkClipDownloaderApp
-from blink_downloader.downloader import TwoFARequired
+from blink_downloader.downloader import AuthenticationError, TwoFARequired
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +402,29 @@ async def test_connect_with_retry_notifies_on_two_fa_timeout(app):
     assert "2FA" in app._notifier.notify.call_args.kwargs.get("title", "")
 
 
+async def test_connect_with_retry_notifies_on_authentication_error(app):
+    """AuthenticationError sends a single HA notification and keeps retrying."""
+    app._running = True
+    app._reconnect_interval = 0
+    attempt = 0
+
+    async def _connect():
+        nonlocal attempt
+        attempt += 1
+        if attempt == 1:
+            raise AuthenticationError("Blink rejected the configured credentials")
+        app._running = False
+        raise RuntimeError("stop")
+
+    app._downloader.connect = _connect
+
+    await app._connect_with_retry()
+
+    assert attempt == 2  # retried after the authentication error
+    app._notifier.notify.assert_awaited_once()
+    assert "Authentication" in app._notifier.notify.call_args.kwargs.get("title", "")
+
+
 # ---------------------------------------------------------------------------
 # run() – single successful iteration
 # ---------------------------------------------------------------------------
@@ -551,6 +574,80 @@ async def test_poll_cycle_skips_local_storage_when_disabled(app):
     await app._poll_cycle()
 
     app._downloader.download_local_storage_clips.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Library re-import on startup (v2.6.6)
+# ---------------------------------------------------------------------------
+
+
+async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path):
+    """run() re-populates a fresh library DB from files left under download_path.
+
+    Simulates a reinstall: /data/clip_library.db is gone (fresh ClipDatabase)
+    but download_path still has clips from before the uninstall.
+    """
+    import dataclasses
+
+    from blink_downloader.database import ClipDatabase
+    from blink_downloader.tracker import ClipTracker
+
+    app._config = dataclasses.replace(app._config, enable_library_db=True)
+    app._db = ClipDatabase(tmp_path / "lib.db")
+    app._storage.ensure_directory = MagicMock()
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+
+    clip_dir = app._config.download_path / "Front_Door" / "2024-06-01"
+    clip_dir.mkdir(parents=True)
+    clip_path = clip_dir / "Front_Door_20240601_080000.mp4"
+    clip_path.write_bytes(b"old-clip")
+
+    poll_count = 0
+
+    async def _fake_poll():
+        nonlocal poll_count
+        poll_count += 1
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    check_db = ClipDatabase(tmp_path / "lib.db")
+    await check_db.init()
+    try:
+        paths = await check_db.get_all_file_paths()
+    finally:
+        await check_db.close()
+
+    assert str(clip_path) in paths
+
+
+async def test_run_skips_import_when_library_db_disabled(app, tmp_path):
+    """When enable_library_db is False, no DB is created or scanned."""
+    app._storage.ensure_directory = MagicMock()
+    from blink_downloader.tracker import ClipTracker
+
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+
+    clip_dir = app._config.download_path / "Front_Door" / "2024-06-01"
+    clip_dir.mkdir(parents=True)
+    (clip_dir / "Front_Door_20240601_080000.mp4").write_bytes(b"old-clip")
+
+    poll_count = 0
+
+    async def _fake_poll():
+        nonlocal poll_count
+        poll_count += 1
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    assert app._db._db is None  # never initialised
 
 
 async def test_poll_cycle_local_storage_clips_trigger_notification(app):
