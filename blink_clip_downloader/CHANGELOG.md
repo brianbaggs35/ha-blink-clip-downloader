@@ -22,6 +22,28 @@
   fire when recovering from `"error"` (not just `"needs_2fa"`), so a
   successful retry is reflected in the UI.
 
+### Maintenance
+
+- **Full operational review of the add-on.** Every module (`__main__.py`,
+  `config.py`, `app.py`, `downloader.py`, `media_server.py`, `digest.py`,
+  `database.py`, `storage.py`, `archiver.py`, `tracker.py`, `manifest.py`,
+  `notifier.py`, `event_watcher.py`, `library_scanner.py`) plus the Docker
+  and Home Assistant add-on infrastructure were reviewed end-to-end.
+
+- **Fixed stale version metadata.** `Dockerfile`'s `ARG BUILD_VERSION`
+  default (used for local/CI builds that don't pass `--build-arg
+  BUILD_VERSION`) was stuck at `2.5.5` since the 2.6.0 release; it now
+  matches the add-on version. `blink_downloader/__init__.py`'s
+  `__version__` was also stuck at the original `1.0.0` placeholder and now
+  matches.
+
+- **Fixed incorrect repository URLs.** `DOCS.md`'s installation
+  instructions pointed at the placeholder
+  `github.com/yourusername/ha-blink-clip-downloader`, and the Dockerfile's
+  `org.opencontainers.image.source` label was missing the `35` suffix from
+  the actual GitHub username. Both now point to
+  `github.com/brianbaggs35/ha-blink-clip-downloader`.
+
 ## 2.6.7
 
 ### Dependencies
