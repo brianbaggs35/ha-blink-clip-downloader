@@ -72,11 +72,8 @@ jobs:
           OWNER=${{ github.repository_owner }}
           TAG_VER="ghcr.io/${OWNER}/blink_clip_downloader"
           TAG_VER="${TAG_VER}:${VERSION}-${{ matrix.arch }}"
-          TAG_LAT="ghcr.io/${OWNER}/blink_clip_downloader"
-          TAG_LAT="${TAG_LAT}:latest-${{ matrix.arch }}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag_version=${TAG_VER}" >> $GITHUB_OUTPUT
-          echo "tag_latest=${TAG_LAT}" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -87,7 +84,6 @@ jobs:
           push: true
           tags: |
             ${{ steps.tags.outputs.tag_version }}
-            ${{ steps.tags.outputs.tag_latest }}
           build-args: |
             BUILD_FROM=${{ matrix.base_image }}
             BUILD_ARCH=${{ matrix.arch }}
@@ -119,14 +115,14 @@ jobs:
           IMAGE=${{ env.IMAGE_NAME }}
           IMAGE_BASE="${REGISTRY}/${OWNER}/${IMAGE}"
 
-          # Create versioned manifest
+          # Create versioned manifest (combining amd64 and aarch64)
           docker buildx imagetools create \
             -t ${IMAGE_BASE}:${VERSION} \
             ${IMAGE_BASE}:${VERSION}-amd64 \
             ${IMAGE_BASE}:${VERSION}-aarch64
 
-          # Create latest manifest
+          # Create latest manifest pointing to current version
           docker buildx imagetools create \
             -t ${IMAGE_BASE}:latest \
-            ${IMAGE_BASE}:latest-amd64 \
-            ${IMAGE_BASE}:latest-aarch64
+            ${IMAGE_BASE}:${VERSION}-amd64 \
+            ${IMAGE_BASE}:${VERSION}-aarch64

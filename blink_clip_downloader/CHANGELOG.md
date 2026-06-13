@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.3
+
+### Bug fixes
+
+- **Fixed stale cached auth token handling** — When cached Blink auth tokens expire, the app now automatically deletes the cache and retries with fresh credentials instead of failing immediately.
+- **Improved UnauthorizedError handling** — Added explicit catch for `UnauthorizedError` to distinguish between invalid credentials and stale tokens, with automatic retry logic for stale tokens.
+- **Better error diagnostics** — Added more detailed logging to help identify whether auth failures are due to bad credentials or API issues.
+
 ## 2.6.2
 
 ### Bug fixes
