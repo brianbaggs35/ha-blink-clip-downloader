@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.2
+
+### Bug fixes
+
+- **Fixed blinkpy 0.25.5 authentication issues** — Pinned blinkpy to `>=0.23.0,<0.25.0` as v0.25.5 introduced a regression where `start()` fails silently without raising exceptions. Enhanced error detection to catch incomplete auth state and retry properly.
+- **Improved 2FA flow after successful start()** — Changed 2FA handler to call `start()` again after code submission instead of just `refresh()`, ensuring full initialization of blink object.
+- **Better auth error messages** — Added logging to distinguish between login failures and silent initialization failures to aid in debugging credential issues.
+
 ## 2.6.1
 
 ### Improvements
