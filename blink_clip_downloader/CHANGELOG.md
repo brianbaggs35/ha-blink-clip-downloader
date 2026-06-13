@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.6.8
+
+### Bug fixes
+
+- **The 2FA prompt no longer disappears without explanation.** The web UI
+  polls `/api/auth/status` and opens the "Two-Factor Authentication" overlay
+  while `auth_state` is `"needs_2fa"`. However, if the code wasn't submitted
+  in time (the 600 s `two_fa_timeout`) — or the account setup after a
+  successful 2FA submission failed — `auth_state` becomes `"error"`. The
+  overlay-closing logic ran *before* the error-message block, so the overlay
+  silently closed with no indication of what happened, right as the add-on
+  was about to retry (and request a fresh code). From the user's
+  perspective, the 2FA prompt appeared to vanish entirely.
+
+  `checkAuthStatus()` now treats `"needs_2fa"` and `"error"` as the two
+  states that keep the overlay open: on `"error"` it shows
+  `auth_message` (e.g. "Verification code not provided within 600s.") in
+  the dialog and re-enables the "Verify" button, instead of closing the
+  overlay. The "Signed in to Blink ✓" toast and library refresh now also
+  fire when recovering from `"error"` (not just `"needs_2fa"`), so a
+  successful retry is reflected in the UI.
+
 ## 2.6.7
 
 ### Dependencies
