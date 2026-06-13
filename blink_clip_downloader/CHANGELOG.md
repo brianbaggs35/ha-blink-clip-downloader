@@ -51,6 +51,11 @@
   `test_handle_2fa_wrong_code_returns_false_does_not_raise` — a wrong 2FA
   code rejected via blinkpy >= 0.25's `False` return (instead of a raised
   `BlinkTwoFARequiredError`) is handled the same as before.
+- Fixed a flaky `test_falls_back_to_mtime_when_no_timestamp_in_filename` —
+  it captured the `before` timestamp *after* creating the clip file, so the
+  file's mtime could be a few microseconds earlier than `before` and fail
+  the `before <= ts <= after` assertion. `before` is now captured before the
+  file is created.
 
 ## 2.6.6
 
