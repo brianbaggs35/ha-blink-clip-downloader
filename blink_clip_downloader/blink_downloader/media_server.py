@@ -1305,42 +1305,53 @@ async function checkAuthStatus() {
     const prev = _twofaState;
     _twofaState = s.state || 'disconnected';
     const overlay = $('twofa-overlay');
-    if (_twofaState === 'needs_2fa') {
+    if (_twofaState === 'needs_2fa' || _twofaState === 'error') {
+      // Keep the overlay open (or open it) so the user always sees the
+      // current auth status, including failures/timeouts — previously a
+      // transition to 'error' closed the overlay before any message could
+      // be shown, making it look like the 2FA prompt had vanished.
       overlay.classList.add('open');
-      if (prev !== 'needs_2fa') {
-        $('twofa-input').value = '';
-        $('twofa-msg').textContent = '';
-        _pendingSeq = 0;
-        setTimeout(() => $('twofa-input').focus(), 80);
-      }
-      // If the submission we're waiting on came back rejected, let the
-      // user try again instead of leaving the form stuck on "Verifying…".
-      if (_pendingSeq && s.two_fa_result_seq === _pendingSeq) {
-        if (s.two_fa_result_ok === false) {
-          $('twofa-msg').textContent =
-            s.message || 'Incorrect verification code. Please try again.';
-          $('twofa-msg').style.color = 'var(--danger)';
-          const btn = $('twofa-submit');
-          btn.disabled = false;
-          btn.textContent = 'Verify';
+      if (_twofaState === 'needs_2fa') {
+        if (prev !== 'needs_2fa') {
           $('twofa-input').value = '';
+          $('twofa-msg').textContent = '';
+          _pendingSeq = 0;
           setTimeout(() => $('twofa-input').focus(), 80);
         }
+        // If the submission we're waiting on came back rejected, let the
+        // user try again instead of leaving the form stuck on "Verifying…".
+        if (_pendingSeq && s.two_fa_result_seq === _pendingSeq) {
+          if (s.two_fa_result_ok === false) {
+            $('twofa-msg').textContent =
+              s.message || 'Incorrect verification code. Please try again.';
+            $('twofa-msg').style.color = 'var(--danger)';
+            const btn = $('twofa-submit');
+            btn.disabled = false;
+            btn.textContent = 'Verify';
+            $('twofa-input').value = '';
+            setTimeout(() => $('twofa-input').focus(), 80);
+          }
+          _pendingSeq = 0;
+        }
+      } else {
+        // 'error' — e.g. the 2FA code wasn't submitted in time, or the
+        // account setup after a successful 2FA failed. Surface the reason
+        // and re-enable the form so the user can try again once the add-on
+        // reconnects and (if needed) prompts for a fresh code.
+        $('twofa-msg').textContent = s.message || 'Authentication failed.';
+        $('twofa-msg').style.color = 'var(--danger)';
+        const btn = $('twofa-submit');
+        btn.disabled = false;
+        btn.textContent = 'Verify';
         _pendingSeq = 0;
       }
     } else {
-      if (prev === 'needs_2fa' && _twofaState === 'connected') {
-        overlay.classList.remove('open');
+      if ((prev === 'needs_2fa' || prev === 'error') && _twofaState === 'connected') {
         toast('Signed in to Blink ✓');
         loadAll();
-      } else if (_twofaState !== 'needs_2fa') {
-        overlay.classList.remove('open');
       }
+      overlay.classList.remove('open');
       _pendingSeq = 0;
-    }
-    if (_twofaState === 'error' && overlay.classList.contains('open')) {
-      $('twofa-msg').textContent = s.message || 'Authentication failed.';
-      $('twofa-msg').style.color = 'var(--danger)';
     }
   } catch {}
 }
