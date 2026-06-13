@@ -124,9 +124,9 @@ async def test_falls_back_to_mtime_when_no_timestamp_in_filename(
 ) -> None:
     download_path = tmp_path / "clips"
     clip_path = download_path / "Garage" / "clip.mp4"
-    _touch(clip_path)
 
     before = datetime.now(timezone.utc)
+    _touch(clip_path)
     added = await import_existing_clips(db, download_path)
     after = datetime.now(timezone.utc)
     assert added == 1
