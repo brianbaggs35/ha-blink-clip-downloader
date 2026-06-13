@@ -61,16 +61,28 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         # Set by submit_two_fa_code(); cleared after each use.
         self._two_fa_event: asyncio.Event | None = None
         self._two_fa_code: str | None = None
+        # 2FA submission/result tracking, exposed to the web UI so it can
+        # tell whether a *specific* submission was accepted or rejected.
+        self.two_fa_seq: int = 0
+        self.two_fa_result_seq: int = 0
+        self.two_fa_result_ok: bool | None = None
 
     # ------------------------------------------------------------------
     # Public: web-UI 2FA submission
     # ------------------------------------------------------------------
 
-    def submit_two_fa_code(self, code: str) -> None:
-        """Accept a sanitised 6-digit 2FA code from the web UI."""
+    def submit_two_fa_code(self, code: str) -> int:
+        """Accept a sanitised 6-digit 2FA code from the web UI.
+
+        Returns a sequence number the caller can compare against
+        ``two_fa_result_seq``/``two_fa_result_ok`` to learn whether this
+        specific submission was accepted or rejected.
+        """
         self._two_fa_code = code.strip()
+        self.two_fa_seq += 1
         if self._two_fa_event is not None:
             self._two_fa_event.set()
+        return self.two_fa_seq
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -92,6 +104,14 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             try:
                 cached = json.loads(AUTH_FILE.read_text(encoding="utf-8"))
                 login_data.update(cached)
+                # blinkpy's persisted login_attributes include the
+                # username/password that were active when the token was
+                # cached. Always prefer the values currently configured for
+                # the add-on so a credential change (e.g. after Blink forces
+                # a password reset) takes effect immediately instead of being
+                # silently overwritten by the stale cached values.
+                login_data["username"] = self._config.username
+                login_data["password"] = self._config.password
                 use_cached = True
                 _LOGGER.debug("Loaded cached Blink auth credentials")
             except (json.JSONDecodeError, KeyError):
@@ -102,11 +122,29 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         self._blink.auth = auth
 
         try:
-            await self._blink.start()
+            started = await self._blink.start()
         except BlinkTwoFARequiredError:
             await self._handle_2fa()
-        except UnauthorizedError as e:
-            # Cached tokens or credentials are invalid
+            started = True
+        except UnauthorizedError:
+            # blinkpy >= 0.25's OAuth v2 flow doesn't raise this for bad
+            # credentials (start() returns False instead) but handle it the
+            # same way in case an older/newer blinkpy raises it directly.
+            started = False
+        except Exception as e:  # noqa: BLE001 pylint: disable=broad-exception-caught
+            self.auth_state = "error"
+            self.auth_message = "Authentication failed. Check your Blink credentials."
+            _LOGGER.error("Authentication error: %s", str(e))
+            # Delete cached auth to force fresh login on next retry
+            AUTH_FILE.unlink(missing_ok=True)
+            raise
+
+        # blinkpy >= 0.25's start() returns False (without raising) when the
+        # OAuth login/refresh flow fails, leaving account_id unset. Treat
+        # that the same as an invalid-credentials error: retry once with
+        # fresh credentials if a cache was used, otherwise report a clear,
+        # actionable authentication error.
+        if not started or not self._blink.account_id:
             if use_cached:
                 _LOGGER.warning(
                     "Cached auth tokens invalid or expired. "
@@ -120,34 +158,20 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 # Retry with fresh credentials and fresh session
                 await asyncio.sleep(0.5)
                 return await self.connect()
-            # No cache was used and auth still failed → credentials are wrong
-            self.auth_state = "error"
-            self.auth_message = "Authentication failed. Check your Blink credentials."
-            _LOGGER.error("Authentication failed with provided credentials: %s", str(e))
-            raise
-        except Exception as e:  # noqa: BLE001 pylint: disable=broad-exception-caught
-            self.auth_state = "error"
-            self.auth_message = "Authentication failed. Check your Blink credentials."
-            _LOGGER.error("Authentication error: %s", str(e))
-            # Delete cached auth to force fresh login on next retry
-            AUTH_FILE.unlink(missing_ok=True)
-            raise
 
-        # Validate blink object is properly initialized after start().
-        # In some blinkpy versions, start() may not raise but still fail
-        # to initialize, leaving attributes like urls as None.
-        if not hasattr(self._blink, "account_id") or not self._blink.account_id:
-            _LOGGER.error(
-                "Blink authentication failed silently; start() completed "
-                "but account_id is not set. This may indicate invalid "
-                "credentials or a Blink API issue."
-            )
-            AUTH_FILE.unlink(missing_ok=True)
+            # No cache was used and auth still failed → credentials are wrong
+            # (or Blink requires additional verification).
             self.auth_state = "error"
             self.auth_message = "Authentication failed. Check your Blink credentials."
-            raise RuntimeError(
-                "Blink authentication failed; check credentials and Blink API status."
+            message = (
+                "Blink rejected the configured username/password, or the "
+                "login could not be completed. Verify the credentials in "
+                "the add-on configuration are correct and that the Blink "
+                "account does not require additional verification, then "
+                "restart the add-on."
             )
+            _LOGGER.error(message)
+            raise AuthenticationError(message)
 
         self.auth_state = "connected"
         self.auth_message = ""
@@ -604,30 +628,42 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         # Fresh event for this authentication attempt.
         self._two_fa_event = asyncio.Event()
         self._two_fa_code = None
+        self.two_fa_result_seq = self.two_fa_seq
+        self.two_fa_result_ok = None
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._config.two_fa_timeout
         while loop.time() < deadline:
+            code: str | None = None
+            seq = self.two_fa_seq
+
             # --- Check web-UI submission first (code already set before event) ---
             if self._two_fa_event.is_set():
                 code = self._two_fa_code or ""
                 self._two_fa_event.clear()
                 self._two_fa_code = None
-                if code and self._blink:
-                    await self._blink.send_2fa_code(code)
-                    # After 2FA submission, call start() again to complete init.
-                    await self._blink.start()
-                    return
 
             # --- File fallback (CLI / backwards compat) ---
-            if TWO_FA_FILE.exists():
+            elif TWO_FA_FILE.exists():
                 code = TWO_FA_FILE.read_text(encoding="utf-8").strip()
-                if code and self._blink:
-                    TWO_FA_FILE.unlink(missing_ok=True)
-                    await self._blink.send_2fa_code(code)
-                    # After 2FA submission, call start() again to complete init.
-                    await self._blink.start()
+                TWO_FA_FILE.unlink(missing_ok=True)
+
+            if code and self._blink:
+                if await self._submit_2fa_code(code):
+                    self.two_fa_result_seq = seq
+                    self.two_fa_result_ok = True
+                    self.auth_message = ""
                     return
+
+                # Wrong/expired code — record the failure for the web UI and
+                # keep waiting so the user can retry before the timeout.
+                self.two_fa_result_seq = seq
+                self.two_fa_result_ok = False
+                self.auth_message = "Incorrect verification code. Please try again."
+                _LOGGER.warning(
+                    "Blink rejected the submitted 2FA code; awaiting retry."
+                )
+                continue
 
             # --- Wait for the event or poll timeout ---
             remaining = deadline - loop.time()
@@ -647,6 +683,25 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             f"2FA code was not provided within {self._config.two_fa_timeout:.0f}s. "
             f"Write the code to {TWO_FA_FILE} and restart the add-on."
         )
+
+    async def _submit_2fa_code(self, code: str) -> bool:
+        """Submit *code* to blinkpy.
+
+        blinkpy >= 0.25 completes the OAuth v2 2FA flow (and full account
+        setup) inside ``send_2fa_code()`` and returns ``True``/``False`` to
+        indicate whether the code was accepted — a wrong or expired code
+        returns ``False`` without raising. Calling ``start()`` again
+        afterwards is unnecessary and would re-run the whole login flow, so
+        we rely on this return value directly.
+        """
+        assert self._blink is not None
+        try:
+            return bool(await self._blink.send_2fa_code(code))
+        except BlinkTwoFARequiredError:
+            return False
+        except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
+            _LOGGER.warning("2FA verification failed: %s", exc)
+            return False
 
     def _persist_auth(self) -> None:
         """Save the current auth token to disk for next startup."""

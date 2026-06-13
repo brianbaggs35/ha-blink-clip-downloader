@@ -15,8 +15,9 @@ from .archiver import ClipArchiver
 from .config import AppConfig
 from .database import ClipDatabase
 from .digest import DailyDigest
-from .downloader import BlinkDownloader, TwoFARequired
+from .downloader import AuthenticationError, BlinkDownloader, TwoFARequired
 from .event_watcher import HAEventWatcher
+from .library_scanner import import_existing_clips
 from .manifest import ClipManifest
 from .media_server import MediaServer
 from .notifier import HANotifier
@@ -76,6 +77,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             auth_state_getter=lambda: {
                 "state": self._downloader.auth_state,
                 "message": self._downloader.auth_message,
+                "two_fa_result_seq": self._downloader.two_fa_result_seq,
+                "two_fa_result_ok": self._downloader.two_fa_result_ok,
             },
         )
         self._event_watcher = HAEventWatcher(
@@ -119,6 +122,15 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # Init database.
         if self._config.enable_library_db:
             await self._db.init()
+
+            # Re-populate the library with any clip files left behind under
+            # download_path from a previous installation (e.g. /data was
+            # wiped on uninstall but /share/blink-clips was not).
+            imported = await import_existing_clips(self._db, self._config.download_path)
+            if imported:
+                _LOGGER.info(
+                    "Library re-import: added %d pre-existing clip(s)", imported
+                )
 
         # ── Web server FIRST ─────────────────────────────────────────────────
         # Must start before any blocking auth call so HA ingress always finds
@@ -232,6 +244,17 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     self._reconnect_interval,
                 )
                 await self._notifier.notify(str(exc), title="Blink 2FA Required")
+            except AuthenticationError as exc:
+                _LOGGER.error(
+                    "Blink authentication failed (attempt %d): %s Retrying in %d s.",
+                    attempt,
+                    exc,
+                    self._reconnect_interval,
+                )
+                if attempt == 1:
+                    await self._notifier.notify(
+                        str(exc), title="Blink Authentication Failed"
+                    )
             except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
                 _LOGGER.exception(
                     "Failed to connect to Blink (attempt %d): %s — retrying in %d s",

@@ -241,6 +241,14 @@ class ClipDatabase:
             row = await cur.fetchone()
         return row[0] if row else 0
 
+    async def get_all_file_paths(self) -> set[str]:
+        """Return the set of all ``file_path`` values currently indexed."""
+        if self._db is None:
+            return set()
+        async with self._db.execute("SELECT file_path FROM clips") as cursor:
+            rows = await cursor.fetchall()
+        return {r[0] for r in rows}
+
     async def get_clips_to_archive(self, older_than_days: int) -> list[dict[str, Any]]:
         if self._db is None:
             return []

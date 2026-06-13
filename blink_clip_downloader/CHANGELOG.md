@@ -1,5 +1,177 @@
 # Changelog
 
+## 2.6.7
+
+### Dependencies
+
+- **Upgraded `blinkpy` to `>=0.25.5`** (replacing the `>=0.23.0,<0.25.0` pin
+  added in 2.6.2). blinkpy 0.25 rewrote login around an OAuth v2 / PKCE flow:
+
+  - `Blink.start()` no longer raises `UnauthorizedError` for bad
+    credentials or an expired refresh token — it now returns `False`.
+  - `Blink.send_2fa_code(code)` now returns `True`/`False` to indicate
+    whether the code was accepted (and performs the full post-2FA account
+    setup itself), instead of always returning `None` and requiring a
+    second call to `start()`.
+
+  2.6.2 worked around this by pinning blinkpy below 0.25. This release
+  instead updates `downloader.py` to handle the new return-value-based
+  contract directly, so the add-on can use the current blinkpy release.
+
+### Bug fixes
+
+- **`connect()` now treats `start()` returning `False` the same as an
+  authentication failure.** Previously this only checked for
+  `UnauthorizedError` (which blinkpy >= 0.25 no longer raises for bad
+  credentials), so a failed login with the new blinkpy could leave
+  `self._blink.account_id` unset while `auth_state` stayed
+  `"authenticating"` forever. `connect()` now checks
+  `started and self._blink.account_id` after `start()` returns: if either is
+  falsy and cached credentials were used, it deletes the stale cache and
+  retries once with the configured username/password (as before); otherwise
+  it raises `AuthenticationError` with the same actionable message as before.
+  The `UnauthorizedError` handler is kept (and treated the same way) in case
+  a future blinkpy version raises it again.
+
+- **2FA submission no longer calls `start()` a second time.** With blinkpy >=
+  0.25, `send_2fa_code()` already completes the full login/account setup and
+  reports success or failure via its return value — a wrong or expired code
+  returns `False` without raising. `_submit_2fa_code()` now returns that
+  value directly instead of calling `start()` again afterwards, which with
+  the new OAuth flow would re-run the whole login and could trigger another,
+  unexpected 2FA prompt right after a successful submission.
+
+### Tests
+
+- `test_connect_start_returns_false_without_cache_raises_authentication_error`,
+  `test_connect_start_returns_false_with_cache_retries_fresh` — `connect()`
+  handles blinkpy >= 0.25's `start()` returning `False` for both fresh and
+  cached logins.
+- `test_submit_2fa_code_returns_false_when_send_2fa_code_returns_false`,
+  `test_handle_2fa_wrong_code_returns_false_does_not_raise` — a wrong 2FA
+  code rejected via blinkpy >= 0.25's `False` return (instead of a raised
+  `BlinkTwoFARequiredError`) is handled the same as before.
+
+## 2.6.6
+
+### New features
+
+- **Re-import existing clips after a reinstall** — `/data` (and the clip
+  library database within it) is wiped when the add-on is uninstalled, but
+  `download_path` (typically `/share/blink-clips`) is not. Previously,
+  reinstalling and pointing at a folder full of existing clips left the web
+  UI empty until new clips were downloaded.
+
+  On startup, if `enable_library_db` is set, the add-on now scans
+  `download_path` for `.mp4` files that aren't yet indexed and adds them to
+  the library database (`blink_downloader/library_scanner.py`,
+  `ClipDatabase.get_all_file_paths()`). Camera name and recording timestamp
+  are recovered from the `<camera>/<YYYY-MM-DD>/<camera>_<timestamp>.mp4`
+  folder/file layout used by the add-on, falling back to the filename alone
+  or the file's modification time when that information isn't available.
+  Files already in the database and anything under an `archives/` directory
+  are skipped, so this is safe to run on every startup.
+
+### Bug fixes
+
+- **Fixed the 2FA dialog getting stuck after an incorrect code** —
+  `Blink.send_2fa_code()` discards its result and `Blink.start()` re-raises
+  `BlinkTwoFARequiredError` when the submitted code is wrong. `_handle_2fa()`
+  didn't catch this, so an incorrect code propagated out as a generic
+  connection error: `auth_state` stayed stuck on `"needs_2fa"` while the web
+  UI's "Verify" button remained disabled with no way to retry.
+
+  `_handle_2fa()` now submits the code through a new `_submit_2fa_code()`
+  helper that catches `BlinkTwoFARequiredError` (and other submission
+  errors) and reports success/failure instead of raising. On a rejected
+  code, the add-on stays in `_handle_2fa()` and waits for another
+  submission (until `two_fa_timeout` elapses) rather than failing the whole
+  connection attempt.
+
+  `submit_two_fa_code()` now returns a sequence number, and
+  `/api/auth/status` reports `two_fa_result_seq` / `two_fa_result_ok` for
+  the most recently processed submission. The web UI tracks the sequence
+  number of its in-flight submission and, if it comes back rejected,
+  re-enables the "Verify" button with an "Incorrect verification code"
+  message and lets the user try again — instead of leaving the dialog
+  stuck on "Verifying…".
+
+### Tests
+
+- `test_get_all_file_paths_returns_paths`, `test_get_all_file_paths_empty` —
+  `ClipDatabase.get_all_file_paths()`.
+- `test_library_scanner.py` — covers importing clips from the standard
+  `<camera>/<date>/` layout, skipping already-known files and `archives/`
+  directories, deriving camera/timestamp from filenames when not organized
+  into folders, falling back to file mtime, and idempotent re-scans.
+- `test_run_imports_existing_clips_with_library_db_enabled`,
+  `test_run_skips_import_when_library_db_disabled` — `app.run()` re-imports
+  pre-existing clips on startup only when `enable_library_db` is set.
+- `test_submit_two_fa_code_returns_incrementing_seq`,
+  `test_submit_2fa_code_returns_false_on_two_fa_required`,
+  `test_submit_2fa_code_returns_false_on_generic_exception`,
+  `test_submit_2fa_code_returns_true_on_success`,
+  `test_handle_2fa_wrong_code_does_not_raise_and_keeps_waiting`,
+  `test_handle_2fa_wrong_code_then_correct_code_succeeds` — wrong-code
+  handling in `_handle_2fa()` / `_submit_2fa_code()`.
+- `test_auth_status_forwards_two_fa_result_fields`,
+  `test_two_fa_submit_returns_seq_from_callback` — `two_fa_result_seq` /
+  `two_fa_result_ok` are forwarded through `/api/auth/status` and
+  `/api/auth/2fa`.
+
+## 2.6.5
+
+### Bug fixes
+
+- **Fixed stale cached credentials overriding an updated username/password**
+  — blinkpy persists `username` and `password` (alongside the auth tokens)
+  to `/data/auth_credentials.json`. On the next start, `connect()` merged
+  this cached data into `login_data` *after* setting it from the add-on
+  configuration, so the stale cached username/password silently won
+  out over newly-configured credentials.
+
+  This is exactly the failure seen when Blink invalidates the cached
+  refresh token (e.g. after a forced password reset): the add-on would
+  keep retrying with the *old* password from the cache even though the
+  user had already updated the configuration, producing an endless
+  `blinkpy.auth.UnauthorizedError` ("Unable to refresh token. Invalid
+  refresh token or invalid credentials.") every retry.
+
+  **`downloader.py` `connect()`** now re-applies `self._config.username`
+  and `self._config.password` after merging the cached auth data, so the
+  configured credentials always take precedence while cached token/host
+  data is still reused.
+
+- **Fixed unhelpful empty authentication error messages** — blinkpy's
+  `UnauthorizedError` carries no message, so `str(e)` is always `""`. This
+  produced log lines with nothing after the colon, e.g.:
+
+  ```
+  ERROR  blink_downloader.downloader: Authentication failed with provided credentials: 
+  ERROR  blink_downloader.app: Failed to connect to Blink (attempt 1):  — retrying in 60 s
+  ```
+
+  When a fresh (non-cached) login is rejected with HTTP 401,
+  `downloader.connect()` now raises a new `AuthenticationError` with an
+  actionable message explaining that Blink rejected the configured
+  username/password and how to fix it. `app._connect_with_retry()` catches
+  `AuthenticationError` separately (like `TwoFARequired`), logs the
+  descriptive message without a noisy stack trace, and sends a single HA
+  persistent notification ("Blink Authentication Failed") on the first
+  failed attempt instead of repeating every retry.
+
+### Tests
+
+- `test_connect_cached_credentials_do_not_override_config` — cached
+  `username`/`password` in `auth_credentials.json` no longer override the
+  add-on's configured credentials (cached token/host data is still merged).
+- `test_connect_unauthorized_without_cache_raises_authentication_error` — a
+  401 on a fresh login raises `AuthenticationError` with a non-empty,
+  actionable message and sets `auth_state = "error"`.
+- `test_connect_with_retry_notifies_on_authentication_error` —
+  `_connect_with_retry()` sends one "Blink Authentication Failed"
+  notification and keeps retrying after an `AuthenticationError`.
+
 ## 2.6.4
 
 ### Bug fixes

@@ -481,6 +481,33 @@ async def test_auth_status_with_getter(db: ClipDatabase, tmp_path: Path) -> None
         await tc.close()
 
 
+async def test_auth_status_forwards_two_fa_result_fields(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """two_fa_result_seq/ok from the getter are forwarded so the UI can
+    detect a rejected (wrong) 2FA code for a specific submission."""
+    server = MediaServer(
+        db=db,
+        download_path=tmp_path,
+        port=0,
+        auth_state_getter=lambda: {
+            "state": "needs_2fa",
+            "message": "Incorrect verification code. Please try again.",
+            "two_fa_result_seq": 1,
+            "two_fa_result_ok": False,
+        },
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/auth/status")
+        data = await resp.json()
+        assert data["two_fa_result_seq"] == 1
+        assert data["two_fa_result_ok"] is False
+    finally:
+        await tc.close()
+
+
 # ---------------------------------------------------------------------------
 # /api/auth/2fa
 # ---------------------------------------------------------------------------
@@ -488,11 +515,16 @@ async def test_auth_status_with_getter(db: ClipDatabase, tmp_path: Path) -> None
 
 async def test_two_fa_submit_valid_code(db: ClipDatabase, tmp_path: Path) -> None:
     received: list[str] = []
+
+    def _callback(code: str) -> int:
+        received.append(code)
+        return 0
+
     server = MediaServer(
         db=db,
         download_path=tmp_path,
         port=0,
-        two_fa_callback=received.append,
+        two_fa_callback=_callback,
     )
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
@@ -509,11 +541,33 @@ async def test_two_fa_submit_valid_code(db: ClipDatabase, tmp_path: Path) -> Non
         await tc.close()
 
 
+async def test_two_fa_submit_returns_seq_from_callback(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The seq number returned by the callback is forwarded to the client."""
+    server = MediaServer(
+        db=db,
+        download_path=tmp_path,
+        port=0,
+        two_fa_callback=lambda _code: 7,
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/auth/2fa", json={"code": "123456"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["submitted"] is True
+        assert data["seq"] == 7
+    finally:
+        await tc.close()
+
+
 async def test_two_fa_submit_non_numeric_rejected(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     server = MediaServer(
-        db=db, download_path=tmp_path, port=0, two_fa_callback=lambda _: None
+        db=db, download_path=tmp_path, port=0, two_fa_callback=lambda _: 0
     )
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
@@ -528,7 +582,7 @@ async def test_two_fa_submit_wrong_length_rejected(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     server = MediaServer(
-        db=db, download_path=tmp_path, port=0, two_fa_callback=lambda _: None
+        db=db, download_path=tmp_path, port=0, two_fa_callback=lambda _: 0
     )
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()

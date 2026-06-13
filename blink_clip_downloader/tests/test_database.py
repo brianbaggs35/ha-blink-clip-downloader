@@ -220,6 +220,20 @@ async def test_mark_archived(db: ClipDatabase) -> None:
     assert result["archive_path"] == "/archives/2024-06.zip"
 
 
+async def test_get_all_file_paths_returns_paths(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    paths = await db.get_all_file_paths()
+    assert paths == {
+        "/share/blink-clips/c1.mp4",
+        "/share/blink-clips/c2.mp4",
+    }
+
+
+async def test_get_all_file_paths_empty(db: ClipDatabase) -> None:
+    assert await db.get_all_file_paths() == set()
+
+
 async def test_get_clips_to_archive(db: ClipDatabase) -> None:
     old_ts = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
     new_ts = datetime.now(timezone.utc).isoformat()
@@ -329,6 +343,7 @@ async def test_operations_without_init_are_safe() -> None:
     assert await d.get_stats() == {}
     assert await d.get_camera_stats() == []
     assert await d.get_clips_to_archive(30) == []
+    assert await d.get_all_file_paths() == set()
     assert await d.star_clip("x", True) is False
     assert await d.set_tags("x", []) is False
     assert await d.delete_clip("x") is False

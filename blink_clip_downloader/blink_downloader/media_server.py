@@ -1292,6 +1292,8 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
 
 // ── 2FA overlay ────────────────────────────────────────────────────────────
 let _twofaState = 'disconnected';
+// Seq of the in-flight submission we're waiting on a result for (0 = none).
+let _pendingSeq = 0;
 
 async function checkAuthStatus() {
   try {
@@ -1304,7 +1306,23 @@ async function checkAuthStatus() {
       if (prev !== 'needs_2fa') {
         $('twofa-input').value = '';
         $('twofa-msg').textContent = '';
+        _pendingSeq = 0;
         setTimeout(() => $('twofa-input').focus(), 80);
+      }
+      // If the submission we're waiting on came back rejected, let the
+      // user try again instead of leaving the form stuck on "Verifying…".
+      if (_pendingSeq && s.two_fa_result_seq === _pendingSeq) {
+        if (s.two_fa_result_ok === false) {
+          $('twofa-msg').textContent =
+            s.message || 'Incorrect verification code. Please try again.';
+          $('twofa-msg').style.color = 'var(--danger)';
+          const btn = $('twofa-submit');
+          btn.disabled = false;
+          btn.textContent = 'Verify';
+          $('twofa-input').value = '';
+          setTimeout(() => $('twofa-input').focus(), 80);
+        }
+        _pendingSeq = 0;
       }
     } else {
       if (prev === 'needs_2fa' && _twofaState === 'connected') {
@@ -1314,6 +1332,7 @@ async function checkAuthStatus() {
       } else if (_twofaState !== 'needs_2fa') {
         overlay.classList.remove('open');
       }
+      _pendingSeq = 0;
     }
     if (_twofaState === 'error' && overlay.classList.contains('open')) {
       $('twofa-msg').textContent = s.message || 'Authentication failed.';
@@ -1349,9 +1368,11 @@ async function submitTwoFA() {
       btn.disabled = false;
       btn.textContent = 'Verify';
     } else {
+      const data = await resp.json().catch(() => ({}));
+      _pendingSeq = data.seq || 0;
       // Keep button disabled — checkAuthStatus() polls every 3 s and will
-      // close the overlay automatically once the add-on confirms sign-in.
-      // Preventing re-submission avoids duplicate code errors from Blink.
+      // close the overlay on success, or re-enable this button with an
+      // error message if Blink rejects the code.
       btn.textContent = '✓ Submitted';
       $('twofa-msg').textContent = 'Code submitted — waiting for confirmation…';
       $('twofa-msg').style.color = 'var(--text)';
@@ -1411,7 +1432,7 @@ class MediaServer:
         download_path: Path,
         port: int,
         trigger_download: Callable[[], Awaitable[None]] | None = None,
-        two_fa_callback: Callable[[str], None] | None = None,
+        two_fa_callback: Callable[[str], int] | None = None,
         auth_state_getter: Callable[[], dict] | None = None,
     ) -> None:
         self._db = db
@@ -1670,8 +1691,8 @@ class MediaServer:
             raise web.HTTPBadRequest(text="Invalid request body")
         if not code.isdigit() or len(code) != 6:
             raise web.HTTPBadRequest(text="Code must be exactly 6 digits")
-        self._two_fa_callback(code)
-        return web.json_response({"submitted": True})
+        seq = self._two_fa_callback(code)
+        return web.json_response({"submitted": True, "seq": seq})
 
     async def _handle_download_now(self, _request: web.Request) -> web.Response:
         if self._trigger_download:
