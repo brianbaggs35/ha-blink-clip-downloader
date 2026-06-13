@@ -3,7 +3,7 @@ FROM ${BUILD_FROM}
 
 # BUILD_ARCH is injected by the HA build system for multi-arch images.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=2.5.5
+ARG BUILD_VERSION=2.6.8
 
 # Install C build tools needed by some Python wheels
 RUN apk add --no-cache gcc musl-dev libffi-dev openssl-dev
@@ -34,7 +34,7 @@ RUN chmod a+x /etc/services.d/blink-downloader/run \
 LABEL \
     org.opencontainers.image.title="Blink Clip Downloader" \
     org.opencontainers.image.description="Continuously downloads Blink camera clips to local HA storage" \
-    org.opencontainers.image.source="https://github.com/brianbaggs/ha-blink-clip-downloader" \
+    org.opencontainers.image.source="https://github.com/brianbaggs35/ha-blink-clip-downloader" \
     org.opencontainers.image.authors="Brian Baggs <brianbaggs@hotmail.com>" \
     org.opencontainers.image.licenses="MIT" \
     org.opencontainers.image.version="${BUILD_VERSION}" \

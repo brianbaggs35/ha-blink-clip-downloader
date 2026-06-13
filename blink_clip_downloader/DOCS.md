@@ -13,7 +13,7 @@ notifications, ZIP archiving, and full Home Assistant integration.
 
 1. In Home Assistant go to **Settings → Add-ons → Add-on Store**.
 2. Click **⋮** (top-right) → **Repositories** → add  
-   `https://github.com/yourusername/ha-blink-clip-downloader`
+   `https://github.com/brianbaggs35/ha-blink-clip-downloader`
 3. Refresh the page; find **Blink Clip Downloader** and click **Install**.
 4. Open the **Configuration** tab, fill in your Blink credentials, and save.
 5. Click **Start**.
