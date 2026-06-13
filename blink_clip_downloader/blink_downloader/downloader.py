@@ -105,7 +105,22 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         except Exception:  # noqa: BLE001 pylint: disable=broad-exception-caught
             self.auth_state = "error"
             self.auth_message = "Authentication failed. Check your Blink credentials."
+            # Delete cached auth to force fresh login on retry
+            AUTH_FILE.unlink(missing_ok=True)
             raise
+
+        # Verify blink object is properly initialized (has urls and networks)
+        if not hasattr(self._blink, "urls") or self._blink.urls is None:
+            _LOGGER.warning(
+                "Blink object incomplete after auth; urls is None. "
+                "Clearing cached auth to force fresh login."
+            )
+            AUTH_FILE.unlink(missing_ok=True)
+            self.auth_state = "error"
+            self.auth_message = "Authentication incomplete. Please restart the add-on."
+            raise RuntimeError(
+                "Blink object not fully initialized after authentication"
+            )
 
         self.auth_state = "connected"
         self.auth_message = ""
@@ -489,9 +504,15 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         """Prepend the Blink base URL to relative paths."""
         if url.startswith("http"):
             return url
-        base = getattr(getattr(self._blink, "urls", None), "base_url", "")
-        if base:
-            return f"{base}{url}"
+        # Safely handle cases where urls or base_url might be None.
+        try:
+            if hasattr(self._blink, "urls") and self._blink.urls:
+                base = getattr(self._blink.urls, "base_url", None)
+                if base:
+                    return f"{base}{url}"
+        except AttributeError:
+            pass
+        # Fallback to default Blink base URL if urls is not available.
         return f"https://rest-prod.immedia-semi.com{url}"
 
     async def _stream_to_file(self, url: str, dest: Path) -> int | None:
@@ -567,6 +588,8 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 self._two_fa_code = None
                 if code and self._blink:
                     await self._blink.send_2fa_code(code)
+                    # Refresh to complete blink initialization after 2FA.
+                    await self._blink.refresh()
                     return
 
             # --- File fallback (CLI / backwards compat) ---
@@ -575,6 +598,8 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 if code and self._blink:
                     TWO_FA_FILE.unlink(missing_ok=True)
                     await self._blink.send_2fa_code(code)
+                    # Refresh to complete blink initialization after 2FA.
+                    await self._blink.refresh()
                     return
 
             # --- Wait for the event or poll timeout ---

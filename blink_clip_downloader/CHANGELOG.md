@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.6.0
+
+### Bug fixes
+
+- **Fixed 2FA authentication flow** — Added `refresh()` call after 2FA submission to ensure the blink object is fully initialized with all sync modules and networks.
+- **Fixed `'NoneType' object has no attribute 'base_url'` error** — Improved URL resolution with safer null checks to handle edge cases where the blink object might not be fully initialized.
+- **Fixed incomplete authentication detection** — Added validation after Blink auth completes to detect incomplete initialization and force fresh login if needed.
+- **Fixed cached auth handling** — Clears stale cached credentials when authentication fails or is incomplete, forcing a fresh login on retry.
+
 ## 2.5.9
 
 ### Bug fixes
