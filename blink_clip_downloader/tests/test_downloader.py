@@ -119,6 +119,26 @@ def test_time_window_filter_outside_window(dl, sample_clip):
     assert len(dl._apply_filters(clips)) == 0
 
 
+def test_time_window_overnight_window_keeps_night_clips(dl, sample_clip):
+    dl._config.time_window_start = "22:00"
+    dl._config.time_window_end = "06:00"
+    # Overnight window wraps past midnight: clips at 23:00 and 02:00 fall
+    # inside the 22:00-06:00 nighttime range and must be kept.
+    late_night = {**sample_clip, "id": 2, "created_at": "2024-06-15T23:00:00+00:00"}
+    early_morning = {**sample_clip, "id": 3, "created_at": "2024-06-15T02:00:00+00:00"}
+    clips = [late_night, early_morning]
+    assert len(dl._apply_filters(clips)) == 2
+
+
+def test_time_window_overnight_window_boundaries_inclusive(dl, sample_clip):
+    dl._config.time_window_start = "22:00"
+    dl._config.time_window_end = "06:00"
+    start_edge = {**sample_clip, "id": 2, "created_at": "2024-06-15T22:00:00+00:00"}
+    end_edge = {**sample_clip, "id": 3, "created_at": "2024-06-15T06:00:00+00:00"}
+    clips = [start_edge, end_edge]
+    assert len(dl._apply_filters(clips)) == 2
+
+
 def test_time_window_invalid_timestamp_keeps_clip(dl):
     dl._config.time_window_start = "08:00"
     dl._config.time_window_end = "20:00"

@@ -1096,7 +1096,11 @@ $('delete-btn').addEventListener('click', async () => {
   document.querySelector(`.clip-card[data-id="${id}"]`)?.remove();
   const idx = allClipIds.indexOf(id);
   if (idx !== -1) allClipIds.splice(idx, 1);
-  navClip(0) || closeModal();  // try to open same index or close
+  // Open whichever clip now occupies the same slot, fall back to the
+  // previous one, or close the modal if the list is empty.
+  if (idx >= 0 && idx < allClipIds.length) openModal(allClipIds[idx]);
+  else if (idx - 1 >= 0) openModal(allClipIds[idx - 1]);
+  else closeModal();
 });
 
 $('copy-path-btn').addEventListener('click', () => {

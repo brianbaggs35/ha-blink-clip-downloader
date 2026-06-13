@@ -452,7 +452,12 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         return clips
 
     def _in_time_window(self, clip: dict) -> bool:
-        """Return True if the clip's creation time falls in the configured window."""
+        """Return True if the clip's creation time falls in the configured window.
+
+        ``time_window_start > time_window_end`` denotes an overnight window
+        that wraps past midnight (e.g. "22:00"-"06:00" for nighttime-only
+        downloads).
+        """
         raw = clip.get("created_at", "")
         try:
             ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
@@ -463,10 +468,14 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         start = self._config.time_window_start
         end = self._config.time_window_end
 
-        if start and clip_time < start:
-            return False
-        if end and clip_time > end:
-            return False
+        if start and end:
+            if start <= end:
+                return start <= clip_time <= end
+            return clip_time >= start or clip_time <= end
+        if start:
+            return clip_time >= start
+        if end:
+            return clip_time <= end
         return True
 
     # ------------------------------------------------------------------
