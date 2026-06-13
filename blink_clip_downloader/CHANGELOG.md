@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.9
+
+### Bug fixes
+
+- Fixed some more bugs.
+
 ## 2.5.6
 
 ### Bug fixes
