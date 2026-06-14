@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.7.1
+
+### Bug fixes
+
+- **Fixed "Login failed" with no 2FA prompt, even with correct credentials
+  and a valid SMS code.** After the cookie-jar fix in 2.7.0, some Blink
+  accounts still got an immediate `Login failed` on the very first login
+  attempt, with no 2FA prompt ever shown — yet Blink still sent an SMS
+  verification code.
+
+  The cause is upstream: blinkpy 0.25's `oauth_signin()` only recognizes an
+  HTTP `412` response as "2FA required". Blink's sign-in endpoint now
+  returns HTTP `202 Accepted` (with a JSON body describing the available
+  SMS/voice/WhatsApp verification methods) for these accounts. blinkpy
+  doesn't recognize `202`, falls through to `return None`, and
+  `Auth._oauth_login_flow()` logs `Login failed` and aborts *before* raising
+  `BlinkTwoFARequiredError` — so the add-on never gets to prompt for the
+  code Blink just texted
+  (see [fronzbot/blinkpy#1233](https://github.com/fronzbot/blinkpy/issues/1233)
+  and [fronzbot/blinkpy#1230](https://github.com/fronzbot/blinkpy/issues/1230),
+  both open/unfixed as of blinkpy 0.25.5).
+
+  The add-on now patches `blinkpy.api.oauth_signin` at startup
+  (`blinkpy_compat.py`) so a `202` response is treated the same as `412`,
+  letting the existing 2FA prompt/submission flow run as designed. This
+  workaround can be removed once a fixed blinkpy release is adopted.
+
+### Tests
+
+- `test_blinkpy_compat.py` — `oauth_signin` returns `"2FA_REQUIRED"` for
+  HTTP `202` (and still for `412`), `"SUCCESS"` for redirect statuses, and
+  `None` otherwise; the patch is applied exactly once and is idempotent.
+
 ## 2.7.0
 
 ### Bug fixes

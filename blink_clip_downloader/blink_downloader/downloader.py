@@ -16,12 +16,18 @@ from blinkpy import api as blink_api
 from blinkpy.auth import Auth, BlinkTwoFARequiredError, UnauthorizedError
 from blinkpy.blinkpy import Blink
 
+from .blinkpy_compat import patch_oauth_signin_2fa_status
 from .config import AppConfig
 from .database import ClipDatabase
 from .storage import StorageManager
 from .tracker import ClipTracker
 
 _LOGGER = logging.getLogger(__name__)
+
+# Work around blinkpy issues #1233/#1230 (Blink's OAuth signin endpoint now
+# returns HTTP 202 for accounts that need 2FA, which blinkpy doesn't yet
+# recognise). See blinkpy_compat.py for details.
+patch_oauth_signin_2fa_status()
 
 AUTH_FILE = Path("/data/auth_credentials.json")
 TWO_FA_FILE = Path("/data/two_fa_code.txt")
