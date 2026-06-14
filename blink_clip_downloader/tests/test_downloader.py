@@ -934,6 +934,27 @@ def test_persist_auth_handles_exception(dl):
 
 
 # ---------------------------------------------------------------------------
+# _get_session
+# ---------------------------------------------------------------------------
+
+
+async def test_get_session_uses_unsafe_cookie_jar(dl):
+    """The session used for blinkpy's OAuth flow must use an unsafe cookie jar.
+
+    blinkpy's OAuth v2 / PKCE login chains several requests to
+    api.oauth.blink.com, relying on cookies from earlier steps (authorize,
+    signin page) being sent back on the signin POST. aiohttp's default
+    ("safe") CookieJar can drop those cookies, making blinkpy log "Login
+    failed" even with correct credentials (fronzbot/blinkpy#1229).
+    """
+    session = await dl._get_session()
+    try:
+        assert session.cookie_jar._unsafe is True
+    finally:
+        await session.close()
+
+
+# ---------------------------------------------------------------------------
 # download_local_storage_clips (v2.5.5)
 # ---------------------------------------------------------------------------
 

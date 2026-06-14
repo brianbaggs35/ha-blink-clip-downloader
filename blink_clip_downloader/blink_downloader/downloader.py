@@ -763,5 +763,18 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            # blinkpy's OAuth v2 / PKCE login flow makes several chained
+            # requests to api.oauth.blink.com (authorize -> signin page ->
+            # signin -> authorization code) and relies on cookies set by the
+            # earlier steps being sent back on the later ones. aiohttp's
+            # default CookieJar runs in "safe" mode and can silently refuse
+            # to store/return some of those cookies, which makes the signin
+            # POST fail validation -- blinkpy then logs "Login failed" with
+            # no further detail, even with correct credentials (see
+            # fronzbot/blinkpy#1229). An "unsafe" cookie jar matches a real
+            # browser/app client and lets the whole OAuth flow share cookies
+            # as intended.
+            self._session = aiohttp.ClientSession(
+                cookie_jar=aiohttp.CookieJar(unsafe=True)
+            )
         return self._session
