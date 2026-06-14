@@ -1,5 +1,47 @@
 # Changelog
 
+## 2.6.9
+
+### Bug fixes
+
+- **Fixed Blink rejecting valid credentials (and 2FA codes) on retry.**
+  blinkpy's OAuth v2 / PKCE login flow identifies this installation to Blink
+  with a per-device `hardware_id`, and generates a brand new random one for
+  every `Auth()` instance that isn't given one. Cached tokens (including
+  `hardware_id`) are only written to `/data/auth_credentials.json` after a
+  *successful* login, so on a fresh install — or after any failed login —
+  every retry presented Blink with a completely new, never-seen "device"
+  trying to sign in with the same username/password. Repeatedly
+  "registering" new devices for the same account in a short window is a
+  classic credential-stuffing signal, and could cause Blink to reject
+  otherwise-correct credentials outright, or invalidate a 2FA challenge
+  before the code entered in the web UI could be verified (producing
+  "authentication failed" even with a correct, freshly received code).
+
+  `connect()` now generates a `hardware_id` once and persists it to
+  `/data/blink_hardware_id.txt`, reusing it for every login attempt —
+  including retries after a failed/expired login and across add-on restarts
+  — so this installation always presents the same device identity to Blink.
+
+- **Verified passwords containing special characters are used as configured.**
+  Added regression tests that drive `connect()` with a password containing
+  symbols (`p@ss!w0rd#123$%^&*()`) and confirm it reaches blinkpy's
+  `login_data` unchanged.
+
+### Tests
+
+- `test_connect_generates_and_persists_hardware_id`,
+  `test_connect_reuses_persisted_hardware_id`,
+  `test_connect_adopts_hardware_id_from_auth_cache` — cover the new stable
+  `hardware_id` persistence across fresh logins, retries, and cached-token
+  logins.
+- `test_connect_passes_through_password_with_symbols` — a password with
+  symbols reaches `Auth(login_data=...)` unchanged.
+- Fixed a flaky `test_falls_back_to_mtime_when_no_timestamp_in_filename` —
+  on some filesystems `stat().st_mtime` can be a few milliseconds ahead of
+  `datetime.now()` due to clock-source skew between the filesystem and wall
+  clock; the assertion now allows a 1 s tolerance on both bounds.
+
 ## 2.6.8
 
 ### Bug fixes

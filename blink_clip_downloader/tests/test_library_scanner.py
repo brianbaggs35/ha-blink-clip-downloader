@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -134,7 +134,11 @@ async def test_falls_back_to_mtime_when_no_timestamp_in_filename(
     clips = await db.get_clips()
     assert clips[0]["camera"] == "Garage"
     ts = datetime.fromisoformat(clips[0]["timestamp"])
-    assert before <= ts <= after
+    # Allow a small tolerance: on some filesystems stat().st_mtime can be a
+    # few milliseconds ahead of datetime.now() due to clock-source skew
+    # between the filesystem and wall clock.
+    tolerance = timedelta(seconds=1)
+    assert before - tolerance <= ts <= after + tolerance
 
 
 async def test_rescanning_does_not_duplicate(db: ClipDatabase, tmp_path: Path) -> None:

@@ -747,6 +747,123 @@ async def test_connect_start_returns_false_with_cache_retries_fresh(dl, tmp_path
 
 
 # ---------------------------------------------------------------------------
+# connect() — stable hardware_id across retries/restarts
+# ---------------------------------------------------------------------------
+
+
+async def test_connect_generates_and_persists_hardware_id(dl, tmp_path):
+    """A fresh install gets a hardware_id, persisted for future attempts.
+
+    blinkpy generates a random hardware_id for every Auth() instance that
+    isn't given one. Without persistence, every retry after a failed login
+    would present Blink with a brand new "device" using the same
+    credentials -- a pattern that can trigger Blink's fraud detection.
+    """
+    missing_auth = tmp_path / "no_auth.json"
+    hw_file = tmp_path / "hardware_id.txt"
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock()
+    mock_blink.account_id = 1
+    mock_blink.auth = MagicMock()
+    mock_blink.auth.login_attributes = {}
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", missing_auth),
+        patch("blink_downloader.downloader.HARDWARE_ID_FILE", hw_file),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth") as MockAuth,
+    ):
+        await dl.connect()
+
+    call_kwargs = MockAuth.call_args[1]
+    hardware_id = call_kwargs["login_data"]["hardware_id"]
+    assert hardware_id
+    assert hw_file.read_text(encoding="utf-8").strip() == hardware_id
+
+
+async def test_connect_reuses_persisted_hardware_id(dl, tmp_path):
+    """A retry after a failed login reuses the same persisted hardware_id."""
+    missing_auth = tmp_path / "no_auth.json"
+    hw_file = tmp_path / "hardware_id.txt"
+    hw_file.write_text("EXISTING-HARDWARE-ID", encoding="utf-8")
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock()
+    mock_blink.account_id = 1
+    mock_blink.auth = MagicMock()
+    mock_blink.auth.login_attributes = {}
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", missing_auth),
+        patch("blink_downloader.downloader.HARDWARE_ID_FILE", hw_file),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth") as MockAuth,
+    ):
+        await dl.connect()
+
+    call_kwargs = MockAuth.call_args[1]
+    assert call_kwargs["login_data"]["hardware_id"] == "EXISTING-HARDWARE-ID"
+    assert hw_file.read_text(encoding="utf-8").strip() == "EXISTING-HARDWARE-ID"
+
+
+async def test_connect_adopts_hardware_id_from_auth_cache(dl, tmp_path):
+    """A hardware_id cached from a prior successful login is reused and
+    backfilled into HARDWARE_ID_FILE so it survives AUTH_FILE being deleted."""
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(
+        json.dumps({"token": "cached_token", "hardware_id": "CACHED-ID"})
+    )
+    hw_file = tmp_path / "hardware_id.txt"  # does not exist yet
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock()
+    mock_blink.account_id = 42
+    mock_blink.auth = MagicMock()
+    mock_blink.auth.login_attributes = {"token": "cached_token"}
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", auth_file),
+        patch("blink_downloader.downloader.HARDWARE_ID_FILE", hw_file),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth") as MockAuth,
+    ):
+        await dl.connect()
+
+    call_kwargs = MockAuth.call_args[1]
+    assert call_kwargs["login_data"]["hardware_id"] == "CACHED-ID"
+    assert hw_file.read_text(encoding="utf-8").strip() == "CACHED-ID"
+
+
+# ---------------------------------------------------------------------------
+# connect() — passwords containing symbols
+# ---------------------------------------------------------------------------
+
+
+async def test_connect_passes_through_password_with_symbols(dl, tmp_path):
+    """A password containing special characters reaches login_data unchanged."""
+    missing_auth = tmp_path / "no_auth.json"
+    dl._config.password = "p@ss!w0rd#123$%^&*()"
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock()
+    mock_blink.account_id = 1
+    mock_blink.auth = MagicMock()
+    mock_blink.auth.login_attributes = {}
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", missing_auth),
+        patch("blink_downloader.downloader.HARDWARE_ID_FILE", tmp_path / "hw.txt"),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth") as MockAuth,
+    ):
+        await dl.connect()
+
+    call_kwargs = MockAuth.call_args[1]
+    assert call_kwargs["login_data"]["password"] == "p@ss!w0rd#123$%^&*()"
+
+
+# ---------------------------------------------------------------------------
 # _fetch_clip_list — pagination
 # ---------------------------------------------------------------------------
 

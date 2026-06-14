@@ -323,6 +323,7 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | Path | Description |
 |------|-------------|
 | `/data/auth_credentials.json` | Cached Blink auth tokens (do not edit) |
+| `/data/blink_hardware_id.txt` | Stable device ID presented to Blink during login (do not edit) |
 | `/data/downloaded_clips.json` | Tracker of downloaded clip IDs |
 | `/data/clip_manifest.json` | Newline-delimited JSON log of all downloads |
 | `/data/clip_library.db` | SQLite database powering the web UI |
