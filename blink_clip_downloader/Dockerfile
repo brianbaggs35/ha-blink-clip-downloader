@@ -3,7 +3,7 @@ FROM ${BUILD_FROM}
 
 # BUILD_ARCH is injected by the HA build system for multi-arch images.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=2.7.0
+ARG BUILD_VERSION=2.7.1
 
 # Install C build tools needed by some Python wheels
 RUN apk add --no-cache gcc musl-dev libffi-dev openssl-dev
