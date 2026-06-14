@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 AUTH_FILE = Path("/data/auth_credentials.json")
 TWO_FA_FILE = Path("/data/two_fa_code.txt")
+HARDWARE_ID_FILE = Path("/data/blink_hardware_id.txt")
 
 # Blink returns up to 25 clips per page by default.
 _PAGE_SIZE = 25
@@ -116,6 +118,19 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 _LOGGER.debug("Loaded cached Blink auth credentials")
             except (json.JSONDecodeError, KeyError):
                 _LOGGER.warning("Cached auth file is corrupt; will re-authenticate")
+
+        # blinkpy's OAuth v2 flow identifies this installation to Blink with a
+        # per-device "hardware_id" and generates a random one whenever an
+        # Auth() instance isn't given one. _persist_auth() only writes
+        # AUTH_FILE on a *successful* login, so without this every retry
+        # after a failed/expired login would present Blink with a brand new
+        # "device" using the same credentials -- a pattern that can trigger
+        # Blink's fraud detection and cause otherwise-valid credentials (or a
+        # freshly entered 2FA code) to be rejected. Persist a stable ID so
+        # retries and add-on restarts all look like the same device.
+        login_data["hardware_id"] = self._get_or_create_hardware_id(
+            login_data.get("hardware_id")
+        )
 
         auth = Auth(login_data=login_data, no_prompt=True, session=session)
         self._blink = Blink(session=session)
@@ -720,6 +735,31 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 AUTH_FILE.write_text(json.dumps(attrs, indent=2))
             except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
                 _LOGGER.warning("Could not persist auth credentials: %s", exc)
+
+    @staticmethod
+    def _get_or_create_hardware_id(cached_hardware_id: str | None) -> str:
+        """Return a stable per-installation hardware ID for blinkpy's OAuth flow.
+
+        Falls back to *cached_hardware_id* (from a previously persisted
+        ``AUTH_FILE``) when ``HARDWARE_ID_FILE`` doesn't exist yet, and
+        otherwise generates a fresh UUID. The chosen value is (re)written to
+        ``HARDWARE_ID_FILE`` so it survives ``AUTH_FILE`` being deleted on a
+        failed/expired login.
+        """
+        try:
+            existing = HARDWARE_ID_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            existing = ""
+
+        hardware_id = existing or cached_hardware_id or str(uuid.uuid4()).upper()
+
+        if hardware_id != existing:
+            try:
+                HARDWARE_ID_FILE.write_text(hardware_id, encoding="utf-8")
+            except OSError as exc:
+                _LOGGER.warning("Could not persist Blink hardware ID: %s", exc)
+
+        return hardware_id
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
