@@ -149,7 +149,7 @@ refresh token expires (typically after 30+ days with the add-on stopped).
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `download_thumbnails` | `false` | Save a JPEG thumbnail alongside each clip |
+| `download_thumbnails` | `false` | Save a JPEG thumbnail (first frame, via ffmpeg) alongside each clip. Enabling this also gradually backfills thumbnails for clips downloaded earlier and for clips re-imported after an uninstall/reinstall (a few per poll cycle until the library is fully covered). |
 | `concurrent_downloads` | `3` | Parallel downloads (1–10) |
 | `retry_attempts` | `3` | Retries per failed download |
 | `retry_delay` | `5.0` | Base seconds between retries (multiplied by attempt number) |

@@ -557,10 +557,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             )
 
             if self._config.download_thumbnails:
-                thumb_url = clip.get("thumbnail", "")
-                if thumb_url:
-                    thumb_dest = dest.with_suffix(".jpg")
-                    await self._stream_to_file(self._resolve_url(thumb_url), thumb_dest)
+                await self._generate_thumbnail(dest, dest.with_suffix(".jpg"))
 
             # Normalise nullable Blink API fields before storing — the API
             # returns null (→ Python None) for duration/network_id on some
@@ -639,6 +636,68 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         if dest.exists():
             dest.unlink()
         return None
+
+    async def _generate_thumbnail(self, video_path: Path, thumb_path: Path) -> bool:
+        """Extract the first frame of *video_path* as a JPEG thumbnail.
+
+        Blink's media API doesn't reliably provide a per-clip thumbnail URL,
+        so thumbnails are generated locally with ffmpeg instead. Returns True
+        if *thumb_path* was created.
+        """
+        if thumb_path.exists() or not video_path.exists():
+            return False
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(video_path),
+                "-frames:v",
+                "1",
+                "-q:v",
+                "5",
+                str(thumb_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except OSError as exc:
+            _LOGGER.warning("Could not run ffmpeg to generate thumbnail: %s", exc)
+            return False
+
+        if not thumb_path.exists():
+            _LOGGER.warning("ffmpeg did not produce a thumbnail for %s", video_path)
+            return False
+        return True
+
+    async def backfill_thumbnails(self, limit: int) -> int:
+        """Generate missing ``.jpg`` thumbnails for already-downloaded clips.
+
+        Used to fill in thumbnails for clips downloaded before
+        ``download_thumbnails`` was enabled, and for clips re-imported by
+        :func:`library_scanner.import_existing_clips` after a reinstall.
+        Processes at most *limit* clips per call so a large backlog is
+        filled in gradually across poll cycles rather than all at once.
+
+        Returns the number of thumbnails generated.
+        """
+        if not self._config.download_thumbnails or self._db is None:
+            return 0
+
+        generated = 0
+        for path_str in sorted(await self._db.get_all_file_paths()):
+            if generated >= limit:
+                break
+            video_path = Path(path_str)
+            thumb_path = video_path.with_suffix(".jpg")
+            if thumb_path.exists() or not video_path.exists():
+                continue
+            if await self._generate_thumbnail(video_path, thumb_path):
+                generated += 1
+        return generated
 
     # ------------------------------------------------------------------
     # Internal: auth helpers
