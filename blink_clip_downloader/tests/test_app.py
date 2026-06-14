@@ -668,3 +668,20 @@ async def test_poll_cycle_local_storage_clips_trigger_notification(app):
     app._notifier.notify.assert_awaited_once()
     notify_msg = app._notifier.notify.call_args[0][0]
     assert "Garage" in notify_msg
+
+
+# ---------------------------------------------------------------------------
+# Thumbnail backfill in poll cycle
+# ---------------------------------------------------------------------------
+
+
+async def test_poll_cycle_backfills_thumbnails(app):
+    from blink_downloader.app import _THUMBNAIL_BACKFILL_BATCH
+
+    app._downloader.backfill_thumbnails = AsyncMock(return_value=0)
+
+    await app._poll_cycle()
+
+    app._downloader.backfill_thumbnails.assert_awaited_once_with(
+        _THUMBNAIL_BACKFILL_BATCH
+    )

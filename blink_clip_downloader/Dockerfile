@@ -3,10 +3,11 @@ FROM ${BUILD_FROM}
 
 # BUILD_ARCH is injected by the HA build system for multi-arch images.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=2.7.1
+ARG BUILD_VERSION=2.7.2
 
-# Install C build tools needed by some Python wheels
-RUN apk add --no-cache gcc musl-dev libffi-dev openssl-dev
+# Install C build tools needed by some Python wheels, plus ffmpeg for
+# generating clip thumbnails.
+RUN apk add --no-cache gcc musl-dev libffi-dev openssl-dev ffmpeg
 
 # Install Python dependencies first (Docker layer cache)
 COPY requirements.txt /tmp/requirements.txt

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -247,6 +249,164 @@ async def test_stream_to_file_deletes_partial_on_failure(dl, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# _generate_thumbnail / backfill_thumbnails
+# ---------------------------------------------------------------------------
+
+_HAVE_FFMPEG = shutil.which("ffmpeg") is not None
+
+
+@pytest.fixture
+def real_video(tmp_path):
+    """A tiny real .mp4 file, generated with ffmpeg for thumbnail tests."""
+    video = tmp_path / "real.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=64x64:rate=5",
+            "-pix_fmt",
+            "yuv420p",
+            str(video),
+        ],
+        check=True,
+    )
+    return video
+
+
+@pytest.mark.skipif(not _HAVE_FFMPEG, reason="ffmpeg is not installed")
+async def test_generate_thumbnail_creates_jpg(dl, real_video):
+    thumb = real_video.with_suffix(".jpg")
+    created = await dl._generate_thumbnail(real_video, thumb)
+
+    assert created is True
+    assert thumb.exists()
+    assert thumb.stat().st_size > 0
+
+
+async def test_generate_thumbnail_skips_if_thumb_exists(dl, tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake video data")
+    thumb = tmp_path / "clip.jpg"
+    thumb.write_bytes(b"existing thumbnail")
+
+    created = await dl._generate_thumbnail(video, thumb)
+
+    assert created is False
+    assert thumb.read_bytes() == b"existing thumbnail"
+
+
+async def test_generate_thumbnail_skips_if_video_missing(dl, tmp_path):
+    video = tmp_path / "missing.mp4"
+    thumb = tmp_path / "missing.jpg"
+
+    created = await dl._generate_thumbnail(video, thumb)
+
+    assert created is False
+    assert not thumb.exists()
+
+
+async def test_generate_thumbnail_handles_missing_ffmpeg(dl, tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake video data")
+    thumb = tmp_path / "clip.jpg"
+
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(side_effect=FileNotFoundError("ffmpeg not found")),
+    ):
+        created = await dl._generate_thumbnail(video, thumb)
+
+    assert created is False
+    assert not thumb.exists()
+
+
+async def test_generate_thumbnail_handles_ffmpeg_producing_no_output(dl, tmp_path):
+    """ffmpeg can exit 0 without writing a file (e.g. a corrupt video)."""
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"not a real video")
+    thumb = tmp_path / "clip.jpg"
+
+    mock_proc = AsyncMock()
+    mock_proc.wait = AsyncMock(return_value=0)
+
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ):
+        created = await dl._generate_thumbnail(video, thumb)
+
+    assert created is False
+    assert not thumb.exists()
+
+
+async def test_backfill_thumbnails_disabled_returns_zero(dl):
+    dl._config.download_thumbnails = False
+    dl._db = AsyncMock()
+
+    assert await dl.backfill_thumbnails(10) == 0
+    dl._db.get_all_file_paths.assert_not_called()
+
+
+async def test_backfill_thumbnails_without_db_returns_zero(dl):
+    dl._config.download_thumbnails = True
+    dl._db = None
+
+    assert await dl.backfill_thumbnails(10) == 0
+
+
+async def test_backfill_thumbnails_generates_missing_only(dl, tmp_path):
+    dl._config.download_thumbnails = True
+
+    has_thumb = tmp_path / "has_thumb.mp4"
+    has_thumb.write_bytes(b"video")
+    has_thumb.with_suffix(".jpg").write_bytes(b"existing thumb")
+
+    needs_thumb = tmp_path / "needs_thumb.mp4"
+    needs_thumb.write_bytes(b"video")
+
+    missing_video = tmp_path / "missing.mp4"
+
+    dl._db = AsyncMock()
+    dl._db.get_all_file_paths = AsyncMock(
+        return_value={str(has_thumb), str(needs_thumb), str(missing_video)}
+    )
+
+    with patch.object(
+        dl, "_generate_thumbnail", AsyncMock(return_value=True)
+    ) as mock_gen:
+        generated = await dl.backfill_thumbnails(10)
+
+    assert generated == 1
+    mock_gen.assert_awaited_once_with(needs_thumb, needs_thumb.with_suffix(".jpg"))
+
+
+async def test_backfill_thumbnails_respects_limit(dl, tmp_path):
+    dl._config.download_thumbnails = True
+
+    videos = []
+    for i in range(5):
+        video = tmp_path / f"clip{i}.mp4"
+        video.write_bytes(b"video")
+        videos.append(video)
+
+    dl._db = AsyncMock()
+    dl._db.get_all_file_paths = AsyncMock(return_value={str(v) for v in videos})
+
+    with patch.object(
+        dl, "_generate_thumbnail", AsyncMock(return_value=True)
+    ) as mock_gen:
+        generated = await dl.backfill_thumbnails(2)
+
+    assert generated == 2
+    assert mock_gen.await_count == 2
+
+
+# ---------------------------------------------------------------------------
 # download_new_clips
 # ---------------------------------------------------------------------------
 
@@ -343,6 +503,75 @@ async def test_download_clip_null_api_fields(dl, tmp_path):
     assert result["duration"] == 0
     assert result["network_id"] == 0
     assert result["source"] == ""
+
+
+async def _download_sample_clip(dl, tmp_path, *, download_thumbnails):
+    """Run _download_clip for a basic clip and return (result, dest_path)."""
+    clip = {
+        "id": 1234,
+        "device_name": "Front Door",
+        "media": "/api/v1/accounts/1/clip/1234.mp4",
+        "thumbnail": None,
+        "created_at": "2024-06-01T08:30:00+00:00",
+        "duration": 10,
+        "network_id": 10,
+        "source": "camera",
+        "deleted": False,
+    }
+    content = b"fake video data"
+
+    async def _iter_chunks(chunk_size):
+        yield content
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.content.iter_chunked = _iter_chunks
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    dl._session = mock_session
+
+    mock_blink = MagicMock()
+    mock_blink.auth.header = {}
+    mock_blink.urls.base_url = "https://rest-prod.immedia-semi.com"
+    dl._blink = mock_blink
+
+    dest = tmp_path / "clip.mp4"
+    dl._config.download_thumbnails = download_thumbnails
+    dl._storage = MagicMock()
+    dl._storage.is_over_quota.return_value = False
+    dl._storage.resolve_path.return_value = dest
+    dl._tracker = MagicMock()
+    dl._db = None
+
+    sem = asyncio.Semaphore(1)
+    result = await dl._download_clip(clip, sem)
+    return result, dest
+
+
+async def test_download_clip_generates_thumbnail_when_enabled(dl, tmp_path):
+    with patch.object(
+        dl, "_generate_thumbnail", AsyncMock(return_value=True)
+    ) as mock_gen:
+        result, dest = await _download_sample_clip(
+            dl, tmp_path, download_thumbnails=True
+        )
+
+    assert result is not None
+    mock_gen.assert_awaited_once_with(dest, dest.with_suffix(".jpg"))
+
+
+async def test_download_clip_skips_thumbnail_when_disabled(dl, tmp_path):
+    with patch.object(
+        dl, "_generate_thumbnail", AsyncMock(return_value=True)
+    ) as mock_gen:
+        result, _ = await _download_sample_clip(dl, tmp_path, download_thumbnails=False)
+
+    assert result is not None
+    mock_gen.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

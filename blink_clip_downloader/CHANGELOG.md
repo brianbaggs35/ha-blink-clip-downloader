@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.7.2
+
+### Bug fixes
+
+- **Fixed clip thumbnails not appearing in the Library tab.** With
+  `download_thumbnails: true`, the add-on previously only saved a thumbnail
+  if Blink's `/media/changed` API returned a `thumbnail` URL for the clip —
+  but that field is `null`/absent for most clips on current Blink accounts,
+  so no `.jpg` was ever written and every clip fell back to the generic 🎬
+  placeholder.
+
+  Thumbnails are now generated locally with `ffmpeg` (first frame of the
+  downloaded `.mp4`) immediately after each clip is saved, independent of
+  what Blink's API provides. `ffmpeg` has been added to the add-on image.
+
+- **Added a thumbnail backfill for existing libraries and reinstalls.** On
+  every poll cycle, a few clips (5 by default) that are missing a `.jpg`
+  thumbnail are backfilled by extracting a frame from their already-downloaded
+  `.mp4`. This fills in thumbnails for clips downloaded before
+  `download_thumbnails` was enabled, and — because clip files in
+  `/share/blink-clips` persist across uninstall/reinstall and are re-scanned
+  into the database on startup — for clips re-imported after a reinstall too.
+
+### Tests
+
+- `test_downloader.py` — `_generate_thumbnail` (success via real ffmpeg,
+  skips when the thumbnail already exists or the video is missing, handles a
+  missing `ffmpeg` binary and a non-producing ffmpeg run) and
+  `backfill_thumbnails` (disabled config, no database, respects the
+  per-cycle limit, only generates for clips missing a thumbnail).
+- `test_app.py` — `_poll_cycle` calls `backfill_thumbnails` with the
+  configured per-cycle batch size.
+
 ## 2.7.1
 
 ### Bug fixes

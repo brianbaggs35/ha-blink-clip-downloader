@@ -29,6 +29,11 @@ _LOGGER = logging.getLogger(__name__)
 STATS_FILE = Path("/data/stats.json")
 TRIGGER_FILE = Path("/data/trigger_download")
 
+# How many missing clip thumbnails to generate per poll cycle. Keeps ffmpeg
+# CPU usage low on constrained hardware while gradually backfilling large
+# libraries (e.g. after enabling download_thumbnails or after a reinstall).
+_THUMBNAIL_BACKFILL_BATCH = 5
+
 
 class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
     """Co-ordinates polling, downloading, library, media server, and events."""
@@ -308,6 +313,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         if downloaded:
             await self._on_clips_downloaded(downloaded)
+
+        # Gradually fill in thumbnails for clips downloaded before
+        # download_thumbnails was enabled (or re-imported after a reinstall).
+        backfilled = await self._downloader.backfill_thumbnails(
+            _THUMBNAIL_BACKFILL_BATCH
+        )
+        if backfilled:
+            _LOGGER.debug("Generated %d missing thumbnail(s)", backfilled)
 
         await self._digest.check_and_send()
 
