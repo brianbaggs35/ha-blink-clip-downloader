@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.7.0
+
+### Bug fixes
+
+- **Fixed "Login failed" from blinkpy's OAuth v2 flow with correct
+  credentials.** blinkpy 0.25's OAuth v2 / PKCE login chains several
+  requests to `api.oauth.blink.com` — an authorization request, fetching the
+  sign-in page (which sets session cookies and embeds a CSRF token), then
+  POSTing the username/password/CSRF token — and relies on the cookies set
+  by the earlier steps being sent back on that final POST.
+
+  The add-on created its `aiohttp.ClientSession` with aiohttp's default
+  ("safe") cookie jar, which can decline to store or return some of those
+  cookies. Without them, Blink's sign-in endpoint doesn't recognize the
+  request as part of the same flow and returns a response that's neither a
+  success redirect nor a 2FA challenge, so blinkpy logs `Login failed` /
+  `Cannot setup Blink platform` and the add-on reports "Blink rejected the
+  configured username/password" — even when the credentials are correct
+  (see [fronzbot/blinkpy#1229](https://github.com/fronzbot/blinkpy/pull/1229)).
+
+  `_get_session()` now creates the session with
+  `aiohttp.CookieJar(unsafe=True)`, matching how a real browser/app client
+  handles cookies for this flow and letting the OAuth steps share state as
+  intended.
+
+### Tests
+
+- `test_get_session_uses_unsafe_cookie_jar` — `_get_session()` returns a
+  session whose cookie jar has `unsafe=True`.
+
 ## 2.6.9
 
 ### Bug fixes
