@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v2.7.2"
+version: "v2.8.0"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -101,10 +101,15 @@ options:
   # Clips transit via the Blink cloud (no direct LAN access).
   download_local_storage: false
 
-  # --- AI Video Analysis (requires remote Ollama server) ---
+  # --- AI Video Analysis ---
+  # ai_provider: "ollama"         – remote/local Ollama server with a vision model
+  #              "moondream_cloud" – Moondream Cloud API (requires moondream_api_key)
+  #              "moondream_local" – Moondream 0.5B model running on this device
   ai_analysis_enabled: false
+  ai_provider: "ollama"
   ollama_url: ""
   ollama_model: ""
+  moondream_api_key: ""
   ai_prompt: >-
     Analyze this security camera frame. Describe what you see.
     Is there any suspicious activity? Respond in JSON:
@@ -180,8 +185,10 @@ schema:
   archive_after_days: "int(1,365)"
   download_local_storage: "bool"
   ai_analysis_enabled: "bool"
+  ai_provider: "list(ollama|moondream_cloud|moondream_local)"
   ollama_url: "str?"
   ollama_model: "str?"
+  moondream_api_key: "password?"
   ai_prompt: "str?"
   ai_car_description: "str?"
   ai_max_frames: "int(1,10)"

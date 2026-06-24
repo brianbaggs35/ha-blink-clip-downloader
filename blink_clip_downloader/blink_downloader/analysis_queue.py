@@ -8,7 +8,7 @@ from datetime import datetime, time, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .analyzer import ClipAnalyzer
+    from .analyzer import BaseAnalyzer
     from .database import ClipDatabase
     from .notification_channels import NotificationDispatcher
 
@@ -25,7 +25,7 @@ class AnalysisQueue:
 
     def __init__(
         self,
-        analyzer: ClipAnalyzer,
+        analyzer: BaseAnalyzer,
         db: ClipDatabase,
         dispatcher: NotificationDispatcher | None,
         schedule_start: str = "",

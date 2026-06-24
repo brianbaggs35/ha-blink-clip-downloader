@@ -5,3 +5,5 @@ aiosqlite>=0.20.0
 python-slugify>=8.0.1
 python-dateutil>=2.9.0
 aiosmtplib>=2.0.0
+moondream>=0.0.5
+Pillow>=10.0.0

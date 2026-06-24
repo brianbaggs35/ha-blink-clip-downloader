@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .analysis_queue import AnalysisQueue
-from .analyzer import ClipAnalyzer
+from .analyzer import BaseAnalyzer, create_analyzer
 from .archiver import ClipArchiver
 from .config import AppConfig
 from .database import ClipDatabase
@@ -78,43 +78,46 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         )
 
         # --- AI Analysis (optional) ---
-        self._analyzer: ClipAnalyzer | None = None
+        self._analyzer: BaseAnalyzer | None = None
         self._analysis_queue: AnalysisQueue | None = None
         self._alert_dispatcher: NotificationDispatcher | None = None
 
-        if config.ai_analysis_enabled and config.ollama_url:
-            self._analyzer = ClipAnalyzer(
-                ollama_url=config.ollama_url,
-                model=config.ollama_model,
+        if config.ai_analysis_enabled:
+            self._analyzer = create_analyzer(
+                ai_provider=config.ai_provider,
                 prompt=config.ai_prompt,
                 car_description=config.ai_car_description,
                 max_frames=config.ai_max_frames,
                 frame_interval=config.ai_frame_interval,
                 suspicious_keywords=config.ai_suspicious_keywords,
+                ollama_url=config.ollama_url,
+                ollama_model=config.ollama_model,
+                moondream_api_key=config.moondream_api_key,
             )
-            self._alert_dispatcher = NotificationDispatcher(
-                supervisor_token=config.supervisor_token,
-                mobile_app_target=config.mobile_app_target,
-                mobile_app_enabled=config.mobile_app_enabled,
-                smtp_host=config.smtp_host,
-                smtp_port=config.smtp_port,
-                smtp_user=config.smtp_user,
-                smtp_password=config.smtp_password,
-                smtp_recipients=config.smtp_recipients,
-                smtp_sender=config.smtp_sender,
-                smtp_enabled=config.smtp_enabled,
-                discord_webhook_url=config.discord_webhook_url,
-                discord_enabled=config.discord_enabled,
-            )
-            self._analysis_queue = AnalysisQueue(
-                analyzer=self._analyzer,
-                db=self._db,
-                dispatcher=self._alert_dispatcher,
-                schedule_start=config.ai_schedule_start,
-                schedule_end=config.ai_schedule_end,
-                batch_size=config.ai_batch_size,
-                check_interval=config.ai_check_interval,
-            )
+            if self._analyzer is not None:
+                self._alert_dispatcher = NotificationDispatcher(
+                    supervisor_token=config.supervisor_token,
+                    mobile_app_target=config.mobile_app_target,
+                    mobile_app_enabled=config.mobile_app_enabled,
+                    smtp_host=config.smtp_host,
+                    smtp_port=config.smtp_port,
+                    smtp_user=config.smtp_user,
+                    smtp_password=config.smtp_password,
+                    smtp_recipients=config.smtp_recipients,
+                    smtp_sender=config.smtp_sender,
+                    smtp_enabled=config.smtp_enabled,
+                    discord_webhook_url=config.discord_webhook_url,
+                    discord_enabled=config.discord_enabled,
+                )
+                self._analysis_queue = AnalysisQueue(
+                    analyzer=self._analyzer,
+                    db=self._db,
+                    dispatcher=self._alert_dispatcher,
+                    schedule_start=config.ai_schedule_start,
+                    schedule_end=config.ai_schedule_end,
+                    batch_size=config.ai_batch_size,
+                    check_interval=config.ai_check_interval,
+                )
 
         self._media_server = MediaServer(
             db=self._db,

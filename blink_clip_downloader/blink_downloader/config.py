@@ -98,8 +98,10 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
 
     # --- AI Video Analysis ---
     ai_analysis_enabled: bool = False
+    ai_provider: str = "ollama"  # "ollama" | "moondream_cloud" | "moondream_local"
     ollama_url: str = ""
     ollama_model: str = ""
+    moondream_api_key: str = ""
     ai_prompt: str = (
         "Analyze this security camera frame. Describe what you see. "
         "Is there any suspicious activity? Respond in JSON: "
@@ -239,8 +241,10 @@ def _parse_config(data: dict) -> AppConfig:
         download_local_storage=bool(data.get("download_local_storage", False)),
         # AI Video Analysis
         ai_analysis_enabled=bool(data.get("ai_analysis_enabled", False)),
+        ai_provider=str(data.get("ai_provider", "ollama") or "ollama").strip().lower(),
         ollama_url=str(data.get("ollama_url", "") or "").strip().rstrip("/"),
         ollama_model=str(data.get("ollama_model", "") or "").strip(),
+        moondream_api_key=str(data.get("moondream_api_key", "") or "").strip(),
         ai_prompt=str(data.get("ai_prompt", "") or "").strip() or AppConfig.ai_prompt,
         ai_car_description=str(data.get("ai_car_description", "") or "").strip(),
         ai_max_frames=max(1, min(10, int(data.get("ai_max_frames", 3)))),

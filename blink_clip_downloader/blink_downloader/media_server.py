@@ -14,7 +14,7 @@ from .database import ClipDatabase
 
 if __import__("typing").TYPE_CHECKING:
     from .analysis_queue import AnalysisQueue
-    from .analyzer import ClipAnalyzer
+    from .analyzer import BaseAnalyzer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -531,22 +531,25 @@ action:
     <div id="ai-disabled-msg" style="display:none">
       <div class="card" style="padding:2rem;text-align:center;color:var(--muted)">
         <p style="font-size:1.2rem;margin-bottom:.8rem">🤖 AI Analysis Not Configured</p>
-        <p>Enable AI analysis in the add-on settings and configure your Ollama server URL.</p>
+        <p>Enable AI analysis in the add-on settings and select a provider (Ollama, Moondream Cloud, or Moondream Local).</p>
       </div>
     </div>
     <div id="ai-content" style="display:none">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin-bottom:1.5rem">
-        <!-- Ollama Connection Card -->
+        <!-- AI Connection Card -->
         <div class="card" style="padding:1.2rem">
-          <h3 style="margin-bottom:.8rem">Ollama Connection</h3>
-          <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem">
+          <h3 style="margin-bottom:.8rem">AI Connection</h3>
+          <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.6rem">
             <span id="ai-status-badge" class="badge" style="font-size:.85rem">●</span>
             <span id="ai-status-text" style="font-size:.85rem">Checking…</span>
+          </div>
+          <div style="font-size:.82rem;color:var(--muted);margin-bottom:.4rem">
+            Provider: <strong id="ai-provider-label">—</strong>
           </div>
           <div style="font-size:.82rem;color:var(--muted);margin-bottom:.6rem">
             Model: <strong id="ai-model-name">—</strong>
           </div>
-          <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <div id="ai-model-picker" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
             <button class="btn sm" id="ai-fetch-models-btn">Fetch Models</button>
             <select class="sel" id="ai-model-select" style="min-width:160px">
               <option value="">Select a model…</option>
@@ -1258,8 +1261,9 @@ async function loadStatus() {
   const grid = $('status-grid');
   grid.innerHTML = '<div style="padding:2rem;color:var(--muted)">Loading…</div>';
   try {
-    const [stats, cams, actData] = await Promise.all([
+    const [stats, cams, actData, aiData] = await Promise.all([
       api('/api/stats'), api('/api/cameras'), api('/api/activity?days=7'),
+      api('/api/ai/status').catch(() => null),
     ]);
     let html = '';
 
@@ -1301,6 +1305,24 @@ async function loadStatus() {
           + `<span class="val">${c.total || 0} clips — ${c.today || 0} today</span></div>`;
       });
       html += `</div>`;
+    }
+
+    // AI Analysis status card
+    if (aiData && aiData.enabled) {
+      const provNames = {ollama:'Ollama',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)'};
+      const prov = aiData.provider || 'ollama';
+      const provLabel = provNames[prov] || prov;
+      const online = aiData.ai_online;
+      const qs = aiData.queue || {};
+      const as_ = aiData.analysis_stats || {};
+      html += `<div class="status-card"><h3>🤖 AI Analysis</h3>`
+        + `<div class="status-row"><span class="lbl">Status</span><span class="val ${online ? 'ok' : 'err'}">${online ? 'Online' : 'Offline'}</span></div>`
+        + `<div class="status-row"><span class="lbl">Provider</span><span class="val">${_esc(provLabel)}</span></div>`
+        + `<div class="status-row"><span class="lbl">Model</span><span class="val">${_esc(aiData.model||'—')}</span></div>`
+        + (qs.pending !== undefined ? `<div class="status-row"><span class="lbl">Pending</span><span class="val">${qs.pending||0}</span></div>` : '')
+        + (as_.total_analyzed ? `<div class="status-row"><span class="lbl">Analyzed</span><span class="val">${as_.total_analyzed}</span></div>` : '')
+        + (as_.suspicious_count ? `<div class="status-row"><span class="lbl">Suspicious</span><span class="val" style="color:var(--danger)">${as_.suspicious_count}</span></div>` : '')
+        + `</div>`;
     }
 
     // Activity chart (full-width card)
@@ -1522,14 +1544,23 @@ async function loadAIStatus() {
     $('ai-content').style.display = d.enabled ? 'block' : 'none';
     if (!d.enabled) return;
     const badge = $('ai-status-badge');
-    if (d.ollama_online) {
+    const providerLabels = {
+      ollama: 'Ollama',
+      moondream_cloud: 'Moondream Cloud',
+      moondream_local: 'Moondream Local (0.5B)',
+    };
+    const provider = d.provider || 'ollama';
+    if (d.ai_online) {
       badge.style.color = 'var(--success)';
       $('ai-status-text').textContent = 'Connected';
     } else {
       badge.style.color = 'var(--danger)';
       $('ai-status-text').textContent = 'Offline';
     }
+    $('ai-provider-label').textContent = providerLabels[provider] || provider;
     $('ai-model-name').textContent = d.model || '—';
+    const modelPicker = $('ai-model-picker');
+    if (modelPicker) modelPicker.style.display = provider === 'ollama' ? 'flex' : 'none';
     if (d.queue) {
       $('ai-q-pending').textContent = d.queue.pending || 0;
       $('ai-q-processing').textContent = d.queue.processing || 0;
@@ -1636,7 +1667,7 @@ class MediaServer:
         trigger_download: Callable[[], Awaitable[None]] | None = None,
         two_fa_callback: Callable[[str], int] | None = None,
         auth_state_getter: Callable[[], dict] | None = None,
-        analyzer: ClipAnalyzer | None = None,
+        analyzer: BaseAnalyzer | None = None,
         analysis_queue: AnalysisQueue | None = None,
     ) -> None:
         self._db = db
@@ -1927,8 +1958,9 @@ class MediaServer:
         data: dict = {"enabled": enabled}
         if enabled:
             assert self._analyzer is not None
-            data["ollama_online"] = await self._analyzer.health_check()
-            data["model"] = self._analyzer._model
+            data["ai_online"] = await self._analyzer.health_check()
+            data["provider"] = self._analyzer.provider_name
+            data["model"] = self._analyzer.model_name()
         if self._analysis_queue:
             data["queue"] = await self._analysis_queue.get_queue_status()
         data["analysis_stats"] = await self._db.get_analysis_stats()
