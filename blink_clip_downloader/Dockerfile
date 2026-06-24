@@ -5,8 +5,7 @@ FROM ${BUILD_FROM}
 ARG BUILD_ARCH
 ARG BUILD_VERSION=2.7.2
 
-# Install C build tools needed by some Python wheels, plus ffmpeg for
-# generating clip thumbnails.
+# Install C build tools needed by some Python wheels
 RUN apk add --no-cache gcc musl-dev libffi-dev openssl-dev ffmpeg
 
 # Install Python dependencies first (Docker layer cache)

@@ -397,3 +397,135 @@ async def test_get_activity_data_counts_correctly(db: ClipDatabase) -> None:
 async def test_get_activity_data_without_init() -> None:
     d = ClipDatabase(Path("/tmp/neveropened3.db"))
     assert await d.get_activity_data() == []
+
+
+# ------------------------------------------------------------------
+# AI Analysis Results
+# ------------------------------------------------------------------
+
+
+def _make_analysis(clip_id: str = "clip1", **kwargs) -> dict:
+    return {
+        "clip_id": clip_id,
+        "camera": kwargs.get("camera", "Front Door"),
+        "model": kwargs.get("model", "llava:7b"),
+        "response_text": kwargs.get("response_text", "Person at door"),
+        "is_suspicious": kwargs.get("is_suspicious", False),
+        "confidence": kwargs.get("confidence", 0.2),
+        "summary": kwargs.get("summary", "Normal activity"),
+        "frame_count": kwargs.get("frame_count", 3),
+        "analysis_duration": kwargs.get("analysis_duration", 4.5),
+        "analyzed_at": kwargs.get("analyzed_at", "2024-06-01T09:00:00+00:00"),
+    }
+
+
+async def test_add_and_get_analysis_result(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("clip1"))
+    await db.add_analysis_result(_make_analysis("clip1"))
+    result = await db.get_analysis_for_clip("clip1")
+    assert result is not None
+    assert result["clip_id"] == "clip1"
+    assert result["model"] == "llava:7b"
+    assert result["is_suspicious"] is False
+    assert result["confidence"] == 0.2
+
+
+async def test_get_analysis_for_clip_missing(db: ClipDatabase) -> None:
+    assert await db.get_analysis_for_clip("ghost") is None
+
+
+async def test_get_suspicious_clips(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_analysis_result(
+        _make_analysis("c1", is_suspicious=True, confidence=0.9)
+    )
+    await db.add_analysis_result(
+        _make_analysis("c2", is_suspicious=False, confidence=0.1)
+    )
+    suspicious = await db.get_suspicious_clips()
+    assert len(suspicious) == 1
+    assert suspicious[0]["clip_id"] == "c1"
+    assert suspicious[0]["is_suspicious"] is True
+
+
+async def test_get_analysis_stats(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_analysis_result(_make_analysis("c1", is_suspicious=True))
+    await db.add_analysis_result(_make_analysis("c2", is_suspicious=False))
+    stats = await db.get_analysis_stats()
+    assert stats["total_analyzed"] == 2
+    assert stats["suspicious_count"] == 1
+    assert stats["last_analysis"] is not None
+
+
+async def test_analysis_stats_empty(db: ClipDatabase) -> None:
+    stats = await db.get_analysis_stats()
+    assert stats["total_analyzed"] == 0
+    assert stats["suspicious_count"] == 0
+    assert stats["last_analysis"] is None
+
+
+# ------------------------------------------------------------------
+# Analysis Queue
+# ------------------------------------------------------------------
+
+
+async def test_enqueue_and_get_pending(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    pending = await db.get_pending_analysis()
+    assert len(pending) == 1
+    assert pending[0]["clip_id"] == "c1"
+    assert pending[0]["status"] == "pending"
+
+
+async def test_enqueue_duplicate_ignored(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    pending = await db.get_pending_analysis()
+    assert len(pending) == 1
+
+
+async def test_update_queue_status(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await db.update_queue_status("c1", "completed")
+    pending = await db.get_pending_analysis()
+    assert len(pending) == 0
+
+
+async def test_update_queue_status_failed(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await db.update_queue_status("c1", "failed", error="Ollama timeout")
+    counts = await db.get_queue_counts()
+    assert counts["failed"] == 1
+    assert counts["pending"] == 0
+
+
+async def test_get_queue_counts(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_clip(_make_clip("c3"))
+    await db.enqueue_for_analysis("c1", "A", "/c1.mp4")
+    await db.enqueue_for_analysis("c2", "B", "/c2.mp4")
+    await db.enqueue_for_analysis("c3", "C", "/c3.mp4")
+    await db.update_queue_status("c2", "completed")
+    await db.update_queue_status("c3", "failed", error="err")
+    counts = await db.get_queue_counts()
+    assert counts["pending"] == 1
+    assert counts["completed"] == 1
+    assert counts["failed"] == 1
+
+
+async def test_analysis_operations_without_init() -> None:
+    d = ClipDatabase(Path("/tmp/neveropened4.db"))
+    assert await d.get_analysis_for_clip("x") is None
+    assert await d.get_suspicious_clips() == []
+    assert await d.get_analysis_stats() == {}
+    assert await d.get_pending_analysis() == []
+    counts = await d.get_queue_counts()
+    assert counts == {"pending": 0, "processing": 0, "completed": 0, "failed": 0}

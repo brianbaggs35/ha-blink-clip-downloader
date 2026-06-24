@@ -210,3 +210,98 @@ def test_download_local_storage_can_be_enabled():
         {"username": "u", "password": "p", "download_local_storage": True}
     )
     assert cfg.download_local_storage is True
+
+
+# ---------------------------------------------------------------------------
+# AI Video Analysis config (v2.7.0)
+# ---------------------------------------------------------------------------
+
+
+def test_ai_analysis_defaults_to_disabled():
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.ai_analysis_enabled is False
+    assert cfg.ollama_url == ""
+    assert cfg.ollama_model == ""
+    assert cfg.ai_max_frames == 3
+    assert cfg.ai_frame_interval == 2.0
+    assert cfg.ai_car_description == ""
+    assert cfg.ai_schedule_start == ""
+    assert cfg.ai_schedule_end == ""
+    assert cfg.ai_batch_size == 10
+    assert cfg.ai_check_interval == 60
+
+
+def test_ai_analysis_full_config():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_analysis_enabled": True,
+            "ollama_url": "http://192.168.1.100:11434",
+            "ollama_model": "llava:7b",
+            "ai_car_description": "Silver 2020 Honda Civic",
+            "ai_max_frames": 5,
+            "ai_frame_interval": 3.0,
+            "ai_schedule_start": "22:00",
+            "ai_schedule_end": "06:00",
+            "ai_batch_size": 20,
+            "ai_check_interval": 120,
+        }
+    )
+    assert cfg.ai_analysis_enabled is True
+    assert cfg.ollama_url == "http://192.168.1.100:11434"
+    assert cfg.ollama_model == "llava:7b"
+    assert cfg.ai_car_description == "Silver 2020 Honda Civic"
+    assert cfg.ai_max_frames == 5
+    assert cfg.ai_frame_interval == 3.0
+    assert cfg.ai_schedule_start == "22:00"
+    assert cfg.ai_schedule_end == "06:00"
+
+
+def test_ai_max_frames_clamped():
+    cfg = _parse_config({"username": "u", "password": "p", "ai_max_frames": 99})
+    assert cfg.ai_max_frames == 10
+    cfg2 = _parse_config({"username": "u", "password": "p", "ai_max_frames": 0})
+    assert cfg2.ai_max_frames == 1
+
+
+def test_ollama_url_trailing_slash_stripped():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "ollama_url": "http://host:11434/"}
+    )
+    assert cfg.ollama_url == "http://host:11434"
+
+
+def test_ai_suspicious_keywords_filters_empty():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_suspicious_keywords": ["", "  ", "theft"],
+        }
+    )
+    assert cfg.ai_suspicious_keywords == ["theft"]
+
+
+# ---------------------------------------------------------------------------
+# Extended Notifications config (v2.7.0)
+# ---------------------------------------------------------------------------
+
+
+def test_notification_channels_default_disabled():
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.mobile_app_enabled is False
+    assert cfg.mobile_app_target == ""
+    assert cfg.smtp_enabled is False
+    assert cfg.smtp_host == ""
+    assert cfg.smtp_port == 587
+    assert cfg.smtp_recipients == []
+    assert cfg.discord_enabled is False
+    assert cfg.discord_webhook_url == ""
+
+
+def test_smtp_port_clamped():
+    cfg = _parse_config({"username": "u", "password": "p", "smtp_port": 10})
+    assert cfg.smtp_port == 25
+    cfg2 = _parse_config({"username": "u", "password": "p", "smtp_port": 99999})
+    assert cfg2.smtp_port == 65535

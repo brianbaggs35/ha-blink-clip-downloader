@@ -34,6 +34,36 @@ CREATE INDEX IF NOT EXISTS idx_clips_camera    ON clips (camera);
 CREATE INDEX IF NOT EXISTS idx_clips_timestamp ON clips (timestamp);
 CREATE INDEX IF NOT EXISTS idx_clips_starred   ON clips (starred);
 CREATE INDEX IF NOT EXISTS idx_clips_archived  ON clips (archived);
+
+CREATE TABLE IF NOT EXISTS analysis_results (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    clip_id           TEXT    NOT NULL,
+    camera            TEXT    NOT NULL,
+    model             TEXT    NOT NULL,
+    response_text     TEXT    DEFAULT '',
+    is_suspicious     INTEGER DEFAULT 0,
+    confidence        REAL    DEFAULT 0.0,
+    summary           TEXT    DEFAULT '',
+    frame_count       INTEGER DEFAULT 0,
+    analysis_duration REAL    DEFAULT 0.0,
+    analyzed_at       TEXT    NOT NULL,
+    FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
+
+CREATE TABLE IF NOT EXISTS analysis_queue (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    clip_id       TEXT    NOT NULL UNIQUE,
+    camera        TEXT    NOT NULL,
+    clip_path     TEXT    NOT NULL,
+    status        TEXT    DEFAULT 'pending',
+    queued_at     TEXT    NOT NULL,
+    completed_at  TEXT    DEFAULT '',
+    error_message TEXT    DEFAULT '',
+    FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_queue_status ON analysis_queue (status);
 """
 
 
@@ -372,3 +402,158 @@ class ClipDatabase:
         ) as cursor:
             rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # AI Analysis
+    # ------------------------------------------------------------------
+
+    async def add_analysis_result(self, result: dict[str, Any]) -> None:
+        if self._db is None:
+            return
+        await self._db.execute(
+            """
+            INSERT INTO analysis_results
+              (clip_id, camera, model, response_text, is_suspicious,
+               confidence, summary, frame_count, analysis_duration, analyzed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(result.get("clip_id") or ""),
+                str(result.get("camera") or ""),
+                str(result.get("model") or ""),
+                str(result.get("response_text") or ""),
+                1 if result.get("is_suspicious") else 0,
+                float(result.get("confidence") or 0.0),
+                str(result.get("summary") or ""),
+                int(result.get("frame_count") or 0),
+                float(result.get("analysis_duration") or 0.0),
+                str(result.get("analyzed_at") or ""),
+            ),
+        )
+        await self._db.commit()
+
+    async def get_analysis_for_clip(self, clip_id: str) -> dict[str, Any] | None:
+        if self._db is None:
+            return None
+        async with self._db.execute(
+            "SELECT * FROM analysis_results WHERE clip_id=? ORDER BY analyzed_at DESC LIMIT 1",
+            (clip_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["is_suspicious"] = bool(d["is_suspicious"])
+        return d
+
+    async def get_suspicious_clips(
+        self, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        if self._db is None:
+            return []
+        async with self._db.execute(
+            """
+            SELECT ar.*, c.file_path, c.timestamp AS clip_timestamp,
+                   c.duration, c.size_bytes
+            FROM analysis_results ar
+            JOIN clips c ON c.id = ar.clip_id
+            WHERE ar.is_suspicious = 1
+            ORDER BY ar.analyzed_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            d["is_suspicious"] = bool(d["is_suspicious"])
+            results.append(d)
+        return results
+
+    async def get_analysis_stats(self) -> dict[str, Any]:
+        if self._db is None:
+            return {}
+        queries = {
+            "total_analyzed": "SELECT COUNT(*) FROM analysis_results",
+            "suspicious_count": (
+                "SELECT COUNT(*) FROM analysis_results WHERE is_suspicious=1"
+            ),
+        }
+        results: dict[str, Any] = {}
+        for key, sql in queries.items():
+            async with self._db.execute(sql) as cur:
+                row = await cur.fetchone()
+            results[key] = row[0] if row else 0
+
+        async with self._db.execute(
+            "SELECT analyzed_at FROM analysis_results ORDER BY analyzed_at DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+        results["last_analysis"] = row[0] if row else None
+        return results
+
+    # ------------------------------------------------------------------
+    # Analysis Queue
+    # ------------------------------------------------------------------
+
+    async def enqueue_for_analysis(
+        self, clip_id: str, camera: str, clip_path: str
+    ) -> None:
+        if self._db is None:
+            return
+        await self._db.execute(
+            """
+            INSERT OR IGNORE INTO analysis_queue
+              (clip_id, camera, clip_path, status, queued_at)
+            VALUES (?, ?, ?, 'pending', ?)
+            """,
+            (clip_id, camera, clip_path, datetime.now(timezone.utc).isoformat()),
+        )
+        await self._db.commit()
+
+    async def get_pending_analysis(self, limit: int = 10) -> list[dict[str, Any]]:
+        if self._db is None:
+            return []
+        async with self._db.execute(
+            "SELECT * FROM analysis_queue WHERE status='pending' ORDER BY queued_at LIMIT ?",
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def update_queue_status(
+        self, clip_id: str, status: str, error: str = ""
+    ) -> None:
+        if self._db is None:
+            return
+        completed = (
+            datetime.now(timezone.utc).isoformat()
+            if status in ("completed", "failed")
+            else ""
+        )
+        await self._db.execute(
+            """
+            UPDATE analysis_queue
+            SET status=?, completed_at=?, error_message=?
+            WHERE clip_id=?
+            """,
+            (status, completed, error, clip_id),
+        )
+        await self._db.commit()
+
+    async def get_queue_counts(self) -> dict[str, int]:
+        if self._db is None:
+            return {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+        async with self._db.execute(
+            """
+            SELECT status, COUNT(*) AS cnt
+            FROM analysis_queue
+            GROUP BY status
+            """
+        ) as cursor:
+            rows = await cursor.fetchall()
+        counts = {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+        for r in rows:
+            counts[r["status"]] = r["cnt"]
+        return counts

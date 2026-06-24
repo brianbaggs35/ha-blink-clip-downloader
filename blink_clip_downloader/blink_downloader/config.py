@@ -12,6 +12,14 @@ _LOGGER = logging.getLogger(__name__)
 
 OPTIONS_FILE = Path("/data/options.json")
 _VALID_LOG_LEVELS = frozenset({"debug", "info", "warning", "error"})
+_DEFAULT_SUSPICIOUS_KEYWORDS = [
+    "suspicious",
+    "break-in",
+    "theft",
+    "vandalism",
+    "intruder",
+    "trespassing",
+]
 
 
 @dataclass
@@ -87,6 +95,39 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # support direct LAN access; clips are temporarily uploaded to the Blink
     # cloud then fetched from there, so an internet connection is required.
     download_local_storage: bool = False
+
+    # --- AI Video Analysis ---
+    ai_analysis_enabled: bool = False
+    ollama_url: str = ""
+    ollama_model: str = ""
+    ai_prompt: str = (
+        "Analyze this security camera frame. Describe what you see. "
+        "Is there any suspicious activity? Respond in JSON: "
+        '{"suspicious": true/false, "confidence": 0.0-1.0, "description": "..."}'
+    )
+    ai_car_description: str = ""
+    ai_max_frames: int = 3
+    ai_frame_interval: float = 2.0
+    ai_suspicious_keywords: list[str] = field(
+        default_factory=lambda: list(_DEFAULT_SUSPICIOUS_KEYWORDS)
+    )
+    ai_schedule_start: str = ""
+    ai_schedule_end: str = ""
+    ai_batch_size: int = 10
+    ai_check_interval: int = 60
+
+    # --- Extended Notifications (AI alerts) ---
+    mobile_app_target: str = ""
+    mobile_app_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_recipients: list[str] = field(default_factory=list)
+    smtp_sender: str = ""
+    smtp_enabled: bool = False
+    discord_webhook_url: str = ""
+    discord_enabled: bool = False
 
     # --- Logging ---
     log_level: str = "info"
@@ -196,5 +237,41 @@ def _parse_config(data: dict) -> AppConfig:
         archive_enabled=bool(data.get("archive_enabled", False)),
         archive_after_days=max(1, int(data.get("archive_after_days", 60))),
         download_local_storage=bool(data.get("download_local_storage", False)),
+        # AI Video Analysis
+        ai_analysis_enabled=bool(data.get("ai_analysis_enabled", False)),
+        ollama_url=str(data.get("ollama_url", "") or "").strip().rstrip("/"),
+        ollama_model=str(data.get("ollama_model", "") or "").strip(),
+        ai_prompt=str(data.get("ai_prompt", "") or "").strip() or AppConfig.ai_prompt,
+        ai_car_description=str(data.get("ai_car_description", "") or "").strip(),
+        ai_max_frames=max(1, min(10, int(data.get("ai_max_frames", 3)))),
+        ai_frame_interval=max(
+            0.5, min(30.0, float(data.get("ai_frame_interval", 2.0)))
+        ),
+        ai_suspicious_keywords=[
+            k.strip()
+            for k in data.get("ai_suspicious_keywords", [])
+            if isinstance(k, str) and k.strip()
+        ]
+        or list(_DEFAULT_SUSPICIOUS_KEYWORDS),
+        ai_schedule_start=str(data.get("ai_schedule_start", "") or "").strip(),
+        ai_schedule_end=str(data.get("ai_schedule_end", "") or "").strip(),
+        ai_batch_size=max(1, min(50, int(data.get("ai_batch_size", 10)))),
+        ai_check_interval=max(10, min(3600, int(data.get("ai_check_interval", 60)))),
+        # Extended notifications
+        mobile_app_target=str(data.get("mobile_app_target", "") or "").strip(),
+        mobile_app_enabled=bool(data.get("mobile_app_enabled", False)),
+        smtp_host=str(data.get("smtp_host", "") or "").strip(),
+        smtp_port=max(25, min(65535, int(data.get("smtp_port", 587)))),
+        smtp_user=str(data.get("smtp_user", "") or "").strip(),
+        smtp_password=str(data.get("smtp_password", "") or ""),
+        smtp_recipients=[
+            r.strip()
+            for r in data.get("smtp_recipients", [])
+            if isinstance(r, str) and r.strip()
+        ],
+        smtp_sender=str(data.get("smtp_sender", "") or "").strip(),
+        smtp_enabled=bool(data.get("smtp_enabled", False)),
+        discord_webhook_url=str(data.get("discord_webhook_url", "") or "").strip(),
+        discord_enabled=bool(data.get("discord_enabled", False)),
         log_level=log_level,
     )

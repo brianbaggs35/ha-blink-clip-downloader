@@ -684,3 +684,73 @@ async def test_stream_range_has_cache_control(
     resp = await client.get("/api/clips/ccr1/stream", headers={"Range": "bytes=0-99"})
     assert resp.status == 206
     assert "cache-control" in {h.lower() for h in resp.headers}
+
+
+# ---------------------------------------------------------------------------
+# AI Analysis endpoints
+# ---------------------------------------------------------------------------
+
+
+async def test_ai_status_disabled(client: TestClient) -> None:
+    resp = await client.get("/api/ai/status")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["enabled"] is False
+
+
+async def test_ai_models_disabled(client: TestClient) -> None:
+    resp = await client.get("/api/ai/models")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["enabled"] is False
+    assert data["models"] == []
+
+
+async def test_ai_queue_disabled(client: TestClient) -> None:
+    resp = await client.get("/api/ai/queue")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["enabled"] is False
+
+
+async def test_ai_suspicious_empty(client: TestClient) -> None:
+    resp = await client.get("/api/ai/suspicious")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data == []
+
+
+async def test_ai_clip_result_not_found(client: TestClient) -> None:
+    resp = await client.get("/api/ai/results/nonexistent")
+    assert resp.status == 200
+
+
+async def test_ai_suspicious_returns_results(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("s1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "s1",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "Suspicious person",
+            "is_suspicious": True,
+            "confidence": 0.85,
+            "summary": "Unknown person near car",
+            "frame_count": 3,
+            "analysis_duration": 4.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.get("/api/ai/suspicious")
+    assert resp.status == 200
+    data = await resp.json()
+    assert len(data) == 1
+    assert data[0]["clip_id"] == "s1"
+    assert data[0]["is_suspicious"] is True
+
+
+async def test_ai_analyze_now_no_analyzer(client: TestClient) -> None:
+    resp = await client.post("/api/ai/analyze/c1")
+    assert resp.status == 400
