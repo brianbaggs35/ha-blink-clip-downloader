@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .analysis_queue import AnalysisQueue
+from .analyzer import ClipAnalyzer
 from .archiver import ClipArchiver
 from .config import AppConfig
 from .database import ClipDatabase
@@ -20,6 +22,7 @@ from .event_watcher import HAEventWatcher
 from .library_scanner import import_existing_clips
 from .manifest import ClipManifest
 from .media_server import MediaServer
+from .notification_channels import NotificationDispatcher
 from .notifier import HANotifier
 from .storage import StorageManager
 from .tracker import ClipTracker
@@ -73,6 +76,46 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             archive_after_days=config.archive_after_days,
             enabled=config.archive_enabled,
         )
+
+        # --- AI Analysis (optional) ---
+        self._analyzer: ClipAnalyzer | None = None
+        self._analysis_queue: AnalysisQueue | None = None
+        self._alert_dispatcher: NotificationDispatcher | None = None
+
+        if config.ai_analysis_enabled and config.ollama_url:
+            self._analyzer = ClipAnalyzer(
+                ollama_url=config.ollama_url,
+                model=config.ollama_model,
+                prompt=config.ai_prompt,
+                car_description=config.ai_car_description,
+                max_frames=config.ai_max_frames,
+                frame_interval=config.ai_frame_interval,
+                suspicious_keywords=config.ai_suspicious_keywords,
+            )
+            self._alert_dispatcher = NotificationDispatcher(
+                supervisor_token=config.supervisor_token,
+                mobile_app_target=config.mobile_app_target,
+                mobile_app_enabled=config.mobile_app_enabled,
+                smtp_host=config.smtp_host,
+                smtp_port=config.smtp_port,
+                smtp_user=config.smtp_user,
+                smtp_password=config.smtp_password,
+                smtp_recipients=config.smtp_recipients,
+                smtp_sender=config.smtp_sender,
+                smtp_enabled=config.smtp_enabled,
+                discord_webhook_url=config.discord_webhook_url,
+                discord_enabled=config.discord_enabled,
+            )
+            self._analysis_queue = AnalysisQueue(
+                analyzer=self._analyzer,
+                db=self._db,
+                dispatcher=self._alert_dispatcher,
+                schedule_start=config.ai_schedule_start,
+                schedule_end=config.ai_schedule_end,
+                batch_size=config.ai_batch_size,
+                check_interval=config.ai_check_interval,
+            )
+
         self._media_server = MediaServer(
             db=self._db,
             download_path=config.download_path,
@@ -85,6 +128,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 "two_fa_result_seq": self._downloader.two_fa_result_seq,
                 "two_fa_result_ok": self._downloader.two_fa_result_ok,
             },
+            analyzer=self._analyzer,
+            analysis_queue=self._analysis_queue,
         )
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,
@@ -204,6 +249,16 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         if self._config.watch_ha_events and self._config.supervisor_token:
             self._bg_tasks.append(
                 asyncio.create_task(self._event_watcher.start(), name="event_watcher")
+            )
+
+        if self._analysis_queue:
+            _LOGGER.info(
+                "  AI analysis    : on (model=%s, url=%s)",
+                self._config.ollama_model,
+                self._config.ollama_url,
+            )
+            self._bg_tasks.append(
+                asyncio.create_task(self._analysis_queue.start(), name="analysis_queue")
             )
 
         # Main poll loop.
@@ -358,6 +413,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             )
             await self._notifier.call_webhook(clip)
 
+            if self._analysis_queue:
+                await self._analysis_queue.enqueue(clip)
+
         tracker_stats = self._tracker.stats
         disk = self._storage.disk_stats()
         last_dl = datetime.now(timezone.utc).isoformat()
@@ -490,6 +548,12 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         await self._media_server.stop()
         await self._event_watcher.stop()
+        if self._analysis_queue:
+            await self._analysis_queue.stop()
+        if self._analyzer:
+            await self._analyzer.close()
+        if self._alert_dispatcher:
+            await self._alert_dispatcher.close()
         await self._downloader.disconnect()
         await self._notifier.close()
         await self._db.close()

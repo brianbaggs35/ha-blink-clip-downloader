@@ -12,6 +12,10 @@ from aiohttp import web
 
 from .database import ClipDatabase
 
+if __import__("typing").TYPE_CHECKING:
+    from .analysis_queue import AnalysisQueue
+    from .analyzer import ClipAnalyzer
+
 _LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -310,7 +314,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 .act-count{width:28px;text-align:right;color:var(--text);font-weight:600;font-size:.78rem}
 
 /* ── Automations page ─────────────────────────────────── */
-#page-automations{overflow-y:auto;padding:1.5rem}
+#page-automations,#page-ai{overflow-y:auto;padding:1.5rem}
 .auto-content{max-width:820px;margin:0 auto}
 .auto-content h2{font-size:1.08rem;font-weight:700;margin-bottom:.9rem}
 .auto-content h3{font-size:.9rem;font-weight:600;color:var(--accent);
@@ -355,6 +359,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
     <button class="nav-tab active" data-tab="library">📁 <span>Library</span></button>
     <button class="nav-tab" data-tab="status">📡 <span>Status</span></button>
     <button class="nav-tab" data-tab="automations">⚡ <span>Automations</span></button>
+    <button class="nav-tab" data-tab="ai">🤖 <span>AI</span></button>
   </div>
   <div class="nav-actions">
     <button class="btn icon ghost" id="theme-btn" title="Toggle dark/light theme">🌙</button>
@@ -516,6 +521,84 @@ action:
           <code>← →</code> skip 10 s, <code>F</code> fullscreen, <code>M</code> mute,
           <code>↑ ↓</code> prev/next clip.</li>
     </ul>
+  </div>
+</div>
+
+<!-- ── AI Analysis ─────────────────────────────────────── -->
+<div class="page" id="page-ai">
+  <div class="auto-content">
+    <h2>AI Video Analysis</h2>
+    <div id="ai-disabled-msg" style="display:none">
+      <div class="card" style="padding:2rem;text-align:center;color:var(--muted)">
+        <p style="font-size:1.2rem;margin-bottom:.8rem">🤖 AI Analysis Not Configured</p>
+        <p>Enable AI analysis in the add-on settings and configure your Ollama server URL.</p>
+      </div>
+    </div>
+    <div id="ai-content" style="display:none">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin-bottom:1.5rem">
+        <!-- Ollama Connection Card -->
+        <div class="card" style="padding:1.2rem">
+          <h3 style="margin-bottom:.8rem">Ollama Connection</h3>
+          <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem">
+            <span id="ai-status-badge" class="badge" style="font-size:.85rem">●</span>
+            <span id="ai-status-text" style="font-size:.85rem">Checking…</span>
+          </div>
+          <div style="font-size:.82rem;color:var(--muted);margin-bottom:.6rem">
+            Model: <strong id="ai-model-name">—</strong>
+          </div>
+          <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+            <button class="btn sm" id="ai-fetch-models-btn">Fetch Models</button>
+            <select class="sel" id="ai-model-select" style="min-width:160px">
+              <option value="">Select a model…</option>
+            </select>
+          </div>
+        </div>
+        <!-- Schedule Card -->
+        <div class="card" style="padding:1.2rem">
+          <h3 style="margin-bottom:.8rem">Schedule</h3>
+          <div id="ai-schedule-info" style="font-size:.85rem;color:var(--muted)">Loading…</div>
+        </div>
+        <!-- Queue Status Card -->
+        <div class="card" style="padding:1.2rem">
+          <h3 style="margin-bottom:.8rem">Queue Status</h3>
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem">
+            <div style="text-align:center">
+              <div id="ai-q-pending" style="font-size:1.5rem;font-weight:700;color:var(--accent)">0</div>
+              <div style="font-size:.72rem;color:var(--muted)">Pending</div>
+            </div>
+            <div style="text-align:center">
+              <div id="ai-q-processing" style="font-size:1.5rem;font-weight:700;color:var(--warn)">0</div>
+              <div style="font-size:.72rem;color:var(--muted)">Processing</div>
+            </div>
+            <div style="text-align:center">
+              <div id="ai-q-completed" style="font-size:1.5rem;font-weight:700;color:var(--success)">0</div>
+              <div style="font-size:.72rem;color:var(--muted)">Completed</div>
+            </div>
+            <div style="text-align:center">
+              <div id="ai-q-failed" style="font-size:1.5rem;font-weight:700;color:var(--danger)">0</div>
+              <div style="font-size:.72rem;color:var(--muted)">Failed</div>
+            </div>
+          </div>
+        </div>
+        <!-- Analysis Stats Card -->
+        <div class="card" style="padding:1.2rem">
+          <h3 style="margin-bottom:.8rem">Analysis Stats</h3>
+          <div style="font-size:.85rem">
+            <div>Total Analyzed: <strong id="ai-stat-total">0</strong></div>
+            <div>Suspicious: <strong id="ai-stat-suspicious" style="color:var(--danger)">0</strong></div>
+            <div style="color:var(--muted);font-size:.78rem;margin-top:.4rem">
+              Last: <span id="ai-stat-last">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Suspicious Activity Feed -->
+      <h3 style="margin-bottom:.8rem">Suspicious Activity Feed</h3>
+      <div id="ai-suspicious-feed" style="display:flex;flex-direction:column;gap:.5rem">
+        <div style="color:var(--muted);padding:1rem;text-align:center">Loading…</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1428,6 +1511,110 @@ setInterval(() => {
     loadCameras();
   }
 }, 60000);
+
+// ── AI Analysis Tab ──────────────────────────────────────
+let _aiEnabled = false;
+async function loadAIStatus() {
+  try {
+    const d = await api('/api/ai/status');
+    _aiEnabled = d.enabled;
+    $('ai-disabled-msg').style.display = d.enabled ? 'none' : 'block';
+    $('ai-content').style.display = d.enabled ? 'block' : 'none';
+    if (!d.enabled) return;
+    const badge = $('ai-status-badge');
+    if (d.ollama_online) {
+      badge.style.color = 'var(--success)';
+      $('ai-status-text').textContent = 'Connected';
+    } else {
+      badge.style.color = 'var(--danger)';
+      $('ai-status-text').textContent = 'Offline';
+    }
+    $('ai-model-name').textContent = d.model || '—';
+    if (d.queue) {
+      $('ai-q-pending').textContent = d.queue.pending || 0;
+      $('ai-q-processing').textContent = d.queue.processing || 0;
+      $('ai-q-completed').textContent = d.queue.completed || 0;
+      $('ai-q-failed').textContent = d.queue.failed || 0;
+      const si = $('ai-schedule-info');
+      if (d.queue.schedule_start && d.queue.schedule_end) {
+        const st = d.queue.in_schedule ? '🟢 Active' : '🔴 Waiting';
+        si.innerHTML = d.queue.schedule_start + ' – ' + d.queue.schedule_end + '<br>' + st;
+      } else {
+        si.textContent = 'Always active (no schedule set)';
+      }
+    }
+    if (d.analysis_stats) {
+      $('ai-stat-total').textContent = d.analysis_stats.total_analyzed || 0;
+      $('ai-stat-suspicious').textContent = d.analysis_stats.suspicious_count || 0;
+      $('ai-stat-last').textContent = d.analysis_stats.last_analysis
+        ? new Date(d.analysis_stats.last_analysis).toLocaleString() : '—';
+    }
+  } catch(e) { console.error('AI status error', e); }
+}
+
+async function loadSuspiciousFeed() {
+  try {
+    const items = await api('/api/ai/suspicious?limit=20');
+    const el = $('ai-suspicious-feed');
+    if (!items || items.length === 0) {
+      el.innerHTML = '<div style="color:var(--muted);padding:1rem;text-align:center">No suspicious activity detected yet.</div>';
+      return;
+    }
+    el.innerHTML = items.map(r => {
+      const dt = new Date(r.analyzed_at).toLocaleString();
+      const conf = Math.round((r.confidence||0)*100);
+      const confColor = conf > 70 ? 'var(--danger)' : 'var(--warn)';
+      return '<div class="card" style="padding:.8rem;display:flex;align-items:center;gap:1rem;cursor:pointer" onclick="openModal(\''+r.clip_id+'\')">'+
+        '<div style="font-size:1.3rem">⚠️</div>'+
+        '<div style="flex:1;min-width:0">'+
+          '<div style="font-weight:600;font-size:.85rem">'+_esc(r.camera)+'</div>'+
+          '<div style="font-size:.78rem;color:var(--muted)">'+dt+'</div>'+
+          '<div style="font-size:.82rem;margin-top:.3rem">'+_esc(r.summary||'')+'</div>'+
+        '</div>'+
+        '<div style="text-align:center;min-width:50px">'+
+          '<div style="font-size:1.1rem;font-weight:700;color:'+confColor+'">'+conf+'%</div>'+
+          '<div style="font-size:.65rem;color:var(--muted)">confidence</div>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+  } catch(e) { console.error('Suspicious feed error', e); }
+}
+
+function _esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+$('ai-fetch-models-btn').addEventListener('click', async () => {
+  const btn = $('ai-fetch-models-btn');
+  btn.disabled = true; btn.textContent = 'Loading…';
+  try {
+    const d = await api('/api/ai/models');
+    const sel = $('ai-model-select');
+    sel.innerHTML = '<option value="">Select a model…</option>';
+    (d.models||[]).forEach(m => {
+      const o = document.createElement('option');
+      o.value = m.name;
+      const gb = (m.size / 1e9).toFixed(1);
+      o.textContent = m.name + ' (' + gb + ' GB)';
+      sel.appendChild(o);
+    });
+    toast('Found ' + (d.models||[]).length + ' model(s)');
+  } catch(e) { toast('Failed to fetch models', true); }
+  btn.disabled = false; btn.textContent = 'Fetch Models';
+});
+
+// Load AI tab when selected
+document.querySelectorAll('.nav-tab').forEach(t => {
+  t.addEventListener('click', () => {
+    if (t.dataset.tab === 'ai') { loadAIStatus(); loadSuspiciousFeed(); }
+  });
+});
+
+// Auto-refresh AI tab every 10s when visible
+setInterval(() => {
+  if (document.querySelector('[data-tab="ai"]') &&
+      document.querySelector('[data-tab="ai"]').classList.contains('active')) {
+    loadAIStatus();
+  }
+}, 10000);
 </script>
 </body>
 </html>"""
@@ -1449,6 +1636,8 @@ class MediaServer:
         trigger_download: Callable[[], Awaitable[None]] | None = None,
         two_fa_callback: Callable[[str], int] | None = None,
         auth_state_getter: Callable[[], dict] | None = None,
+        analyzer: ClipAnalyzer | None = None,
+        analysis_queue: AnalysisQueue | None = None,
     ) -> None:
         self._db = db
         self._download_path = download_path
@@ -1456,6 +1645,8 @@ class MediaServer:
         self._trigger_download = trigger_download
         self._two_fa_callback = two_fa_callback
         self._auth_state_getter = auth_state_getter
+        self._analyzer = analyzer
+        self._analysis_queue = analysis_queue
         self._runner: web.AppRunner | None = None
         self.extra_status: dict = {}
 
@@ -1499,6 +1690,14 @@ class MediaServer:
         app.router.add_post("/api/download-now", self._handle_download_now)
         app.router.add_get("/api/auth/status", self._handle_auth_status)
         app.router.add_post("/api/auth/2fa", self._handle_two_fa)
+        # AI Analysis endpoints
+        app.router.add_get("/api/ai/status", self._handle_ai_status)
+        app.router.add_get("/api/ai/models", self._handle_ai_models)
+        app.router.add_get("/api/ai/queue", self._handle_ai_queue)
+        app.router.add_get("/api/ai/results", self._handle_ai_results)
+        app.router.add_get("/api/ai/results/{clip_id}", self._handle_ai_clip_result)
+        app.router.add_get("/api/ai/suspicious", self._handle_ai_suspicious)
+        app.router.add_post("/api/ai/analyze/{clip_id}", self._handle_ai_analyze_now)
         return app
 
     # ------------------------------------------------------------------
@@ -1718,3 +1917,80 @@ class MediaServer:
         except OSError:
             pass
         return web.json_response({"triggered": True})
+
+    # ------------------------------------------------------------------
+    # AI Analysis handlers
+    # ------------------------------------------------------------------
+
+    async def _handle_ai_status(self, _request: web.Request) -> web.Response:
+        enabled = self._analyzer is not None
+        data: dict = {"enabled": enabled}
+        if enabled:
+            assert self._analyzer is not None
+            data["ollama_online"] = await self._analyzer.health_check()
+            data["model"] = self._analyzer._model
+        if self._analysis_queue:
+            data["queue"] = await self._analysis_queue.get_queue_status()
+        data["analysis_stats"] = await self._db.get_analysis_stats()
+        return web.json_response(data)
+
+    async def _handle_ai_models(self, _request: web.Request) -> web.Response:
+        if not self._analyzer:
+            return web.json_response({"enabled": False, "models": []})
+        models = await self._analyzer.fetch_models()
+        return web.json_response({"enabled": True, "models": models})
+
+    async def _handle_ai_queue(self, _request: web.Request) -> web.Response:
+        if not self._analysis_queue:
+            return web.json_response({"enabled": False})
+        status = await self._analysis_queue.get_queue_status()
+        return web.json_response({"enabled": True, **status})
+
+    async def _handle_ai_results(self, request: web.Request) -> web.Response:
+        q = request.rel_url.query
+        try:
+            limit = min(int(q.get("limit", 50)), 200)
+            offset = int(q.get("offset", 0))
+        except ValueError:
+            limit, offset = 50, 0
+
+        if q.get("suspicious") == "1":
+            results = await self._db.get_suspicious_clips(limit=limit, offset=offset)
+        else:
+            results = await self._db.get_suspicious_clips(limit=limit, offset=offset)
+        return web.json_response(results)
+
+    async def _handle_ai_clip_result(self, request: web.Request) -> web.Response:
+        clip_id = request.match_info["clip_id"]
+        result = await self._db.get_analysis_for_clip(clip_id)
+        if not result:
+            return web.json_response(None)
+        return web.json_response(result)
+
+    async def _handle_ai_suspicious(self, request: web.Request) -> web.Response:
+        q = request.rel_url.query
+        try:
+            limit = min(int(q.get("limit", 50)), 200)
+            offset = int(q.get("offset", 0))
+        except ValueError:
+            limit, offset = 50, 0
+        results = await self._db.get_suspicious_clips(limit=limit, offset=offset)
+        return web.json_response(results)
+
+    async def _handle_ai_analyze_now(self, request: web.Request) -> web.Response:
+        if not self._analyzer:
+            return web.json_response(
+                {"error": "AI analysis not configured"}, status=400
+            )
+        clip_id = request.match_info["clip_id"]
+        clip = await self._db.get_clip(clip_id)
+        if not clip:
+            raise web.HTTPNotFound(text="Clip not found")
+
+        result = await self._analyzer.analyze_clip(
+            clip_path=clip["file_path"],
+            clip_id=clip_id,
+            camera=clip["camera"],
+        )
+        await self._db.add_analysis_result(result.to_dict())
+        return web.json_response(result.to_dict())

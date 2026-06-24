@@ -101,6 +101,42 @@ options:
   # Clips transit via the Blink cloud (no direct LAN access).
   download_local_storage: false
 
+  # --- AI Video Analysis (requires remote Ollama server) ---
+  ai_analysis_enabled: false
+  ollama_url: ""
+  ollama_model: ""
+  ai_prompt: >-
+    Analyze this security camera frame. Describe what you see.
+    Is there any suspicious activity? Respond in JSON:
+    {"suspicious": true/false, "confidence": 0.0-1.0, "description": "..."}
+  ai_car_description: ""
+  ai_max_frames: 3
+  ai_frame_interval: 2.0
+  ai_suspicious_keywords:
+    - "suspicious"
+    - "break-in"
+    - "theft"
+    - "vandalism"
+    - "intruder"
+    - "trespassing"
+  ai_schedule_start: ""
+  ai_schedule_end: ""
+  ai_batch_size: 10
+  ai_check_interval: 60
+
+  # --- Extended Notifications (AI alerts) ---
+  mobile_app_target: ""
+  mobile_app_enabled: false
+  smtp_host: ""
+  smtp_port: 587
+  smtp_user: ""
+  smtp_password: ""
+  smtp_recipients: []
+  smtp_sender: ""
+  smtp_enabled: false
+  discord_webhook_url: ""
+  discord_enabled: false
+
   # --- Logging ---
   log_level: "info"
 
@@ -143,4 +179,29 @@ schema:
   archive_enabled: "bool"
   archive_after_days: "int(1,365)"
   download_local_storage: "bool"
+  ai_analysis_enabled: "bool"
+  ollama_url: "str?"
+  ollama_model: "str?"
+  ai_prompt: "str?"
+  ai_car_description: "str?"
+  ai_max_frames: "int(1,10)"
+  ai_frame_interval: "float(0.5,30)"
+  ai_suspicious_keywords:
+    - "str?"
+  ai_schedule_start: "str?"
+  ai_schedule_end: "str?"
+  ai_batch_size: "int(1,50)"
+  ai_check_interval: "int(10,3600)"
+  mobile_app_target: "str?"
+  mobile_app_enabled: "bool"
+  smtp_host: "str?"
+  smtp_port: "int(25,65535)"
+  smtp_user: "str?"
+  smtp_password: "password?"
+  smtp_recipients:
+    - "str?"
+  smtp_sender: "str?"
+  smtp_enabled: "bool"
+  discord_webhook_url: "str?"
+  discord_enabled: "bool"
   log_level: "list(debug|info|warning|error)"
