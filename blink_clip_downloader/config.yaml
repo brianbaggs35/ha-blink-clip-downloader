@@ -102,8 +102,8 @@ options:
   download_local_storage: false
 
   # --- AI Video Analysis ---
-  # ai_provider: "ollama"         – remote/local Ollama server with a vision model
-  #              "moondream_cloud" – Moondream Cloud API (requires moondream_api_key)
+  # ai_provider: "ollama"         – Ollama server with a vision model
+  #              "moondream_cloud" – Cloud API (needs moondream_api_key)
   #              "moondream_local" – Moondream 0.5B model running on this device
   ai_analysis_enabled: false
   ai_provider: "ollama"
