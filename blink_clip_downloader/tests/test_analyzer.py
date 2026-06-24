@@ -1,4 +1,4 @@
-"""Tests for ClipAnalyzer."""
+"""Tests for ClipAnalyzer and the multi-provider AI analysis system."""
 
 from __future__ import annotations
 
@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from blink_downloader.analyzer import ClipAnalyzer
+from blink_downloader.analyzer import (
+    ClipAnalyzer,
+    MoondreamCloudAnalyzer,
+    MoondreamLocalAnalyzer,
+    create_analyzer,
+    is_vision_model,
+)
 
 
 def _mock_session(**overrides: object) -> MagicMock:
@@ -349,3 +355,242 @@ async def test_analyze_clip_no_frames(analyzer: ClipAnalyzer) -> None:
     assert result.is_suspicious is False
     assert result.frame_count == 0
     assert "No frames" in result.summary
+
+
+# ------------------------------------------------------------------
+# is_vision_model
+# ------------------------------------------------------------------
+
+
+def test_is_vision_model_known_vision() -> None:
+    assert is_vision_model("llava:7b") is True
+    assert is_vision_model("LLaVA-Phi3:latest") is True
+    assert is_vision_model("moondream2:latest") is True
+    assert is_vision_model("bakllava:13b") is True
+    assert is_vision_model("minicpm-v:latest") is True
+    assert is_vision_model("llama3.2-vision:11b") is True
+
+
+def test_is_vision_model_not_vision() -> None:
+    assert is_vision_model("llama3:8b") is False
+    assert is_vision_model("gemma:2b") is False
+    assert is_vision_model("mistral:latest") is False
+    assert is_vision_model("codellama:7b") is False
+
+
+# ------------------------------------------------------------------
+# fetch_models vision filter
+# ------------------------------------------------------------------
+
+
+async def test_fetch_models_filters_non_vision(analyzer: ClipAnalyzer) -> None:
+    models_data = {
+        "models": [
+            {"name": "llava:7b", "size": 4_000_000_000},
+            {"name": "llama3:8b", "size": 6_000_000_000},
+            {"name": "moondream:latest", "size": 1_500_000_000},
+            {"name": "gemma:2b", "size": 2_000_000_000},
+        ]
+    }
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=models_data)
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    models = await analyzer.fetch_models()
+    names = [m["name"] for m in models]
+    assert "llava:7b" in names
+    assert "moondream:latest" in names
+    assert "llama3:8b" not in names
+    assert "gemma:2b" not in names
+
+
+# ------------------------------------------------------------------
+# create_analyzer factory
+# ------------------------------------------------------------------
+
+
+def test_create_analyzer_ollama() -> None:
+    a = create_analyzer("ollama", "prompt", ollama_url="http://localhost:11434", ollama_model="llava")
+    assert isinstance(a, ClipAnalyzer)
+
+
+def test_create_analyzer_ollama_no_url() -> None:
+    a = create_analyzer("ollama", "prompt")
+    assert a is None
+
+
+def test_create_analyzer_moondream_cloud() -> None:
+    a = create_analyzer("moondream_cloud", "prompt", moondream_api_key="key123")
+    assert isinstance(a, MoondreamCloudAnalyzer)
+
+
+def test_create_analyzer_moondream_cloud_no_key() -> None:
+    a = create_analyzer("moondream_cloud", "prompt")
+    assert a is None
+
+
+def test_create_analyzer_moondream_local() -> None:
+    a = create_analyzer("moondream_local", "prompt")
+    assert isinstance(a, MoondreamLocalAnalyzer)
+
+
+def test_create_analyzer_unknown_provider() -> None:
+    a = create_analyzer("unknown_ai", "prompt")
+    assert a is None
+
+
+# ------------------------------------------------------------------
+# MoondreamCloudAnalyzer
+# ------------------------------------------------------------------
+
+
+async def test_moondream_cloud_health_check_no_key() -> None:
+    a = MoondreamCloudAnalyzer(api_key="", prompt="test")
+    assert await a.health_check() is False
+    await a.close()
+
+
+async def test_moondream_cloud_health_check_online() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    a = MoondreamCloudAnalyzer(api_key="test-key", prompt="test")
+    a._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    assert await a.health_check() is True
+
+
+async def test_moondream_cloud_health_check_offline() -> None:
+    import aiohttp
+
+    a = MoondreamCloudAnalyzer(api_key="test-key", prompt="test")
+    a._session = _mock_session(
+        get=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    assert await a.health_check() is False
+
+
+async def test_moondream_cloud_call_model_success() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"answer": "No suspicious activity"})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="Analyze this frame.")
+    a._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG, _FAKE_JPEG], "Analyze.")
+    assert "No suspicious activity" in result
+
+    # Should have posted to the Cloud API
+    call_kwargs = a._session.post.call_args
+    assert "moondream.ai" in str(call_kwargs)
+
+
+async def test_moondream_cloud_call_model_rate_limit() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 429
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    a._session = _mock_session(post=MagicMock(return_value=mock_resp))
+    result = await a._call_model([_FAKE_JPEG], "test")
+    assert result == ""
+
+
+async def test_moondream_cloud_fetch_models() -> None:
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    models = await a.fetch_models()
+    assert len(models) == 1
+    assert models[0]["name"] == "moondream-cloud"
+
+
+def test_moondream_cloud_provider_name() -> None:
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    assert a.provider_name == "moondream_cloud"
+    assert a.model_name() == "moondream-cloud"
+
+
+# ------------------------------------------------------------------
+# MoondreamLocalAnalyzer
+# ------------------------------------------------------------------
+
+
+def test_moondream_local_provider_name() -> None:
+    a = MoondreamLocalAnalyzer(prompt="test")
+    assert a.provider_name == "moondream_local"
+    assert a.model_name() == "moondream-0_5b-int8"
+
+
+async def test_moondream_local_fetch_models() -> None:
+    a = MoondreamLocalAnalyzer(prompt="test")
+    models = await a.fetch_models()
+    assert len(models) == 1
+    assert "0_5b" in models[0]["name"]
+
+
+async def test_moondream_local_health_check_no_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    """health_check returns False when the moondream package is missing."""
+    import sys
+
+    monkeypatch.delitem(sys.modules, "moondream", raising=False)
+
+    a = MoondreamLocalAnalyzer(prompt="test")
+
+    with patch.object(a, "_load_model_sync", side_effect=ImportError("no module")):
+        result = await a.health_check()
+
+    assert result is False
+
+
+async def test_moondream_local_health_check_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """health_check returns True once the model is loaded."""
+    mock_md = MagicMock()
+    mock_md.vl.return_value = MagicMock()
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "moondream", mock_md)
+
+    a = MoondreamLocalAnalyzer(prompt="test")
+    result = await a.health_check()
+
+    assert result is True
+    assert a._model_ready is True
+
+
+async def test_moondream_local_call_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_call_model runs inference in a thread executor."""
+    mock_model = MagicMock()
+    mock_model.query.return_value = {"answer": "A car is parked"}
+
+    a = MoondreamLocalAnalyzer(prompt="Analyze.")
+    a._md_model = mock_model
+    a._model_ready = True
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "Analyze this scene.")
+
+    assert "car" in result.lower()
+
+
+async def test_moondream_local_call_model_no_frames() -> None:
+    a = MoondreamLocalAnalyzer(prompt="test")
+    a._model_ready = True
+    result = await a._call_model([], "prompt")
+    assert result == ""
+
+
+async def test_moondream_local_close_resets_state() -> None:
+    a = MoondreamLocalAnalyzer(prompt="test")
+    a._model_ready = True
+    a._md_model = MagicMock()
+    await a.close()
+    assert a._model_ready is False
+    assert a._md_model is None

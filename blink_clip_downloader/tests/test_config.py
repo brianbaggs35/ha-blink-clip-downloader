@@ -305,3 +305,46 @@ def test_smtp_port_clamped():
     assert cfg.smtp_port == 25
     cfg2 = _parse_config({"username": "u", "password": "p", "smtp_port": 99999})
     assert cfg2.smtp_port == 65535
+
+
+# ---------------------------------------------------------------------------
+# AI provider config (v2.8.0)
+# ---------------------------------------------------------------------------
+
+
+def test_ai_provider_defaults_to_ollama():
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.ai_provider == "ollama"
+
+
+def test_ai_provider_moondream_cloud():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "ai_provider": "moondream_cloud"}
+    )
+    assert cfg.ai_provider == "moondream_cloud"
+
+
+def test_ai_provider_moondream_local():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "ai_provider": "moondream_local"}
+    )
+    assert cfg.ai_provider == "moondream_local"
+
+
+def test_ai_provider_normalised_lowercase():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "ai_provider": "OLLAMA"}
+    )
+    assert cfg.ai_provider == "ollama"
+
+
+def test_moondream_api_key_defaults_to_empty():
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.moondream_api_key == ""
+
+
+def test_moondream_api_key_parsed():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "moondream_api_key": "  sk-abc123  "}
+    )
+    assert cfg.moondream_api_key == "sk-abc123"

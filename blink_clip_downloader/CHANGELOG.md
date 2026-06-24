@@ -1,5 +1,47 @@
 # Changelog
 
+## 2.8.0
+
+### New features
+
+- **Three AI analysis providers.** `ai_provider` now controls which backend
+  is used to analyse camera clips:
+
+  - `ollama` *(default, existing behaviour)* — sends frames to a
+    remote/local Ollama server.  The URL and model are set via `ollama_url`
+    and `ollama_model`.  The model picker in the UI now shows **only
+    vision-capable models** (llava, moondream, minicpm-v, bakllava, etc.);
+    text-only models are filtered out.
+
+  - `moondream_cloud` — sends the clip's middle frame to the
+    [Moondream Cloud API](https://docs.moondream.ai/api).  Requires a free
+    API key (`moondream_api_key`). Handles rate-limit (HTTP 429) and invalid-
+    key (HTTP 401) errors with clear log messages.
+
+  - `moondream_local` — runs the **Moondream 0.5B INT8** model directly on
+    the Raspberry Pi 5 (or any host running the add-on) using the `moondream`
+    Python package.  The model file (~430 MB) is downloaded automatically on
+    first use; subsequent starts reuse the cached copy.  Inference runs in a
+    thread executor so the asyncio loop is never blocked.
+
+- **AI status on the Status page.** The Status tab now shows an *AI Analysis*
+  card with provider name, online/offline status, model, pending queue count,
+  and suspicious-clip count — no need to navigate to the AI tab for a quick
+  health overview.
+
+- **Errors from all AI providers appear in the add-on logs** with appropriate
+  log levels (`WARNING` for transient failures, `ERROR` for configuration
+  problems).
+
+### Dependency updates
+
+- **blinkpy 0.25.6** — PR #1231 natively fixes the HTTP 202 / 2FA issue that
+  our `blinkpy_compat.py` patch worked around.  The patch is kept as
+  belt-and-suspenders but is now redundant.
+- Added `moondream>=0.0.5` and `Pillow>=10.0.0` (required by the local
+  provider).
+- Dockerfile: added `jpeg-dev zlib-dev` Alpine packages (Pillow build deps).
+
 ## 2.7.2
 
 ### Bug fixes

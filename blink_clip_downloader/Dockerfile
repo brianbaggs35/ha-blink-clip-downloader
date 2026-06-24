@@ -3,10 +3,11 @@ FROM ${BUILD_FROM}
 
 # BUILD_ARCH is injected by the HA build system for multi-arch images.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=2.7.2
+ARG BUILD_VERSION=2.8.0
 
-# Install C build tools needed by some Python wheels
-RUN apk add --no-cache gcc musl-dev libffi-dev openssl-dev ffmpeg
+# Install C build tools needed by some Python wheels.
+# jpeg-dev + zlib-dev are required by Pillow (used by moondream_local provider).
+RUN apk add --no-cache gcc musl-dev libffi-dev openssl-dev ffmpeg jpeg-dev zlib-dev
 
 # Install Python dependencies first (Docker layer cache)
 COPY requirements.txt /tmp/requirements.txt
@@ -43,3 +44,4 @@ LABEL \
     io.hass.arch="${BUILD_ARCH}" \
     io.hass.type="addon" \
     io.hass.version="${BUILD_VERSION}"
+
