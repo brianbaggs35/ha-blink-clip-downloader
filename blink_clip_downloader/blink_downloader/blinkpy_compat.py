@@ -1,4 +1,4 @@
-"""Workarounds for known bugs in blinkpy's OAuth v2 login flow.
+"""Workarounds for known issues in blinkpy's OAuth v2 login flow.
 
 blinkpy 0.25.x's ``oauth_signin()`` (called from
 ``Auth._oauth_login_flow()``) only recognises an HTTP ``412`` response as
@@ -9,15 +9,15 @@ an unconditional login failure -- it logs "Login failed" and returns
 ``False`` *without* raising ``BlinkTwoFARequiredError`` -- so the add-on
 never gets a chance to prompt for the code Blink just sent.
 
-This matches reports upstream:
+This was reported upstream:
 https://github.com/fronzbot/blinkpy/issues/1233
 https://github.com/fronzbot/blinkpy/issues/1230
 
-Both are open and unfixed as of blinkpy 0.25.5 / 0.26.0b0, so we patch
-``blinkpy.api.oauth_signin`` at import time to also treat status 202 as
-"2FA_REQUIRED". This can be removed once a fixed blinkpy is released and
-pinned -- the patched function behaves identically to a future upstream
-fix that adds the same status code.
+blinkpy 0.25.6 (PR #1231) now handles HTTP 202 natively, so this patch
+is redundant when running >= 0.25.6. We keep it as a belt-and-suspenders
+measure: it is idempotent, replaces the function with identical behaviour
+to the upstream fix, and ensures the 2FA flow works even if a future
+blinkpy regression reintroduces the problem.
 """
 
 from __future__ import annotations
