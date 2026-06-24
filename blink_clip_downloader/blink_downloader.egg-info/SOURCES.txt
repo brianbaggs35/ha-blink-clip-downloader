@@ -1,8 +1,11 @@
 pyproject.toml
 blink_downloader/__init__.py
 blink_downloader/__main__.py
+blink_downloader/analysis_queue.py
+blink_downloader/analyzer.py
 blink_downloader/app.py
 blink_downloader/archiver.py
+blink_downloader/blinkpy_compat.py
 blink_downloader/config.py
 blink_downloader/database.py
 blink_downloader/digest.py
@@ -11,6 +14,7 @@ blink_downloader/event_watcher.py
 blink_downloader/library_scanner.py
 blink_downloader/manifest.py
 blink_downloader/media_server.py
+blink_downloader/notification_channels.py
 blink_downloader/notifier.py
 blink_downloader/storage.py
 blink_downloader/tracker.py
@@ -19,8 +23,11 @@ blink_downloader.egg-info/SOURCES.txt
 blink_downloader.egg-info/dependency_links.txt
 blink_downloader.egg-info/requires.txt
 blink_downloader.egg-info/top_level.txt
+tests/test_analysis_queue.py
+tests/test_analyzer.py
 tests/test_app.py
 tests/test_archiver.py
+tests/test_blinkpy_compat.py
 tests/test_config.py
 tests/test_database.py
 tests/test_digest.py
@@ -29,6 +36,7 @@ tests/test_event_watcher.py
 tests/test_library_scanner.py
 tests/test_manifest.py
 tests/test_media_server.py
+tests/test_notification_channels.py
 tests/test_notifier.py
 tests/test_storage.py
 tests/test_tracker.py
