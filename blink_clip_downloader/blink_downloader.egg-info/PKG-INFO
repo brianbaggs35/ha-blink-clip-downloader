@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: blink-downloader
-Version: 2.8.0
+Version: 2.8.1
 Summary: Home Assistant add-on: Blink Clip Downloader
 Author-email: Brian Baggs <brianbaggs@hotmail.com>
 Requires-Python: >=3.12
