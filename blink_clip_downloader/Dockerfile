@@ -3,7 +3,7 @@ FROM ${BUILD_FROM}
 
 # BUILD_ARCH is injected by the HA build system for multi-arch images.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=2.8.0
+ARG BUILD_VERSION=2.8.1
 
 # Install C build tools needed by some Python wheels.
 # jpeg-dev + zlib-dev are required by Pillow.

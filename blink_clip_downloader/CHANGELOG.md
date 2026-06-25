@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.8.1
+
+### Bug fixes
+
+- **Fixed `moondream_local` packages not surviving container restarts.** The
+  web-UI installer now installs the `moondream` package into
+  `/data/moondream_packages` (a persistent HA data volume) via
+  `pip install --target`.  Both the startup path (`__main__.py`) and the
+  install-check helper add that directory to `sys.path` at runtime, so the
+  installed model is available across restarts without re-running the
+  installer.
+
+- **Fixed `moondream_local` install hanging on aarch64 (Raspberry Pi).** The
+  `moondream` package has no pre-built wheels for `aarch64` musllinux and its
+  TVM dependency compilation hangs indefinitely on that platform.  The install
+  endpoint now returns HTTP 422 with a clear explanation on unsupported
+  architectures, and the Dockerfile skips the build-time install on non-amd64
+  targets.
+
+- **Added architecture guard in the UI.** When `moondream_local` is selected
+  on a non-x86_64 host the AI tab now shows an *"unsupported architecture"*
+  notice with guidance to use `moondream_cloud` or `ollama` instead, rather
+  than displaying the install button.
+
 ## 2.8.0
 
 ### New features
