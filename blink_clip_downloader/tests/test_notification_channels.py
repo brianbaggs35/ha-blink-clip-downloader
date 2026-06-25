@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.notification_channels import NotificationDispatcher
 
 
-def _mock_session(**overrides: object) -> MagicMock:
+def _mock_session(**overrides: Any) -> MagicMock:
     s = MagicMock()
     s.closed = False
     for k, v in overrides.items():
@@ -16,7 +17,7 @@ def _mock_session(**overrides: object) -> MagicMock:
     return s
 
 
-def _make_result(suspicious: bool = True, **kwargs: object) -> AnalysisResult:
+def _make_result(suspicious: bool = True, **kwargs: Any) -> AnalysisResult:
     return AnalysisResult(
         clip_id=str(kwargs.get("clip_id", "c1")),
         camera=str(kwargs.get("camera", "Front Door")),

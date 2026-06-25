@@ -98,7 +98,7 @@ def _vision_model_score(name: str) -> int:
 def is_moondream_installed() -> bool:
     """Return True if the moondream package is importable."""
     try:
-        import moondream  # noqa: PLC0415, F401
+        import moondream  # noqa: PLC0415, F401  # type: ignore[import-not-found]
 
         return True
     except ImportError:
@@ -638,7 +638,7 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
 
     def _load_model_sync(self) -> None:
         """Load / download the Moondream model (blocking — run in executor)."""
-        import moondream as md  # noqa: PLC0415
+        import moondream as md  # noqa: PLC0415  # type: ignore[import-not-found]
 
         _LOGGER.info(
             "Loading Moondream local model '%s' "

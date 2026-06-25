@@ -28,7 +28,7 @@ _moondream_install_state: dict = {"status": "idle", "log": ""}
 
 def _is_moondream_installed() -> bool:
     try:
-        import moondream  # noqa: PLC0415, F401
+        import moondream  # noqa: PLC0415, F401  # type: ignore[import-not-found]
 
         return True
     except ImportError:
