@@ -5,6 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from pathlib import Path
+
+# Prepend the persistent moondream packages dir to sys.path so that a
+# moondream install performed via the web UI survives container restarts.
+# Must happen before any local import that might lazily try to import moondream.
+_md_packages = Path("/data/moondream_packages")
+if _md_packages.exists() and str(_md_packages) not in sys.path:
+    sys.path.insert(0, str(_md_packages))
 
 from .app import BlinkClipDownloaderApp
 from .config import AppConfig, load_config

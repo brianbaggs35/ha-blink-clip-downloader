@@ -11,7 +11,6 @@ Requires-Dist: aiosqlite>=0.20.0
 Requires-Dist: python-slugify>=8.0.1
 Requires-Dist: python-dateutil>=2.9.0
 Requires-Dist: aiosmtplib>=2.0.0
-Requires-Dist: moondream>=0.0.5
 Requires-Dist: Pillow>=10.0.0
 Provides-Extra: test
 Requires-Dist: pytest>=8.0; extra == "test"
