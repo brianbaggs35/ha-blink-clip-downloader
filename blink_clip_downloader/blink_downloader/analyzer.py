@@ -57,11 +57,52 @@ _VISION_MODEL_PATTERNS: frozenset[str] = frozenset(
     }
 )
 
+# Priority patterns for ranking Ollama vision models (higher score = better).
+# Longer/more specific patterns must come before shorter ones.
+_VISION_PRIORITY_PATTERNS: list[tuple[str, int]] = [
+    ("llama3.2-vision", 100),
+    ("llava:34b", 95),
+    ("llava:13b", 90),
+    ("llava-llama3", 85),
+    ("llava:7b", 80),
+    ("qwen2.5-vl", 78),
+    ("qwen2-vl", 76),
+    ("bakllava:13b", 72),
+    ("minicpm-v", 70),
+    ("llava-phi3", 65),
+    ("pixtral", 63),
+    ("internvl", 60),
+    ("bakllava", 58),
+    ("granite3.2-vision", 55),
+    ("moondream2", 52),
+    ("moondream", 50),
+    ("minicpm", 45),
+]
+
 
 def is_vision_model(model_name: str) -> bool:
     """Return True if an Ollama model name looks vision-capable."""
     lower = model_name.lower()
     return any(p in lower for p in _VISION_MODEL_PATTERNS)
+
+
+def _vision_model_score(name: str) -> int:
+    """Return a quality score for an Ollama vision model (higher = better)."""
+    lower = name.lower()
+    for pattern, score in _VISION_PRIORITY_PATTERNS:
+        if pattern in lower:
+            return score
+    return 30
+
+
+def is_moondream_installed() -> bool:
+    """Return True if the moondream package is importable."""
+    try:
+        import moondream  # noqa: PLC0415, F401
+
+        return True
+    except ImportError:
+        return False
 
 
 @dataclass
@@ -373,7 +414,7 @@ class ClipAnalyzer(BaseAnalyzer):
             return False
 
     async def fetch_models(self) -> list[dict[str, Any]]:
-        """Fetch vision-capable models from Ollama."""
+        """Fetch vision-capable models from Ollama, sorted best-first."""
         try:
             session = await self._get_session()
             async with session.get(
@@ -383,7 +424,10 @@ class ClipAnalyzer(BaseAnalyzer):
                     return []
                 data = await resp.json()
                 all_models = data.get("models", [])
-                return [m for m in all_models if is_vision_model(m.get("name", ""))]
+                vision = [m for m in all_models if is_vision_model(m.get("name", ""))]
+                for m in vision:
+                    m["score"] = _vision_model_score(m.get("name", ""))
+                return sorted(vision, key=lambda m: m.get("score", 0), reverse=True)
         except (
             aiohttp.ClientError,
             asyncio.TimeoutError,

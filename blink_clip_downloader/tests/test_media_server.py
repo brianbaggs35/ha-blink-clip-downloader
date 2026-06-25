@@ -11,7 +11,6 @@ from aiohttp.test_utils import TestClient, TestServer
 from blink_downloader.database import ClipDatabase
 from blink_downloader.media_server import MediaServer
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -754,3 +753,77 @@ async def test_ai_suspicious_returns_results(
 async def test_ai_analyze_now_no_analyzer(client: TestClient) -> None:
     resp = await client.post("/api/ai/analyze/c1")
     assert resp.status == 400
+
+
+# ---------------------------------------------------------------------------
+# /api/ai/moondream/install-status
+# ---------------------------------------------------------------------------
+
+
+async def test_moondream_install_status_returns_json(client: TestClient) -> None:
+    resp = await client.get("/api/ai/moondream/install-status")
+    assert resp.status == 200
+    data = await resp.json()
+    assert "installed" in data
+    assert isinstance(data["installed"], bool)
+    assert "install_state" in data
+    assert "status" in data["install_state"]
+
+
+# ---------------------------------------------------------------------------
+# /api/ai/moondream/install
+# ---------------------------------------------------------------------------
+
+
+async def test_moondream_install_returns_installing_or_already_installed(
+    client: TestClient,
+) -> None:
+    from unittest.mock import patch
+
+    import blink_downloader.media_server as ms
+
+    # Reset state
+    ms._moondream_install_state = {"status": "idle", "log": ""}
+
+    with patch(
+        "blink_downloader.media_server._is_moondream_installed", return_value=False
+    ):
+        with patch("asyncio.create_task", side_effect=lambda coro: coro.close()):
+            resp = await client.post("/api/ai/moondream/install")
+
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["status"] in ("installing", "already_installed")
+
+
+async def test_moondream_install_already_installed(client: TestClient) -> None:
+    from unittest.mock import patch
+
+    with patch(
+        "blink_downloader.media_server._is_moondream_installed", return_value=True
+    ):
+        resp = await client.post("/api/ai/moondream/install")
+
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["status"] == "already_installed"
+
+
+async def test_moondream_install_already_in_progress(client: TestClient) -> None:
+    from unittest.mock import patch
+
+    import blink_downloader.media_server as ms
+
+    ms._moondream_install_state = {"status": "installing", "log": "in progress"}
+
+    with patch(
+        "blink_downloader.media_server._is_moondream_installed", return_value=False
+    ):
+        resp = await client.post("/api/ai/moondream/install")
+
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["status"] == "installing"
+
+    # Restore state
+    ms._moondream_install_state = {"status": "idle", "log": ""}

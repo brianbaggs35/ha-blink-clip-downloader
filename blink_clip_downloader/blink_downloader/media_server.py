@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import zipfile
@@ -17,6 +18,22 @@ if __import__("typing").TYPE_CHECKING:
     from .analyzer import BaseAnalyzer
 
 _LOGGER = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Moondream local install state (persists for the lifetime of the process)
+# ---------------------------------------------------------------------------
+
+_moondream_install_state: dict = {"status": "idle", "log": ""}
+
+
+def _is_moondream_installed() -> bool:
+    try:
+        import moondream  # noqa: PLC0415, F401
+
+        return True
+    except ImportError:
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Security
@@ -550,10 +567,31 @@ action:
             Model: <strong id="ai-model-name">—</strong>
           </div>
           <div id="ai-model-picker" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
-            <button class="btn sm" id="ai-fetch-models-btn">Fetch Models</button>
-            <select class="sel" id="ai-model-select" style="min-width:160px">
+            <button class="btn sm" id="ai-fetch-models-btn">⟳ Fetch Models</button>
+            <select class="sel" id="ai-model-select" style="min-width:175px">
               <option value="">Select a model…</option>
             </select>
+          </div>
+          <!-- Moondream local: install / status section -->
+          <div id="ai-moondream-local-section" style="display:none;margin-top:.75rem">
+            <div id="ai-md-not-installed">
+              <p style="font-size:.8rem;color:var(--warn);margin-bottom:.45rem">⚠ moondream package not installed</p>
+              <button class="btn sm" id="ai-install-moondream-btn">⬇ Install Moondream 0.5B</button>
+              <p style="font-size:.73rem;color:var(--muted);margin-top:.35rem">Package + model ~430 MB, may take several minutes</p>
+            </div>
+            <div id="ai-md-installing" style="display:none">
+              <p style="font-size:.8rem;color:var(--warn);margin-bottom:.35rem">⏳ Installing… please wait</p>
+              <div id="ai-md-install-log" style="font-size:.7rem;font-family:monospace;color:var(--muted);background:var(--card2);border:1px solid var(--border);border-radius:4px;padding:.3rem .5rem;max-height:70px;overflow-y:auto;white-space:pre-wrap"></div>
+            </div>
+            <div id="ai-md-installed" style="display:none">
+              <p style="font-size:.8rem;color:var(--success)">✓ moondream installed</p>
+              <p style="font-size:.73rem;color:var(--muted)">Model (~430 MB) downloads automatically on first health check</p>
+            </div>
+            <div id="ai-md-failed" style="display:none">
+              <p style="font-size:.8rem;color:var(--danger);margin-bottom:.3rem">✗ Installation failed</p>
+              <div id="ai-md-fail-log" style="font-size:.7rem;font-family:monospace;color:var(--muted);background:var(--card2);border:1px solid var(--border);border-radius:4px;padding:.3rem .5rem;max-height:70px;overflow-y:auto;white-space:pre-wrap;margin-bottom:.4rem"></div>
+              <button class="btn sm ghost" id="ai-retry-moondream-btn">↺ Retry Install</button>
+            </div>
           </div>
         </div>
         <!-- Schedule Card -->
@@ -1561,6 +1599,10 @@ async function loadAIStatus() {
     $('ai-model-name').textContent = d.model || '—';
     const modelPicker = $('ai-model-picker');
     if (modelPicker) modelPicker.style.display = provider === 'ollama' ? 'flex' : 'none';
+    // Moondream local: show install section and poll install state
+    const mdSection = $('ai-moondream-local-section');
+    if (mdSection) mdSection.style.display = provider === 'moondream_local' ? 'block' : 'none';
+    if (provider === 'moondream_local') _updateMoondreamInstallUI(d.moondream_installed);
     if (d.queue) {
       $('ai-q-pending').textContent = d.queue.pending || 0;
       $('ai-q-processing').textContent = d.queue.processing || 0;
@@ -1615,22 +1657,79 @@ function _esc(s) { const d=document.createElement('div'); d.textContent=s; retur
 
 $('ai-fetch-models-btn').addEventListener('click', async () => {
   const btn = $('ai-fetch-models-btn');
-  btn.disabled = true; btn.textContent = 'Loading…';
+  btn.disabled = true; btn.textContent = '⏳ Loading…';
   try {
     const d = await api('/api/ai/models');
+    const models = d.models || [];
     const sel = $('ai-model-select');
     sel.innerHTML = '<option value="">Select a model…</option>';
-    (d.models||[]).forEach(m => {
+    models.forEach((m, i) => {
       const o = document.createElement('option');
       o.value = m.name;
-      const gb = (m.size / 1e9).toFixed(1);
-      o.textContent = m.name + ' (' + gb + ' GB)';
+      const gb = m.size ? ' · ' + (m.size / 1e9).toFixed(1) + ' GB' : '';
+      const star = i === 0 ? ' ⭐ Best' : '';
+      o.textContent = m.name + gb + star;
       sel.appendChild(o);
     });
-    toast('Found ' + (d.models||[]).length + ' model(s)');
+    // Auto-select the top-ranked model
+    if (models.length && !sel.value) sel.value = models[0].name;
+    const count = models.length;
+    toast(count ? 'Found ' + count + ' vision model(s) — best shown first' : 'No vision models found on this Ollama server');
   } catch(e) { toast('Failed to fetch models', true); }
-  btn.disabled = false; btn.textContent = 'Fetch Models';
+  btn.disabled = false; btn.textContent = '⟳ Fetch Models';
 });
+
+// ── Moondream local install ───────────────────────────────
+function _updateMoondreamInstallUI(installed) {
+  const notInst = $('ai-md-not-installed');
+  const installing = $('ai-md-installing');
+  const instd = $('ai-md-installed');
+  const failed = $('ai-md-failed');
+  [notInst, installing, instd, failed].forEach(el => { if (el) el.style.display = 'none'; });
+
+  const state = _moondreamInstallState;
+  if (installed || state.status === 'installed') {
+    if (instd) instd.style.display = 'block';
+  } else if (state.status === 'installing') {
+    if (installing) {
+      installing.style.display = 'block';
+      const log = $('ai-md-install-log');
+      if (log) { log.textContent = state.log || ''; log.scrollTop = log.scrollHeight; }
+    }
+    // Poll for completion
+    setTimeout(_pollMoondreamInstallStatus, 2500);
+  } else if (state.status === 'failed') {
+    if (failed) {
+      failed.style.display = 'block';
+      const log = $('ai-md-fail-log');
+      if (log) log.textContent = state.log || '';
+    }
+  } else {
+    if (notInst) notInst.style.display = 'block';
+  }
+}
+
+let _moondreamInstallState = { status: 'idle', log: '' };
+
+async function _pollMoondreamInstallStatus() {
+  try {
+    const s = await api('/api/ai/moondream/install-status');
+    _moondreamInstallState = s.install_state || { status: 'idle', log: '' };
+    _updateMoondreamInstallUI(s.installed);
+  } catch(e) { console.error('moondream install status error', e); }
+}
+
+async function _startMoondreamInstall() {
+  try {
+    _moondreamInstallState = { status: 'installing', log: 'Starting pip install moondream…\n' };
+    _updateMoondreamInstallUI(false);
+    await api('/api/ai/moondream/install', { method: 'POST' });
+    await _pollMoondreamInstallStatus();
+  } catch(e) { toast('Failed to start installation', true); }
+}
+
+$('ai-install-moondream-btn').addEventListener('click', _startMoondreamInstall);
+$('ai-retry-moondream-btn').addEventListener('click', _startMoondreamInstall);
 
 // Load AI tab when selected
 document.querySelectorAll('.nav-tab').forEach(t => {
@@ -1729,6 +1828,10 @@ class MediaServer:
         app.router.add_get("/api/ai/results/{clip_id}", self._handle_ai_clip_result)
         app.router.add_get("/api/ai/suspicious", self._handle_ai_suspicious)
         app.router.add_post("/api/ai/analyze/{clip_id}", self._handle_ai_analyze_now)
+        app.router.add_get(
+            "/api/ai/moondream/install-status", self._handle_moondream_install_status
+        )
+        app.router.add_post("/api/ai/moondream/install", self._handle_moondream_install)
         return app
 
     # ------------------------------------------------------------------
@@ -1961,6 +2064,8 @@ class MediaServer:
             data["ai_online"] = await self._analyzer.health_check()
             data["provider"] = self._analyzer.provider_name
             data["model"] = self._analyzer.model_name()
+            if self._analyzer.provider_name == "moondream_local":
+                data["moondream_installed"] = _is_moondream_installed()
         if self._analysis_queue:
             data["queue"] = await self._analysis_queue.get_queue_status()
         data["analysis_stats"] = await self._db.get_analysis_stats()
@@ -2026,3 +2131,59 @@ class MediaServer:
         )
         await self._db.add_analysis_result(result.to_dict())
         return web.json_response(result.to_dict())
+
+    async def _handle_moondream_install_status(
+        self, _request: web.Request
+    ) -> web.Response:
+        return web.json_response(
+            {
+                "installed": _is_moondream_installed(),
+                "install_state": _moondream_install_state.copy(),
+            }
+        )
+
+    async def _handle_moondream_install(self, _request: web.Request) -> web.Response:
+        global _moondream_install_state  # noqa: PLW0603
+
+        if _is_moondream_installed():
+            return web.json_response({"status": "already_installed"})
+
+        if _moondream_install_state.get("status") == "installing":
+            return web.json_response(
+                {"status": "installing", "log": _moondream_install_state.get("log", "")}
+            )
+
+        _moondream_install_state = {
+            "status": "installing",
+            "log": "Starting: pip install moondream\n",
+        }
+
+        async def _run_install() -> None:
+            global _moondream_install_state  # noqa: PLW0603
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "pip3",
+                    "install",
+                    "--no-cache-dir",
+                    "moondream",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
+                log = stdout.decode(errors="replace") if stdout else ""
+                if proc.returncode == 0:
+                    _moondream_install_state = {"status": "installed", "log": log}
+                    _LOGGER.info("moondream installed successfully")
+                else:
+                    _moondream_install_state = {"status": "failed", "log": log}
+                    _LOGGER.warning("moondream install failed (rc=%d)", proc.returncode)
+            except asyncio.TimeoutError:
+                _moondream_install_state = {
+                    "status": "failed",
+                    "log": "Installation timed out after 15 minutes",
+                }
+            except Exception as exc:  # noqa: BLE001
+                _moondream_install_state = {"status": "failed", "log": str(exc)}
+
+        asyncio.create_task(_run_install())
+        return web.json_response({"status": "installing"})
