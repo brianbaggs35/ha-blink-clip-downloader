@@ -582,15 +582,15 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         """Prepend the Blink base URL to relative paths."""
         if url.startswith("http"):
             return url
-        # Safely handle cases where urls or base_url might be None.
-        try:
-            if hasattr(self._blink, "urls") and self._blink.urls:
-                base = getattr(self._blink.urls, "base_url", None)
-                if base:
-                    return f"{base}{url}"
-        except AttributeError:
-            pass
-        # Fallback to default Blink base URL if urls is not available.
+        if self._blink is not None:
+            try:
+                blink_urls = getattr(self._blink, "urls", None)
+                if blink_urls:
+                    base = getattr(blink_urls, "base_url", None)
+                    if base:
+                        return f"{base}{url}"
+            except AttributeError:
+                pass
         return f"https://rest-prod.immedia-semi.com{url}"
 
     async def _stream_to_file(self, url: str, dest: Path) -> int | None:

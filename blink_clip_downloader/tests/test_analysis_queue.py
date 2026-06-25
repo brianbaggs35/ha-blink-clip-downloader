@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from datetime import time
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,7 +23,7 @@ async def db(tmp_path: Path) -> AsyncGenerator[ClipDatabase, None]:
     await d.close()
 
 
-def _make_analyzer_mock(**kwargs: object) -> MagicMock:
+def _make_analyzer_mock(**kwargs: Any) -> MagicMock:
     m = MagicMock(spec=ClipAnalyzer)
     m.health_check = AsyncMock(return_value=kwargs.get("healthy", True))
     m.analyze_clip = AsyncMock(
@@ -49,7 +50,7 @@ def _make_queue(
     analyzer: MagicMock,
     db: ClipDatabase,
     dispatcher: MagicMock | None = None,
-    **kwargs: object,
+    **kwargs: Any,
 ) -> AnalysisQueue:
     return AnalysisQueue(
         analyzer=analyzer,
