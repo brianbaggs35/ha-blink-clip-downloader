@@ -8,7 +8,6 @@ import pytest
 
 from blink_downloader.config import _parse_config, load_config
 
-
 # ---------------------------------------------------------------------------
 # _parse_config
 # ---------------------------------------------------------------------------
@@ -332,9 +331,7 @@ def test_ai_provider_moondream_local():
 
 
 def test_ai_provider_normalised_lowercase():
-    cfg = _parse_config(
-        {"username": "u", "password": "p", "ai_provider": "OLLAMA"}
-    )
+    cfg = _parse_config({"username": "u", "password": "p", "ai_provider": "OLLAMA"})
     assert cfg.ai_provider == "ollama"
 
 

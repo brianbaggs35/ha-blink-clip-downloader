@@ -12,7 +12,9 @@ from blink_downloader.analyzer import (
     ClipAnalyzer,
     MoondreamCloudAnalyzer,
     MoondreamLocalAnalyzer,
+    _vision_model_score,
     create_analyzer,
+    is_moondream_installed,
     is_vision_model,
 )
 
@@ -413,7 +415,9 @@ async def test_fetch_models_filters_non_vision(analyzer: ClipAnalyzer) -> None:
 
 
 def test_create_analyzer_ollama() -> None:
-    a = create_analyzer("ollama", "prompt", ollama_url="http://localhost:11434", ollama_model="llava")
+    a = create_analyzer(
+        "ollama", "prompt", ollama_url="http://localhost:11434", ollama_model="llava"
+    )
     assert isinstance(a, ClipAnalyzer)
 
 
@@ -535,7 +539,9 @@ async def test_moondream_local_fetch_models() -> None:
     assert "0_5b" in models[0]["name"]
 
 
-async def test_moondream_local_health_check_no_package(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_moondream_local_health_check_no_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """health_check returns False when the moondream package is missing."""
     import sys
 
@@ -549,7 +555,9 @@ async def test_moondream_local_health_check_no_package(monkeypatch: pytest.Monke
     assert result is False
 
 
-async def test_moondream_local_health_check_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_moondream_local_health_check_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """health_check returns True once the model is loaded."""
     mock_md = MagicMock()
     mock_md.vl.return_value = MagicMock()
@@ -594,3 +602,104 @@ async def test_moondream_local_close_resets_state() -> None:
     await a.close()
     assert a._model_ready is False
     assert a._md_model is None
+
+
+# ------------------------------------------------------------------
+# _vision_model_score
+# ------------------------------------------------------------------
+
+
+def test_vision_model_score_llama32_vision_is_highest() -> None:
+    score = _vision_model_score("llama3.2-vision:11b")
+    assert score == 100
+
+
+def test_vision_model_score_llava7b() -> None:
+    score = _vision_model_score("llava:7b")
+    assert score > 0
+    # llava:7b should score higher than moondream
+    assert score > _vision_model_score("moondream:latest")
+
+
+def test_vision_model_score_unknown_model() -> None:
+    score = _vision_model_score("some-future-vision-model:99b")
+    assert score == 30  # default for unrecognized models
+
+
+def test_vision_model_score_case_insensitive() -> None:
+    assert _vision_model_score("LLaVA:7B") == _vision_model_score("llava:7b")
+
+
+# ------------------------------------------------------------------
+# Ollama fetch_models ranking
+# ------------------------------------------------------------------
+
+
+async def test_fetch_models_sorted_best_first(analyzer: ClipAnalyzer) -> None:
+    models_data = {
+        "models": [
+            {"name": "moondream:latest", "size": 1_500_000_000},
+            {"name": "llama3.2-vision:11b", "size": 8_000_000_000},
+            {"name": "llava:7b", "size": 4_000_000_000},
+        ]
+    }
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=models_data)
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    models = await analyzer.fetch_models()
+
+    assert len(models) == 3
+    # Best model should be first
+    assert models[0]["name"] == "llama3.2-vision:11b"
+    assert models[0]["score"] == 100
+    # Worst should be last
+    assert models[-1]["name"] == "moondream:latest"
+
+
+async def test_fetch_models_score_field_present(analyzer: ClipAnalyzer) -> None:
+    models_data = {
+        "models": [
+            {"name": "llava:7b", "size": 4_000_000_000},
+        ]
+    }
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=models_data)
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    models = await analyzer.fetch_models()
+
+    assert "score" in models[0]
+    assert models[0]["score"] > 0
+
+
+# ------------------------------------------------------------------
+# is_moondream_installed
+# ------------------------------------------------------------------
+
+
+def test_is_moondream_installed_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    fake_md = MagicMock()
+    monkeypatch.setitem(sys.modules, "moondream", fake_md)
+    assert is_moondream_installed() is True
+
+
+def test_is_moondream_installed_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.delitem(sys.modules, "moondream", raising=False)
+
+    with patch(
+        "builtins.__import__", side_effect=ImportError("no module named moondream")
+    ):
+        result = is_moondream_installed()
+
+    assert result is False
