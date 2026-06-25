@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from datetime import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -238,3 +239,97 @@ async def test_get_queue_status(db: ClipDatabase) -> None:
     assert status["schedule_start"] == "08:00"
     assert status["schedule_end"] == "18:00"
     assert "in_schedule" in status
+
+
+# ------------------------------------------------------------------
+# Coverage gap tests: lifecycle (start/stop) and mid-batch break
+# ------------------------------------------------------------------
+
+
+async def test_stop_sets_running_false(db: ClipDatabase) -> None:
+    """stop() clears _running (line 71)."""
+    analyzer = _make_analyzer_mock()
+    queue = _make_queue(analyzer, db)
+    queue._running = True
+    await queue.stop()
+    assert not queue._running
+
+
+async def test_start_runs_loop_and_exits_on_stop(db: ClipDatabase) -> None:
+    """Main loop runs at least once and exits cleanly when _running is cleared (lines 51-52, 54, 63-64, 66, 68)."""
+    analyzer = _make_analyzer_mock(healthy=False)
+    queue = _make_queue(analyzer, db, check_interval=1)
+
+    async def fake_sleep(_delay: float) -> None:
+        queue._running = False  # signal stop after first sleep
+
+    with patch("asyncio.sleep", fake_sleep):
+        await queue.start()
+
+    assert not queue._running
+
+
+async def test_start_exits_on_cancelled_error(db: ClipDatabase) -> None:
+    """CancelledError from health_check breaks the loop without re-raising (lines 58-59, 68)."""
+    analyzer = _make_analyzer_mock()
+    analyzer.health_check = AsyncMock(side_effect=asyncio.CancelledError)
+    queue = _make_queue(analyzer, db, check_interval=1)
+
+    await queue.start()  # must complete without raising
+
+
+async def test_start_logs_exception_and_continues(db: ClipDatabase) -> None:
+    """General exceptions from health_check are logged and the loop continues (lines 60-61)."""
+    call_count = 0
+
+    async def flaky_health() -> bool:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("transient network error")
+        return False
+
+    analyzer = _make_analyzer_mock()
+    analyzer.health_check = AsyncMock(side_effect=flaky_health)
+    queue = _make_queue(analyzer, db, check_interval=1)
+
+    async def fake_sleep(_delay: float) -> None:
+        if call_count >= 2:
+            queue._running = False
+
+    with patch("asyncio.sleep", fake_sleep):
+        await queue.start()
+
+    assert call_count >= 2  # loop continued past the exception
+
+
+async def test_start_early_return_from_sleep_loop(db: ClipDatabase) -> None:
+    """Setting _running=False mid sleep-interval triggers early return (lines 64-65)."""
+    analyzer = _make_analyzer_mock(healthy=False)
+    queue = _make_queue(analyzer, db, check_interval=2)
+
+    sleep_count = 0
+
+    async def fake_sleep(_delay: float) -> None:
+        nonlocal sleep_count
+        sleep_count += 1
+        queue._running = False  # stop after first sleep in the 2-step interval
+
+    with patch("asyncio.sleep", fake_sleep):
+        await queue.start()
+
+    assert sleep_count == 1  # second sleep never reached (early return)
+
+
+async def test_process_pending_breaks_when_queue_stopped(db: ClipDatabase) -> None:
+    """If _running is False when iterating, processing breaks immediately (line 100)."""
+    analyzer = _make_analyzer_mock()
+    queue = _make_queue(analyzer, db, batch_size=3)
+    queue._running = False  # halted
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    analyzer.analyze_clip.assert_not_awaited()  # break before analysis

@@ -178,3 +178,52 @@ async def test_run_unknown_timestamp_uses_unknown_bucket(tmp_path: Path) -> None
 
     assert result == 1
     assert (tmp_path / "archives" / "blink_archive_unknown.zip").exists()
+
+
+# ------------------------------------------------------------------
+# Coverage gap tests
+# ------------------------------------------------------------------
+
+
+async def test_archive_month_bad_zip_file_is_logged(tmp_path: Path) -> None:
+    """OSError opening the ZIP is caught and error is logged (lines 88-89)."""
+    from unittest.mock import patch
+
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"data")
+    clip = {
+        "id": "c1",
+        "camera": "Cam",
+        "file_path": str(src),
+        "timestamp": "2024-06-01T00:00:00+00:00",
+    }
+    archiver, db = _make_archiver(tmp_path, clips=[clip])
+
+    # Make ZipFile constructor raise OSError to trigger the outer handler
+    with patch(
+        "blink_downloader.archiver.zipfile.ZipFile", side_effect=OSError("disk full")
+    ):
+        result = await archiver.run()
+
+    assert result == 0  # nothing archived because zip open failed
+
+
+async def test_archive_month_write_oserror_is_logged(tmp_path: Path) -> None:
+    """OSError from ZipFile.write is caught and logged (lines 86-87)."""
+    from unittest.mock import patch
+
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"data")
+    clip = {
+        "id": "c1",
+        "camera": "Cam",
+        "file_path": str(src),
+        "timestamp": "2024-06-01T00:00:00+00:00",
+    }
+    archiver, db = _make_archiver(tmp_path, clips=[clip])
+
+    with patch("zipfile.ZipFile.write", side_effect=OSError("write failed")):
+        result = await archiver.run()
+
+    assert result == 0  # write failed, not marked as archived
+    db.mark_archived.assert_not_awaited()

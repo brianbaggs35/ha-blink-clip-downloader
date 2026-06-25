@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-
+from unittest.mock import patch
 
 from blink_downloader.storage import StorageManager, _cleanup_empty_dirs, _safe_name
 
@@ -273,3 +273,70 @@ def test_cleanup_empty_dirs_keeps_non_empty(tmp_path):
     (d / "file.mp4").write_bytes(b"x")
     _cleanup_empty_dirs(tmp_path)
     assert d.exists()
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap tests
+# ---------------------------------------------------------------------------
+
+
+def test_used_bytes_dir_not_exist(tmp_path):
+    """used_bytes() returns 0 immediately when base dir doesn't exist (line 89)."""
+    s = make_storage(tmp_path)
+    # Don't call ensure_directory() — base path is missing
+    assert s.used_bytes() == 0
+
+
+def test_used_bytes_ignores_stat_error(tmp_path):
+    """A file that raises OSError on the size stat() is silently skipped (lines 94-95)."""
+    s = make_storage(tmp_path)
+    s.ensure_directory()
+    (tmp_path / "clips" / "a.mp4").write_bytes(b"x" * 100)
+
+    stat_calls: dict[str, int] = {}
+    original_stat = Path.stat
+
+    def flaky_stat(self: Path, **kwargs):  # type: ignore[override]
+        key = str(self)
+        stat_calls[key] = stat_calls.get(key, 0) + 1
+        # is_file() calls stat() first; the second call for st_size should raise
+        if self.name == "a.mp4" and stat_calls[key] >= 2:
+            raise OSError("permission denied")
+        return original_stat(self, **kwargs)
+
+    with patch.object(Path, "stat", flaky_stat):
+        total = s.used_bytes()
+    assert total == 0  # the only file errored, so nothing summed
+
+
+def test_bytes_remaining_with_quota_set(tmp_path):
+    """bytes_remaining() returns max_bytes - used when quota is configured (line 108)."""
+    s = make_storage(tmp_path, max_storage_gb=1.0)
+    s.ensure_directory()
+    remaining = s.bytes_remaining()
+    assert 0 < remaining <= int(1.0 * 1024**3)
+
+
+def test_apply_retention_oserror_on_delete(tmp_path):
+    """When unlink raises OSError the error is logged and the loop continues (lines 132-133)."""
+    s = make_storage(tmp_path, retention_days=7)
+    s.ensure_directory()
+    old = tmp_path / "clips" / "old.mp4"
+    old.write_bytes(b"data")
+    _age_file(old, 10)
+
+    with patch.object(Path, "unlink", side_effect=OSError("permission denied")):
+        deleted = s.apply_retention_policy()
+
+    assert deleted == 0  # unlink failed so counter stays 0
+
+
+def test_disk_stats_oserror_fallback(tmp_path):
+    """When shutil.disk_usage raises, total/free fall back to 0 (lines 150-151)."""
+    import shutil
+
+    s = make_storage(tmp_path)
+    with patch.object(shutil, "disk_usage", side_effect=OSError("no device")):
+        stats = s.disk_stats()
+    assert stats["total_gb"] == 0
+    assert stats["free_gb"] == 0

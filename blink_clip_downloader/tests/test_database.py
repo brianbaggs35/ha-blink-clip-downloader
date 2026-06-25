@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from blink_downloader.database import ClipDatabase
+from blink_downloader.database import ClipDatabase, _row_to_dict
 
 
 @pytest.fixture
@@ -529,3 +529,135 @@ async def test_analysis_operations_without_init() -> None:
     assert await d.get_pending_analysis() == []
     counts = await d.get_queue_counts()
     assert counts == {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+
+
+# ------------------------------------------------------------------
+# Coverage gap tests
+# ------------------------------------------------------------------
+
+
+def test_row_to_dict_invalid_json_tags() -> None:
+    """_row_to_dict falls back to [] when tags column contains invalid JSON (lines 76-77)."""
+    row: dict = {
+        "id": "c1",
+        "camera": "Cam",
+        "file_path": "/c1.mp4",
+        "timestamp": "2024-01-01T00:00:00+00:00",
+        "size_bytes": 100,
+        "duration": 5,
+        "source": "pir",
+        "network_id": 1,
+        "starred": 0,
+        "tags": "not-valid-json!!!",
+        "downloaded_at": "2024-01-01",
+        "archived": 0,
+        "archive_path": "",
+    }
+    result = _row_to_dict(row)  # type: ignore[arg-type]
+    assert result["tags"] == []
+
+
+async def test_mark_archived_without_init() -> None:
+    """mark_archived() silently returns when db is not initialised (line 161)."""
+    d = ClipDatabase(Path("/tmp/neveropened_arch.db"))
+    await d.mark_archived("c1", "/archive/2024-06.zip")  # must not raise
+
+
+async def test_get_clips_since_filter(db: ClipDatabase) -> None:
+    """get_clips(since=...) restricts results to clips after the timestamp (lines 218-219)."""
+    await db.add_clip(_make_clip("old", timestamp="2024-01-01T00:00:00+00:00"))
+    await db.add_clip(_make_clip("new", timestamp="2024-06-01T00:00:00+00:00"))
+    clips = await db.get_clips(since="2024-03-01T00:00:00+00:00")
+    assert len(clips) == 1
+    assert clips[0]["id"] == "new"
+
+
+async def test_get_clips_until_filter(db: ClipDatabase) -> None:
+    """get_clips(until=...) restricts results to clips before the timestamp (lines 221-222)."""
+    await db.add_clip(_make_clip("old", timestamp="2024-01-01T00:00:00+00:00"))
+    await db.add_clip(_make_clip("new", timestamp="2024-06-01T00:00:00+00:00"))
+    clips = await db.get_clips(until="2024-03-01T00:00:00+00:00")
+    assert len(clips) == 1
+    assert clips[0]["id"] == "old"
+
+
+async def test_get_clips_source_filter(db: ClipDatabase) -> None:
+    """get_clips(source=...) filters by clip source (lines 227-228)."""
+    await db.add_clip(_make_clip("c1", source="pir"))
+    await db.add_clip(_make_clip("c2", source="cloud"))
+    clips = await db.get_clips(source="cloud")
+    assert len(clips) == 1
+    assert clips[0]["id"] == "c2"
+
+
+async def test_get_clips_tag_filter(db: ClipDatabase) -> None:
+    """get_clips(tag=...) filters by tag substring in JSON array (lines 230-231)."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.set_tags("c1", ["important", "night"])
+    clips = await db.get_clips(tag="important")
+    assert len(clips) == 1
+    assert clips[0]["id"] == "c1"
+
+
+async def test_count_clips_camera_filter(db: ClipDatabase) -> None:
+    """count_clips(camera=...) counts only clips from that camera (lines 263-264)."""
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_clip(_make_clip("c2", camera="Back Yard"))
+    await db.add_clip(_make_clip("c3", camera="Front Door"))
+    count = await db.count_clips(camera="Front Door")
+    assert count == 2
+
+
+async def test_count_clips_starred_filter(db: ClipDatabase) -> None:
+    """count_clips(starred=True) counts only starred clips (lines 266-267)."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.star_clip("c1", True)
+    count = await db.count_clips(starred=True)
+    assert count == 1
+
+
+async def test_get_distinct_cameras_without_init() -> None:
+    """get_distinct_cameras() returns [] when db is not initialised (line 358)."""
+    d = ClipDatabase(Path("/tmp/neveropened_cams.db"))
+    result = await d.get_distinct_cameras()
+    assert result == []
+
+
+async def test_get_distinct_tags_without_init() -> None:
+    """get_distinct_tags() returns [] when db is not initialised (line 368)."""
+    d = ClipDatabase(Path("/tmp/neveropened_tags.db"))
+    result = await d.get_distinct_tags()
+    assert result == []
+
+
+async def test_get_distinct_tags_bad_json_skipped(db: ClipDatabase) -> None:
+    """Clips whose tags column holds invalid JSON are silently skipped (lines 377-378)."""
+    await db.add_clip(_make_clip("c1"))
+    await db.set_tags("c1", ["good"])
+    # Inject bad JSON directly via raw SQL
+    assert db._db is not None
+    await db._db.execute("UPDATE clips SET tags='bad-json!!!' WHERE id='c1'")
+    await db._db.commit()
+    tags = await db.get_distinct_tags()
+    assert isinstance(tags, list)
+    assert "good" not in tags  # bad JSON skipped entirely
+
+
+async def test_add_analysis_result_without_init() -> None:
+    """add_analysis_result() silently returns when db is not initialised (line 412)."""
+    d = ClipDatabase(Path("/tmp/neveropened_ar.db"))
+    await d.add_analysis_result({"clip_id": "c1", "camera": "A"})  # must not raise
+
+
+async def test_enqueue_for_analysis_without_init() -> None:
+    """enqueue_for_analysis() silently returns when db is not initialised (line 504)."""
+    d = ClipDatabase(Path("/tmp/neveropened_eq.db"))
+    await d.enqueue_for_analysis("c1", "Cam", "/c1.mp4")  # must not raise
+
+
+async def test_update_queue_status_without_init() -> None:
+    """update_queue_status() silently returns when db is not initialised (line 529)."""
+    d = ClipDatabase(Path("/tmp/neveropened_uq.db"))
+    await d.update_queue_status("c1", "completed")  # must not raise
