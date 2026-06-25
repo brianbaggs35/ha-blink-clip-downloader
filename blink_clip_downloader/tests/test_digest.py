@@ -153,3 +153,29 @@ def test_load_last_sent_corrupt_file(tmp_path: Path) -> None:
     state_file.write_text("not json!!!")
     digest, _, _ = _make_digest(tmp_path)
     assert digest._last_sent is None
+
+
+# ------------------------------------------------------------------
+# Coverage gap tests
+# ------------------------------------------------------------------
+
+
+def test_save_last_sent_none_is_noop(tmp_path: Path) -> None:
+    """_save_last_sent() returns immediately when _last_sent is None (line 111)."""
+    state_file = tmp_path / "last_digest.json"
+    digest, _, _ = _make_digest(tmp_path)
+    digest._last_sent = None
+    digest._save_last_sent()
+    assert not state_file.exists()
+
+
+def test_save_last_sent_oserror_is_logged(tmp_path: Path) -> None:
+    """OSError writing state file is caught and logged (lines 115-116)."""
+    from datetime import date
+    from unittest.mock import patch
+
+    digest, _, _ = _make_digest(tmp_path)
+    digest._last_sent = date.today()
+
+    with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+        digest._save_last_sent()  # must not raise

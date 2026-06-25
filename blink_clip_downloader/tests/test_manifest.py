@@ -62,3 +62,13 @@ def test_append_adds_recorded_at(tmp_path):
 
     dt = datetime.fromisoformat(record["recorded_at"])
     assert dt is not None
+
+
+def test_append_oserror_is_logged(tmp_path):
+    """When the manifest file cannot be written, OSError is caught (lines 35-36)."""
+    from unittest.mock import patch, mock_open
+
+    m = ClipManifest(tmp_path / "manifest.json")
+    with patch("builtins.open", mock_open()) as m_open:
+        m_open.return_value.__enter__.side_effect = OSError("disk full")
+        m.append({"id": "x"})  # must not raise

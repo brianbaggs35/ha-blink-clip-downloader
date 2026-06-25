@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 
 from blink_downloader.database import ClipDatabase
-from blink_downloader.library_scanner import import_existing_clips
+from blink_downloader.library_scanner import (
+    _timestamp_from_filename,
+    import_existing_clips,
+)
 
 
 @pytest.fixture
@@ -155,3 +158,46 @@ async def test_rescanning_does_not_duplicate(db: ClipDatabase, tmp_path: Path) -
 
     clips = await db.get_clips()
     assert len(clips) == 1
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap tests
+# ---------------------------------------------------------------------------
+
+
+async def test_import_skips_directory_entries(db: ClipDatabase, tmp_path: Path) -> None:
+    """rglob("*.mp4") can match directories named *.mp4; those are skipped (line 40)."""
+    download_path = tmp_path / "clips"
+    # Create a directory whose name ends in .mp4 (unusual but possible)
+    fake_dir = download_path / "weird.mp4"
+    fake_dir.mkdir(parents=True)
+
+    added = await import_existing_clips(db, download_path)
+    assert added == 0  # directories are skipped
+
+
+def test_build_clip_record_handles_stat_error(tmp_path: Path) -> None:
+    """If stat() raises OSError while measuring size, size defaults to 0 (lines 76-77)."""
+    import unittest.mock
+    from blink_downloader.library_scanner import _build_clip_record
+
+    download_path = tmp_path / "clips"
+    download_path.mkdir(parents=True)
+    # Filename contains a parseable timestamp so the mtime stat() is not called;
+    # the only stat() call inside _build_clip_record is for st_size.
+    clip_path = download_path / "Front_Door_20240601_080000.mp4"
+    clip_path.write_bytes(b"fake")
+
+    with unittest.mock.patch.object(
+        Path, "stat", side_effect=OSError("permission denied")
+    ):
+        record = _build_clip_record(download_path, clip_path)
+
+    assert record["size_bytes"] == 0
+
+
+def test_timestamp_from_filename_invalid_date() -> None:
+    """A match that cannot be parsed as a date returns None (lines 101-102)."""
+    # strptime would raise ValueError for month=99
+    result = _timestamp_from_filename("camera_99990099_999999.mp4")
+    assert result is None

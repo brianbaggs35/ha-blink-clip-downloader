@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
+
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.notification_channels import NotificationDispatcher
 
@@ -251,3 +253,80 @@ async def test_dispatch_only_enabled_channels() -> None:
     dispatcher.send_mobile.assert_not_awaited()
     dispatcher.send_email.assert_not_awaited()
     dispatcher.send_discord.assert_awaited_once()
+
+
+# ------------------------------------------------------------------
+# Coverage gap tests
+# ------------------------------------------------------------------
+
+
+async def test_close_closes_open_session() -> None:
+    """close() closes the session when one exists and is open (lines 58-59)."""
+    dispatcher = NotificationDispatcher()
+    mock_session = AsyncMock()
+    mock_session.closed = False
+    dispatcher._session = mock_session
+
+    await dispatcher.close()
+    mock_session.close.assert_awaited_once()
+
+
+async def test_get_session_creates_when_none() -> None:
+    """_get_session() creates a new ClientSession when _session is None (line 63)."""
+    dispatcher = NotificationDispatcher(supervisor_token="tok")
+    mock_session = MagicMock()
+    mock_session.closed = False
+
+    with patch(
+        "blink_downloader.notification_channels.aiohttp.ClientSession",
+        return_value=mock_session,
+    ):
+        session = await dispatcher._get_session()
+
+    assert session is mock_session
+
+
+async def test_send_mobile_network_error_returns_false() -> None:
+    """aiohttp.ClientError from the HTTP call is caught and returns False (lines 113-115)."""
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_target="mobile_app_phone",
+        mobile_app_enabled=True,
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(side_effect=aiohttp.ClientError("timeout"))
+    )
+
+    result = await dispatcher.send_mobile("Alert", "msg")
+    assert result is False
+
+
+async def test_send_discord_http_error_returns_false() -> None:
+    """HTTP status >= 400 from Discord webhook returns False (lines 197-198)."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 429
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        discord_enabled=True,
+        discord_webhook_url="https://discord.com/api/webhooks/123/abc",
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    result = await dispatcher.send_discord("Alert", "Body")
+    assert result is False
+
+
+async def test_send_discord_network_error_returns_false() -> None:
+    """aiohttp.ClientError from Discord webhook call is caught and returns False (lines 199-201)."""
+    dispatcher = NotificationDispatcher(
+        discord_enabled=True,
+        discord_webhook_url="https://discord.com/api/webhooks/123/abc",
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(side_effect=aiohttp.ClientError("connection refused"))
+    )
+
+    result = await dispatcher.send_discord("Alert", "Body")
+    assert result is False
