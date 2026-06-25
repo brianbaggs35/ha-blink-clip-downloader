@@ -2224,7 +2224,10 @@ class MediaServer:
                     if pkg not in sys.path:
                         sys.path.insert(0, pkg)
                     _moondream_install_state = {"status": "installed", "log": log}
-                    _LOGGER.info("moondream installed successfully to %s", _MOONDREAM_PACKAGES_DIR)
+                    _LOGGER.info(
+                        "moondream installed successfully to %s",
+                        _MOONDREAM_PACKAGES_DIR,
+                    )
                 else:
                     _moondream_install_state = {"status": "failed", "log": log}
                     _LOGGER.warning("moondream install failed (rc=%d)", proc.returncode)
