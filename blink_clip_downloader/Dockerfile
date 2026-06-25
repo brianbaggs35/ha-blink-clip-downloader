@@ -7,7 +7,7 @@ ARG BUILD_VERSION=2.8.0
 
 # Install C build tools needed by some Python wheels.
 # jpeg-dev + zlib-dev are required by Pillow.
-# make + cmake are needed by moondream's kestrel/TVM dependency (moondream_local provider).
+# make + cmake are only used by moondream on amd64 but are small enough to install unconditionally.
 RUN apk add --no-cache gcc g++ musl-dev libffi-dev openssl-dev ffmpeg jpeg-dev zlib-dev make cmake
 
 # Install Python dependencies first (Docker layer cache)
@@ -16,11 +16,16 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
 # Optional: moondream local model support (moondream_local provider).
-# Requires building kestrel/TVM from source – may take several minutes.
-# Non-fatal: if build fails the moondream_local provider reports "not installed"
-# at runtime and the image still starts normally.
-RUN pip3 install --no-cache-dir moondream 2>&1 | tail -5 || \
-    echo "INFO: moondream could not be built on this platform; moondream_local provider will be unavailable"
+# Only attempted on amd64 — the moondream package has no pre-built wheels for
+# aarch64 musllinux and its TVM compilation hangs indefinitely on that platform.
+# Non-fatal: if the install fails the moondream_local provider reports "not
+# installed" at runtime and the image still starts normally.
+RUN if [ "${BUILD_ARCH}" = "amd64" ]; then \
+        pip3 install --no-cache-dir moondream 2>&1 | tail -5 || \
+        echo "INFO: moondream install failed; moondream_local provider will be unavailable"; \
+    else \
+        echo "INFO: moondream is not supported on ${BUILD_ARCH}; moondream_local provider will be unavailable"; \
+    fi
 
 # Install the app package so `python3 -m blink_downloader` works anywhere
 COPY pyproject.toml /app/pyproject.toml

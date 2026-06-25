@@ -786,10 +786,13 @@ async def test_moondream_install_returns_installing_or_already_installed(
     ms._moondream_install_state = {"status": "idle", "log": ""}
 
     with patch(
-        "blink_downloader.media_server._is_moondream_installed", return_value=False
+        "blink_downloader.media_server._moondream_arch_supported", return_value=True
     ):
-        with patch("asyncio.create_task", side_effect=lambda coro: coro.close()):
-            resp = await client.post("/api/ai/moondream/install")
+        with patch(
+            "blink_downloader.media_server._is_moondream_installed", return_value=False
+        ):
+            with patch("asyncio.create_task", side_effect=lambda coro: coro.close()):
+                resp = await client.post("/api/ai/moondream/install")
 
     assert resp.status == 200
     data = await resp.json()

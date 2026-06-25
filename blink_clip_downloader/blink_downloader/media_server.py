@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import platform
+import sys
 import zipfile
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -23,10 +25,20 @@ _LOGGER = logging.getLogger(__name__)
 # Moondream local install state (persists for the lifetime of the process)
 # ---------------------------------------------------------------------------
 
+_MOONDREAM_PACKAGES_DIR = Path("/data/moondream_packages")
+
 _moondream_install_state: dict = {"status": "idle", "log": ""}
 
 
+def _moondream_arch_supported() -> bool:
+    """Return True only on x86_64 — moondream has no musllinux aarch64 wheels."""
+    return platform.machine() == "x86_64"
+
+
 def _is_moondream_installed() -> bool:
+    pkg = str(_MOONDREAM_PACKAGES_DIR)
+    if _MOONDREAM_PACKAGES_DIR.exists() and pkg not in sys.path:
+        sys.path.insert(0, pkg)
     try:
         import moondream  # noqa: PLC0415, F401  # type: ignore[import-not-found]
 
@@ -574,6 +586,9 @@ action:
           </div>
           <!-- Moondream local: install / status section -->
           <div id="ai-moondream-local-section" style="display:none;margin-top:.75rem">
+            <div id="ai-md-arch-unsupported" style="display:none">
+              <p style="font-size:.8rem;color:var(--muted)">moondream_local is not available on this architecture.<br>Use <strong>moondream_cloud</strong> or <strong>ollama</strong> instead.</p>
+            </div>
             <div id="ai-md-not-installed">
               <p style="font-size:.8rem;color:var(--warn);margin-bottom:.45rem">⚠ moondream package not installed</p>
               <button class="btn sm" id="ai-install-moondream-btn">⬇ Install Moondream 0.5B</button>
@@ -1602,7 +1617,10 @@ async function loadAIStatus() {
     // Moondream local: show install section and poll install state
     const mdSection = $('ai-moondream-local-section');
     if (mdSection) mdSection.style.display = provider === 'moondream_local' ? 'block' : 'none';
-    if (provider === 'moondream_local') _updateMoondreamInstallUI(d.moondream_installed);
+    if (provider === 'moondream_local') {
+      _moondreamArchSupported = d.moondream_arch_supported !== false;
+      _updateMoondreamInstallUI(d.moondream_installed);
+    }
     if (d.queue) {
       $('ai-q-pending').textContent = d.queue.pending || 0;
       $('ai-q-processing').textContent = d.queue.processing || 0;
@@ -1680,12 +1698,20 @@ $('ai-fetch-models-btn').addEventListener('click', async () => {
 });
 
 // ── Moondream local install ───────────────────────────────
+let _moondreamArchSupported = true;
+
 function _updateMoondreamInstallUI(installed) {
+  const archUnsup = $('ai-md-arch-unsupported');
   const notInst = $('ai-md-not-installed');
   const installing = $('ai-md-installing');
   const instd = $('ai-md-installed');
   const failed = $('ai-md-failed');
-  [notInst, installing, instd, failed].forEach(el => { if (el) el.style.display = 'none'; });
+  [archUnsup, notInst, installing, instd, failed].forEach(el => { if (el) el.style.display = 'none'; });
+
+  if (!_moondreamArchSupported) {
+    if (archUnsup) archUnsup.style.display = 'block';
+    return;
+  }
 
   const state = _moondreamInstallState;
   if (installed || state.status === 'installed') {
@@ -1714,6 +1740,7 @@ let _moondreamInstallState = { status: 'idle', log: '' };
 async function _pollMoondreamInstallStatus() {
   try {
     const s = await api('/api/ai/moondream/install-status');
+    _moondreamArchSupported = s.arch_supported !== false;
     _moondreamInstallState = s.install_state || { status: 'idle', log: '' };
     _updateMoondreamInstallUI(s.installed);
   } catch(e) { console.error('moondream install status error', e); }
@@ -2066,6 +2093,7 @@ class MediaServer:
             data["model"] = self._analyzer.model_name()
             if self._analyzer.provider_name == "moondream_local":
                 data["moondream_installed"] = _is_moondream_installed()
+                data["moondream_arch_supported"] = _moondream_arch_supported()
         if self._analysis_queue:
             data["queue"] = await self._analysis_queue.get_queue_status()
         data["analysis_stats"] = await self._db.get_analysis_stats()
@@ -2138,12 +2166,26 @@ class MediaServer:
         return web.json_response(
             {
                 "installed": _is_moondream_installed(),
+                "arch_supported": _moondream_arch_supported(),
                 "install_state": _moondream_install_state.copy(),
             }
         )
 
     async def _handle_moondream_install(self, _request: web.Request) -> web.Response:
         global _moondream_install_state  # noqa: PLW0603
+
+        if not _moondream_arch_supported():
+            return web.json_response(
+                {
+                    "status": "unsupported",
+                    "log": (
+                        f"moondream_local is not supported on {platform.machine()} "
+                        "(no pre-built wheels for this architecture). "
+                        "Use moondream_cloud or ollama instead."
+                    ),
+                },
+                status=422,
+            )
 
         if _is_moondream_installed():
             return web.json_response({"status": "already_installed"})
@@ -2153,9 +2195,13 @@ class MediaServer:
                 {"status": "installing", "log": _moondream_install_state.get("log", "")}
             )
 
+        try:
+            _MOONDREAM_PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            _LOGGER.warning("Could not create moondream packages dir: %s", exc)
         _moondream_install_state = {
             "status": "installing",
-            "log": "Starting: pip install moondream\n",
+            "log": f"Starting: pip install --target {_MOONDREAM_PACKAGES_DIR} moondream\n",
         }
 
         async def _run_install() -> None:
@@ -2165,6 +2211,8 @@ class MediaServer:
                     "pip3",
                     "install",
                     "--no-cache-dir",
+                    "--target",
+                    str(_MOONDREAM_PACKAGES_DIR),
                     "moondream",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
@@ -2172,8 +2220,11 @@ class MediaServer:
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=900)
                 log = stdout.decode(errors="replace") if stdout else ""
                 if proc.returncode == 0:
+                    pkg = str(_MOONDREAM_PACKAGES_DIR)
+                    if pkg not in sys.path:
+                        sys.path.insert(0, pkg)
                     _moondream_install_state = {"status": "installed", "log": log}
-                    _LOGGER.info("moondream installed successfully")
+                    _LOGGER.info("moondream installed successfully to %s", _MOONDREAM_PACKAGES_DIR)
                 else:
                     _moondream_install_state = {"status": "failed", "log": log}
                     _LOGGER.warning("moondream install failed (rc=%d)", proc.returncode)
