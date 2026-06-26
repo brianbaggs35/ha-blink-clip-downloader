@@ -1,5 +1,45 @@
 # Changelog
 
+## 2.8.3
+
+### New features
+
+- **Ollama Cloud provider (`ollama_cloud`).** A fourth AI provider is now
+  available that targets the [Ollama Cloud API](https://api.ollama.com).
+  Set `ai_provider: ollama_cloud` and supply your API key via
+  `ollama_cloud_api_key`.  The cloud provider uses the identical Ollama API
+  (same `/api/generate` and `/api/tags` endpoints) so model selection,
+  token counting, and vision-model auto-ranking all work exactly as with the
+  local provider.
+
+- **Ollama local over LAN.** The `ollama` provider already supported any
+  URL, but this is now explicitly documented: set `ollama_url` to
+  `http://<device-ip>:11434` to route analysis to an Ollama instance running
+  on another device on your local network.
+
+- **Per-clip AI analysis panel.** Each clip modal now includes a collapsible
+  🤖 **AI Analysis** section.  Click to expand and see the suspicion badge,
+  confidence score, AI summary, and model/timestamp.  An **Analyze Now**
+  button lets you trigger analysis for any clip on demand, and a
+  **Re-analyze** button re-runs it.  The full raw AI response is available
+  via a **Full response** toggle.  The panel is hidden when AI is disabled.
+
+- **Test Analysis button.** The AI Connection card on the AI tab now has a
+  🔬 **Test Analysis** button.  It picks the most recently downloaded clip,
+  runs a full analysis, and displays the result inline — confirming the AI
+  backend is reachable and working end-to-end.
+
+### Improvements
+
+- Provider labels in the UI now distinguish between
+  **Ollama (Local/LAN)** and **Ollama Cloud** so it is always clear which
+  backend is active.
+- The AI Usage tab correctly shows token counts for both `ollama` and
+  `ollama_cloud` and hides the token columns for providers that do not
+  report them (`moondream_cloud`, `moondream_local`).
+- Startup log now reports the AI provider name and model together, making
+  it easier to confirm which backend was selected.
+
 ## 2.8.2
 
 ### New features
