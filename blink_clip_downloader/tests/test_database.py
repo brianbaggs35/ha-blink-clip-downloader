@@ -708,7 +708,9 @@ async def test_get_token_usage_stats_with_data(db: ClipDatabase) -> None:
 
     await db.add_analysis_result(_make_analysis_tokens("c1", "llava:7b", 100, 50))
     await db.add_analysis_result(_make_analysis_tokens("c2", "llava:7b", 200, 80))
-    await db.add_analysis_result(_make_analysis_tokens("c3", "moondream:latest", 60, 30))
+    await db.add_analysis_result(
+        _make_analysis_tokens("c3", "moondream:latest", 60, 30)
+    )
 
     stats = await db.get_token_usage_stats()
 
