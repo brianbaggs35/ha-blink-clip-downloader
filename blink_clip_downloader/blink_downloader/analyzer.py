@@ -1,7 +1,8 @@
 """AI video analysis via ffmpeg frame extraction and pluggable AI providers.
 
-Three providers are supported:
-- ``ollama``          – remote/local Ollama server with a vision-capable model
+Four providers are supported:
+- ``ollama``          – local/LAN Ollama server with a vision-capable model
+- ``ollama_cloud``    – Ollama Cloud API (api.ollama.com) with an API key
 - ``moondream_cloud`` – Moondream Cloud API (api.moondream.ai)
 - ``moondream_local`` – Moondream 0.5B model running on-device (no cloud)
 
@@ -485,6 +486,62 @@ class ClipAnalyzer(BaseAnalyzer):
 
 
 # ---------------------------------------------------------------------------
+# Ollama Cloud provider
+# ---------------------------------------------------------------------------
+
+
+class OllamaCloudAnalyzer(ClipAnalyzer):
+    """Analyzes clips via the Ollama Cloud API (api.ollama.com).
+
+    Behaves identically to :class:`ClipAnalyzer` (local Ollama) but targets
+    the Ollama Cloud endpoint and authenticates every request with an API key
+    via ``Authorization: Bearer <key>``.
+    """
+
+    _CLOUD_BASE_URL = "https://api.ollama.com"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        prompt: str,
+        car_description: str = "",
+        max_frames: int = 3,
+        frame_interval: float = 2.0,
+        suspicious_keywords: list[str] | None = None,
+    ) -> None:
+        super().__init__(
+            ollama_url=self._CLOUD_BASE_URL,
+            model=model,
+            prompt=prompt,
+            car_description=car_description,
+            max_frames=max_frames,
+            frame_interval=frame_interval,
+            suspicious_keywords=suspicious_keywords,
+        )
+        self._api_key = api_key
+
+    @property
+    def provider_name(self) -> str:
+        return "ollama_cloud"
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            headers: dict[str, str] = {}
+            if self._api_key:
+                headers["Authorization"] = f"Bearer {self._api_key}"
+            self._session = aiohttp.ClientSession(headers=headers)
+        return self._session
+
+    async def health_check(self) -> bool:
+        """Return False immediately if no API key is configured."""
+        if not self._api_key:
+            _LOGGER.warning("Ollama Cloud: no API key configured")
+            return False
+        return await super().health_check()
+
+
+# ---------------------------------------------------------------------------
 # Moondream Cloud provider
 # ---------------------------------------------------------------------------
 
@@ -742,6 +799,7 @@ def create_analyzer(
     *,
     ollama_url: str = "",
     ollama_model: str = "",
+    ollama_cloud_api_key: str = "",
     moondream_api_key: str = "",
 ) -> BaseAnalyzer | None:
     """Return an analyzer for *ai_provider*, or ``None`` if configuration is invalid."""
@@ -754,6 +812,23 @@ def create_analyzer(
             return None
         return ClipAnalyzer(
             ollama_url=ollama_url,
+            model=ollama_model,
+            prompt=prompt,
+            car_description=car_description,
+            max_frames=max_frames,
+            frame_interval=frame_interval,
+            suspicious_keywords=suspicious_keywords,
+        )
+
+    if ai_provider == "ollama_cloud":
+        if not ollama_cloud_api_key:
+            _LOGGER.warning(
+                "ai_provider='ollama_cloud' requires ollama_cloud_api_key to be set; "
+                "AI analysis disabled"
+            )
+            return None
+        return OllamaCloudAnalyzer(
+            api_key=ollama_cloud_api_key,
             model=ollama_model,
             prompt=prompt,
             car_description=car_description,
@@ -788,8 +863,8 @@ def create_analyzer(
         )
 
     _LOGGER.warning(
-        "Unknown ai_provider %r; expected 'ollama', 'moondream_cloud', or "
-        "'moondream_local'. AI analysis disabled.",
+        "Unknown ai_provider %r; expected 'ollama', 'ollama_cloud', "
+        "'moondream_cloud', or 'moondream_local'. AI analysis disabled.",
         ai_provider,
     )
     return None

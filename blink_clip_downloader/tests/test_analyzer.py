@@ -12,6 +12,7 @@ from blink_downloader.analyzer import (
     ClipAnalyzer,
     MoondreamCloudAnalyzer,
     MoondreamLocalAnalyzer,
+    OllamaCloudAnalyzer,
     _vision_model_score,
     create_analyzer,
     is_moondream_installed,
@@ -414,6 +415,110 @@ async def test_fetch_models_filters_non_vision(analyzer: ClipAnalyzer) -> None:
 # ------------------------------------------------------------------
 
 
+# ------------------------------------------------------------------
+# OllamaCloudAnalyzer
+# ------------------------------------------------------------------
+
+
+async def test_ollama_cloud_health_check_no_key() -> None:
+    a = OllamaCloudAnalyzer(api_key="", model="llava:7b", prompt="test")
+    assert await a.health_check() is False
+    await a.close()
+
+
+async def test_ollama_cloud_health_check_online() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    a = OllamaCloudAnalyzer(api_key="test-key", model="llava:7b", prompt="test")
+    a._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    assert await a.health_check() is True
+
+
+async def test_ollama_cloud_health_check_offline() -> None:
+    import aiohttp
+
+    a = OllamaCloudAnalyzer(api_key="test-key", model="llava:7b", prompt="test")
+    a._session = _mock_session(
+        get=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    assert await a.health_check() is False
+
+
+def test_ollama_cloud_provider_name() -> None:
+    a = OllamaCloudAnalyzer(api_key="key", model="llava:7b", prompt="test")
+    assert a.provider_name == "ollama_cloud"
+    assert a.model_name() == "llava:7b"
+
+
+async def test_ollama_cloud_session_has_auth_header() -> None:
+    """The aiohttp session is created with the Authorization header."""
+    a = OllamaCloudAnalyzer(api_key="my-secret-key", model="llava:7b", prompt="test")
+    session = await a._get_session()
+    assert "Authorization" in dict(session.headers)
+    assert "my-secret-key" in dict(session.headers)["Authorization"]
+    await a.close()
+
+
+async def test_ollama_cloud_session_no_auth_header_when_no_key() -> None:
+    a = OllamaCloudAnalyzer(api_key="", model="llava:7b", prompt="test")
+    session = await a._get_session()
+    assert "Authorization" not in dict(session.headers)
+    await a.close()
+
+
+async def test_ollama_cloud_call_model_success() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": "All clear"})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    a = OllamaCloudAnalyzer(api_key="key", model="llava:7b", prompt="Analyze.")
+    a._session = _mock_session(post=MagicMock(return_value=mock_resp))
+    result = await a.call_ollama([_FAKE_JPEG], "Analyze")
+    assert result == "All clear"
+    # Verify it posted to the cloud URL
+    call_args = a._session.post.call_args
+    assert "api.ollama.com" in str(call_args)
+
+
+async def test_ollama_cloud_uses_cloud_base_url() -> None:
+    """OllamaCloudAnalyzer always targets api.ollama.com."""
+    a = OllamaCloudAnalyzer(api_key="k", model="llava:7b", prompt="p")
+    assert a._ollama_url == "https://api.ollama.com"
+    await a.close()
+
+
+async def test_ollama_cloud_fetch_models() -> None:
+    models_data = {
+        "models": [
+            {"name": "llava:7b", "size": 4_000_000_000},
+            {"name": "llama3:8b", "size": 5_000_000_000},
+        ]
+    }
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=models_data)
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    a = OllamaCloudAnalyzer(api_key="key", model="llava:7b", prompt="test")
+    a._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    models = await a.fetch_models()
+    # Should filter to vision-only
+    names = [m["name"] for m in models]
+    assert "llava:7b" in names
+    assert "llama3:8b" not in names
+
+
+# ------------------------------------------------------------------
+# create_analyzer factory
+# ------------------------------------------------------------------
+
+
 def test_create_analyzer_ollama() -> None:
     a = create_analyzer(
         "ollama", "prompt", ollama_url="http://localhost:11434", ollama_model="llava"
@@ -423,6 +528,16 @@ def test_create_analyzer_ollama() -> None:
 
 def test_create_analyzer_ollama_no_url() -> None:
     a = create_analyzer("ollama", "prompt")
+    assert a is None
+
+
+def test_create_analyzer_ollama_cloud() -> None:
+    a = create_analyzer("ollama_cloud", "prompt", ollama_cloud_api_key="key123")
+    assert isinstance(a, OllamaCloudAnalyzer)
+
+
+def test_create_analyzer_ollama_cloud_no_key() -> None:
+    a = create_analyzer("ollama_cloud", "prompt")
     assert a is None
 
 

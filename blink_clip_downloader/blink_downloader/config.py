@@ -98,9 +98,12 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
 
     # --- AI Video Analysis ---
     ai_analysis_enabled: bool = False
-    ai_provider: str = "ollama"  # "ollama" | "moondream_cloud" | "moondream_local"
+    ai_provider: str = (
+        "ollama"  # "ollama" | "ollama_cloud" | "moondream_cloud" | "moondream_local"
+    )
     ollama_url: str = ""
     ollama_model: str = ""
+    ollama_cloud_api_key: str = ""
     moondream_api_key: str = ""
     ai_prompt: str = (
         "Analyze this security camera frame. Describe what you see. "
@@ -244,6 +247,7 @@ def _parse_config(data: dict) -> AppConfig:
         ai_provider=str(data.get("ai_provider", "ollama") or "ollama").strip().lower(),
         ollama_url=str(data.get("ollama_url", "") or "").strip().rstrip("/"),
         ollama_model=str(data.get("ollama_model", "") or "").strip(),
+        ollama_cloud_api_key=str(data.get("ollama_cloud_api_key", "") or "").strip(),
         moondream_api_key=str(data.get("moondream_api_key", "") or "").strip(),
         ai_prompt=str(data.get("ai_prompt", "") or "").strip() or AppConfig.ai_prompt,
         ai_car_description=str(data.get("ai_car_description", "") or "").strip(),

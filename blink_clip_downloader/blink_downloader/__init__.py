@@ -1,3 +1,3 @@
 """Blink Clip Downloader – Home Assistant add-on."""
 
-__version__ = "2.7.2"
+__version__ = "2.8.3"

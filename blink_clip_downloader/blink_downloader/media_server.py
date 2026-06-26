@@ -381,6 +381,22 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
                 text-transform:uppercase;letter-spacing:.05em}
 .event-table td{padding:.38rem .7rem;border-bottom:1px solid var(--border)}
 
+/* ── AI analysis panel in clip modal ───────────────────── */
+.ai-panel{border-top:1px solid var(--border);margin-top:.6rem;padding-top:.5rem}
+.ai-panel-hdr{background:none;border:none;color:var(--muted);cursor:pointer;
+              font-size:.8rem;display:flex;align-items:center;gap:.35rem;
+              padding:.18rem 0;width:100%;text-align:left}
+.ai-panel-hdr:hover{color:var(--accent)}
+.ai-panel-hdr .chevron{margin-left:auto;font-size:.7rem;transition:transform .2s;display:inline-block}
+.ai-panel-hdr.open .chevron{transform:rotate(90deg)}
+.ai-panel-body{overflow:hidden;max-height:0;transition:max-height .28s ease}
+.ai-panel-body.open{max-height:500px}
+.ai-result-box{background:var(--card2);border:1px solid var(--border);
+               border-radius:var(--radius);padding:.55rem .75rem;font-size:.82rem;
+               margin-top:.4rem}
+.ai-badge-suspicious{color:var(--danger);font-weight:700}
+.ai-badge-clean{color:var(--success);font-weight:700}
+
 /* ── Toast ────────────────────────────────────────────── */
 .toast{position:fixed;bottom:1.4rem;right:1.4rem;background:#238636;
        color:#fff;padding:.55rem 1rem;border-radius:var(--radius);
@@ -674,6 +690,12 @@ action:
               <button class="btn sm ghost" id="ai-retry-moondream-btn">↺ Retry Install</button>
             </div>
           </div>
+          <!-- Test analysis -->
+          <div style="margin-top:.75rem;border-top:1px solid var(--border);padding-top:.6rem">
+            <button class="btn sm ghost" id="ai-test-btn">🔬 Test Analysis</button>
+            <p style="font-size:.73rem;color:var(--muted);margin:.3rem 0 0">Analyzes a recent clip to verify AI is working</p>
+            <div id="ai-test-result" style="display:none;margin-top:.45rem"></div>
+          </div>
         </div>
         <!-- Schedule Card -->
         <div class="card" style="padding:1.2rem">
@@ -764,6 +786,17 @@ action:
         <div class="modal-options">
           <label><input type="checkbox" id="autoplay-next"> Auto-play next clip</label>
           <label><input type="checkbox" id="loop-clip"> Loop</label>
+        </div>
+        <!-- AI Analysis panel – shown only when AI analysis is enabled -->
+        <div id="modal-ai-panel" class="ai-panel" style="display:none">
+          <button class="ai-panel-hdr" id="ai-panel-hdr">
+            🤖 <strong style="font-weight:600">AI Analysis</strong>
+            <span id="ai-panel-badge" style="font-size:.8rem"></span>
+            <span class="chevron">▶</span>
+          </button>
+          <div class="ai-panel-body" id="ai-panel-body">
+            <div id="ai-panel-content" style="padding-bottom:.3rem"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -1226,6 +1259,15 @@ async function openModal(clipId) {
     renderTags();
 
     $('modal-bg').classList.add('open');
+    // Reset and optionally show the AI analysis panel
+    const aiPanel = $('modal-ai-panel');
+    const aiPanelBody = $('ai-panel-body');
+    const aiPanelHdr = $('ai-panel-hdr');
+    if (aiPanel) aiPanel.style.display = _aiEnabled ? 'block' : 'none';
+    if (aiPanelBody) { aiPanelBody.classList.remove('open'); delete aiPanelBody.dataset.loaded; }
+    if (aiPanelHdr) aiPanelHdr.classList.remove('open');
+    const aiPanelBadge = $('ai-panel-badge');
+    if (aiPanelBadge) { aiPanelBadge.textContent = ''; aiPanelBadge.style.color = ''; }
     // Attempt auto-play (may be blocked by browser autoplay policy)
     player.play().catch(() => {});
   } catch (e) { toast('Failed to load clip', true); console.error(e); }
@@ -1428,7 +1470,7 @@ async function loadStatus() {
 
     // AI Analysis status card
     if (aiData && aiData.enabled) {
-      const provNames = {ollama:'Ollama',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)'};
+      const provNames = {ollama:'Ollama (Local)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)'};
       const prov = aiData.provider || 'ollama';
       const provLabel = provNames[prov] || prov;
       const online = aiData.ai_online;
@@ -1653,6 +1695,142 @@ setInterval(() => {
   }
 }, 60000);
 
+// ── Per-clip AI analysis panel ────────────────────────────
+function toggleAIPanel() {
+  const hdr = $('ai-panel-hdr');
+  const body = $('ai-panel-body');
+  if (!hdr || !body) return;
+  const isOpen = body.classList.contains('open');
+  hdr.classList.toggle('open', !isOpen);
+  body.classList.toggle('open', !isOpen);
+  if (!isOpen && !body.dataset.loaded) {
+    body.dataset.loaded = '1';
+    loadClipAIResult(currentClipId);
+  }
+}
+
+async function loadClipAIResult(clipId) {
+  if (!clipId) return;
+  const content = $('ai-panel-content');
+  if (!content) return;
+  content.innerHTML = '<span style="color:var(--muted);font-size:.8rem">Loading…</span>';
+  try {
+    const r = await api('/api/ai/results/' + clipId);
+    if (!r) {
+      content.innerHTML =
+        '<div style="color:var(--muted);font-size:.8rem;margin-bottom:.45rem">Not analyzed yet</div>' +
+        '<button class="btn sm" onclick="analyzeClipNow(\'' + clipId + '\')">🔬 Analyze Now</button>';
+      const badge = $('ai-panel-badge');
+      if (badge) { badge.textContent = ''; badge.style.color = ''; }
+      return;
+    }
+    const conf = Math.round((r.confidence || 0) * 100);
+    const isSusp = r.is_suspicious;
+    const badge = $('ai-panel-badge');
+    if (badge) {
+      badge.textContent = isSusp ? ' ⚠' : ' ✓';
+      badge.style.color = isSusp ? 'var(--danger)' : 'var(--success)';
+    }
+    const statusBadge = isSusp
+      ? '<span class="ai-badge-suspicious">⚠ Suspicious</span>'
+      : '<span class="ai-badge-clean">✓ Clear</span>';
+    const confColor = isSusp ? 'var(--danger)' : 'var(--success)';
+    content.innerHTML =
+      '<div class="ai-result-box">' +
+        '<div style="display:flex;align-items:center;gap:.55rem;margin-bottom:.4rem">' +
+          statusBadge +
+          '<span style="color:' + confColor + ';font-weight:600">' + conf + '% confidence</span>' +
+        '</div>' +
+        (r.summary ? '<div style="color:var(--text);line-height:1.45;margin-bottom:.4rem">' + _esc(r.summary) + '</div>' : '') +
+        '<div style="color:var(--muted);font-size:.74rem;margin-bottom:.4rem">' +
+          'Model: ' + _esc(r.model || '—') +
+          (r.analyzed_at ? ' &nbsp;·&nbsp; ' + new Date(r.analyzed_at).toLocaleString() : '') +
+          (r.frame_count ? ' &nbsp;·&nbsp; ' + r.frame_count + ' frame(s)' : '') +
+        '</div>' +
+        '<div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">' +
+          '<button class="btn sm ghost" onclick="analyzeClipNow(\'' + clipId + '\')">↺ Re-analyze</button>' +
+          '<button class="btn sm ghost" id="ai-raw-toggle-btn" onclick="toggleRawResponse()">📄 Full response</button>' +
+        '</div>' +
+        '<div id="ai-raw-response" style="display:none;margin-top:.4rem;font-size:.73rem;font-family:monospace;' +
+             'background:var(--card2);border-radius:4px;padding:.4rem .5rem;white-space:pre-wrap;' +
+             'color:var(--muted);max-height:120px;overflow-y:auto">' +
+          _esc(r.response_text || '') +
+        '</div>' +
+      '</div>';
+  } catch(e) {
+    const content2 = $('ai-panel-content');
+    if (content2) content2.innerHTML = '<span style="color:var(--danger);font-size:.8rem">Failed to load analysis</span>';
+  }
+}
+
+function toggleRawResponse() {
+  const el = $('ai-raw-response');
+  const btn = $('ai-raw-toggle-btn');
+  if (!el) return;
+  const hidden = el.style.display === 'none';
+  el.style.display = hidden ? 'block' : 'none';
+  if (btn) btn.textContent = hidden ? '📄 Hide response' : '📄 Full response';
+}
+
+async function analyzeClipNow(clipId) {
+  const content = $('ai-panel-content');
+  if (content) content.innerHTML = '<span style="color:var(--muted);font-size:.8rem">⏳ Analyzing… (may take 30–120 s)</span>';
+  try {
+    await api('/api/ai/analyze/' + clipId, { method: 'POST' });
+    const body = $('ai-panel-body');
+    if (body) delete body.dataset.loaded;
+    await loadClipAIResult(clipId);
+    toast('AI analysis complete');
+  } catch(e) {
+    if (content) content.innerHTML = '<span style="color:var(--danger);font-size:.8rem">Analysis failed — check AI connection on the AI tab</span>';
+    toast('Analysis failed', true);
+  }
+}
+
+// ── AI tab: test analysis ──────────────────────────────────
+async function runAITest() {
+  const btn = $('ai-test-btn');
+  const resultEl = $('ai-test-result');
+  if (!btn || !resultEl) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Testing…';
+  resultEl.style.display = 'block';
+  resultEl.innerHTML = '<span style="color:var(--muted);font-size:.8rem">Fetching a recent clip…</span>';
+  try {
+    const clips = await api('/api/clips?limit=1&sort=newest');
+    if (!clips || !clips.length) {
+      resultEl.innerHTML = '<span style="color:var(--warn);font-size:.8rem">No clips in the library yet. Download a clip first, then run the test.</span>';
+      return;
+    }
+    const clip = clips[0];
+    resultEl.innerHTML = '<span style="color:var(--muted);font-size:.8rem">Analyzing ' + _esc(clip.camera) + ' clip… (may take a minute)</span>';
+    const r = await api('/api/ai/analyze/' + clip.id, { method: 'POST' });
+    const conf = Math.round((r.confidence || 0) * 100);
+    const resultColor = r.is_suspicious ? 'var(--danger)' : 'var(--success)';
+    const resultLabel = r.is_suspicious ? '⚠ Suspicious' : '✓ Clear';
+    resultEl.innerHTML =
+      '<div style="background:var(--card2);border:1px solid var(--border);border-radius:var(--radius);' +
+           'padding:.6rem .8rem;font-size:.82rem;margin-top:.3rem">' +
+        '<div style="color:var(--success);font-weight:700;margin-bottom:.35rem">✓ AI is working!</div>' +
+        '<div>Camera: <strong>' + _esc(r.camera || clip.camera) + '</strong></div>' +
+        '<div>Result: <span style="color:' + resultColor + ';font-weight:600">' + resultLabel + '</span> (' + conf + '% confidence)</div>' +
+        (r.summary ? '<div style="color:var(--muted);margin-top:.3rem">' + _esc(r.summary) + '</div>' : '') +
+        '<div style="color:var(--muted);font-size:.74rem;margin-top:.3rem">' +
+          'Model: ' + _esc(r.model || '—') +
+          ' &nbsp;·&nbsp; ' + (r.frame_count || 0) + ' frame(s)' +
+          ' &nbsp;·&nbsp; ' + ((r.analysis_duration || 0)).toFixed(1) + 's' +
+        '</div>' +
+      '</div>';
+    toast('Test complete — AI is working ✓');
+  } catch(e) {
+    resultEl.innerHTML = '<span style="color:var(--danger);font-size:.8rem">Test failed — check AI provider settings and connection</span>';
+    toast('AI test failed', true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔬 Test Analysis';
+  }
+}
+
 // ── AI Analysis Tab ──────────────────────────────────────
 let _aiEnabled = false;
 async function loadAIStatus() {
@@ -1664,7 +1842,8 @@ async function loadAIStatus() {
     if (!d.enabled) return;
     const badge = $('ai-status-badge');
     const providerLabels = {
-      ollama: 'Ollama',
+      ollama: 'Ollama (Local/LAN)',
+      ollama_cloud: 'Ollama Cloud',
       moondream_cloud: 'Moondream Cloud',
       moondream_local: 'Moondream Local (0.5B)',
     };
@@ -1679,7 +1858,7 @@ async function loadAIStatus() {
     $('ai-provider-label').textContent = providerLabels[provider] || provider;
     $('ai-model-name').textContent = d.model || '—';
     const modelPicker = $('ai-model-picker');
-    if (modelPicker) modelPicker.style.display = provider === 'ollama' ? 'flex' : 'none';
+    if (modelPicker) modelPicker.style.display = (provider === 'ollama' || provider === 'ollama_cloud') ? 'flex' : 'none';
     // Moondream local: show install section and poll install state
     const mdSection = $('ai-moondream-local-section');
     if (mdSection) mdSection.style.display = provider === 'moondream_local' ? 'block' : 'none';
@@ -1823,6 +2002,8 @@ async function _startMoondreamInstall() {
 
 $('ai-install-moondream-btn').addEventListener('click', _startMoondreamInstall);
 $('ai-retry-moondream-btn').addEventListener('click', _startMoondreamInstall);
+$('ai-panel-hdr').addEventListener('click', () => toggleAIPanel());
+$('ai-test-btn').addEventListener('click', () => runAITest());
 
 // Load AI tab when selected
 document.querySelectorAll('.nav-tab').forEach(t => {
@@ -1853,7 +2034,8 @@ function _fmtNum(n) {
 }
 
 const _PROVIDER_NOTES = {
-  ollama: 'Ollama runs locally — no cloud costs. Token counts are extracted from the Ollama API response (<code>prompt_eval_count</code> / <code>eval_count</code>). Some cached responses may show 0 prompt tokens.',
+  ollama: 'Ollama (Local/LAN) runs on your own hardware or another device on your network — no cloud costs. Token counts are extracted from the Ollama API response (<code>prompt_eval_count</code> / <code>eval_count</code>). Some cached responses may show 0 prompt tokens.',
+  ollama_cloud: 'Ollama Cloud (api.ollama.com) is a hosted Ollama service. Token counts are extracted from the API response. API usage may incur costs — check your Ollama Cloud account dashboard.',
   moondream_cloud: 'Moondream Cloud bills per API request. Each clip analysis sends one request (the middle frame). Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for current pricing and your account usage.',
   moondream_local: 'Moondream Local runs entirely on-device — no cloud costs and no token tracking. The analysis count shows how many clips have been processed.',
 };
@@ -1874,7 +2056,7 @@ async function loadAIUsage() {
     $('usage-completion-tokens').textContent = _fmtNum(completionTokens);
 
     const provider = d.provider || '';
-    const provLabels = {ollama:'Ollama',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)'};
+    const provLabels = {ollama:'Ollama (Local/LAN)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)'};
     $('usage-provider-name').textContent = provLabels[provider] || (provider || '—');
     $('usage-model-name').textContent = d.model || '—';
 
@@ -1886,8 +2068,8 @@ async function loadAIUsage() {
       noteEl.style.display = 'none';
     }
 
-    // Hide token stat boxes for providers that don't produce token counts
-    const showTokens = provider !== 'moondream_local' && provider !== 'moondream_cloud';
+    // Ollama (local + cloud) report token counts; moondream variants do not
+    const showTokens = provider === 'ollama' || provider === 'ollama_cloud';
     document.getElementById('usage-total-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
     document.getElementById('usage-prompt-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
     document.getElementById('usage-completion-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
@@ -2001,6 +2183,7 @@ class MediaServer:
         app.router.add_get("/api/ai/results/{clip_id}", self._handle_ai_clip_result)
         app.router.add_get("/api/ai/suspicious", self._handle_ai_suspicious)
         app.router.add_post("/api/ai/analyze/{clip_id}", self._handle_ai_analyze_now)
+        app.router.add_post("/api/ai/test", self._handle_ai_test)
         app.router.add_get(
             "/api/ai/moondream/install-status", self._handle_moondream_install_status
         )
@@ -2316,6 +2499,33 @@ class MediaServer:
         )
         await self._db.add_analysis_result(result.to_dict())
         return web.json_response(result.to_dict())
+
+    async def _handle_ai_test(self, _request: web.Request) -> web.Response:
+        """Test AI by analyzing the most recently downloaded clip."""
+        if not self._analyzer:
+            return web.json_response(
+                {"error": "AI analysis not configured"}, status=400
+            )
+        clips = await self._db.get_clips(limit=1, sort="newest")
+        if not clips:
+            return web.json_response(
+                {"error": "No clips in library — download a clip first"},
+                status=404,
+            )
+        clip = clips[0]
+        try:
+            result = await self._analyzer.analyze_clip(
+                clip_path=clip["file_path"],
+                clip_id=clip["id"],
+                camera=clip["camera"],
+            )
+            await self._db.add_analysis_result(result.to_dict())
+            return web.json_response(
+                {"success": True, "clip_id": clip["id"], **result.to_dict()}
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("AI test analysis failed: %s", exc)
+            return web.json_response({"error": str(exc)}, status=500)
 
     async def _handle_moondream_install_status(
         self, _request: web.Request

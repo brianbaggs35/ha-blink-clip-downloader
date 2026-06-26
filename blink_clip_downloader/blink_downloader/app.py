@@ -92,6 +92,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 suspicious_keywords=config.ai_suspicious_keywords,
                 ollama_url=config.ollama_url,
                 ollama_model=config.ollama_model,
+                ollama_cloud_api_key=config.ollama_cloud_api_key,
                 moondream_api_key=config.moondream_api_key,
             )
             if self._analyzer is not None:
@@ -256,9 +257,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         if self._analysis_queue:
             _LOGGER.info(
-                "  AI analysis    : on (model=%s, url=%s)",
-                self._config.ollama_model,
-                self._config.ollama_url,
+                "  AI analysis    : on (provider=%s, model=%s)",
+                self._config.ai_provider,
+                self._config.ollama_model or "(auto)",
             )
             self._bg_tasks.append(
                 asyncio.create_task(self._analysis_queue.start(), name="analysis_queue")
