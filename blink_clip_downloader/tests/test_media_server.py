@@ -697,6 +697,46 @@ async def test_ai_status_disabled(client: TestClient) -> None:
     assert data["enabled"] is False
 
 
+async def test_ai_usage_disabled(client: TestClient) -> None:
+    resp = await client.get("/api/ai/usage")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["enabled"] is False
+    assert "total_analyses" in data
+    assert "by_model" in data
+
+
+async def test_ai_usage_returns_token_stats(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("u1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "u1",
+            "camera": "Front Door",
+            "model": "llava:7b",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "tokens_prompt": 120,
+            "tokens_completion": 40,
+        }
+    )
+    resp = await client.get("/api/ai/usage")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["total_analyses"] == 1
+    assert data["total_tokens_prompt"] == 120
+    assert data["total_tokens_completion"] == 40
+    assert data["total_tokens"] == 160
+    assert len(data["by_model"]) == 1
+    assert data["by_model"][0]["model"] == "llava:7b"
+
+
 async def test_ai_models_disabled(client: TestClient) -> None:
     resp = await client.get("/api/ai/models")
     assert resp.status == 200

@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     frame_count       INTEGER DEFAULT 0,
     analysis_duration REAL    DEFAULT 0.0,
     analyzed_at       TEXT    NOT NULL,
+    tokens_prompt     INTEGER DEFAULT 0,
+    tokens_completion INTEGER DEFAULT 0,
     FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
@@ -95,7 +97,25 @@ class ClipDatabase:
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
+        await self._migrate()
         _LOGGER.debug("Clip database opened at %s", self._path)
+
+    async def _migrate(self) -> None:
+        """Apply incremental schema migrations for existing databases."""
+        assert self._db is not None
+        new_columns = [
+            ("analysis_results", "tokens_prompt", "INTEGER DEFAULT 0"),
+            ("analysis_results", "tokens_completion", "INTEGER DEFAULT 0"),
+        ]
+        for table, col, definition in new_columns:
+            try:
+                await self._db.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {col} {definition}"
+                )
+                await self._db.commit()
+                _LOGGER.debug("Migrated: added %s.%s", table, col)
+            except Exception:  # noqa: BLE001
+                pass  # Column already exists — safe to ignore
 
     async def close(self) -> None:
         if self._db:
@@ -414,8 +434,9 @@ class ClipDatabase:
             """
             INSERT INTO analysis_results
               (clip_id, camera, model, response_text, is_suspicious,
-               confidence, summary, frame_count, analysis_duration, analyzed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               confidence, summary, frame_count, analysis_duration, analyzed_at,
+               tokens_prompt, tokens_completion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(result.get("clip_id") or ""),
@@ -428,6 +449,8 @@ class ClipDatabase:
                 int(result.get("frame_count") or 0),
                 float(result.get("analysis_duration") or 0.0),
                 str(result.get("analyzed_at") or ""),
+                int(result.get("tokens_prompt") or 0),
+                int(result.get("tokens_completion") or 0),
             ),
         )
         await self._db.commit()
@@ -492,6 +515,39 @@ class ClipDatabase:
             row = await cur.fetchone()
         results["last_analysis"] = row[0] if row else None
         return results
+
+    async def get_token_usage_stats(self) -> dict[str, Any]:
+        """Return per-model token usage totals for the AI Usage tab."""
+        if self._db is None:
+            return {"total_analyses": 0, "total_tokens_prompt": 0,
+                    "total_tokens_completion": 0, "total_tokens": 0, "by_model": []}
+
+        async with self._db.execute(
+            """
+            SELECT
+                model,
+                COUNT(*)                             AS analyses,
+                COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
+                COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
+            FROM analysis_results
+            GROUP BY model
+            ORDER BY analyses DESC
+            """
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        by_model = [dict(r) for r in rows]
+        total_prompt = sum(int(m["tokens_prompt"]) for m in by_model)
+        total_completion = sum(int(m["tokens_completion"]) for m in by_model)
+        total_analyses = sum(int(m["analyses"]) for m in by_model)
+
+        return {
+            "total_analyses": total_analyses,
+            "total_tokens_prompt": total_prompt,
+            "total_tokens_completion": total_completion,
+            "total_tokens": total_prompt + total_completion,
+            "by_model": by_model,
+        }
 
     # ------------------------------------------------------------------
     # Analysis Queue

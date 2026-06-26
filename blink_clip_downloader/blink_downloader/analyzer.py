@@ -119,6 +119,8 @@ class AnalysisResult:
     frame_count: int
     analysis_duration: float
     analyzed_at: str
+    tokens_prompt: int = 0
+    tokens_completion: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -132,6 +134,8 @@ class AnalysisResult:
             "frame_count": self.frame_count,
             "analysis_duration": self.analysis_duration,
             "analyzed_at": self.analyzed_at,
+            "tokens_prompt": self.tokens_prompt,
+            "tokens_completion": self.tokens_completion,
         }
 
 
@@ -151,6 +155,10 @@ class BaseAnalyzer(abc.ABC):
         self._max_frames = max_frames
         self._frame_interval = frame_interval
         self._suspicious_keywords = [k.lower() for k in (suspicious_keywords or [])]
+        # Token counts set by _call_model() implementations that support them.
+        # Reset to 0 at the start of each analyze_clip() call.
+        self._last_prompt_tokens: int = 0
+        self._last_completion_tokens: int = 0
 
     # ------------------------------------------------------------------
     # Abstract interface
@@ -191,6 +199,8 @@ class BaseAnalyzer(abc.ABC):
         """Full pipeline: extract frames → call AI → parse response."""
         from datetime import datetime, timezone
 
+        self._last_prompt_tokens = 0
+        self._last_completion_tokens = 0
         start = time.monotonic()
         frames = await self.extract_frames(clip_path)
 
@@ -223,6 +233,8 @@ class BaseAnalyzer(abc.ABC):
             frame_count=len(frames),
             analysis_duration=time.monotonic() - start,
             analyzed_at=datetime.now(timezone.utc).isoformat(),
+            tokens_prompt=self._last_prompt_tokens,
+            tokens_completion=self._last_completion_tokens,
         )
 
     # ------------------------------------------------------------------
@@ -461,6 +473,8 @@ class ClipAnalyzer(BaseAnalyzer):
                     _LOGGER.warning("Ollama returned HTTP %d", resp.status)
                     return ""
                 data = await resp.json()
+                self._last_prompt_tokens = int(data.get("prompt_eval_count") or 0)
+                self._last_completion_tokens = int(data.get("eval_count") or 0)
                 return str(data.get("response", ""))
         except asyncio.TimeoutError:
             _LOGGER.warning("Ollama request timed out")
