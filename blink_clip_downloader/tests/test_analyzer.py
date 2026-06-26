@@ -701,5 +701,95 @@ def test_is_moondream_installed_when_missing(monkeypatch: pytest.MonkeyPatch) ->
         "builtins.__import__", side_effect=ImportError("no module named moondream")
     ):
         result = is_moondream_installed()
-
     assert result is False
+
+
+# ------------------------------------------------------------------
+# Token usage tracking
+# ------------------------------------------------------------------
+
+
+async def test_call_ollama_extracts_token_counts(analyzer: ClipAnalyzer) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(
+        return_value={
+            "response": "All clear",
+            "prompt_eval_count": 128,
+            "eval_count": 64,
+        }
+    )
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+    await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
+    assert analyzer._last_prompt_tokens == 128
+    assert analyzer._last_completion_tokens == 64
+
+
+async def test_call_ollama_missing_token_counts(analyzer: ClipAnalyzer) -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": "All clear"})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+    await analyzer.call_ollama([_FAKE_JPEG], "Analyze")
+
+    assert analyzer._last_prompt_tokens == 0
+    assert analyzer._last_completion_tokens == 0
+
+
+async def test_analyze_clip_includes_token_counts(analyzer: ClipAnalyzer) -> None:
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_FAKE_JPEG, b""))
+    mock_proc.returncode = 0
+
+    ollama_response = json.dumps(
+        {"suspicious": False, "confidence": 0.1, "description": "Empty driveway"}
+    )
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(
+        return_value={
+            "response": ollama_response,
+            "prompt_eval_count": 200,
+            "eval_count": 50,
+        }
+    )
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.tokens_prompt == 200
+    assert result.tokens_completion == 50
+    assert result.to_dict()["tokens_prompt"] == 200
+    assert result.to_dict()["tokens_completion"] == 50
+
+
+async def test_moondream_cloud_tokens_are_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_FAKE_JPEG, b""))
+    mock_proc.returncode = 0
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"answer": "All clear"})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    a._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Camera")
+
+    assert result.tokens_prompt == 0
+    assert result.tokens_completion == 0

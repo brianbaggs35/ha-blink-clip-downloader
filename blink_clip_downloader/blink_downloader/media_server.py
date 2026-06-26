@@ -343,7 +343,24 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 .act-count{width:28px;text-align:right;color:var(--text);font-weight:600;font-size:.78rem}
 
 /* ── Automations page ─────────────────────────────────── */
-#page-automations,#page-ai{overflow-y:auto;padding:1.5rem}
+#page-automations,#page-ai,#page-usage{overflow-y:auto;padding:1.5rem}
+
+/* ── AI Usage page ────────────────────────────────────── */
+.usage-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));
+            gap:1rem;margin-bottom:1.5rem}
+.usage-stat{background:var(--card);border:1px solid var(--border);
+            border-radius:var(--radius);padding:1.1rem 1.2rem;text-align:center}
+.usage-stat .num{font-size:1.9rem;font-weight:700;color:var(--accent);
+                 line-height:1.15;margin-bottom:.2rem}
+.usage-stat .lbl{font-size:.76rem;color:var(--muted);text-transform:uppercase;
+                 letter-spacing:.07em}
+.usage-table{width:100%;border-collapse:collapse;font-size:.82rem;margin:.4rem 0 1.2rem}
+.usage-table th{background:var(--card2);padding:.4rem .75rem;text-align:left;
+                color:var(--muted);font-size:.73rem;font-weight:700;
+                text-transform:uppercase;letter-spacing:.06em}
+.usage-table td{padding:.4rem .75rem;border-bottom:1px solid var(--border)}
+.usage-table tr:last-child td{border-bottom:none}
+.usage-table tr:hover td{background:var(--card2)}
 .auto-content{max-width:820px;margin:0 auto}
 .auto-content h2{font-size:1.08rem;font-weight:700;margin-bottom:.9rem}
 .auto-content h3{font-size:.9rem;font-weight:600;color:var(--accent);
@@ -387,6 +404,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
   <div class="nav-tabs">
     <button class="nav-tab active" data-tab="library">📁 <span>Library</span></button>
     <button class="nav-tab" data-tab="status">📡 <span>Status</span></button>
+    <button class="nav-tab" data-tab="usage">📊 <span>AI Usage</span></button>
     <button class="nav-tab" data-tab="automations">⚡ <span>Automations</span></button>
     <button class="nav-tab" data-tab="ai">🤖 <span>AI</span></button>
   </div>
@@ -550,6 +568,54 @@ action:
           <code>← →</code> skip 10 s, <code>F</code> fullscreen, <code>M</code> mute,
           <code>↑ ↓</code> prev/next clip.</li>
     </ul>
+  </div>
+</div>
+
+<!-- ── AI Usage ────────────────────────────────────────── -->
+<div class="page" id="page-usage">
+  <div class="auto-content">
+    <h2>AI Token Usage</h2>
+    <div id="usage-disabled-msg" style="display:none">
+      <div class="status-card" style="padding:2rem;text-align:center;color:var(--muted)">
+        <p style="font-size:1.2rem;margin-bottom:.8rem">📊 No AI Usage Data</p>
+        <p>Enable AI analysis in the add-on settings. Usage statistics will appear after the first analysis run.</p>
+      </div>
+    </div>
+    <div id="usage-content">
+      <!-- Summary stats row -->
+      <div class="usage-grid" id="usage-stats-grid">
+        <div class="usage-stat"><div class="num" id="usage-total-analyses">—</div><div class="lbl">Clips Analyzed</div></div>
+        <div class="usage-stat"><div class="num" id="usage-total-tokens">—</div><div class="lbl">Total Tokens</div></div>
+        <div class="usage-stat"><div class="num" id="usage-prompt-tokens">—</div><div class="lbl">Prompt Tokens</div></div>
+        <div class="usage-stat"><div class="num" id="usage-completion-tokens">—</div><div class="lbl">Completion Tokens</div></div>
+      </div>
+
+      <!-- Provider info card -->
+      <div class="status-card" style="margin-bottom:1.2rem" id="usage-provider-card">
+        <h3 style="margin-bottom:.75rem">Current Provider</h3>
+        <div class="status-row"><span class="lbl">Provider</span><span class="val" id="usage-provider-name">—</span></div>
+        <div class="status-row"><span class="lbl">Model</span><span class="val" id="usage-model-name">—</span></div>
+        <div id="usage-provider-note" style="font-size:.8rem;color:var(--muted);margin-top:.6rem;line-height:1.55"></div>
+      </div>
+
+      <!-- Per-model breakdown table -->
+      <h3 style="margin-bottom:.6rem">Per-Model Breakdown</h3>
+      <div id="usage-model-table-wrap">
+        <table class="usage-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th style="text-align:right">Analyses</th>
+              <th style="text-align:right">Prompt Tokens</th>
+              <th style="text-align:right">Completion Tokens</th>
+              <th style="text-align:right">Total Tokens</th>
+            </tr>
+          </thead>
+          <tbody id="usage-model-tbody"></tbody>
+        </table>
+        <p id="usage-no-data" style="display:none;color:var(--muted);padding:1rem;text-align:center">No analysis data yet. Run the AI analysis to see usage statistics.</p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1762,6 +1828,7 @@ $('ai-retry-moondream-btn').addEventListener('click', _startMoondreamInstall);
 document.querySelectorAll('.nav-tab').forEach(t => {
   t.addEventListener('click', () => {
     if (t.dataset.tab === 'ai') { loadAIStatus(); loadSuspiciousFeed(); }
+    if (t.dataset.tab === 'usage') { loadAIUsage(); }
   });
 });
 
@@ -1771,7 +1838,85 @@ setInterval(() => {
       document.querySelector('[data-tab="ai"]').classList.contains('active')) {
     loadAIStatus();
   }
+  if (document.querySelector('[data-tab="usage"]') &&
+      document.querySelector('[data-tab="usage"]').classList.contains('active')) {
+    loadAIUsage();
+  }
 }, 10000);
+
+// ── AI Usage Tab ─────────────────────────────────────────
+function _fmtNum(n) {
+  if (n == null || n === 0) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+const _PROVIDER_NOTES = {
+  ollama: 'Ollama runs locally — no cloud costs. Token counts are extracted from the Ollama API response (<code>prompt_eval_count</code> / <code>eval_count</code>). Some cached responses may show 0 prompt tokens.',
+  moondream_cloud: 'Moondream Cloud bills per API request. Each clip analysis sends one request (the middle frame). Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for current pricing and your account usage.',
+  moondream_local: 'Moondream Local runs entirely on-device — no cloud costs and no token tracking. The analysis count shows how many clips have been processed.',
+};
+
+async function loadAIUsage() {
+  try {
+    const d = await api('/api/ai/usage');
+
+    const totalAnalyses = d.total_analyses || 0;
+    const totalTokens = d.total_tokens || 0;
+    const promptTokens = d.total_tokens_prompt || 0;
+    const completionTokens = d.total_tokens_completion || 0;
+    const byModel = d.by_model || [];
+
+    $('usage-total-analyses').textContent = _fmtNum(totalAnalyses);
+    $('usage-total-tokens').textContent = _fmtNum(totalTokens);
+    $('usage-prompt-tokens').textContent = _fmtNum(promptTokens);
+    $('usage-completion-tokens').textContent = _fmtNum(completionTokens);
+
+    const provider = d.provider || '';
+    const provLabels = {ollama:'Ollama',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)'};
+    $('usage-provider-name').textContent = provLabels[provider] || (provider || '—');
+    $('usage-model-name').textContent = d.model || '—';
+
+    const noteEl = $('usage-provider-note');
+    if (_PROVIDER_NOTES[provider]) {
+      noteEl.innerHTML = _PROVIDER_NOTES[provider];
+      noteEl.style.display = 'block';
+    } else {
+      noteEl.style.display = 'none';
+    }
+
+    // Hide token stat boxes for providers that don't produce token counts
+    const showTokens = provider !== 'moondream_local' && provider !== 'moondream_cloud';
+    document.getElementById('usage-total-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
+    document.getElementById('usage-prompt-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
+    document.getElementById('usage-completion-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
+
+    // Populate model breakdown table
+    const tbody = $('usage-model-tbody');
+    const noData = $('usage-no-data');
+    if (byModel.length === 0) {
+      tbody.innerHTML = '';
+      noData.style.display = '';
+    } else {
+      noData.style.display = 'none';
+      tbody.innerHTML = byModel.map(m => {
+        const tp = parseInt(m.tokens_prompt || 0);
+        const tc = parseInt(m.tokens_completion || 0);
+        const tt = tp + tc;
+        const tokensHtml = showTokens
+          ? `<td style="text-align:right">${_fmtNum(tp)}</td><td style="text-align:right">${_fmtNum(tc)}</td><td style="text-align:right">${_fmtNum(tt)}</td>`
+          : `<td style="text-align:right;color:var(--muted)">N/A</td><td style="text-align:right;color:var(--muted)">N/A</td><td style="text-align:right;color:var(--muted)">N/A</td>`;
+        return `<tr><td>${_esc(m.model||'—')}</td><td style="text-align:right">${_fmtNum(m.analyses||0)}</td>${tokensHtml}</tr>`;
+      }).join('');
+    }
+
+    $('usage-disabled-msg').style.display = (!d.enabled && totalAnalyses === 0) ? 'block' : 'none';
+    $('usage-content').style.display = '';
+  } catch(e) {
+    console.error('AI usage error', e);
+  }
+}
 </script>
 </body>
 </html>"""
@@ -1849,6 +1994,7 @@ class MediaServer:
         app.router.add_post("/api/auth/2fa", self._handle_two_fa)
         # AI Analysis endpoints
         app.router.add_get("/api/ai/status", self._handle_ai_status)
+        app.router.add_get("/api/ai/usage", self._handle_ai_usage)
         app.router.add_get("/api/ai/models", self._handle_ai_models)
         app.router.add_get("/api/ai/queue", self._handle_ai_queue)
         app.router.add_get("/api/ai/results", self._handle_ai_results)
@@ -2097,6 +2243,17 @@ class MediaServer:
         if self._analysis_queue:
             data["queue"] = await self._analysis_queue.get_queue_status()
         data["analysis_stats"] = await self._db.get_analysis_stats()
+        return web.json_response(data)
+
+    async def _handle_ai_usage(self, _request: web.Request) -> web.Response:
+        enabled = self._analyzer is not None
+        data: dict = {"enabled": enabled}
+        if enabled:
+            assert self._analyzer is not None
+            data["provider"] = self._analyzer.provider_name
+            data["model"] = self._analyzer.model_name()
+        usage = await self._db.get_token_usage_stats()
+        data.update(usage)
         return web.json_response(data)
 
     async def _handle_ai_models(self, _request: web.Request) -> web.Response:

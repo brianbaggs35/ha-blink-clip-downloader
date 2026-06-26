@@ -661,3 +661,92 @@ async def test_update_queue_status_without_init() -> None:
     """update_queue_status() silently returns when db is not initialised (line 529)."""
     d = ClipDatabase(Path("/tmp/neveropened_uq.db"))
     await d.update_queue_status("c1", "completed")  # must not raise
+
+
+# ------------------------------------------------------------------
+# Token usage stats
+# ------------------------------------------------------------------
+
+
+def _make_analysis_tokens(
+    clip_id: str = "c1",
+    model: str = "llava:7b",
+    tokens_prompt: int = 0,
+    tokens_completion: int = 0,
+) -> dict:
+    from datetime import datetime, timezone
+
+    return {
+        "clip_id": clip_id,
+        "camera": "Front Door",
+        "model": model,
+        "response_text": "",
+        "is_suspicious": False,
+        "confidence": 0.1,
+        "summary": "ok",
+        "frame_count": 1,
+        "analysis_duration": 0.5,
+        "analyzed_at": datetime.now(timezone.utc).isoformat(),
+        "tokens_prompt": tokens_prompt,
+        "tokens_completion": tokens_completion,
+    }
+
+
+async def test_get_token_usage_stats_empty(db: ClipDatabase) -> None:
+    stats = await db.get_token_usage_stats()
+    assert stats["total_analyses"] == 0
+    assert stats["total_tokens_prompt"] == 0
+    assert stats["total_tokens_completion"] == 0
+    assert stats["total_tokens"] == 0
+    assert stats["by_model"] == []
+
+
+async def test_get_token_usage_stats_with_data(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_clip(_make_clip("c3"))
+
+    await db.add_analysis_result(_make_analysis_tokens("c1", "llava:7b", 100, 50))
+    await db.add_analysis_result(_make_analysis_tokens("c2", "llava:7b", 200, 80))
+    await db.add_analysis_result(_make_analysis_tokens("c3", "moondream:latest", 60, 30))
+
+    stats = await db.get_token_usage_stats()
+
+    assert stats["total_analyses"] == 3
+    assert stats["total_tokens_prompt"] == 360
+    assert stats["total_tokens_completion"] == 160
+    assert stats["total_tokens"] == 520
+    assert len(stats["by_model"]) == 2
+
+    llava = next(m for m in stats["by_model"] if m["model"] == "llava:7b")
+    assert llava["analyses"] == 2
+    assert llava["tokens_prompt"] == 300
+    assert llava["tokens_completion"] == 130
+
+
+async def test_get_token_usage_stats_without_init() -> None:
+    d = ClipDatabase(Path("/tmp/neveropened_tu.db"))
+    stats = await d.get_token_usage_stats()
+    assert stats["total_analyses"] == 0
+    assert stats["by_model"] == []
+
+
+async def test_analysis_result_stores_tokens(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis_tokens("c1", tokens_prompt=150, tokens_completion=75)
+    )
+    result = await db.get_analysis_for_clip("c1")
+    assert result is not None
+    assert result["tokens_prompt"] == 150
+    assert result["tokens_completion"] == 75
+
+
+async def test_migrate_adds_columns_idempotent(tmp_path: Path) -> None:
+    """Running init() twice does not raise errors (migration is idempotent)."""
+    d = ClipDatabase(tmp_path / "migrate_test.db")
+    await d.init()
+    await d.close()
+    d2 = ClipDatabase(tmp_path / "migrate_test.db")
+    await d2.init()  # should not raise
+    await d2.close()

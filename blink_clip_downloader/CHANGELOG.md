@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.8.2
+
+### New features
+
+- **AI Usage tab.** A new **📊 AI Usage** tab sits between Status and Automations
+  and shows per-provider token usage statistics:
+  - **Ollama** — total prompt tokens, completion tokens, and a per-model breakdown
+    (extracted from the Ollama API's `prompt_eval_count` / `eval_count` fields).
+  - **Moondream Cloud** — clip analysis count with a note about billing on
+    moondream.ai (the Cloud API does not expose token counts).
+  - **Moondream Local** — inference count only (no token tracking for on-device
+    inference).
+
+- **Token usage persisted to the database.** `tokens_prompt` and `tokens_completion`
+  columns are added to the `analysis_results` table.  Existing databases are
+  migrated automatically on start-up (non-destructive `ALTER TABLE` with a
+  safe-ignore guard for the already-migrated case).
+
+- **`/api/ai/usage` REST endpoint.** Returns per-model token totals and the
+  current provider/model — powers the new UI tab and is available for
+  external dashboards.
+
+### Improvements
+
+- Verified **blinkpy 0.25.6** 2FA handling: `blinkpy_compat.py` is correctly
+  retained as a belt-and-suspenders patch.  `requirements.txt` pins
+  `blinkpy>=0.25.6` which includes the native HTTP 202 fix (PR #1231); the
+  compat patch is idempotent and harmless when running on the fixed version.
+
+- Confirmed AI analysis disabled mode works correctly: all UI tabs render
+  without errors when `ai_analysis_enabled: false`, and the AI Usage tab
+  shows a helpful "no data" message until the first analysis run.
+
 ## 2.8.1
 
 ### Bug fixes
