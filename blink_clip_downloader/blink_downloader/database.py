@@ -519,8 +519,13 @@ class ClipDatabase:
     async def get_token_usage_stats(self) -> dict[str, Any]:
         """Return per-model token usage totals for the AI Usage tab."""
         if self._db is None:
-            return {"total_analyses": 0, "total_tokens_prompt": 0,
-                    "total_tokens_completion": 0, "total_tokens": 0, "by_model": []}
+            return {
+                "total_analyses": 0,
+                "total_tokens_prompt": 0,
+                "total_tokens_completion": 0,
+                "total_tokens": 0,
+                "by_model": [],
+            }
 
         async with self._db.execute(
             """
