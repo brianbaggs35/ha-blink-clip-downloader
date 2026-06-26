@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.8.4
+
+### Fixes
+
+- Correct version strings across all package files so the Docker image is
+  tagged and published correctly.
+
 ## 2.8.3
 
 ### New features
