@@ -96,6 +96,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 moondream_api_key=config.moondream_api_key,
                 anthropic_api_key=config.anthropic_api_key,
                 anthropic_model=config.anthropic_model,
+                openai_api_key=config.openai_api_key,
+                openai_model=config.openai_model,
             )
             if self._analyzer is not None:
                 self._alert_dispatcher = NotificationDispatcher(

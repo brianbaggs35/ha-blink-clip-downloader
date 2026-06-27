@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v2.8.6"
+version: "v2.8.7"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -149,6 +149,7 @@ options:
   #   "moondream_cloud" – Moondream Cloud API (needs moondream_api_key)
   #   "moondream_local" – Moondream 0.5B model downloaded and run on this device
   #   "anthropic"       – Anthropic Claude API (needs anthropic_api_key)
+  #   "openai"          – OpenAI API, e.g. GPT-4o (needs openai_api_key)
   ai_analysis_enabled: false
   ai_provider: "ollama"
   # [Ollama / Ollama Cloud] URL of your Ollama server, e.g. http://192.168.1.10:11434
@@ -165,6 +166,11 @@ options:
   # [Anthropic] Claude model to use. Use "Fetch Models" in the web UI to see
   # available models. claude-haiku-4-5 is the most cost-effective option.
   anthropic_model: "claude-haiku-4-5"
+  # [OpenAI] API key from platform.openai.com. Keep this secret.
+  openai_api_key: ""
+  # [OpenAI] GPT model to use. Use "Fetch Models" in the web UI to see available
+  # models. gpt-4o-mini is the most cost-effective vision option.
+  openai_model: "gpt-4o-mini"
   # Prompt sent to the AI for each clip. Must ask for JSON with
   # suspicious/confidence/description keys.
   ai_prompt: >-
@@ -262,13 +268,15 @@ schema:
   archive_after_days: "int(1,365)"
   download_local_storage: "bool"
   ai_analysis_enabled: "bool"
-  ai_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic)"
+  ai_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic|openai)"
   ollama_url: "str?"
   ollama_model: "str?"
   ollama_cloud_api_key: "password?"
   moondream_api_key: "password?"
   anthropic_api_key: "password?"
   anthropic_model: "str?"
+  openai_api_key: "password?"
+  openai_model: "str?"
   ai_prompt: "str?"
   ai_car_description: "str?"
   ai_max_frames: "int(1,10)"

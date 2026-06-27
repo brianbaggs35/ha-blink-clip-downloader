@@ -14,10 +14,13 @@ from blink_downloader.analyzer import (
     MoondreamCloudAnalyzer,
     MoondreamLocalAnalyzer,
     OllamaCloudAnalyzer,
+    OpenAIAnalyzer,
     _ANTHROPIC_FALLBACK_MODELS,
+    _OPENAI_FALLBACK_MODELS,
     _vision_model_score,
     create_analyzer,
     is_moondream_installed,
+    is_openai_vision_model,
     is_vision_model,
 )
 
@@ -1656,3 +1659,722 @@ async def test_anthropic_call_model_generic_exception() -> None:
     a._client = mock_mod.AsyncAnthropic.return_value
     with patch.dict(sys.modules, {"anthropic": mock_mod}):
         assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+# ------------------------------------------------------------------
+# OpenAI helpers
+# ------------------------------------------------------------------
+
+
+class _MockOpenAIAPIStatusError(Exception):
+    """Minimal stand-in for openai.APIStatusError."""
+
+    def __init__(
+        self, msg: str = "", status_code: int = 500, message: str = "err"
+    ) -> None:
+        super().__init__(msg)
+        self.status_code = status_code
+        self.message = message
+
+
+def _make_openai_response(
+    text: str = '{"suspicious": false, "confidence": 0.1, "description": "Empty scene"}',
+    prompt_tokens: int = 150,
+    completion_tokens: int = 45,
+) -> MagicMock:
+    """Return a mock openai chat.completions.create() response."""
+    message = MagicMock()
+    message.content = text
+
+    choice = MagicMock()
+    choice.message = message
+
+    usage = MagicMock()
+    usage.prompt_tokens = prompt_tokens
+    usage.completion_tokens = completion_tokens
+
+    resp = MagicMock()
+    resp.choices = [choice]
+    resp.usage = usage
+    return resp
+
+
+def _make_openai_module(
+    response: MagicMock | None = None,
+    auth_error: bool = False,
+    permission_error: bool = False,
+    rate_limit_error: bool = False,
+    api_status_error: bool = False,
+    models_data: list | None = None,
+    models_auth_error: bool = False,
+    models_exception: Exception | None = None,
+) -> MagicMock:
+    """Return a mock openai module with AsyncOpenAI client."""
+    mod = MagicMock()
+
+    # Error classes
+    mod.AuthenticationError = type("AuthenticationError", (Exception,), {})
+    mod.PermissionDeniedError = type("PermissionDeniedError", (Exception,), {})
+    mod.RateLimitError = type("RateLimitError", (Exception,), {})
+    mod.BadRequestError = type(
+        "BadRequestError", (Exception,), {"message": "bad request"}
+    )
+    mod.APIStatusError = _MockOpenAIAPIStatusError
+    mod.APIConnectionError = type("APIConnectionError", (Exception,), {})
+
+    # AsyncOpenAI client
+    client = MagicMock()
+    mod.AsyncOpenAI.return_value = client
+
+    # chat.completions.create
+    if auth_error:
+        client.chat.completions.create = AsyncMock(
+            side_effect=mod.AuthenticationError("bad key")
+        )
+    elif permission_error:
+        client.chat.completions.create = AsyncMock(
+            side_effect=mod.PermissionDeniedError("no perm")
+        )
+    elif rate_limit_error:
+        client.chat.completions.create = AsyncMock(
+            side_effect=mod.RateLimitError("rate limited")
+        )
+    elif api_status_error:
+        err = _MockOpenAIAPIStatusError(
+            "api error", status_code=500, message="server error"
+        )
+        client.chat.completions.create = AsyncMock(side_effect=err)
+    elif response is not None:
+        client.chat.completions.create = AsyncMock(return_value=response)
+
+    # models.list
+    if models_auth_error:
+        client.models.list = AsyncMock(side_effect=mod.AuthenticationError("bad key"))
+    elif models_exception is not None:
+        client.models.list = AsyncMock(side_effect=models_exception)
+    elif models_data is not None:
+        page = MagicMock()
+        page.data = models_data
+        client.models.list = AsyncMock(return_value=page)
+    else:
+        page = MagicMock()
+        page.data = []
+        client.models.list = AsyncMock(return_value=page)
+
+    # close
+    client.close = AsyncMock()
+
+    return mod
+
+
+# ------------------------------------------------------------------
+# OpenAIAnalyzer — basic attrs
+# ------------------------------------------------------------------
+
+
+def test_openai_provider_name() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    assert a.provider_name == "openai"
+    assert a.model_name() == "gpt-4o-mini"
+
+
+def test_openai_model_default() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="", prompt="test")
+    assert a.model_name() == "gpt-4o-mini"
+
+
+def test_openai_model_pricing_gpt4o_mini() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 0.15
+    assert out == 0.60
+
+
+def test_openai_model_pricing_gpt4o() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 2.50
+    assert out == 10.00
+
+
+def test_openai_model_pricing_gpt4_turbo() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4-turbo", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 10.00
+    assert out == 30.00
+
+
+def test_openai_model_pricing_gpt41_mini() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4.1-mini", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 0.40
+    assert out == 1.60
+
+
+def test_openai_model_pricing_unknown_falls_back_to_gpt4o() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-future-99b", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 2.50
+    assert out == 10.00
+
+
+# ------------------------------------------------------------------
+# OpenAIAnalyzer — is_openai_vision_model
+# ------------------------------------------------------------------
+
+
+def test_is_openai_vision_model_gpt4o() -> None:
+    assert is_openai_vision_model("gpt-4o") is True
+    assert is_openai_vision_model("gpt-4o-mini") is True
+    assert is_openai_vision_model("gpt-4o-2024-08-06") is True
+
+
+def test_is_openai_vision_model_gpt4_turbo() -> None:
+    assert is_openai_vision_model("gpt-4-turbo") is True
+    assert is_openai_vision_model("gpt-4-turbo-2024-04-09") is True
+
+
+def test_is_openai_vision_model_gpt41() -> None:
+    assert is_openai_vision_model("gpt-4.1") is True
+    assert is_openai_vision_model("gpt-4.1-mini") is True
+    assert is_openai_vision_model("gpt-4.1-nano") is True
+
+
+def test_is_openai_vision_model_o_series() -> None:
+    assert is_openai_vision_model("o1") is True
+    assert is_openai_vision_model("o3") is True
+    assert is_openai_vision_model("o4-mini") is True
+
+
+def test_is_openai_vision_model_non_vision() -> None:
+    assert is_openai_vision_model("text-davinci-003") is False
+    assert is_openai_vision_model("whisper-1") is False
+    assert is_openai_vision_model("text-embedding-ada-002") is False
+
+
+# ------------------------------------------------------------------
+# OpenAIAnalyzer — health_check
+# ------------------------------------------------------------------
+
+
+async def test_openai_health_check_no_key() -> None:
+    a = OpenAIAnalyzer(api_key="", model="gpt-4o-mini", prompt="test")
+    assert await a.health_check() is False
+
+
+async def test_openai_health_check_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    monkeypatch.delitem(sys.modules, "openai", raising=False)
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    with patch("builtins.__import__", side_effect=ImportError("no module openai")):
+        result = await a.health_check()
+    assert result is False
+
+
+async def test_openai_health_check_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    mock_mod = _make_openai_module()
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="valid-key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a.health_check()
+    assert result is True
+
+
+async def test_openai_health_check_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    mock_mod = _make_openai_module(models_auth_error=True)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="bad-key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a.health_check()
+    assert result is False
+
+
+async def test_openai_health_check_permission_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.models.list = AsyncMock(
+        side_effect=mock_mod.PermissionDeniedError("no permission")
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a.health_check()
+    assert result is False
+
+
+async def test_openai_health_check_generic_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module(models_exception=RuntimeError("connection refused"))
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a.health_check()
+    assert result is False
+
+
+# ------------------------------------------------------------------
+# OpenAIAnalyzer — fetch_models
+# ------------------------------------------------------------------
+
+
+async def test_openai_fetch_models_from_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    m1 = MagicMock()
+    m1.id = "gpt-4o"
+    m2 = MagicMock()
+    m2.id = "gpt-4o-mini"
+    m3 = MagicMock()
+    m3.id = "whisper-1"  # not vision-capable
+
+    mock_mod = _make_openai_module(models_data=[m1, m2, m3])
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        models = await a.fetch_models()
+
+    names = [m["name"] for m in models]
+    assert "gpt-4o" in names
+    assert "gpt-4o-mini" in names
+    assert "whisper-1" not in names
+    assert len(models) == 2
+
+
+async def test_openai_fetch_models_fallback_no_key() -> None:
+    a = OpenAIAnalyzer(api_key="", model="gpt-4o-mini", prompt="test")
+    models = await a.fetch_models()
+    assert len(models) == len(_OPENAI_FALLBACK_MODELS)
+    assert any(m["name"] == "gpt-4o-mini" for m in models)
+
+
+async def test_openai_fetch_models_fallback_on_auth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module(models_auth_error=True)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="bad-key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        models = await a.fetch_models()
+    assert len(models) == len(_OPENAI_FALLBACK_MODELS)
+
+
+async def test_openai_fetch_models_fallback_on_generic_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module(models_exception=RuntimeError("API unavailable"))
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        models = await a.fetch_models()
+    assert len(models) == len(_OPENAI_FALLBACK_MODELS)
+
+
+async def test_openai_fetch_models_import_error() -> None:
+    import sys
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    with patch.dict(sys.modules, {"openai": None}):
+        models = await a.fetch_models()
+    assert len(models) == len(_OPENAI_FALLBACK_MODELS)
+
+
+async def test_openai_fetch_models_empty_api_returns_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the API returns no vision models, fall back to hardcoded list."""
+    import sys
+
+    non_vision = MagicMock()
+    non_vision.id = "whisper-1"
+
+    mock_mod = _make_openai_module(models_data=[non_vision])
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        models = await a.fetch_models()
+    assert len(models) == len(_OPENAI_FALLBACK_MODELS)
+
+
+# ------------------------------------------------------------------
+# OpenAIAnalyzer — _call_model
+# ------------------------------------------------------------------
+
+
+async def test_openai_call_model_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.85, "description": "Intruder"}',
+        prompt_tokens=300,
+        completion_tokens=60,
+    )
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="Analyze.")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "Analyze this scene.")
+
+    assert "Intruder" in result or "suspicious" in result.lower()
+    assert a._last_prompt_tokens == 300
+    assert a._last_completion_tokens == 60
+
+
+async def test_openai_call_model_no_frames() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    result = await a._call_model([], "Analyze")
+    assert result == ""
+
+
+async def test_openai_call_model_import_error() -> None:
+    import sys
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    with patch.dict(sys.modules, {"openai": None}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+async def test_openai_call_model_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    mock_mod = _make_openai_module(auth_error=True)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="bad-key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "Analyze")
+    assert result == ""
+
+
+async def test_openai_call_model_permission_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module(permission_error=True)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "Analyze")
+    assert result == ""
+
+
+async def test_openai_call_model_rate_limit_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module(rate_limit_error=True)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "Analyze")
+    assert result == ""
+
+
+async def test_openai_call_model_bad_request_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module()
+    bad_req = mock_mod.BadRequestError("model has no vision support")
+    bad_req.message = "model has no vision support"
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=bad_req
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+async def test_openai_call_model_api_status_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module(api_status_error=True)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "Analyze")
+    assert result == ""
+
+
+async def test_openai_call_model_api_connection_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=mock_mod.APIConnectionError("connection refused")
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+async def test_openai_call_model_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=asyncio.TimeoutError
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "Analyze") == ""
+
+
+async def test_openai_call_model_generic_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=ValueError("unexpected error")
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+async def test_openai_call_model_no_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When usage is None, token counts stay zero."""
+    import sys
+
+    resp = _make_openai_response("All clear")
+    resp.usage = None
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+    assert a._last_prompt_tokens == 0
+    assert a._last_completion_tokens == 0
+
+
+async def test_openai_call_model_empty_choices(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Empty choices list returns empty string."""
+    import sys
+
+    resp = _make_openai_response("text")
+    resp.choices = []
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "prompt")
+    assert result == ""
+
+
+# ------------------------------------------------------------------
+# OpenAIAnalyzer — close / _get_client
+# ------------------------------------------------------------------
+
+
+async def test_openai_close() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    mock_client = AsyncMock()
+    a._client = mock_client
+    await a.close()
+    mock_client.close.assert_called_once()
+    assert a._client is None
+
+
+async def test_openai_close_no_client() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    await a.close()  # Should not raise
+
+
+def test_openai_get_client_creates_client() -> None:
+    import sys
+
+    mock_mod = _make_openai_module()
+    a = OpenAIAnalyzer(api_key="sk-openai-test", model="gpt-4o-mini", prompt="test")
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        client = a._get_client()
+    assert client is not None
+    mock_mod.AsyncOpenAI.assert_called_once_with(api_key="sk-openai-test")
+
+
+# ------------------------------------------------------------------
+# OpenAIAnalyzer — frame resize
+# ------------------------------------------------------------------
+
+
+def test_openai_resize_frame_resizes_large_image() -> None:
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (3000, 2000), color=(100, 150, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    result = OpenAIAnalyzer._resize_frame(buf.getvalue(), max_dimension=2048)
+    resized = Image.open(io.BytesIO(result))
+    assert max(resized.width, resized.height) <= 2048
+
+
+def test_openai_resize_frame_skips_small_image() -> None:
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (640, 480), color=(50, 100, 150))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    original = buf.getvalue()
+    assert OpenAIAnalyzer._resize_frame(original) == original
+
+
+# ------------------------------------------------------------------
+# OpenAIAnalyzer — full pipeline
+# ------------------------------------------------------------------
+
+
+async def test_openai_full_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Full analyze_clip pipeline: ffmpeg → OpenAI API → AnalysisResult."""
+    import sys
+
+    resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.9, "description": "Suspicious person"}',
+        prompt_tokens=400,
+        completion_tokens=80,
+    )
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_FAKE_JPEG, b""))
+    mock_proc.returncode = 0
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="Analyze.")
+    a._client = mock_mod.AsyncOpenAI.return_value
+
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await a.analyze_clip("/clips/test.mp4", "clip-oai-1", "Front Door")
+
+    assert result.clip_id == "clip-oai-1"
+    assert result.is_suspicious is True
+    assert result.confidence == 0.9
+    assert result.tokens_prompt == 400
+    assert result.tokens_completion == 80
+    assert result.frame_count == 1
+
+
+async def test_openai_tokens_reset_between_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Token counts from a previous call must not bleed into the next."""
+    import sys
+
+    resp1 = _make_openai_response(prompt_tokens=500, completion_tokens=100)
+    resp2 = _make_openai_response(prompt_tokens=200, completion_tokens=40)
+
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=[resp1, resp2]
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_FAKE_JPEG, b""))
+    mock_proc.returncode = 0
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="Analyze.")
+    a._client = mock_mod.AsyncOpenAI.return_value
+
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            r1 = await a.analyze_clip("/clips/a.mp4", "c1", "Cam1")
+            r2 = await a.analyze_clip("/clips/b.mp4", "c2", "Cam2")
+
+    assert r1.tokens_prompt == 500
+    assert r1.tokens_completion == 100
+    assert r2.tokens_prompt == 200
+    assert r2.tokens_completion == 40
+
+
+# ------------------------------------------------------------------
+# create_analyzer factory — OpenAI
+# ------------------------------------------------------------------
+
+
+def test_create_analyzer_openai() -> None:
+    a = create_analyzer("openai", "prompt", openai_api_key="sk-test")
+    assert isinstance(a, OpenAIAnalyzer)
+    assert a.model_name() == "gpt-4o-mini"  # default
+
+
+def test_create_analyzer_openai_with_model() -> None:
+    a = create_analyzer(
+        "openai", "prompt", openai_api_key="sk-test", openai_model="gpt-4o"
+    )
+    assert isinstance(a, OpenAIAnalyzer)
+    assert a.model_name() == "gpt-4o"
+
+
+def test_create_analyzer_openai_no_key() -> None:
+    a = create_analyzer("openai", "prompt")
+    assert a is None

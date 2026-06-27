@@ -1,11 +1,12 @@
 """AI video analysis via ffmpeg frame extraction and pluggable AI providers.
 
-Five providers are supported:
+Six providers are supported:
 - ``ollama``          – local/LAN Ollama server with a vision-capable model
 - ``ollama_cloud``    – Ollama Cloud API (api.ollama.com) with an API key
 - ``moondream_cloud`` – Moondream Cloud API (api.moondream.ai)
 - ``moondream_local`` – Moondream 0.5B model running on-device (no cloud)
 - ``anthropic``       – Anthropic Claude API (claude.ai) with an API key
+- ``openai``          – OpenAI Chat Completions API (platform.openai.com) with an API key
 
 Use :func:`create_analyzer` to instantiate the right provider from config.
 """
@@ -95,6 +96,70 @@ def _vision_model_score(name: str) -> int:
         if pattern in lower:
             return score
     return 30
+
+
+# OpenAI model pricing: (input_$/1M_tokens, output_$/1M_tokens)
+# Source: https://platform.openai.com/docs/pricing
+_OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "gpt-4.1-nano": (0.10, 0.40),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4.1-mini": (0.40, 1.60),
+    "o3-mini": (1.10, 4.40),
+    "o4-mini": (1.10, 4.40),
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4.1": (2.00, 8.00),
+    "o1-mini": (3.00, 12.00),
+    "o1": (15.00, 60.00),
+    "o3": (10.00, 40.00),
+    "gpt-4-turbo": (10.00, 30.00),
+}
+
+# Vision-capable OpenAI model ID prefixes (checked as substring of model id).
+_OPENAI_VISION_PREFIXES: frozenset[str] = frozenset(
+    {
+        "gpt-4o",
+        "gpt-4-turbo",
+        "gpt-4-vision",
+        "gpt-4.1",
+        "o1",
+        "o3",
+        "o4-mini",
+    }
+)
+
+# Fallback model list when the OpenAI API cannot be reached.
+_OPENAI_FALLBACK_MODELS: list[dict] = [
+    {
+        "name": "gpt-4o",
+        "display_name": "GPT-4o ($2.50/$10 per 1M tokens)",
+    },
+    {
+        "name": "gpt-4o-mini",
+        "display_name": "GPT-4o mini — Best Value ($0.15/$0.60 per 1M tokens)",
+    },
+    {
+        "name": "gpt-4.1",
+        "display_name": "GPT-4.1 ($2/$8 per 1M tokens)",
+    },
+    {
+        "name": "gpt-4.1-mini",
+        "display_name": "GPT-4.1 mini ($0.40/$1.60 per 1M tokens)",
+    },
+    {
+        "name": "gpt-4.1-nano",
+        "display_name": "GPT-4.1 nano — Lowest Cost ($0.10/$0.40 per 1M tokens)",
+    },
+    {
+        "name": "gpt-4-turbo",
+        "display_name": "GPT-4 Turbo ($10/$30 per 1M tokens)",
+    },
+]
+
+
+def is_openai_vision_model(model_id: str) -> bool:
+    """Return True if an OpenAI model id looks vision-capable."""
+    lower = model_id.lower()
+    return any(p in lower for p in _OPENAI_VISION_PREFIXES)
 
 
 # Anthropic model pricing: (input_$/1M_tokens, output_$/1M_tokens)
@@ -1067,6 +1132,253 @@ class AnthropicAnalyzer(BaseAnalyzer):
 
 
 # ---------------------------------------------------------------------------
+# OpenAI provider
+# ---------------------------------------------------------------------------
+
+
+class OpenAIAnalyzer(BaseAnalyzer):
+    """Analyzes clips via the OpenAI Chat Completions API (platform.openai.com).
+
+    Sends JPEG frames as base64 image_url content to a GPT-4o / GPT-4.1 model
+    and extracts token usage for cost tracking.  Authentication errors are logged
+    clearly so the user knows to check ``openai_api_key`` in the add-on settings.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        prompt: str,
+        car_description: str = "",
+        max_frames: int = 3,
+        frame_interval: float = 2.0,
+        suspicious_keywords: list[str] | None = None,
+    ) -> None:
+        super().__init__(
+            prompt=prompt,
+            car_description=car_description,
+            max_frames=max_frames,
+            frame_interval=frame_interval,
+            suspicious_keywords=suspicious_keywords,
+        )
+        self._api_key = api_key
+        self._model = model or "gpt-4o-mini"
+        self._client: Any = None
+
+    @property
+    def provider_name(self) -> str:
+        return "openai"
+
+    def model_name(self) -> str:
+        return self._model
+
+    def model_pricing(self) -> tuple[float, float]:
+        """Return (input_price, output_price) per 1M tokens for the current model."""
+        lower = self._model.lower()
+        for prefix, pricing in _OPENAI_MODEL_PRICING.items():
+            if lower.startswith(prefix) or prefix in lower:
+                return pricing
+        return (2.50, 10.00)  # gpt-4o level fallback for unknown models
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
+
+            self._client = _openai.AsyncOpenAI(api_key=self._api_key)
+        return self._client
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+
+    async def health_check(self) -> bool:
+        """Return True when the API key is valid and the OpenAI API is reachable."""
+        if not self._api_key:
+            _LOGGER.warning("OpenAI: no API key configured")
+            return False
+        try:
+            import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
+        except ImportError:
+            _LOGGER.error(
+                "openai package is not installed. Install it with: pip install openai"
+            )
+            return False
+        try:
+            client = self._get_client()
+            await client.models.list()
+            return True
+        except _openai.AuthenticationError:
+            _LOGGER.error(
+                "OpenAI: invalid API key (AuthenticationError) — "
+                "check your openai_api_key in the add-on settings"
+            )
+            return False
+        except _openai.PermissionDeniedError:
+            _LOGGER.error(
+                "OpenAI: API key does not have permission to access this resource"
+            )
+            return False
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("OpenAI health check failed: %s", exc)
+            return False
+
+    async def fetch_models(self) -> list[dict[str, Any]]:
+        """Fetch vision-capable models from the OpenAI API; falls back to a hardcoded list."""
+        if self._api_key:
+            try:
+                import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
+            except ImportError:
+                pass
+            else:
+                try:
+                    client = self._get_client()
+                    pages = await client.models.list()
+                    result = []
+                    for m in pages.data:
+                        if not is_openai_vision_model(m.id):
+                            continue
+                        inp, out = _OPENAI_MODEL_PRICING.get(m.id, (2.50, 10.00))
+                        # Use a friendly pricing suffix only for known models
+                        suffix = f" (${inp:.2f}/${out:.2f} per 1M tokens)"
+                        result.append(
+                            {
+                                "name": m.id,
+                                "id": m.id,
+                                "display_name": m.id + suffix,
+                                "description": m.id + suffix,
+                            }
+                        )
+                    if result:
+                        return sorted(result, key=lambda m: m["name"])
+                except _openai.AuthenticationError:
+                    _LOGGER.error(
+                        "OpenAI: invalid API key — "
+                        "check your openai_api_key in the add-on settings"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.debug("Failed to fetch OpenAI models from API: %s", exc)
+
+        return [
+            {
+                "name": m["name"],
+                "id": m["name"],
+                "display_name": m["display_name"],
+                "description": m["display_name"],
+            }
+            for m in _OPENAI_FALLBACK_MODELS
+        ]
+
+    @staticmethod
+    def _resize_frame(frame_bytes: bytes, max_dimension: int = 2048) -> bytes:
+        """Resize a JPEG frame so its longest side is at most max_dimension pixels.
+
+        OpenAI resizes images server-side to 2048px; doing it client-side reduces
+        upload bandwidth for high-resolution security cameras.
+        Returns the original bytes unchanged if the image cannot be opened.
+        """
+        import io  # noqa: PLC0415
+
+        from PIL import Image  # noqa: PLC0415
+
+        try:
+            img = Image.open(io.BytesIO(frame_bytes))
+            if max(img.width, img.height) > max_dimension:
+                img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85)
+                return buf.getvalue()
+        except Exception:  # noqa: BLE001
+            pass
+        return frame_bytes
+
+    async def _call_model(self, frames: list[bytes], prompt: str) -> str:
+        """Send frames to the OpenAI Chat Completions API."""
+        if not frames:
+            return ""
+
+        try:
+            import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
+        except ImportError:
+            _LOGGER.error(
+                "openai package is not installed. Install it with: pip install openai"
+            )
+            return ""
+
+        try:
+            client = self._get_client()
+
+            resized = [self._resize_frame(f) for f in frames]
+            content: list[dict[str, Any]] = [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64.b64encode(frame).decode('ascii')}",
+                        "detail": "auto",
+                    },
+                }
+                for frame in resized
+            ]
+            content.append({"type": "text", "text": prompt})
+
+            response = await client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": content}],
+                max_tokens=1024,
+            )
+
+            if response.usage:
+                self._last_prompt_tokens = int(response.usage.prompt_tokens or 0)
+                self._last_completion_tokens = int(
+                    response.usage.completion_tokens or 0
+                )
+
+            choice = response.choices[0] if response.choices else None
+            if choice and choice.message and choice.message.content:
+                return str(choice.message.content)
+            return ""
+
+        except _openai.AuthenticationError:
+            _LOGGER.error(
+                "OpenAI: invalid API key (AuthenticationError) — "
+                "check your openai_api_key in the add-on settings"
+            )
+            return ""
+        except _openai.PermissionDeniedError:
+            _LOGGER.error(
+                "OpenAI: permission denied — "
+                "check that your API key has access to model '%s'",
+                self._model,
+            )
+            return ""
+        except _openai.RateLimitError:
+            _LOGGER.warning(
+                "OpenAI: rate limit hit — API quota exceeded; "
+                "analysis will resume on the next cycle"
+            )
+            return ""
+        except _openai.BadRequestError as exc:
+            _LOGGER.error(
+                "OpenAI: bad request (HTTP 400) — %s; "
+                "check that the selected model supports vision",
+                exc.message,
+            )
+            return ""
+        except _openai.APIStatusError as exc:
+            _LOGGER.error("OpenAI API error HTTP %d: %s", exc.status_code, exc.message)
+            return ""
+        except _openai.APIConnectionError as exc:
+            _LOGGER.warning("OpenAI: connection error — %s", exc)
+            return ""
+        except asyncio.TimeoutError:
+            _LOGGER.warning("OpenAI request timed out")
+            return ""
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("OpenAI request failed: %s", exc)
+            return ""
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -1085,6 +1397,8 @@ def create_analyzer(
     moondream_api_key: str = "",
     anthropic_api_key: str = "",
     anthropic_model: str = "",
+    openai_api_key: str = "",
+    openai_model: str = "",
 ) -> BaseAnalyzer | None:
     """Return an analyzer for *ai_provider*, or ``None`` if configuration is invalid."""
     if ai_provider == "ollama":
@@ -1163,9 +1477,27 @@ def create_analyzer(
             suspicious_keywords=suspicious_keywords,
         )
 
+    if ai_provider == "openai":
+        if not openai_api_key:
+            _LOGGER.warning(
+                "ai_provider='openai' requires openai_api_key to be set; "
+                "AI analysis disabled"
+            )
+            return None
+        return OpenAIAnalyzer(
+            api_key=openai_api_key,
+            model=openai_model or "gpt-4o-mini",
+            prompt=prompt,
+            car_description=car_description,
+            max_frames=max_frames,
+            frame_interval=frame_interval,
+            suspicious_keywords=suspicious_keywords,
+        )
+
     _LOGGER.warning(
         "Unknown ai_provider %r; expected 'ollama', 'ollama_cloud', "
-        "'moondream_cloud', 'moondream_local', or 'anthropic'. AI analysis disabled.",
+        "'moondream_cloud', 'moondream_local', 'anthropic', or 'openai'. "
+        "AI analysis disabled.",
         ai_provider,
     )
     return None

@@ -88,6 +88,24 @@ token.
 and works well for security-camera analysis. `claude-opus-4-8` ($5/$25 per 1M tokens)
 gives the best accuracy for complex scenes.
 
+### OpenAI
+
+Uses the [OpenAI Chat Completions API](https://platform.openai.com) — supports GPT-4o,
+GPT-4.1, and other vision-capable models. Requires an OpenAI account and API key;
+usage is billed per token.
+
+1. Sign up at <https://platform.openai.com> and create an API key.
+2. In the add-on settings set:
+   - `ai_provider: openai`
+   - `openai_api_key: <your-api-key>`
+   - `openai_model: gpt-4o-mini` (most cost-effective; use **Fetch Models**
+     in the web UI to see all available vision models)
+
+**Cost tip:** `gpt-4o-mini` ($0.15/$0.60 per 1M tokens) is the most affordable option
+and performs well for security-camera analysis. `gpt-4o` ($2.50/$10 per 1M tokens)
+offers higher accuracy, while `gpt-4.1-nano` ($0.10/$0.40 per 1M tokens) is the
+lowest-cost option available.
+
 ## Support
 
 Open an issue at <https://github.com/brianbaggs35/ha-blink-clip-downloader/issues>.
