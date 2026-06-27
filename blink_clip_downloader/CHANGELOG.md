@@ -1,5 +1,79 @@
 # Changelog
 
+## 2.8.6
+
+### New features
+
+- **Anthropic (Claude) AI provider.** A fifth AI provider is now available.
+  Set `ai_provider: anthropic` and supply your `anthropic_api_key` from
+  [console.anthropic.com](https://console.anthropic.com).  Any Claude vision
+  model is supported — use the **Fetch Models** button in the AI tab to browse
+  models pulled live from the Anthropic API.  `claude-haiku-4-5` is selected by
+  default as the most cost-effective option.
+
+- **Model selector for Anthropic.** The model-picker dropdown (previously
+  shown only for Ollama providers) is now also displayed when the Anthropic
+  provider is selected.  Clicking **Fetch Models** lists all available Claude
+  models with their pricing so you can pick the right balance of quality and cost.
+
+- **Estimated API cost for Anthropic.** The AI Usage tab now shows an
+  **Estimated Cost** stat when the Anthropic provider is active and token data
+  is available.  Cost is calculated from cumulative prompt and completion token
+  counts multiplied by the model's per-token rate, giving you a running total
+  without needing to log into the Anthropic dashboard.
+
+- **Clear error messages for invalid credentials.** If an Anthropic API key is
+  invalid or lacks permission, the add-on now logs `AuthenticationError` and
+  `PermissionDeniedError` messages that say exactly what went wrong and direct
+  the user to check `anthropic_api_key` in the add-on settings.  Health-check
+  failures for all providers already followed this pattern; Anthropic is now
+  consistent with them.
+
+- **All config options now have descriptions.** Every option in `config.yaml`
+  now has an inline comment explaining what it does, including the previously
+  undocumented `download_local_storage` setting (downloads clips stored on the
+  USB drive attached to the Blink Sync Module — clips still transit via the
+  Blink cloud even though they live on local hardware).
+
+- **`ollama_cloud_api_key` exposed in config.yaml.** The Ollama Cloud API key
+  was handled in code since v2.8.3 but was missing from the `options` and
+  `schema` sections of `config.yaml`, making it invisible in the HA add-on UI.
+  It is now correctly listed as a `password?` field.
+
+### Improvements
+
+- **Anthropic: client-side frame resizing.** JPEG frames are now resized to a
+  maximum of 1568 px on the long side before being sent to the Anthropic API.
+  This matches Anthropic's own server-side cap, reduces upload bandwidth for
+  high-resolution cameras, and keeps image token counts predictable.
+
+- **Anthropic: richer error handling.** `RateLimitError` (HTTP 429) now logs a
+  clear "rate limit hit" warning instead of falling through to the generic
+  handler.  `BadRequestError` (HTTP 400, e.g. unsupported model or image
+  format) logs the API's own error message and hints to check the model setting.
+  `APIConnectionError` (network failures reaching api.anthropic.com) is now
+  caught and logged separately from generic exceptions.
+
+- **yamllint configuration.** Added `.yamllint` at the repository root with a
+  120-character line-length limit (up from the yamllint default of 80) so that
+  `yamllint .` passes without reformatting `config.yaml`.
+
+- **README: AI provider setup guides.** The repository README now includes
+  step-by-step setup instructions for each AI provider (Ollama, Ollama Cloud,
+  Moondream Cloud, Moondream Local, and Anthropic Claude), plus a Feature
+  Requests section pointing to the GitHub issue tracker.
+
+### Dependencies
+
+- **anthropic** bumped from `>=0.50.0` to `>=0.100.0` — the 0.50 floor was
+  approximately one year behind the current release.
+- **aiohttp** bumped from `>=3.9.0` to `>=3.11.0`.
+- **aiofiles** bumped from `>=23.2.1` to `>=24.1.0`.
+- **aiosqlite** bumped from `>=0.20.0` to `>=0.21.0`.
+- **python-slugify** bumped from `>=8.0.1` to `>=8.0.4`.
+- **aiosmtplib** bumped from `>=2.0.0` to `>=3.0.0`.
+- **Pillow** bumped from `>=10.0.0` to `>=11.0.0`.
+
 ## 2.8.5
 
 ### Bug fixes

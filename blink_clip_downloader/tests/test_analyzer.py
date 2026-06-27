@@ -9,10 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from blink_downloader.analyzer import (
+    AnthropicAnalyzer,
     ClipAnalyzer,
     MoondreamCloudAnalyzer,
     MoondreamLocalAnalyzer,
     OllamaCloudAnalyzer,
+    _ANTHROPIC_FALLBACK_MODELS,
     _vision_model_score,
     create_analyzer,
     is_moondream_installed,
@@ -889,6 +891,440 @@ async def test_analyze_clip_includes_token_counts(analyzer: ClipAnalyzer) -> Non
     assert result.to_dict()["tokens_completion"] == 50
 
 
+# ------------------------------------------------------------------
+# AnthropicAnalyzer
+# ------------------------------------------------------------------
+
+
+def _make_anthropic_response(
+    text: str = '{"suspicious": false, "confidence": 0.1, "description": "Empty scene"}',
+    input_tokens: int = 150,
+    output_tokens: int = 45,
+) -> MagicMock:
+    """Return a mock Anthropic messages.create() response."""
+    block = MagicMock()
+    block.text = text
+
+    usage = MagicMock()
+    usage.input_tokens = input_tokens
+    usage.output_tokens = output_tokens
+
+    resp = MagicMock()
+    resp.content = [block]
+    resp.usage = usage
+    return resp
+
+
+class _MockAPIStatusError(Exception):
+    """Minimal stand-in for anthropic.APIStatusError with typed instance attrs."""
+
+    def __init__(
+        self, msg: str = "", status_code: int = 500, message: str = "err"
+    ) -> None:
+        super().__init__(msg)
+        self.status_code = status_code
+        self.message = message
+
+
+def _make_anthropic_module(
+    response: MagicMock | None = None,
+    auth_error: bool = False,
+    permission_error: bool = False,
+    api_status_error: bool = False,
+    models_data: list | None = None,
+) -> MagicMock:
+    """Return a mock anthropic module with AsyncAnthropic client."""
+    mod = MagicMock()
+
+    # Error classes
+    mod.AuthenticationError = type("AuthenticationError", (Exception,), {})
+    mod.PermissionDeniedError = type("PermissionDeniedError", (Exception,), {})
+    mod.APIStatusError = _MockAPIStatusError
+    mod.RateLimitError = type("RateLimitError", (Exception,), {})
+    mod.BadRequestError = type(
+        "BadRequestError", (Exception,), {"message": "bad request"}
+    )
+    mod.APIConnectionError = type("APIConnectionError", (Exception,), {})
+
+    # AsyncAnthropic client
+    client = MagicMock()
+    mod.AsyncAnthropic.return_value = client
+
+    # messages.create
+    if auth_error:
+        client.messages.create = AsyncMock(
+            side_effect=mod.AuthenticationError("bad key")
+        )
+    elif permission_error:
+        client.messages.create = AsyncMock(
+            side_effect=mod.PermissionDeniedError("no perm")
+        )
+    elif api_status_error:
+        err = _MockAPIStatusError("api error", status_code=429, message="rate limited")
+        client.messages.create = AsyncMock(side_effect=err)
+    elif response is not None:
+        client.messages.create = AsyncMock(return_value=response)
+
+    # models.list
+    if models_data is not None:
+        page = MagicMock()
+        page.data = models_data
+        client.models.list = AsyncMock(return_value=page)
+    else:
+        client.models.list = AsyncMock(return_value=MagicMock(data=[]))
+
+    # close
+    client.close = AsyncMock()
+
+    return mod
+
+
+async def test_anthropic_provider_name() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    assert a.provider_name == "anthropic"
+    assert a.model_name() == "claude-haiku-4-5"
+
+
+async def test_anthropic_model_default() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="", prompt="test")
+    assert a.model_name() == "claude-haiku-4-5"
+
+
+def test_anthropic_model_pricing_haiku() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 1.00
+    assert out == 5.00
+
+
+def test_anthropic_model_pricing_opus() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-opus-4-8", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 5.00
+    assert out == 25.00
+
+
+def test_anthropic_model_pricing_sonnet() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-sonnet-4-6", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 3.00
+    assert out == 15.00
+
+
+def test_anthropic_model_pricing_unknown_falls_back_to_sonnet() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-future-99b", prompt="test")
+    inp, out = a.model_pricing()
+    # Unknown model falls back to Sonnet-level pricing
+    assert inp == 3.00
+    assert out == 15.00
+
+
+async def test_anthropic_health_check_no_key() -> None:
+    a = AnthropicAnalyzer(api_key="", model="claude-haiku-4-5", prompt="test")
+    assert await a.health_check() is False
+
+
+async def test_anthropic_health_check_import_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """health_check returns False when the anthropic package is missing."""
+    import sys
+
+    monkeypatch.delitem(sys.modules, "anthropic", raising=False)
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    with patch("builtins.__import__", side_effect=ImportError("no module anthropic")):
+        result = await a.health_check()
+    assert result is False
+
+
+async def test_anthropic_health_check_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="valid-key", model="claude-haiku-4-5", prompt="test")
+    # Reset any cached client so it picks up the mocked module
+    a._client = None
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        # health_check calls _get_client which imports anthropic
+        a._client = mock_mod.AsyncAnthropic.return_value
+        result = await a.health_check()
+    assert result is True
+
+
+async def test_anthropic_health_check_auth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """health_check returns False and logs clearly for invalid API keys."""
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    # Make models.list raise AuthenticationError
+    mock_mod.AsyncAnthropic.return_value.models.list = AsyncMock(
+        side_effect=mock_mod.AuthenticationError("invalid key")
+    )
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="bad-key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        result = await a.health_check()
+    assert result is False
+
+
+async def test_anthropic_call_model_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    resp = _make_anthropic_response(
+        '{"suspicious": true, "confidence": 0.85, "description": "Intruder"}',
+        input_tokens=300,
+        output_tokens=60,
+    )
+    mock_mod = _make_anthropic_module(response=resp)
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="Analyze.")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "Analyze this scene.")
+
+    assert "Intruder" in result or "suspicious" in result.lower()
+    assert a._last_prompt_tokens == 300
+    assert a._last_completion_tokens == 60
+
+
+async def test_anthropic_call_model_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module(auth_error=True)
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="bad-key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+
+
+async def test_anthropic_call_model_permission_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module(permission_error=True)
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-opus-4-8", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+
+
+async def test_anthropic_call_model_api_status_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module(api_status_error=True)
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+
+
+async def test_anthropic_call_model_no_frames() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    result = await a._call_model([], "Analyze")
+    assert result == ""
+
+
+async def test_anthropic_call_model_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        side_effect=asyncio.TimeoutError
+    )
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "Analyze")
+
+    assert result == ""
+
+
+async def test_anthropic_fetch_models_from_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    m1 = MagicMock()
+    m1.id = "claude-haiku-4-5"
+    m1.display_name = "Claude Haiku 4.5"
+
+    m2 = MagicMock()
+    m2.id = "claude-sonnet-4-6"
+    m2.display_name = "Claude Sonnet 4.6"
+
+    mock_mod = _make_anthropic_module(models_data=[m1, m2])
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        models = await a.fetch_models()
+
+    assert len(models) == 2
+    assert models[0]["name"] == "claude-haiku-4-5"
+    assert "display_name" in models[0]
+
+
+async def test_anthropic_fetch_models_fallback_on_auth_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.models.list = AsyncMock(
+        side_effect=mock_mod.AuthenticationError("bad key")
+    )
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="bad-key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        models = await a.fetch_models()
+
+    # Should fall back to the hardcoded list
+    assert len(models) == len(_ANTHROPIC_FALLBACK_MODELS)
+    assert any(m["name"] == "claude-haiku-4-5" for m in models)
+
+
+async def test_anthropic_fetch_models_fallback_no_key() -> None:
+    a = AnthropicAnalyzer(api_key="", model="claude-haiku-4-5", prompt="test")
+    models = await a.fetch_models()
+    assert len(models) == len(_ANTHROPIC_FALLBACK_MODELS)
+
+
+async def test_anthropic_full_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Full analyze_clip pipeline: ffmpeg → Anthropic API → AnalysisResult."""
+    import sys
+
+    resp = _make_anthropic_response(
+        '{"suspicious": true, "confidence": 0.9, "description": "Suspicious person"}',
+        input_tokens=400,
+        output_tokens=80,
+    )
+    mock_mod = _make_anthropic_module(response=resp)
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_FAKE_JPEG, b""))
+    mock_proc.returncode = 0
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="Analyze.")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await a.analyze_clip(
+                "/clips/test.mp4", "clip-anthr-1", "Front Door"
+            )
+
+    assert result.clip_id == "clip-anthr-1"
+    assert result.is_suspicious is True
+    assert result.confidence == 0.9
+    assert result.tokens_prompt == 400
+    assert result.tokens_completion == 80
+    assert result.frame_count == 1
+
+
+async def test_anthropic_close() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    mock_client = AsyncMock()
+    a._client = mock_client
+    await a.close()
+    mock_client.close.assert_called_once()
+    assert a._client is None
+
+
+async def test_anthropic_close_no_client() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    await a.close()  # Should not raise
+
+
+def test_create_analyzer_anthropic() -> None:
+    a = create_analyzer("anthropic", "prompt", anthropic_api_key="sk-ant-test")
+    assert isinstance(a, AnthropicAnalyzer)
+    assert a.model_name() == "claude-haiku-4-5"  # default
+
+
+def test_create_analyzer_anthropic_with_model() -> None:
+    a = create_analyzer(
+        "anthropic",
+        "prompt",
+        anthropic_api_key="sk-ant-test",
+        anthropic_model="claude-opus-4-8",
+    )
+    assert isinstance(a, AnthropicAnalyzer)
+    assert a.model_name() == "claude-opus-4-8"
+
+
+def test_create_analyzer_anthropic_no_key() -> None:
+    a = create_analyzer("anthropic", "prompt")
+    assert a is None
+
+
+async def test_anthropic_tokens_reset_between_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Token counts from a previous call must not bleed into the next."""
+    import sys
+
+    resp1 = _make_anthropic_response(input_tokens=500, output_tokens=100)
+    resp2 = _make_anthropic_response(input_tokens=200, output_tokens=40)
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        side_effect=[resp1, resp2]
+    )
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_FAKE_JPEG, b""))
+    mock_proc.returncode = 0
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="Analyze.")
+    a._client = mock_mod.AsyncAnthropic.return_value
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            r1 = await a.analyze_clip("/clips/a.mp4", "c1", "Cam1")
+            r2 = await a.analyze_clip("/clips/b.mp4", "c2", "Cam2")
+
+    assert r1.tokens_prompt == 500
+    assert r1.tokens_completion == 100
+    assert r2.tokens_prompt == 200
+    assert r2.tokens_completion == 40
+
+
 async def test_moondream_cloud_tokens_are_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock(return_value=(_FAKE_JPEG, b""))
@@ -908,3 +1344,315 @@ async def test_moondream_cloud_tokens_are_zero(monkeypatch: pytest.MonkeyPatch) 
 
     assert result.tokens_prompt == 0
     assert result.tokens_completion == 0
+
+
+# ------------------------------------------------------------------
+# Additional coverage: _split_jpeg_frames edge cases
+# ------------------------------------------------------------------
+
+
+def test_split_jpeg_frames_no_eoi() -> None:
+    """SOI found but no EOI — should return no frames."""
+    data = b"\xff\xd8\xff\xe0"  # SOI + bytes but no EOI
+    assert ClipAnalyzer._split_jpeg_frames(data) == []
+
+
+# ------------------------------------------------------------------
+# Additional coverage: parse_response / _try_parse_json
+# ------------------------------------------------------------------
+
+
+def test_parse_response_long_text_truncated(analyzer: ClipAnalyzer) -> None:
+    """Responses longer than 200 chars without JSON/keywords get truncated with ellipsis."""
+    response = "x" * 250
+    _, _, summary = analyzer.parse_response(response)
+    assert summary.endswith("…")
+
+
+def test_try_parse_json_malformed_json() -> None:
+    """Braces present but content is not valid JSON — returns empty tuple."""
+    assert ClipAnalyzer._try_parse_json("{not: valid json!!!}") == (False, 0.0, "")
+
+
+# ------------------------------------------------------------------
+# Additional coverage: ClipAnalyzer internals
+# ------------------------------------------------------------------
+
+
+def test_clip_analyzer_provider_name(analyzer: ClipAnalyzer) -> None:
+    assert analyzer.provider_name == "ollama"
+
+
+async def test_clip_analyzer_get_session_creates_session(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """_get_session creates a real ClientSession when _session is None."""
+    analyzer._session = None
+    session = await analyzer._get_session()
+    assert session is not None
+    await session.close()
+
+
+async def test_fetch_models_returns_empty_on_http_error(analyzer: ClipAnalyzer) -> None:
+    """fetch_models returns [] when Ollama returns a non-200 status."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 503
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(get=MagicMock(return_value=mock_resp))
+    assert await analyzer.fetch_models() == []
+
+
+# ------------------------------------------------------------------
+# Additional coverage: MoondreamCloudAnalyzer
+# ------------------------------------------------------------------
+
+
+async def test_moondream_cloud_get_session_creates_session() -> None:
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    a._session = None
+    session = await a._get_session()
+    assert session is not None
+    await session.close()
+
+
+async def test_moondream_cloud_close_open_session() -> None:
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    mock_session = MagicMock()
+    mock_session.closed = False
+    mock_session.close = AsyncMock()
+    a._session = mock_session
+    await a.close()
+    mock_session.close.assert_called_once()
+
+
+async def test_moondream_cloud_call_api_frame_401() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 401
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    a._session = _mock_session(post=MagicMock(return_value=mock_resp))
+    assert await a._call_api_frame(_FAKE_JPEG, "prompt") == ""
+
+
+async def test_moondream_cloud_call_api_frame_500() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 500
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    a._session = _mock_session(post=MagicMock(return_value=mock_resp))
+    assert await a._call_api_frame(_FAKE_JPEG, "prompt") == ""
+
+
+async def test_moondream_cloud_call_api_frame_timeout() -> None:
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    a._session = _mock_session(post=MagicMock(side_effect=asyncio.TimeoutError))
+    assert await a._call_api_frame(_FAKE_JPEG, "prompt") == ""
+
+
+async def test_moondream_cloud_call_api_frame_client_error() -> None:
+    import aiohttp
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    a._session = _mock_session(
+        post=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    assert await a._call_api_frame(_FAKE_JPEG, "prompt") == ""
+
+
+async def test_moondream_cloud_call_model_empty_frames() -> None:
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    assert await a._call_model([], "prompt") == ""
+
+
+# ------------------------------------------------------------------
+# Additional coverage: MoondreamLocalAnalyzer
+# ------------------------------------------------------------------
+
+
+async def test_moondream_local_ensure_model_generic_exception() -> None:
+    """Non-ImportError during model load is caught and returns False."""
+    a = MoondreamLocalAnalyzer(prompt="test")
+    with patch("asyncio.get_running_loop") as mock_loop:
+        mock_loop.return_value.run_in_executor = AsyncMock(
+            side_effect=RuntimeError("load failed")
+        )
+        assert await a._ensure_model() is False
+
+
+async def test_moondream_local_call_model_no_frames_after_ready() -> None:
+    a = MoondreamLocalAnalyzer(prompt="test")
+    a._model_ready = True
+    assert await a._call_model([], "prompt") == ""
+
+
+async def test_moondream_local_call_model_inference_exception() -> None:
+    a = MoondreamLocalAnalyzer(prompt="test")
+    a._model_ready = True
+    with patch("asyncio.get_running_loop") as mock_loop:
+        mock_loop.return_value.run_in_executor = AsyncMock(
+            side_effect=RuntimeError("CUDA error")
+        )
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+# ------------------------------------------------------------------
+# Additional coverage: AnthropicAnalyzer internals
+# ------------------------------------------------------------------
+
+
+def test_anthropic_get_client_creates_client() -> None:
+    """_get_client instantiates AsyncAnthropic when _client is None."""
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    a = AnthropicAnalyzer(
+        api_key="sk-ant-test", model="claude-haiku-4-5", prompt="test"
+    )
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        client = a._get_client()
+    assert client is not None
+    mock_mod.AsyncAnthropic.assert_called_once_with(api_key="sk-ant-test")
+
+
+async def test_anthropic_health_check_permission_denied() -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.models.list = AsyncMock(
+        side_effect=mock_mod.PermissionDeniedError("no permission")
+    )
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        assert await a.health_check() is False
+
+
+async def test_anthropic_health_check_generic_exception() -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.models.list = AsyncMock(
+        side_effect=RuntimeError("connection refused")
+    )
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        assert await a.health_check() is False
+
+
+async def test_anthropic_fetch_models_import_error() -> None:
+    """fetch_models falls back to hardcoded list when anthropic is not importable."""
+    import sys
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    with patch.dict(sys.modules, {"anthropic": None}):
+        result = await a.fetch_models()
+    assert len(result) == len(_ANTHROPIC_FALLBACK_MODELS)
+
+
+async def test_anthropic_fetch_models_generic_exception() -> None:
+    """fetch_models falls back to hardcoded list on unexpected API errors."""
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.models.list = AsyncMock(
+        side_effect=RuntimeError("API unavailable")
+    )
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        result = await a.fetch_models()
+    assert len(result) == len(_ANTHROPIC_FALLBACK_MODELS)
+
+
+def test_anthropic_resize_frame_resizes_large_image() -> None:
+    """Frames wider/taller than max_dimension are resized down."""
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (2000, 1000), color=(100, 150, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    result = AnthropicAnalyzer._resize_frame(buf.getvalue(), max_dimension=1568)
+    resized = Image.open(io.BytesIO(result))
+    assert max(resized.width, resized.height) <= 1568
+
+
+def test_anthropic_resize_frame_skips_small_image() -> None:
+    """Frames within max_dimension are returned byte-for-byte unchanged."""
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (640, 480), color=(50, 100, 150))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    original = buf.getvalue()
+    assert AnthropicAnalyzer._resize_frame(original) == original
+
+
+async def test_anthropic_call_model_import_error() -> None:
+    """_call_model returns '' when the anthropic package is not importable."""
+    import sys
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    with patch.dict(sys.modules, {"anthropic": None}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+async def test_anthropic_call_model_rate_limit_error() -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        side_effect=mock_mod.RateLimitError("rate limited")
+    )
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+async def test_anthropic_call_model_bad_request_error() -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    bad_req = mock_mod.BadRequestError("model has no vision support")
+    bad_req.message = "model has no vision support"
+    mock_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        side_effect=bad_req
+    )
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+async def test_anthropic_call_model_api_connection_error() -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        side_effect=mock_mod.APIConnectionError("connection refused")
+    )
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+
+
+async def test_anthropic_call_model_generic_exception() -> None:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        side_effect=ValueError("unexpected error")
+    )
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
