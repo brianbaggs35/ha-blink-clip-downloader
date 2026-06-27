@@ -1,27 +1,37 @@
 """Workarounds for known issues in blinkpy's OAuth v2 login flow.
 
-blinkpy 0.25.x's ``oauth_signin()`` (called from
-``Auth._oauth_login_flow()``) only recognises an HTTP ``412`` response as
+blinkpy 0.25.0–0.25.5's ``oauth_signin()`` (called from
+``Auth._oauth_login_flow()``) only recognised an HTTP ``412`` response as
 "2FA required". Blink's backend now returns HTTP ``202 Accepted`` (with a
 JSON body describing the available SMS/voice/WhatsApp verification
-methods) for many accounts when 2FA is needed. blinkpy treats that 202 as
-an unconditional login failure -- it logs "Login failed" and returns
+methods) for many accounts when 2FA is needed. blinkpy treated that 202
+as an unconditional login failure -- it logged "Login failed" and returned
 ``False`` *without* raising ``BlinkTwoFARequiredError`` -- so the add-on
-never gets a chance to prompt for the code Blink just sent.
+never got a chance to prompt for the code Blink just sent.
 
 This was reported upstream:
 https://github.com/fronzbot/blinkpy/issues/1233
 https://github.com/fronzbot/blinkpy/issues/1230
 
-blinkpy 0.25.6 (PR #1231) now handles HTTP 202 natively, so this patch
-is redundant when running >= 0.25.6. We keep it as a belt-and-suspenders
-measure: it is idempotent, replaces the function with identical behaviour
-to the upstream fix, and ensures the 2FA flow works even if a future
-blinkpy regression reintroduces the problem.
+blinkpy 0.25.6 (PR #1231) now handles HTTP 202 natively by inspecting the
+JSON body for ``tsv_state``, ``tsv_methods``, or ``next_time_in_secs``
+before treating it as a 2FA challenge.  blinkpy 0.25.7 additionally
+initialises ``response_text = ""`` to prevent an ``UnboundLocalError``
+when the error-logging path runs on unexpected status codes.
+
+We keep this patch as a belt-and-suspenders measure, but it now matches
+blinkpy's own body-checking logic.  The critical difference from the old
+version: a 202 WITHOUT the 2FA indicator fields is **not** treated as
+2FA required (it is returned as ``None``/failure instead).  This prevents
+spurious 2FA prompts -- which would appear with no corresponding SMS from
+Blink -- that could occur on HA restart if a transient network hiccup
+causes Blink's signin endpoint to return 202 without a genuine 2FA
+challenge body.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 
 from blinkpy import api as blink_api
@@ -62,10 +72,30 @@ def patch_oauth_signin_2fa_status() -> None:
             allow_redirects=False,
         )
 
-        if response.status in (202, 412):
-            # 2FA required. See module docstring re: blinkpy issue #1233.
+        if response.status == 412:
             return "2FA_REQUIRED"
-        elif response.status in (301, 302, 303, 307, 308):
+
+        if response.status == 202:
+            # Inspect the body before treating this as a 2FA challenge.
+            # Blink can return 202 for reasons other than 2FA; only the
+            # presence of tsv_state/tsv_methods/next_time_in_secs indicates
+            # that a verification code was actually sent.  Treating every 202
+            # as 2FA_REQUIRED would show a prompt with no corresponding SMS
+            # from Blink (see module docstring).
+            response_text = await response.text()
+            try:
+                response_json = json.loads(response_text)
+            except json.JSONDecodeError:
+                response_json = {}
+            if (
+                response_json.get("tsv_state")
+                or response_json.get("tsv_methods")
+                or response_json.get("next_time_in_secs")
+            ):
+                return "2FA_REQUIRED"
+            return None
+
+        if response.status in (301, 302, 303, 307, 308):
             return "SUCCESS"
 
         return None
