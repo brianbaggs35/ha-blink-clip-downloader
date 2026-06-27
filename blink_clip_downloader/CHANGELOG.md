@@ -1,5 +1,47 @@
 # Changelog
 
+## 2.8.7
+
+### New features
+
+- **OpenAI AI provider.** A sixth AI provider is now available.
+  Set `ai_provider: openai` and supply your `openai_api_key` from
+  [platform.openai.com](https://platform.openai.com).  Any OpenAI vision model
+  is supported (GPT-4o, GPT-4.1, GPT-4-Turbo, and variants) — use the **Fetch
+  Models** button in the AI tab to browse models pulled live from the OpenAI API.
+  `gpt-4o-mini` is selected by default as the most cost-effective option.
+
+- **Model selector for OpenAI.** The model-picker dropdown is shown when the
+  OpenAI provider is selected.  Clicking **Fetch Models** lists all available
+  vision-capable GPT models with their pricing so you can pick the right balance
+  of quality and cost.
+
+- **Estimated API cost for OpenAI.** The AI Usage tab shows an **Estimated Cost**
+  stat when the OpenAI provider is active and token data is available.  Cost is
+  calculated from cumulative prompt and completion token counts multiplied by the
+  model's per-token rate.
+
+- **Clear error messages for invalid OpenAI credentials.** If an OpenAI API key
+  is invalid or lacks permission, the add-on logs `AuthenticationError` and
+  `PermissionDeniedError` messages that say exactly what went wrong and direct the
+  user to check `openai_api_key` in the add-on settings.
+
+- **OpenAI: client-side frame resizing.** JPEG frames are resized to a maximum of
+  2048 px on the long side before being sent to the OpenAI API, matching OpenAI's
+  server-side cap and reducing upload bandwidth for high-resolution cameras.
+
+- **OpenAI: full error handling.** `RateLimitError`, `BadRequestError`,
+  `APIConnectionError`, and `APIStatusError` are all caught and logged with
+  clear messages, consistent with the Anthropic provider.
+
+- **README: OpenAI setup guide.** Step-by-step setup instructions for the OpenAI
+  provider have been added to the repository README alongside the existing guides
+  for Ollama, Moondream, and Anthropic.
+
+### Dependencies
+
+- **openai** added (`>=1.0.0`) — required for the new OpenAI provider.
+
 ## 2.8.6
 
 ### New features
