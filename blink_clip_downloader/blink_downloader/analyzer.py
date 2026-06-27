@@ -1,10 +1,11 @@
 """AI video analysis via ffmpeg frame extraction and pluggable AI providers.
 
-Four providers are supported:
+Five providers are supported:
 - ``ollama``          – local/LAN Ollama server with a vision-capable model
 - ``ollama_cloud``    – Ollama Cloud API (api.ollama.com) with an API key
 - ``moondream_cloud`` – Moondream Cloud API (api.moondream.ai)
 - ``moondream_local`` – Moondream 0.5B model running on-device (no cloud)
+- ``anthropic``       – Anthropic Claude API (claude.ai) with an API key
 
 Use :func:`create_analyzer` to instantiate the right provider from config.
 """
@@ -94,6 +95,41 @@ def _vision_model_score(name: str) -> int:
         if pattern in lower:
             return score
     return 30
+
+
+# Anthropic model pricing: (input_$/1M_tokens, output_$/1M_tokens)
+# Source: https://platform.claude.com/docs/en/about-claude/pricing
+_ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "claude-fable-5": (10.00, 50.00),
+    "claude-mythos-5": (10.00, 50.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-opus-4-7": (5.00, 25.00),
+    "claude-opus-4-6": (5.00, 25.00),
+    "claude-opus-4-5": (5.00, 25.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-sonnet-4-5": (3.00, 15.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+}
+
+# Fallback model list when the Anthropic API cannot be reached.
+_ANTHROPIC_FALLBACK_MODELS: list[dict] = [
+    {
+        "name": "claude-opus-4-8",
+        "display_name": "Claude Opus 4.8 ($5/$25 per 1M tokens)",
+    },
+    {
+        "name": "claude-sonnet-4-6",
+        "display_name": "Claude Sonnet 4.6 ($3/$15 per 1M tokens)",
+    },
+    {
+        "name": "claude-sonnet-4-5",
+        "display_name": "Claude Sonnet 4.5 ($3/$15 per 1M tokens)",
+    },
+    {
+        "name": "claude-haiku-4-5",
+        "display_name": "Claude Haiku 4.5 — Best Value ($1/$5 per 1M tokens)",
+    },
+]
 
 
 def is_moondream_installed() -> bool:
@@ -785,6 +821,252 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
 
 
 # ---------------------------------------------------------------------------
+# Anthropic provider
+# ---------------------------------------------------------------------------
+
+
+class AnthropicAnalyzer(BaseAnalyzer):
+    """Analyzes clips via the Anthropic Claude API (claude.ai).
+
+    Sends JPEG frames as base64 image content to a Claude vision model and
+    extracts token usage for cost tracking.  Authentication errors are logged
+    clearly so the user knows to check ``anthropic_api_key`` in the add-on
+    settings.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        prompt: str,
+        car_description: str = "",
+        max_frames: int = 3,
+        frame_interval: float = 2.0,
+        suspicious_keywords: list[str] | None = None,
+    ) -> None:
+        super().__init__(
+            prompt=prompt,
+            car_description=car_description,
+            max_frames=max_frames,
+            frame_interval=frame_interval,
+            suspicious_keywords=suspicious_keywords,
+        )
+        self._api_key = api_key
+        self._model = model or "claude-haiku-4-5"
+        self._client: Any = None
+
+    @property
+    def provider_name(self) -> str:
+        return "anthropic"
+
+    def model_name(self) -> str:
+        return self._model
+
+    def model_pricing(self) -> tuple[float, float]:
+        """Return (input_price, output_price) per 1M tokens for the current model."""
+        lower = self._model.lower()
+        for prefix, pricing in _ANTHROPIC_MODEL_PRICING.items():
+            if lower.startswith(prefix) or prefix in lower:
+                return pricing
+        return (3.00, 15.00)  # Sonnet-level fallback for unknown models
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            import anthropic as _anthropic  # noqa: PLC0415
+
+            self._client = _anthropic.AsyncAnthropic(api_key=self._api_key)
+        return self._client
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+
+    async def health_check(self) -> bool:
+        """Return True when the API key is valid and the Anthropic API is reachable."""
+        if not self._api_key:
+            _LOGGER.warning("Anthropic: no API key configured")
+            return False
+        try:
+            import anthropic as _anthropic  # noqa: PLC0415
+        except ImportError:
+            _LOGGER.error(
+                "anthropic package is not installed. "
+                "Install it with: pip install anthropic"
+            )
+            return False
+        try:
+            client = self._get_client()
+            await client.models.list(limit=1)
+            return True
+        except _anthropic.AuthenticationError:
+            _LOGGER.error(
+                "Anthropic: invalid API key (AuthenticationError) — "
+                "check your anthropic_api_key in the add-on settings"
+            )
+            return False
+        except _anthropic.PermissionDeniedError:
+            _LOGGER.error(
+                "Anthropic: API key does not have permission to access this resource"
+            )
+            return False
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Anthropic health check failed: %s", exc)
+            return False
+
+    async def fetch_models(self) -> list[dict[str, Any]]:
+        """Fetch available models from the Anthropic API; falls back to a hardcoded list."""
+        if self._api_key:
+            try:
+                import anthropic as _anthropic  # noqa: PLC0415
+            except ImportError:
+                pass
+            else:
+                try:
+                    client = self._get_client()
+                    page = await client.models.list()
+                    result = []
+                    for m in page.data:
+                        inp, out = _ANTHROPIC_MODEL_PRICING.get(m.id, (3.00, 15.00))
+                        display = getattr(m, "display_name", m.id)
+                        result.append(
+                            {
+                                "name": m.id,
+                                "id": m.id,
+                                "display_name": display,
+                                "description": f"{display} (${inp:.0f}/${out:.0f} per 1M tokens)",
+                            }
+                        )
+                    return result
+                except _anthropic.AuthenticationError:
+                    _LOGGER.error(
+                        "Anthropic: invalid API key — "
+                        "check your anthropic_api_key in the add-on settings"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.debug("Failed to fetch Anthropic models from API: %s", exc)
+
+        return [
+            {
+                "name": m["name"],
+                "id": m["name"],
+                "display_name": m["display_name"],
+                "description": m["display_name"],
+            }
+            for m in _ANTHROPIC_FALLBACK_MODELS
+        ]
+
+    @staticmethod
+    def _resize_frame(frame_bytes: bytes, max_dimension: int = 1568) -> bytes:
+        """Resize a JPEG frame so its longest side is at most max_dimension pixels.
+
+        Anthropic resizes images server-side to 1568px anyway; doing it client-side
+        reduces upload bandwidth for high-resolution security cameras.
+        Returns the original bytes unchanged if the image cannot be opened.
+        """
+        import io  # noqa: PLC0415
+
+        from PIL import Image  # noqa: PLC0415
+
+        try:
+            img = Image.open(io.BytesIO(frame_bytes))
+            if max(img.width, img.height) > max_dimension:
+                img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85)
+                return buf.getvalue()
+        except Exception:  # noqa: BLE001
+            pass
+        return frame_bytes
+
+    async def _call_model(self, frames: list[bytes], prompt: str) -> str:
+        """Send frames to Claude via the Anthropic Messages API."""
+        if not frames:
+            return ""
+
+        try:
+            import anthropic as _anthropic  # noqa: PLC0415
+        except ImportError:
+            _LOGGER.error(
+                "anthropic package is not installed. "
+                "Install it with: pip install anthropic"
+            )
+            return ""
+
+        try:
+            client = self._get_client()
+
+            resized = [self._resize_frame(f) for f in frames]
+            content: list[dict[str, Any]] = [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": base64.b64encode(frame).decode("ascii"),
+                    },
+                }
+                for frame in resized
+            ]
+            content.append({"type": "text", "text": prompt})
+
+            response = await client.messages.create(
+                model=self._model,
+                max_tokens=1024,
+                messages=[{"role": "user", "content": content}],
+            )
+
+            if response.usage:
+                self._last_prompt_tokens = int(response.usage.input_tokens or 0)
+                self._last_completion_tokens = int(response.usage.output_tokens or 0)
+
+            return "\n".join(
+                block.text for block in response.content if hasattr(block, "text")
+            )
+
+        except _anthropic.AuthenticationError:
+            _LOGGER.error(
+                "Anthropic: invalid API key (AuthenticationError) — "
+                "check your anthropic_api_key in the add-on settings"
+            )
+            return ""
+        except _anthropic.PermissionDeniedError:
+            _LOGGER.error(
+                "Anthropic: permission denied — "
+                "check that your API key has access to model '%s'",
+                self._model,
+            )
+            return ""
+        except _anthropic.RateLimitError:
+            _LOGGER.warning(
+                "Anthropic: rate limit hit — API quota exceeded; "
+                "analysis will resume on the next cycle"
+            )
+            return ""
+        except _anthropic.BadRequestError as exc:
+            _LOGGER.error(
+                "Anthropic: bad request (HTTP 400) — %s; "
+                "check that the selected model supports vision",
+                exc.message,
+            )
+            return ""
+        except _anthropic.APIStatusError as exc:
+            _LOGGER.error(
+                "Anthropic API error HTTP %d: %s", exc.status_code, exc.message
+            )
+            return ""
+        except _anthropic.APIConnectionError as exc:
+            _LOGGER.warning("Anthropic: connection error — %s", exc)
+            return ""
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Anthropic request timed out")
+            return ""
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Anthropic request failed: %s", exc)
+            return ""
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -801,6 +1083,8 @@ def create_analyzer(
     ollama_model: str = "",
     ollama_cloud_api_key: str = "",
     moondream_api_key: str = "",
+    anthropic_api_key: str = "",
+    anthropic_model: str = "",
 ) -> BaseAnalyzer | None:
     """Return an analyzer for *ai_provider*, or ``None`` if configuration is invalid."""
     if ai_provider == "ollama":
@@ -862,9 +1146,26 @@ def create_analyzer(
             suspicious_keywords=suspicious_keywords,
         )
 
+    if ai_provider == "anthropic":
+        if not anthropic_api_key:
+            _LOGGER.warning(
+                "ai_provider='anthropic' requires anthropic_api_key to be set; "
+                "AI analysis disabled"
+            )
+            return None
+        return AnthropicAnalyzer(
+            api_key=anthropic_api_key,
+            model=anthropic_model or "claude-haiku-4-5",
+            prompt=prompt,
+            car_description=car_description,
+            max_frames=max_frames,
+            frame_interval=frame_interval,
+            suspicious_keywords=suspicious_keywords,
+        )
+
     _LOGGER.warning(
         "Unknown ai_provider %r; expected 'ollama', 'ollama_cloud', "
-        "'moondream_cloud', or 'moondream_local'. AI analysis disabled.",
+        "'moondream_cloud', 'moondream_local', or 'anthropic'. AI analysis disabled.",
         ai_provider,
     )
     return None

@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v2.8.5"
+version: "v2.8.6"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -34,87 +34,151 @@ ports_description:
 
 options:
   # --- Credentials ---
+  # Your Blink account email address.
   username: ""
+  # Your Blink account password.
   password: ""
 
   # --- Storage ---
+  # Where to save downloaded clips (must be under /share for HA persistence).
   download_path: "/share/blink-clips"
+  # Create a sub-folder for each camera inside download_path.
   organize_by_camera: true
+  # Create a YYYY/MM/DD sub-folder structure inside each camera folder.
   organize_by_date: true
+  # Filename template. Supports {camera} and {timestamp}.
   filename_format: "{camera}_{timestamp}"
 
   # --- Polling ---
+  # How often (seconds) to check Blink for new clips. Min 30, max 3600.
   poll_interval: 300
+  # Maximum clips to download in a single poll cycle. Keeps each cycle fast.
   max_clips_per_poll: 50
 
   # --- Retention & quota ---
+  # Delete clips older than this many days (0 = keep forever).
   retention_days: 30
+  # Delete oldest clips when total library exceeds this size in GB.
   max_storage_gb: 10.0
 
   # --- Filtering ---
+  # Only download clips from these cameras (leave empty for all cameras).
   camera_filter: []
+  # Only download PIR motion-triggered clips (skip liveview and snapshots).
   motion_only: false
+  # Only download clips recorded after this time of day (HH:MM, 24-hour, local time).
   time_window_start: ""
+  # Only download clips recorded before this time of day (HH:MM, 24-hour, local time).
   time_window_end: ""
+  # Skip clips shorter than this duration in seconds (0 = keep all).
   min_clip_duration: 0
 
   # --- Download options ---
+  # Also download thumbnail images alongside each clip.
   download_thumbnails: false
+  # Number of clips to download in parallel. Higher values use more bandwidth.
   concurrent_downloads: 3
+  # How many times to retry a failed download before giving up.
   retry_attempts: 3
+  # Seconds to wait between retry attempts.
   retry_delay: 5.0
 
   # --- HA notifications ---
+  # Send a Home Assistant persistent notification each time a clip is downloaded.
   notify_ha: true
+  # Title shown in the HA notification.
   ha_notification_title: "Blink Clip Downloaded"
 
   # --- Extra features ---
+  # POST a JSON payload to this URL each time a clip is downloaded (leave empty to disable).
   webhook_url: ""
+  # Write a JSON manifest file listing all downloaded clips.
   create_clip_manifest: true
 
   # --- Clip library database ---
+  # Enable the SQLite clip library. Required for the web UI and AI analysis.
   enable_library_db: true
 
   # --- Media server / web UI ---
+  # Enable the built-in web UI for browsing and playing clips.
   enable_media_server: true
+  # TCP port the web UI listens on for direct (non-ingress) access.
   media_server_port: 8099
 
   # --- Event-driven instant download ---
+  # Listen for HA motion events to trigger an immediate download without
+  # waiting for the next poll cycle.
   watch_ha_events: true
+  # How long (seconds) to run in fast-poll mode after a motion event.
   fast_poll_duration: 120
+  # Poll interval (seconds) during fast-poll mode after a motion event.
   fast_poll_interval: 15
+  # Wait this many seconds after a motion event before fetching the clip,
+  # giving Blink time to finish recording and upload it.
   post_motion_delay: 30
+  # Limit fast-poll to these cameras (leave empty to apply to all cameras).
   event_cameras: []
 
   # --- Daily digest ---
+  # Send a daily summary notification with clip statistics.
   digest_enabled: true
+  # Time of day (HH:MM, 24-hour, local time) to send the daily digest.
   digest_time: "08:00"
 
   # --- ZIP archiving ---
+  # Move old clips into ZIP archives to save space while keeping records.
   archive_enabled: false
+  # Archive clips that are older than this many days.
   archive_after_days: 60
 
   # --- Sync Module local storage (USB drive clips) ---
-  # Requires a USB drive plugged into the Blink Sync Module.
-  # Clips transit via the Blink cloud (no direct LAN access).
+  # When enabled, each poll cycle also downloads clips stored on the physical
+  # USB drive plugged into the Blink Sync Module.  These clips do not appear
+  # in the normal Blink cloud feed.  Note: Blink has no direct LAN API for
+  # the USB drive — clips are temporarily uploaded to the Blink cloud and then
+  # fetched from there, so an internet connection is required even for
+  # "local" storage clips.
   download_local_storage: false
 
   # --- AI Video Analysis ---
-  # ai_provider: "ollama"         – Ollama server with a vision model
-  #              "moondream_cloud" – Cloud API (needs moondream_api_key)
-  #              "moondream_local" – Moondream 0.5B model running on this device
+  # Use an AI model to analyse each downloaded clip for suspicious activity.
+  # Select a provider below and configure its settings.
+  # Providers:
+  #   "ollama"          – Ollama server running a vision model on your LAN
+  #   "ollama_cloud"    – Ollama Cloud API (api.ollama.com, needs ollama_cloud_api_key)
+  #   "moondream_cloud" – Moondream Cloud API (needs moondream_api_key)
+  #   "moondream_local" – Moondream 0.5B model downloaded and run on this device
+  #   "anthropic"       – Anthropic Claude API (needs anthropic_api_key)
   ai_analysis_enabled: false
   ai_provider: "ollama"
+  # [Ollama / Ollama Cloud] URL of your Ollama server, e.g. http://192.168.1.10:11434
   ollama_url: ""
+  # [Ollama / Ollama Cloud] Vision model to use. Use "Fetch Models" in the web UI
+  # to see available models on your server.
   ollama_model: ""
+  # [Ollama Cloud] API key from api.ollama.com (leave empty for local Ollama).
+  ollama_cloud_api_key: ""
+  # [Moondream Cloud] API key from moondream.ai.
   moondream_api_key: ""
+  # [Anthropic] API key from console.anthropic.com. Keep this secret.
+  anthropic_api_key: ""
+  # [Anthropic] Claude model to use. Use "Fetch Models" in the web UI to see
+  # available models. claude-haiku-4-5 is the most cost-effective option.
+  anthropic_model: "claude-haiku-4-5"
+  # Prompt sent to the AI for each clip. Must ask for JSON with
+  # suspicious/confidence/description keys.
   ai_prompt: >-
     Analyze this security camera frame. Describe what you see.
     Is there any suspicious activity? Respond in JSON:
     {"suspicious": true/false, "confidence": 0.0-1.0, "description": "..."}
+  # Optional description of the homeowner's car so the AI can identify it.
   ai_car_description: ""
+  # Number of frames to extract from each clip for analysis (1–10).
   ai_max_frames: 3
+  # Extract one frame every this many seconds of video.
   ai_frame_interval: 2.0
+  # Words that trigger a "suspicious" flag when found in the AI's plain-text
+  # response (used as fallback when the AI does not return JSON).
   ai_suspicious_keywords:
     - "suspicious"
     - "break-in"
@@ -122,25 +186,40 @@ options:
     - "vandalism"
     - "intruder"
     - "trespassing"
+  # Only run AI analysis between these hours (HH:MM, 24-hour, leave empty for always).
   ai_schedule_start: ""
   ai_schedule_end: ""
+  # Maximum clips to analyse in one batch before waiting for ai_check_interval.
   ai_batch_size: 10
+  # Seconds between analysis batch runs.
   ai_check_interval: 60
 
   # --- Extended Notifications (AI alerts) ---
+  # HA mobile app entity to push AI suspicious-activity alerts to.
   mobile_app_target: ""
+  # Enable push notifications to the mobile app for suspicious clips.
   mobile_app_enabled: false
+  # SMTP server hostname or IP for email alerts.
   smtp_host: ""
+  # SMTP server port (usually 587 for STARTTLS, 465 for SSL).
   smtp_port: 587
+  # SMTP login username (usually your email address).
   smtp_user: ""
+  # SMTP login password.
   smtp_password: ""
+  # List of email addresses to send suspicious-clip alerts to.
   smtp_recipients: []
+  # From address used in outgoing alert emails.
   smtp_sender: ""
+  # Enable email alerts for suspicious clips.
   smtp_enabled: false
+  # Discord webhook URL to post suspicious-clip alerts to.
   discord_webhook_url: ""
+  # Enable Discord alerts for suspicious clips.
   discord_enabled: false
 
   # --- Logging ---
+  # Log verbosity level. Use "debug" to troubleshoot connection issues.
   log_level: "info"
 
 schema:
@@ -183,10 +262,13 @@ schema:
   archive_after_days: "int(1,365)"
   download_local_storage: "bool"
   ai_analysis_enabled: "bool"
-  ai_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local)"
+  ai_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic)"
   ollama_url: "str?"
   ollama_model: "str?"
+  ollama_cloud_api_key: "password?"
   moondream_api_key: "password?"
+  anthropic_api_key: "password?"
+  anthropic_model: "str?"
   ai_prompt: "str?"
   ai_car_description: "str?"
   ai_max_frames: "int(1,10)"

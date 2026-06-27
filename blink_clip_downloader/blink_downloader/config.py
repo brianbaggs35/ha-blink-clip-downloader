@@ -98,13 +98,13 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
 
     # --- AI Video Analysis ---
     ai_analysis_enabled: bool = False
-    ai_provider: str = (
-        "ollama"  # "ollama" | "ollama_cloud" | "moondream_cloud" | "moondream_local"
-    )
+    ai_provider: str = "ollama"  # "ollama" | "ollama_cloud" | "moondream_cloud" | "moondream_local" | "anthropic"
     ollama_url: str = ""
     ollama_model: str = ""
     ollama_cloud_api_key: str = ""
     moondream_api_key: str = ""
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5"
     ai_prompt: str = (
         "Analyze this security camera frame. Describe what you see. "
         "Is there any suspicious activity? Respond in JSON: "
@@ -249,6 +249,9 @@ def _parse_config(data: dict) -> AppConfig:
         ollama_model=str(data.get("ollama_model", "") or "").strip(),
         ollama_cloud_api_key=str(data.get("ollama_cloud_api_key", "") or "").strip(),
         moondream_api_key=str(data.get("moondream_api_key", "") or "").strip(),
+        anthropic_api_key=str(data.get("anthropic_api_key", "") or "").strip(),
+        anthropic_model=str(data.get("anthropic_model", "") or "").strip()
+        or "claude-haiku-4-5",
         ai_prompt=str(data.get("ai_prompt", "") or "").strip() or AppConfig.ai_prompt,
         ai_car_description=str(data.get("ai_car_description", "") or "").strip(),
         ai_max_frames=max(1, min(10, int(data.get("ai_max_frames", 3)))),

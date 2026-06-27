@@ -604,6 +604,7 @@ action:
         <div class="usage-stat"><div class="num" id="usage-total-tokens">—</div><div class="lbl">Total Tokens</div></div>
         <div class="usage-stat"><div class="num" id="usage-prompt-tokens">—</div><div class="lbl">Prompt Tokens</div></div>
         <div class="usage-stat"><div class="num" id="usage-completion-tokens">—</div><div class="lbl">Completion Tokens</div></div>
+        <div class="usage-stat" id="usage-cost-stat" style="display:none"><div class="num" id="usage-cost-value">—</div><div class="lbl">Estimated Cost</div></div>
       </div>
 
       <!-- Provider info card -->
@@ -1470,7 +1471,7 @@ async function loadStatus() {
 
     // AI Analysis status card
     if (aiData && aiData.enabled) {
-      const provNames = {ollama:'Ollama (Local)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)'};
+      const provNames = {ollama:'Ollama (Local)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)',anthropic:'Anthropic (Claude)'};
       const prov = aiData.provider || 'ollama';
       const provLabel = provNames[prov] || prov;
       const online = aiData.ai_online;
@@ -1846,6 +1847,7 @@ async function loadAIStatus() {
       ollama_cloud: 'Ollama Cloud',
       moondream_cloud: 'Moondream Cloud',
       moondream_local: 'Moondream Local (0.5B)',
+      anthropic: 'Anthropic (Claude)',
     };
     const provider = d.provider || 'ollama';
     if (d.ai_online) {
@@ -1858,7 +1860,8 @@ async function loadAIStatus() {
     $('ai-provider-label').textContent = providerLabels[provider] || provider;
     $('ai-model-name').textContent = d.model || '—';
     const modelPicker = $('ai-model-picker');
-    if (modelPicker) modelPicker.style.display = (provider === 'ollama' || provider === 'ollama_cloud') ? 'flex' : 'none';
+    const showPicker = provider === 'ollama' || provider === 'ollama_cloud' || provider === 'anthropic';
+    if (modelPicker) modelPicker.style.display = showPicker ? 'flex' : 'none';
     // Moondream local: show install section and poll install state
     const mdSection = $('ai-moondream-local-section');
     if (mdSection) mdSection.style.display = provider === 'moondream_local' ? 'block' : 'none';
@@ -2038,6 +2041,7 @@ const _PROVIDER_NOTES = {
   ollama_cloud: 'Ollama Cloud (api.ollama.com) is a hosted Ollama service. Token counts are extracted from the API response. API usage may incur costs — check your Ollama Cloud account dashboard.',
   moondream_cloud: 'Moondream Cloud bills per API request. Each clip analysis sends one request (the middle frame). Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for current pricing and your account usage.',
   moondream_local: 'Moondream Local runs entirely on-device — no cloud costs and no token tracking. The analysis count shows how many clips have been processed.',
+  anthropic: 'Anthropic (Claude) charges per token. Input and output tokens are tracked for every analysis. Use <strong>Claude Haiku 4.5</strong> for best cost efficiency ($1/$5 per 1M tokens). Estimated cost is calculated from your token usage and the model\'s current pricing.',
 };
 
 async function loadAIUsage() {
@@ -2056,7 +2060,7 @@ async function loadAIUsage() {
     $('usage-completion-tokens').textContent = _fmtNum(completionTokens);
 
     const provider = d.provider || '';
-    const provLabels = {ollama:'Ollama (Local/LAN)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)'};
+    const provLabels = {ollama:'Ollama (Local/LAN)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)',anthropic:'Anthropic (Claude)'};
     $('usage-provider-name').textContent = provLabels[provider] || (provider || '—');
     $('usage-model-name').textContent = d.model || '—';
 
@@ -2068,8 +2072,22 @@ async function loadAIUsage() {
       noteEl.style.display = 'none';
     }
 
-    // Ollama (local + cloud) report token counts; moondream variants do not
-    const showTokens = provider === 'ollama' || provider === 'ollama_cloud';
+    // Ollama (local + cloud) and Anthropic report token counts; moondream variants do not
+    const showTokens = provider === 'ollama' || provider === 'ollama_cloud' || provider === 'anthropic';
+
+    // Anthropic: show estimated cost based on token usage and model pricing
+    const costStatEl = $('usage-cost-stat');
+    if (provider === 'anthropic' && d.cost_per_1m_input !== undefined && totalTokens > 0) {
+      const estimatedCost = (promptTokens * d.cost_per_1m_input + completionTokens * d.cost_per_1m_output) / 1000000;
+      const costStr = estimatedCost < 0.001 ? '<$0.001' : '$' + estimatedCost.toFixed(4);
+      if (costStatEl) {
+        costStatEl.style.display = '';
+        const valEl = $('usage-cost-value');
+        if (valEl) valEl.textContent = costStr;
+      }
+    } else {
+      if (costStatEl) costStatEl.style.display = 'none';
+    }
     document.getElementById('usage-total-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
     document.getElementById('usage-prompt-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
     document.getElementById('usage-completion-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
@@ -2435,6 +2453,12 @@ class MediaServer:
             assert self._analyzer is not None
             data["provider"] = self._analyzer.provider_name
             data["model"] = self._analyzer.model_name()
+            if self._analyzer.provider_name == "anthropic" and hasattr(
+                self._analyzer, "model_pricing"
+            ):
+                inp, out = self._analyzer.model_pricing()  # type: ignore[union-attr]
+                data["cost_per_1m_input"] = inp
+                data["cost_per_1m_output"] = out
         usage = await self._db.get_token_usage_stats()
         data.update(usage)
         return web.json_response(data)
