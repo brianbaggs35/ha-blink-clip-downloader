@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v2.8.4"
+version: "v2.8.5"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -8,9 +8,7 @@ description: >-
   per-camera organisation, retention policies, storage quotas, HA notifications,
   motion/time-window filtering, SQLite clip library, Video.js web UI, and
   event-driven instant download after motion events.
-url: >-
-  https://github.com/brianbaggs35/ha-blink-clip-downloader/tree/main/
-  blink_clip_downloader
+url: "https://github.com/brianbaggs35/ha-blink-clip-downloader"
 arch:
   - aarch64
   - amd64
@@ -185,7 +183,7 @@ schema:
   archive_after_days: "int(1,365)"
   download_local_storage: "bool"
   ai_analysis_enabled: "bool"
-  ai_provider: "list(ollama|moondream_cloud|moondream_local)"
+  ai_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local)"
   ollama_url: "str?"
   ollama_model: "str?"
   moondream_api_key: "password?"

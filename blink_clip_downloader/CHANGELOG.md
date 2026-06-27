@@ -1,5 +1,51 @@
 # Changelog
 
+## 2.8.5
+
+### Bug fixes
+
+- **Fixed spurious 2FA prompts after HA server restart with no SMS from Blink.**
+  The `blinkpy_compat.py` compatibility patch replaced blinkpy's `oauth_signin`
+  with a simplified version that treated *any* HTTP 202 response from Blink's
+  OAuth signin endpoint as a 2FA challenge.  Blinkpy 0.25.6+ correctly inspects
+  the JSON response body — only returning "2FA required" when the body contains
+  `tsv_state`, `tsv_methods`, or `next_time_in_secs`.  On HA server restart,
+  when the network is still stabilising, Blink's signin endpoint can return 202
+  without those fields (a transient non-2FA response).  The old patch would
+  immediately display the 2FA overlay even though Blink never sent a verification
+  code, leaving the user with a prompt they could not complete.  After the 600 s
+  timeout the add-on retried and showed the prompt again — repeating
+  indefinitely.
+
+  The patch now performs the same body inspection as blinkpy 0.25.7.  A 202
+  without the 2FA indicator fields is treated as a login failure (not a 2FA
+  challenge), so the add-on retries the connection and recovers once the network
+  is fully up, rather than getting stuck in a 2FA loop.
+
+- **Fixed broken info-page link in the HA add-on repository.**  The `url`
+  field in `config.yaml` used a YAML block scalar (`>-`) split across two
+  lines, which YAML joins with a space.  HA URL-encodes that space as `%20`,
+  producing an invalid link
+  (`…/tree/main/%20blink_clip_downloader`).  The field is now a plain
+  quoted string pointing directly to the repository root:
+  `https://github.com/brianbaggs35/ha-blink-clip-downloader`.
+
+- **Fixed `ollama_cloud` missing from the HA add-on `ai_provider` schema.**
+  The `ollama_cloud` provider was added in 2.8.3 but the `config.yaml` schema
+  still listed only `ollama|moondream_cloud|moondream_local`.  Users who set
+  `ai_provider: ollama_cloud` would see a configuration validation error when
+  saving the add-on options.  The schema now reads
+  `ollama|ollama_cloud|moondream_cloud|moondream_local`.
+
+### Dependency updates
+
+- **blinkpy 0.25.7** — minor upstream fix that initialises `response_text = ""`
+  before the error-logging path in `oauth_signin`, preventing a potential
+  `UnboundLocalError` when the signin endpoint returns an unexpected status code.
+  Our compatibility patch already avoided this code path, so the change is a
+  belt-and-suspenders improvement.  `requirements.txt` and `pyproject.toml` now
+  pin `blinkpy>=0.25.7`.
+
 ## 2.8.4
 
 ### Fixes

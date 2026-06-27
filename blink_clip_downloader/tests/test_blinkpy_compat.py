@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 from blinkpy import api as blink_api
@@ -24,9 +25,10 @@ def test_patch_is_idempotent():
     assert blink_api.oauth_signin is before
 
 
-async def _call_oauth_signin(status: int):
+async def _call_oauth_signin(status: int, body: str = ""):
     mock_response = MagicMock()
     mock_response.status = status
+    mock_response.text = AsyncMock(return_value=body)
 
     mock_auth = MagicMock()
     mock_auth.session.post = AsyncMock(return_value=mock_response)
@@ -34,18 +36,44 @@ async def _call_oauth_signin(status: int):
     return await blink_api.oauth_signin(mock_auth, "user@example.com", "pw", "csrf")
 
 
-async def test_status_202_means_2fa_required():
-    """Blink's signin endpoint now returns 202 (not 412) when 2FA is needed.
-
-    See https://github.com/fronzbot/blinkpy/issues/1233 -- unpatched
-    blinkpy falls through to `return None` for this status, which causes
-    "Login failed" without ever prompting for the 2FA code.
-    """
-    assert await _call_oauth_signin(202) == "2FA_REQUIRED"
-
-
-async def test_status_412_still_means_2fa_required():
+async def test_status_412_means_2fa_required():
     assert await _call_oauth_signin(412) == "2FA_REQUIRED"
+
+
+async def test_status_202_with_tsv_methods_means_2fa_required():
+    """202 with tsv_methods in body is a genuine 2FA challenge — SMS should arrive."""
+    body = json.dumps({"tsv_methods": ["sms"], "tsv_state": "required"})
+    assert await _call_oauth_signin(202, body) == "2FA_REQUIRED"
+
+
+async def test_status_202_with_tsv_state_only_means_2fa_required():
+    body = json.dumps({"tsv_state": "pending"})
+    assert await _call_oauth_signin(202, body) == "2FA_REQUIRED"
+
+
+async def test_status_202_with_next_time_in_secs_means_2fa_required():
+    body = json.dumps({"next_time_in_secs": 30})
+    assert await _call_oauth_signin(202, body) == "2FA_REQUIRED"
+
+
+async def test_status_202_without_2fa_fields_is_not_2fa():
+    """202 without 2FA indicator fields must NOT show a prompt.
+
+    Without this check the add-on would display a 2FA overlay with no
+    corresponding SMS from Blink — e.g. on HA restart when a transient
+    network hiccup causes Blink's signin endpoint to return 202 for a
+    non-2FA reason (see blinkpy issue #1233 and blinkpy_compat.py docstring).
+    """
+    body = json.dumps({"message": "ok"})
+    assert await _call_oauth_signin(202, body) is None
+
+
+async def test_status_202_with_empty_body_is_not_2fa():
+    assert await _call_oauth_signin(202, "") is None
+
+
+async def test_status_202_with_invalid_json_is_not_2fa():
+    assert await _call_oauth_signin(202, "not-json") is None
 
 
 async def test_redirect_status_means_success():
