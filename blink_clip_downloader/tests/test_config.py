@@ -221,7 +221,7 @@ def test_ai_analysis_defaults_to_disabled():
     assert cfg.ai_analysis_enabled is False
     assert cfg.ollama_url == ""
     assert cfg.ollama_model == ""
-    assert cfg.ai_max_frames == 3
+    assert cfg.ai_max_frames == 5
     assert cfg.ai_frame_interval == 2.0
     assert cfg.ai_car_description == ""
     assert cfg.ai_schedule_start == ""
@@ -258,8 +258,8 @@ def test_ai_analysis_full_config():
 
 
 def test_ai_max_frames_clamped():
-    cfg = _parse_config({"username": "u", "password": "p", "ai_max_frames": 99})
-    assert cfg.ai_max_frames == 10
+    cfg = _parse_config({"username": "u", "password": "p", "ai_max_frames": 150})
+    assert cfg.ai_max_frames == 100
     cfg2 = _parse_config({"username": "u", "password": "p", "ai_max_frames": 0})
     assert cfg2.ai_max_frames == 1
 

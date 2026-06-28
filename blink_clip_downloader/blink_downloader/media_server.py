@@ -738,6 +738,22 @@ action:
         </div>
       </div>
 
+      <!-- Camera Configurations -->
+      <div style="margin-bottom:1.5rem">
+        <h3 style="margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem">
+          📷 Camera Configurations
+          <span style="font-size:.73rem;color:var(--muted);font-weight:400">
+            — Set per-camera purpose and custom prompts
+          </span>
+        </h3>
+        <div id="ai-cam-configs-loading" style="color:var(--muted);font-size:.85rem;padding:1rem">Loading…</div>
+        <div id="ai-cam-configs-list" style="display:flex;flex-direction:column;gap:.65rem"></div>
+        <div style="margin-top:.75rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <button class="btn sm" id="ai-cam-save-btn">💾 Save Camera Configs</button>
+          <span style="font-size:.75rem;color:var(--muted)">Changes apply immediately — no restart needed</span>
+        </div>
+      </div>
+
       <!-- Suspicious Activity Feed -->
       <h3 style="margin-bottom:.8rem">Suspicious Activity Feed</h3>
       <div id="ai-suspicious-feed" style="display:flex;flex-direction:column;gap:.5rem">
@@ -1746,7 +1762,7 @@ async function loadClipAIResult(clipId) {
         '<div style="color:var(--muted);font-size:.74rem;margin-bottom:.4rem">' +
           'Model: ' + _esc(r.model || '—') +
           (r.analyzed_at ? ' &nbsp;·&nbsp; ' + new Date(r.analyzed_at).toLocaleString() : '') +
-          (r.frame_count ? ' &nbsp;·&nbsp; ' + r.frame_count + ' frame(s)' : '') +
+          (r.frame_count ? ' &nbsp;·&nbsp; ' + r.frame_count + ' frame(s) analyzed' : '') +
         '</div>' +
         '<div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">' +
           '<button class="btn sm ghost" onclick="analyzeClipNow(\'' + clipId + '\')">↺ Re-analyze</button>' +
@@ -1921,6 +1937,75 @@ async function loadSuspiciousFeed() {
 
 function _esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
+// ── Camera Configurations ──────────────────────────────────────────────────
+let _camConfigsData = [];
+
+async function loadCameraConfigs() {
+  const listEl = $('ai-cam-configs-list');
+  const loadingEl = $('ai-cam-configs-loading');
+  if (!listEl || !loadingEl) return;
+  loadingEl.style.display = 'block';
+  listEl.innerHTML = '';
+  try {
+    _camConfigsData = await api('/api/ai/camera-configs');
+    loadingEl.style.display = 'none';
+    if (!_camConfigsData.length) {
+      listEl.innerHTML = '<div style="color:var(--muted);font-size:.84rem;padding:.5rem 0">No cameras found. Download at least one clip to populate the camera list.</div>';
+      return;
+    }
+    listEl.innerHTML = _camConfigsData.map((c, i) =>
+      `<div class="status-card" style="padding:.85rem 1rem">
+        <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.55rem">
+          <span style="font-weight:600;font-size:.88rem;color:var(--accent)">📷 ${_esc(c.camera)}</span>
+        </div>
+        <div style="margin-bottom:.45rem">
+          <label style="font-size:.76rem;color:var(--muted);display:block;margin-bottom:.2rem">Camera purpose / description</label>
+          <input type="text" class="tag-input" style="width:100%" data-cam="${_esc(c.camera)}" data-field="description"
+            placeholder="e.g. Points at driveway, monitors the silver Kia Forte. Watch for anyone approaching the car."
+            value="${_esc(c.description || '')}">
+        </div>
+        <div>
+          <label style="font-size:.76rem;color:var(--muted);display:block;margin-bottom:.2rem">Custom AI prompt (overrides global prompt for this camera — optional)</label>
+          <input type="text" class="tag-input" style="width:100%" data-cam="${_esc(c.camera)}" data-field="custom_prompt"
+            placeholder="Leave empty to use the global AI prompt"
+            value="${_esc(c.custom_prompt || '')}">
+        </div>
+      </div>`
+    ).join('');
+  } catch(e) {
+    loadingEl.style.display = 'none';
+    listEl.innerHTML = '<div style="color:var(--danger);font-size:.84rem">Failed to load camera configs.</div>';
+  }
+}
+
+async function saveCameraConfigs() {
+  const btn = $('ai-cam-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving…'; }
+  try {
+    const inputs = document.querySelectorAll('#ai-cam-configs-list input[data-cam]');
+    const byCamera = {};
+    inputs.forEach(inp => {
+      const cam = inp.dataset.cam;
+      const field = inp.dataset.field;
+      if (!byCamera[cam]) byCamera[cam] = { camera: cam, description: '', custom_prompt: '' };
+      byCamera[cam][field] = inp.value.trim();
+    });
+    const payload = Object.values(byCamera);
+    await api('/api/ai/camera-configs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    toast('Camera configs saved ✓');
+  } catch(e) { toast('Failed to save camera configs', true); }
+  finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Save Camera Configs'; }
+  }
+}
+
+const camSaveBtn = $('ai-cam-save-btn');
+if (camSaveBtn) camSaveBtn.addEventListener('click', saveCameraConfigs);
+
 $('ai-fetch-models-btn').addEventListener('click', async () => {
   const btn = $('ai-fetch-models-btn');
   btn.disabled = true; btn.textContent = '⏳ Loading…';
@@ -2011,7 +2096,7 @@ $('ai-test-btn').addEventListener('click', () => runAITest());
 // Load AI tab when selected
 document.querySelectorAll('.nav-tab').forEach(t => {
   t.addEventListener('click', () => {
-    if (t.dataset.tab === 'ai') { loadAIStatus(); loadSuspiciousFeed(); }
+    if (t.dataset.tab === 'ai') { loadAIStatus(); loadSuspiciousFeed(); loadCameraConfigs(); }
     if (t.dataset.tab === 'usage') { loadAIUsage(); }
   });
 });
@@ -2039,7 +2124,7 @@ function _fmtNum(n) {
 const _PROVIDER_NOTES = {
   ollama: 'Ollama (Local/LAN) runs on your own hardware or another device on your network — no cloud costs. Token counts are extracted from the Ollama API response (<code>prompt_eval_count</code> / <code>eval_count</code>). Some cached responses may show 0 prompt tokens.',
   ollama_cloud: 'Ollama Cloud (api.ollama.com) is a hosted Ollama service. Token counts are extracted from the API response. API usage may incur costs — check your Ollama Cloud account dashboard.',
-  moondream_cloud: 'Moondream Cloud bills per API request. Each clip analysis sends one request (the middle frame). Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for current pricing and your account usage.',
+  moondream_cloud: 'Moondream Cloud bills per API request. Each clip analysis now sends one request per extracted frame (up to ai_max_frames), picking the most alarming result. Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for current pricing and your account usage.',
   moondream_local: 'Moondream Local runs entirely on-device — no cloud costs and no token tracking. The analysis count shows how many clips have been processed.',
   anthropic: 'Anthropic (Claude) charges per token. Input and output tokens are tracked for every analysis. Use <strong>Claude Haiku 4.5</strong> for best cost efficiency ($1/$5 per 1M tokens). Estimated cost is calculated from your token usage and the model\'s current pricing.',
 };
@@ -2206,6 +2291,8 @@ class MediaServer:
             "/api/ai/moondream/install-status", self._handle_moondream_install_status
         )
         app.router.add_post("/api/ai/moondream/install", self._handle_moondream_install)
+        app.router.add_get("/api/ai/camera-configs", self._handle_ai_camera_configs_get)
+        app.router.add_put("/api/ai/camera-configs", self._handle_ai_camera_configs_put)
         return app
 
     # ------------------------------------------------------------------
@@ -2632,3 +2719,84 @@ class MediaServer:
 
         asyncio.create_task(_run_install())
         return web.json_response({"status": "installing"})
+
+    _CAMERA_CONFIGS_FILE = Path("/data/camera_configs.json")
+
+    async def _handle_ai_camera_configs_get(
+        self, _request: web.Request
+    ) -> web.Response:
+        """Return current per-camera AI configurations."""
+        cameras = await self._db.get_camera_stats()
+        cam_names = [c["camera"] for c in cameras]
+        configs: list[dict] = []
+        if self._CAMERA_CONFIGS_FILE.exists():
+            try:
+                import json as _json  # noqa: PLC0415
+
+                configs = _json.loads(self._CAMERA_CONFIGS_FILE.read_text())
+            except Exception:  # noqa: BLE001
+                configs = []
+        # Ensure every known camera has an entry
+        configured = {c.get("camera", ""): c for c in configs}
+        result = []
+        for name in cam_names:
+            entry = configured.get(
+                name, {"camera": name, "description": "", "custom_prompt": ""}
+            )
+            result.append(
+                {
+                    "camera": name,
+                    "description": str(entry.get("description", "")),
+                    "custom_prompt": str(entry.get("custom_prompt", "")),
+                }
+            )
+        # Also include configured cameras not in the current clip list
+        for name, entry in configured.items():
+            if name not in cam_names:
+                result.append(
+                    {
+                        "camera": name,
+                        "description": str(entry.get("description", "")),
+                        "custom_prompt": str(entry.get("custom_prompt", "")),
+                    }
+                )
+        return web.json_response(result)
+
+    async def _handle_ai_camera_configs_put(self, request: web.Request) -> web.Response:
+        """Save per-camera AI configurations and update the live analyzer."""
+        try:
+            body = await request.json()
+            configs = [
+                {
+                    "camera": str(c["camera"]),
+                    "description": str(c.get("description", "")),
+                    "custom_prompt": str(c.get("custom_prompt", "")),
+                }
+                for c in body
+                if isinstance(c, dict) and c.get("camera")
+            ]
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+
+        try:
+            import json as _json  # noqa: PLC0415
+
+            self._CAMERA_CONFIGS_FILE.write_text(_json.dumps(configs, indent=2))
+        except OSError as exc:
+            _LOGGER.warning("Could not save camera configs: %s", exc)
+
+        # Update the live analyzer without restart
+        if self._analyzer is not None:
+            descriptions = {
+                c["camera"]: c["description"] for c in configs if c.get("description")
+            }
+            self._analyzer.update_camera_descriptions(descriptions)
+            # Also update camera-specific prompts
+            prompts = {
+                c["camera"]: c["custom_prompt"]
+                for c in configs
+                if c.get("custom_prompt")
+            }
+            self._analyzer._camera_prompts.update(prompts)  # noqa: SLF001
+
+        return web.json_response({"saved": True, "count": len(configs)})

@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v2.8.8"
+version: "v2.9.0"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -141,21 +141,21 @@ options:
   download_local_storage: false
 
   # --- AI Video Analysis ---
-  # Use an AI model to analyse each downloaded clip for suspicious activity.
-  # Select a provider below and configure its settings.
-  # Providers:
-  #   "ollama"          – Ollama server running a vision model on your LAN
-  #   "ollama_cloud"    – Ollama Cloud API (api.ollama.com, needs ollama_cloud_api_key)
-  #   "moondream_cloud" – Moondream Cloud API (needs moondream_api_key)
-  #   "moondream_local" – Moondream 0.5B model downloaded and run on this device
-  #   "anthropic"       – Anthropic Claude API (needs anthropic_api_key)
-  #   "openai"          – OpenAI API, e.g. GPT-4o (needs openai_api_key)
+  # Enable AI analysis to automatically inspect each downloaded clip for suspicious
+  # activity and send alerts via Discord, email, or the HA mobile app.
   ai_analysis_enabled: false
+  # AI provider to use. Options:
+  #   "ollama"          – Ollama server running a vision model on your LAN (free, private)
+  #   "ollama_cloud"    – Ollama Cloud API (api.ollama.com, needs ollama_cloud_api_key)
+  #   "moondream_cloud" – Moondream Cloud API (needs moondream_api_key, billed per request)
+  #   "moondream_local" – Moondream 0.5B INT8 model downloaded and run on this device (free, x86_64 only)
+  #   "anthropic"       – Anthropic Claude API (needs anthropic_api_key, billed per token)
+  #   "openai"          – OpenAI API, e.g. GPT-4o (needs openai_api_key, billed per token)
   ai_provider: "ollama"
   # [Ollama / Ollama Cloud] URL of your Ollama server, e.g. http://192.168.1.10:11434
   ollama_url: ""
   # [Ollama / Ollama Cloud] Vision model to use. Use "Fetch Models" in the web UI
-  # to see available models on your server.
+  # to see available models on your server (e.g. llava:7b, llama3.2-vision:11b).
   ollama_model: ""
   # [Ollama Cloud] API key from api.ollama.com (leave empty for local Ollama).
   ollama_cloud_api_key: ""
@@ -171,21 +171,30 @@ options:
   # [OpenAI] GPT model to use. Use "Fetch Models" in the web UI to see available
   # models. gpt-4o-mini is the most cost-effective vision option.
   openai_model: "gpt-4o-mini"
-  # Prompt sent to the AI for each clip. Must ask for JSON with
-  # suspicious/confidence/description keys.
+  # Base prompt sent to the AI for each clip. Must request a JSON response with
+  # "suspicious", "confidence", and "description" keys. This is the global default;
+  # use ai_camera_prompts (or the Camera Configurations section in the web UI) to
+  # override for individual cameras.
   ai_prompt: >-
-    Analyze this security camera clip frame. Describe what you see.
-    Mark suspicious=true if any person is close to or touching a vehicle,
-    or if there is any unusual or unexpected activity.
-    Provide an honest confidence score (0.1=very uncertain, 1.0=very certain)
-    reflecting how clearly the activity is visible.
-    Respond ONLY in JSON: {"suspicious": true/false, "confidence": 0.1-1.0, "description": "brief description"}
-  # Optional description of the homeowner's car so the AI can identify it.
-  # When set, anyone who comes within 1-2 feet of the car is flagged as suspicious.
+    You are a security camera AI analyst. Analyze this motion-triggered security camera footage.
+    Provide a concise 2-3 sentence description covering what triggered the motion,
+    the subject's position and movement, estimated distance from nearby assets
+    (vehicles, doors, windows, property line), and visibility conditions.
+    Flag as SUSPICIOUS (suspicious=true) if any person is touching or within arm's reach
+    (~2 feet) of a vehicle, door, or window, or is loitering or acting evasively.
+    Confidence reflects VISIBILITY CLARITY (0.1=very dark/blurry, 1.0=crystal clear).
+    Respond ONLY with valid JSON:
+    {"suspicious": true/false, "confidence": 0.1-1.0, "description": "2-3 sentence description"}
+  # Optional description of a vehicle to protect. When set, the AI applies strict
+  # distance rules and flags anyone within ~2 feet of the vehicle as suspicious.
+  # Example: "Silver Kia Forte, parked in the driveway"
   ai_car_description: ""
-  # Number of frames to extract from each clip for analysis (1–10).
-  ai_max_frames: 3
-  # Extract one frame every this many seconds of video.
+  # Number of frames extracted per clip for analysis (1–100). More frames = better
+  # coverage of the full clip but higher API cost and analysis time.
+  # For moondream_cloud, each frame = one API request (rate-limited to 2 req/s).
+  ai_max_frames: 5
+  # Extract one frame every this many seconds of video. With 5 frames and 2s interval,
+  # analysis covers approximately the first 8 seconds of the clip.
   ai_frame_interval: 2.0
   # Words that trigger a "suspicious" flag when found in the AI's plain-text
   # response (used as fallback when the AI does not return JSON).
@@ -196,7 +205,7 @@ options:
     - "vandalism"
     - "intruder"
     - "trespassing"
-  # Only run AI analysis between these hours (HH:MM, 24-hour, leave empty for always).
+  # Only run AI analysis between these hours (HH:MM, 24-hour, leave empty for always-on).
   ai_schedule_start: ""
   ai_schedule_end: ""
   # Maximum clips to analyse in one batch before waiting for ai_check_interval.
@@ -204,13 +213,20 @@ options:
   # Seconds between analysis batch runs.
   ai_check_interval: 60
   # Minimum confidence threshold (0.0–1.0) for sending suspicious-activity alerts.
-  # Results below this confidence are still recorded but no notifications are sent.
-  # Set to 0.3 or higher to reduce false-positive alerts.
+  # 0.0 = send alerts for all results; 0.3 = suppress low-confidence detections;
+  # 0.5 = only alert when the AI is reasonably certain. Results are always stored.
   ai_min_confidence: 0.0
   # Per-camera AI prompts. Each entry overrides the global ai_prompt for a specific
   # camera. Cameras not listed here use ai_prompt as the default.
-  # Example: [{camera: "Driveway", prompt: "Flag anyone who approaches the car."}]
+  # Tip: use the Camera Configurations section in the web UI AI tab for a friendlier editor.
+  # Example: [{camera: "Driveway", prompt: "Focus on vehicle proximity and flag anyone near the car."}]
   ai_camera_prompts: []
+  # Per-camera descriptions / context. Each entry tells the AI what the camera is
+  # watching so it can give more precise distance estimates and make better decisions.
+  # These are injected into every prompt for the matching camera and can be edited
+  # live in the web UI (AI tab → Camera Configurations) without restarting.
+  # Example: [{camera: "Driveway", description: "Points at driveway; silver Kia Forte parked left"}]
+  ai_camera_descriptions: []
 
   # --- Extended Notifications (AI alerts) ---
   # HA mobile app entity to push AI suspicious-activity alerts to.
@@ -291,7 +307,7 @@ schema:
   openai_model: "str?"
   ai_prompt: "str?"
   ai_car_description: "str?"
-  ai_max_frames: "int(1,10)"
+  ai_max_frames: "int(1,100)"
   ai_frame_interval: "float(0.5,30)"
   ai_suspicious_keywords:
     - "str?"
@@ -303,6 +319,9 @@ schema:
   ai_camera_prompts:
     - camera: "str"
       prompt: "str"
+  ai_camera_descriptions:
+    - camera: "str"
+      description: "str?"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"
   smtp_host: "str?"

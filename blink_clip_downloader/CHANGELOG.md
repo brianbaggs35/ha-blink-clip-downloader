@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.9.0
+
+### New features
+
+- **Multi-frame analysis for Moondream Cloud and Local.** Previously only the
+  middle frame of a clip was sent to Moondream. Now every extracted frame is
+  analysed individually and the most alarming result (suspicious over
+  not-suspicious; higher confidence when tied) is returned. The Moondream Cloud
+  path respects the 2 req/s rate limit with a 0.55 s inter-frame delay.
+
+- **Improved AI prompt with distance estimates.** The default `ai_prompt` and
+  the car-proximity block now ask the model to explicitly estimate the distance
+  between any person and a protected vehicle (e.g. "approximately 1.5 feet from
+  the driver-side door"). Strict distance thresholds (1 ft, 2 ft, 5 ft) are
+  enforced: `suspicious=true` is only set when the person is genuinely close.
+
+- **Raised `ai_max_frames` cap to 100.** The default increased from 3 to 5 and
+  the maximum allowed value increased from 10 to 100, enabling thorough analysis
+  of longer clips.
+
+- **Per-camera descriptions (`ai_camera_descriptions`).** Each camera can now
+  have a plain-text description of its location and purpose that is included in
+  the AI prompt. Descriptions can be set in `options.json` via
+  `ai_camera_descriptions` or at runtime through the new Camera Configurations
+  panel in the web UI.
+
+- **Camera Configurations panel in the AI tab.** A new section in the web UI
+  lists every known camera and lets you type a description per camera.
+  Changes are saved to `/data/camera_configs.json` and take effect immediately
+  without restarting the add-on.
+
+- **Improved frame extraction quality.** Frames are now extracted at
+  `scale=1280:-1` and JPEG quality `-q:v 2` (up from `-q:v 5`), providing
+  sharper images for AI analysis.
+
+- **Descriptive config comments.** Every AI-related setting in `config.yaml`
+  now includes an explanatory comment describing what it does and its valid
+  range.
+
 ## 2.8.8
 
 ### Bug fixes
