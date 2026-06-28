@@ -83,6 +83,11 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._alert_dispatcher: NotificationDispatcher | None = None
 
         if config.ai_analysis_enabled:
+            camera_prompts = (
+                {item["camera"]: item["prompt"] for item in config.ai_camera_prompts}
+                if config.ai_camera_prompts
+                else None
+            )
             self._analyzer = create_analyzer(
                 ai_provider=config.ai_provider,
                 prompt=config.ai_prompt,
@@ -90,6 +95,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 max_frames=config.ai_max_frames,
                 frame_interval=config.ai_frame_interval,
                 suspicious_keywords=config.ai_suspicious_keywords,
+                camera_prompts=camera_prompts,
                 ollama_url=config.ollama_url,
                 ollama_model=config.ollama_model,
                 ollama_cloud_api_key=config.ollama_cloud_api_key,
@@ -122,6 +128,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     schedule_end=config.ai_schedule_end,
                     batch_size=config.ai_batch_size,
                     check_interval=config.ai_check_interval,
+                    min_confidence=config.ai_min_confidence,
                 )
 
         self._media_server = MediaServer(
@@ -313,16 +320,22 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 )
                 await self._notifier.notify(str(exc), title="Blink 2FA Required")
             except AuthenticationError as exc:
+                # Invalid credentials — retrying with the same credentials
+                # would trigger Blink's lockout protection. Stop immediately
+                # and wait for the add-on to be restarted with fixed credentials.
                 _LOGGER.error(
-                    "Blink authentication failed (attempt %d): %s Retrying in %d s.",
-                    attempt,
-                    exc,
-                    self._reconnect_interval,
+                    "Blink authentication failed — invalid credentials. "
+                    "Fix the username/password in the add-on configuration "
+                    "and restart. Not retrying to prevent account lockout."
                 )
-                if attempt == 1:
-                    await self._notifier.notify(
-                        str(exc), title="Blink Authentication Failed"
-                    )
+                await self._notifier.notify(
+                    str(exc), title="Blink Authentication Failed"
+                )
+                self._downloader.auth_state = "error"
+                self._downloader.auth_message = "Invalid credentials — fix username/password and restart the add-on."
+                while self._running:
+                    await asyncio.sleep(self._startup_poll_interval)
+                return False
             except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
                 _LOGGER.exception(
                     "Failed to connect to Blink (attempt %d): %s — retrying in %d s",

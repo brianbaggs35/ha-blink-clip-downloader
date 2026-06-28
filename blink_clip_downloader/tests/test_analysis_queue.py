@@ -333,3 +333,96 @@ async def test_process_pending_breaks_when_queue_stopped(db: ClipDatabase) -> No
     await queue._process_pending()
 
     analyzer.analyze_clip.assert_not_awaited()  # break before analysis
+
+
+# ------------------------------------------------------------------
+# min_confidence threshold
+# ------------------------------------------------------------------
+
+
+async def test_process_pending_suppresses_dispatch_below_min_confidence(
+    db: ClipDatabase,
+) -> None:
+    """Alerts are not dispatched when confidence is below min_confidence."""
+    suspicious_result = AnalysisResult(
+        clip_id="c1",
+        camera="Front Door",
+        model="llava",
+        response_text="Maybe suspicious",
+        is_suspicious=True,
+        confidence=0.2,
+        summary="Low confidence detection",
+        frame_count=1,
+        analysis_duration=1.0,
+        analyzed_at="2024-06-01T09:00:00+00:00",
+    )
+    analyzer = _make_analyzer_mock(result=suspicious_result)
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock()
+
+    queue = AnalysisQueue(
+        analyzer=analyzer,
+        db=db,
+        dispatcher=dispatcher,
+        min_confidence=0.3,
+    )
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    # Result stored but NOT dispatched (confidence 0.2 < threshold 0.3)
+    dispatcher.dispatch.assert_not_awaited()
+    result = await db.get_analysis_for_clip("c1")
+    assert result is not None
+
+
+async def test_process_pending_dispatches_at_or_above_min_confidence(
+    db: ClipDatabase,
+) -> None:
+    """Alerts are dispatched when confidence meets the threshold."""
+    suspicious_result = AnalysisResult(
+        clip_id="c1",
+        camera="Front Door",
+        model="llava",
+        response_text="Intruder",
+        is_suspicious=True,
+        confidence=0.5,
+        summary="Person near car",
+        frame_count=1,
+        analysis_duration=1.0,
+        analyzed_at="2024-06-01T09:00:00+00:00",
+    )
+    analyzer = _make_analyzer_mock(result=suspicious_result)
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock()
+
+    queue = AnalysisQueue(
+        analyzer=analyzer,
+        db=db,
+        dispatcher=dispatcher,
+        min_confidence=0.5,
+    )
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    dispatcher.dispatch.assert_awaited_once()
+
+
+async def test_get_queue_status_includes_min_confidence(db: ClipDatabase) -> None:
+    """get_queue_status exposes the configured min_confidence value."""
+    analyzer = _make_analyzer_mock()
+    queue = AnalysisQueue(
+        analyzer=analyzer,
+        db=db,
+        dispatcher=None,
+        min_confidence=0.35,
+    )
+    status = await queue.get_queue_status()
+    assert status["min_confidence"] == 0.35

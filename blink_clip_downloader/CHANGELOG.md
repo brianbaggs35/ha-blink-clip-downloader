@@ -1,5 +1,53 @@
 # Changelog
 
+## 2.8.8
+
+### Bug fixes
+
+- **Account lockout prevention.** When Blink rejects invalid credentials the
+  add-on now stops retrying immediately and logs a clear "fix username/password
+  and restart" message.  Previously it retried indefinitely with the same bad
+  credentials, which could trigger Blink's fraud-detection lockout.  Transient
+  network errors and 2FA timeouts are still retried as before.
+
+- **Moondream Cloud: confidence always 0.0 in Discord.** Small models like
+  Moondream often return `"confidence": 0.0` even when flagging suspicious
+  activity because they don't calibrate confidence scores.  The response parser
+  now detects this case and derives a non-zero confidence via keyword matching
+  (defaulting to 0.5 when no keywords match), so Discord embeds and alerts show
+  a meaningful value instead of "0%".
+
+- **Moondream Cloud pricing corrected.** Fetch-models now reports the correct
+  Moondream Cloud pricing: $0.30/$2.50 per 1M input/output tokens, sourced from
+  https://docs.moondream.ai/pricing/.
+
+### New features
+
+- **Silent no-suspicious-activity logs.** Analysis results that are not
+  suspicious are now logged at DEBUG level instead of INFO, reducing noise.
+  Suspicious results continue to log at INFO with the confidence score and a
+  summary snippet.
+
+- **Minimum confidence threshold (`ai_min_confidence`).** Set this to e.g.
+  `0.3` to suppress notifications for low-confidence detections.  Clips are
+  still analysed and stored; only the alert dispatch is gated.  Default is
+  `0.0` (no change in behaviour).
+
+- **Per-camera AI prompts (`ai_camera_prompts`).** Cameras that do not point
+  directly at the car can now use a different prompt from the one used for the
+  driveway/car camera.  Each entry is `{camera: "Camera Name", prompt: "..."}`;
+  cameras not listed fall back to `ai_prompt`.
+
+- **Improved car-proximity detection.** When `ai_car_description` is set the
+  prompt now explicitly instructs the AI to flag as suspicious anyone who comes
+  within 1-2 feet of the vehicle, even when their intent is unclear.  Previously
+  the instruction only asked to "pay special attention" to the car, which missed
+  close-proximity events.
+
+- **Updated default `ai_prompt`.** The built-in prompt now requests a minimum
+  confidence of 0.1 (instead of 0.0) and adds the phrase "Respond ONLY in JSON"
+  to reduce the chance of the model including extra text that breaks JSON parsing.
+
 ## 2.8.7
 
 ### New features
