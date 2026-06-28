@@ -108,9 +108,12 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     ai_prompt: str = (
-        "Analyze this security camera frame. Describe what you see. "
-        "Is there any suspicious activity? Respond in JSON: "
-        '{"suspicious": true/false, "confidence": 0.0-1.0, "description": "..."}'
+        "Analyze this security camera clip frame. Describe what you see. "
+        "Mark suspicious=true if any person is close to or touching a vehicle, "
+        "or if there is any unusual or unexpected activity. "
+        "Provide an honest confidence score (0.1=very uncertain, 1.0=very certain) "
+        "reflecting how clearly the activity is visible. "
+        'Respond ONLY in JSON: {"suspicious": true/false, "confidence": 0.1-1.0, "description": "brief description"}'
     )
     ai_car_description: str = ""
     ai_max_frames: int = 3
@@ -122,6 +125,8 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     ai_schedule_end: str = ""
     ai_batch_size: int = 10
     ai_check_interval: int = 60
+    ai_min_confidence: float = 0.0
+    ai_camera_prompts: list[dict] = field(default_factory=list)
 
     # --- Extended Notifications (AI alerts) ---
     mobile_app_target: str = ""
@@ -272,6 +277,12 @@ def _parse_config(data: dict) -> AppConfig:
         ai_schedule_end=str(data.get("ai_schedule_end", "") or "").strip(),
         ai_batch_size=max(1, min(50, int(data.get("ai_batch_size", 10)))),
         ai_check_interval=max(10, min(3600, int(data.get("ai_check_interval", 60)))),
+        ai_min_confidence=max(0.0, min(1.0, float(data.get("ai_min_confidence", 0.0)))),
+        ai_camera_prompts=[
+            {"camera": str(item["camera"]), "prompt": str(item["prompt"])}
+            for item in data.get("ai_camera_prompts", [])
+            if isinstance(item, dict) and item.get("camera") and item.get("prompt")
+        ],
         # Extended notifications
         mobile_app_target=str(data.get("mobile_app_target", "") or "").strip(),
         mobile_app_enabled=bool(data.get("mobile_app_enabled", False)),

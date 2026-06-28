@@ -402,27 +402,33 @@ async def test_connect_with_retry_notifies_on_two_fa_timeout(app):
     assert "2FA" in app._notifier.notify.call_args.kwargs.get("title", "")
 
 
-async def test_connect_with_retry_notifies_on_authentication_error(app):
-    """AuthenticationError sends a single HA notification and keeps retrying."""
+async def test_connect_with_retry_stops_on_authentication_error(app):
+    """AuthenticationError sends a notification and stops retrying to prevent account lockout."""
     app._running = True
     app._reconnect_interval = 0
+    app._startup_poll_interval = 0.0
     attempt = 0
 
     async def _connect():
         nonlocal attempt
         attempt += 1
-        if attempt == 1:
-            raise AuthenticationError("Blink rejected the configured credentials")
-        app._running = False
-        raise RuntimeError("stop")
+        raise AuthenticationError("Blink rejected the configured credentials")
 
     app._downloader.connect = _connect
 
-    await app._connect_with_retry()
+    # Simulate _running being cleared (e.g. SIGTERM) so the wait loop exits.
+    async def _stop_running() -> None:
+        await asyncio.sleep(0)
+        app._running = False
 
-    assert attempt == 2  # retried after the authentication error
+    asyncio.create_task(_stop_running())
+    result = await app._connect_with_retry()
+
+    assert result is False
+    assert attempt == 1  # did NOT retry — would risk account lockout
     app._notifier.notify.assert_awaited_once()
     assert "Authentication" in app._notifier.notify.call_args.kwargs.get("title", "")
+    assert app._downloader.auth_state == "error"
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v2.8.7"
+version: "v2.8.8"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -174,10 +174,14 @@ options:
   # Prompt sent to the AI for each clip. Must ask for JSON with
   # suspicious/confidence/description keys.
   ai_prompt: >-
-    Analyze this security camera frame. Describe what you see.
-    Is there any suspicious activity? Respond in JSON:
-    {"suspicious": true/false, "confidence": 0.0-1.0, "description": "..."}
+    Analyze this security camera clip frame. Describe what you see.
+    Mark suspicious=true if any person is close to or touching a vehicle,
+    or if there is any unusual or unexpected activity.
+    Provide an honest confidence score (0.1=very uncertain, 1.0=very certain)
+    reflecting how clearly the activity is visible.
+    Respond ONLY in JSON: {"suspicious": true/false, "confidence": 0.1-1.0, "description": "brief description"}
   # Optional description of the homeowner's car so the AI can identify it.
+  # When set, anyone who comes within 1-2 feet of the car is flagged as suspicious.
   ai_car_description: ""
   # Number of frames to extract from each clip for analysis (1–10).
   ai_max_frames: 3
@@ -199,6 +203,14 @@ options:
   ai_batch_size: 10
   # Seconds between analysis batch runs.
   ai_check_interval: 60
+  # Minimum confidence threshold (0.0–1.0) for sending suspicious-activity alerts.
+  # Results below this confidence are still recorded but no notifications are sent.
+  # Set to 0.3 or higher to reduce false-positive alerts.
+  ai_min_confidence: 0.0
+  # Per-camera AI prompts. Each entry overrides the global ai_prompt for a specific
+  # camera. Cameras not listed here use ai_prompt as the default.
+  # Example: [{camera: "Driveway", prompt: "Flag anyone who approaches the car."}]
+  ai_camera_prompts: []
 
   # --- Extended Notifications (AI alerts) ---
   # HA mobile app entity to push AI suspicious-activity alerts to.
@@ -287,6 +299,10 @@ schema:
   ai_schedule_end: "str?"
   ai_batch_size: "int(1,50)"
   ai_check_interval: "int(10,3600)"
+  ai_min_confidence: "float(0,1)"
+  ai_camera_prompts:
+    - camera: "str"
+      prompt: "str"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"
   smtp_host: "str?"

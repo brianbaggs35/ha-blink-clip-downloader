@@ -2378,3 +2378,160 @@ def test_create_analyzer_openai_with_model() -> None:
 def test_create_analyzer_openai_no_key() -> None:
     a = create_analyzer("openai", "prompt")
     assert a is None
+
+
+# ------------------------------------------------------------------
+# Per-camera prompts
+# ------------------------------------------------------------------
+
+
+def test_build_prompt_uses_camera_specific_prompt() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Default prompt.",
+        camera_prompts={"Driveway": "Driveway-specific prompt."},
+    )
+    assert (
+        a._build_prompt("Driveway") == "Driveway-specific prompt.\n\nCamera: Driveway"
+    )
+    assert a._build_prompt("Front Door").startswith("Default prompt.")
+
+
+def test_build_prompt_falls_back_to_default_for_unknown_camera() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Global prompt.",
+        camera_prompts={"Driveway": "Car cam prompt."},
+    )
+    prompt = a._build_prompt("Backyard")
+    assert "Global prompt." in prompt
+    assert "Car cam prompt." not in prompt
+
+
+def test_build_prompt_no_camera_prompts_uses_base() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Base prompt.",
+        camera_prompts=None,
+    )
+    assert "Base prompt." in a._build_prompt("Any Camera")
+
+
+def test_create_analyzer_passes_camera_prompts() -> None:
+    prompts = {"Driveway": "Flag anyone near the car."}
+    a = create_analyzer(
+        "ollama",
+        "default",
+        camera_prompts=prompts,
+        ollama_url="http://localhost:11434",
+    )
+    assert isinstance(a, ClipAnalyzer)
+    assert a._camera_prompts == prompts
+
+
+def test_create_analyzer_moondream_local_passes_camera_prompts() -> None:
+    prompts = {"Driveway": "Watch the car."}
+    a = create_analyzer("moondream_local", "default", camera_prompts=prompts)
+    assert isinstance(a, MoondreamLocalAnalyzer)
+    assert a._camera_prompts == prompts
+
+
+# ------------------------------------------------------------------
+# Confidence=0.0 fix (suspicious but no confidence)
+# ------------------------------------------------------------------
+
+
+def test_parse_response_suspicious_zero_confidence_uses_keyword_fallback(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """When JSON returns suspicious=true but confidence=0.0, keyword fallback applies."""
+    response = '{"suspicious": true, "confidence": 0.0, "description": "suspicious person near car"}'
+    is_suspicious, confidence, summary = analyzer.parse_response(response)
+    assert is_suspicious is True
+    assert confidence > 0.0  # must not be 0.0
+
+
+def test_parse_response_suspicious_zero_confidence_no_keywords_defaults_half() -> None:
+    """When suspicious=true, confidence=0.0, and no custom keywords match → defaults to 0.5."""
+    # Use keywords that don't appear anywhere in the response JSON
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="test",
+        suspicious_keywords=["robbery", "arson"],
+    )
+    response = (
+        '{"suspicious": true, "confidence": 0.0, "description": "person in frame"}'
+    )
+    _, confidence, _ = a.parse_response(response)
+    assert confidence == 0.5
+
+
+def test_parse_response_not_suspicious_zero_confidence_unchanged(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """When suspicious=false, confidence=0.0 is left as-is."""
+    response = (
+        '{"suspicious": false, "confidence": 0.0, "description": "Empty driveway"}'
+    )
+    is_suspicious, confidence, _ = analyzer.parse_response(response)
+    assert is_suspicious is False
+    assert confidence == 0.0
+
+
+def test_parse_response_non_zero_confidence_unchanged(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """Explicit non-zero confidence from JSON is never overridden."""
+    response = (
+        '{"suspicious": true, "confidence": 0.8, "description": "Person near car"}'
+    )
+    _, confidence, _ = analyzer.parse_response(response)
+    assert confidence == 0.8
+
+
+# ------------------------------------------------------------------
+# Moondream Cloud model_pricing and fetch_models
+# ------------------------------------------------------------------
+
+
+def test_moondream_cloud_model_pricing() -> None:
+    from blink_downloader.analyzer import _MOONDREAM_CLOUD_PRICING
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == _MOONDREAM_CLOUD_PRICING[0]
+    assert out == _MOONDREAM_CLOUD_PRICING[1]
+    assert inp == 0.30
+    assert out == 2.50
+
+
+async def test_moondream_cloud_fetch_models_includes_pricing() -> None:
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    models = await a.fetch_models()
+    assert len(models) == 1
+    model = models[0]
+    assert "0.30" in model["description"]
+    assert "2.50" in model["description"]
+    assert "display_name" in model
+
+
+# ------------------------------------------------------------------
+# car proximity prompt
+# ------------------------------------------------------------------
+
+
+def test_build_prompt_car_proximity_message() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Blue Toyota Camry",
+    )
+    prompt = a._build_prompt("Driveway")
+    assert "Blue Toyota Camry" in prompt
+    assert "1-2 feet" in prompt
+    assert "Proximity" in prompt

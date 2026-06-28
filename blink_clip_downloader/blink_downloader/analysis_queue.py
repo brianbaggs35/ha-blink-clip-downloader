@@ -32,6 +32,7 @@ class AnalysisQueue:
         schedule_end: str = "",
         batch_size: int = 10,
         check_interval: int = 60,
+        min_confidence: float = 0.0,
     ) -> None:
         self._analyzer = analyzer
         self._db = db
@@ -40,6 +41,7 @@ class AnalysisQueue:
         self._schedule_end = self._parse_time(schedule_end)
         self._batch_size = batch_size
         self._check_interval = check_interval
+        self._min_confidence = min_confidence
         self._running = False
 
     # ------------------------------------------------------------------
@@ -111,14 +113,26 @@ class AnalysisQueue:
                 await self._db.add_analysis_result(result.to_dict())
                 await self._db.update_queue_status(clip_id, "completed")
 
-                _LOGGER.info(
-                    "Analyzed clip %s: suspicious=%s confidence=%.2f",
-                    clip_id,
-                    result.is_suspicious,
-                    result.confidence,
-                )
+                if result.is_suspicious:
+                    _LOGGER.info(
+                        "Analyzed clip %s: SUSPICIOUS confidence=%.2f — %s",
+                        clip_id,
+                        result.confidence,
+                        result.summary[:100] if result.summary else "",
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Analyzed clip %s: no suspicious activity (confidence=%.2f)",
+                        clip_id,
+                        result.confidence,
+                    )
 
-                if result.is_suspicious and self._dispatcher:
+                should_alert = (
+                    result.is_suspicious
+                    and result.confidence >= self._min_confidence
+                    and self._dispatcher is not None
+                )
+                if should_alert and self._dispatcher:
                     clip_data = {
                         "id": clip_id,
                         "camera": item["camera"],
@@ -181,5 +195,6 @@ class AnalysisQueue:
                 self._schedule_end.strftime("%H:%M") if self._schedule_end else None
             ),
             "in_schedule": self._is_in_schedule(),
+            "min_confidence": self._min_confidence,
             **counts,
         }
