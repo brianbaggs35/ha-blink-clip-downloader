@@ -200,8 +200,7 @@ _ANTHROPIC_FALLBACK_MODELS: list[dict] = [
 def is_moondream_installed() -> bool:
     """Return True if the moondream package is importable."""
     try:
-        import moondream  # noqa: PLC0415, F401  # type: ignore[import-not-found]
-
+        __import__("moondream")
         return True
     except ImportError:
         return False
@@ -252,6 +251,7 @@ class BaseAnalyzer(abc.ABC):
         frame_interval: float = 2.0,
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
+        camera_descriptions: dict[str, str] | None = None,
     ) -> None:
         self._base_prompt = prompt
         self._car_description = car_description
@@ -259,10 +259,15 @@ class BaseAnalyzer(abc.ABC):
         self._frame_interval = frame_interval
         self._suspicious_keywords = [k.lower() for k in (suspicious_keywords or [])]
         self._camera_prompts: dict[str, str] = camera_prompts or {}
+        self._camera_descriptions: dict[str, str] = camera_descriptions or {}
         # Token counts set by _call_model() implementations that support them.
         # Reset to 0 at the start of each analyze_clip() call.
         self._last_prompt_tokens: int = 0
         self._last_completion_tokens: int = 0
+
+    def update_camera_descriptions(self, descriptions: dict[str, str]) -> None:
+        """Update per-camera descriptions at runtime without restart."""
+        self._camera_descriptions = descriptions
 
     # ------------------------------------------------------------------
     # Abstract interface
@@ -352,7 +357,7 @@ class BaseAnalyzer(abc.ABC):
             "-i",
             clip_path,
             "-vf",
-            f"fps=1/{self._frame_interval}",
+            f"fps=1/{self._frame_interval},scale=1280:-1",
             "-frames:v",
             str(self._max_frames),
             "-f",
@@ -360,7 +365,7 @@ class BaseAnalyzer(abc.ABC):
             "-vcodec",
             "mjpeg",
             "-q:v",
-            "5",
+            "2",
             "pipe:1",
         ]
 
@@ -412,17 +417,32 @@ class BaseAnalyzer(abc.ABC):
     # ------------------------------------------------------------------
 
     def _build_prompt(self, camera: str) -> str:
-        prompt = self._camera_prompts.get(camera, self._base_prompt)
+        """Build a detailed analysis prompt with camera context and asset protection rules."""
+        base = self._camera_prompts.get(camera, self._base_prompt)
+        parts = [base]
+
+        # Add camera description/purpose if configured
+        camera_desc = self._camera_descriptions.get(camera, "")
+        if camera_desc:
+            parts.append(f"\n\nCamera location and purpose — {camera}: {camera_desc}")
+        else:
+            parts.append(f"\n\nCamera: {camera}")
+
+        # Add car proximity rules with precise distance guidance
         if self._car_description:
-            prompt += (
-                f"\n\nThe homeowner's car is: {self._car_description}. "
-                "Mark suspicious=true if ANY person comes within 1-2 feet of this "
-                "vehicle, even if their intent is unclear. Proximity to the car is "
-                "the primary trigger — do not require obvious theft or break-in "
-                "behavior."
+            parts.append(
+                f"\n\nPROTECTED VEHICLE: {self._car_description}\n"
+                "Apply these distance rules STRICTLY:\n"
+                "• Person within 1 foot (touching or near-contact): suspicious=true, confidence ≥0.8\n"
+                "• Person 1–2 feet away AND facing/reaching toward vehicle: suspicious=true, confidence ≥0.6\n"
+                "• Person walking past at more than 2 feet away: suspicious=false\n"
+                "• Person more than 5 feet away: suspicious=false unless other concerning behavior\n"
+                "Reference: car door handle is ~4 ft off the ground; typical car is ~6 ft wide.\n"
+                "ALWAYS estimate and state the distance in your description "
+                "(e.g., 'approximately 1.5 feet from the driver-side door')."
             )
-        prompt += f"\n\nCamera: {camera}"
-        return prompt
+
+        return "".join(parts)
 
     def parse_response(self, response: str) -> tuple[bool, float, str]:
         """Parse AI response into (is_suspicious, confidence, summary).
@@ -493,6 +513,7 @@ class ClipAnalyzer(BaseAnalyzer):
         frame_interval: float = 2.0,
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
+        camera_descriptions: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -501,6 +522,7 @@ class ClipAnalyzer(BaseAnalyzer):
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
         self._ollama_url = ollama_url.rstrip("/")
         self._model = model
@@ -625,6 +647,7 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
         frame_interval: float = 2.0,
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
+        camera_descriptions: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             ollama_url=self._CLOUD_BASE_URL,
@@ -635,6 +658,7 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
         self._api_key = api_key
 
@@ -682,6 +706,7 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
         frame_interval: float = 2.0,
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
+        camera_descriptions: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -690,6 +715,7 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
         self._api_key = api_key
         self._session: aiohttp.ClientSession | None = None
@@ -780,14 +806,43 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             return ""
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
-        """Analyse the middle frame via Moondream Cloud (one request per clip)."""
+        """Analyse all extracted frames via Moondream Cloud, one request per frame.
+
+        Picks the most alarming result: any suspicious frame causes the clip to be
+        flagged.  Respects the 2 req/s rate limit with a 0.55 s inter-frame delay.
+        """
         if not frames:
             return ""
-        # Use the middle frame as the most representative snapshot.
-        # The Cloud API accepts one image per request; sending just one keeps
-        # us well within the base-tier 2 req/s rate limit.
-        mid = len(frames) // 2
-        return await self._call_api_frame(frames[mid], prompt)
+
+        best_response = ""
+        best_is_suspicious = False
+        best_confidence = 0.0
+
+        for i, frame in enumerate(frames):
+            resp = await self._call_api_frame(frame, prompt)
+            if not resp:
+                if i < len(frames) - 1:
+                    await asyncio.sleep(0.55)
+                continue
+
+            susp, conf, desc = self._try_parse_json(resp)
+            if not desc:
+                # Non-JSON response — keep as fallback if nothing better found
+                if not best_response:
+                    best_response = resp
+            elif (
+                not best_response
+                or (susp and not best_is_suspicious)
+                or (susp == best_is_suspicious and conf > best_confidence)
+            ):
+                best_response = resp
+                best_is_suspicious = susp
+                best_confidence = conf
+
+            if i < len(frames) - 1:
+                await asyncio.sleep(0.55)
+
+        return best_response
 
 
 # ---------------------------------------------------------------------------
@@ -814,6 +869,7 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
         frame_interval: float = 2.0,
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
+        camera_descriptions: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -822,6 +878,7 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
         self._md_model: Any = None
         self._model_lock: asyncio.Lock | None = None
@@ -901,23 +958,43 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
         return str(result.get("answer", ""))
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
-        """Run the local model on the middle frame of the clip."""
+        """Run the local model on all extracted frames and return the most alarming result."""
         if not await self._ensure_model():
             return ""
         if not frames:
             return ""
 
-        mid = len(frames) // 2
-        frame = frames[mid]
+        best_response = ""
+        best_is_suspicious = False
+        best_confidence = 0.0
 
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, self._run_inference_sync, frame, prompt
-            )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.error("Moondream local inference failed: %s", exc)
-            return ""
+        for frame in frames:
+            try:
+                loop = asyncio.get_running_loop()
+                resp = await loop.run_in_executor(
+                    None, self._run_inference_sync, frame, prompt
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.error("Moondream local inference failed: %s", exc)
+                continue
+
+            if not resp:
+                continue
+
+            susp, conf, desc = self._try_parse_json(resp)
+            if not desc:
+                if not best_response:
+                    best_response = resp
+            elif (
+                not best_response
+                or (susp and not best_is_suspicious)
+                or (susp == best_is_suspicious and conf > best_confidence)
+            ):
+                best_response = resp
+                best_is_suspicious = susp
+                best_confidence = conf
+
+        return best_response
 
 
 # ---------------------------------------------------------------------------
@@ -944,6 +1021,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
         frame_interval: float = 2.0,
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
+        camera_descriptions: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -952,6 +1030,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
         self._api_key = api_key
         self._model = model or "claude-haiku-4-5"
@@ -1191,6 +1270,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
         frame_interval: float = 2.0,
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
+        camera_descriptions: dict[str, str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -1199,6 +1279,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
         self._api_key = api_key
         self._model = model or "gpt-4o-mini"
@@ -1430,6 +1511,7 @@ def create_analyzer(
     frame_interval: float = 2.0,
     suspicious_keywords: list[str] | None = None,
     camera_prompts: dict[str, str] | None = None,
+    camera_descriptions: dict[str, str] | None = None,
     *,
     ollama_url: str = "",
     ollama_model: str = "",
@@ -1457,6 +1539,7 @@ def create_analyzer(
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
 
     if ai_provider == "ollama_cloud":
@@ -1475,6 +1558,7 @@ def create_analyzer(
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
 
     if ai_provider == "moondream_cloud":
@@ -1492,6 +1576,7 @@ def create_analyzer(
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
 
     if ai_provider == "moondream_local":
@@ -1502,6 +1587,7 @@ def create_analyzer(
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
 
     if ai_provider == "anthropic":
@@ -1520,6 +1606,7 @@ def create_analyzer(
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
 
     if ai_provider == "openai":
@@ -1538,6 +1625,7 @@ def create_analyzer(
             frame_interval=frame_interval,
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
+            camera_descriptions=camera_descriptions,
         )
 
     _LOGGER.warning(

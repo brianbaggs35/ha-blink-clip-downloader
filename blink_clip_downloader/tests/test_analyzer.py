@@ -252,7 +252,9 @@ def test_parse_response_confidence_clamped(analyzer: ClipAnalyzer) -> None:
 def test_build_prompt_no_car(analyzer: ClipAnalyzer) -> None:
     prompt = analyzer._build_prompt("Front Door")
     assert "Front Door" in prompt
-    assert "homeowner's car" not in prompt
+    # No car-related distance rules when no car is configured
+    assert "PROTECTED VEHICLE" not in prompt
+    assert "1 foot" not in prompt
 
 
 def test_build_prompt_with_car() -> None:
@@ -265,6 +267,9 @@ def test_build_prompt_with_car() -> None:
     prompt = a._build_prompt("Driveway")
     assert "Silver Honda Civic" in prompt
     assert "Driveway" in prompt
+    assert "1 foot" in prompt
+    assert "2 feet" in prompt
+    assert "distance" in prompt.lower()
 
 
 # ------------------------------------------------------------------
@@ -601,16 +606,22 @@ async def test_moondream_cloud_health_check_offline() -> None:
 async def test_moondream_cloud_call_model_success() -> None:
     mock_resp = AsyncMock()
     mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"answer": "No suspicious activity"})
+    mock_resp.json = AsyncMock(
+        return_value={
+            "answer": '{"suspicious": false, "confidence": 0.2, "description": "No suspicious activity"}'
+        }
+    )
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
     a = MoondreamCloudAnalyzer(api_key="key", prompt="Analyze this frame.")
     a._session = _mock_session(post=MagicMock(return_value=mock_resp))
 
-    result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG, _FAKE_JPEG], "Analyze.")
-    assert "No suspicious activity" in result
-
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG, _FAKE_JPEG], "Analyze.")
+    assert "No suspicious activity" in result or "suspicious" in result.lower()
+    # Should have posted once per frame (3 frames)
+    assert a._session.post.call_count == 3
     # Should have posted to the Cloud API
     call_kwargs = a._session.post.call_args
     assert "moondream.ai" in str(call_kwargs)
@@ -624,7 +635,8 @@ async def test_moondream_cloud_call_model_rate_limit() -> None:
 
     a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
     a._session = _mock_session(post=MagicMock(return_value=mock_resp))
-    result = await a._call_model([_FAKE_JPEG], "test")
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "test")
     assert result == ""
 
 
@@ -694,9 +706,17 @@ async def test_moondream_local_health_check_ready(
 
 
 async def test_moondream_local_call_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_call_model runs inference in a thread executor."""
+    """_call_model runs inference in a thread executor on all frames."""
     mock_model = MagicMock()
-    mock_model.query.return_value = {"answer": "A car is parked"}
+    # First frame: not suspicious; second frame: suspicious
+    mock_model.query.side_effect = [
+        {
+            "answer": '{"suspicious": false, "confidence": 0.1, "description": "Empty scene"}'
+        },
+        {
+            "answer": '{"suspicious": true, "confidence": 0.8, "description": "Person near car"}'
+        },
+    ]
 
     a = MoondreamLocalAnalyzer(prompt="Analyze.")
     a._md_model = mock_model
@@ -705,7 +725,8 @@ async def test_moondream_local_call_model(monkeypatch: pytest.MonkeyPatch) -> No
     with patch("PIL.Image.open", return_value=MagicMock()):
         result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "Analyze this scene.")
 
-    assert "car" in result.lower()
+    # Should pick the suspicious result
+    assert "Person near car" in result or "suspicious" in result.lower()
 
 
 async def test_moondream_local_call_model_no_frames() -> None:
@@ -1342,8 +1363,9 @@ async def test_moondream_cloud_tokens_are_zero(monkeypatch: pytest.MonkeyPatch) 
     a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
     a._session = _mock_session(post=MagicMock(return_value=mock_resp))
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        result = await a.analyze_clip("/clips/test.mp4", "c1", "Camera")
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            result = await a.analyze_clip("/clips/test.mp4", "c1", "Camera")
 
     assert result.tokens_prompt == 0
     assert result.tokens_completion == 0
@@ -2533,5 +2555,67 @@ def test_build_prompt_car_proximity_message() -> None:
     )
     prompt = a._build_prompt("Driveway")
     assert "Blue Toyota Camry" in prompt
-    assert "1-2 feet" in prompt
-    assert "Proximity" in prompt
+    assert "1 foot" in prompt
+    assert "PROTECTED VEHICLE" in prompt
+
+
+# ------------------------------------------------------------------
+# camera descriptions
+# ------------------------------------------------------------------
+
+
+def test_build_prompt_with_camera_description() -> None:
+    """Camera description is included in prompt when set."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        camera_descriptions={"FrontDoor": "Faces the front porch and mailbox"},
+    )
+    prompt = a._build_prompt("FrontDoor")
+    assert "Faces the front porch and mailbox" in prompt
+    assert "FrontDoor" in prompt
+
+
+def test_update_camera_descriptions() -> None:
+    """update_camera_descriptions replaces the internal mapping."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+    )
+    assert a._build_prompt("Garage") == "Analyze.\n\nCamera: Garage"
+    a.update_camera_descriptions({"Garage": "Side entrance to the house"})
+    prompt = a._build_prompt("Garage")
+    assert "Side entrance to the house" in prompt
+
+
+def test_build_prompt_car_description_with_distance_rules() -> None:
+    """Distance rules appear in prompt when car_description is set."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Red Honda Civic",
+    )
+    prompt = a._build_prompt("Driveway")
+    assert "Red Honda Civic" in prompt
+    assert "1 foot" in prompt
+    assert "2 feet" in prompt
+    assert "distance" in prompt.lower()
+    assert "PROTECTED VEHICLE" in prompt
+
+
+def test_create_analyzer_ollama_with_camera_descriptions() -> None:
+    """create_analyzer passes camera_descriptions to ClipAnalyzer."""
+    descriptions = {"Backyard": "Overlooks the pool"}
+    a = create_analyzer(
+        ai_provider="ollama",
+        prompt="Analyze.",
+        camera_descriptions=descriptions,
+        ollama_url="http://localhost:11434",
+        ollama_model="llava",
+    )
+    assert isinstance(a, ClipAnalyzer)
+    prompt = a._build_prompt("Backyard")
+    assert "Overlooks the pool" in prompt

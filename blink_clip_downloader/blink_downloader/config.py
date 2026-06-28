@@ -108,15 +108,23 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
     ai_prompt: str = (
-        "Analyze this security camera clip frame. Describe what you see. "
-        "Mark suspicious=true if any person is close to or touching a vehicle, "
-        "or if there is any unusual or unexpected activity. "
-        "Provide an honest confidence score (0.1=very uncertain, 1.0=very certain) "
-        "reflecting how clearly the activity is visible. "
-        'Respond ONLY in JSON: {"suspicious": true/false, "confidence": 0.1-1.0, "description": "brief description"}'
+        "You are a security camera AI analyst. Analyze this motion-triggered security camera footage.\n\n"
+        "Provide a concise 2-3 sentence description covering:\n"
+        "- What triggered the motion (person, animal, vehicle, wind, leaves, etc.)\n"
+        "- Subject's position, movement direction, and any notable actions\n"
+        "- Estimated distance from any nearby assets (vehicles, doors, windows, property line)\n"
+        "- Visibility conditions (day/night/dusk, clear/obscured)\n\n"
+        "Flag as SUSPICIOUS (suspicious=true) if:\n"
+        "- Any person is touching or within arm's reach (~2 feet) of a vehicle, door, or window\n"
+        "- Someone is attempting to access, tamper with, or break into property\n"
+        "- A person is loitering, hiding, or acting evasively near protected assets\n"
+        "- Unusual behavior for the location and time of day\n\n"
+        "Confidence reflects VISIBILITY CLARITY (0.1=very dark/blurry, 1.0=crystal clear).\n\n"
+        "Respond ONLY with valid JSON:\n"
+        '{"suspicious": true/false, "confidence": 0.1-1.0, "description": "2-3 sentence description"}'
     )
     ai_car_description: str = ""
-    ai_max_frames: int = 3
+    ai_max_frames: int = 5
     ai_frame_interval: float = 2.0
     ai_suspicious_keywords: list[str] = field(
         default_factory=lambda: list(_DEFAULT_SUSPICIOUS_KEYWORDS)
@@ -127,6 +135,7 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     ai_check_interval: int = 60
     ai_min_confidence: float = 0.0
     ai_camera_prompts: list[dict] = field(default_factory=list)
+    ai_camera_descriptions: list[dict] = field(default_factory=list)
 
     # --- Extended Notifications (AI alerts) ---
     mobile_app_target: str = ""
@@ -263,7 +272,7 @@ def _parse_config(data: dict) -> AppConfig:
         openai_model=str(data.get("openai_model", "") or "").strip() or "gpt-4o-mini",
         ai_prompt=str(data.get("ai_prompt", "") or "").strip() or AppConfig.ai_prompt,
         ai_car_description=str(data.get("ai_car_description", "") or "").strip(),
-        ai_max_frames=max(1, min(10, int(data.get("ai_max_frames", 3)))),
+        ai_max_frames=max(1, min(100, int(data.get("ai_max_frames", 5)))),
         ai_frame_interval=max(
             0.5, min(30.0, float(data.get("ai_frame_interval", 2.0)))
         ),
@@ -282,6 +291,14 @@ def _parse_config(data: dict) -> AppConfig:
             {"camera": str(item["camera"]), "prompt": str(item["prompt"])}
             for item in data.get("ai_camera_prompts", [])
             if isinstance(item, dict) and item.get("camera") and item.get("prompt")
+        ],
+        ai_camera_descriptions=[
+            {
+                "camera": str(item["camera"]),
+                "description": str(item.get("description", "")),
+            }
+            for item in data.get("ai_camera_descriptions", [])
+            if isinstance(item, dict) and item.get("camera")
         ],
         # Extended notifications
         mobile_app_target=str(data.get("mobile_app_target", "") or "").strip(),

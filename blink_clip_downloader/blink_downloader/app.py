@@ -88,6 +88,27 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 if config.ai_camera_prompts
                 else None
             )
+            # Load per-camera descriptions from the runtime config file
+            _cam_desc_file = Path("/data/camera_configs.json")
+            camera_descriptions: dict[str, str] = {}
+            if _cam_desc_file.exists():
+                try:
+                    import json as _json
+
+                    _cam_cfgs = _json.loads(_cam_desc_file.read_text())
+                    camera_descriptions = {
+                        str(c["camera"]): str(c.get("description", ""))
+                        for c in _cam_cfgs
+                        if isinstance(c, dict) and c.get("camera")
+                    }
+                except Exception:  # noqa: BLE001
+                    pass
+            # Merge with ai_camera_descriptions from options.json
+            for item in config.ai_camera_descriptions:
+                cam = str(item.get("camera", ""))
+                desc = str(item.get("description", ""))
+                if cam and desc and cam not in camera_descriptions:
+                    camera_descriptions[cam] = desc
             self._analyzer = create_analyzer(
                 ai_provider=config.ai_provider,
                 prompt=config.ai_prompt,
@@ -96,6 +117,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 frame_interval=config.ai_frame_interval,
                 suspicious_keywords=config.ai_suspicious_keywords,
                 camera_prompts=camera_prompts,
+                camera_descriptions=camera_descriptions,
                 ollama_url=config.ollama_url,
                 ollama_model=config.ollama_model,
                 ollama_cloud_api_key=config.ollama_cloud_api_key,
