@@ -66,6 +66,18 @@ CREATE TABLE IF NOT EXISTS analysis_queue (
     FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_queue_status ON analysis_queue (status);
+
+CREATE TABLE IF NOT EXISTS camera_baselines (
+    camera TEXT    NOT NULL,
+    hour   INTEGER NOT NULL,
+    count  INTEGER DEFAULT 0,
+    PRIMARY KEY (camera, hour)
+);
+CREATE TABLE IF NOT EXISTS camera_duration_stats (
+    camera       TEXT PRIMARY KEY,
+    avg_duration REAL    DEFAULT 0.0,
+    sample_count INTEGER DEFAULT 0
+);
 """
 
 
@@ -106,6 +118,7 @@ class ClipDatabase:
         new_columns = [
             ("analysis_results", "tokens_prompt", "INTEGER DEFAULT 0"),
             ("analysis_results", "tokens_completion", "INTEGER DEFAULT 0"),
+            ("analysis_results", "anomaly_score", "REAL DEFAULT 0.0"),
         ]
         for table, col, definition in new_columns:
             try:
@@ -435,8 +448,8 @@ class ClipDatabase:
             INSERT INTO analysis_results
               (clip_id, camera, model, response_text, is_suspicious,
                confidence, summary, frame_count, analysis_duration, analyzed_at,
-               tokens_prompt, tokens_completion)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               tokens_prompt, tokens_completion, anomaly_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(result.get("clip_id") or ""),
@@ -451,6 +464,7 @@ class ClipDatabase:
                 str(result.get("analyzed_at") or ""),
                 int(result.get("tokens_prompt") or 0),
                 int(result.get("tokens_completion") or 0),
+                float(result.get("anomaly_score") or 0.0),
             ),
         )
         await self._db.commit()
@@ -553,6 +567,99 @@ class ClipDatabase:
             "total_tokens": total_prompt + total_completion,
             "by_model": by_model,
         }
+
+    # ------------------------------------------------------------------
+    # Behavior Memory (per-camera baseline learning)
+    # ------------------------------------------------------------------
+
+    async def record_clip_baseline(
+        self, camera: str, hour: int, duration: float
+    ) -> None:
+        """Record a clip event to build the per-camera behavioral baseline.
+
+        Call this every time a clip is downloaded regardless of whether AI
+        analysis is enabled.  The baseline is used later to compute anomaly
+        scores for new events.
+        """
+        if self._db is None:
+            return
+        await self._db.execute(
+            """
+            INSERT INTO camera_baselines (camera, hour, count)
+            VALUES (?, ?, 1)
+            ON CONFLICT(camera, hour) DO UPDATE SET count = count + 1
+            """,
+            (camera, hour),
+        )
+        if duration > 0:
+            await self._db.execute(
+                """
+                INSERT INTO camera_duration_stats (camera, avg_duration, sample_count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(camera) DO UPDATE SET
+                    avg_duration = (avg_duration * sample_count + ?) / (sample_count + 1),
+                    sample_count = sample_count + 1
+                """,
+                (camera, duration, duration),
+            )
+        await self._db.commit()
+
+    async def get_anomaly_score(self, camera: str, hour: int, duration: float) -> float:
+        """Return an anomaly score 0.0–1.0 for a clip at *hour* with *duration*.
+
+        Requires at least 30 historical events for the camera before scoring
+        activates; returns 0.0 until enough history exists so that early
+        installs don't produce false positives.
+        """
+        if self._db is None:
+            return 0.0
+
+        # Total event count for this camera
+        async with self._db.execute(
+            "SELECT COALESCE(SUM(count), 0) FROM camera_baselines WHERE camera=?",
+            (camera,),
+        ) as cur:
+            row = await cur.fetchone()
+        total: int = int(row[0]) if row else 0
+
+        if total < 30:
+            return 0.0
+
+        score = 0.0
+
+        # Hour rarity: how often does this camera fire at this hour vs. average?
+        async with self._db.execute(
+            "SELECT COALESCE(count, 0) FROM camera_baselines WHERE camera=? AND hour=?",
+            (camera, hour),
+        ) as cur:
+            row = await cur.fetchone()
+        hour_count: int = int(row[0]) if row else 0
+
+        expected_per_hour = total / 24.0
+        if hour_count == 0:
+            score += 0.5  # Never seen activity at this hour
+        elif hour_count < expected_per_hour * 0.15:
+            score += 0.35  # Very rare hour
+        elif hour_count < expected_per_hour * 0.35:
+            score += 0.15  # Uncommon hour
+
+        # Duration anomaly
+        if duration > 0:
+            async with self._db.execute(
+                "SELECT avg_duration, sample_count FROM camera_duration_stats WHERE camera=?",
+                (camera,),
+            ) as cur:
+                row = await cur.fetchone()
+            if row and int(row[1]) >= 10:
+                avg = float(row[0])
+                if avg > 0:
+                    ratio = duration / avg
+                    if ratio > 4.0 or ratio < 0.2:
+                        score += 0.25  # Very long or very short clip
+                    elif ratio > 2.5 or ratio < 0.4:
+                        score += 0.1
+
+        return min(1.0, score)
 
     # ------------------------------------------------------------------
     # Analysis Queue

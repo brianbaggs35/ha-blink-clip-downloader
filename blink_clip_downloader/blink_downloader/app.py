@@ -118,6 +118,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 suspicious_keywords=config.ai_suspicious_keywords,
                 camera_prompts=camera_prompts,
                 camera_descriptions=camera_descriptions,
+                frame_strategy=config.ai_frame_strategy,
+                car_cameras=config.ai_car_cameras or None,
                 ollama_url=config.ollama_url,
                 ollama_model=config.ollama_model,
                 ollama_cloud_api_key=config.ollama_cloud_api_key,
@@ -458,6 +460,24 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
             if self._analysis_queue:
                 await self._analysis_queue.enqueue(clip)
+
+            # Record clip in behavior baseline so anomaly scoring improves over time.
+            # This runs regardless of whether AI analysis is enabled.
+            if self._config.enable_library_db:
+                try:
+                    ts = str(clip.get("timestamp") or "")
+                    hour = (
+                        datetime.fromisoformat(ts.replace("Z", "+00:00")).hour
+                        if ts
+                        else datetime.now(timezone.utc).hour
+                    )
+                    await self._db.record_clip_baseline(
+                        camera=str(clip.get("camera") or ""),
+                        hour=hour,
+                        duration=float(clip.get("duration") or 0),
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
         tracker_stats = self._tracker.stats
         disk = self._storage.disk_stats()

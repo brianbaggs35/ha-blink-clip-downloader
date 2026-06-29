@@ -1698,7 +1698,7 @@ setInterval(checkAuthStatus, 3000);
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 async function loadAll() {
-  await Promise.all([loadStats(), loadCameras(), loadClips(0)]);
+  await Promise.all([loadStats(), loadCameras(), loadClips(0), loadAIStatus()]);
 }
 loadAll();
 loadTagFilter();
