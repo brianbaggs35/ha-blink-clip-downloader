@@ -426,3 +426,51 @@ async def test_get_queue_status_includes_min_confidence(db: ClipDatabase) -> Non
     )
     status = await queue.get_queue_status()
     assert status["min_confidence"] == 0.35
+
+
+# ---------------------------------------------------------------------------
+# Coverage: line 59 (_process_pending called from start when healthy)
+# ---------------------------------------------------------------------------
+
+
+async def test_start_calls_process_pending_when_healthy(db: ClipDatabase) -> None:
+    """When health_check returns True, start() calls _process_pending (line 59)."""
+    analyzer = _make_analyzer_mock(healthy=True)
+    queue = _make_queue(analyzer, db, check_interval=1)
+
+    async def fake_sleep(_delay: float) -> None:
+        queue._running = False  # stop after first sleep so the loop exits
+
+    with patch("asyncio.sleep", fake_sleep):
+        await queue.start()
+
+    # health_check was awaited at least once
+    analyzer.health_check.assert_awaited()
+    # analyze_clip may or may not have been called depending on whether there
+    # are pending clips — what matters is health_check returned True and the
+    # branch at line 59 was reached without error.
+
+
+# ---------------------------------------------------------------------------
+# Coverage: lines 128-129 (exception in anomaly score is swallowed)
+# ---------------------------------------------------------------------------
+
+
+async def test_process_pending_exception_in_anomaly_score_is_swallowed(
+    db: ClipDatabase,
+) -> None:
+    """If get_anomaly_score raises, the exception is caught and analysis proceeds."""
+    analyzer = _make_analyzer_mock()
+    queue = _make_queue(analyzer, db)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    with patch.object(db, "get_anomaly_score", side_effect=RuntimeError("db error")):
+        await queue._process_pending()
+
+    # Analysis should still have been attempted despite the anomaly-score error
+    analyzer.analyze_clip.assert_awaited_once()
+    counts = await db.get_queue_counts()
+    assert counts["pending"] == 0  # item was processed

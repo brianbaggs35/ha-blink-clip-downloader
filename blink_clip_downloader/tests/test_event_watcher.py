@@ -423,3 +423,32 @@ async def test_connect_and_watch_creates_session_if_none() -> None:
         await w._connect_and_watch()
 
     MockSession.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Coverage: invalid JSON in TEXT message triggers json.JSONDecodeError (lines 122-123)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_and_watch_invalid_json_text_is_skipped() -> None:
+    """TEXT message with invalid JSON triggers the JSONDecodeError handler and continues."""
+    import aiohttp as _aiohttp
+
+    invalid_msg = MagicMock()
+    invalid_msg.type = _aiohttp.WSMsgType.TEXT
+    invalid_msg.data = "NOT_VALID_JSON"
+
+    ws_messages = [
+        invalid_msg,
+        _make_ws_message(_aiohttp.WSMsgType.CLOSE),
+    ]
+    fake_ws = _FakeWS(
+        receive_jsons=[{"type": "auth_required"}, {"type": "auth_ok"}],
+        ws_messages=ws_messages,
+    )
+    w, cb, _ = _make_watcher()
+    w._running = True
+    w._session = _mock_session(fake_ws)
+    await w._connect_and_watch()
+    cb.assert_not_called()

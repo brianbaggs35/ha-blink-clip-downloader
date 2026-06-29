@@ -326,6 +326,10 @@ class BaseAnalyzer(abc.ABC):
 
         self._last_prompt_tokens = 0
         self._last_completion_tokens = 0
+        # Store camera name so provider subclasses can access it in _call_model.
+        # Safe under asyncio's single-threaded event loop — only one analyze_clip
+        # runs at a time per provider instance.
+        self._current_camera: str = camera
         start = time.monotonic()
         frames = await self.extract_frames(clip_path)
 
@@ -899,7 +903,8 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
     """Analyzes clips via the Moondream Cloud API (api.moondream.ai)."""
 
     _BASE_URL = "https://api.moondream.ai/v1"
-    _MODEL_ID = "moondream-cloud"
+    # Model identifier returned by the Moondream API as of mid-2025.
+    _MODEL_ID = "moondream3-preview"
 
     def __init__(
         self,
@@ -975,13 +980,91 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             }
         ]
 
+    # Image encoder cost per 640px JPEG frame (empirical, based on observed
+    # Moondream Cloud usage: ~869 tokens for a single-frame request with a
+    # short prompt, leaving ~800 tokens for the image after subtracting text).
+    # The Moondream API does not return usage stats, so these are estimates.
+    _IMAGE_TOKENS_PER_FRAME: int = 800
+
+    async def _detect_objects(
+        self, frame: bytes, object_name: str
+    ) -> list[dict[str, float]]:
+        """Call the Moondream /detect endpoint for ``object_name``.
+
+        Returns a list of normalised bounding boxes
+        ``[{x_min, y_min, x_max, y_max}]``.  Returns ``[]`` on any error so
+        callers can safely skip detect-based logic when it fails.
+        """
+        image_b64 = base64.b64encode(frame).decode("ascii")
+        payload = {
+            "image_url": f"data:image/jpeg;base64,{image_b64}",
+            "object": object_name,
+        }
+        headers = {
+            "X-Moondream-Auth": self._api_key,
+            "Content-Type": "application/json",
+        }
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"{self._BASE_URL}/detect",
+                json=payload,
+                headers=headers,
+                timeout=_API_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.debug(
+                        "Moondream /detect returned HTTP %d for %r",
+                        resp.status,
+                        object_name,
+                    )
+                    return []
+                data = await resp.json()
+                objects = data.get("objects", [])
+                return [o for o in objects if isinstance(o, dict)]
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.debug("Moondream /detect failed for %r: %s", object_name, exc)
+            return []
+
+    @staticmethod
+    def _bbox_min_gap(
+        boxes_a: list[dict[str, float]], boxes_b: list[dict[str, float]]
+    ) -> float:
+        """Return the minimum Euclidean gap between any pair of bounding boxes.
+
+        0.0 means the boxes overlap; 1.0 means maximum separation.
+        Uses normalised coordinates (0–1 relative to image width/height).
+        """
+        min_gap = 1.0
+        for a in boxes_a:
+            ax1, ay1 = a.get("x_min", 0.0), a.get("y_min", 0.0)
+            ax2, ay2 = a.get("x_max", 1.0), a.get("y_max", 1.0)
+            for b in boxes_b:
+                bx1, by1 = b.get("x_min", 0.0), b.get("y_min", 0.0)
+                bx2, by2 = b.get("x_max", 1.0), b.get("y_max", 1.0)
+                x_gap = max(0.0, max(ax1, bx1) - min(ax2, bx2))
+                y_gap = max(0.0, max(ay1, by1) - min(ay2, by2))
+                gap = (x_gap**2 + y_gap**2) ** 0.5
+                min_gap = min(min_gap, gap)
+        return min_gap
+
     async def _call_api_frame(self, frame: bytes, prompt: str) -> str:
-        """Send a single JPEG frame to the Moondream Cloud /query endpoint."""
+        """Send a single JPEG frame to the Moondream Cloud /query endpoint.
+
+        Reasoning mode is always enabled — it adds 10-20 % latency but
+        substantially improves multi-step spatial analysis (proximity
+        estimates, evasive behaviour detection) with no extra cost.
+
+        Token counts are not returned by the Moondream API; we accumulate
+        estimates in ``_last_prompt_tokens`` / ``_last_completion_tokens``
+        so the usage table shows approximate figures instead of N/A.
+        """
         image_b64 = base64.b64encode(frame).decode("ascii")
         payload = {
             "image_url": f"data:image/jpeg;base64,{image_b64}",
             "question": prompt,
             "stream": False,
+            "reasoning": True,
         }
         headers = {
             "X-Moondream-Auth": self._api_key,
@@ -1005,7 +1088,15 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
                     _LOGGER.warning("Moondream Cloud returned HTTP %d", resp.status)
                     return ""
                 data = await resp.json()
-                return str(data.get("answer", ""))
+                answer = str(data.get("answer", ""))
+                # Accumulate estimated token counts across frames.
+                # Prompt: image encoder tokens + text tokens (4 chars ≈ 1 token).
+                self._last_prompt_tokens += self._IMAGE_TOKENS_PER_FRAME + max(
+                    1, len(prompt) // 4
+                )
+                # Completion: output text tokens.
+                self._last_completion_tokens += max(1, len(answer) // 4)
+                return answer
         except asyncio.TimeoutError:
             _LOGGER.warning("Moondream Cloud request timed out")
             return ""
@@ -1014,20 +1105,111 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             return ""
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
-        """Analyse all extracted frames via Moondream Cloud, one request per frame.
+        """Analyse frames via Moondream Cloud with detect-augmented analysis.
 
-        Picks the most alarming result: any suspicious frame causes the clip to be
-        flagged.  Respects the 2 req/s rate limit with a 0.55 s inter-frame delay.
+        For each frame:
+        1. Run ``/detect`` for "person" — if no person found, skip the
+           expensive ``/query`` and record a clear result for that frame.
+        2. For car cameras: also run ``/detect`` for "car" and inject
+           precise bounding-box proximity data into the query prompt so the
+           model can make an evidence-based suspicious/clear decision.
+        3. Run ``/query`` (with reasoning=True) on the augmented prompt and
+           pick the most alarming result across all frames.
+
+        Respects the 2 req/s rate limit with a 0.55 s delay between requests.
         """
         if not frames:
             return ""
+
+        camera = getattr(self, "_current_camera", "")
+        car_applies = bool(
+            self._car_description
+            and (not self._car_cameras or camera in self._car_cameras)
+        )
 
         best_response = ""
         best_is_suspicious = False
         best_confidence = 0.0
 
         for i, frame in enumerate(frames):
-            resp = await self._call_api_frame(frame, prompt)
+            # ── Phase 1: detect persons ──────────────────────────────────
+            persons = await self._detect_objects(frame, "person")
+            await asyncio.sleep(0.55)
+
+            if not persons:
+                # No person in this frame — motion likely caused by something else.
+                # Record a clear result and move on without spending query tokens.
+                no_person_resp = (
+                    '{"suspicious": false, "confidence": 0.9, '
+                    '"description": "No person detected in this frame. '
+                    'Motion likely caused by a vehicle, animal, or environmental factor."}'
+                )
+                if not best_response:
+                    best_response = no_person_resp
+                if i < len(frames) - 1:
+                    await asyncio.sleep(0.55)
+                continue
+
+            # ── Phase 2: augment prompt with spatial context ─────────────
+            augmented_prompt = prompt
+
+            if car_applies:
+                car_boxes = await self._detect_objects(frame, "car")
+                await asyncio.sleep(0.55)
+
+                if car_boxes:
+                    gap = self._bbox_min_gap(persons, car_boxes)
+                    if gap == 0.0:
+                        spatial_note = (
+                            "SPATIAL DATA: Person bounding box OVERLAPS the car — "
+                            "they are touching or directly pressed against it."
+                        )
+                    elif gap < 0.05:
+                        spatial_note = (
+                            f"SPATIAL DATA: Person is very close to the car "
+                            f"(normalised gap {gap:.3f} ≈ less than 1 foot). "
+                            "Consider suspicious if no obvious innocent purpose."
+                        )
+                    elif gap < 0.15:
+                        spatial_note = (
+                            f"SPATIAL DATA: Person is within {gap:.1%} of frame "
+                            "width from the car — roughly 1-3 feet. "
+                            "Do NOT flag as suspicious unless actively touching "
+                            "or attempting to open the car."
+                        )
+                    else:
+                        spatial_note = (
+                            f"SPATIAL DATA: Person is {gap:.1%} of frame width "
+                            "from the car. This represents SEVERAL FEET of actual "
+                            "distance — set suspicious=false unless other clear "
+                            "evidence of tampering."
+                        )
+                    augmented_prompt += f"\n\n{spatial_note}"
+                else:
+                    # Car not detected in this frame — suppress car rules to
+                    # avoid the model hallucinating car proximity.
+                    augmented_prompt += (
+                        "\n\nSPATIAL DATA: Protected car is NOT visible in this "
+                        "frame. Evaluate person behaviour based on camera context "
+                        "and location description only."
+                    )
+
+            else:
+                # Non-car camera: inject person position to help AI.
+                position_notes = []
+                for j, person in enumerate(persons[:3], 1):
+                    cx = (person.get("x_min", 0.0) + person.get("x_max", 1.0)) / 2
+                    cy = (person.get("y_min", 0.0) + person.get("y_max", 1.0)) / 2
+                    position_notes.append(
+                        f"Person {j}: centre at ({cx:.0%} from left, {cy:.0%} from top)"
+                    )
+                if position_notes:
+                    augmented_prompt += (
+                        "\n\nSPATIAL DATA: " + "; ".join(position_notes) + "."
+                    )
+
+            # ── Phase 3: full query with augmented prompt ────────────────
+            resp = await self._call_api_frame(frame, augmented_prompt)
             if not resp:
                 if i < len(frames) - 1:
                     await asyncio.sleep(0.55)
@@ -1035,7 +1217,6 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
 
             susp, conf, desc = self._try_parse_json(resp)
             if not desc:
-                # Non-JSON response — keep as fallback if nothing better found
                 if not best_response:
                     best_response = resp
             elif (

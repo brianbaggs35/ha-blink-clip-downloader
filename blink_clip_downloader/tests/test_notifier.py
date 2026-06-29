@@ -199,3 +199,57 @@ async def test_close_closes_session():
 
     await notifier.close()
     mock_session.close.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Coverage: update_sensor with no token (line 67)
+# ---------------------------------------------------------------------------
+
+
+async def test_update_sensor_no_token():
+    notifier = HANotifier("", enabled=True, title="T")
+    result = await notifier.update_sensor("sensor.blink_status", "42", {})
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Coverage: call_webhook with HTTP 400+ response (lines 86-89)
+# ---------------------------------------------------------------------------
+
+
+async def test_call_webhook_http_400():
+    notifier = HANotifier(
+        "tok", enabled=True, title="T", webhook_url="https://hook.test/"
+    )
+    resp = _make_mock_resp(400)
+    notifier._session = _make_mock_session(resp)
+    result = await notifier.call_webhook({"data": 1})
+    assert result is False
+
+
+async def test_call_webhook_http_500():
+    notifier = HANotifier(
+        "tok", enabled=True, title="T", webhook_url="https://hook.test/"
+    )
+    resp = _make_mock_resp(500)
+    notifier._session = _make_mock_session(resp)
+    result = await notifier.call_webhook({})
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Coverage: _get_session creates ClientSession when _session is None (line 100)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_session_creates_session_when_none():
+    from unittest.mock import patch
+
+    notifier = HANotifier("mytoken", enabled=True, title="T")
+    mock_session = MagicMock()
+    with patch(
+        "blink_downloader.notifier.aiohttp.ClientSession", return_value=mock_session
+    ) as MockCS:
+        session = await notifier._get_session()
+    MockCS.assert_called_once_with(headers={"Authorization": "Bearer mytoken"})
+    assert session is mock_session

@@ -2124,9 +2124,10 @@ function _fmtNum(n) {
 const _PROVIDER_NOTES = {
   ollama: 'Ollama (Local/LAN) runs on your own hardware or another device on your network — no cloud costs. Token counts are extracted from the Ollama API response (<code>prompt_eval_count</code> / <code>eval_count</code>). Some cached responses may show 0 prompt tokens.',
   ollama_cloud: 'Ollama Cloud (api.ollama.com) is a hosted Ollama service. Token counts are extracted from the API response. API usage may incur costs — check your Ollama Cloud account dashboard.',
-  moondream_cloud: 'Moondream Cloud bills per API request. Each clip analysis now sends one request per extracted frame (up to ai_max_frames), picking the most alarming result. Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for current pricing and your account usage.',
+  moondream_cloud: 'Moondream Cloud bills per API request. Each frame is analysed individually with reasoning mode enabled for better spatial accuracy. Token counts shown are <em>estimates</em> (256 image tokens + text tokens per frame) — the Moondream API does not return usage stats. Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for authoritative billing.',
   moondream_local: 'Moondream Local runs entirely on-device — no cloud costs and no token tracking. The analysis count shows how many clips have been processed.',
   anthropic: 'Anthropic (Claude) charges per token. Input and output tokens are tracked for every analysis. Use <strong>Claude Haiku 4.5</strong> for best cost efficiency ($1/$5 per 1M tokens). Estimated cost is calculated from your token usage and the model\'s current pricing.',
+  openai: 'OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis.',
 };
 
 async function loadAIUsage() {
@@ -2157,8 +2158,9 @@ async function loadAIUsage() {
       noteEl.style.display = 'none';
     }
 
-    // Ollama (local + cloud) and Anthropic report token counts; moondream variants do not
-    const showTokens = provider === 'ollama' || provider === 'ollama_cloud' || provider === 'anthropic';
+    // Providers that show token counts (real or estimated)
+    const showTokens = provider === 'ollama' || provider === 'ollama_cloud'
+      || provider === 'anthropic' || provider === 'openai' || provider === 'moondream_cloud';
 
     // Anthropic: show estimated cost based on token usage and model pricing
     const costStatEl = $('usage-cost-stat');
