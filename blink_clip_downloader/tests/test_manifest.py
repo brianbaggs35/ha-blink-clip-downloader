@@ -65,10 +65,10 @@ def test_append_adds_recorded_at(tmp_path):
 
 
 def test_append_oserror_is_logged(tmp_path):
-    """When the manifest file cannot be written, OSError is caught (lines 35-36)."""
-    from unittest.mock import patch, mock_open
+    """When the manifest file cannot be written, OSError is caught and logged."""
+    from unittest.mock import patch
 
     m = ClipManifest(tmp_path / "manifest.json")
-    with patch("builtins.open", mock_open()) as m_open:
-        m_open.return_value.__enter__.side_effect = OSError("disk full")
+    # Path.open() is used internally, so patch that (not builtins.open).
+    with patch.object(Path, "open", side_effect=OSError("disk full")):
         m.append({"id": "x"})  # must not raise

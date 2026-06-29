@@ -176,12 +176,16 @@ options:
   # use ai_camera_prompts (or the Camera Configurations section in the web UI) to
   # override for individual cameras.
   ai_prompt: >-
-    You are a security camera AI analyst. Analyze this motion-triggered security camera footage.
-    Provide a concise 2-3 sentence description covering what triggered the motion,
-    the subject's position and movement, estimated distance from nearby assets
-    (vehicles, doors, windows, property line), and visibility conditions.
-    Flag as SUSPICIOUS (suspicious=true) if any person is touching or within arm's reach
-    (~2 feet) of a vehicle, door, or window, or is loitering or acting evasively.
+    You are a precise security camera AI analyst. Analyze this motion-triggered clip.
+    Identify WHAT triggered the motion first: person, animal, vehicle passing on the street,
+    wind/leaves/shadows, or environmental motion. A vehicle or shadow moving on a public road
+    is NOT a person - distinguish carefully. If a person is present, describe their position,
+    movement direction, estimated distance from nearby assets, and apparent intent.
+    SUSPICIOUS (suspicious=true) ONLY when: person is physically touching or pressing against
+    a vehicle/door/window, crouching beside a protected asset, or running away after contact.
+    NOT SUSPICIOUS: person walking past on public road/sidewalk, person standing more than
+    3 feet (1m) from assets, vehicles or shadows passing, animals, environmental motion,
+    delivery drivers at door under 60 seconds.
     Confidence reflects VISIBILITY CLARITY (0.1=very dark/blurry, 1.0=crystal clear).
     Respond ONLY with valid JSON:
     {"suspicious": true/false, "confidence": 0.1-1.0, "description": "2-3 sentence description"}

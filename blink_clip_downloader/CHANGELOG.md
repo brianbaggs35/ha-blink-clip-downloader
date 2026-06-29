@@ -59,6 +59,21 @@
   because the enabled-state check was deferred.  AI status is now fetched at
   boot so the panel header shows up on the very first clip the user opens.
 
+- **Moondream Cloud: reasoning mode enabled.** All `/query` requests now
+  include `"reasoning": true`, enabling multi-step spatial analysis (proximity
+  estimates, evasive behaviour detection).  Per Moondream docs this adds
+  10-20 % latency with no extra cost.
+
+- **Moondream Cloud: estimated token tracking.** The Moondream API does not
+  return usage statistics.  The add-on now accumulates *estimates*
+  (256 image tokens + prompt text tokens per frame, plus answer text tokens
+  for completion) so the AI usage table shows approximate figures instead
+  of N/A.  A note in the UI clarifies these are estimates.
+
+- **OpenAI token counts now shown in usage table.** The UI was erroneously
+  hiding token stats for the OpenAI provider even though the API returns
+  exact counts.  Fixed.
+
 ## 2.9.0
 
 ### New features

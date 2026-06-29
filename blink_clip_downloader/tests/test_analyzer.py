@@ -628,6 +628,8 @@ async def test_moondream_cloud_call_model_success() -> None:
 
 
 async def test_moondream_cloud_call_model_rate_limit() -> None:
+    # When /detect returns 429, _detect_objects returns [] (no person detected).
+    # The fallback "no person" response is used — the query is never called.
     mock_resp = AsyncMock()
     mock_resp.status = 429
     mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
@@ -637,20 +639,21 @@ async def test_moondream_cloud_call_model_rate_limit() -> None:
     a._session = _mock_session(post=MagicMock(return_value=mock_resp))
     with patch("asyncio.sleep", new_callable=AsyncMock):
         result = await a._call_model([_FAKE_JPEG], "test")
-    assert result == ""
+    # With detect-based flow: rate limit on detect → no person → fallback result used
+    assert "No person detected" in result or result == ""
 
 
 async def test_moondream_cloud_fetch_models() -> None:
     a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
     models = await a.fetch_models()
     assert len(models) == 1
-    assert models[0]["name"] == "moondream-cloud"
+    assert models[0]["name"] == "moondream3-preview"
 
 
 def test_moondream_cloud_provider_name() -> None:
     a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
     assert a.provider_name == "moondream_cloud"
-    assert a.model_name() == "moondream-cloud"
+    assert a.model_name() == "moondream3-preview"
 
 
 # ------------------------------------------------------------------
@@ -3056,3 +3059,415 @@ async def test_extract_frames_uses_640_scale() -> None:
 
     cmd_str = " ".join(str(a) for a in mock_exec.call_args[0])
     assert "scale=640:-1" in cmd_str
+
+
+# ===========================================================================
+# Additional coverage — MoondreamCloudAnalyzer detect-based analysis
+# ===========================================================================
+
+
+def _make_detect_resp(objects: list) -> AsyncMock:
+    """Create a mock aiohttp response for the /detect endpoint."""
+    resp = AsyncMock()
+    resp.status = 200
+    resp.json = AsyncMock(return_value={"objects": objects})
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=False)
+    return resp
+
+
+def _make_query_resp(answer: str) -> AsyncMock:
+    """Create a mock aiohttp response for the /query endpoint."""
+    resp = AsyncMock()
+    resp.status = 200
+    resp.json = AsyncMock(return_value={"answer": answer})
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=False)
+    return resp
+
+
+# ------------------------------------------------------------------
+# _detect_objects
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_detect_objects_success() -> None:
+    """_detect_objects returns parsed bounding boxes on HTTP 200."""
+    boxes = [{"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    resp = _make_detect_resp(boxes)
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = _mock_session(post=MagicMock(return_value=resp))
+
+    result = await a._detect_objects(b"fake_frame", "person")
+    assert result == boxes
+
+
+@pytest.mark.asyncio
+async def test_detect_objects_non_200_returns_empty() -> None:
+    """_detect_objects returns [] when the API returns a non-200 status."""
+    resp = AsyncMock()
+    resp.status = 500
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=False)
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = _mock_session(post=MagicMock(return_value=resp))
+
+    result = await a._detect_objects(b"fake", "person")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_detect_objects_client_error_returns_empty() -> None:
+    """_detect_objects returns [] on aiohttp.ClientError."""
+    import aiohttp
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    session = MagicMock()
+    session.post = MagicMock(side_effect=aiohttp.ClientError("conn refused"))
+    session.closed = False
+    a._session = session
+
+    result = await a._detect_objects(b"fake", "person")
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_detect_objects_filters_non_dicts() -> None:
+    """_detect_objects discards non-dict entries from the objects array."""
+    objects_raw = [
+        {"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9},
+        "not_a_dict",
+        42,
+        None,
+    ]
+    resp = AsyncMock()
+    resp.status = 200
+    resp.json = AsyncMock(return_value={"objects": objects_raw})
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=False)
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = _mock_session(post=MagicMock(return_value=resp))
+
+    result = await a._detect_objects(b"f", "person")
+    assert result == [{"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+
+
+# ------------------------------------------------------------------
+# _bbox_min_gap
+# ------------------------------------------------------------------
+
+
+def test_bbox_min_gap_overlapping() -> None:
+    """Boxes that overlap → gap == 0.0."""
+    a_boxes = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.5, "y_max": 0.5}]
+    b_boxes = [{"x_min": 0.3, "y_min": 0.3, "x_max": 0.8, "y_max": 0.8}]
+    gap = MoondreamCloudAnalyzer._bbox_min_gap(a_boxes, b_boxes)
+    assert gap == 0.0
+
+
+def test_bbox_min_gap_adjacent() -> None:
+    """Boxes that touch but don't overlap → gap ~= 0.0."""
+    a_boxes = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.5, "y_max": 1.0}]
+    b_boxes = [{"x_min": 0.5, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}]
+    gap = MoondreamCloudAnalyzer._bbox_min_gap(a_boxes, b_boxes)
+    assert gap == pytest.approx(0.0, abs=1e-9)
+
+
+def test_bbox_min_gap_separated() -> None:
+    """Boxes with clear separation → gap > 0."""
+    a_boxes = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.2, "y_max": 0.2}]
+    b_boxes = [{"x_min": 0.8, "y_min": 0.8, "x_max": 1.0, "y_max": 1.0}]
+    gap = MoondreamCloudAnalyzer._bbox_min_gap(a_boxes, b_boxes)
+    # Euclidean: sqrt(0.6^2 + 0.6^2) ≈ 0.849
+    assert gap > 0.8
+
+
+def test_bbox_min_gap_multiple_pairs() -> None:
+    """Returns the minimum gap across all box pairs."""
+    a_boxes = [
+        {"x_min": 0.0, "y_min": 0.0, "x_max": 0.1, "y_max": 0.1},
+        {"x_min": 0.4, "y_min": 0.4, "x_max": 0.6, "y_max": 0.6},
+    ]
+    b_boxes = [{"x_min": 0.5, "y_min": 0.5, "x_max": 0.7, "y_max": 0.7}]
+    gap = MoondreamCloudAnalyzer._bbox_min_gap(a_boxes, b_boxes)
+    assert gap == 0.0  # Second a-box overlaps b-box
+
+
+# ------------------------------------------------------------------
+# _call_model with detect-based analysis
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_call_model_with_person_detected() -> None:
+    """When /detect finds a person, _call_model proceeds to /query."""
+    person_boxes = [{"x_min": 0.3, "y_min": 0.1, "x_max": 0.5, "y_max": 0.9}]
+    query_answer = (
+        '{"suspicious": false, "confidence": 0.7, "description": "Person walking by."}'
+    )
+
+    detect_resp = _make_detect_resp(person_boxes)
+    query_resp = _make_query_resp(query_answer)
+
+    call_count = 0
+
+    def side_effect_post(url, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if "detect" in url:
+            return detect_resp
+        return query_resp
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect_post)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = session
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    assert "Person walking by" in result
+    assert call_count == 2  # 1 detect + 1 query
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_call_model_no_person_skips_query() -> None:
+    """When /detect finds no person, /query is skipped and fallback used."""
+    detect_resp = _make_detect_resp([])
+
+    session = MagicMock()
+    session.post = MagicMock(return_value=detect_resp)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = session
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "p")
+
+    # Only 2 detect calls (one per frame), no query calls
+    assert session.post.call_count == 2
+    assert "No person detected" in result
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_call_model_car_camera_with_car_detected() -> None:
+    """Car camera: when car detected, proximity gap is injected into prompt."""
+    person_boxes = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.1, "y_max": 0.9}]
+    car_boxes = [{"x_min": 0.5, "y_min": 0.0, "x_max": 0.9, "y_max": 0.9}]
+    query_answer = '{"suspicious": false, "confidence": 0.8, "description": "Person far from car."}'
+
+    call_order: list[str] = []
+
+    def side_effect(url, **kwargs):
+        if "detect" in url:
+            obj = kwargs.get("json", {}).get("object", "")
+            call_order.append(f"detect:{obj}")
+            if obj == "person":
+                return _make_detect_resp(person_boxes)
+            return _make_detect_resp(car_boxes)
+        call_order.append("query")
+        return _make_query_resp(query_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="p",
+        car_description="Silver Kia Forte",
+    )
+    a._session = session
+    a._current_camera = "Driveway"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    assert "Person far from car" in result
+    assert "detect:person" in call_order
+    assert "detect:car" in call_order
+    assert "query" in call_order
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_call_model_car_camera_no_car_in_frame() -> None:
+    """Car camera: when car not detected, spatial note about car visibility added."""
+    person_boxes = [{"x_min": 0.4, "y_min": 0.1, "x_max": 0.6, "y_max": 0.9}]
+    query_answer = (
+        '{"suspicious": false, "confidence": 0.7, "description": "Person at door."}'
+    )
+
+    injected_prompts: list[str] = []
+
+    def side_effect(url, **kwargs):
+        if "detect" in url:
+            obj = kwargs.get("json", {}).get("object", "")
+            if obj == "person":
+                return _make_detect_resp(person_boxes)
+            return _make_detect_resp([])  # no car
+        # Capture the augmented prompt sent to /query
+        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
+        return _make_query_resp(query_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="base prompt",
+        car_description="Silver Kia",
+    )
+    a._session = session
+    a._current_camera = "Driveway"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "base prompt")
+
+    assert result != ""
+    # Car not in frame → suppression note injected
+    assert injected_prompts
+    assert "NOT visible" in injected_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_call_model_non_car_camera_injects_position() -> None:
+    """Non-car camera: person position injected into prompt without car rules."""
+    person_boxes = [{"x_min": 0.2, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    query_answer = '{"suspicious": false, "confidence": 0.6, "description": "Person at front door."}'
+
+    injected_prompts: list[str] = []
+
+    def side_effect(url, **kwargs):
+        if "detect" in url:
+            return _make_detect_resp(person_boxes)
+        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
+        return _make_query_resp(query_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = session
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    assert "Person at front door" in result
+    assert injected_prompts
+    assert "SPATIAL DATA" in injected_prompts[0]
+    assert "from left" in injected_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_car_camera_overlap_flagged() -> None:
+    """Person box overlapping car box → spatial note shows OVERLAPS."""
+    # Person and car boxes that overlap
+    person_boxes = [{"x_min": 0.3, "y_min": 0.0, "x_max": 0.6, "y_max": 1.0}]
+    car_boxes = [{"x_min": 0.5, "y_min": 0.0, "x_max": 0.9, "y_max": 1.0}]
+    query_answer = (
+        '{"suspicious": true, "confidence": 0.9, "description": "Person touching car."}'
+    )
+
+    injected_prompts: list[str] = []
+
+    def side_effect(url, **kwargs):
+        if "detect" in url:
+            obj = kwargs.get("json", {}).get("object", "")
+            if obj == "person":
+                return _make_detect_resp(person_boxes)
+            return _make_detect_resp(car_boxes)
+        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
+        return _make_query_resp(query_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    a._session = session
+    a._current_camera = "Driveway"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    assert "Person touching car" in result
+    assert injected_prompts
+    assert "OVERLAPS" in injected_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_tokens_accumulate_per_frame() -> None:
+    """Token counts accumulate across multiple frames when person is detected."""
+    person_boxes = [{"x_min": 0.2, "y_min": 0.0, "x_max": 0.4, "y_max": 1.0}]
+    query_answer = (
+        '{"suspicious": false, "confidence": 0.5, "description": "All clear."}'
+    )
+
+    def side_effect(url, **kwargs):
+        if "detect" in url:
+            return _make_detect_resp(person_boxes)
+        return _make_query_resp(query_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = session
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "test prompt")
+
+    # 2 frames × (800 image tokens + prompt text tokens) → > 0
+    assert a._last_prompt_tokens > 0
+    assert a._last_completion_tokens > 0
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_car_camera_scoped_to_car_cameras() -> None:
+    """Car rules NOT applied when camera is not in ai_car_cameras list."""
+    person_boxes = [{"x_min": 0.3, "y_min": 0.0, "x_max": 0.5, "y_max": 1.0}]
+    query_answer = '{"suspicious": false, "confidence": 0.6, "description": "Clear."}'
+
+    injected_prompts: list[str] = []
+
+    def side_effect(url, **kwargs):
+        if "detect" in url:
+            return _make_detect_resp(person_boxes)
+        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
+        return _make_query_resp(query_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="p",
+        car_description="Silver Kia",
+        car_cameras=["Driveway"],  # Only Driveway gets car rules
+    )
+    a._session = session
+    # Camera "Front Door" is NOT in car_cameras → should not get car detect
+    a._current_camera = "Front Door"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        await a._call_model([_FAKE_JPEG], "p")
+
+    # Only 2 calls: detect(person) + query — no detect(car) for Front Door
+    assert session.post.call_count == 2
+    # Injected prompt should have position data, NOT car rules
+    assert injected_prompts
+    assert "SPATIAL DATA" in injected_prompts[0]
+    assert "OVERLAPS" not in injected_prompts[0]
+
+
+# ------------------------------------------------------------------
+# Database anomaly score — coverage for rare-hour and duration paths
+# ------------------------------------------------------------------

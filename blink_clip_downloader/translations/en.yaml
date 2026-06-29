@@ -151,6 +151,189 @@ configuration:
     description: >-
       Clips older than this many days are compressed into a ZIP archive (only
       when archiving is enabled).
+  download_local_storage:
+    name: Download Sync Module Local Storage
+    description: >-
+      Also download clips stored on the USB drive attached to the Blink Sync
+      Module. Blink uploads these to the cloud before they can be fetched, so
+      an internet connection is still required.
+  ai_analysis_enabled:
+    name: Enable AI Video Analysis
+    description: >-
+      Automatically analyse each downloaded clip for suspicious activity and
+      send alerts via Discord, email, or the HA mobile app.
+  ai_provider:
+    name: AI Provider
+    description: >-
+      Which AI backend to use. "ollama" = local Ollama server on your LAN (free,
+      private). "ollama_cloud" = Ollama Cloud API (paid). "moondream_cloud" =
+      Moondream Cloud API (paid, uses object-detect + reasoning for better
+      accuracy). "moondream_local" = Moondream 0.5B on-device (free, x86_64
+      only). "anthropic" = Claude API (paid). "openai" = OpenAI GPT API (paid).
+  ollama_url:
+    name: Ollama Server URL
+    description: >-
+      URL of your Ollama instance, e.g. http://192.168.1.10:11434.
+      Required for the "ollama" and "ollama_cloud" providers.
+  ollama_model:
+    name: Ollama Vision Model
+    description: >-
+      Vision-capable model to use on your Ollama server, e.g. llava:7b or
+      llama3.2-vision:11b. Use "Fetch Models" in the web UI AI tab to see
+      what is available.
+  ollama_cloud_api_key:
+    name: Ollama Cloud API Key
+    description: API key from api.ollama.com. Required when ai_provider is "ollama_cloud".
+  moondream_api_key:
+    name: Moondream API Key
+    description: API key from moondream.ai. Required when ai_provider is "moondream_cloud".
+  anthropic_api_key:
+    name: Anthropic API Key
+    description: >-
+      API key from console.anthropic.com. Required when ai_provider is
+      "anthropic". Keep this secret.
+  anthropic_model:
+    name: Anthropic Model
+    description: >-
+      Claude model to use. claude-haiku-4-5 is the most cost-effective option
+      for security camera analysis. Use "Fetch Models" in the web UI AI tab.
+  openai_api_key:
+    name: OpenAI API Key
+    description: >-
+      API key from platform.openai.com. Required when ai_provider is "openai".
+      Keep this secret.
+  openai_model:
+    name: OpenAI Model
+    description: >-
+      GPT model to use. gpt-4o-mini is the most cost-effective vision option.
+      Use "Fetch Models" in the web UI AI tab.
+  ai_prompt:
+    name: AI Analysis Prompt
+    description: >-
+      Base prompt sent to the AI for every clip. Must request a JSON response
+      with "suspicious", "confidence", and "description" keys. Override per
+      camera via ai_camera_prompts or the Camera Configurations section in the
+      web UI.
+  ai_car_description:
+    name: Protected Vehicle Description
+    description: >-
+      Optional description of a vehicle to protect, e.g. "Silver Kia Forte,
+      parked in the driveway". When set the AI applies strict distance rules
+      and flags anyone touching the vehicle as suspicious.
+  ai_max_frames:
+    name: Max Frames per Clip
+    description: >-
+      Number of frames extracted per clip for analysis (1–100). More frames
+      give better coverage but increase API cost and analysis time. For
+      moondream_cloud each frame uses additional API requests.
+  ai_frame_interval:
+    name: Frame Interval (seconds)
+    description: >-
+      Extract one frame every this many seconds of video. With 5 frames and
+      2 s interval the analysis covers approximately the first 8 s of the clip.
+  ai_suspicious_keywords:
+    name: Suspicious Keywords
+    description: >-
+      Words that trigger a suspicious flag when found in the AI plain-text
+      response. Used as a fallback when the AI does not return valid JSON.
+  ai_schedule_start:
+    name: AI Schedule Start (HH:MM)
+    description: >-
+      Only run AI analysis between this time and ai_schedule_end (24-hour local
+      time). Leave blank to run analysis around the clock.
+  ai_schedule_end:
+    name: AI Schedule End (HH:MM)
+    description: >-
+      Stop running AI analysis after this time (24-hour local time). Leave blank
+      to run analysis around the clock.
+  ai_batch_size:
+    name: AI Batch Size
+    description: >-
+      Maximum number of clips to analyse in one batch before pausing for
+      ai_check_interval seconds. Prevents overloading the AI backend.
+  ai_check_interval:
+    name: AI Check Interval (seconds)
+    description: >-
+      Seconds between analysis batch runs. The queue is checked this often for
+      new un-analysed clips.
+  ai_min_confidence:
+    name: Minimum Alert Confidence
+    description: >-
+      Minimum AI confidence score (0.0–1.0) required before a suspicious-clip
+      alert is dispatched. Results are always stored regardless of this setting.
+      0.0 = alert on all results; 0.5 = only when the AI is reasonably certain.
+  ai_camera_prompts:
+    name: Per-Camera AI Prompts
+    description: >-
+      Override the global ai_prompt for specific cameras. Each entry has a
+      "camera" name and a "prompt" string. Cameras not listed use ai_prompt.
+      Editable in the web UI AI tab under Camera Configurations.
+  ai_camera_descriptions:
+    name: Per-Camera Descriptions
+    description: >-
+      Context descriptions injected into every AI prompt for the matching
+      camera, e.g. "Points at driveway; Silver Kia Forte parked on left".
+      Editable live in the web UI AI tab under Camera Configurations.
+  ai_frame_strategy:
+    name: Frame Extraction Strategy
+    description: >-
+      "smart" (default) extracts 2x frames then picks entry, peak-motion, and
+      exit frames using motion-diff. "sequential" analyses each frame
+      individually and returns the most alarming result. "uniform" is the legacy
+      fixed-interval mode.
+  ai_car_cameras:
+    name: Car-Protection Cameras
+    description: >-
+      Restrict protected-vehicle distance rules to these camera names. Cameras
+      not in this list focus on their own description and will not apply car
+      proximity rules. Leave empty to apply car rules to all cameras.
+  mobile_app_target:
+    name: Mobile App Target Entity
+    description: >-
+      Home Assistant mobile app notification entity to send suspicious-clip
+      alerts to, e.g. mobile_app_my_phone. Required when mobile_app_enabled is
+      true.
+  mobile_app_enabled:
+    name: Enable Mobile App Alerts
+    description: >-
+      Send a push notification to the HA mobile app when a suspicious clip is
+      detected.
+  smtp_host:
+    name: SMTP Host
+    description: Hostname or IP address of the SMTP server for email alerts.
+  smtp_port:
+    name: SMTP Port
+    description: >-
+      SMTP server port. Use 587 for STARTTLS (recommended) or 465 for SSL.
+  smtp_user:
+    name: SMTP Username
+    description: Login username for the SMTP server (usually your email address).
+  smtp_password:
+    name: SMTP Password
+    description: Login password for the SMTP server. Keep this secret.
+  smtp_recipients:
+    name: Email Alert Recipients
+    description: >-
+      List of email addresses to send suspicious-clip alerts to. At least one
+      address is required when smtp_enabled is true.
+  smtp_sender:
+    name: Email Sender Address
+    description: From address used in outgoing alert emails.
+  smtp_enabled:
+    name: Enable Email Alerts
+    description: >-
+      Send an email alert with a clip summary when suspicious activity is
+      detected.
+  discord_webhook_url:
+    name: Discord Webhook URL
+    description: >-
+      Discord webhook URL to post suspicious-clip alerts to. Leave blank to
+      disable Discord notifications.
+  discord_enabled:
+    name: Enable Discord Alerts
+    description: >-
+      Post a Discord message with clip details when suspicious activity is
+      detected.
   log_level:
     name: Log Level
     description: Verbosity of add-on logs.

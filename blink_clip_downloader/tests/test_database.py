@@ -822,3 +822,48 @@ async def test_record_clip_baseline_uninitialised_db() -> None:
     d = ClipDatabase(Path("/tmp/neveropened_baseline2.db"))
     # Should not raise even when db is not open
     await d.record_clip_baseline("Camera", 8, 5.0)
+
+
+# ---------------------------------------------------------------------------
+# Coverage: very-rare-hour (line 642), uncommon-hour (line 644), and
+# slight-duration-anomaly (line 660) branches in get_anomaly_score
+# ---------------------------------------------------------------------------
+
+
+async def test_get_anomaly_score_very_rare_hour(db: ClipDatabase) -> None:
+    """hour_count < expected * 0.15 → score += 0.35 (line 642)."""
+    # 200 events at hour 8 → expected_per_hour = 200/24 ≈ 8.33
+    # 0.15 threshold ≈ 1.25 → hour_count=1 qualifies as very rare
+    for _ in range(200):
+        await db.record_clip_baseline("Patio", 8, 5.0)
+    # Add exactly 1 event at hour 6 so it is very rare but not zero
+    await db.record_clip_baseline("Patio", 6, 5.0)
+    score = await db.get_anomaly_score("Patio", 6, 0.0)
+    assert score >= 0.35
+
+
+async def test_get_anomaly_score_uncommon_hour(db: ClipDatabase) -> None:
+    """hour_count in [0.15, 0.35) of expected → score += 0.15 (line 644)."""
+    # 200 events at hour 8 → expected ≈ 8.33; 0.15 threshold ≈ 1.25, 0.35 ≈ 2.9
+    # hour_count=2 is in [1.25, 2.9) → uncommon
+    for _ in range(200):
+        await db.record_clip_baseline("Pool", 8, 5.0)
+    await db.record_clip_baseline("Pool", 10, 5.0)
+    await db.record_clip_baseline("Pool", 10, 5.0)
+    score = await db.get_anomaly_score("Pool", 10, 0.0)
+    assert score >= 0.15
+    assert score < 0.5  # not in the very-rare or zero-seen range
+
+
+async def test_get_anomaly_score_slight_duration_anomaly(db: ClipDatabase) -> None:
+    """duration ratio in (2.5, 4.0) → score += 0.1 (line 660)."""
+    # Need at least 10 duration samples and a known average
+    # Record 10 clips with duration=5.0 → avg_duration=5.0
+    for _ in range(30):
+        await db.record_clip_baseline("Gate", 12, 5.0)
+    for _ in range(10):
+        await db.record_clip_baseline("Gate", 12, 5.0)
+    # A clip at a normal hour (hour 12 has many events → hour_count not zero)
+    # Duration 15.0 → ratio = 15/5 = 3.0, which is in (2.5, 4.0) → slight anomaly
+    score = await db.get_anomaly_score("Gate", 12, 15.0)
+    assert score >= 0.1
