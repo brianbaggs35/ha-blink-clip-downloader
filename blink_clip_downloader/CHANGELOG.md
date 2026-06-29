@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.0.2
+
+### Moondream Cloud — fine-tuning support
+
+- **`MoondreamFineTuneManager` class.** A complete HTTP API wrapper for the
+  Moondream Cloud fine-tuning API, enabling programmatic management of
+  fine-tuning workflows entirely in the cloud (no local GPU required).
+  Supported operations:
+  - `create_finetune(name, rank)` — create a LoRA fine-tune (rank 8/16/24/32)
+  - `list_finetunes()` / `get_finetune(id)` / `delete_finetune(id)` — manage
+    fine-tune lifecycle
+  - `generate_rollouts(finetune_id, image, question, num_rollouts, ...)` —
+    generate multiple model outputs for scoring; supports `query`, `point`, and
+    `detect` skills; automatic reward computation via `ground_truth`
+  - `train_step(finetune_id, request, rollouts, rewards, mode, lr)` — execute
+    one RL (reinforcement learning) or SFT (supervised fine-tuning) training
+    step
+  - `save_checkpoint(id)` / `list_checkpoints(id)` / `delete_checkpoint(id, step)`
+    — checkpoint management
+  - `log_metrics(id, step, metrics)` — record custom evaluation metrics
+  - `get_model_id(finetune_id, step)` — static method that returns the
+    inference model identifier (`moondream3-preview/{id}@{step}`) for use
+    with `MoondreamCloudAnalyzer`
+
+- **Fine-tuned model inference in `MoondreamCloudAnalyzer`.**  A new
+  `finetune_model` parameter (also exposed in `create_analyzer()` as
+  `moondream_finetune_model`) routes all `/query` and `/detect` requests to a
+  custom fine-tuned checkpoint instead of the base `moondream3-preview` model.
+  Build the value with `MoondreamFineTuneManager.get_model_id()` after
+  training.  `model_name()` and `fetch_models()` both reflect the fine-tuned
+  model when it is configured.
+
 ## 3.0.1
 
 ### AI analysis — improved responses and prompts
