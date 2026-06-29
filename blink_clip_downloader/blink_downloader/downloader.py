@@ -353,7 +353,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                         "Preparing local-storage clip %s from %r (~%.1f KB)",
                         item.id,
                         camera_name,
-                        (item.size or 0) / 1024,
+                        int(item.size or 0) / 1024,
                     )
                     await item.prepare_download(self._blink)
                     success = await item.download_video(

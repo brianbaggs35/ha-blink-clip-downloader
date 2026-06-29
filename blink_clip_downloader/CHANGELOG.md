@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.0.3
+
+### Bug fixes
+
+- **Fix local-storage sync crash.** The Blink API returns `size` as a string in
+  the local-storage manifest.  Dividing it by `1024` for the log message raised
+  `unsupported operand type(s) for /: 'str' and 'int'`, which caused every
+  local-storage clip download to fail silently.  The value is now cast to `int`
+  before the division.
+- **Widen 2FA verification modal.** The "Verify" button was partially cut off at
+  `max-width: 420px`; bumped to `480px` so the button is always fully visible.
+
+### Dependencies
+
+- Bumped minimum **blinkpy** requirement to `>=0.25.7`.  The 0.25.7 release
+  initialises `response_text = ""` to prevent an `UnboundLocalError` on
+  unexpected status codes in the OAuth login flow.
+
 ## 3.0.2
 
 ### Moondream Cloud — fine-tuning support
