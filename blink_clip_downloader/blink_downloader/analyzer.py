@@ -222,6 +222,7 @@ class AnalysisResult:
     analyzed_at: str
     tokens_prompt: int = 0
     tokens_completion: int = 0
+    anomaly_score: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -237,6 +238,7 @@ class AnalysisResult:
             "analyzed_at": self.analyzed_at,
             "tokens_prompt": self.tokens_prompt,
             "tokens_completion": self.tokens_completion,
+            "anomaly_score": self.anomaly_score,
         }
 
 
@@ -252,6 +254,8 @@ class BaseAnalyzer(abc.ABC):
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
         camera_descriptions: dict[str, str] | None = None,
+        frame_strategy: str = "smart",
+        car_cameras: list[str] | None = None,
     ) -> None:
         self._base_prompt = prompt
         self._car_description = car_description
@@ -260,6 +264,13 @@ class BaseAnalyzer(abc.ABC):
         self._suspicious_keywords = [k.lower() for k in (suspicious_keywords or [])]
         self._camera_prompts: dict[str, str] = camera_prompts or {}
         self._camera_descriptions: dict[str, str] = camera_descriptions or {}
+        # "smart" oversamples then picks entry/peak/exit frames via motion diff.
+        # "sequential" analyses each frame individually and returns the most alarming.
+        # "uniform" is the legacy behaviour: extract exactly max_frames at fixed intervals.
+        self._frame_strategy = frame_strategy
+        # If non-empty, car-protection distance rules are only injected for cameras
+        # in this set.  Empty means "apply to every camera" (backward-compatible default).
+        self._car_cameras: set[str] = set(car_cameras) if car_cameras else set()
         # Token counts set by _call_model() implementations that support them.
         # Reset to 0 at the start of each analyze_clip() call.
         self._last_prompt_tokens: int = 0
@@ -303,9 +314,14 @@ class BaseAnalyzer(abc.ABC):
     # ------------------------------------------------------------------
 
     async def analyze_clip(
-        self, clip_path: str, clip_id: str, camera: str
+        self,
+        clip_path: str,
+        clip_id: str,
+        camera: str,
+        anomaly_score: float = 0.0,
+        clip_timestamp: str = "",
     ) -> AnalysisResult:
-        """Full pipeline: extract frames → call AI → parse response."""
+        """Full pipeline: extract frames → select best → call AI → parse response."""
         from datetime import datetime, timezone
 
         self._last_prompt_tokens = 0
@@ -325,10 +341,24 @@ class BaseAnalyzer(abc.ABC):
                 frame_count=0,
                 analysis_duration=time.monotonic() - start,
                 analyzed_at=datetime.now(timezone.utc).isoformat(),
+                anomaly_score=anomaly_score,
             )
 
-        prompt = self._build_prompt(camera)
-        response = await self._call_model(frames, prompt)
+        # Smart frame selection: oversample then pick entry/peak/exit frames
+        if self._frame_strategy == "smart" and len(frames) > self._max_frames:
+            frames = self._select_best_frames(frames, self._max_frames)
+
+        prompt = self._build_prompt(
+            camera,
+            anomaly_score=anomaly_score,
+            clip_timestamp=clip_timestamp,
+        )
+
+        if self._frame_strategy == "sequential":
+            response = await self._analyze_sequentially(frames, prompt)
+        else:
+            response = await self._call_model(frames, prompt)
+
         is_suspicious, confidence, summary = self.parse_response(response)
 
         return AnalysisResult(
@@ -344,6 +374,7 @@ class BaseAnalyzer(abc.ABC):
             analyzed_at=datetime.now(timezone.utc).isoformat(),
             tokens_prompt=self._last_prompt_tokens,
             tokens_completion=self._last_completion_tokens,
+            anomaly_score=anomaly_score,
         )
 
     # ------------------------------------------------------------------
@@ -351,15 +382,27 @@ class BaseAnalyzer(abc.ABC):
     # ------------------------------------------------------------------
 
     async def extract_frames(self, clip_path: str) -> list[bytes]:
-        """Extract JPEG frames from an MP4 using ffmpeg."""
+        """Extract JPEG frames from an MP4 using ffmpeg.
+
+        In ``smart`` mode, 2× max_frames are extracted so that
+        :meth:`_select_best_frames` has enough material to pick the entry,
+        peak-motion, and exit frames.  In all other modes exactly
+        ``max_frames`` are extracted.
+        """
+        # Oversample in smart mode so _select_best_frames has enough to work with
+        extract_count = (
+            self._max_frames * 2
+            if self._frame_strategy == "smart"
+            else self._max_frames
+        )
         cmd = [
             "ffmpeg",
             "-i",
             clip_path,
             "-vf",
-            f"fps=1/{self._frame_interval},scale=1280:-1",
+            f"fps=1/{self._frame_interval},scale=640:-1",
             "-frames:v",
-            str(self._max_frames),
+            str(extract_count),
             "-f",
             "image2pipe",
             "-vcodec",
@@ -395,6 +438,114 @@ class BaseAnalyzer(abc.ABC):
         return self._split_jpeg_frames(stdout or b"")
 
     @staticmethod
+    def _select_best_frames(frames: list[bytes], target_count: int) -> list[bytes]:
+        """Pick the *target_count* most informative frames using motion scoring.
+
+        Strategy:
+        - Always include the first frame (scene entry) and last frame (exit).
+        - Find the frame with the largest inter-frame pixel diff (peak motion).
+        - Fill remaining slots with the next highest-motion frames.
+
+        Falls back to even-spaced selection if PIL is unavailable.
+        """
+        if len(frames) <= target_count:
+            return frames
+
+        try:
+            import io as _io  # noqa: PLC0415
+
+            from PIL import Image as _Image  # noqa: PLC0415
+
+            _THUMB = (64, 64)
+            # tobytes() returns raw pixel bytes (L mode = 1 byte/pixel)
+            # which avoids the untyped ImagingCore returned by getdata()
+            thumbs: list[bytes] = [
+                _Image.open(_io.BytesIO(f))
+                .convert("L")
+                .resize(_THUMB, _Image.Resampling.LANCZOS)
+                .tobytes()
+                for f in frames
+            ]
+
+            # Inter-frame absolute difference (normalised per pixel)
+            pixels = _THUMB[0] * _THUMB[1]
+            diffs: list[float] = [
+                sum(abs(a - b) for a, b in zip(thumbs[i - 1], thumbs[i])) / pixels
+                for i in range(1, len(thumbs))
+            ]
+
+            selected: set[int] = {0, len(frames) - 1}
+
+            # Peak-motion frame (index into frames, not diffs)
+            if diffs:
+                peak = max(range(len(diffs)), key=lambda i: diffs[i]) + 1
+                selected.add(peak)
+
+            # Fill remaining slots by motion score
+            remaining = target_count - len(selected)
+            ranked = sorted(
+                (
+                    (diffs[i], i + 1)
+                    for i in range(len(diffs))
+                    if (i + 1) not in selected
+                ),
+                reverse=True,
+            )
+            for _, idx in ranked[:remaining]:
+                selected.add(idx)
+
+            return [frames[i] for i in sorted(selected)]
+
+        except Exception:  # noqa: BLE001
+            # PIL unavailable or processing error — fall back to even spacing
+            # anchored at first and last to preserve entry/exit coverage
+            if target_count <= 1:
+                return [frames[0]]
+            anchored: set[int] = {0, len(frames) - 1}
+            gap = target_count - len(anchored)
+            if gap > 0:
+                step = max(1, len(frames) // target_count)
+                idx = step
+                while len(anchored) < target_count and idx < len(frames) - 1:
+                    anchored.add(idx)
+                    idx += step
+            return [frames[i] for i in sorted(anchored)[:target_count]]
+
+    async def _analyze_sequentially(self, frames: list[bytes], prompt: str) -> str:
+        """Analyse frames one at a time and return the most alarming response.
+
+        Each frame is sent to the AI individually via :meth:`_call_model`.
+        The result with the highest concern level (suspicious > non-suspicious;
+        higher confidence when tied) is returned.  This mode is especially
+        effective for providers that perform better on single images than on
+        batches (e.g. Ollama with small models, or when per-frame clarity
+        matters more than temporal context).
+        """
+        best_response = ""
+        best_suspicious = False
+        best_confidence = 0.0
+
+        for frame in frames:
+            response = await self._call_model([frame], prompt)
+            if not response:
+                continue
+            suspicious, confidence, desc = self._try_parse_json(response)
+            if not desc:
+                if not best_response:
+                    best_response = response
+                continue
+            if (
+                not best_response
+                or (suspicious and not best_suspicious)
+                or (suspicious == best_suspicious and confidence > best_confidence)
+            ):
+                best_response = response
+                best_suspicious = suspicious
+                best_confidence = confidence
+
+        return best_response
+
+    @staticmethod
     def _split_jpeg_frames(data: bytes) -> list[bytes]:
         """Split concatenated JPEG data into individual frames."""
         frames: list[bytes] = []
@@ -416,20 +567,65 @@ class BaseAnalyzer(abc.ABC):
     # Response parsing (shared by all providers)
     # ------------------------------------------------------------------
 
-    def _build_prompt(self, camera: str) -> str:
-        """Build a detailed analysis prompt with camera context and asset protection rules."""
+    def _build_prompt(
+        self,
+        camera: str,
+        anomaly_score: float = 0.0,
+        clip_timestamp: str = "",
+    ) -> str:
+        """Build a rich analysis prompt with camera context, temporal context,
+        anomaly alert, and asset-protection distance rules."""
         base = self._camera_prompts.get(camera, self._base_prompt)
         parts = [base]
 
-        # Add camera description/purpose if configured
+        # Camera location / purpose
         camera_desc = self._camera_descriptions.get(camera, "")
         if camera_desc:
             parts.append(f"\n\nCamera location and purpose — {camera}: {camera_desc}")
         else:
             parts.append(f"\n\nCamera: {camera}")
 
-        # Add car proximity rules with precise distance guidance
-        if self._car_description:
+        # Time-of-day context (helps AI calibrate what's "normal")
+        if clip_timestamp:
+            try:
+                from datetime import datetime as _dt  # noqa: PLC0415
+
+                dt = _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00"))
+                hour = dt.hour
+                if hour < 5:
+                    tod = "late night"
+                elif hour < 9:
+                    tod = "early morning"
+                elif hour < 12:
+                    tod = "morning"
+                elif hour < 17:
+                    tod = "afternoon"
+                elif hour < 20:
+                    tod = "evening"
+                else:
+                    tod = "night"
+                parts.append(
+                    f"\n\nTime of day: {tod} ({dt.strftime('%H:%M')} UTC). "
+                    "Factor this into your assessment of whether the activity is normal."
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Behavior anomaly alert
+        if anomaly_score >= 0.6:
+            parts.append(
+                f"\n\nBEHAVIOR ALERT: This event is statistically unusual for "
+                f"this camera at this time (anomaly score {anomaly_score:.2f}/1.00). "
+                "Apply heightened scrutiny to any persons or vehicles in the frame."
+            )
+
+        # Protected vehicle with precise distance rules — only for cameras that
+        # can see the car (all cameras when car_cameras is empty, otherwise only
+        # the cameras explicitly listed in car_cameras).
+        car_applies = self._car_description and (
+            not self._car_cameras or camera in self._car_cameras
+        )
+        if car_applies:
             parts.append(
                 f"\n\nPROTECTED VEHICLE: {self._car_description}\n"
                 "Apply these distance rules STRICTLY:\n"
@@ -514,6 +710,8 @@ class ClipAnalyzer(BaseAnalyzer):
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
         camera_descriptions: dict[str, str] | None = None,
+        frame_strategy: str = "smart",
+        car_cameras: list[str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -523,6 +721,8 @@ class ClipAnalyzer(BaseAnalyzer):
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
         self._ollama_url = ollama_url.rstrip("/")
         self._model = model
@@ -648,6 +848,8 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
         camera_descriptions: dict[str, str] | None = None,
+        frame_strategy: str = "smart",
+        car_cameras: list[str] | None = None,
     ) -> None:
         super().__init__(
             ollama_url=self._CLOUD_BASE_URL,
@@ -659,6 +861,8 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
         self._api_key = api_key
 
@@ -707,6 +911,8 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
         camera_descriptions: dict[str, str] | None = None,
+        frame_strategy: str = "smart",
+        car_cameras: list[str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -716,6 +922,8 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
         self._api_key = api_key
         self._session: aiohttp.ClientSession | None = None
@@ -870,6 +1078,8 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
         camera_descriptions: dict[str, str] | None = None,
+        frame_strategy: str = "smart",
+        car_cameras: list[str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -879,6 +1089,8 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
         self._md_model: Any = None
         self._model_lock: asyncio.Lock | None = None
@@ -1022,6 +1234,8 @@ class AnthropicAnalyzer(BaseAnalyzer):
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
         camera_descriptions: dict[str, str] | None = None,
+        frame_strategy: str = "smart",
+        car_cameras: list[str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -1031,6 +1245,8 @@ class AnthropicAnalyzer(BaseAnalyzer):
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
         self._api_key = api_key
         self._model = model or "claude-haiku-4-5"
@@ -1271,6 +1487,8 @@ class OpenAIAnalyzer(BaseAnalyzer):
         suspicious_keywords: list[str] | None = None,
         camera_prompts: dict[str, str] | None = None,
         camera_descriptions: dict[str, str] | None = None,
+        frame_strategy: str = "smart",
+        car_cameras: list[str] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -1280,6 +1498,8 @@ class OpenAIAnalyzer(BaseAnalyzer):
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
         self._api_key = api_key
         self._model = model or "gpt-4o-mini"
@@ -1512,6 +1732,8 @@ def create_analyzer(
     suspicious_keywords: list[str] | None = None,
     camera_prompts: dict[str, str] | None = None,
     camera_descriptions: dict[str, str] | None = None,
+    frame_strategy: str = "smart",
+    car_cameras: list[str] | None = None,
     *,
     ollama_url: str = "",
     ollama_model: str = "",
@@ -1540,6 +1762,8 @@ def create_analyzer(
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
 
     if ai_provider == "ollama_cloud":
@@ -1559,6 +1783,8 @@ def create_analyzer(
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
 
     if ai_provider == "moondream_cloud":
@@ -1577,6 +1803,8 @@ def create_analyzer(
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
 
     if ai_provider == "moondream_local":
@@ -1588,6 +1816,8 @@ def create_analyzer(
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
 
     if ai_provider == "anthropic":
@@ -1607,6 +1837,8 @@ def create_analyzer(
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
 
     if ai_provider == "openai":
@@ -1626,6 +1858,8 @@ def create_analyzer(
             suspicious_keywords=suspicious_keywords,
             camera_prompts=camera_prompts,
             camera_descriptions=camera_descriptions,
+            frame_strategy=frame_strategy,
+            car_cameras=car_cameras,
         )
 
     _LOGGER.warning(

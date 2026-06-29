@@ -1,5 +1,64 @@
 # Changelog
 
+## 3.0.0
+
+### New features — Smart Security Brain
+
+- **Behavior memory baseline.** The add-on now records per-camera hourly event
+  frequency and average clip duration in SQLite every time a clip is downloaded.
+  This data is used to compute an *anomaly score* (0.0–1.0) for every clip that
+  goes through AI analysis, answering: "Is this event unusual for this camera at
+  this time of day?"
+
+- **Anomaly-aware AI prompts.** When a clip scores ≥ 0.6 on the anomaly scale
+  the prompt automatically includes a **BEHAVIOR ALERT** flag with the score,
+  telling the model to apply heightened scrutiny.  After ~30 events per camera
+  the system activates; before that it stays silent to avoid false positives on
+  new installs.
+
+- **Time-of-day context in every prompt.** Every AI call now includes the
+  clip's local time label ("early morning", "evening", "night", etc.) derived
+  from the clip timestamp, so the model can calibrate what constitutes
+  suspicious behaviour for that time.
+
+- **Smart frame selection (new default).** `ai_frame_strategy: "smart"` (new
+  default) extracts 2× `ai_max_frames` candidates then uses PIL inter-frame
+  motion-diff to select the *entry* frame, *peak-motion* frame, and *exit*
+  frame.  This delivers better coverage of the full event with the same or
+  fewer frames sent to the AI.
+
+- **Sequential per-frame analysis mode.** `ai_frame_strategy: "sequential"`
+  analyses each frame individually via separate AI calls and returns the most
+  alarming result (suspicious > non-suspicious; higher confidence when tied).
+  This mode works for **all six providers** and produces sharper results when
+  the AI performs better on individual images than on batches.
+
+- **`anomaly_score` stored on every analysis result.** The computed anomaly
+  score is now persisted in `analysis_results.anomaly_score` and included in
+  every `AnalysisResult` dict returned by the API, so you can query and filter
+  by it.
+
+- **Reduced frame size: 640 px width.** The ffmpeg extraction command now uses
+  `scale=640:-1` (down from 1280) — the single biggest per-frame token cost
+  reduction.  Frame selection via smart mode offsets any quality loss by
+  ensuring only the most informative frames are sent.
+
+- **`ai_frame_strategy` config option.** New `options` key with three choices:
+  `"smart"` (default), `"sequential"`, or `"uniform"` (legacy behaviour).
+  Documented in `config.yaml` and exposed in the schema.
+
+- **Camera-scoped car-protection rules (`ai_car_cameras`).** New config key
+  accepts a list of camera names.  When set, the PROTECTED VEHICLE distance
+  rules are only injected into prompts for those cameras.  Cameras not in the
+  list use only their own description, preventing false positives like
+  "person near the vehicle" on cameras that can't see the car.  Leave empty
+  (default) for backward-compatible all-camera behaviour.
+
+- **Modal AI panel shown immediately on page load.** Previously the AI analysis
+  header would not appear in the clip modal until the user visited the AI tab,
+  because the enabled-state check was deferred.  AI status is now fetched at
+  boot so the panel header shows up on the very first clip the user opens.
+
 ## 2.9.0
 
 ### New features

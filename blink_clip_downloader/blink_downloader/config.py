@@ -136,6 +136,15 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     ai_min_confidence: float = 0.0
     ai_camera_prompts: list[dict] = field(default_factory=list)
     ai_camera_descriptions: list[dict] = field(default_factory=list)
+    # Frame extraction strategy:
+    #   "smart"      – oversample 2x then pick entry/peak-motion/exit frames (default)
+    #   "sequential" – analyse each frame individually, return most alarming result
+    #   "uniform"    – legacy: extract exactly ai_max_frames at fixed intervals
+    ai_frame_strategy: str = "smart"
+    # List of camera names that have the protected vehicle in view.
+    # When non-empty, car-protection distance rules are only injected into prompts
+    # for cameras in this list.  Leave empty to apply to all cameras (default).
+    ai_car_cameras: list[str] = field(default_factory=list)
 
     # --- Extended Notifications (AI alerts) ---
     mobile_app_target: str = ""
@@ -299,6 +308,17 @@ def _parse_config(data: dict) -> AppConfig:
             }
             for item in data.get("ai_camera_descriptions", [])
             if isinstance(item, dict) and item.get("camera")
+        ],
+        ai_frame_strategy=str(data.get("ai_frame_strategy", "smart") or "smart")
+        .strip()
+        .lower()
+        if str(data.get("ai_frame_strategy", "smart") or "smart").strip().lower()
+        in {"smart", "sequential", "uniform"}
+        else "smart",
+        ai_car_cameras=[
+            c.strip()
+            for c in data.get("ai_car_cameras", [])
+            if isinstance(c, str) and c.strip()
         ],
         # Extended notifications
         mobile_app_target=str(data.get("mobile_app_target", "") or "").strip(),

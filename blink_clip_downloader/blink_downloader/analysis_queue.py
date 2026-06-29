@@ -105,10 +105,35 @@ class AnalysisQueue:
             await self._db.update_queue_status(clip_id, "processing")
 
             try:
+                # Look up clip metadata to enrich analysis with temporal context
+                clip = await self._db.get_clip(clip_id)
+                clip_timestamp = str(clip.get("timestamp", "")) if clip else ""
+                clip_duration = float((clip or {}).get("duration") or 0)
+
+                # Compute anomaly score before analysis so the prompt can reference it
+                anomaly_score = 0.0
+                try:
+                    from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+
+                    hour = (
+                        _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00")).hour
+                        if clip_timestamp
+                        else _dt.now(_tz.utc).hour
+                    )
+                    anomaly_score = await self._db.get_anomaly_score(
+                        camera=item["camera"],
+                        hour=hour,
+                        duration=clip_duration,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+
                 result = await self._analyzer.analyze_clip(
                     clip_path=item["clip_path"],
                     clip_id=clip_id,
                     camera=item["camera"],
+                    anomaly_score=anomaly_score,
+                    clip_timestamp=clip_timestamp,
                 )
                 await self._db.add_analysis_result(result.to_dict())
                 await self._db.update_queue_status(clip_id, "completed")

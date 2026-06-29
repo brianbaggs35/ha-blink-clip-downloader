@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v2.9.0"
+version: "v3.0.0"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -227,6 +227,19 @@ options:
   # live in the web UI (AI tab → Camera Configurations) without restarting.
   # Example: [{camera: "Driveway", description: "Points at driveway; silver Kia Forte parked left"}]
   ai_camera_descriptions: []
+  # Frame extraction strategy controlling how frames are selected and sent to the AI:
+  #   "smart"      – (default) extract 2x frames then use motion-diff to pick the
+  #                  entry frame, peak-motion frame, and exit frame. Best accuracy.
+  #   "sequential" – analyse each frame individually and return the most alarming
+  #                  result. Works well when the AI performs better on single images.
+  #   "uniform"    – extract exactly ai_max_frames at fixed time intervals (legacy).
+  ai_frame_strategy: "smart"
+  # Restrict car-proximity rules to specific cameras. When set, only cameras in
+  # this list will have the PROTECTED VEHICLE / distance rules injected into
+  # their AI prompt. Cameras not in this list will focus on their own camera
+  # description instead. Leave empty to apply car rules to all cameras (legacy).
+  # Example: ["Driveway", "Front Door"]
+  ai_car_cameras: []
 
   # --- Extended Notifications (AI alerts) ---
   # HA mobile app entity to push AI suspicious-activity alerts to.
@@ -322,6 +335,9 @@ schema:
   ai_camera_descriptions:
     - camera: "str"
       description: "str?"
+  ai_frame_strategy: "list(smart|sequential|uniform)"
+  ai_car_cameras:
+    - "str?"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"
   smtp_host: "str?"

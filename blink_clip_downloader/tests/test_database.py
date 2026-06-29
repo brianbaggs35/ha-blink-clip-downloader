@@ -752,3 +752,73 @@ async def test_migrate_adds_columns_idempotent(tmp_path: Path) -> None:
     d2 = ClipDatabase(tmp_path / "migrate_test.db")
     await d2.init()  # should not raise
     await d2.close()
+
+
+# ------------------------------------------------------------------
+# Behavior-memory baseline / anomaly scoring
+# ------------------------------------------------------------------
+
+
+async def test_record_clip_baseline_increments_count(db: ClipDatabase) -> None:
+    await db.record_clip_baseline("Driveway", 8, 5.0)
+    await db.record_clip_baseline("Driveway", 8, 6.0)
+    await db.record_clip_baseline("Driveway", 8, 4.0)
+    # Three events should be stored; score still 0 (total < 30)
+    score = await db.get_anomaly_score("Driveway", 8, 5.0)
+    assert score == 0.0
+
+
+async def test_get_anomaly_score_returns_zero_below_threshold(db: ClipDatabase) -> None:
+    for _ in range(29):
+        await db.record_clip_baseline("Front Door", 10, 5.0)
+    # 29 events – one below the 30-event activation threshold
+    score = await db.get_anomaly_score("Front Door", 10, 5.0)
+    assert score == 0.0
+
+
+async def test_get_anomaly_score_activates_at_threshold(db: ClipDatabase) -> None:
+    for _ in range(30):
+        await db.record_clip_baseline("Backyard", 14, 5.0)
+    # All events are at hour 14; querying hour 14 should score 0.0 (common hour)
+    score = await db.get_anomaly_score("Backyard", 14, 5.0)
+    assert score == 0.0
+
+
+async def test_get_anomaly_score_unseen_hour_adds_max_rarity(db: ClipDatabase) -> None:
+    # Record 30 events only at hour 8
+    for _ in range(30):
+        await db.record_clip_baseline("Garage", 8, 5.0)
+    # Hour 3 has never been seen → +0.5 rarity contribution
+    score = await db.get_anomaly_score("Garage", 3, 5.0)
+    assert score >= 0.5
+
+
+async def test_get_anomaly_score_capped_at_one(db: ClipDatabase) -> None:
+    # 30 events at one hour; query an unseen hour with a very long clip
+    for _ in range(30):
+        await db.record_clip_baseline("Side Gate", 12, 5.0)
+    # unseen hour (+0.5) + very long clip duration (+0.25) → would be 0.75; capped at 1.0
+    score = await db.get_anomaly_score("Side Gate", 3, 100.0)
+    assert 0.0 <= score <= 1.0
+
+
+async def test_record_clip_baseline_zero_duration_skips_duration_stats(
+    db: ClipDatabase,
+) -> None:
+    for _ in range(30):
+        await db.record_clip_baseline("Porch", 9, 0.0)
+    # No duration stats recorded; score should not include duration component
+    score = await db.get_anomaly_score("Porch", 9, 0.0)
+    assert score == 0.0
+
+
+async def test_get_anomaly_score_uninitialised_db() -> None:
+    d = ClipDatabase(Path("/tmp/neveropened_baseline.db"))
+    score = await d.get_anomaly_score("Camera", 8, 5.0)
+    assert score == 0.0
+
+
+async def test_record_clip_baseline_uninitialised_db() -> None:
+    d = ClipDatabase(Path("/tmp/neveropened_baseline2.db"))
+    # Should not raise even when db is not open
+    await d.record_clip_baseline("Camera", 8, 5.0)
