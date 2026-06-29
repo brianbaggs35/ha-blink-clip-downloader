@@ -12,6 +12,7 @@ from blink_downloader.analyzer import (
     AnthropicAnalyzer,
     ClipAnalyzer,
     MoondreamCloudAnalyzer,
+    MoondreamFineTuneManager,
     MoondreamLocalAnalyzer,
     OllamaCloudAnalyzer,
     OpenAIAnalyzer,
@@ -3475,3 +3476,622 @@ async def test_moondream_cloud_car_camera_scoped_to_car_cameras() -> None:
 # ------------------------------------------------------------------
 # Database anomaly score — coverage for rare-hour and duration paths
 # ------------------------------------------------------------------
+
+
+# =============================================================================
+# v3.0.2 — MoondreamFineTuneManager and finetune_model inference
+# =============================================================================
+
+
+def _make_ft_resp(status: int = 200, body: dict | None = None) -> AsyncMock:
+    """Create a mock aiohttp response for the fine-tuning API."""
+    resp = AsyncMock()
+    resp.status = status
+    resp.json = AsyncMock(return_value=body or {})
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=False)
+    return resp
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — get_model_id (static)
+# ------------------------------------------------------------------
+
+
+def test_get_model_id_format() -> None:
+    model_id = MoondreamFineTuneManager.get_model_id("abc123", 50)
+    assert model_id == "moondream3-preview/abc123@50"
+
+
+def test_get_model_id_zero_step() -> None:
+    assert MoondreamFineTuneManager.get_model_id("x", 0) == "moondream3-preview/x@0"
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — lifecycle
+# ------------------------------------------------------------------
+
+
+async def test_ft_manager_get_session_creates_session() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    session = await m._get_session()
+    assert session is not None
+    await m.close()
+
+
+async def test_ft_manager_close_open_session() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    mock_session = MagicMock()
+    mock_session.closed = False
+    mock_session.close = AsyncMock()
+    m._session = mock_session
+    await m.close()
+    mock_session.close.assert_called_once()
+
+
+async def test_ft_manager_close_already_closed() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    mock_session = MagicMock()
+    mock_session.closed = True
+    m._session = mock_session
+    await m.close()
+    mock_session.close.assert_not_called()
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — create_finetune
+# ------------------------------------------------------------------
+
+
+async def test_create_finetune_success() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(return_value=_make_ft_resp(200, {"finetune_id": "ft-abc123"}))
+    )
+    result = await m.create_finetune("my-cam-finetune", rank=16)
+    assert result == "ft-abc123"
+
+
+async def test_create_finetune_invalid_rank() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    result = await m.create_finetune("test", rank=7)
+    assert result is None
+
+
+async def test_create_finetune_http_error() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(500)))
+    result = await m.create_finetune("test", rank=8)
+    assert result is None
+
+
+async def test_create_finetune_empty_id_returns_none() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(return_value=_make_ft_resp(200, {"finetune_id": ""}))
+    )
+    result = await m.create_finetune("test", rank=16)
+    assert result is None
+
+
+async def test_create_finetune_network_error() -> None:
+    import aiohttp
+
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    result = await m.create_finetune("test", rank=16)
+    assert result is None
+
+
+async def test_create_finetune_all_valid_ranks() -> None:
+    for rank in (8, 16, 24, 32):
+        m = MoondreamFineTuneManager(api_key="key")
+        m._session = _mock_session(
+            post=MagicMock(
+                return_value=_make_ft_resp(200, {"finetune_id": f"ft-{rank}"})
+            )
+        )
+        result = await m.create_finetune(f"test-{rank}", rank=rank)
+        assert result == f"ft-{rank}"
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — list_finetunes
+# ------------------------------------------------------------------
+
+
+async def test_list_finetunes_success() -> None:
+    finetunes = [{"id": "ft-1", "name": "cam-ft"}, {"id": "ft-2", "name": "other"}]
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        get=MagicMock(return_value=_make_ft_resp(200, {"finetunes": finetunes}))
+    )
+    result = await m.list_finetunes()
+    assert result == finetunes
+
+
+async def test_list_finetunes_non_200_returns_empty() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(get=MagicMock(return_value=_make_ft_resp(401)))
+    result = await m.list_finetunes()
+    assert result == []
+
+
+async def test_list_finetunes_network_error() -> None:
+    import aiohttp
+
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        get=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    result = await m.list_finetunes()
+    assert result == []
+
+
+async def test_list_finetunes_passes_cursor() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        get=MagicMock(return_value=_make_ft_resp(200, {"finetunes": []}))
+    )
+    await m.list_finetunes(limit=10, cursor="next-page-token")
+    call_kwargs = m._session.get.call_args
+    params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params", {})
+    assert params.get("cursor") == "next-page-token"
+    assert params.get("limit") == 10
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — get_finetune
+# ------------------------------------------------------------------
+
+
+async def test_get_finetune_success() -> None:
+    body = {"id": "ft-1", "name": "cam-ft", "rank": 16}
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(get=MagicMock(return_value=_make_ft_resp(200, body)))
+    result = await m.get_finetune("ft-1")
+    assert result == body
+
+
+async def test_get_finetune_not_found() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(get=MagicMock(return_value=_make_ft_resp(404)))
+    result = await m.get_finetune("nonexistent")
+    assert result is None
+
+
+async def test_get_finetune_server_error() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(get=MagicMock(return_value=_make_ft_resp(500)))
+    result = await m.get_finetune("ft-1")
+    assert result is None
+
+
+async def test_get_finetune_network_error() -> None:
+    import aiohttp
+
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        get=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    result = await m.get_finetune("ft-1")
+    assert result is None
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — delete_finetune
+# ------------------------------------------------------------------
+
+
+async def test_delete_finetune_success() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        delete=MagicMock(return_value=_make_ft_resp(200, {"ok": True}))
+    )
+    assert await m.delete_finetune("ft-1") is True
+
+
+async def test_delete_finetune_not_found() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(delete=MagicMock(return_value=_make_ft_resp(404)))
+    assert await m.delete_finetune("nonexistent") is False
+
+
+async def test_delete_finetune_network_error() -> None:
+    import aiohttp
+
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        delete=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    assert await m.delete_finetune("ft-1") is False
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — generate_rollouts
+# ------------------------------------------------------------------
+
+
+async def test_generate_rollouts_success_query_skill() -> None:
+    body = {"rollouts": ["person", "car", "empty", "person"]}
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(200, body)))
+    result = await m.generate_rollouts(
+        finetune_id="ft-1",
+        image=_FAKE_JPEG,
+        question="What do you see?",
+        num_rollouts=4,
+    )
+    assert result == body
+
+
+async def test_generate_rollouts_with_ground_truth() -> None:
+    body = {"rollouts": ["person"], "rewards": [1.0]}
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(200, body)))
+    result = await m.generate_rollouts(
+        finetune_id="ft-1",
+        image=_FAKE_JPEG,
+        question="What do you see?",
+        num_rollouts=1,
+        ground_truth="person",
+    )
+    assert "rewards" in result
+    assert result["rewards"] == [1.0]
+
+
+async def test_generate_rollouts_detect_skill_uses_object_key() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(return_value=_make_ft_resp(200, {"rollouts": []}))
+    )
+    await m.generate_rollouts(
+        finetune_id="ft-1",
+        image=_FAKE_JPEG,
+        question="person",
+        num_rollouts=2,
+        skill="detect",
+    )
+    call_kwargs = m._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    assert payload["request"]["skill"] == "detect"
+    assert "object" in payload["request"]
+    assert "question" not in payload["request"]
+
+
+async def test_generate_rollouts_clamps_num_rollouts() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(return_value=_make_ft_resp(200, {"rollouts": []}))
+    )
+    await m.generate_rollouts("ft-1", _FAKE_JPEG, "q", num_rollouts=99)
+    call_kwargs = m._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    assert payload["num_rollouts"] == 16  # clamped to max
+
+
+async def test_generate_rollouts_http_error() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(500)))
+    result = await m.generate_rollouts("ft-1", _FAKE_JPEG, "q")
+    assert result == {}
+
+
+async def test_generate_rollouts_timeout() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(side_effect=asyncio.TimeoutError))
+    result = await m.generate_rollouts("ft-1", _FAKE_JPEG, "q")
+    assert result == {}
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — train_step
+# ------------------------------------------------------------------
+
+
+async def test_train_step_rl_mode() -> None:
+    metrics = {"kl_divergence": 0.01, "gradient_norm": 0.5, "reward_mean": 0.8}
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(200, metrics)))
+    result = await m.train_step(
+        finetune_id="ft-1",
+        request={"skill": "query", "question": "Who is there?"},
+        rollouts=["person", "empty"],
+        rewards=[1.0, 0.0],
+        mode="rl",
+    )
+    assert result == metrics
+
+
+async def test_train_step_sft_mode_uses_first_rollout_as_target() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(return_value=_make_ft_resp(200, {"ok": True}))
+    )
+    await m.train_step(
+        finetune_id="ft-1",
+        request={"skill": "query", "question": "Describe."},
+        rollouts=["A person is walking."],
+        mode="sft",
+    )
+    call_kwargs = m._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    group = payload["groups"][0]
+    assert group["mode"] == "sft"
+    assert group["target"] == "A person is walking."
+
+
+async def test_train_step_rl_includes_rewards() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(200, {})))
+    await m.train_step(
+        "ft-1",
+        {"skill": "query", "question": "q"},
+        ["r1", "r2"],
+        rewards=[1.0, 0.0],
+        mode="rl",
+    )
+    call_kwargs = m._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    group = payload["groups"][0]
+    assert group["rewards"] == [1.0, 0.0]
+
+
+async def test_train_step_http_error() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(500)))
+    result = await m.train_step("ft-1", {}, [], [])
+    assert result == {}
+
+
+async def test_train_step_network_error() -> None:
+    import aiohttp
+
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    result = await m.train_step("ft-1", {}, [], [])
+    assert result == {}
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — checkpoints
+# ------------------------------------------------------------------
+
+
+async def test_save_checkpoint_success() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(return_value=_make_ft_resp(200, {"ok": True}))
+    )
+    assert await m.save_checkpoint("ft-1") is True
+
+
+async def test_save_checkpoint_failure() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(500)))
+    assert await m.save_checkpoint("ft-1") is False
+
+
+async def test_save_checkpoint_network_error() -> None:
+    import aiohttp
+
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    assert await m.save_checkpoint("ft-1") is False
+
+
+async def test_list_checkpoints_success() -> None:
+    checkpoints = [{"step": 10}, {"step": 20}]
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        get=MagicMock(return_value=_make_ft_resp(200, {"checkpoints": checkpoints}))
+    )
+    result = await m.list_checkpoints("ft-1")
+    assert result == checkpoints
+
+
+async def test_list_checkpoints_non_200_returns_empty() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(get=MagicMock(return_value=_make_ft_resp(404)))
+    assert await m.list_checkpoints("ft-1") == []
+
+
+async def test_list_checkpoints_network_error() -> None:
+    import aiohttp
+
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        get=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    assert await m.list_checkpoints("ft-1") == []
+
+
+async def test_delete_checkpoint_success() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(delete=MagicMock(return_value=_make_ft_resp(200)))
+    assert await m.delete_checkpoint("ft-1", 50) is True
+
+
+async def test_delete_checkpoint_not_found() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(delete=MagicMock(return_value=_make_ft_resp(404)))
+    assert await m.delete_checkpoint("ft-1", 99) is False
+
+
+async def test_delete_checkpoint_network_error() -> None:
+    import aiohttp
+
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        delete=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    assert await m.delete_checkpoint("ft-1", 50) is False
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — log_metrics
+# ------------------------------------------------------------------
+
+
+async def test_log_metrics_success() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(return_value=_make_ft_resp(200, {"ok": True}))
+    )
+    assert await m.log_metrics("ft-1", step=25, metrics={"accuracy": 0.87}) is True
+
+
+async def test_log_metrics_failure() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(400)))
+    assert await m.log_metrics("ft-1", step=1, metrics={}) is False
+
+
+async def test_log_metrics_network_error() -> None:
+    import aiohttp
+
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
+    )
+    assert await m.log_metrics("ft-1", step=1, metrics={"val_acc": 0.9}) is False
+
+
+async def test_log_metrics_sends_correct_payload() -> None:
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(200)))
+    await m.log_metrics("ft-abc", step=42, metrics={"loss": 0.05, "acc": 0.95})
+    call_kwargs = m._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    assert payload["step"] == 42
+    assert payload["metrics"] == {"loss": 0.05, "acc": 0.95}
+
+
+# ------------------------------------------------------------------
+# MoondreamCloudAnalyzer — finetune_model integration
+# ------------------------------------------------------------------
+
+
+def test_moondream_cloud_model_name_with_finetune() -> None:
+    """model_name() returns the fine-tune model ID when configured."""
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="p",
+        finetune_model="moondream3-preview/ft-abc@50",
+    )
+    assert a.model_name() == "moondream3-preview/ft-abc@50"
+
+
+def test_moondream_cloud_model_name_without_finetune() -> None:
+    """model_name() returns the base model ID when no fine-tune is configured."""
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    assert a.model_name() == "moondream3-preview"
+
+
+async def test_moondream_cloud_fetch_models_with_finetune() -> None:
+    """fetch_models includes the fine-tune model entry when configured."""
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="p",
+        finetune_model="moondream3-preview/ft-abc@50",
+    )
+    models = await a.fetch_models()
+    assert len(models) == 2
+    names = [m["name"] for m in models]
+    assert "moondream3-preview" in names
+    assert "moondream3-preview/ft-abc@50" in names
+
+
+async def test_moondream_cloud_fetch_models_without_finetune() -> None:
+    """fetch_models returns only the base model when no fine-tune is configured."""
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    models = await a.fetch_models()
+    assert len(models) == 1
+    assert models[0]["name"] == "moondream3-preview"
+
+
+async def test_moondream_cloud_call_api_frame_includes_finetune_model() -> None:
+    """_call_api_frame sends the fine-tune model ID in the request payload."""
+    query_resp = _make_query_resp(
+        '{"suspicious": false, "confidence": 0.5, "description": "Clear."}'
+    )
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="p",
+        finetune_model="moondream3-preview/ft-xyz@100",
+    )
+    a._session = _mock_session(post=MagicMock(return_value=query_resp))
+
+    await a._call_api_frame(_FAKE_JPEG, "Analyze.")
+    call_kwargs = a._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    assert payload.get("model") == "moondream3-preview/ft-xyz@100"
+
+
+async def test_moondream_cloud_call_api_frame_no_model_when_no_finetune() -> None:
+    """_call_api_frame does NOT include 'model' when no fine-tune is configured."""
+    query_resp = _make_query_resp(
+        '{"suspicious": false, "confidence": 0.5, "description": "Clear."}'
+    )
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = _mock_session(post=MagicMock(return_value=query_resp))
+
+    await a._call_api_frame(_FAKE_JPEG, "Analyze.")
+    call_kwargs = a._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    assert "model" not in payload
+
+
+async def test_moondream_cloud_detect_includes_finetune_model() -> None:
+    """_detect_objects sends the fine-tune model ID in the payload."""
+    detect_resp = _make_detect_resp(
+        [{"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    )
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="p",
+        finetune_model="moondream3-preview/ft-abc@50",
+    )
+    a._session = _mock_session(post=MagicMock(return_value=detect_resp))
+
+    await a._detect_objects(_FAKE_JPEG, "person")
+    call_kwargs = a._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    assert payload.get("model") == "moondream3-preview/ft-abc@50"
+
+
+async def test_moondream_cloud_detect_no_model_when_no_finetune() -> None:
+    """_detect_objects does NOT include 'model' when no fine-tune is configured."""
+    detect_resp = _make_detect_resp([])
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = _mock_session(post=MagicMock(return_value=detect_resp))
+
+    await a._detect_objects(_FAKE_JPEG, "person")
+    call_kwargs = a._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    assert "model" not in payload
+
+
+def test_create_analyzer_moondream_cloud_with_finetune_model() -> None:
+    """create_analyzer passes finetune_model through to MoondreamCloudAnalyzer."""
+    a = create_analyzer(
+        "moondream_cloud",
+        "prompt",
+        moondream_api_key="key",
+        moondream_finetune_model="moondream3-preview/ft-123@75",
+    )
+    assert isinstance(a, MoondreamCloudAnalyzer)
+    assert a.model_name() == "moondream3-preview/ft-123@75"
+
+
+def test_create_analyzer_moondream_cloud_no_finetune_model() -> None:
+    """create_analyzer works without finetune_model — uses base model."""
+    a = create_analyzer("moondream_cloud", "prompt", moondream_api_key="key")
+    assert isinstance(a, MoondreamCloudAnalyzer)
+    assert a.model_name() == "moondream3-preview"

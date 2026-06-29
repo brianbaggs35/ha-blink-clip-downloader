@@ -920,7 +920,12 @@ _MOONDREAM_CLOUD_PRICING: tuple[float, float] = (0.30, 2.50)
 
 
 class MoondreamCloudAnalyzer(BaseAnalyzer):
-    """Analyzes clips via the Moondream Cloud API (api.moondream.ai)."""
+    """Analyzes clips via the Moondream Cloud API (api.moondream.ai).
+
+    Pass ``finetune_model`` (e.g. ``"moondream3-preview/abc123@50"``) to use a
+    fine-tuned checkpoint for inference instead of the base model.  Build the
+    model ID with :meth:`MoondreamFineTuneManager.get_model_id` after training.
+    """
 
     _BASE_URL = "https://api.moondream.ai/v1"
     # Model identifier returned by the Moondream API as of mid-2025.
@@ -938,6 +943,7 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
         camera_descriptions: dict[str, str] | None = None,
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
+        finetune_model: str = "",
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -951,6 +957,7 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             car_cameras=car_cameras,
         )
         self._api_key = api_key
+        self._finetune_model = finetune_model
         self._session: aiohttp.ClientSession | None = None
 
     @property
@@ -958,7 +965,7 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
         return "moondream_cloud"
 
     def model_name(self) -> str:
-        return self._MODEL_ID
+        return self._finetune_model or self._MODEL_ID
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -992,13 +999,22 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
 
     async def fetch_models(self) -> list[dict[str, Any]]:
         inp, out = _MOONDREAM_CLOUD_PRICING
-        return [
+        models: list[dict[str, Any]] = [
             {
                 "name": self._MODEL_ID,
                 "display_name": f"Moondream Cloud (${inp:.2f}/${out:.2f} per 1M tokens)",
                 "description": f"Moondream Cloud API (${inp:.2f}/${out:.2f} per 1M tokens)",
             }
         ]
+        if self._finetune_model:
+            models.append(
+                {
+                    "name": self._finetune_model,
+                    "display_name": f"Moondream Fine-tuned: {self._finetune_model}",
+                    "description": "Custom fine-tuned model via Moondream Cloud fine-tuning API",
+                }
+            )
+        return models
 
     # Image encoder cost per 640px JPEG frame (empirical, based on observed
     # Moondream Cloud usage: ~869 tokens for a single-frame request with a
@@ -1016,10 +1032,12 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
         callers can safely skip detect-based logic when it fails.
         """
         image_b64 = base64.b64encode(frame).decode("ascii")
-        payload = {
+        payload: dict[str, Any] = {
             "image_url": f"data:image/jpeg;base64,{image_b64}",
             "object": object_name,
         }
+        if self._finetune_model:
+            payload["model"] = self._finetune_model
         headers = {
             "X-Moondream-Auth": self._api_key,
             "Content-Type": "application/json",
@@ -1080,12 +1098,14 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
         so the usage table shows approximate figures instead of N/A.
         """
         image_b64 = base64.b64encode(frame).decode("ascii")
-        payload = {
+        payload: dict[str, Any] = {
             "image_url": f"data:image/jpeg;base64,{image_b64}",
             "question": prompt,
             "stream": False,
             "reasoning": True,
         }
+        if self._finetune_model:
+            payload["model"] = self._finetune_model
         headers = {
             "X-Moondream-Auth": self._api_key,
             "Content-Type": "application/json",
@@ -1422,6 +1442,351 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
                 best_confidence = conf
 
         return best_response
+
+
+# ---------------------------------------------------------------------------
+# Moondream fine-tune manager
+# ---------------------------------------------------------------------------
+
+
+class MoondreamFineTuneManager:
+    """HTTP API wrapper for Moondream Cloud fine-tuning operations.
+
+    Fine-tunes train entirely in Moondream Cloud — no local GPU required.
+    After training, call :meth:`get_model_id` and pass the result as
+    ``finetune_model`` to :class:`MoondreamCloudAnalyzer` to run inference
+    with the fine-tuned model.
+
+    Supports both RL (Reinforcement Learning) and SFT (Supervised Fine-tuning)
+    training modes across three skills: ``query``, ``point``, and ``detect``.
+    """
+
+    _TUNING_BASE_URL = "https://api.moondream.ai/v1/tuning"
+
+    def __init__(self, api_key: str) -> None:
+        self._api_key = api_key
+        self._session: aiohttp.ClientSession | None = None
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "X-Moondream-Auth": self._api_key,
+            "Content-Type": "application/json",
+        }
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+    # ------------------------------------------------------------------
+    # Finetune management
+    # ------------------------------------------------------------------
+
+    async def create_finetune(self, name: str, rank: int = 16) -> str | None:
+        """Create a new fine-tune and return its finetune_id.
+
+        Args:
+            name: Unique identifier (alphanumeric, dots, hyphens, underscores).
+            rank: LoRA rank — 8, 16, 24, or 32.  Higher = more capacity but
+                  longer training time.
+
+        Returns:
+            ``finetune_id`` string on success, ``None`` on error.
+        """
+        if rank not in (8, 16, 24, 32):
+            _LOGGER.error("Moondream create_finetune: rank must be 8, 16, 24, or 32")
+            return None
+        payload: dict[str, Any] = {"name": name, "rank": rank}
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"{self._TUNING_BASE_URL}/finetunes",
+                json=payload,
+                headers=self._headers(),
+                timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.error(
+                        "Moondream create_finetune returned HTTP %d", resp.status
+                    )
+                    return None
+                data = await resp.json()
+                fid = str(data.get("finetune_id", ""))
+                return fid or None
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.error("Moondream create_finetune failed: %s", exc)
+            return None
+
+    async def list_finetunes(
+        self, limit: int = 20, cursor: str = ""
+    ) -> list[dict[str, Any]]:
+        """List all fine-tunes for the current API key."""
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            session = await self._get_session()
+            async with session.get(
+                f"{self._TUNING_BASE_URL}/finetunes",
+                params=params,
+                headers=self._headers(),
+                timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+                return list(data.get("finetunes", []))
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.debug("Moondream list_finetunes failed: %s", exc)
+            return []
+
+    async def get_finetune(self, finetune_id: str) -> dict[str, Any] | None:
+        """Return details for a specific fine-tune, or ``None`` if not found."""
+        try:
+            session = await self._get_session()
+            async with session.get(
+                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}",
+                headers=self._headers(),
+                timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                if resp.status in (404, 400):
+                    return None
+                if resp.status != 200:
+                    return None
+                return dict(await resp.json())
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.debug("Moondream get_finetune failed: %s", exc)
+            return None
+
+    async def delete_finetune(self, finetune_id: str) -> bool:
+        """Soft-delete a fine-tune and all its checkpoints."""
+        try:
+            session = await self._get_session()
+            async with session.delete(
+                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}",
+                headers=self._headers(),
+                timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                return resp.status == 200
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.debug("Moondream delete_finetune failed: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Training
+    # ------------------------------------------------------------------
+
+    async def generate_rollouts(
+        self,
+        finetune_id: str,
+        image: bytes,
+        question: str,
+        num_rollouts: int = 4,
+        ground_truth: str | None = None,
+        skill: str = "query",
+    ) -> dict[str, Any]:
+        """Generate multiple model outputs for a single request.
+
+        Args:
+            finetune_id: ID of the fine-tune to generate rollouts for.
+            image: JPEG frame bytes.
+            question: Question to ask the model (skill='query') or object name
+                      to locate (skill='point'/'detect').
+            num_rollouts: Number of outputs to generate (1–16).
+            ground_truth: Expected answer for automatic reward computation.
+                          Supported for 'query', 'point', and 'detect' skills.
+            skill: One of ``'query'``, ``'point'``, or ``'detect'``.
+
+        Returns:
+            Dict with ``'rollouts'`` list and optional ``'rewards'`` list when
+            ``ground_truth`` was provided.  Empty dict on error.
+        """
+        image_b64 = base64.b64encode(image).decode("ascii")
+        request: dict[str, Any] = {
+            "skill": skill,
+            "image_url": f"data:image/jpeg;base64,{image_b64}",
+        }
+        if skill == "query":
+            request["question"] = question
+        else:
+            request["object"] = question
+
+        payload: dict[str, Any] = {
+            "finetune_id": finetune_id,
+            "num_rollouts": min(max(1, num_rollouts), 16),
+            "request": request,
+        }
+        if ground_truth is not None:
+            payload["ground_truth"] = ground_truth
+
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"{self._TUNING_BASE_URL}/rollouts",
+                json=payload,
+                headers=self._headers(),
+                timeout=_API_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.warning(
+                        "Moondream generate_rollouts returned HTTP %d", resp.status
+                    )
+                    return {}
+                return dict(await resp.json())
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.warning("Moondream generate_rollouts failed: %s", exc)
+            return {}
+
+    async def train_step(
+        self,
+        finetune_id: str,
+        request: dict[str, Any],
+        rollouts: list[str],
+        rewards: list[float] | None = None,
+        mode: str = "rl",
+        learning_rate: float = 2e-4,
+    ) -> dict[str, Any]:
+        """Execute one RL or SFT training step.
+
+        Args:
+            finetune_id: Target fine-tune ID.
+            request: The rollout request dict (same structure used in
+                     :meth:`generate_rollouts`).
+            rollouts: Model outputs from :meth:`generate_rollouts`.
+            rewards: Score per rollout (0.0–1.0) for RL mode.  Not used in
+                     SFT mode (first rollout is treated as the target).
+            mode: ``'rl'`` for reinforcement learning (requires ``rewards``),
+                  ``'sft'`` for supervised fine-tuning.
+            learning_rate: Optimizer learning rate (default 2e-4).
+
+        Returns:
+            Dict with training metrics such as ``kl_divergence`` and
+            ``gradient_norm``.  Empty dict on error.
+        """
+        group: dict[str, Any] = {
+            "mode": mode,
+            "request": request,
+            "rollouts": rollouts,
+        }
+        if mode == "rl":
+            group["rewards"] = rewards or []
+        elif mode == "sft" and rollouts:
+            group["target"] = rollouts[0]
+
+        payload: dict[str, Any] = {
+            "finetune_id": finetune_id,
+            "groups": [group],
+            "learning_rate": learning_rate,
+        }
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"{self._TUNING_BASE_URL}/train_step",
+                json=payload,
+                headers=self._headers(),
+                timeout=_API_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.warning(
+                        "Moondream train_step returned HTTP %d", resp.status
+                    )
+                    return {}
+                return dict(await resp.json())
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.warning("Moondream train_step failed: %s", exc)
+            return {}
+
+    # ------------------------------------------------------------------
+    # Checkpoints
+    # ------------------------------------------------------------------
+
+    async def save_checkpoint(self, finetune_id: str) -> bool:
+        """Persist the current model state as a named checkpoint."""
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/checkpoints/save",
+                headers=self._headers(),
+                timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                return resp.status == 200
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.debug("Moondream save_checkpoint failed: %s", exc)
+            return False
+
+    async def list_checkpoints(
+        self, finetune_id: str, limit: int = 20, cursor: str = ""
+    ) -> list[dict[str, Any]]:
+        """List saved checkpoints for a fine-tune."""
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            session = await self._get_session()
+            async with session.get(
+                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/checkpoints",
+                params=params,
+                headers=self._headers(),
+                timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+                return list(data.get("checkpoints", []))
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.debug("Moondream list_checkpoints failed: %s", exc)
+            return []
+
+    async def delete_checkpoint(self, finetune_id: str, step: int) -> bool:
+        """Delete a specific checkpoint by training step number."""
+        try:
+            session = await self._get_session()
+            async with session.delete(
+                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/checkpoints/{step}",
+                headers=self._headers(),
+                timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                return resp.status == 200
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.debug("Moondream delete_checkpoint failed: %s", exc)
+            return False
+
+    async def log_metrics(
+        self, finetune_id: str, step: int, metrics: dict[str, float]
+    ) -> bool:
+        """Record custom evaluation metrics for a given training step."""
+        payload: dict[str, Any] = {"step": step, "metrics": metrics}
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/metrics",
+                json=payload,
+                headers=self._headers(),
+                timeout=_HEALTH_TIMEOUT,
+            ) as resp:
+                return resp.status == 200
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            _LOGGER.debug("Moondream log_metrics failed: %s", exc)
+            return False
+
+    @staticmethod
+    def get_model_id(finetune_id: str, step: int) -> str:
+        """Return the inference model identifier for a saved checkpoint.
+
+        Pass the returned string as ``finetune_model`` to
+        :class:`MoondreamCloudAnalyzer` to run inference with your fine-tuned
+        model instead of the base ``moondream3-preview``.
+
+        Example::
+
+            model_id = MoondreamFineTuneManager.get_model_id("abc123", 50)
+            # → "moondream3-preview/abc123@50"
+        """
+        return f"moondream3-preview/{finetune_id}@{step}"
 
 
 # ---------------------------------------------------------------------------
@@ -1994,6 +2359,7 @@ def create_analyzer(
     ollama_model: str = "",
     ollama_cloud_api_key: str = "",
     moondream_api_key: str = "",
+    moondream_finetune_model: str = "",
     anthropic_api_key: str = "",
     anthropic_model: str = "",
     openai_api_key: str = "",
@@ -2060,6 +2426,7 @@ def create_analyzer(
             camera_descriptions=camera_descriptions,
             frame_strategy=frame_strategy,
             car_cameras=car_cameras,
+            finetune_model=moondream_finetune_model,
         )
 
     if ai_provider == "moondream_local":
