@@ -1964,11 +1964,18 @@ async function loadCameraConfigs() {
             placeholder="e.g. Points at driveway, monitors the silver Kia Forte. Watch for anyone approaching the car."
             value="${_esc(c.description || '')}">
         </div>
-        <div>
+        <div style="margin-bottom:.45rem">
           <label style="font-size:.76rem;color:var(--muted);display:block;margin-bottom:.2rem">Custom AI prompt (overrides global prompt for this camera — optional)</label>
           <input type="text" class="tag-input" style="width:100%" data-cam="${_esc(c.camera)}" data-field="custom_prompt"
             placeholder="Leave empty to use the global AI prompt"
             value="${_esc(c.custom_prompt || '')}">
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;padding:.4rem .55rem;background:var(--bg2,rgba(255,255,255,.04));border-radius:.4rem;border:1px solid var(--border,rgba(255,255,255,.1))">
+          <input type="checkbox" id="cam-car-chk-${i}" data-cam="${_esc(c.camera)}" data-field="is_car_camera"
+            ${c.is_car_camera ? 'checked' : ''} style="cursor:pointer;width:1rem;height:1rem;accent-color:var(--accent,#5b9cf6)">
+          <label for="cam-car-chk-${i}" style="font-size:.76rem;color:var(--fg,#e2e8f0);cursor:pointer;line-height:1.3">
+            <strong>Protected vehicle visible from this camera</strong> — enables car-proximity alert rules
+          </label>
         </div>
       </div>`
     ).join('');
@@ -1982,13 +1989,19 @@ async function saveCameraConfigs() {
   const btn = $('ai-cam-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving…'; }
   try {
-    const inputs = document.querySelectorAll('#ai-cam-configs-list input[data-cam]');
     const byCamera = {};
-    inputs.forEach(inp => {
+    // Text/number inputs
+    document.querySelectorAll('#ai-cam-configs-list input[type=text][data-cam]').forEach(inp => {
       const cam = inp.dataset.cam;
       const field = inp.dataset.field;
-      if (!byCamera[cam]) byCamera[cam] = { camera: cam, description: '', custom_prompt: '' };
+      if (!byCamera[cam]) byCamera[cam] = { camera: cam, description: '', custom_prompt: '', is_car_camera: false };
       byCamera[cam][field] = inp.value.trim();
+    });
+    // Checkboxes (is_car_camera)
+    document.querySelectorAll('#ai-cam-configs-list input[type=checkbox][data-cam]').forEach(chk => {
+      const cam = chk.dataset.cam;
+      if (!byCamera[cam]) byCamera[cam] = { camera: cam, description: '', custom_prompt: '', is_car_camera: false };
+      byCamera[cam][chk.dataset.field] = chk.checked;
     });
     const payload = Object.values(byCamera);
     await api('/api/ai/camera-configs', {
@@ -2743,13 +2756,20 @@ class MediaServer:
         result = []
         for name in cam_names:
             entry = configured.get(
-                name, {"camera": name, "description": "", "custom_prompt": ""}
+                name,
+                {
+                    "camera": name,
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": False,
+                },
             )
             result.append(
                 {
                     "camera": name,
                     "description": str(entry.get("description", "")),
                     "custom_prompt": str(entry.get("custom_prompt", "")),
+                    "is_car_camera": bool(entry.get("is_car_camera", False)),
                 }
             )
         # Also include configured cameras not in the current clip list
@@ -2760,6 +2780,7 @@ class MediaServer:
                         "camera": name,
                         "description": str(entry.get("description", "")),
                         "custom_prompt": str(entry.get("custom_prompt", "")),
+                        "is_car_camera": bool(entry.get("is_car_camera", False)),
                     }
                 )
         return web.json_response(result)
@@ -2773,6 +2794,7 @@ class MediaServer:
                     "camera": str(c["camera"]),
                     "description": str(c.get("description", "")),
                     "custom_prompt": str(c.get("custom_prompt", "")),
+                    "is_car_camera": bool(c.get("is_car_camera", False)),
                 }
                 for c in body
                 if isinstance(c, dict) and c.get("camera")
@@ -2793,12 +2815,18 @@ class MediaServer:
                 c["camera"]: c["description"] for c in configs if c.get("description")
             }
             self._analyzer.update_camera_descriptions(descriptions)
-            # Also update camera-specific prompts
+            # Update camera-specific prompts
             prompts = {
                 c["camera"]: c["custom_prompt"]
                 for c in configs
                 if c.get("custom_prompt")
             }
             self._analyzer._camera_prompts.update(prompts)  # noqa: SLF001
+            # Update car-camera set from checkbox selections
+            car_cameras = {c["camera"] for c in configs if c.get("is_car_camera")}
+            # If the UI has no car cameras checked, preserve the existing set
+            # so that options.json ai_car_cameras remains in effect.
+            if car_cameras:
+                self._analyzer._car_cameras = car_cameras  # noqa: SLF001
 
         return web.json_response({"saved": True, "count": len(configs)})

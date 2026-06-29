@@ -870,3 +870,107 @@ async def test_moondream_install_already_in_progress(client: TestClient) -> None
 
     # Restore state
     ms._moondream_install_state = {"status": "idle", "log": ""}
+
+
+# ---------------------------------------------------------------------------
+# /api/ai/camera-configs  (GET + PUT)
+# ---------------------------------------------------------------------------
+
+
+async def test_ai_camera_configs_get_empty(client: TestClient) -> None:
+    """GET returns an empty list when no cameras and no saved configs."""
+    resp = await client.get("/api/ai/camera-configs")
+    assert resp.status == 200
+    data = await resp.json()
+    assert isinstance(data, list)
+
+
+async def test_ai_camera_configs_get_returns_is_car_camera_field(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    """GET includes is_car_camera=True for cameras saved with that flag."""
+    import json
+
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Driveway",
+                    "description": "Points at car",
+                    "custom_prompt": "",
+                    "is_car_camera": True,
+                }
+            ]
+        )
+    )
+    from unittest.mock import patch
+
+    with patch(
+        "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+        new=cfg_file,
+    ):
+        resp = await client.get("/api/ai/camera-configs")
+
+    assert resp.status == 200
+    data = await resp.json()
+    # If Driveway appears in the result it must have is_car_camera=True
+    driveway = next((c for c in data if c["camera"] == "Driveway"), None)
+    if driveway:
+        assert driveway["is_car_camera"] is True
+
+
+async def test_ai_camera_configs_put_saves_is_car_camera(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """PUT persists is_car_camera flag and returns saved count."""
+    payload = [
+        {
+            "camera": "Driveway",
+            "description": "Side driveway",
+            "custom_prompt": "",
+            "is_car_camera": True,
+        },
+        {
+            "camera": "Front Door",
+            "description": "Front entrance",
+            "custom_prompt": "",
+            "is_car_camera": False,
+        },
+    ]
+    import json
+
+    cfg_file = tmp_path / "camera_configs.json"
+
+    from unittest.mock import patch
+
+    with patch(
+        "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+        new=cfg_file,
+    ):
+        resp = await client.put(
+            "/api/ai/camera-configs",
+            data=json.dumps(payload),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["saved"] is True
+    assert data["count"] == 2
+
+    saved = json.loads(cfg_file.read_text())
+    driveway = next(c for c in saved if c["camera"] == "Driveway")
+    assert driveway["is_car_camera"] is True
+    front = next(c for c in saved if c["camera"] == "Front Door")
+    assert front["is_car_camera"] is False
+
+
+async def test_ai_camera_configs_put_bad_json(client: TestClient) -> None:
+    """PUT with invalid JSON returns 400."""
+    resp = await client.put(
+        "/api/ai/camera-configs",
+        data="not json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status == 400

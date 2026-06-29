@@ -83,32 +83,50 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._alert_dispatcher: NotificationDispatcher | None = None
 
         if config.ai_analysis_enabled:
-            camera_prompts = (
-                {item["camera"]: item["prompt"] for item in config.ai_camera_prompts}
-                if config.ai_camera_prompts
-                else None
-            )
-            # Load per-camera descriptions from the runtime config file
+            # Load per-camera settings from the web UI config file
+            # (camera_configs.json is the primary source of truth for
+            # descriptions, custom prompts, and car-camera flags).
             _cam_desc_file = Path("/data/camera_configs.json")
             camera_descriptions: dict[str, str] = {}
+            camera_prompts: dict[str, str] = {}
+            car_cameras_from_ui: list[str] = []
             if _cam_desc_file.exists():
                 try:
                     import json as _json
 
                     _cam_cfgs = _json.loads(_cam_desc_file.read_text())
-                    camera_descriptions = {
-                        str(c["camera"]): str(c.get("description", ""))
-                        for c in _cam_cfgs
-                        if isinstance(c, dict) and c.get("camera")
-                    }
+                    for _c in _cam_cfgs:
+                        if not isinstance(_c, dict) or not _c.get("camera"):
+                            continue
+                        _cam = str(_c["camera"])
+                        if _c.get("description"):
+                            camera_descriptions[_cam] = str(_c["description"])
+                        if _c.get("custom_prompt"):
+                            camera_prompts[_cam] = str(_c["custom_prompt"])
+                        if _c.get("is_car_camera"):
+                            car_cameras_from_ui.append(_cam)
                 except Exception:  # noqa: BLE001
                     pass
-            # Merge with ai_camera_descriptions from options.json
+
+            # Fall back to options.json values for cameras not yet configured
+            # in the web UI (preserves backward compatibility).
             for item in config.ai_camera_descriptions:
                 cam = str(item.get("camera", ""))
                 desc = str(item.get("description", ""))
                 if cam and desc and cam not in camera_descriptions:
                     camera_descriptions[cam] = desc
+            for item in config.ai_camera_prompts:
+                cam = str(item.get("camera", ""))
+                pmt = str(item.get("prompt", ""))
+                if cam and pmt and cam not in camera_prompts:
+                    camera_prompts[cam] = pmt
+
+            # Derive car_cameras: web UI checkboxes take priority; fall back
+            # to ai_car_cameras from options.json for backward compatibility.
+            car_cameras: list[str] | None = (
+                car_cameras_from_ui or config.ai_car_cameras or None
+            )
+
             self._analyzer = create_analyzer(
                 ai_provider=config.ai_provider,
                 prompt=config.ai_prompt,
@@ -116,10 +134,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 max_frames=config.ai_max_frames,
                 frame_interval=config.ai_frame_interval,
                 suspicious_keywords=config.ai_suspicious_keywords,
-                camera_prompts=camera_prompts,
+                camera_prompts=camera_prompts or None,
                 camera_descriptions=camera_descriptions,
                 frame_strategy=config.ai_frame_strategy,
-                car_cameras=config.ai_car_cameras or None,
+                car_cameras=car_cameras,
                 ollama_url=config.ollama_url,
                 ollama_model=config.ollama_model,
                 ollama_cloud_api_key=config.ollama_cloud_api_key,
