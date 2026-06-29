@@ -1,5 +1,68 @@
 # Changelog
 
+## 3.0.1
+
+### AI analysis — improved responses and prompts
+
+- **Fixed: internal spatial data leaking into descriptions.** AI responses were
+  including raw technical terms like "bounding box overlaps", "normalised gap
+  0.021", and "18.4% of the frame width" verbatim in the user-visible
+  description.  All SPATIAL DATA context injected for Moondream Cloud is now
+  labelled as `[INTERNAL PROXIMITY HINT — use for reasoning only]` so models
+  treat it as internal context and write plain-English descriptions instead.
+
+- **Enhanced prompt with explicit plain-language rule.** Every prompt now ends
+  with an `OUTPUT RULES` section instructing the AI to write the description
+  in natural language ("about 2 feet from the car") and never quote technical
+  terms such as "bounding box", "normalized", "frame percentage", or "spatial
+  data".
+
+- **Anthropic: system prompt now used.** Claude models receive a dedicated
+  `system` prompt separating role/format instructions from user content,
+  improving JSON compliance and preventing internal analysis terms from
+  appearing in descriptions.  `max_tokens` reduced to 512 (sufficient for
+  a short JSON response).
+
+- **OpenAI: system message + JSON object mode.** GPT-4o, GPT-4.1, and
+  GPT-4-Turbo models now receive a system message with role and output rules
+  and use `response_format: json_object` to guarantee valid JSON output.
+  Image detail bumped from `"auto"` to `"high"` for better scene analysis.
+  `max_tokens` reduced to 512.
+
+- **Ollama: JSON format mode + system prompt.** The `/api/generate` payload
+  now includes `"format": "json"` (forces valid JSON output on Ollama ≥ 0.1.9)
+  and a `"system"` field with role and output rules.
+
+- **Improved default AI prompt.** The built-in base prompt in `config.yaml`
+  and `config.py` is rewritten as a clear step-by-step instruction that
+  emphasises natural-language output and avoids ambiguous phrasing.
+
+### Camera configuration — per-camera UI improvements
+
+- **Car-camera checkbox in the AI tab.** Each camera card in the "Camera
+  Configurations" section (AI tab → Camera Configurations) now shows a
+  **"Protected vehicle visible from this camera"** checkbox.  Checking it
+  enables car-proximity alert rules for that camera without editing
+  `config.yaml`.  The setting is saved to `/data/camera_configs.json` and
+  applied immediately without restart.
+
+- **Car cameras now loaded from the web UI on startup.** Previously the
+  `ai_car_cameras` list was only read from `options.json` at boot.  On startup,
+  the add-on now loads camera flags set via the web UI (`is_car_camera: true`
+  entries in `camera_configs.json`) and uses those as the authoritative source;
+  `options.json` is kept as a backward-compatible fallback.
+
+- **Custom prompts from the web UI now survive restarts.** Per-camera custom
+  prompts set via the Camera Configurations section were only applied when saved
+  and were lost on add-on restart.  They are now loaded from
+  `camera_configs.json` on startup alongside descriptions and car-camera flags.
+
+- **Single source of truth for per-camera settings.** `camera_configs.json`
+  (editable via the AI tab web UI) is now the primary source for descriptions,
+  custom prompts, and car-camera flags.  `ai_camera_descriptions` and
+  `ai_camera_prompts` in `options.json` remain as fallbacks for cameras not
+  yet configured in the web UI.
+
 ## 3.0.0
 
 ### New features — Smart Security Brain

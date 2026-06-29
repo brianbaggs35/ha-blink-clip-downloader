@@ -2417,9 +2417,10 @@ def test_build_prompt_uses_camera_specific_prompt() -> None:
         prompt="Default prompt.",
         camera_prompts={"Driveway": "Driveway-specific prompt."},
     )
-    assert (
-        a._build_prompt("Driveway") == "Driveway-specific prompt.\n\nCamera: Driveway"
-    )
+    built = a._build_prompt("Driveway")
+    assert built.startswith("Driveway-specific prompt.")
+    assert "\n\nCamera: Driveway" in built
+    assert "OUTPUT RULES" in built
     assert a._build_prompt("Front Door").startswith("Default prompt.")
 
 
@@ -2587,7 +2588,9 @@ def test_update_camera_descriptions() -> None:
         model="llava",
         prompt="Analyze.",
     )
-    assert a._build_prompt("Garage") == "Analyze.\n\nCamera: Garage"
+    built = a._build_prompt("Garage")
+    assert built.startswith("Analyze.")
+    assert "\n\nCamera: Garage" in built
     a.update_camera_descriptions({"Garage": "Side entrance to the house"})
     prompt = a._build_prompt("Garage")
     assert "Side entrance to the house" in prompt
@@ -3331,7 +3334,7 @@ async def test_moondream_cloud_call_model_car_camera_no_car_in_frame() -> None:
     assert result != ""
     # Car not in frame → suppression note injected
     assert injected_prompts
-    assert "NOT visible" in injected_prompts[0]
+    assert "not visible" in injected_prompts[0].lower()
 
 
 @pytest.mark.asyncio
@@ -3360,8 +3363,8 @@ async def test_moondream_cloud_call_model_non_car_camera_injects_position() -> N
 
     assert "Person at front door" in result
     assert injected_prompts
-    assert "SPATIAL DATA" in injected_prompts[0]
-    assert "from left" in injected_prompts[0]
+    assert "INTERNAL POSITION HINT" in injected_prompts[0]
+    assert "of the frame" in injected_prompts[0]
 
 
 @pytest.mark.asyncio
@@ -3398,7 +3401,8 @@ async def test_moondream_cloud_car_camera_overlap_flagged() -> None:
 
     assert "Person touching car" in result
     assert injected_prompts
-    assert "OVERLAPS" in injected_prompts[0]
+    assert "INTERNAL PROXIMITY HINT" in injected_prompts[0]
+    assert "touching" in injected_prompts[0].lower()
 
 
 @pytest.mark.asyncio
@@ -3464,8 +3468,8 @@ async def test_moondream_cloud_car_camera_scoped_to_car_cameras() -> None:
     assert session.post.call_count == 2
     # Injected prompt should have position data, NOT car rules
     assert injected_prompts
-    assert "SPATIAL DATA" in injected_prompts[0]
-    assert "OVERLAPS" not in injected_prompts[0]
+    assert "INTERNAL POSITION HINT" in injected_prompts[0]
+    assert "touching" not in injected_prompts[0].lower()
 
 
 # ------------------------------------------------------------------

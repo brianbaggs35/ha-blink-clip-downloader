@@ -633,14 +633,25 @@ class BaseAnalyzer(abc.ABC):
             parts.append(
                 f"\n\nPROTECTED VEHICLE: {self._car_description}\n"
                 "Apply these distance rules STRICTLY:\n"
-                "• Person within 1 foot (touching or near-contact): suspicious=true, confidence ≥0.8\n"
-                "• Person 1–2 feet away AND facing/reaching toward vehicle: suspicious=true, confidence ≥0.6\n"
-                "• Person walking past at more than 2 feet away: suspicious=false\n"
-                "• Person more than 5 feet away: suspicious=false unless other concerning behavior\n"
-                "Reference: car door handle is ~4 ft off the ground; typical car is ~6 ft wide.\n"
-                "ALWAYS estimate and state the distance in your description "
-                "(e.g., 'approximately 1.5 feet from the driver-side door')."
+                "• Person touching or within 1 foot of the vehicle: suspicious=true, confidence ≥0.8\n"
+                "• Person 1–2 feet away AND facing or reaching toward the vehicle: suspicious=true, confidence ≥0.6\n"
+                "• Person walking past more than 2 feet from the vehicle: suspicious=false\n"
+                "• Person more than 5 feet from the vehicle: suspicious=false unless actively tampering\n"
+                "Reference: a car door handle is about 4 feet off the ground; a typical car is about 6 feet wide.\n"
+                "In your description, always include a natural-language distance estimate such as "
+                "'right next to the car', 'about 2 feet from the driver door', or 'well away from the vehicle'."
             )
+
+        # Ensure the description stays human-readable and never exposes internal data.
+        parts.append(
+            "\n\nOUTPUT RULES: The 'description' field must be written in plain English "
+            "as if explaining to a homeowner what happened. "
+            "Use natural phrases like 'standing about 2 feet from the car' or 'walking past the driveway'. "
+            "NEVER include any of these technical terms in the description: "
+            "'bounding box', 'normalized', 'frame width', 'frame percentage', 'spatial data', "
+            "'INTERNAL', 'CONTEXT', 'proximity analysis', 'overlap', 'gap 0.', or any decimal coordinates. "
+            "Any internal proximity hints provided are for your reasoning only — do not quote them."
+        )
 
         return "".join(parts)
 
@@ -799,9 +810,18 @@ class ClipAnalyzer(BaseAnalyzer):
 
         payload = {
             "model": self._model,
+            "system": (
+                "You are a security camera analyst. "
+                "You respond ONLY with a single valid JSON object and nothing else. "
+                "Write the description field in plain English as if speaking to a homeowner. "
+                "Never include technical terms such as 'bounding box', 'normalized', "
+                "'frame percentage', 'spatial data', 'INTERNAL', or decimal coordinates "
+                "in the description field."
+            ),
             "prompt": prompt,
             "images": images,
             "stream": False,
+            "format": "json",
         }
 
         try:
@@ -1161,37 +1181,46 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
                     gap = self._bbox_min_gap(persons, car_boxes)
                     if gap == 0.0:
                         spatial_note = (
-                            "SPATIAL DATA: Person bounding box OVERLAPS the car — "
-                            "they are touching or directly pressed against it."
+                            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
+                            "do NOT copy this text into the description]: "
+                            "The person appears to be directly touching or pressed "
+                            "against the vehicle. Describe this as 'right next to' "
+                            "or 'touching the car' in plain English."
                         )
                     elif gap < 0.05:
                         spatial_note = (
-                            f"SPATIAL DATA: Person is very close to the car "
-                            f"(normalised gap {gap:.3f} ≈ less than 1 foot). "
-                            "Consider suspicious if no obvious innocent purpose."
+                            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
+                            "do NOT copy this text into the description]: "
+                            "The person appears to be less than 1 foot from the vehicle. "
+                            "Describe this as 'very close to the car' in plain English."
                         )
                     elif gap < 0.15:
                         spatial_note = (
-                            f"SPATIAL DATA: Person is within {gap:.1%} of frame "
-                            "width from the car — roughly 1-3 feet. "
-                            "Do NOT flag as suspicious unless actively touching "
-                            "or attempting to open the car."
+                            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
+                            "do NOT copy this text into the description]: "
+                            "The person appears to be roughly 1–3 feet from the vehicle. "
+                            "This is close but not touching — do NOT flag as suspicious "
+                            "unless actively reaching for or touching the car. "
+                            "Describe this as 'a couple of feet from the car' in plain English."
                         )
                     else:
                         spatial_note = (
-                            f"SPATIAL DATA: Person is {gap:.1%} of frame width "
-                            "from the car. This represents SEVERAL FEET of actual "
-                            "distance — set suspicious=false unless other clear "
-                            "evidence of tampering."
+                            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
+                            "do NOT copy this text into the description]: "
+                            "The person appears to be several feet from the vehicle — "
+                            "this distance is NOT suspicious on its own. "
+                            "Set suspicious=false unless there is other clear evidence of tampering. "
+                            "Describe this as 'well away from the car' in plain English."
                         )
                     augmented_prompt += f"\n\n{spatial_note}"
                 else:
                     # Car not detected in this frame — suppress car rules to
                     # avoid the model hallucinating car proximity.
                     augmented_prompt += (
-                        "\n\nSPATIAL DATA: Protected car is NOT visible in this "
-                        "frame. Evaluate person behaviour based on camera context "
-                        "and location description only."
+                        "\n\n[INTERNAL PROXIMITY HINT — use for reasoning only]: "
+                        "The protected vehicle is not visible in this frame. "
+                        "Evaluate the person's behaviour based on the camera "
+                        "location description only."
                     )
 
             else:
@@ -1200,12 +1229,17 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
                 for j, person in enumerate(persons[:3], 1):
                     cx = (person.get("x_min", 0.0) + person.get("x_max", 1.0)) / 2
                     cy = (person.get("y_min", 0.0) + person.get("y_max", 1.0)) / 2
+                    side = "left" if cx < 0.33 else ("right" if cx > 0.67 else "centre")
+                    vert = "top" if cy < 0.33 else ("bottom" if cy > 0.67 else "middle")
                     position_notes.append(
-                        f"Person {j}: centre at ({cx:.0%} from left, {cy:.0%} from top)"
+                        f"Person {j} is in the {vert}-{side} of the frame"
                     )
                 if position_notes:
                     augmented_prompt += (
-                        "\n\nSPATIAL DATA: " + "; ".join(position_notes) + "."
+                        "\n\n[INTERNAL POSITION HINT — use for reasoning only, "
+                        "do NOT copy this text into the description]: "
+                        + "; ".join(position_notes)
+                        + "."
                     )
 
             # ── Phase 3: full query with augmented prompt ────────────────
@@ -1588,9 +1622,22 @@ class AnthropicAnalyzer(BaseAnalyzer):
             ]
             content.append({"type": "text", "text": prompt})
 
+            # System prompt keeps the role and output format instructions
+            # separate from user content, improving JSON compliance and
+            # preventing the model from leaking internal analysis terms.
+            system_prompt = (
+                "You are a security camera analyst. "
+                "You respond ONLY with a single valid JSON object and nothing else. "
+                "Write the description field in plain English as if speaking to a homeowner. "
+                "Never include technical terms such as 'bounding box', 'normalized', "
+                "'frame percentage', 'spatial data', 'INTERNAL', or decimal coordinates "
+                "in the description field."
+            )
+
             response = await client.messages.create(
                 model=self._model,
-                max_tokens=1024,
+                max_tokens=512,
+                system=system_prompt,
                 messages=[{"role": "user", "content": content}],
             )
 
@@ -1835,18 +1882,45 @@ class OpenAIAnalyzer(BaseAnalyzer):
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:image/jpeg;base64,{base64.b64encode(frame).decode('ascii')}",
-                        "detail": "auto",
+                        "detail": "high",
                     },
                 }
                 for frame in resized
             ]
             content.append({"type": "text", "text": prompt})
 
-            response = await client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "user", "content": content}],
-                max_tokens=1024,
+            # System message keeps role and format rules separate from user
+            # content, improving JSON compliance and stopping the model from
+            # leaking internal analysis terms into the description field.
+            system_content = (
+                "You are a security camera analyst. "
+                "You respond ONLY with a single valid JSON object and nothing else. "
+                "Write the description field in plain English as if speaking to a homeowner. "
+                "Never include technical terms such as 'bounding box', 'normalized', "
+                "'frame percentage', 'spatial data', 'INTERNAL', or decimal coordinates "
+                "in the description field."
             )
+            messages_to_send: list[dict[str, Any]] = [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": content},
+            ]
+
+            # json_object response format is supported on gpt-4o, gpt-4.1, and
+            # gpt-4-turbo families — it guarantees the model returns valid JSON.
+            model_lower = self._model.lower()
+            supports_json_object = any(
+                prefix in model_lower
+                for prefix in ("gpt-4o", "gpt-4.1", "gpt-4-turbo", "o4-mini")
+            )
+            create_kwargs: dict[str, Any] = {
+                "model": self._model,
+                "messages": messages_to_send,
+                "max_tokens": 512,
+            }
+            if supports_json_object:
+                create_kwargs["response_format"] = {"type": "json_object"}
+
+            response = await client.chat.completions.create(**create_kwargs)
 
             if response.usage:
                 self._last_prompt_tokens = int(response.usage.prompt_tokens or 0)
