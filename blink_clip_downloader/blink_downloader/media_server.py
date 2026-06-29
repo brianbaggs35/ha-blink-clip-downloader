@@ -842,7 +842,7 @@ action:
 
 <!-- ── 2FA overlay (shown automatically when Blink requires verification) ── -->
 <div class="modal-bg" id="twofa-overlay" style="z-index:200">
-  <div class="modal" style="max-width:420px">
+  <div class="modal" style="max-width:480px">
     <div class="modal-body" style="padding:1.8rem 1.6rem">
       <div class="modal-title" style="font-size:1.08rem;margin-bottom:.5rem">🔐 Two-Factor Authentication</div>
       <p style="color:var(--muted);font-size:.86rem;line-height:1.55;margin-bottom:1.2rem">
