@@ -5,7 +5,8 @@
 This add-on continuously polls the Blink API for new camera clips and saves them to
 your local storage (under `/share/blink-clips` by default). It includes a built-in
 web library UI, SQLite clip database, event-driven instant download, daily digest
-notifications, ZIP archiving, and full Home Assistant integration.
+notifications, ZIP archiving, full Home Assistant integration, and an AI video
+analysis engine that automatically flags suspicious activity.
 
 ---
 
@@ -172,7 +173,7 @@ refresh token expires (typically after 30+ days with the add-on stopped).
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enable_library_db` | `true` | Store clip metadata in a SQLite database |
+| `enable_library_db` | `true` | Store clip metadata in a SQLite database. Required for the web UI and AI analysis. |
 
 ### Web Library UI
 
@@ -209,11 +210,218 @@ refresh token expires (typically after 30+ days with the add-on stopped).
 | `archive_enabled` | `false` | Compress old clips into monthly ZIP files |
 | `archive_after_days` | `60` | Clips older than N days are archived (1–365) |
 
+### Sync Module Local Storage
+
+When a USB drive is plugged into a Blink Sync Module, the module records clips to it
+in addition to the cloud. Enabling this option instructs the add-on to also fetch those
+locally-stored clips each poll cycle.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `download_local_storage` | `false` | Download clips stored on the USB drive attached to the Blink Sync Module |
+
+**How it works:** After every normal cloud download the add-on checks each Sync Module
+for a connected USB drive, fetches the clip list via the Blink cloud API (no direct LAN
+access is required), and downloads any new clips into the same folder structure as cloud
+clips. Local-storage clips are indexed in the database with `source = "local_storage"`.
+
 ### Logging
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `log_level` | `info` | `debug`, `info`, `warning`, or `error` |
+
+---
+
+## AI Video Analysis
+
+The add-on can automatically analyse every downloaded clip for suspicious activity and
+send alerts via the HA mobile app, email, or Discord. AI analysis is **disabled by
+default**; set `ai_analysis_enabled: true` to turn it on.
+
+### Enabling AI Analysis
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ai_analysis_enabled` | `false` | Enable AI clip analysis |
+| `ai_provider` | `"ollama"` | Which AI backend to use (see providers below) |
+| `ai_batch_size` | `10` | Maximum clips to analyse per batch run |
+| `ai_check_interval` | `60` | Seconds between analysis batch runs |
+| `ai_schedule_start` | `""` | Only run analysis after this time (`HH:MM`; empty = always) |
+| `ai_schedule_end` | `""` | Only run analysis before this time (`HH:MM`; empty = always) |
+
+### AI Providers
+
+Six providers are supported. Set `ai_provider` to one of the values below:
+
+#### Ollama (Local/LAN) — `ollama`
+
+Sends frames to an Ollama server running a vision model on your local network.
+Free and fully private — no data leaves your home.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ollama_url` | `""` | URL of your Ollama server, e.g. `http://192.168.1.10:11434` |
+| `ollama_model` | `""` | Vision model to use (e.g. `llava:7b`, `llama3.2-vision:11b`). Use **Fetch Models** in the web UI to browse available models. |
+
+Only vision-capable models are shown in the model picker; text-only models are filtered out.
+
+#### Ollama Cloud — `ollama_cloud`
+
+Uses the [Ollama Cloud API](https://api.ollama.com) instead of a local server. Identical
+API surface to local Ollama, so model selection and token counting work the same way.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ollama_url` | `""` | Leave empty to use the default Ollama Cloud endpoint |
+| `ollama_model` | `""` | Model name (same as local Ollama) |
+| `ollama_cloud_api_key` | `""` | API key from api.ollama.com |
+
+#### Moondream Cloud — `moondream_cloud`
+
+Sends frames to the [Moondream Cloud API](https://docs.moondream.ai/api). Billed per
+request; reasoning mode is enabled by default for better spatial analysis.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `moondream_api_key` | `""` | API key from moondream.ai |
+
+#### Moondream Local — `moondream_local`
+
+Runs the Moondream 0.5B INT8 model directly on the host device. The model file (~430 MB)
+is downloaded automatically the first time via the **Install** button in the AI tab.
+
+> **Architecture note:** Moondream Local requires an x86_64 (amd64) host. On aarch64
+> (Raspberry Pi), the AI tab shows an unsupported-architecture notice — use
+> `moondream_cloud` or `ollama` instead.
+
+#### Anthropic (Claude) — `anthropic`
+
+Uses the Anthropic Claude API for high-quality vision analysis. Billed per token.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `anthropic_api_key` | `""` | API key from [console.anthropic.com](https://console.anthropic.com) |
+| `anthropic_model` | `"claude-haiku-4-5"` | Claude model to use. Use **Fetch Models** in the web UI to browse available models and pricing. |
+
+Claude models receive a dedicated system prompt that separates role/format instructions
+from user content, improving JSON compliance. `claude-haiku-4-5` is the default as
+the most cost-effective option.
+
+#### OpenAI (GPT) — `openai`
+
+Uses the OpenAI API for vision analysis. Billed per token. Any OpenAI vision model is
+supported (GPT-4o, GPT-4.1, GPT-4-Turbo, and variants).
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `openai_api_key` | `""` | API key from [platform.openai.com](https://platform.openai.com) |
+| `openai_model` | `"gpt-4o-mini"` | GPT model to use. Use **Fetch Models** in the web UI to browse models with pricing. |
+
+GPT models use `response_format: json_object` to guarantee valid JSON output, and
+`"high"` image detail for better scene analysis. `gpt-4o-mini` is selected by default
+as the most cost-effective option.
+
+### Analysis Prompt & Behaviour
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ai_prompt` | _(see config.yaml)_ | Global prompt sent to the AI for each clip. Must request a JSON response with `"suspicious"`, `"confidence"`, and `"description"` keys. |
+| `ai_car_description` | `""` | Description of a vehicle to protect (e.g. `"Silver Kia Forte, parked in the driveway"`). When set, the AI applies strict distance rules and flags anyone within ~2 feet of the vehicle as suspicious. |
+| `ai_car_cameras` | `[]` | Camera names for which car-proximity rules apply. Leave empty to apply to all cameras. Cameras not listed focus only on their own description, preventing false positives on cameras that cannot see the car. |
+| `ai_min_confidence` | `0.0` | Minimum confidence threshold (0.0–1.0) for sending suspicious-activity alerts. Clips are still analysed and stored; only alert dispatch is gated. Example: `0.3` to suppress low-confidence detections. |
+| `ai_suspicious_keywords` | _(list)_ | Words that trigger a suspicious flag when found in an AI plain-text response (used as fallback when the AI does not return valid JSON). |
+
+### Frame Extraction
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ai_max_frames` | `5` | Number of frames extracted per clip for analysis (1–100). More frames = better coverage but higher API cost. |
+| `ai_frame_interval` | `2.0` | Seconds between frame extraction points (0.5–30). |
+| `ai_frame_strategy` | `"smart"` | How frames are selected and sent to the AI (see below). |
+
+#### Frame Strategies
+
+| Value | Behaviour |
+|-------|-----------|
+| `"smart"` | (Default) Extracts 2× `ai_max_frames` candidates then uses inter-frame motion-diff (PIL) to pick the entry frame, peak-motion frame, and exit frame. Best accuracy for the same or fewer API calls. |
+| `"sequential"` | Analyses each frame individually via separate AI calls and returns the most alarming result (suspicious > non-suspicious; higher confidence when tied). Works well when the AI performs better on single images than on batches. Works with all six providers. |
+| `"uniform"` | Extracts exactly `ai_max_frames` at fixed time intervals (legacy behaviour). |
+
+### Per-Camera Configuration
+
+You can set a description and a custom prompt for each camera without editing YAML —
+use the **Camera Configurations** section in the web UI **AI tab**. Changes are saved
+to `/data/camera_configs.json` and take effect immediately without restarting the add-on.
+
+You can also configure these in `config.yaml` for YAML-based setups:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ai_camera_descriptions` | `[]` | Per-camera descriptions. Example: `[{camera: "Driveway", description: "Points at driveway; silver Kia Forte parked left"}]` |
+| `ai_camera_prompts` | `[]` | Per-camera prompt overrides. Example: `[{camera: "Driveway", prompt: "Focus on vehicle proximity."}]` |
+
+The **"Protected vehicle visible from this camera"** checkbox in the Camera Configurations
+panel enables car-proximity rules for individual cameras without editing `ai_car_cameras`
+in the add-on options.
+
+> **Priority:** `camera_configs.json` (set via the web UI) is the primary source for
+> descriptions, custom prompts, and car-camera flags. `ai_camera_descriptions` and
+> `ai_camera_prompts` in `options.json` serve as fallbacks for cameras not yet
+> configured in the web UI.
+
+### Smart Security Brain (Anomaly Detection)
+
+The add-on builds a behavioural baseline for each camera over time, recording per-camera
+hourly event frequency and average clip duration in SQLite with every download. This
+data powers an **anomaly score** (0.0–1.0) computed for every clip that goes through AI
+analysis.
+
+- **Anomaly score 0.0–0.5:** Normal activity for this camera and time of day.
+- **Anomaly score ≥ 0.6:** The AI prompt automatically includes a **BEHAVIOR ALERT**
+  flag, telling the model to apply heightened scrutiny.
+- **Activation threshold:** The system activates after approximately 30 events per
+  camera to avoid false positives on new installs.
+
+Every AI call also includes the clip's local time label ("early morning", "evening",
+"night", etc.) derived from the clip timestamp, so the model can calibrate what
+constitutes suspicious behaviour for that time of day.
+
+The `anomaly_score` is stored in the `analysis_results` table and returned by the
+`/api/ai/analysis` endpoint so you can query and filter by it.
+
+---
+
+## AI Alerts (Extended Notifications)
+
+When AI analysis flags a clip as suspicious it can notify you through three channels
+in addition to HA persistent notifications.
+
+### HA Mobile App Push
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `mobile_app_enabled` | `false` | Enable push notifications to the HA mobile app |
+| `mobile_app_target` | `""` | HA mobile app entity to send alerts to (e.g. `mobile_app_my_phone`) |
+
+### Email (SMTP)
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `smtp_enabled` | `false` | Enable email alerts for suspicious clips |
+| `smtp_host` | `""` | SMTP server hostname or IP |
+| `smtp_port` | `587` | SMTP server port (usually 587 for STARTTLS, 465 for SSL) |
+| `smtp_user` | `""` | SMTP login username |
+| `smtp_password` | `""` | SMTP login password |
+| `smtp_recipients` | `[]` | List of email addresses to send alerts to |
+| `smtp_sender` | `""` | From address used in outgoing alert emails |
+
+### Discord
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `discord_enabled` | `false` | Enable Discord alerts for suspicious clips |
+| `discord_webhook_url` | `""` | Discord webhook URL to post suspicious-clip alerts to |
 
 ---
 
@@ -226,14 +434,32 @@ from any browser without leaving Home Assistant.
 
 - **Library tab** — scrollable grid with thumbnails, camera/date/source/tag filters,
   sort by newest/oldest/camera/size/duration, starred filter, and a camera sidebar.
-- **Status tab** — Blink connection status, library stats, per-camera breakdown, and
-  a 7-day activity chart.
+- **Status tab** — Blink connection status, library stats, per-camera breakdown, a
+  7-day activity chart, and an **AI Analysis** card showing provider name,
+  online/offline status, model, pending queue count, and suspicious-clip count.
+- **AI tab** — AI provider configuration, connection health check, Camera
+  Configurations panel, AI Usage statistics, and a **Test Analysis** button that runs
+  a full analysis on the most recently downloaded clip to confirm the AI backend is
+  working end-to-end.
 - **Automations tab** — ready-to-paste HA automation YAML snippets.
 - **Video.js player** — in-browser streaming with play/pause, seek, fullscreen, PiP,
   loop, autoplay-next, theater mode, and playback-rate selection.
+- **Per-clip AI Analysis panel** — each clip modal includes a collapsible 🤖 **AI
+  Analysis** section showing the suspicion badge, confidence score, AI summary, and
+  model/timestamp. An **Analyze Now** button triggers analysis on demand; a
+  **Re-analyze** button re-runs it. The full raw AI response is available via a
+  **Full response** toggle.
+- **AI Usage tab** — per-provider token usage statistics including prompt tokens,
+  completion tokens, per-model breakdown, and estimated API cost (for Anthropic and
+  OpenAI). Moondream Cloud shows request count with a billing note.
+- **Camera Configurations panel** (AI tab) — set per-camera descriptions, custom
+  prompts, and the "Protected vehicle" checkbox without editing YAML. Changes apply
+  immediately without restarting.
 - **Bulk select** — star, delete, or export multiple clips as a ZIP archive.
 - **Tag management** — add/remove freeform tags per clip; filter the library by tag.
 - **Browser notifications** — opt-in desktop notifications when new clips arrive.
+- **Dark/Light theme** — automatically follows the OS/browser preference; a ☀/🌙
+  toggle in the nav bar lets you override. Preference is saved across page loads.
 
 ### Keyboard shortcuts
 
@@ -326,11 +552,13 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/blink_hardware_id.txt` | Stable device ID presented to Blink during login (do not edit) |
 | `/data/downloaded_clips.json` | Tracker of downloaded clip IDs |
 | `/data/clip_manifest.json` | Newline-delimited JSON log of all downloads |
-| `/data/clip_library.db` | SQLite database powering the web UI |
+| `/data/clip_library.db` | SQLite database powering the web UI and AI analysis |
 | `/data/stats.json` | Latest statistics snapshot |
 | `/data/last_digest.json` | Timestamp of the last daily digest |
 | `/data/two_fa_code.txt` | Write your 2FA code here when prompted |
 | `/data/trigger_download` | Touch to force an immediate poll |
+| `/data/camera_configs.json` | Per-camera descriptions, custom prompts, and car-camera flags set via the web UI |
+| `/data/moondream_packages/` | Moondream Local model files (downloaded on first use; persists across restarts) |
 
 > All `/data/` files are stored inside the add-on's private data directory and are
 > automatically removed by the supervisor when the add-on is uninstalled.
@@ -369,3 +597,42 @@ Downloaded clips are saved under the `share` folder, accessible via:
   to get the corrected S6-overlay v3 service definition.  If you are already on
   v2.1.0 and still see it, check that the add-on was fully reinstalled (not just
   restarted) so the new container image is in use.
+
+**AI analysis is not running**
+- Confirm `ai_analysis_enabled: true` and `enable_library_db: true` in the add-on
+  configuration.
+- Check the AI tab in the web UI for the provider connection status. Use the
+  **Test Analysis** button to confirm end-to-end connectivity.
+- If using Ollama, verify `ollama_url` is reachable from the HA host and that the
+  model named in `ollama_model` is installed (`ollama pull <model>`).
+
+**AI responses contain technical terms like "bounding box" or "normalized"**
+- Update to v3.0.1 or later. Prior versions did not suppress internal spatial data
+  from user-visible descriptions.
+
+**Moondream Local fails to install on Raspberry Pi**
+- Moondream Local (`moondream_local`) only supports x86_64 (amd64) hosts. Use
+  `moondream_cloud` or `ollama` instead on aarch64 devices.
+
+**AI suspicious-activity alerts are not being sent**
+- Check `ai_min_confidence` — if set above 0.0, low-confidence results are stored
+  but alerts are suppressed.
+- For Discord, verify `discord_webhook_url` is correct and `discord_enabled: true`.
+- For email, confirm SMTP credentials and that `smtp_recipients` is populated.
+- For mobile app, ensure `mobile_app_target` matches your HA mobile app entity name
+  exactly (e.g. `mobile_app_my_phone`).
+
+**Anomaly detection is flagging everything as suspicious**
+- The anomaly baseline requires approximately 30 events per camera to activate. On a
+  new install, allow time for normal activity to be recorded before the scores
+  become meaningful.
+
+**AI confidence is always 0% in Discord embeds (Moondream)**
+- Update to v2.8.8 or later, which derives a non-zero confidence via keyword matching
+  when the model returns 0.0.
+
+**Local-storage clips from the Sync Module USB drive are not downloading**
+- Enable `download_local_storage: true` in the add-on configuration.
+- Verify that the USB drive is detected by the Sync Module (check the Blink app).
+  The add-on fetches the clip list via the Blink cloud API, so internet access is
+  required even for "local" storage clips.
