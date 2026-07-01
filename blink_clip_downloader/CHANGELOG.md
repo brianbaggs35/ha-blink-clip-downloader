@@ -1,5 +1,43 @@
 # Changelog
 
+## 3.0.5
+
+### AI analysis — full-clip frame coverage
+
+- **Fix frame extraction only sampling the first few seconds of a clip.**
+  Blink motion clips can run up to 60 seconds, but `extract_frames` requested
+  exactly `max_frames` (or `2 × max_frames` in `smart` mode) frames from
+  ffmpeg at the configured `frame_interval` — with the defaults (5 frames,
+  2s interval) that's only the first 10–20 seconds. Anything that happened
+  later in a longer clip, including the actual point of interest, was never
+  extracted or seen by the AI. Extraction now always requests enough frames
+  to cover a full 60-second clip regardless of strategy or `max_frames`;
+  ffmpeg naturally emits fewer frames for shorter clips, so this only ever
+  adds coverage, never cost.
+- **`sequential` and `uniform` strategies now down-select their oversampled
+  pool.** Since extraction now oversamples to cover the whole clip, all three
+  frame strategies need a down-selection step before frames are sent to the
+  AI, or the two non-`smart` strategies would send far more frames (and API
+  calls) per clip than `max_frames` configures. `smart` and `sequential` both
+  use the existing motion-weighted entry/peak/exit picker; the new
+  `_select_uniform_frames` evenly spaces `uniform`'s picks across the whole
+  extracted pool, preserving its "no motion analysis" contract while fixing
+  its coverage.
+- **Fix car-camera protection silently reverting after being disabled in the
+  UI.** Unchecking every "protected vehicle visible from this camera" box in
+  the AI tab persisted the change to `camera_configs.json` correctly, but the
+  live analyzer's in-memory car-camera set was only updated when the new
+  selection was non-empty — so a running add-on kept applying car-proximity
+  rules to a camera until the next restart. `camera_configs.json` is the
+  documented single source of truth for `is_car_camera`, so the live analyzer
+  now always adopts the saved selection, including clearing it.
+- **Broaden car-proximity prompt language to "anyone or anything."** The
+  protected-vehicle distance rules only described people approaching the
+  vehicle. They now also cover animals and other vehicles stopping, parking,
+  or backing in close to the protected vehicle, while keeping the existing
+  false-positive guidance that ordinary through-traffic and pedestrians who
+  don't stop near the vehicle are not suspicious.
+
 ## 3.0.4
 
 ### Bug fixes

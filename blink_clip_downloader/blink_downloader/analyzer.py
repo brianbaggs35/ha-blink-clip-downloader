@@ -18,6 +18,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -28,6 +29,13 @@ _LOGGER = logging.getLogger(__name__)
 
 _API_TIMEOUT = aiohttp.ClientTimeout(total=120)
 _HEALTH_TIMEOUT = aiohttp.ClientTimeout(total=10)
+
+# Blink motion clips can run up to 60 seconds. Frame extraction must sample
+# candidates across the *entire* clip length regardless of frame_strategy or
+# max_frames, otherwise a fixed small frame count at the default interval only
+# ever samples the leading portion of the clip (e.g. 5 frames * 2s = the first
+# 10s of a 60s clip) and anything that happens later is never seen.
+_MAX_CLIP_COVERAGE_SECONDS: float = 60.0
 
 # Ollama model-name fragments that indicate vision capability.
 # Checked case-insensitively as a substring of the full model name.
@@ -348,9 +356,17 @@ class BaseAnalyzer(abc.ABC):
                 anomaly_score=anomaly_score,
             )
 
-        # Smart frame selection: oversample then pick entry/peak/exit frames
-        if self._frame_strategy == "smart" and len(frames) > self._max_frames:
-            frames = self._select_best_frames(frames, self._max_frames)
+        # Down-select the oversampled pool to the frames actually sent to the
+        # AI. "uniform" keeps frames evenly spread across the whole clip;
+        # "smart" and "sequential" both benefit from motion-weighted picks
+        # (entry/peak/exit) since sequential analyses each frame individually
+        # and gets more value from a few well-chosen frames than an arbitrary
+        # early slice of the clip.
+        if len(frames) > self._max_frames:
+            if self._frame_strategy == "uniform":
+                frames = self._select_uniform_frames(frames, self._max_frames)
+            else:
+                frames = self._select_best_frames(frames, self._max_frames)
 
         prompt = self._build_prompt(
             camera,
@@ -388,17 +404,23 @@ class BaseAnalyzer(abc.ABC):
     async def extract_frames(self, clip_path: str) -> list[bytes]:
         """Extract JPEG frames from an MP4 using ffmpeg.
 
-        In ``smart`` mode, 2× max_frames are extracted so that
-        :meth:`_select_best_frames` has enough material to pick the entry,
-        peak-motion, and exit frames.  In all other modes exactly
-        ``max_frames`` are extracted.
+        The extraction count is the larger of the strategy's own oversampling
+        target (2× max_frames in ``smart`` mode, else max_frames) and however
+        many frames are needed to cover a full :data:`_MAX_CLIP_COVERAGE_SECONDS`
+        clip at ``frame_interval`` spacing.  This second term is what keeps a
+        60-second Blink clip from only being sampled in its first few seconds —
+        ffmpeg naturally emits fewer frames than requested for shorter clips, so
+        this is a safe upper bound rather than a fixed count.  Down-selection to
+        the frames actually sent to the AI happens afterwards in
+        :meth:`_select_best_frames` / :meth:`_select_uniform_frames`.
         """
-        # Oversample in smart mode so _select_best_frames has enough to work with
-        extract_count = (
+        base_count = (
             self._max_frames * 2
             if self._frame_strategy == "smart"
             else self._max_frames
         )
+        coverage_count = math.ceil(_MAX_CLIP_COVERAGE_SECONDS / self._frame_interval)
+        extract_count = max(base_count, coverage_count)
         cmd = [
             "ffmpeg",
             "-i",
@@ -514,6 +536,24 @@ class BaseAnalyzer(abc.ABC):
                     anchored.add(idx)
                     idx += step
             return [frames[i] for i in sorted(anchored)[:target_count]]
+
+    @staticmethod
+    def _select_uniform_frames(frames: list[bytes], target_count: int) -> list[bytes]:
+        """Evenly space *target_count* frames across the whole extracted pool.
+
+        Used by the "uniform" strategy, which intentionally skips motion
+        scoring — this keeps its output spread across the full clip (including
+        a 60-second one) rather than motion-weighted, while still respecting
+        ``max_frames``.
+        """
+        if len(frames) <= target_count:
+            return frames
+        if target_count <= 1:
+            return [frames[0]]
+
+        step = (len(frames) - 1) / (target_count - 1)
+        indices = sorted({round(i * step) for i in range(target_count)})
+        return [frames[i] for i in indices]
 
     async def _analyze_sequentially(self, frames: list[bytes], prompt: str) -> str:
         """Analyse frames one at a time and return the most alarming response.
@@ -633,12 +673,24 @@ class BaseAnalyzer(abc.ABC):
         if car_applies:
             parts.append(
                 f"\n\nPROTECTED VEHICLE: {self._car_description}\n"
-                "Apply these distance rules STRICTLY:\n"
-                "• Person touching or within 1 foot of the vehicle: suspicious=true, confidence ≥0.8\n"
-                "• Person 1–2 feet away AND facing or reaching toward the vehicle: suspicious=true, confidence ≥0.6\n"
-                "• Person walking past more than 2 feet from the vehicle: suspicious=false\n"
-                "• Person more than 5 feet from the vehicle: suspicious=false unless actively tampering\n"
-                "Reference: a car door handle is about 4 feet off the ground; a typical car is about 6 feet wide.\n"
+                "Apply these distance rules STRICTLY. They cover anyone or anything "
+                "getting close to the vehicle — people, animals, or other vehicles —"
+                " not just pedestrians:\n"
+                "• A person, animal, or object touching or within 1 foot of the vehicle: "
+                "suspicious=true, confidence ≥0.8\n"
+                "• A person 1–2 feet away AND facing or reaching toward the vehicle: "
+                "suspicious=true, confidence ≥0.6\n"
+                "• Another vehicle stopping, parking, or backing within 2 feet of the "
+                "protected vehicle: suspicious=true, confidence ≥0.6\n"
+                "• A person or animal walking past more than 2 feet from the vehicle "
+                "without stopping: suspicious=false\n"
+                "• A vehicle driving past on the street without slowing or stopping near "
+                "the protected vehicle: suspicious=false — ordinary through-traffic is NOT "
+                "suspicious no matter how frequent\n"
+                "• Anyone or anything more than 5 feet from the vehicle: suspicious=false "
+                "unless actively tampering\n"
+                "Reference: a car door handle is about 4 feet off the ground; a typical car "
+                "is about 6 feet wide.\n"
                 "In your description, always include a natural-language distance estimate such as "
                 "'right next to the car', 'about 2 feet from the driver door', or 'well away from the vehicle'."
             )
