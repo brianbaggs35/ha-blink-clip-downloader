@@ -626,8 +626,9 @@ class BaseAnalyzer(abc.ABC):
         # Protected vehicle with precise distance rules — only for cameras that
         # can see the car (all cameras when car_cameras is empty, otherwise only
         # the cameras explicitly listed in car_cameras).
-        car_applies = self._car_description and (
-            not self._car_cameras or camera in self._car_cameras
+        car_applies = bool(
+            self._car_description
+            and (not self._car_cameras or camera in self._car_cameras)
         )
         if car_applies:
             parts.append(
@@ -641,13 +642,35 @@ class BaseAnalyzer(abc.ABC):
                 "In your description, always include a natural-language distance estimate such as "
                 "'right next to the car', 'about 2 feet from the driver door', or 'well away from the vehicle'."
             )
+        elif self._car_description and self._car_cameras:
+            # A protected vehicle exists elsewhere on the property, but this camera
+            # is not one of the cameras configured to see it (is_car_camera unchecked
+            # for this camera in the AI tab). State this explicitly so the model
+            # doesn't borrow car/driveway language meant for a different camera.
+            parts.append(
+                f"\n\nThis camera ({camera}) does not view the protected vehicle. "
+                "Do not mention a car, driveway, or vehicle distance in your description "
+                "unless a vehicle is clearly visible in the frames you were given."
+            )
 
-        # Ensure the description stays human-readable and never exposes internal data.
+        # Ensure the description stays human-readable, never exposes internal data,
+        # and never borrows scenery from a different camera. The example phrase is
+        # only about vehicle distance when this specific camera has car-distance
+        # rules in play (car_applies) — otherwise it uses a camera-agnostic example
+        # so smaller models aren't nudged into inventing a car or driveway that this
+        # camera cannot actually see (each camera has its own field of view).
+        example_phrase = (
+            "Use natural phrases like 'standing about 2 feet from the car' or 'walking past the driveway'. "
+            if car_applies
+            else "Use natural phrases like 'standing near the front steps' or 'walking across the yard'. "
+        )
         parts.append(
             "\n\nOUTPUT RULES: The 'description' field must be written in plain English "
-            "as if explaining to a homeowner what happened. "
-            "Use natural phrases like 'standing about 2 feet from the car' or 'walking past the driveway'. "
-            "NEVER include any of these technical terms in the description: "
+            "as if explaining to a homeowner what happened, and must describe ONLY what is "
+            f"actually visible in these specific frames from the {camera} camera — never assume "
+            "objects or areas seen by other cameras on the property are visible here. "
+            + example_phrase
+            + "NEVER include any of these technical terms in the description: "
             "'bounding box', 'normalized', 'frame width', 'frame percentage', 'spatial data', "
             "'INTERNAL', 'CONTEXT', 'proximity analysis', 'overlap', 'gap 0.', or any decimal coordinates. "
             "Any internal proximity hints provided are for your reasoning only — do not quote them."

@@ -1,11 +1,13 @@
-blinkpy>=0.25.6
-aiohttp>=3.9.0
-aiofiles>=23.2.1
-aiosqlite>=0.20.0
-python-slugify>=8.0.1
+blinkpy>=0.25.7
+aiohttp>=3.11.0
+aiofiles>=24.1.0
+aiosqlite>=0.21.0
+python-slugify>=8.0.4
 python-dateutil>=2.9.0
-aiosmtplib>=2.0.0
-Pillow>=10.0.0
+aiosmtplib>=3.0.0
+Pillow>=11.0.0
+anthropic>=0.100.0
+openai>=1.0.0
 
 [test]
 pytest>=8.0

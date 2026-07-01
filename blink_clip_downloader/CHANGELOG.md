@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.0.4
+
+### Bug fixes
+
+- **Fix car/driveway language leaking onto cameras that can't see the car.**
+  Leaving the AI tab's "car camera" checkboxes unset for a camera makes
+  `car_cameras` empty, which is documented as "applies to all cameras" — but
+  the OUTPUT RULES block in the analysis prompt unconditionally seeded the
+  model with a car/driveway example phrase regardless of which camera actually
+  took the clip. A camera like Front Door, which has no vehicle in its field
+  of view, could still get car-distance language in its description. The
+  prompt now states explicitly when a camera does not view the protected
+  vehicle, and only uses the car-distance example phrase for cameras where the
+  vehicle distance rules actually apply.
+- **Fix mobile web UI cut-off elements.** On narrow Android viewports the top
+  navigation bar didn't wrap, so the rightmost buttons (Refresh/Sync) were
+  clipped by the page's `overflow:hidden`. The nav now wraps onto a second row
+  below 600px width, the toast notification no longer risks spilling past the
+  left edge on very narrow screens, and grid layouts (clip grid, status cards,
+  usage cards, AI cards) now shrink below their minimum column width instead
+  of overflowing on viewports narrower than that minimum.
+
 ## 3.0.3
 
 ### Bug fixes
