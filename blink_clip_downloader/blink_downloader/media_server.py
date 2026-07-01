@@ -2820,11 +2820,12 @@ class MediaServer:
                 if c.get("custom_prompt")
             }
             self._analyzer._camera_prompts.update(prompts)  # noqa: SLF001
-            # Update car-camera set from checkbox selections
+            # Update car-camera set from checkbox selections. camera_configs.json
+            # is the single source of truth for is_car_camera (see CLAUDE.md), so
+            # this must apply even when the new set is empty — otherwise
+            # unchecking every "protected vehicle" box in the UI could never
+            # actually clear car-proximity rules from the running analyzer.
             car_cameras = {c["camera"] for c in configs if c.get("is_car_camera")}
-            # If the UI has no car cameras checked, preserve the existing set
-            # so that options.json ai_car_cameras remains in effect.
-            if car_cameras:
-                self._analyzer._car_cameras = car_cameras  # noqa: SLF001
+            self._analyzer._car_cameras = car_cameras  # noqa: SLF001
 
         return web.json_response({"saved": True, "count": len(configs)})

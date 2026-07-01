@@ -2812,6 +2812,31 @@ def test_select_best_frames_always_includes_first_and_last() -> None:
     assert result[-1] == frames[-1]
 
 
+def test_select_uniform_frames_returns_all_if_under_target() -> None:
+    frames = [_FAKE_JPEG, _FAKE_JPEG_2]
+    result = ClipAnalyzer._select_uniform_frames(frames, 5)
+    assert result == frames
+
+
+def test_select_uniform_frames_returns_target_count() -> None:
+    frames = [_FAKE_JPEG, _FAKE_JPEG_2, _FAKE_JPEG_3] * 4  # 12 frames
+    result = ClipAnalyzer._select_uniform_frames(frames, 5)
+    assert len(result) == 5
+
+
+def test_select_uniform_frames_includes_first_and_last() -> None:
+    frames = [_FAKE_JPEG, _FAKE_JPEG_2, _FAKE_JPEG_3] * 4  # 12 frames
+    result = ClipAnalyzer._select_uniform_frames(frames, 5)
+    assert result[0] == frames[0]
+    assert result[-1] == frames[-1]
+
+
+def test_select_uniform_frames_single_target() -> None:
+    frames = [_FAKE_JPEG, _FAKE_JPEG_2, _FAKE_JPEG_3]
+    result = ClipAnalyzer._select_uniform_frames(frames, 1)
+    assert result == [frames[0]]
+
+
 def test_select_best_frames_fallback_on_pil_error() -> None:
     """When PIL raises an error, even-spaced selection is used as fallback."""
     frames = [_FAKE_JPEG, _FAKE_JPEG_2, _FAKE_JPEG_3, _FAKE_JPEG]
@@ -2919,6 +2944,70 @@ async def test_analyze_clip_uses_sequential_mode() -> None:
         ) as seq_spy:
             await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
     seq_spy.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_sequential_downselects_oversampled_pool() -> None:
+    """A 60s-clip-sized oversampled pool must be trimmed to max_frames before
+    each frame is analysed individually — otherwise a long clip would trigger
+    one API call per sampled frame instead of per selected frame."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="sequential",
+        max_frames=2,
+    )
+    many_frames = (_FAKE_JPEG + _FAKE_JPEG_2 + _FAKE_JPEG_3) * 4  # 12 raw frames
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(many_frames, b""))
+    mock_proc.returncode = 0
+
+    good_resp = json.dumps(
+        {"suspicious": False, "confidence": 0.8, "description": "Clear"}
+    )
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.frame_count == 2
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_uniform_downselects_oversampled_pool() -> None:
+    """Uniform mode must also trim its oversampled pool down to max_frames."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="uniform",
+        max_frames=2,
+    )
+    many_frames = (_FAKE_JPEG + _FAKE_JPEG_2 + _FAKE_JPEG_3) * 4  # 12 raw frames
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(many_frames, b""))
+    mock_proc.returncode = 0
+
+    good_resp = json.dumps(
+        {"suspicious": False, "confidence": 0.8, "description": "Clear"}
+    )
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.frame_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -3069,13 +3158,16 @@ async def test_analyze_clip_anomaly_score_in_no_frames_result() -> None:
 
 @pytest.mark.asyncio
 async def test_extract_frames_smart_requests_double() -> None:
-    """In smart mode ffmpeg is called with 2 × max_frames."""
+    """In smart mode ffmpeg is called with 2 × max_frames when that exceeds
+    the 60-second coverage floor (isolated here with a large frame_interval
+    so the coverage floor doesn't dominate the count)."""
     analyzer = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
         prompt="p",
         max_frames=3,
         frame_strategy="smart",
+        frame_interval=20.0,
     )
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
@@ -3091,13 +3183,15 @@ async def test_extract_frames_smart_requests_double() -> None:
 
 @pytest.mark.asyncio
 async def test_extract_frames_uniform_requests_exact() -> None:
-    """In uniform mode ffmpeg is called with exactly max_frames."""
+    """In uniform mode ffmpeg is called with exactly max_frames when that
+    exceeds the 60-second coverage floor (isolated with a large frame_interval)."""
     analyzer = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
         prompt="p",
         max_frames=5,
         frame_strategy="uniform",
+        frame_interval=20.0,
     )
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock(return_value=(b"", b""))
@@ -3109,6 +3203,55 @@ async def test_extract_frames_uniform_requests_exact() -> None:
     cmd = mock_exec.call_args[0]
     frames_arg_idx = list(cmd).index("-frames:v") + 1
     assert cmd[frames_arg_idx] == "5"
+
+
+@pytest.mark.asyncio
+async def test_extract_frames_covers_full_60s_clip_by_default() -> None:
+    """A small max_frames with the default 2s interval must not truncate
+    extraction to only the first few seconds of a up-to-60s clip — ffmpeg
+    must be asked for enough frames to span the whole clip."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        max_frames=3,
+        frame_strategy="smart",
+        frame_interval=2.0,
+    )
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        await analyzer.extract_frames("/clips/test.mp4")
+
+    cmd = mock_exec.call_args[0]
+    frames_arg_idx = list(cmd).index("-frames:v") + 1
+    # 3 * 2 = 6 would only cover the first 12s; 60s / 2s = 30 covers the full clip.
+    assert cmd[frames_arg_idx] == "30"
+
+
+@pytest.mark.asyncio
+async def test_extract_frames_uniform_covers_full_60s_clip_by_default() -> None:
+    """Uniform mode must also cover the full clip, not just max_frames * interval."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        max_frames=5,
+        frame_strategy="uniform",
+        frame_interval=2.0,
+    )
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        await analyzer.extract_frames("/clips/test.mp4")
+
+    cmd = mock_exec.call_args[0]
+    frames_arg_idx = list(cmd).index("-frames:v") + 1
+    assert cmd[frames_arg_idx] == "30"
 
 
 @pytest.mark.asyncio

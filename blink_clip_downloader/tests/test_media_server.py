@@ -1118,6 +1118,42 @@ async def test_ai_camera_configs_put_updates_live_analyzer(
         await tc.close()
 
 
+async def test_ai_camera_configs_put_can_clear_car_cameras(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Unchecking every 'protected vehicle' box must clear the live analyzer's
+    car-camera set, not silently preserve the previous one — camera_configs.json
+    is the single source of truth for is_car_camera."""
+    analyzer = _make_analyzer()
+    analyzer._car_cameras = {"Driveway"}
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        cfg_file = tmp_path / "camera_configs.json"
+        payload = [
+            {
+                "camera": "Driveway",
+                "description": "Points at the driveway",
+                "custom_prompt": "",
+                "is_car_camera": False,
+            }
+        ]
+        with patch(
+            "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+            new=cfg_file,
+        ):
+            resp = await tc.put(
+                "/api/ai/camera-configs",
+                data=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status == 200
+        assert analyzer._car_cameras == set()
+    finally:
+        await tc.close()
+
+
 # ---------------------------------------------------------------------------
 # Module-level moondream helpers
 # ---------------------------------------------------------------------------
