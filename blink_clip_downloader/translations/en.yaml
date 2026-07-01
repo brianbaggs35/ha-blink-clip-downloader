@@ -266,14 +266,19 @@ configuration:
     name: Per-Camera AI Prompts
     description: >-
       Override the global ai_prompt for specific cameras. Each entry has a
-      "camera" name and a "prompt" string. Cameras not listed use ai_prompt.
-      Editable in the web UI AI tab under Camera Configurations.
+      "camera" name (must exactly match a camera name shown in the Blink app)
+      and a "prompt" string. Cameras not listed use ai_prompt. Prefer the web
+      UI AI tab under Camera Configurations instead — it lists your actual
+      camera names so there is nothing to type or get wrong.
   ai_camera_descriptions:
     name: Per-Camera Descriptions
     description: >-
       Context descriptions injected into every AI prompt for the matching
-      camera, e.g. "Points at driveway; Silver Kia Forte parked on left".
-      Editable live in the web UI AI tab under Camera Configurations.
+      camera, e.g. "Points at driveway; Silver Kia Forte parked on left". The
+      "camera" name must exactly match a camera name shown in the Blink app.
+      Prefer editing live in the web UI AI tab under Camera Configurations
+      instead — it lists your actual camera names so there is nothing to type
+      or get wrong.
   ai_frame_strategy:
     name: Frame Extraction Strategy
     description: >-
@@ -284,9 +289,13 @@ configuration:
   ai_car_cameras:
     name: Car-Protection Cameras
     description: >-
-      Restrict protected-vehicle distance rules to these camera names. Cameras
-      not in this list focus on their own description and will not apply car
-      proximity rules. Leave empty to apply car rules to all cameras.
+      Restrict protected-vehicle distance rules to these camera names (must
+      exactly match a camera name shown in the Blink app). Cameras not in this
+      list focus on their own description and will not apply car proximity
+      rules. Leave empty to apply car rules to all cameras. Prefer the
+      "Protected vehicle visible from this camera" checkbox in the web UI AI
+      tab under Camera Configurations instead — it lists your actual camera
+      names so there is nothing to type or get wrong.
   mobile_app_target:
     name: Mobile App Target Entity
     description: >-

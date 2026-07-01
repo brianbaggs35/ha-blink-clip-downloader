@@ -328,7 +328,7 @@ as the most cost-effective option.
 |--------|---------|-------------|
 | `ai_prompt` | _(see config.yaml)_ | Global prompt sent to the AI for each clip. Must request a JSON response with `"suspicious"`, `"confidence"`, and `"description"` keys. |
 | `ai_car_description` | `""` | Description of a vehicle to protect (e.g. `"Silver Kia Forte, parked in the driveway"`). When set, the AI applies strict distance rules and flags anyone within ~2 feet of the vehicle as suspicious. |
-| `ai_car_cameras` | `[]` | Camera names for which car-proximity rules apply. Leave empty to apply to all cameras. Cameras not listed focus only on their own description, preventing false positives on cameras that cannot see the car. |
+| `ai_car_cameras` | `[]` | Camera names for which car-proximity rules apply. Must exactly match your Blink camera name (case-sensitive). Leave empty to apply to all cameras. Cameras not listed focus only on their own description, preventing false positives on cameras that cannot see the car. Easier to set via the **Camera Configurations** panel in the web UI AI tab, which lists your actual cameras instead of requiring you to type the name. |
 | `ai_min_confidence` | `0.0` | Minimum confidence threshold (0.0–1.0) for sending suspicious-activity alerts. Clips are still analysed and stored; only alert dispatch is gated. Example: `0.3` to suppress low-confidence detections. |
 | `ai_suspicious_keywords` | _(list)_ | Words that trigger a suspicious flag when found in an AI plain-text response (used as fallback when the AI does not return valid JSON). |
 
@@ -340,21 +340,31 @@ as the most cost-effective option.
 | `ai_frame_interval` | `2.0` | Seconds between frame extraction points (0.5–30). |
 | `ai_frame_strategy` | `"smart"` | How frames are selected and sent to the AI (see below). |
 
+`ai_max_frames`/`ai_frame_interval` apply as configured to clips estimated at 30
+seconds or less. Longer clips automatically get `ai_max_frames + 2` frames — a small
+bump that keeps API/token cost predictable while giving longer clips enough coverage
+to describe what happened across the whole clip, not just its first half.
+
 #### Frame Strategies
 
 | Value | Behaviour |
 |-------|-----------|
-| `"smart"` | (Default) Extracts 2× `ai_max_frames` candidates then uses inter-frame motion-diff (PIL) to pick the entry frame, peak-motion frame, and exit frame. Best accuracy for the same or fewer API calls. |
+| `"smart"` | (Default) Extracts 2× `ai_max_frames` candidates then uses inter-frame motion-diff (PIL) to pick the entry frame, peak-motion frame, and exit frame, then fills any remaining slots by motion score while enforcing a minimum spacing between picks so they spread across the clip's timeline instead of clustering around a single motion burst. Best accuracy for the same or fewer API calls. |
 | `"sequential"` | Analyses each frame individually via separate AI calls and returns the most alarming result (suspicious > non-suspicious; higher confidence when tied). Works well when the AI performs better on single images than on batches. Works with all six providers. |
-| `"uniform"` | Extracts exactly `ai_max_frames` at fixed time intervals (legacy behaviour). |
+| `"uniform"` | Extracts exactly `ai_max_frames` (or the long-clip bonus count) at fixed time intervals (legacy behaviour, no motion analysis). |
 
 ### Per-Camera Configuration
 
 You can set a description and a custom prompt for each camera without editing YAML —
-use the **Camera Configurations** section in the web UI **AI tab**. Changes are saved
-to `/data/camera_configs.json` and take effect immediately without restarting the add-on.
+use the **Camera Configurations** section in the web UI **AI tab**. It lists your
+actual Blink cameras so you can't mistype or mismatch a name, and changes are saved
+to `/data/camera_configs.json` and take effect immediately without restarting the
+add-on. This is the recommended way to configure per-camera settings.
 
-You can also configure these in `config.yaml` for YAML-based setups:
+You can also configure these in `config.yaml` for YAML-based setups, but the `camera`
+value in each entry must exactly match your Blink camera's name (case-sensitive) —
+the add-on has no way to validate a typo against your actual cameras from the options
+form, and a mismatched name silently fails to apply:
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -389,6 +399,27 @@ constitutes suspicious behaviour for that time of day.
 
 The `anomaly_score` is stored in the `analysis_results` table and returned by the
 `/api/ai/analysis` endpoint so you can query and filter by it.
+
+### Visual Scene Baseline
+
+Blink cameras are fixed in place, so a given camera's clips almost always frame the
+same porch, driveway, or yard. The add-on takes advantage of this: alongside the
+time-of-day/frequency anomaly score above, it also learns what each camera's
+background normally looks like.
+
+- Each analysed clip's opening frame is reduced to a small grayscale thumbnail and
+  blended into a running per-camera baseline.
+- Once a camera has built up enough history (20 clips), each new clip's opening frame
+  is compared against that baseline. A frame that closely matches the camera's usual
+  background nudges the AI toward a calm, routine read of the activity; a frame that
+  looks visually different (an unfamiliar object, vehicle, or obstruction in view) is
+  flagged in the prompt as worth a closer look, without being treated as a verdict on
+  its own.
+- The baseline only learns from clips the AI did **not** flag as suspicious, so a
+  genuine intruder or one-off anomaly can't teach the system to treat itself as
+  normal.
+- This activates automatically — no configuration needed — and complements rather
+  than replaces the anomaly score above.
 
 ---
 

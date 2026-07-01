@@ -38,6 +38,77 @@
   false-positive guidance that ordinary through-traffic and pedestrians who
   don't stop near the vehicle are not suspicious.
 
+### Configuration — camera name fields
+
+- **Clarify how `ai_camera_prompts`, `ai_camera_descriptions`, and
+  `ai_car_cameras` camera names must be entered.** These add-on options are
+  free-text fields in the Supervisor's config form — a platform limitation
+  of the schema-driven options UI, which can't render a live dropdown of your
+  actual Blink camera names. It wasn't clear whether the value you typed had
+  to match the camera's exact name in Blink. The option descriptions now say
+  explicitly that the name must exactly match your Blink camera name
+  (case-sensitive), and point at the add-on's own web UI (**AI tab → Camera
+  Configurations**) as the easier way to configure these per camera: it lists
+  your actual cameras and lets you set the description, custom prompt, and
+  car-protection flag directly against them, with no typing or guesswork.
+
+### AI analysis — smarter frame budget and selection
+
+- **Long clips now get a few bonus frames instead of stretching the same
+  budget thinner.** `ai_max_frames`/`ai_frame_interval` are sized around a
+  typical short motion clip; applying them unchanged to a clip estimated at
+  over 30 seconds spread the same handful of frames across twice the footage,
+  risking gaps in the AI's view of what happened. Clips estimated at 30
+  seconds or less still use exactly the configured `max_frames`; anything
+  longer now gets `max_frames + 2`, a small enough bump to keep token usage
+  in check while giving longer clips a real chance at full coverage.
+- **`smart`/`sequential` frame selection now spreads its picks across the
+  whole clip instead of clustering around a single motion burst.** Previously
+  the down-selector picked the single highest-motion frame plus whichever
+  other frames had the next-highest motion-diff scores — for a clip with one
+  concentrated burst of motion (e.g. a car passing through frame), most or
+  all of the "extra" picks beyond first/peak/last could bunch up around that
+  same moment, leaving the rest of the clip unrepresented. Frame selection
+  now enforces a minimum spacing between selected frames so picks are spread
+  across the timeline, falling back to the old unconstrained behavior only
+  when the raw frame pool is too small to space picks out.
+
+### AI analysis — visual scene baseline ("smart brain")
+
+- **New: per-camera visual scene baseline learns what a camera's background
+  normally looks like.** Blink cameras are stationary, so a given camera's
+  clips almost always frame the same porch, driveway, or yard. Building on
+  the existing time-of-day/frequency "Smart Security Brain" anomaly score,
+  the analyzer now also reduces each clip's opening frame to a small
+  grayscale thumbnail and blends it into a running per-camera baseline
+  (`camera_scene_baselines` table). Once a camera has enough history (20
+  clips), each new clip is compared against its baseline; a frame that looks
+  like the camera's normal, empty background reinforces a calm read of the
+  activity, while a frame that looks visually different from the norm (a
+  package, a parked vehicle, an obstruction) is flagged in the prompt as
+  worth a closer look. The baseline only learns from clips the AI did not
+  flag as suspicious, so a genuine intruder or anomaly can't teach the
+  system to treat itself as normal.
+
+### AI analysis — reduced false positives, more professional tone
+
+- **The AI now explicitly classifies people, vehicles, and animals before
+  describing them**, instead of leaving subject identification implicit —
+  reducing cases where a passing car's motion got described in
+  person-oriented language or vice versa.
+- **Ordinary passing traffic is now described as just that.** A car that
+  drives up or down the street without stopping, parking, or slowing near a
+  person or entryway is described plainly (e.g. "a car drove up the
+  street"), never as being "near" the protected vehicle, a person, or
+  anything else in frame — that language is now reserved for cases where a
+  person, vehicle, or animal actually stops or lingers close to something.
+  This applies both generally and to the protected-vehicle distance rules.
+- **Refined tone: calm, factual, professional security-analyst language
+  throughout.** The prompt now explicitly asks the model to state only what
+  is observable, avoid speculation or alarmist wording, and reserve
+  "suspicious" for genuine cause for concern, aiming to cut down on
+  false-positive alerts from routine activity described in dramatic terms.
+
 ## 3.0.4
 
 ### Bug fixes

@@ -78,7 +78,17 @@ CREATE TABLE IF NOT EXISTS camera_duration_stats (
     avg_duration REAL    DEFAULT 0.0,
     sample_count INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS camera_scene_baselines (
+    camera       TEXT PRIMARY KEY,
+    thumbnail    TEXT    NOT NULL,
+    sample_count INTEGER DEFAULT 0,
+    updated_at   TEXT
+);
 """
+
+# Minimum recorded clips before a camera's visual scene baseline is trusted
+# enough to report a deviation score — see get_scene_deviation().
+_SCENE_BASELINE_MIN_SAMPLES = 20
 
 
 def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
@@ -660,6 +670,98 @@ class ClipDatabase:
                         score += 0.1
 
         return min(1.0, score)
+
+    # ------------------------------------------------------------------
+    # Scene Baseline (per-camera visual "smart brain" learning)
+    # ------------------------------------------------------------------
+
+    async def record_scene_baseline(self, camera: str, thumbnail: list[float]) -> None:
+        """Fold a clip's opening-frame thumbnail into this camera's learned scene.
+
+        Blink cameras are fixed in place, so a given camera's background
+        should look almost identical clip after clip — this running average
+        *is* that "usual background". Call this only for clips that were NOT
+        flagged suspicious (see ``analyzer.BaseAnalyzer.analyze_clip``) so a
+        genuine intruder is never absorbed into what counts as normal.
+
+        The blend rate is faster while a camera has little history (so the
+        baseline converges quickly instead of being anchored to whatever the
+        first clip or two happened to show) and settles into a slow-moving
+        average once established, so gradual lighting/seasonal drift is
+        absorbed without letting any single clip swing the baseline.
+        """
+        if self._db is None:
+            return
+        async with self._db.execute(
+            "SELECT thumbnail, sample_count FROM camera_scene_baselines WHERE camera=?",
+            (camera,),
+        ) as cur:
+            row = await cur.fetchone()
+
+        now = datetime.now(timezone.utc).isoformat()
+        if row is None:
+            await self._db.execute(
+                """
+                INSERT INTO camera_scene_baselines (camera, thumbnail, sample_count, updated_at)
+                VALUES (?, ?, 1, ?)
+                """,
+                (camera, json.dumps(thumbnail), now),
+            )
+            await self._db.commit()
+            return
+
+        try:
+            existing = json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            existing = []
+        count = int(row[1])
+
+        if not existing or len(existing) != len(thumbnail):
+            # Thumbnail size changed (or prior data was corrupt) — restart
+            # the baseline from this sample rather than blending mismatched data.
+            blended = thumbnail
+            count = 0
+        else:
+            alpha = max(0.05, 1.0 / (count + 1))
+            blended = [e * (1 - alpha) + t * alpha for e, t in zip(existing, thumbnail)]
+
+        await self._db.execute(
+            """
+            UPDATE camera_scene_baselines
+            SET thumbnail = ?, sample_count = ?, updated_at = ?
+            WHERE camera = ?
+            """,
+            (json.dumps(blended), count + 1, now, camera),
+        )
+        await self._db.commit()
+
+    async def get_scene_deviation(
+        self, camera: str, thumbnail: list[float]
+    ) -> float | None:
+        """Return how much *thumbnail* deviates (0.0-1.0) from the camera's learned scene.
+
+        Returns ``None`` until at least :data:`_SCENE_BASELINE_MIN_SAMPLES` clips
+        have been recorded for this camera — with too little history the
+        "baseline" is just whatever the last clip or two happened to show,
+        which isn't a reliable signal yet.
+        """
+        if self._db is None:
+            return None
+        async with self._db.execute(
+            "SELECT thumbnail, sample_count FROM camera_scene_baselines WHERE camera=?",
+            (camera,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None or int(row[1]) < _SCENE_BASELINE_MIN_SAMPLES:
+            return None
+        try:
+            existing = json.loads(row[0])
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not existing or len(existing) != len(thumbnail):
+            return None
+        diff = sum(abs(e - t) for e, t in zip(existing, thumbnail)) / len(existing)
+        return min(1.0, diff)
 
     # ------------------------------------------------------------------
     # Analysis Queue

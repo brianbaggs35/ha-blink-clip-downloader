@@ -867,3 +867,97 @@ async def test_get_anomaly_score_slight_duration_anomaly(db: ClipDatabase) -> No
     # Duration 15.0 → ratio = 15/5 = 3.0, which is in (2.5, 4.0) → slight anomaly
     score = await db.get_anomaly_score("Gate", 12, 15.0)
     assert score >= 0.1
+
+
+# ------------------------------------------------------------------
+# Scene baseline (visual "smart brain" learning)
+# ------------------------------------------------------------------
+
+
+async def test_get_scene_deviation_unknown_camera_returns_none(
+    db: ClipDatabase,
+) -> None:
+    assert await db.get_scene_deviation("Nowhere", [0.5] * 4) is None
+
+
+async def test_get_scene_deviation_returns_none_below_threshold(
+    db: ClipDatabase,
+) -> None:
+    scene = [0.2] * 4
+    for _ in range(19):  # one short of the 20-sample activation threshold
+        await db.record_scene_baseline("Driveway", scene)
+    assert await db.get_scene_deviation("Driveway", scene) is None
+
+
+async def test_get_scene_deviation_activates_at_threshold_low_for_match(
+    db: ClipDatabase,
+) -> None:
+    scene = [0.2] * 4
+    for _ in range(20):
+        await db.record_scene_baseline("Driveway", scene)
+    deviation = await db.get_scene_deviation("Driveway", scene)
+    assert deviation is not None
+    assert deviation < 0.05  # identical thumbnail → near-zero deviation
+
+
+async def test_get_scene_deviation_detects_large_change(db: ClipDatabase) -> None:
+    usual = [0.0] * 4
+    for _ in range(20):
+        await db.record_scene_baseline("Backyard", usual)
+    deviation = await db.get_scene_deviation("Backyard", [1.0] * 4)
+    assert deviation is not None
+    assert deviation > 0.5
+
+
+async def test_get_scene_deviation_capped_at_one(db: ClipDatabase) -> None:
+    for _ in range(20):
+        await db.record_scene_baseline("Porch", [0.0] * 4)
+    deviation = await db.get_scene_deviation("Porch", [1.0] * 4)
+    assert deviation is not None
+    assert deviation <= 1.0
+
+
+async def test_get_scene_deviation_query_length_mismatch_returns_none(
+    db: ClipDatabase,
+) -> None:
+    scene = [0.5] * 4
+    for _ in range(20):
+        await db.record_scene_baseline("Garage", scene)
+    assert await db.get_scene_deviation("Garage", [0.5] * 5) is None
+
+
+async def test_record_scene_baseline_restarts_on_size_change(
+    db: ClipDatabase,
+) -> None:
+    """A thumbnail-size change (e.g. after a config change) restarts the
+    baseline from scratch rather than blending mismatched data."""
+    await db.record_scene_baseline("Side Gate", [0.0, 0.0])
+    await db.record_scene_baseline("Side Gate", [1.0, 1.0, 1.0])
+    # Restarted at sample_count=1 — well below the activation threshold.
+    assert await db.get_scene_deviation("Side Gate", [1.0, 1.0, 1.0]) is None
+
+
+async def test_record_scene_baseline_adapts_toward_new_normal(
+    db: ClipDatabase,
+) -> None:
+    """The baseline should shift toward a consistently different scene over
+    time rather than staying anchored to whatever the first sample showed."""
+    old_scene = [0.0] * 4
+    new_scene = [1.0] * 4
+    await db.record_scene_baseline("Yard", old_scene)
+    for _ in range(24):
+        await db.record_scene_baseline("Yard", new_scene)
+    deviation_from_new = await db.get_scene_deviation("Yard", new_scene)
+    assert deviation_from_new is not None
+    assert deviation_from_new < 0.2
+
+
+async def test_get_scene_deviation_uninitialised_db() -> None:
+    d = ClipDatabase(Path("/tmp/neveropened_scene.db"))
+    assert await d.get_scene_deviation("Camera", [0.5] * 4) is None
+
+
+async def test_record_scene_baseline_uninitialised_db() -> None:
+    d = ClipDatabase(Path("/tmp/neveropened_scene2.db"))
+    # Should not raise even when the db is not open
+    await d.record_scene_baseline("Camera", [0.5] * 4)

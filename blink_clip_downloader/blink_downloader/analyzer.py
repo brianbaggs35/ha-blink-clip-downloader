@@ -21,9 +21,12 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
+
+if TYPE_CHECKING:
+    from .database import ClipDatabase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +39,24 @@ _HEALTH_TIMEOUT = aiohttp.ClientTimeout(total=10)
 # ever samples the leading portion of the clip (e.g. 5 frames * 2s = the first
 # 10s of a 60s clip) and anything that happens later is never seen.
 _MAX_CLIP_COVERAGE_SECONDS: float = 60.0
+
+# max_frames/frame_interval are honored exactly for clips at or under this
+# length. Longer clips (Blink's ceiling is 60s) get a few bonus frames on top
+# of max_frames — the configured budget alone tends to under-sample a 45-60s
+# clip (missing the start, the end, or the middle), while still keeping token
+# usage far below analyzing every extracted frame.
+_LONG_CLIP_THRESHOLD_SECONDS: float = 30.0
+_LONG_CLIP_BONUS_FRAMES: int = 2
+
+# Fixed-size grayscale thumbnail used for the visual scene-baseline ("smart
+# brain") comparison — see BaseAnalyzer._scene_thumbnail(). Small enough to
+# store cheaply per-camera and compare quickly; large enough to notice a
+# parked vehicle, a delivered package, or similar new object in frame.
+_SCENE_THUMBNAIL_SIZE: tuple[int, int] = (16, 16)
+
+# Deviation score (0.0-1.0, see ClipDatabase.get_scene_deviation) at or above
+# which the prompt calls out that the scene looks different from usual.
+_SCENE_DEVIATION_ALERT_THRESHOLD: float = 0.12
 
 # Ollama model-name fragments that indicate vision capability.
 # Checked case-insensitively as a substring of the full model name.
@@ -283,10 +304,28 @@ class BaseAnalyzer(abc.ABC):
         # Reset to 0 at the start of each analyze_clip() call.
         self._last_prompt_tokens: int = 0
         self._last_completion_tokens: int = 0
+        # Optional ClipDatabase for the visual scene-baseline ("smart brain")
+        # feature. Unset (None) disables it entirely — set via
+        # attach_scene_baseline_db() once the app has a database ready.
+        self._scene_baseline_db: ClipDatabase | None = None
 
     def update_camera_descriptions(self, descriptions: dict[str, str]) -> None:
         """Update per-camera descriptions at runtime without restart."""
         self._camera_descriptions = descriptions
+
+    def attach_scene_baseline_db(self, db: ClipDatabase) -> None:
+        """Enable the visual scene-baseline ("smart brain") feature.
+
+        Blink cameras are stationary, so each camera's background should look
+        almost the same clip after clip. Once attached, analyze_clip() checks
+        each clip's opening frame against this camera's learned baseline
+        appearance and — once enough history has accumulated — tells the
+        model whether the scene looks like it usually does. That is a cheap
+        signal for flagging a genuinely new object or vehicle in frame, and
+        just as importantly, for reassuring the model when a scene is
+        unremarkable so it doesn't over-flag routine activity.
+        """
+        self._scene_baseline_db = db
 
     # ------------------------------------------------------------------
     # Abstract interface
@@ -356,22 +395,40 @@ class BaseAnalyzer(abc.ABC):
                 anomaly_score=anomaly_score,
             )
 
+        # Visual scene-baseline ("smart brain") lookup — compares this clip's
+        # opening frame (closest to the pre-motion scene) against the
+        # camera's learned background, using whatever history was recorded
+        # before this clip. Folded back into the baseline further down, once
+        # we know whether this clip was suspicious.
+        scene_thumbnail: list[float] | None = None
+        scene_deviation: float | None = None
+        if self._scene_baseline_db is not None:
+            scene_thumbnail = self._scene_thumbnail(frames[0])
+            if scene_thumbnail is not None:
+                scene_deviation = await self._scene_baseline_db.get_scene_deviation(
+                    camera, scene_thumbnail
+                )
+
         # Down-select the oversampled pool to the frames actually sent to the
         # AI. "uniform" keeps frames evenly spread across the whole clip;
         # "smart" and "sequential" both benefit from motion-weighted picks
         # (entry/peak/exit) since sequential analyses each frame individually
         # and gets more value from a few well-chosen frames than an arbitrary
-        # early slice of the clip.
-        if len(frames) > self._max_frames:
+        # early slice of the clip. Clips estimated to run longer than
+        # _LONG_CLIP_THRESHOLD_SECONDS get a few bonus frames on top of
+        # max_frames — see _target_frame_count().
+        target_frame_count = self._target_frame_count(len(frames))
+        if len(frames) > target_frame_count:
             if self._frame_strategy == "uniform":
-                frames = self._select_uniform_frames(frames, self._max_frames)
+                frames = self._select_uniform_frames(frames, target_frame_count)
             else:
-                frames = self._select_best_frames(frames, self._max_frames)
+                frames = self._select_best_frames(frames, target_frame_count)
 
         prompt = self._build_prompt(
             camera,
             anomaly_score=anomaly_score,
             clip_timestamp=clip_timestamp,
+            scene_deviation=scene_deviation,
         )
 
         if self._frame_strategy == "sequential":
@@ -380,6 +437,16 @@ class BaseAnalyzer(abc.ABC):
             response = await self._call_model(frames, prompt)
 
         is_suspicious, confidence, summary = self.parse_response(response)
+
+        # Only fold ordinary (non-suspicious) clips into the learned scene
+        # baseline, so a genuine intruder is never absorbed into "what's
+        # normal here".
+        if (
+            scene_thumbnail is not None
+            and self._scene_baseline_db is not None
+            and not is_suspicious
+        ):
+            await self._scene_baseline_db.record_scene_baseline(camera, scene_thumbnail)
 
         return AnalysisResult(
             clip_id=clip_id,
@@ -463,6 +530,47 @@ class BaseAnalyzer(abc.ABC):
 
         return self._split_jpeg_frames(stdout or b"")
 
+    def _target_frame_count(self, raw_frame_count: int) -> int:
+        """How many frames to actually send the AI, given the raw extracted pool.
+
+        ``max_frames``/``frame_interval`` are honored exactly for clips at or
+        under :data:`_LONG_CLIP_THRESHOLD_SECONDS`. Longer clips get
+        :data:`_LONG_CLIP_BONUS_FRAMES` extra on top of ``max_frames`` — the
+        configured budget alone tends to under-sample a 45-60s clip, and a
+        couple of extra frames is a small token cost for materially better
+        coverage of what happened across the whole event.
+
+        Duration is estimated from the already-extracted frame count and
+        ``frame_interval`` (frames are spaced ``frame_interval`` seconds
+        apart) rather than probing the file again with ffprobe.
+        """
+        estimated_duration = raw_frame_count * self._frame_interval
+        if estimated_duration <= _LONG_CLIP_THRESHOLD_SECONDS:
+            return self._max_frames
+        return self._max_frames + _LONG_CLIP_BONUS_FRAMES
+
+    @staticmethod
+    def _scene_thumbnail(frame: bytes) -> list[float] | None:
+        """Reduce a frame to a small grayscale thumbnail for scene-baseline comparison.
+
+        Returns a flat list of pixel values normalized to 0.0-1.0, or ``None``
+        if the frame can't be decoded (e.g. Pillow unavailable or a corrupt
+        JPEG) — callers treat that as "scene baseline unavailable for this
+        clip" rather than an error.
+        """
+        try:
+            import io as _io  # noqa: PLC0415
+
+            from PIL import Image as _Image  # noqa: PLC0415
+
+            with _Image.open(_io.BytesIO(frame)) as img:
+                gray = img.convert("L").resize(
+                    _SCENE_THUMBNAIL_SIZE, _Image.Resampling.LANCZOS
+                )
+                return [p / 255.0 for p in gray.tobytes()]
+        except Exception:  # noqa: BLE001
+            return None
+
     @staticmethod
     def _select_best_frames(frames: list[bytes], target_count: int) -> list[bytes]:
         """Pick the *target_count* most informative frames using motion scoring.
@@ -470,7 +578,13 @@ class BaseAnalyzer(abc.ABC):
         Strategy:
         - Always include the first frame (scene entry) and last frame (exit).
         - Find the frame with the largest inter-frame pixel diff (peak motion).
-        - Fill remaining slots with the next highest-motion frames.
+        - Fill remaining slots with the next highest-motion frames, preferring
+          candidates spread across the clip's timeline over ones clustered
+          around a single motion burst — a security clip's story (approach,
+          event, departure) needs coverage across the whole duration, and the
+          top few frames by raw pixel delta often sit right next to each
+          other (e.g. three consecutive frames of the same door swinging
+          open) which wastes frame budget on near-duplicates.
 
         Falls back to even-spaced selection if PIL is unavailable.
         """
@@ -507,8 +621,10 @@ class BaseAnalyzer(abc.ABC):
                 peak = max(range(len(diffs)), key=lambda i: diffs[i]) + 1
                 selected.add(peak)
 
-            # Fill remaining slots by motion score
-            remaining = target_count - len(selected)
+            # Fill remaining slots by motion score, spreading picks across the
+            # timeline: require each new pick to be at least min_gap frames
+            # from every frame already selected, then relax that constraint
+            # only if it left slots unfilled (small pools/short clips).
             ranked = sorted(
                 (
                     (diffs[i], i + 1)
@@ -517,8 +633,17 @@ class BaseAnalyzer(abc.ABC):
                 ),
                 reverse=True,
             )
-            for _, idx in ranked[:remaining]:
-                selected.add(idx)
+            min_gap = max(1, len(frames) // target_count)
+            for _, idx in ranked:
+                if len(selected) >= target_count:
+                    break
+                if all(abs(idx - s) >= min_gap for s in selected):
+                    selected.add(idx)
+            if len(selected) < target_count:
+                for _, idx in ranked:
+                    if len(selected) >= target_count:
+                        break
+                    selected.add(idx)
 
             return [frames[i] for i in sorted(selected)]
 
@@ -616,9 +741,10 @@ class BaseAnalyzer(abc.ABC):
         camera: str,
         anomaly_score: float = 0.0,
         clip_timestamp: str = "",
+        scene_deviation: float | None = None,
     ) -> str:
         """Build a rich analysis prompt with camera context, temporal context,
-        anomaly alert, and asset-protection distance rules."""
+        anomaly alert, scene-baseline signal, and asset-protection distance rules."""
         base = self._camera_prompts.get(camera, self._base_prompt)
         parts = [base]
 
@@ -655,13 +781,34 @@ class BaseAnalyzer(abc.ABC):
             except Exception:  # noqa: BLE001
                 pass
 
-        # Behavior anomaly alert
+        # Behavior anomaly alert (temporal — unusual hour/duration for this camera)
         if anomaly_score >= 0.6:
             parts.append(
                 f"\n\nBEHAVIOR ALERT: This event is statistically unusual for "
                 f"this camera at this time (anomaly score {anomaly_score:.2f}/1.00). "
                 "Apply heightened scrutiny to any persons or vehicles in the frame."
             )
+
+        # Visual scene-baseline ("smart brain") signal. This camera is fixed in
+        # place, so its background should look almost the same clip after clip.
+        # A large deviation suggests something new (object, vehicle, obstruction)
+        # is in frame; a close match is a strong signal this is routine, which
+        # helps suppress false positives on ordinary daily activity.
+        if scene_deviation is not None:
+            if scene_deviation >= _SCENE_DEVIATION_ALERT_THRESHOLD:
+                parts.append(
+                    "\n\nSCENE BASELINE: This camera's view currently differs from its "
+                    f"usual background (deviation {scene_deviation:.2f}/1.00). Something "
+                    "not normally present — an object, vehicle, or obstruction — may be "
+                    "in frame. Treat this as a hint to look closer, not a verdict on its own."
+                )
+            else:
+                parts.append(
+                    "\n\nSCENE BASELINE: This camera's view closely matches its usual "
+                    "background — no unexplained new objects. Favor a calm, routine read "
+                    "of the activity unless the frames themselves show something genuinely "
+                    "concerning."
+                )
 
         # Protected vehicle with precise distance rules — only for cameras that
         # can see the car (all cameras when car_cameras is empty, otherwise only
@@ -673,9 +820,11 @@ class BaseAnalyzer(abc.ABC):
         if car_applies:
             parts.append(
                 f"\n\nPROTECTED VEHICLE: {self._car_description}\n"
-                "Apply these distance rules STRICTLY. They cover anyone or anything "
-                "getting close to the vehicle — people, animals, or other vehicles —"
-                " not just pedestrians:\n"
+                "First identify whether each subject is a person, a vehicle, or an "
+                "animal — never apply these vehicle-distance rules to a person unless a "
+                "vehicle is also genuinely visible in frame. Then apply these distance "
+                "rules STRICTLY. They cover anyone or anything getting close to the "
+                "vehicle — people, animals, or other vehicles — not just pedestrians:\n"
                 "• A person, animal, or object touching or within 1 foot of the vehicle: "
                 "suspicious=true, confidence ≥0.8\n"
                 "• A person 1–2 feet away AND facing or reaching toward the vehicle: "
@@ -686,13 +835,18 @@ class BaseAnalyzer(abc.ABC):
                 "without stopping: suspicious=false\n"
                 "• A vehicle driving past on the street without slowing or stopping near "
                 "the protected vehicle: suspicious=false — ordinary through-traffic is NOT "
-                "suspicious no matter how frequent\n"
+                "suspicious no matter how frequent. Describe it plainly as simply driving "
+                "up or down the street; do not say it was 'near' the protected vehicle or "
+                "anything else just because it passed through the frame.\n"
                 "• Anyone or anything more than 5 feet from the vehicle: suspicious=false "
                 "unless actively tampering\n"
                 "Reference: a car door handle is about 4 feet off the ground; a typical car "
                 "is about 6 feet wide.\n"
-                "In your description, always include a natural-language distance estimate such as "
-                "'right next to the car', 'about 2 feet from the driver door', or 'well away from the vehicle'."
+                "When something is genuinely close to the vehicle, always include a "
+                "natural-language distance estimate in your description, such as 'right "
+                "next to the car', 'about 2 feet from the driver door', or 'well away from "
+                "the vehicle'. For ordinary passing traffic or pedestrians, skip distance "
+                "language entirely and just describe the movement."
             )
         elif self._car_description and self._car_cameras:
             # A protected vehicle exists elsewhere on the property, but this camera
@@ -722,7 +876,17 @@ class BaseAnalyzer(abc.ABC):
             f"actually visible in these specific frames from the {camera} camera — never assume "
             "objects or areas seen by other cameras on the property are visible here. "
             + example_phrase
-            + "NEVER include any of these technical terms in the description: "
+            + "Identify subjects accurately: state plainly whether you see a person, a "
+            "vehicle (car, truck, van, motorcycle), or an animal — never describe a "
+            "vehicle's movement as if it were a person, or vice versa. A vehicle simply "
+            "moving along the street without stopping, parking, or approaching a person "
+            "or property is routine traffic — describe it plainly, e.g. 'a car drove up "
+            "the street', and do not say it was 'near' anyone or anything unless it "
+            "actually stopped or slowed close to a specific person, vehicle, or entryway. "
+            "Write in the calm, factual tone of a professional security analyst — state "
+            "only what is observable, avoid speculation or alarmist language, and reserve "
+            "words like 'suspicious' for genuine cause for concern. "
+            "NEVER include any of these technical terms in the description: "
             "'bounding box', 'normalized', 'frame width', 'frame percentage', 'spatial data', "
             "'INTERNAL', 'CONTEXT', 'proximity analysis', 'overlap', 'gap 0.', or any decimal coordinates. "
             "Any internal proximity hints provided are for your reasoning only — do not quote them."

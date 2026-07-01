@@ -221,14 +221,21 @@ options:
   # 0.5 = only alert when the AI is reasonably certain. Results are always stored.
   ai_min_confidence: 0.0
   # Per-camera AI prompts. Each entry overrides the global ai_prompt for a specific
-  # camera. Cameras not listed here use ai_prompt as the default.
-  # Tip: use the Camera Configurations section in the web UI AI tab for a friendlier editor.
+  # camera. Cameras not listed here use ai_prompt as the default. The "camera" value
+  # must exactly match a camera name as shown in the Blink app (case-sensitive) —
+  # this add-on cannot show a dropdown of your camera names here because the HA
+  # Supervisor's config form only supports static fields, not live data.
+  # Tip: use the Camera Configurations section in the web UI AI tab instead — it
+  # lists your actual camera names so there's nothing to type or get wrong.
   # Example: [{camera: "Driveway", prompt: "Focus on vehicle proximity and flag anyone near the car."}]
   ai_camera_prompts: []
   # Per-camera descriptions / context. Each entry tells the AI what the camera is
   # watching so it can give more precise distance estimates and make better decisions.
-  # These are injected into every prompt for the matching camera and can be edited
-  # live in the web UI (AI tab → Camera Configurations) without restarting.
+  # The "camera" value must exactly match a camera name as shown in the Blink app
+  # (case-sensitive). These are injected into every prompt for the matching camera
+  # and can be edited live in the web UI (AI tab → Camera Configurations) without
+  # restarting — that panel lists your actual camera names, so prefer it over
+  # typing names here.
   # Example: [{camera: "Driveway", description: "Points at driveway; silver Kia Forte parked left"}]
   ai_camera_descriptions: []
   # Frame extraction strategy controlling how frames are selected and sent to the AI:
@@ -242,6 +249,10 @@ options:
   # this list will have the PROTECTED VEHICLE / distance rules injected into
   # their AI prompt. Cameras not in this list will focus on their own camera
   # description instead. Leave empty to apply car rules to all cameras (legacy).
+  # Entries must exactly match a camera name as shown in the Blink app
+  # (case-sensitive). Tip: use the "Protected vehicle visible from this camera"
+  # checkbox in the web UI (AI tab → Camera Configurations) instead — it lists
+  # your actual camera names, so there's nothing to type or get wrong.
   # Example: ["Driveway", "Front Door"]
   ai_car_cameras: []
 
