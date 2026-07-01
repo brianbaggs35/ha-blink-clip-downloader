@@ -148,6 +148,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 openai_model=config.openai_model,
             )
             if self._analyzer is not None:
+                self._analyzer.attach_scene_baseline_db(self._db)
                 self._alert_dispatcher = NotificationDispatcher(
                     supervisor_token=config.supervisor_token,
                     mobile_app_target=config.mobile_app_target,

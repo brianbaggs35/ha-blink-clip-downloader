@@ -4304,3 +4304,310 @@ def test_create_analyzer_moondream_cloud_no_finetune_model() -> None:
     a = create_analyzer("moondream_cloud", "prompt", moondream_api_key="key")
     assert isinstance(a, MoondreamCloudAnalyzer)
     assert a.model_name() == "moondream3-preview"
+
+
+# ===========================================================================
+# v3.0.5 — long-clip frame budget, timeline-spread frame selection, scene
+# baseline ("smart brain"), and refined prompt wording
+# ===========================================================================
+
+
+def _real_jpeg(shade: int = 100, width: int = 64) -> bytes:
+    """Build a genuinely decodable solid-color JPEG for PIL-dependent tests."""
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (width, 64), color=(shade, shade, shade))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# _target_frame_count — 30s frame-budget threshold
+# ---------------------------------------------------------------------------
+
+
+def test_target_frame_count_short_clip_uses_max_frames() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        max_frames=3,
+        frame_interval=2.0,
+    )
+    # 15 frames * 2.0s = 30s — at the threshold, not over it.
+    assert a._target_frame_count(15) == 3
+
+
+def test_target_frame_count_long_clip_gets_bonus_frames() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        max_frames=3,
+        frame_interval=2.0,
+    )
+    # 16 frames * 2.0s = 32s — over the 30s threshold.
+    assert a._target_frame_count(16) == 5  # max_frames (3) + bonus (2)
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_long_clip_sends_bonus_frames() -> None:
+    """A clip estimated to run past 30s should send more than max_frames."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="uniform",
+        max_frames=3,
+        frame_interval=2.0,
+    )
+    # 20 raw frames * 2.0s = 40s (> 30s) → target = 3 + 2 = 5
+    many_frames = _FAKE_JPEG * 20
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(many_frames, b""))
+    mock_proc.returncode = 0
+
+    good_resp = json.dumps(
+        {"suspicious": False, "confidence": 0.8, "description": "Clear"}
+    )
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.frame_count == 5
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_short_clip_keeps_configured_max_frames() -> None:
+    """A clip estimated at or under 30s must not get bonus frames."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="uniform",
+        max_frames=3,
+        frame_interval=2.0,
+    )
+    # 15 raw frames * 2.0s = 30s (at, not over, threshold) → target stays 3
+    many_frames = _FAKE_JPEG * 15
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(many_frames, b""))
+    mock_proc.returncode = 0
+
+    good_resp = json.dumps(
+        {"suspicious": False, "confidence": 0.8, "description": "Clear"}
+    )
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.frame_count == 3
+
+
+# ---------------------------------------------------------------------------
+# _select_best_frames — timeline-spread fill (item c)
+# ---------------------------------------------------------------------------
+
+
+def test_select_best_frames_spreads_extra_picks_across_timeline() -> None:
+    """Extra picks (beyond first/last/peak) should spread across the clip's
+    timeline instead of clustering around a single motion burst."""
+    shades = [10] * 20
+    shades[9] = 250
+    shades[10] = 250
+    frames = [_real_jpeg(shades[i], width=64 + i) for i in range(20)]
+
+    result = ClipAnalyzer._select_best_frames(frames, 5)
+    assert len(result) == 5
+
+    indices = sorted(frames.index(f) for f in result)
+    assert indices[0] == 0
+    assert indices[-1] == 19
+    gaps = [b - a for a, b in zip(indices, indices[1:])]
+    assert min(gaps) >= 3
+
+
+def test_select_best_frames_relaxes_spacing_when_pool_too_small() -> None:
+    """With a small pool, the spacing constraint must relax rather than
+    return fewer than target_count frames."""
+    frames = [_real_jpeg(10, width=64 + i) for i in range(6)]
+    result = ClipAnalyzer._select_best_frames(frames, 5)
+    assert len(result) == 5
+
+
+# ---------------------------------------------------------------------------
+# _scene_thumbnail
+# ---------------------------------------------------------------------------
+
+
+def test_scene_thumbnail_returns_normalized_pixel_values() -> None:
+    thumb = ClipAnalyzer._scene_thumbnail(_real_jpeg(128, width=200))
+    assert thumb is not None
+    assert len(thumb) == 16 * 16
+    assert all(0.0 <= v <= 1.0 for v in thumb)
+    assert all(abs(v - 128 / 255) < 0.05 for v in thumb)
+
+
+def test_scene_thumbnail_returns_none_for_invalid_data() -> None:
+    assert ClipAnalyzer._scene_thumbnail(b"not a real jpeg") is None
+
+
+def test_scene_thumbnail_returns_none_for_empty_bytes() -> None:
+    assert ClipAnalyzer._scene_thumbnail(b"") is None
+
+
+# ---------------------------------------------------------------------------
+# attach_scene_baseline_db / analyze_clip integration
+# ---------------------------------------------------------------------------
+
+
+def test_attach_scene_baseline_db_sets_attribute() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    assert a._scene_baseline_db is None
+    sentinel = object()
+    a.attach_scene_baseline_db(sentinel)  # type: ignore[arg-type]
+    assert a._scene_baseline_db is sentinel
+
+
+async def _run_analyze_clip_with_mock_db(
+    is_suspicious: bool,
+) -> tuple[MagicMock, object]:
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="uniform",
+        max_frames=1,
+    )
+    mock_db = MagicMock()
+    mock_db.get_scene_deviation = AsyncMock(return_value=0.05)
+    mock_db.record_scene_baseline = AsyncMock()
+    analyzer.attach_scene_baseline_db(mock_db)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(), b""))
+    mock_proc.returncode = 0
+
+    resp_json = json.dumps(
+        {
+            "suspicious": is_suspicious,
+            "confidence": 0.9 if is_suspicious else 0.5,
+            "description": "Someone prying at the door" if is_suspicious else "OK",
+        }
+    )
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": resp_json})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    return mock_db, result
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_looks_up_scene_deviation_when_db_attached() -> None:
+    mock_db, _ = await _run_analyze_clip_with_mock_db(is_suspicious=False)
+    mock_db.get_scene_deviation.assert_called_once()
+    assert mock_db.get_scene_deviation.call_args[0][0] == "Driveway"
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_records_scene_baseline_when_not_suspicious() -> None:
+    mock_db, _ = await _run_analyze_clip_with_mock_db(is_suspicious=False)
+    mock_db.record_scene_baseline.assert_called_once()
+    assert mock_db.record_scene_baseline.call_args[0][0] == "Driveway"
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_skips_scene_baseline_recording_when_suspicious() -> None:
+    """A suspicious clip must never be folded into the 'normal' baseline."""
+    mock_db, _ = await _run_analyze_clip_with_mock_db(is_suspicious=True)
+    mock_db.record_scene_baseline.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _build_prompt — scene_deviation wording (item d)
+# ---------------------------------------------------------------------------
+
+
+def test_build_prompt_scene_deviation_none_omits_scene_baseline() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam", scene_deviation=None)
+    assert "SCENE BASELINE" not in prompt
+
+
+def test_build_prompt_scene_deviation_high_flags_change() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam", scene_deviation=0.5)
+    assert "SCENE BASELINE" in prompt
+    assert "differs from its usual background" in prompt
+    assert "0.50" in prompt
+
+
+def test_build_prompt_scene_deviation_low_confirms_normal() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam", scene_deviation=0.02)
+    assert "SCENE BASELINE" in prompt
+    assert "closely matches its usual background" in prompt
+
+
+def test_build_prompt_scene_deviation_zero_confirms_normal() -> None:
+    """0.0 (exact match) must take the 'matches baseline' branch, not be
+    treated as falsy/absent the way None is."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam", scene_deviation=0.0)
+    assert "SCENE BASELINE" in prompt
+    assert "closely matches its usual background" in prompt
+
+
+# ---------------------------------------------------------------------------
+# _build_prompt — refined car/person/animal + passing-traffic wording (item e)
+# ---------------------------------------------------------------------------
+
+
+def test_build_prompt_classifies_person_vehicle_animal() -> None:
+    """General subject-classification guidance applies to every camera, not
+    just ones with a protected vehicle configured."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam")
+    assert "person, a vehicle" in prompt
+    assert "professional security analyst" in prompt
+
+
+def test_build_prompt_passing_car_wording_general() -> None:
+    """Even without a protected vehicle configured, ordinary passing traffic
+    should be described as driving up the street, not as being 'near' something."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam")
+    assert "a car drove up the street" in prompt
+
+
+def test_build_prompt_car_applies_passing_traffic_no_near_language() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="Blue Toyota Camry",
+    )
+    prompt = a._build_prompt("Driveway")
+    assert "driving up or down the street" in prompt
+    assert "do not say it was 'near' the protected vehicle" in prompt
