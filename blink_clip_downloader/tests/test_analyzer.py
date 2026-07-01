@@ -2613,6 +2613,72 @@ def test_build_prompt_car_description_with_distance_rules() -> None:
     assert "PROTECTED VEHICLE" in prompt
 
 
+def test_build_prompt_car_camera_included_gets_car_example() -> None:
+    """A camera explicitly listed in car_cameras gets the car-distance example."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Silver Kia Forte",
+        car_cameras=["Driveway"],
+    )
+    prompt = a._build_prompt("Driveway")
+    assert "PROTECTED VEHICLE" in prompt
+    assert "standing about 2 feet from the car" in prompt
+
+
+def test_build_prompt_car_camera_excluded_states_no_vehicle() -> None:
+    """A camera NOT in car_cameras must not be nudged into inventing a car.
+
+    Regression test: previously the OUTPUT RULES example phrase referenced
+    'the car' / 'the driveway' unconditionally, which caused non-car cameras
+    (e.g. a front-door camera that cannot see the driveway) to parrot that
+    exact language back in their descriptions.
+    """
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Silver Kia Forte",
+        car_cameras=["Driveway"],
+    )
+    prompt = a._build_prompt("Front Door")
+    assert "PROTECTED VEHICLE" not in prompt
+    assert "does not view the protected vehicle" in prompt
+    assert "standing about 2 feet from the car" not in prompt
+    assert "walking past the driveway" not in prompt
+    # Camera-agnostic example used instead
+    assert "front steps" in prompt or "yard" in prompt
+
+
+def test_build_prompt_empty_car_cameras_still_applies_to_all() -> None:
+    """Leaving car_cameras empty preserves the documented default: apply to
+    every camera (config.py: 'Leave empty to apply to all cameras')."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Silver Kia Forte",
+        car_cameras=None,
+    )
+    prompt = a._build_prompt("Front Door")
+    assert "PROTECTED VEHICLE" in prompt
+    assert "does not view the protected vehicle" not in prompt
+
+
+def test_build_prompt_output_rules_scoped_to_camera_name() -> None:
+    """OUTPUT RULES explicitly names the current camera and warns against
+    borrowing scenery from other cameras on the property."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+    )
+    prompt = a._build_prompt("Backyard")
+    assert "from the Backyard camera" in prompt
+    assert "other cameras on the property" in prompt
+
+
 def test_create_analyzer_ollama_with_camera_descriptions() -> None:
     """create_analyzer passes camera_descriptions to ClipAnalyzer."""
     descriptions = {"Backyard": "Overlooks the pool"}

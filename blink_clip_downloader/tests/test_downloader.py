@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -252,40 +250,30 @@ async def test_stream_to_file_deletes_partial_on_failure(dl, tmp_path):
 # _generate_thumbnail / backfill_thumbnails
 # ---------------------------------------------------------------------------
 
-_HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 
+async def test_generate_thumbnail_creates_jpg(dl, tmp_path):
+    """ffmpeg exits 0 and writes the thumbnail file."""
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake video data")
+    thumb = tmp_path / "clip.jpg"
 
-@pytest.fixture
-def real_video(tmp_path):
-    """A tiny real .mp4 file, generated with ffmpeg for thumbnail tests."""
-    video = tmp_path / "real.mp4"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc=duration=1:size=64x64:rate=5",
-            "-pix_fmt",
-            "yuv420p",
-            str(video),
-        ],
-        check=True,
-    )
-    return video
+    mock_proc = AsyncMock()
+    mock_proc.wait = AsyncMock(side_effect=lambda: thumb.write_bytes(b"\xff\xd8\xff"))
 
-
-@pytest.mark.skipif(not _HAVE_FFMPEG, reason="ffmpeg is not installed")
-async def test_generate_thumbnail_creates_jpg(dl, real_video):
-    thumb = real_video.with_suffix(".jpg")
-    created = await dl._generate_thumbnail(real_video, thumb)
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ) as mock_exec:
+        created = await dl._generate_thumbnail(video, thumb)
 
     assert created is True
     assert thumb.exists()
     assert thumb.stat().st_size > 0
+
+    args = mock_exec.call_args.args
+    assert args[0] == "ffmpeg"
+    assert str(video) in args
+    assert str(thumb) in args
 
 
 async def test_generate_thumbnail_skips_if_thumb_exists(dl, tmp_path):

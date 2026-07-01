@@ -9,13 +9,13 @@ import platform
 import sys
 import zipfile
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from aiohttp import web
 
 from .database import ClipDatabase
 
-if __import__("typing").TYPE_CHECKING:
+if TYPE_CHECKING:
     from .analysis_queue import AnalysisQueue
     from .analyzer import BaseAnalyzer
 
@@ -132,7 +132,9 @@ body.light{
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-     background:var(--bg);color:var(--text);height:100vh;display:flex;
+     background:var(--bg);color:var(--text);
+     /* dvh re-measures on iOS Companion WKWebView bg/fg cycles; vh is the fallback */
+     height:100vh;height:100dvh;display:flex;
      flex-direction:column;overflow:hidden}
 button,input,select{font:inherit}
 a{color:var(--accent);text-decoration:none}
@@ -212,7 +214,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 .stat-chip strong{color:var(--accent)}
 
 /* ── Clip grid ────────────────────────────────────────── */
-.clip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));gap:.8rem}
+.clip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(228px,100%),1fr));gap:.8rem}
 .clip-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
            overflow:hidden;cursor:pointer;transition:.15s;position:relative;user-select:none}
 .clip-card:hover{border-color:var(--accent2);transform:translateY(-2px);
@@ -315,7 +317,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 
 /* ── Status page ──────────────────────────────────────── */
 #page-status{overflow-y:auto;padding:1.5rem}
-.status-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+.status-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));
              gap:1rem;max-width:1050px;margin:0 auto}
 .status-card{background:var(--card);border:1px solid var(--border);
              border-radius:var(--radius);padding:1rem 1.15rem}
@@ -346,7 +348,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 #page-automations,#page-ai,#page-usage{overflow-y:auto;padding:1.5rem}
 
 /* ── AI Usage page ────────────────────────────────────── */
-.usage-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));
+.usage-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));
             gap:1rem;margin-bottom:1.5rem}
 .usage-stat{background:var(--card);border:1px solid var(--border);
             border-radius:var(--radius);padding:1.1rem 1.2rem;text-align:center}
@@ -401,7 +403,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 .toast{position:fixed;bottom:1.4rem;right:1.4rem;background:#238636;
        color:#fff;padding:.55rem 1rem;border-radius:var(--radius);
        font-size:.84rem;z-index:500;opacity:0;transition:opacity .22s;
-       pointer-events:none;max-width:310px}
+       pointer-events:none;max-width:min(310px,calc(100vw - 2.8rem))}
 .toast.show{opacity:1}
 .toast.err{background:var(--danger)}
 
@@ -409,6 +411,17 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 @media(max-width:600px){
   .sidebar{display:none} .nav-tab span{display:none} .search{width:120px}
   .meta-grid{grid-template-columns:auto 1fr}
+
+  /* Unwrapped nav overflowed narrow viewports, clipping trailing buttons via body's overflow:hidden */
+  .nav{flex-wrap:wrap;height:auto;min-height:var(--nav-h);
+       padding:.4rem .6rem;row-gap:.35rem}
+  .nav-brand{font-size:.92rem}
+  .nav-brand span{display:none}
+  .nav-tabs{order:3;flex:1 1 100%;overflow-x:auto;-webkit-overflow-scrolling:touch;
+            scrollbar-width:none}
+  .nav-tabs::-webkit-scrollbar{display:none}
+  .nav-actions{gap:.3rem}
+  .nav-actions .btn.sm{padding:.3rem .55rem;font-size:.75rem}
 }
 </style>
 </head>
@@ -647,7 +660,7 @@ action:
       </div>
     </div>
     <div id="ai-content" style="display:none">
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1rem;margin-bottom:1.5rem">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:1rem;margin-bottom:1.5rem">
         <!-- AI Connection Card -->
         <div class="card" style="padding:1.2rem">
           <h3 style="margin-bottom:.8rem">AI Connection</h3>
@@ -2297,7 +2310,6 @@ class MediaServer:
         app.router.add_get("/api/ai/usage", self._handle_ai_usage)
         app.router.add_get("/api/ai/models", self._handle_ai_models)
         app.router.add_get("/api/ai/queue", self._handle_ai_queue)
-        app.router.add_get("/api/ai/results", self._handle_ai_results)
         app.router.add_get("/api/ai/results/{clip_id}", self._handle_ai_clip_result)
         app.router.add_get("/api/ai/suspicious", self._handle_ai_suspicious)
         app.router.add_post("/api/ai/analyze/{clip_id}", self._handle_ai_analyze_now)
@@ -2576,20 +2588,6 @@ class MediaServer:
             return web.json_response({"enabled": False})
         status = await self._analysis_queue.get_queue_status()
         return web.json_response({"enabled": True, **status})
-
-    async def _handle_ai_results(self, request: web.Request) -> web.Response:
-        q = request.rel_url.query
-        try:
-            limit = min(int(q.get("limit", 50)), 200)
-            offset = int(q.get("offset", 0))
-        except ValueError:
-            limit, offset = 50, 0
-
-        if q.get("suspicious") == "1":
-            results = await self._db.get_suspicious_clips(limit=limit, offset=offset)
-        else:
-            results = await self._db.get_suspicious_clips(limit=limit, offset=offset)
-        return web.json_response(results)
 
     async def _handle_ai_clip_result(self, request: web.Request) -> web.Response:
         clip_id = request.match_info["clip_id"]
