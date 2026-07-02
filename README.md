@@ -1,3 +1,11 @@
+[![codecov](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader/graph/badge.svg?token=66T4D63JFM)](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader)
+
+[![CI/CD Pipeline](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/ci.yaml/badge.svg)](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/ci.yaml)
+
+[![CI/CD Pipeline](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/build.yaml/badge.svg?event=release)](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/build.yaml)
+
+Current Version - ![GitHub release](https://img.shields.io/github/v/release/brianbaggs35/ha-blink-clip-downloader)
+
 # Home Assistant Blink Clip Downloader
 
 A Home Assistant OS add-on that continuously downloads Blink camera clips to your
