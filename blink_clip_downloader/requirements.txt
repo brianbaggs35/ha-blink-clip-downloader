@@ -1,8 +1,10 @@
 blinkpy>=0.25.7
-aiohttp>=3.9.0
-aiofiles>=23.2.1
-aiosqlite>=0.20.0
-python-slugify>=8.0.1
+aiohttp>=3.14.1
+aiofiles>=25.1.0
+aiosqlite>=0.22.1
+python-slugify>=8.0.4
 python-dateutil>=2.9.0
-aiosmtplib>=2.0.0
-Pillow>=10.0.0
+aiosmtplib>=5.1.2
+Pillow>=12.3.0
+anthropic>=0.115.1
+openai>=2.44.0

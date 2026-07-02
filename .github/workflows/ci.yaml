@@ -93,14 +93,15 @@ jobs:
           pip install -e "blink_clip_downloader[test]"
 
       - name: Run pytest with coverage
+        working-directory: blink_clip_downloader
         run: |
-          pytest blink_clip_downloader/tests \
+          pytest tests \
             -v \
             --tb=short \
-            --cov=blink_clip_downloader \
+            --cov=blink_downloader \
             --cov-branch \
             --cov-report=term-missing \
-            --cov-report=xml:coverage.xml
+            --cov-report=xml:../coverage.xml
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
