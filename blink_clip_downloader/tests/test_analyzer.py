@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -621,8 +623,9 @@ async def test_moondream_cloud_call_model_success() -> None:
     with patch("asyncio.sleep", new_callable=AsyncMock):
         result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG, _FAKE_JPEG], "Analyze.")
     assert "No suspicious activity" in result or "suspicious" in result.lower()
-    # Should have posted once per frame (3 frames)
-    assert a._session.post.call_count == 3
+    # No "objects" key in the blanket mock response → person/animal/vehicle
+    # detect all return [] per frame (3 detect calls each), so 3 frames × 3 = 9
+    assert a._session.post.call_count == 9
     # Should have posted to the Cloud API
     call_kwargs = a._session.post.call_args
     assert "moondream.ai" in str(call_kwargs)
@@ -712,6 +715,12 @@ async def test_moondream_local_health_check_ready(
 async def test_moondream_local_call_model(monkeypatch: pytest.MonkeyPatch) -> None:
     """_call_model runs inference in a thread executor on all frames."""
     mock_model = MagicMock()
+    # A person is detected on every frame so the pipeline reaches query()
+    # instead of short-circuiting to the no-subject skip response.
+    mock_model.detect.return_value = {
+        "objects": [{"x_min": 0.2, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    }
+    mock_model.caption.return_value = {"caption": "A person stands in the yard."}
     # First frame: not suspicious; second frame: suspicious
     mock_model.query.side_effect = [
         {
@@ -730,7 +739,7 @@ async def test_moondream_local_call_model(monkeypatch: pytest.MonkeyPatch) -> No
         result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "Analyze this scene.")
 
     # Should pick the suspicious result
-    assert "Person near car" in result or "suspicious" in result.lower()
+    assert "Person near car" in result
 
 
 async def test_moondream_local_call_model_no_frames() -> None:
@@ -747,6 +756,274 @@ async def test_moondream_local_close_resets_state() -> None:
     await a.close()
     assert a._model_ready is False
     assert a._md_model is None
+
+
+# ------------------------------------------------------------------
+# MoondreamLocalAnalyzer — detect/caption helpers
+# ------------------------------------------------------------------
+
+
+def test_local_detect_filters_non_dicts() -> None:
+    mock_model = MagicMock()
+    mock_model.detect.return_value = {
+        "objects": [
+            {"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9},
+            "not_a_dict",
+            None,
+        ]
+    }
+    a = MoondreamLocalAnalyzer(prompt="p")
+    a._md_model = mock_model
+
+    result = a._local_detect("encoded", "person")
+    assert result == [{"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+
+
+def test_local_detect_exception_returns_empty() -> None:
+    mock_model = MagicMock()
+    mock_model.detect.side_effect = RuntimeError("inference failed")
+    a = MoondreamLocalAnalyzer(prompt="p")
+    a._md_model = mock_model
+
+    assert a._local_detect("encoded", "person") == []
+
+
+def test_local_caption_success() -> None:
+    mock_model = MagicMock()
+    mock_model.caption.return_value = {"caption": "A quiet driveway scene."}
+    a = MoondreamLocalAnalyzer(prompt="p")
+    a._md_model = mock_model
+
+    assert a._local_caption("encoded") == "A quiet driveway scene."
+
+
+def test_local_caption_exception_returns_empty() -> None:
+    mock_model = MagicMock()
+    mock_model.caption.side_effect = RuntimeError("inference failed")
+    a = MoondreamLocalAnalyzer(prompt="p")
+    a._md_model = mock_model
+
+    assert a._local_caption("encoded") == ""
+
+
+def test_detect_protected_vehicle_sync_skips_when_zero_or_one_car() -> None:
+    mock_model = MagicMock()
+    mock_model.detect.side_effect = AssertionError("should not be called")
+    a = MoondreamLocalAnalyzer(prompt="p", car_description="Silver Kia")
+    a._md_model = mock_model
+
+    single = [{"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    protected, other = a._detect_protected_vehicle_sync("encoded", single)
+    assert protected == single
+    assert other == []
+
+
+def test_detect_protected_vehicle_sync_disambiguates() -> None:
+    car_boxes = [
+        {"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9},
+        {"x_min": 0.6, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9},
+    ]
+
+    def fake_detect(encoded: Any, object_name: str) -> dict[str, Any]:
+        assert object_name == "Silver Kia"
+        return {"objects": [car_boxes[0]]}
+
+    mock_model = MagicMock()
+    mock_model.detect.side_effect = fake_detect
+    a = MoondreamLocalAnalyzer(prompt="p", car_description="Silver Kia")
+    a._md_model = mock_model
+
+    protected, other = a._detect_protected_vehicle_sync("encoded", car_boxes)
+    assert protected == [car_boxes[0]]
+    assert other == [car_boxes[1]]
+
+
+def test_detect_protected_vehicle_sync_falls_back_when_nothing_found() -> None:
+    car_boxes = [
+        {"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9},
+        {"x_min": 0.6, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9},
+    ]
+    mock_model = MagicMock()
+    mock_model.detect.return_value = {"objects": []}
+    a = MoondreamLocalAnalyzer(prompt="p", car_description="Silver Kia")
+    a._md_model = mock_model
+
+    protected, other = a._detect_protected_vehicle_sync("encoded", car_boxes)
+    assert protected == car_boxes
+    assert other == []
+
+
+# ------------------------------------------------------------------
+# MoondreamLocalAnalyzer — _analyze_frame_sync ambient detection
+# ------------------------------------------------------------------
+
+
+def _make_local_model(
+    detect_by_object: dict[str, list[dict[str, float]]],
+    query_answer: str,
+    caption: str = "A quiet scene.",
+) -> MagicMock:
+    """Build a mock local moondream model dispatching detect/caption/query
+    calls by object name, mirroring the cloud tests' _dispatch_moondream."""
+    mock_model = MagicMock()
+    mock_model.encode_image.return_value = "encoded"
+
+    def fake_detect(encoded: Any, object_name: str) -> dict[str, Any]:
+        return {"objects": detect_by_object.get(object_name, [])}
+
+    mock_model.detect.side_effect = fake_detect
+    mock_model.caption.return_value = {"caption": caption}
+    mock_model.query.return_value = {"answer": query_answer}
+    return mock_model
+
+
+def test_analyze_frame_sync_non_car_camera_vehicle_gets_query() -> None:
+    """A car passing a non-car camera (no person) must still reach query,
+    not the generic no-subject skip, and carry a vehicle hint."""
+    vehicle_boxes = [{"x_min": 0.2, "y_min": 0.3, "x_max": 0.6, "y_max": 0.8}]
+    query_answer = '{"suspicious": false, "confidence": 0.3, "description": "A car drove up the street."}'
+    mock_model = _make_local_model({"vehicle": vehicle_boxes}, query_answer)
+
+    a = MoondreamLocalAnalyzer(prompt="p")
+    a._md_model = mock_model
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=False)
+
+    assert "A car drove up the street" in result
+    prompt_arg = mock_model.query.call_args[0][1]
+    assert "INTERNAL VEHICLE HINT" in prompt_arg
+    assert "Vehicle 1 is in the" in prompt_arg
+
+
+def test_analyze_frame_sync_non_car_camera_animal_gets_query() -> None:
+    animal_boxes = [{"x_min": 0.4, "y_min": 0.5, "x_max": 0.6, "y_max": 0.9}]
+    query_answer = '{"suspicious": false, "confidence": 0.2, "description": "A cat walked across the yard."}'
+    mock_model = _make_local_model({"animal": animal_boxes}, query_answer)
+
+    a = MoondreamLocalAnalyzer(prompt="p")
+    a._md_model = mock_model
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=False)
+
+    assert "A cat walked across the yard" in result
+    prompt_arg = mock_model.query.call_args[0][1]
+    assert "Animal 1 is in the" in prompt_arg
+    assert "INTERNAL VEHICLE HINT" not in prompt_arg
+
+
+def test_analyze_frame_sync_nothing_detected_skips_query() -> None:
+    mock_model = _make_local_model({}, '{"suspicious": false}')
+
+    a = MoondreamLocalAnalyzer(prompt="p")
+    a._md_model = mock_model
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=False)
+
+    assert "No person detected" in result
+    mock_model.query.assert_not_called()
+
+
+def test_analyze_frame_sync_car_camera_multiple_vehicles_uses_vehicle_proximity_hint() -> (
+    None
+):
+    """Car camera: another vehicle near the protected car uses the
+    conservative vehicle-proximity hint, not the person/animal one."""
+    car_boxes = [
+        {"x_min": 0.1, "y_min": 0.2, "x_max": 0.5, "y_max": 0.9},
+        {"x_min": 0.5, "y_min": 0.2, "x_max": 0.9, "y_max": 0.9},
+    ]
+
+    def fake_detect(encoded: Any, object_name: str) -> dict[str, Any]:
+        if object_name == "car":
+            return {"objects": car_boxes}
+        if object_name == "Silver Kia":
+            return {"objects": [car_boxes[0]]}
+        return {"objects": []}
+
+    mock_model = MagicMock()
+    mock_model.encode_image.return_value = "encoded"
+    mock_model.detect.side_effect = fake_detect
+    mock_model.caption.return_value = {"caption": "Two cars in the driveway."}
+    mock_model.query.return_value = {
+        "answer": '{"suspicious": true, "confidence": 0.5, "description": "Another car parked beside it."}'
+    }
+
+    a = MoondreamLocalAnalyzer(prompt="p", car_description="Silver Kia")
+    a._md_model = mock_model
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=True)
+
+    assert "Another car parked beside it" in result
+    prompt_arg = mock_model.query.call_args[0][1]
+    assert "INTERNAL VEHICLE PROXIMITY HINT" in prompt_arg
+    assert "camera perspective" in prompt_arg
+
+
+def test_analyze_frame_sync_car_camera_person_near_car_uses_proximity_hint() -> None:
+    """Car camera: a person detected alongside the protected vehicle re-runs
+    the car detect (Phase 1b skips it when a person is present) and uses the
+    person/animal proximity hint, not the vehicle one."""
+    person_boxes = [{"x_min": 0.35, "y_min": 0.2, "x_max": 0.55, "y_max": 0.9}]
+    car_boxes = [{"x_min": 0.4, "y_min": 0.3, "x_max": 0.9, "y_max": 0.9}]
+
+    def fake_detect(encoded: Any, object_name: str) -> dict[str, Any]:
+        if object_name == "person":
+            return {"objects": person_boxes}
+        if object_name == "car":
+            return {"objects": car_boxes}
+        return {"objects": []}
+
+    mock_model = MagicMock()
+    mock_model.encode_image.return_value = "encoded"
+    mock_model.detect.side_effect = fake_detect
+    mock_model.caption.return_value = {"caption": "A person stands by the car."}
+    mock_model.query.return_value = {
+        "answer": '{"suspicious": true, "confidence": 0.8, "description": "Person touching the car."}'
+    }
+
+    a = MoondreamLocalAnalyzer(prompt="p", car_description="Silver Kia")
+    a._md_model = mock_model
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=True)
+
+    assert "Person touching the car" in result
+    prompt_arg = mock_model.query.call_args[0][1]
+    assert "INTERNAL PROXIMITY HINT" in prompt_arg
+    assert "person or animal" in prompt_arg
+
+
+def test_analyze_frame_sync_car_camera_person_no_car_visible() -> None:
+    """Car camera: a person is present but the protected vehicle is not
+    visible in this frame — should note the car's absence, not guess."""
+    person_boxes = [{"x_min": 0.35, "y_min": 0.2, "x_max": 0.55, "y_max": 0.9}]
+
+    def fake_detect(encoded: Any, object_name: str) -> dict[str, Any]:
+        if object_name == "person":
+            return {"objects": person_boxes}
+        return {"objects": []}
+
+    mock_model = MagicMock()
+    mock_model.encode_image.return_value = "encoded"
+    mock_model.detect.side_effect = fake_detect
+    mock_model.caption.return_value = {"caption": "A person walks by."}
+    mock_model.query.return_value = {
+        "answer": '{"suspicious": false, "confidence": 0.2, "description": "Person walking past."}'
+    }
+
+    a = MoondreamLocalAnalyzer(prompt="p", car_description="Silver Kia")
+    a._md_model = mock_model
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=True)
+
+    assert "Person walking past" in result
+    prompt_arg = mock_model.query.call_args[0][1]
+    assert "not visible in this frame" in prompt_arg
 
 
 # ------------------------------------------------------------------
@@ -3346,6 +3623,41 @@ def _make_query_resp(answer: str) -> AsyncMock:
     return resp
 
 
+def _make_caption_resp(caption: str = "A quiet driveway scene.") -> AsyncMock:
+    """Create a mock aiohttp response for the /caption endpoint."""
+    resp = AsyncMock()
+    resp.status = 200
+    resp.json = AsyncMock(return_value={"caption": caption})
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=False)
+    return resp
+
+
+def _dispatch_moondream(
+    url: str,
+    kwargs: dict[str, Any],
+    *,
+    detect: list[dict[str, float]] | Callable[[str], list[dict[str, float]]],
+    query_answer: str,
+    caption: str = "A quiet driveway scene.",
+    injected_prompts: list[str] | None = None,
+) -> AsyncMock:
+    """Shared endpoint dispatcher for Moondream Cloud mocks.
+
+    ``detect`` is either a fixed list of boxes (returned for every /detect
+    call regardless of object) or a callable ``(object_name) -> list``.
+    """
+    if "/detect" in url:
+        obj = kwargs.get("json", {}).get("object", "")
+        boxes = detect(obj) if callable(detect) else detect
+        return _make_detect_resp(boxes)
+    if "/caption" in url:
+        return _make_caption_resp(caption)
+    if injected_prompts is not None:
+        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
+    return _make_query_resp(query_answer)
+
+
 # ------------------------------------------------------------------
 # _detect_objects
 # ------------------------------------------------------------------
@@ -3411,6 +3723,159 @@ async def test_detect_objects_filters_non_dicts() -> None:
 
     result = await a._detect_objects(b"f", "person")
     assert result == [{"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+
+
+# ------------------------------------------------------------------
+# _caption_frame
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_caption_frame_success() -> None:
+    """_caption_frame returns the caption text and accumulates tokens."""
+    resp = _make_caption_resp("A grey Kia Forte parked on a gravel driveway.")
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = _mock_session(post=MagicMock(return_value=resp))
+
+    result = await a._caption_frame(b"fake_frame")
+    assert result == "A grey Kia Forte parked on a gravel driveway."
+    assert a._last_prompt_tokens > 0
+    assert a._last_completion_tokens > 0
+
+
+@pytest.mark.asyncio
+async def test_caption_frame_non_200_returns_empty() -> None:
+    resp = AsyncMock()
+    resp.status = 500
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=False)
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = _mock_session(post=MagicMock(return_value=resp))
+
+    result = await a._caption_frame(b"fake_frame")
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_caption_frame_timeout_returns_empty() -> None:
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = _mock_session(post=MagicMock(side_effect=asyncio.TimeoutError))
+
+    result = await a._caption_frame(b"fake_frame")
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_caption_frame_client_error_returns_empty() -> None:
+    import aiohttp
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    session = MagicMock()
+    session.post = MagicMock(side_effect=aiohttp.ClientError("conn refused"))
+    session.closed = False
+    a._session = session
+
+    result = await a._caption_frame(b"fake_frame")
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_caption_frame_includes_finetune_model() -> None:
+    """When a fine-tuned model is configured, /caption's payload includes it."""
+    resp = _make_caption_resp("A quiet scene.")
+    session = _mock_session(post=MagicMock(return_value=resp))
+    a = MoondreamCloudAnalyzer(
+        api_key="key", prompt="p", finetune_model="moondream3-preview/abc123@50"
+    )
+    a._session = session
+
+    await a._caption_frame(b"fake_frame")
+
+    _, kwargs = session.post.call_args
+    assert kwargs["json"]["model"] == "moondream3-preview/abc123@50"
+
+
+# ------------------------------------------------------------------
+# _detect_protected_vehicle
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_detect_protected_vehicle_skips_when_zero_or_one_car() -> None:
+    """No disambiguation needed with 0 or 1 car boxes — no extra detect call."""
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    session = MagicMock()
+    session.post = MagicMock(side_effect=AssertionError("should not be called"))
+    session.closed = False
+    a._session = session
+
+    single = [{"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    protected, other = await a._detect_protected_vehicle(b"frame", single)
+    assert protected == single
+    assert other == []
+
+    protected, other = await a._detect_protected_vehicle(b"frame", [])
+    assert protected == []
+    assert other == []
+
+
+@pytest.mark.asyncio
+async def test_detect_protected_vehicle_skips_without_car_description() -> None:
+    """No car_description configured — nothing to disambiguate against."""
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    session = MagicMock()
+    session.post = MagicMock(side_effect=AssertionError("should not be called"))
+    session.closed = False
+    a._session = session
+
+    car_boxes = [
+        {"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9},
+        {"x_min": 0.5, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9},
+    ]
+    protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
+    assert protected == car_boxes
+    assert other == []
+
+
+@pytest.mark.asyncio
+async def test_detect_protected_vehicle_disambiguates_ambiguous_case() -> None:
+    """More than one car box + a targeted detect that finds the protected
+    car → the non-matching box is returned as an "other vehicle"."""
+    car_boxes = [
+        {"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9},
+        {"x_min": 0.6, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9},
+    ]
+
+    async def fake_detect(frame: bytes, object_name: str) -> list[dict[str, float]]:
+        assert object_name == "Silver Kia"
+        return [car_boxes[0]]
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    with patch.object(a, "_detect_objects", side_effect=fake_detect):
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
+
+    assert protected == [car_boxes[0]]
+    assert other == [car_boxes[1]]
+
+
+@pytest.mark.asyncio
+async def test_detect_protected_vehicle_falls_back_when_nothing_found() -> None:
+    """Targeted detect finds nothing usable → fall back to treating every
+    car box as the protected vehicle rather than manufacturing a false
+    'other vehicle' alert."""
+    car_boxes = [
+        {"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9},
+        {"x_min": 0.6, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9},
+    ]
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    with patch.object(a, "_detect_objects", new=AsyncMock(return_value=[])):
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
+
+    assert protected == car_boxes
+    assert other == []
 
 
 # ------------------------------------------------------------------
@@ -3502,7 +3967,7 @@ def test_proximity_hint_under_one_foot() -> None:
 
 
 def test_proximity_hint_one_to_three_feet() -> None:
-    hint = MoondreamCloudAnalyzer._proximity_hint(0.10, "other vehicle")
+    hint = MoondreamCloudAnalyzer._proximity_hint(0.10, "person or animal")
     assert "1–3 feet" in hint
     assert "do NOT flag as suspicious" in hint
 
@@ -3511,6 +3976,156 @@ def test_proximity_hint_far_away() -> None:
     hint = MoondreamCloudAnalyzer._proximity_hint(0.5, "person or animal")
     assert "several feet" in hint
     assert "NOT suspicious" in hint
+
+
+# ------------------------------------------------------------------
+# _vehicle_proximity_hint
+# ------------------------------------------------------------------
+
+
+def test_vehicle_proximity_hint_warns_about_camera_perspective() -> None:
+    """The vehicle-to-vehicle hint must never instruct the model to parrot
+    'touching'/'right next to' language purely from bbox gap — that was the
+    root cause of false suspicious alerts for ordinary passing traffic."""
+    hint = MoondreamCloudAnalyzer._vehicle_proximity_hint(0.0)
+    assert "INTERNAL VEHICLE PROXIMITY HINT" in hint
+    assert "camera perspective" in hint
+    assert "NOT reliable evidence" in hint
+    assert "Describe this as" not in hint
+
+
+def test_vehicle_proximity_hint_requires_stopping_or_parking() -> None:
+    hint = MoondreamCloudAnalyzer._vehicle_proximity_hint(0.02)
+    assert "stopping, parking, or backing up" in hint
+    assert "0.02" in hint
+
+
+def test_vehicle_proximity_hint_suggests_plain_driving_description() -> None:
+    hint = MoondreamCloudAnalyzer._vehicle_proximity_hint(0.3)
+    assert "driving up or down the street" in hint
+    assert "suspicious=false" in hint
+
+
+# ------------------------------------------------------------------
+# _bbox_iou
+# ------------------------------------------------------------------
+
+
+def test_bbox_iou_identical_boxes() -> None:
+    box = {"x_min": 0.2, "y_min": 0.2, "x_max": 0.6, "y_max": 0.6}
+    assert MoondreamCloudAnalyzer._bbox_iou(box, box) == pytest.approx(1.0)
+
+
+def test_bbox_iou_no_overlap() -> None:
+    a = {"x_min": 0.0, "y_min": 0.0, "x_max": 0.1, "y_max": 0.1}
+    b = {"x_min": 0.5, "y_min": 0.5, "x_max": 0.6, "y_max": 0.6}
+    assert MoondreamCloudAnalyzer._bbox_iou(a, b) == 0.0
+
+
+def test_bbox_iou_touching_but_no_area_overlap() -> None:
+    """Two boxes that merely touch at an edge (gap 0) have IoU 0 — distinct
+    from two detections of the same box, which should have IoU 1."""
+    a = {"x_min": 0.0, "y_min": 0.0, "x_max": 0.3, "y_max": 1.0}
+    b = {"x_min": 0.3, "y_min": 0.0, "x_max": 0.6, "y_max": 1.0}
+    assert MoondreamCloudAnalyzer._bbox_iou(a, b) == 0.0
+
+
+def test_bbox_iou_partial_overlap() -> None:
+    a = {"x_min": 0.0, "y_min": 0.0, "x_max": 0.5, "y_max": 0.5}
+    b = {"x_min": 0.25, "y_min": 0.0, "x_max": 0.75, "y_max": 0.5}
+    # intersection: 0.25*0.5 = 0.125; union: 0.25 + 0.25 - 0.125 = 0.375
+    assert MoondreamCloudAnalyzer._bbox_iou(a, b) == pytest.approx(0.125 / 0.375)
+
+
+# ------------------------------------------------------------------
+# _other_vehicle_boxes
+# ------------------------------------------------------------------
+
+
+def test_other_vehicle_boxes_empty_protected_returns_all() -> None:
+    all_boxes = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.3, "y_max": 0.3}]
+    result = MoondreamCloudAnalyzer._other_vehicle_boxes([], all_boxes)
+    assert result == all_boxes
+
+
+def test_other_vehicle_boxes_excludes_matching_protected_box() -> None:
+    protected = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.3, "y_max": 0.3}]
+    same_box = {"x_min": 0.01, "y_min": 0.01, "x_max": 0.3, "y_max": 0.3}
+    other_box = {"x_min": 0.6, "y_min": 0.6, "x_max": 0.9, "y_max": 0.9}
+    result = MoondreamCloudAnalyzer._other_vehicle_boxes(
+        protected, [same_box, other_box]
+    )
+    assert result == [other_box]
+
+
+def test_other_vehicle_boxes_adjacent_cars_both_kept() -> None:
+    """Two physically distinct cars parked flush against each other (gap
+    0, IoU 0) must both survive — the protected-vehicle box does not
+    erroneously swallow its touching neighbour."""
+    protected = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.3, "y_max": 1.0}]
+    neighbour = {"x_min": 0.3, "y_min": 0.0, "x_max": 0.6, "y_max": 1.0}
+    result = MoondreamCloudAnalyzer._other_vehicle_boxes(protected, [neighbour])
+    assert result == [neighbour]
+
+
+# ------------------------------------------------------------------
+# _position_hint (labeled subjects)
+# ------------------------------------------------------------------
+
+
+def test_position_hint_empty_returns_blank() -> None:
+    assert MoondreamCloudAnalyzer._position_hint([]) == ""
+
+
+def test_position_hint_single_person() -> None:
+    box = {"x_min": 0.0, "y_min": 0.0, "x_max": 0.2, "y_max": 0.2}
+    hint = MoondreamCloudAnalyzer._position_hint([("Person", box)])
+    assert "Person 1 is in the top-left of the frame" in hint
+    assert "INTERNAL POSITION HINT" in hint
+
+
+def test_position_hint_mixed_labels_numbered_independently() -> None:
+    person_box = {"x_min": 0.0, "y_min": 0.0, "x_max": 0.2, "y_max": 0.2}
+    vehicle_box = {"x_min": 0.8, "y_min": 0.8, "x_max": 1.0, "y_max": 1.0}
+    hint = MoondreamCloudAnalyzer._position_hint(
+        [("Person", person_box), ("Vehicle", vehicle_box)]
+    )
+    assert "Person 1 is in the top-left of the frame" in hint
+    assert "Vehicle 1 is in the bottom-right of the frame" in hint
+
+
+def test_position_hint_limits_to_three_subjects() -> None:
+    box = {"x_min": 0.0, "y_min": 0.0, "x_max": 0.2, "y_max": 0.2}
+    subjects = [("Person", box)] * 5
+    hint = MoondreamCloudAnalyzer._position_hint(subjects)
+    assert "Person 4" not in hint
+    assert "Person 3" in hint
+
+
+# ------------------------------------------------------------------
+# _vehicle_hint
+# ------------------------------------------------------------------
+
+
+def test_vehicle_hint_content() -> None:
+    hint = MoondreamCloudAnalyzer._vehicle_hint()
+    assert "INTERNAL VEHICLE HINT" in hint
+    assert "car drove up the street" in hint
+    assert "suspicious=false" in hint
+
+
+# ------------------------------------------------------------------
+# _no_subject_response
+# ------------------------------------------------------------------
+
+
+def test_no_subject_response_is_valid_clear_json() -> None:
+    is_suspicious, confidence, summary = MoondreamCloudAnalyzer._try_parse_json(
+        MoondreamCloudAnalyzer._no_subject_response()
+    )
+    assert is_suspicious is False
+    assert confidence == pytest.approx(0.9)
+    assert "No person detected" in summary
 
 
 # ------------------------------------------------------------------
@@ -3526,17 +4141,14 @@ async def test_moondream_cloud_call_model_with_person_detected() -> None:
         '{"suspicious": false, "confidence": 0.7, "description": "Person walking by."}'
     )
 
-    detect_resp = _make_detect_resp(person_boxes)
-    query_resp = _make_query_resp(query_answer)
-
     call_count = 0
 
     def side_effect_post(url, **kwargs):
         nonlocal call_count
         call_count += 1
-        if "detect" in url:
-            return detect_resp
-        return query_resp
+        return _dispatch_moondream(
+            url, kwargs, detect=person_boxes, query_answer=query_answer
+        )
 
     session = MagicMock()
     session.post = MagicMock(side_effect=side_effect_post)
@@ -3549,7 +4161,7 @@ async def test_moondream_cloud_call_model_with_person_detected() -> None:
         result = await a._call_model([_FAKE_JPEG], "p")
 
     assert "Person walking by" in result
-    assert call_count == 2  # 1 detect + 1 query
+    assert call_count == 3  # 1 detect + 1 caption + 1 query
 
 
 @pytest.mark.asyncio
@@ -3567,8 +4179,8 @@ async def test_moondream_cloud_call_model_no_person_skips_query() -> None:
     with patch("asyncio.sleep", new_callable=AsyncMock):
         result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "p")
 
-    # Only 2 detect calls (one per frame), no query calls
-    assert session.post.call_count == 2
+    # 3 detect calls per frame (person, animal, vehicle) — all empty, no query
+    assert session.post.call_count == 6
     assert "No person detected" in result
 
 
@@ -3618,16 +4230,21 @@ async def test_moondream_cloud_call_model_car_camera_animal_near_car_triggers_qu
 
     injected_prompts: list[str] = []
 
+    def detect(obj: str) -> list[dict[str, float]]:
+        if obj == "animal":
+            return animal_boxes
+        if obj == "car":
+            return car_boxes
+        return []  # no person
+
     def side_effect(url, **kwargs):
-        if "detect" in url:
-            obj = kwargs.get("json", {}).get("object", "")
-            if obj == "animal":
-                return _make_detect_resp(animal_boxes)
-            if obj == "car":
-                return _make_detect_resp(car_boxes)
-            return _make_detect_resp([])  # no person
-        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
-        return _make_query_resp(query_answer)
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=detect,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
 
     session = MagicMock()
     session.post = MagicMock(side_effect=side_effect)
@@ -3661,14 +4278,23 @@ async def test_moondream_cloud_call_model_car_camera_multiple_vehicles_triggers_
 
     injected_prompts: list[str] = []
 
+    def detect(obj: str) -> list[dict[str, float]]:
+        if obj == "car":
+            return car_boxes
+        if obj == "Silver Kia":
+            # Description-specific detect disambiguates the protected
+            # vehicle as the first box, leaving the second as "other".
+            return [car_boxes[0]]
+        return []  # no person, no animal
+
     def side_effect(url, **kwargs):
-        if "detect" in url:
-            obj = kwargs.get("json", {}).get("object", "")
-            if obj == "car":
-                return _make_detect_resp(car_boxes)
-            return _make_detect_resp([])  # no person, no animal
-        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
-        return _make_query_resp(query_answer)
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=detect,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
 
     session = MagicMock()
     session.post = MagicMock(side_effect=side_effect)
@@ -3683,8 +4309,8 @@ async def test_moondream_cloud_call_model_car_camera_multiple_vehicles_triggers_
 
     assert "Another car parked beside it" in result
     assert injected_prompts
-    assert "INTERNAL PROXIMITY HINT" in injected_prompts[0]
-    assert "other vehicle" in injected_prompts[0]
+    assert "INTERNAL VEHICLE PROXIMITY HINT" in injected_prompts[0]
+    assert "camera perspective" in injected_prompts[0]
 
 
 @pytest.mark.asyncio
@@ -3737,15 +4363,19 @@ async def test_moondream_cloud_call_model_car_camera_no_car_in_frame() -> None:
 
     injected_prompts: list[str] = []
 
+    def detect(obj: str) -> list[dict[str, float]]:
+        if obj == "person":
+            return person_boxes
+        return []  # no car
+
     def side_effect(url, **kwargs):
-        if "detect" in url:
-            obj = kwargs.get("json", {}).get("object", "")
-            if obj == "person":
-                return _make_detect_resp(person_boxes)
-            return _make_detect_resp([])  # no car
-        # Capture the augmented prompt sent to /query
-        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
-        return _make_query_resp(query_answer)
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=detect,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
 
     session = MagicMock()
     session.post = MagicMock(side_effect=side_effect)
@@ -3777,10 +4407,13 @@ async def test_moondream_cloud_call_model_non_car_camera_injects_position() -> N
     injected_prompts: list[str] = []
 
     def side_effect(url, **kwargs):
-        if "detect" in url:
-            return _make_detect_resp(person_boxes)
-        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
-        return _make_query_resp(query_answer)
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=person_boxes,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
 
     session = MagicMock()
     session.post = MagicMock(side_effect=side_effect)
@@ -3810,14 +4443,19 @@ async def test_moondream_cloud_car_camera_overlap_flagged() -> None:
 
     injected_prompts: list[str] = []
 
+    def detect(obj: str) -> list[dict[str, float]]:
+        if obj == "person":
+            return person_boxes
+        return car_boxes
+
     def side_effect(url, **kwargs):
-        if "detect" in url:
-            obj = kwargs.get("json", {}).get("object", "")
-            if obj == "person":
-                return _make_detect_resp(person_boxes)
-            return _make_detect_resp(car_boxes)
-        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
-        return _make_query_resp(query_answer)
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=detect,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
 
     session = MagicMock()
     session.post = MagicMock(side_effect=side_effect)
@@ -3873,10 +4511,13 @@ async def test_moondream_cloud_car_camera_scoped_to_car_cameras() -> None:
     injected_prompts: list[str] = []
 
     def side_effect(url, **kwargs):
-        if "detect" in url:
-            return _make_detect_resp(person_boxes)
-        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
-        return _make_query_resp(query_answer)
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=person_boxes,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
 
     session = MagicMock()
     session.post = MagicMock(side_effect=side_effect)
@@ -3895,12 +4536,122 @@ async def test_moondream_cloud_car_camera_scoped_to_car_cameras() -> None:
     with patch("asyncio.sleep", new_callable=AsyncMock):
         await a._call_model([_FAKE_JPEG], "p")
 
-    # Only 2 calls: detect(person) + query — no detect(car) for Front Door
-    assert session.post.call_count == 2
+    # 3 calls: detect(person) + caption + query — no detect(car) for Front Door
+    assert session.post.call_count == 3
     # Injected prompt should have position data, NOT car rules
     assert injected_prompts
     assert "INTERNAL POSITION HINT" in injected_prompts[0]
     assert "touching" not in injected_prompts[0].lower()
+
+
+# ------------------------------------------------------------------
+# Non-car camera ambient vehicle/animal detection (no person in frame)
+# ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_non_car_camera_vehicle_gets_caption_and_query() -> None:
+    """A car passing a non-car camera (no person) must still get a caption
+    and a query — not the generic 'no person detected' skip response."""
+    vehicle_boxes = [{"x_min": 0.2, "y_min": 0.3, "x_max": 0.6, "y_max": 0.8}]
+    query_answer = '{"suspicious": false, "confidence": 0.3, "description": "A car drove up the street."}'
+
+    injected_prompts: list[str] = []
+
+    def detect(obj: str) -> list[dict[str, float]]:
+        if obj == "vehicle":
+            return vehicle_boxes
+        return []  # no person, no animal
+
+    def side_effect(url, **kwargs):
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=detect,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = session
+    a._current_camera = "Front Door"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    assert "A car drove up the street" in result
+    assert injected_prompts
+    assert "INTERNAL VEHICLE HINT" in injected_prompts[0]
+    assert "Vehicle 1 is in the" in injected_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_non_car_camera_animal_gets_caption_and_query() -> None:
+    """An animal on a non-car camera (no person) must still get a caption
+    and a query, with its position injected but no vehicle-specific hint."""
+    animal_boxes = [{"x_min": 0.4, "y_min": 0.5, "x_max": 0.6, "y_max": 0.9}]
+    query_answer = '{"suspicious": false, "confidence": 0.2, "description": "A cat walked across the yard."}'
+
+    injected_prompts: list[str] = []
+
+    def detect(obj: str) -> list[dict[str, float]]:
+        if obj == "animal":
+            return animal_boxes
+        return []  # no person, no vehicle
+
+    def side_effect(url, **kwargs):
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=detect,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = session
+    a._current_camera = "Backyard"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    assert "A cat walked across the yard" in result
+    assert injected_prompts
+    assert "Animal 1 is in the" in injected_prompts[0]
+    assert "INTERNAL VEHICLE HINT" not in injected_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_non_car_camera_nothing_detected_skips_query() -> None:
+    """Non-car camera with no person, animal, or vehicle detected still
+    uses the cheap skip path — no caption/query wasted on empty motion."""
+    query_answer = '{"suspicious": false, "confidence": 0.1, "description": "unused"}'
+
+    def side_effect(url, **kwargs):
+        return _dispatch_moondream(url, kwargs, detect=[], query_answer=query_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = session
+    a._current_camera = "Front Door"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    # 3 detect calls (person, animal, vehicle) — no caption, no query
+    assert session.post.call_count == 3
+    assert "No person detected" in result
 
 
 # ------------------------------------------------------------------

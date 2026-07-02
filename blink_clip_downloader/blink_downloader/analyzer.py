@@ -1197,7 +1197,248 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
 _MOONDREAM_CLOUD_PRICING: tuple[float, float] = (0.30, 2.50)
 
 
-class MoondreamCloudAnalyzer(BaseAnalyzer):
+class _MoondreamDetectionMixin:
+    """Shared detect-augmented reasoning helpers for Moondream analyzers.
+
+    Both :class:`MoondreamCloudAnalyzer` and :class:`MoondreamLocalAnalyzer`
+    run the same phased "detect objects, then reason about them" pipeline —
+    only how each fetches a detection (HTTP vs. local package call) differs.
+    This mixin holds the provider-agnostic pieces: bounding-box math and the
+    natural-language hints built from it.
+    """
+
+    @staticmethod
+    def _bbox_gap(a: dict[str, float], b: dict[str, float]) -> float:
+        """Return the Euclidean gap between two bounding boxes.
+
+        0.0 means the boxes overlap; 1.0 means maximum separation.
+        Uses normalised coordinates (0–1 relative to image width/height).
+        """
+        ax1, ay1 = a.get("x_min", 0.0), a.get("y_min", 0.0)
+        ax2, ay2 = a.get("x_max", 1.0), a.get("y_max", 1.0)
+        bx1, by1 = b.get("x_min", 0.0), b.get("y_min", 0.0)
+        bx2, by2 = b.get("x_max", 1.0), b.get("y_max", 1.0)
+        x_gap = max(0.0, max(ax1, bx1) - min(ax2, bx2))
+        y_gap = max(0.0, max(ay1, by1) - min(ay2, by2))
+        return (x_gap**2 + y_gap**2) ** 0.5
+
+    @classmethod
+    def _bbox_min_gap(
+        cls,
+        boxes_a: list[dict[str, float]],
+        boxes_b: list[dict[str, float]],
+    ) -> float:
+        """Return the minimum gap between any pair of boxes across two lists."""
+        min_gap = 1.0
+        for a in boxes_a:
+            for b in boxes_b:
+                min_gap = min(min_gap, cls._bbox_gap(a, b))
+        return min_gap
+
+    @classmethod
+    def _bbox_min_pairwise_gap(cls, boxes: list[dict[str, float]]) -> float:
+        """Return the minimum gap between any two distinct boxes in one list.
+
+        Used to detect a second vehicle parked or stopped close to the
+        protected vehicle when no person or animal is in frame — e.g. two
+        detected "car" boxes sitting right next to each other.
+        """
+        if len(boxes) < 2:
+            return 1.0
+        min_gap = 1.0
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                min_gap = min(min_gap, cls._bbox_gap(boxes[i], boxes[j]))
+        return min_gap
+
+    @staticmethod
+    def _bbox_iou(a: dict[str, float], b: dict[str, float]) -> float:
+        """Return the Intersection-over-Union overlap ratio of two boxes.
+
+        Unlike :meth:`_bbox_gap` (which measures separation and is 0.0 for
+        both "identical box" and "merely touching, no area in common"), IoU
+        distinguishes those two cases — needed to tell "the same physical
+        vehicle detected twice" (high IoU) apart from "two different
+        vehicles parked flush against each other" (near-zero IoU despite a
+        zero gap).
+        """
+        ax1, ay1 = a.get("x_min", 0.0), a.get("y_min", 0.0)
+        ax2, ay2 = a.get("x_max", 1.0), a.get("y_max", 1.0)
+        bx1, by1 = b.get("x_min", 0.0), b.get("y_min", 0.0)
+        bx2, by2 = b.get("x_max", 1.0), b.get("y_max", 1.0)
+        inter_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+        inter_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+        intersection = inter_w * inter_h
+        area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+        area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+        union = area_a + area_b - intersection
+        if union <= 0.0:
+            return 0.0
+        return intersection / union
+
+    @classmethod
+    def _other_vehicle_boxes(
+        cls,
+        protected_boxes: list[dict[str, float]],
+        all_boxes: list[dict[str, float]],
+    ) -> list[dict[str, float]]:
+        """Return boxes from *all_boxes* that are not the protected vehicle.
+
+        A box counts as "the protected vehicle" when it substantially
+        overlaps (IoU ≥ 0.5) one of *protected_boxes* — the generic "car"
+        detect and the description-specific detect each produce their own
+        box for the same physical vehicle, with minor jitter, so this
+        cross-matches them by overlap rather than identity. Returns
+        *all_boxes* unchanged when *protected_boxes* is empty, since there's
+        nothing yet to distinguish "other" from.
+        """
+        if not protected_boxes:
+            return all_boxes
+        return [
+            box
+            for box in all_boxes
+            if max(cls._bbox_iou(box, p) for p in protected_boxes) < 0.5
+        ]
+
+    @staticmethod
+    def _proximity_hint(gap: float, subject: str) -> str:
+        """Build an [INTERNAL PROXIMITY HINT] string tiering *subject*'s
+        distance from the protected vehicle from touching down to several
+        feet away. Used for person/animal proximity, where the subject
+        shares the vehicle's ground plane and 2D bounding-box distance is a
+        reasonable proxy for real-world distance. Vehicle-to-vehicle
+        proximity uses :meth:`_vehicle_proximity_hint` instead — see its
+        docstring for why the two cases need different calibration.
+        """
+        prefix = (
+            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
+            "do NOT copy this text into the description]: "
+        )
+        if gap == 0.0:
+            return (
+                f"{prefix}The {subject} appears to be directly touching or pressed "
+                "against the vehicle. Describe this as 'right next to' "
+                "or 'touching the car' in plain English."
+            )
+        if gap < 0.05:
+            return (
+                f"{prefix}The {subject} appears to be less than 1 foot from the vehicle. "
+                "Describe this as 'very close to the car' in plain English."
+            )
+        if gap < 0.15:
+            return (
+                f"{prefix}The {subject} appears to be roughly 1–3 feet from the vehicle. "
+                "This is close but not touching — do NOT flag as suspicious "
+                "unless actively lingering, reaching for, or touching the car. "
+                "Describe this as 'a couple of feet from the car' in plain English."
+            )
+        return (
+            f"{prefix}The {subject} appears to be several feet from the vehicle — "
+            "this distance is NOT suspicious on its own. "
+            "Set suspicious=false unless there is other clear evidence of tampering. "
+            "Describe this as 'well away from the car' in plain English."
+        )
+
+    @staticmethod
+    def _vehicle_proximity_hint(gap: float) -> str:
+        """Build an [INTERNAL VEHICLE PROXIMITY HINT] for another vehicle
+        detected near the protected vehicle.
+
+        Unlike a person or animal (which stands on the ground right next to
+        the car, so 2D bounding-box distance tracks real-world distance
+        reasonably well), two vehicle boxes can appear close or even
+        touching in a 2D frame while being many feet apart in real depth —
+        a car driving past on the street behind or beside a parked car
+        routinely overlaps it in screen space purely from camera
+        perspective. Treating that bounding-box gap the same way as a
+        person's produces frequent false "right next to the car" /
+        "touching the car" alerts for ordinary passing traffic, so this
+        hint is deliberately conservative: it never instructs the model to
+        parrot proximity language and only allows suspicious=true when the
+        frames themselves — not the bounding-box gap alone — show the other
+        vehicle actually stopping, parking, or backing up close to the
+        protected vehicle.
+        """
+        return (
+            "[INTERNAL VEHICLE PROXIMITY HINT — use for reasoning only, do "
+            "NOT copy this text into the description]: Another vehicle's "
+            f"bounding box is close to or overlapping the protected "
+            f"vehicle's in this single 2D frame (estimated gap {gap:.2f}). "
+            "This overlap can happen purely from camera perspective — a car "
+            "driving past on the street behind or beside the parked vehicle "
+            "commonly appears adjacent to or touching it in the frame while "
+            "actually being many feet away in real distance. Bounding-box "
+            "proximity alone is NOT reliable evidence for two vehicles. "
+            "Only set suspicious=true if the frames clearly show the other "
+            "vehicle stopping, parking, or backing up right next to the "
+            "protected vehicle. If it is simply moving through the frame, "
+            "describe it plainly as driving up or down the street and set "
+            "suspicious=false — do not say it was 'near', 'right next to', "
+            "or 'touching' the protected vehicle just because their boxes "
+            "are close in this one frame."
+        )
+
+    @staticmethod
+    def _position_hint(subjects: list[tuple[str, dict[str, float]]]) -> str:
+        """Build an [INTERNAL POSITION HINT] locating up to 3 detected
+        subjects within the frame, for cameras with no protected-vehicle
+        proximity rules in play. Each entry is a ``(label, box)`` pair, e.g.
+        ``("Person", box)``, ``("Animal", box)``, or ``("Vehicle", box)`` —
+        the label lets one hint cover people, animals, and incidental
+        vehicles on cameras that aren't watching a protected vehicle.
+        Returns "" when *subjects* is empty.
+        """
+        position_notes = []
+        label_counts: dict[str, int] = {}
+        for label, box in subjects[:3]:
+            label_counts[label] = label_counts.get(label, 0) + 1
+            cx = (box.get("x_min", 0.0) + box.get("x_max", 1.0)) / 2
+            cy = (box.get("y_min", 0.0) + box.get("y_max", 1.0)) / 2
+            side = "left" if cx < 0.33 else ("right" if cx > 0.67 else "centre")
+            vert = "top" if cy < 0.33 else ("bottom" if cy > 0.67 else "middle")
+            position_notes.append(
+                f"{label} {label_counts[label]} is in the {vert}-{side} of the frame"
+            )
+        if not position_notes:
+            return ""
+        return (
+            "[INTERNAL POSITION HINT — use for reasoning only, "
+            "do NOT copy this text into the description]: "
+            + "; ".join(position_notes)
+            + "."
+        )
+
+    @staticmethod
+    def _vehicle_hint() -> str:
+        """Build an [INTERNAL VEHICLE HINT] for cameras with no protected-
+        vehicle rules in play, when a vehicle is detected with no person
+        present. Nudges the model to describe ordinary passing or parking
+        traffic plainly — e.g. "a car drove up the street" — instead of
+        reflexively treating any vehicle in frame as noteworthy just
+        because it appeared on a motion-triggered clip.
+        """
+        return (
+            "[INTERNAL VEHICLE HINT — use for reasoning only, do NOT copy "
+            "this text into the description]: A vehicle is visible in this "
+            "frame. If it is simply passing through, driving by, or parking "
+            "normally with no person involved, describe it plainly (e.g. 'a "
+            "car drove up the street') and set suspicious=false unless it is "
+            "clearly behaving abnormally (e.g. stopping to case the property)."
+        )
+
+    @staticmethod
+    def _no_subject_response() -> str:
+        """Hardcoded JSON result for a frame with no person, animal, or second
+        vehicle detected — skips the expensive query/caption calls entirely.
+        """
+        return (
+            '{"suspicious": false, "confidence": 0.9, '
+            '"description": "No person detected in this frame. '
+            'Motion likely caused by a vehicle, animal, or environmental factor."}'
+        )
+
+
+class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
     """Analyzes clips via the Moondream Cloud API (api.moondream.ai).
 
     Pass ``finetune_model`` (e.g. ``"moondream3-preview/abc123@50"``) to use a
@@ -1342,86 +1583,81 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             _LOGGER.debug("Moondream /detect failed for %r: %s", object_name, exc)
             return []
 
-    @staticmethod
-    def _bbox_gap(a: dict[str, float], b: dict[str, float]) -> float:
-        """Return the Euclidean gap between two bounding boxes.
+    async def _caption_frame(self, frame: bytes) -> str:
+        """Call Moondream Cloud's dedicated ``/caption`` endpoint for a
+        factual, grounding description of *frame*.
 
-        0.0 means the boxes overlap; 1.0 means maximum separation.
-        Uses normalised coordinates (0–1 relative to image width/height).
+        The caption skill is tuned specifically for comprehensive scene
+        description (elements, context, colors, positioning) rather than
+        free-form Q&A, so injecting its output into the ``/query`` prompt as
+        grounding context measurably reduces hallucination in the final
+        structured description compared to relying on ``/query`` alone.
+        Returns "" on any error so callers can skip the grounding hint.
         """
-        ax1, ay1 = a.get("x_min", 0.0), a.get("y_min", 0.0)
-        ax2, ay2 = a.get("x_max", 1.0), a.get("y_max", 1.0)
-        bx1, by1 = b.get("x_min", 0.0), b.get("y_min", 0.0)
-        bx2, by2 = b.get("x_max", 1.0), b.get("y_max", 1.0)
-        x_gap = max(0.0, max(ax1, bx1) - min(ax2, bx2))
-        y_gap = max(0.0, max(ay1, by1) - min(ay2, by2))
-        return (x_gap**2 + y_gap**2) ** 0.5
+        image_b64 = base64.b64encode(frame).decode("ascii")
+        payload: dict[str, Any] = {
+            "image_url": f"data:image/jpeg;base64,{image_b64}",
+            "length": "normal",
+            "stream": False,
+        }
+        if self._finetune_model:
+            payload["model"] = self._finetune_model
+        headers = {
+            "X-Moondream-Auth": self._api_key,
+            "Content-Type": "application/json",
+        }
+        try:
+            session = await self._get_session()
+            async with session.post(
+                f"{self._BASE_URL}/caption",
+                json=payload,
+                headers=headers,
+                timeout=_API_TIMEOUT,
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.debug("Moondream /caption returned HTTP %d", resp.status)
+                    return ""
+                data = await resp.json()
+                caption = str(data.get("caption", ""))
+                self._last_prompt_tokens += self._IMAGE_TOKENS_PER_FRAME
+                self._last_completion_tokens += max(1, len(caption) // 4)
+                return caption
+        except asyncio.TimeoutError:
+            _LOGGER.debug("Moondream /caption request timed out")
+            return ""
+        except (aiohttp.ClientError, OSError) as exc:
+            _LOGGER.debug("Moondream /caption request failed: %s", exc)
+            return ""
 
-    @classmethod
-    def _bbox_min_gap(
-        cls,
-        boxes_a: list[dict[str, float]],
-        boxes_b: list[dict[str, float]],
-    ) -> float:
-        """Return the minimum gap between any pair of boxes across two lists."""
-        min_gap = 1.0
-        for a in boxes_a:
-            for b in boxes_b:
-                min_gap = min(min_gap, cls._bbox_gap(a, b))
-        return min_gap
+    async def _detect_protected_vehicle(
+        self, frame: bytes, all_car_boxes: list[dict[str, float]]
+    ) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+        """Disambiguate the protected vehicle from other cars in *frame*.
 
-    @classmethod
-    def _bbox_min_pairwise_gap(cls, boxes: list[dict[str, float]]) -> float:
-        """Return the minimum gap between any two distinct boxes in one list.
+        Moondream's ``/detect`` accepts free-text zero-shot object queries,
+        so when more than one "car" box is present, the protected vehicle's
+        own description (e.g. "silver Kia Forte") is used as a second,
+        targeted detect query instead of treating every car box the same —
+        this distinguishes the actual protected vehicle from a visitor's
+        car, a passing vehicle, or a second car parked nearby. Skipped
+        entirely when there's only 0-1 car boxes, since there's nothing to
+        disambiguate. Falls back to treating all boxes as the protected
+        vehicle (no "other" vehicles) if the description-specific detect
+        finds nothing usable — an unusually worded description Moondream
+        can't match should not manufacture a false "other vehicle" alert.
 
-        Used to detect a second vehicle parked or stopped close to the
-        protected vehicle when no person or animal is in frame — e.g. two
-        detected "car" boxes sitting right next to each other.
+        Returns ``(protected_vehicle_boxes, other_vehicle_boxes)``.
         """
-        if len(boxes) < 2:
-            return 1.0
-        min_gap = 1.0
-        for i in range(len(boxes)):
-            for j in range(i + 1, len(boxes)):
-                min_gap = min(min_gap, cls._bbox_gap(boxes[i], boxes[j]))
-        return min_gap
+        if len(all_car_boxes) <= 1 or not self._car_description:
+            return all_car_boxes, []
 
-    @staticmethod
-    def _proximity_hint(gap: float, subject: str) -> str:
-        """Build an [INTERNAL PROXIMITY HINT] string tiering *subject*'s
-        distance from the protected vehicle (or another vehicle) from
-        touching down to several feet away. Shared by the person/animal-to-
-        car and vehicle-to-vehicle proximity checks so both use the same
-        distance calibration and wording.
-        """
-        prefix = (
-            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
-            "do NOT copy this text into the description]: "
-        )
-        if gap == 0.0:
-            return (
-                f"{prefix}The {subject} appears to be directly touching or pressed "
-                "against the vehicle. Describe this as 'right next to' "
-                "or 'touching the car' in plain English."
-            )
-        if gap < 0.05:
-            return (
-                f"{prefix}The {subject} appears to be less than 1 foot from the vehicle. "
-                "Describe this as 'very close to the car' in plain English."
-            )
-        if gap < 0.15:
-            return (
-                f"{prefix}The {subject} appears to be roughly 1–3 feet from the vehicle. "
-                "This is close but not touching — do NOT flag as suspicious "
-                "unless actively lingering, reaching for, or touching the car. "
-                "Describe this as 'a couple of feet from the car' in plain English."
-            )
-        return (
-            f"{prefix}The {subject} appears to be several feet from the vehicle — "
-            "this distance is NOT suspicious on its own. "
-            "Set suspicious=false unless there is other clear evidence of tampering. "
-            "Describe this as 'well away from the car' in plain English."
-        )
+        protected_boxes = await self._detect_objects(frame, self._car_description)
+        await asyncio.sleep(0.55)
+        if not protected_boxes:
+            return all_car_boxes, []
+
+        other_boxes = self._other_vehicle_boxes(protected_boxes, all_car_boxes)
+        return protected_boxes, other_boxes
 
     async def _call_api_frame(self, frame: bytes, prompt: str) -> str:
         """Send a single JPEG frame to the Moondream Cloud /query endpoint.
@@ -1485,17 +1721,28 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
         """Analyse frames via Moondream Cloud with detect-augmented analysis.
 
         For each frame:
-        1. Run ``/detect`` for "person". For car cameras, a frame with no
-           person still gets checked for an animal near the vehicle or a
-           second vehicle parked/stopped close to it before being written
-           off — a car camera's job is to catch anyone or anything getting
-           close to the protected vehicle, not just people.
-        2. If nothing of interest was found, skip the expensive ``/query``
-           and record a clear result for that frame.
-        3. For car cameras: also run ``/detect`` for "car" and inject
-           precise bounding-box proximity data into the query prompt so the
-           model can make an evidence-based suspicious/clear decision.
-        4. Run ``/query`` (with reasoning=True) on the augmented prompt and
+        1. Run ``/detect`` for "person". A frame with no person still gets
+           checked for an animal or a vehicle before being written off —
+           every camera's job is to describe what's actually happening, not
+           just track people, and a car camera additionally needs to catch
+           anyone or anything getting close to the protected vehicle.
+        2. If nothing of interest was found, skip the expensive ``/caption``
+           and ``/query`` calls and record a clear result for that frame.
+        3. For car cameras: also run ``/detect`` for "car". When more than
+           one car box is found, a second targeted detect using the
+           protected vehicle's own description disambiguates it from any
+           other vehicle in frame (see :meth:`_detect_protected_vehicle`),
+           and precise bounding-box proximity data is injected into the
+           query prompt so the model can make an evidence-based
+           suspicious/clear decision. Non-car cameras instead run a plain
+           "vehicle" detect — there's no specific vehicle to disambiguate,
+           just an incidental one worth captioning accurately.
+        4. Run ``/caption`` once on the frame and inject its factual scene
+           description as grounding context — a dedicated captioning call
+           tends to describe *what's actually there* more reliably than
+           relying solely on the free-form ``/query`` answer, which reduces
+           hallucination in the final structured description.
+        5. Run ``/query`` (with reasoning=True) on the augmented prompt and
            pick the most alarming result across all frames.
 
         Respects the 2 req/s rate limit with a 0.55 s delay between requests.
@@ -1520,30 +1767,42 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             persons = await self._detect_objects(frame, "person")
             await asyncio.sleep(0.55)
 
-            # ── Phase 1b: car cameras still need to check for an animal or
-            # a second vehicle near the protected car even with no person —
-            # otherwise a dog sniffing at the car, or another car pulling up
-            # tight beside it, would be silently written off below.
+            # ── Phase 1b: with no person, still check for an animal or a
+            # vehicle before writing the frame off — otherwise a dog
+            # sniffing at the car, another car pulling up tight beside it,
+            # or a car simply driving past a non-car camera would be
+            # silently reduced to a generic "no person detected" result
+            # with no caption at all.
             animals: list[dict[str, float]] = []
-            car_boxes: list[dict[str, float]] = []
-            if not persons and car_applies:
+            protected_boxes: list[dict[str, float]] = []
+            other_vehicle_boxes: list[dict[str, float]] = []
+            generic_vehicles: list[dict[str, float]] = []
+            if not persons:
                 animals = await self._detect_objects(frame, "animal")
                 await asyncio.sleep(0.55)
-                car_boxes = await self._detect_objects(frame, "car")
-                await asyncio.sleep(0.55)
+                if car_applies:
+                    all_car_boxes = await self._detect_objects(frame, "car")
+                    await asyncio.sleep(0.55)
+                    (
+                        protected_boxes,
+                        other_vehicle_boxes,
+                    ) = await self._detect_protected_vehicle(frame, all_car_boxes)
+                else:
+                    generic_vehicles = await self._detect_objects(frame, "vehicle")
+                    await asyncio.sleep(0.55)
 
-            multiple_vehicles = car_applies and len(car_boxes) > 1
-            if not persons and not animals and not multiple_vehicles:
+            multiple_vehicles = car_applies and bool(other_vehicle_boxes)
+            if (
+                not persons
+                and not animals
+                and not multiple_vehicles
+                and not generic_vehicles
+            ):
                 # Nothing of interest in this frame — motion likely caused by
                 # something else. Record a clear result and move on without
                 # spending query tokens.
-                no_subject_resp = (
-                    '{"suspicious": false, "confidence": 0.9, '
-                    '"description": "No person detected in this frame. '
-                    'Motion likely caused by a vehicle, animal, or environmental factor."}'
-                )
                 if not best_response:
-                    best_response = no_subject_resp
+                    best_response = self._no_subject_response()
                 if not is_last:
                     await asyncio.sleep(0.55)
                 continue
@@ -1553,20 +1812,27 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             subjects = persons + animals
 
             if car_applies:
-                if not car_boxes:
-                    car_boxes = await self._detect_objects(frame, "car")
+                if not protected_boxes and not other_vehicle_boxes:
+                    all_car_boxes = await self._detect_objects(frame, "car")
                     await asyncio.sleep(0.55)
+                    (
+                        protected_boxes,
+                        other_vehicle_boxes,
+                    ) = await self._detect_protected_vehicle(frame, all_car_boxes)
+                    multiple_vehicles = car_applies and bool(other_vehicle_boxes)
 
-                if subjects and car_boxes:
-                    gap = self._bbox_min_gap(subjects, car_boxes)
+                if subjects and protected_boxes:
+                    gap = self._bbox_min_gap(subjects, protected_boxes)
                     augmented_prompt += (
                         f"\n\n{self._proximity_hint(gap, 'person or animal')}"
                     )
                 elif multiple_vehicles:
-                    gap = self._bbox_min_pairwise_gap(car_boxes)
-                    augmented_prompt += (
-                        f"\n\n{self._proximity_hint(gap, 'other vehicle')}"
+                    gap = (
+                        self._bbox_min_gap(protected_boxes, other_vehicle_boxes)
+                        if protected_boxes
+                        else self._bbox_min_pairwise_gap(other_vehicle_boxes)
                     )
+                    augmented_prompt += f"\n\n{self._vehicle_proximity_hint(gap)}"
                 else:
                     # Car not detected in this frame — suppress car rules to
                     # avoid the model hallucinating car proximity.
@@ -1578,23 +1844,28 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
                     )
 
             else:
-                # Non-car camera: inject person position to help AI.
-                position_notes = []
-                for j, person in enumerate(persons[:3], 1):
-                    cx = (person.get("x_min", 0.0) + person.get("x_max", 1.0)) / 2
-                    cy = (person.get("y_min", 0.0) + person.get("y_max", 1.0)) / 2
-                    side = "left" if cx < 0.33 else ("right" if cx > 0.67 else "centre")
-                    vert = "top" if cy < 0.33 else ("bottom" if cy > 0.67 else "middle")
-                    position_notes.append(
-                        f"Person {j} is in the {vert}-{side} of the frame"
-                    )
-                if position_notes:
-                    augmented_prompt += (
-                        "\n\n[INTERNAL POSITION HINT — use for reasoning only, "
-                        "do NOT copy this text into the description]: "
-                        + "; ".join(position_notes)
-                        + "."
-                    )
+                # Non-car camera: inject subject positions (person, animal,
+                # incidental vehicle) to help the model describe the scene
+                # accurately without borrowing protected-vehicle rules.
+                labeled_subjects = (
+                    [("Person", p) for p in persons]
+                    + [("Animal", a) for a in animals]
+                    + [("Vehicle", v) for v in generic_vehicles]
+                )
+                position_hint = self._position_hint(labeled_subjects)
+                if position_hint:
+                    augmented_prompt += f"\n\n{position_hint}"
+                if generic_vehicles and not persons:
+                    augmented_prompt += f"\n\n{self._vehicle_hint()}"
+
+            # ── Phase 2b: caption grounding ───────────────────────────────
+            caption = await self._caption_frame(frame)
+            await asyncio.sleep(0.55)
+            if caption:
+                augmented_prompt += (
+                    "\n\n[INTERNAL SCENE CAPTION — factual grounding only, do "
+                    f"NOT copy this text verbatim into your description]: {caption}"
+                )
 
             # ── Phase 3: full query with augmented prompt ────────────────
             resp = await self._call_api_frame(frame, augmented_prompt)
@@ -1627,13 +1898,19 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
 # ---------------------------------------------------------------------------
 
 
-class MoondreamLocalAnalyzer(BaseAnalyzer):
+class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
     """Runs the Moondream 0.5B INT8 model locally using the moondream package.
 
     The model (~430 MB) is downloaded from Moondream's servers on the first
     run and cached in the default moondream cache directory.  Subsequent
     starts reuse the cached file.  Inference runs in a thread executor so the
     asyncio event loop is never blocked.
+
+    Mirrors :class:`MoondreamCloudAnalyzer`'s detect-augmented pipeline
+    (person/animal/vehicle detection feeding proximity hints, plus a
+    caption-grounded query) using the local package's ``detect``/``caption``/
+    ``query`` methods instead of HTTP calls — see
+    :meth:`_analyze_frame_sync` for the per-frame pipeline.
     """
 
     _MODEL_ID = "moondream-0_5b-int8"
@@ -1728,14 +2005,150 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
             }
         ]
 
-    def _run_inference_sync(self, frame_bytes: bytes, prompt: str) -> str:
-        """Run moondream inference synchronously (called from thread executor)."""
+    def _local_detect(self, encoded: Any, object_name: str) -> list[dict[str, float]]:
+        """Call the local model's ``detect`` and filter to well-formed boxes.
+
+        Mirrors :meth:`MoondreamCloudAnalyzer._detect_objects` for behavioural
+        parity between the two providers. Returns ``[]`` on any error so
+        callers can safely skip detect-based logic when it fails.
+        """
+        try:
+            objects = self._md_model.detect(encoded, object_name).get("objects", [])
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Moondream local detect failed for %r: %s", object_name, exc)
+            return []
+        return [o for o in objects if isinstance(o, dict)]
+
+    def _local_caption(self, encoded: Any) -> str:
+        """Call the local model's ``caption`` for factual grounding context.
+
+        Mirrors :meth:`MoondreamCloudAnalyzer._caption_frame`. Returns "" on
+        any error so callers can skip the grounding hint.
+        """
+        try:
+            return str(
+                self._md_model.caption(encoded, length="normal").get("caption", "")
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Moondream local caption failed: %s", exc)
+            return ""
+
+    def _detect_protected_vehicle_sync(
+        self, encoded: Any, all_car_boxes: list[dict[str, float]]
+    ) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+        """Local-inference counterpart to
+        :meth:`MoondreamCloudAnalyzer._detect_protected_vehicle` —
+        disambiguates the protected vehicle from other cars in frame using
+        its own description, but only when more than one car box is
+        present (see that method for the full rationale). Returns
+        ``(protected_vehicle_boxes, other_vehicle_boxes)``.
+        """
+        if len(all_car_boxes) <= 1 or not self._car_description:
+            return all_car_boxes, []
+
+        protected_boxes = self._local_detect(encoded, self._car_description)
+        if not protected_boxes:
+            return all_car_boxes, []
+
+        other_boxes = self._other_vehicle_boxes(protected_boxes, all_car_boxes)
+        return protected_boxes, other_boxes
+
+    def _analyze_frame_sync(
+        self, frame_bytes: bytes, prompt: str, car_applies: bool
+    ) -> str:
+        """Run the full detect + caption + query pipeline for one frame.
+
+        Runs entirely inside the thread executor since every Moondream local
+        call is blocking. The image is encoded once via ``encode_image`` and
+        the encoded result is reused across every detect/caption/query call
+        on this frame — encoding is the expensive vision-tower pass, so
+        reusing it avoids repeating that work up to five times per frame.
+        Mirrors :meth:`MoondreamCloudAnalyzer._call_model`'s per-frame
+        pipeline; see that method's docstring for the phase-by-phase
+        rationale.
+        """
         import io  # noqa: PLC0415
 
         from PIL import Image  # noqa: PLC0415
 
         image = Image.open(io.BytesIO(frame_bytes))
-        result = self._md_model.query(image, prompt)
+        encoded = self._md_model.encode_image(image)
+
+        persons = self._local_detect(encoded, "person")
+
+        animals: list[dict[str, float]] = []
+        protected_boxes: list[dict[str, float]] = []
+        other_vehicle_boxes: list[dict[str, float]] = []
+        generic_vehicles: list[dict[str, float]] = []
+        if not persons:
+            animals = self._local_detect(encoded, "animal")
+            if car_applies:
+                all_car_boxes = self._local_detect(encoded, "car")
+                protected_boxes, other_vehicle_boxes = (
+                    self._detect_protected_vehicle_sync(encoded, all_car_boxes)
+                )
+            else:
+                generic_vehicles = self._local_detect(encoded, "vehicle")
+
+        multiple_vehicles = car_applies and bool(other_vehicle_boxes)
+        if (
+            not persons
+            and not animals
+            and not multiple_vehicles
+            and not generic_vehicles
+        ):
+            return self._no_subject_response()
+
+        augmented_prompt = prompt
+        subjects = persons + animals
+
+        if car_applies:
+            if not protected_boxes and not other_vehicle_boxes:
+                all_car_boxes = self._local_detect(encoded, "car")
+                protected_boxes, other_vehicle_boxes = (
+                    self._detect_protected_vehicle_sync(encoded, all_car_boxes)
+                )
+                multiple_vehicles = car_applies and bool(other_vehicle_boxes)
+
+            if subjects and protected_boxes:
+                gap = self._bbox_min_gap(subjects, protected_boxes)
+                augmented_prompt += (
+                    f"\n\n{self._proximity_hint(gap, 'person or animal')}"
+                )
+            elif multiple_vehicles:
+                gap = (
+                    self._bbox_min_gap(protected_boxes, other_vehicle_boxes)
+                    if protected_boxes
+                    else self._bbox_min_pairwise_gap(other_vehicle_boxes)
+                )
+                augmented_prompt += f"\n\n{self._vehicle_proximity_hint(gap)}"
+            else:
+                augmented_prompt += (
+                    "\n\n[INTERNAL PROXIMITY HINT — use for reasoning only]: "
+                    "The protected vehicle is not visible in this frame. "
+                    "Evaluate the subject's behaviour based on the camera "
+                    "location description only."
+                )
+        else:
+            labeled_subjects = (
+                [("Person", p) for p in persons]
+                + [("Animal", a) for a in animals]
+                + [("Vehicle", v) for v in generic_vehicles]
+            )
+            position_hint = self._position_hint(labeled_subjects)
+            if position_hint:
+                augmented_prompt += f"\n\n{position_hint}"
+            if generic_vehicles and not persons:
+                augmented_prompt += f"\n\n{self._vehicle_hint()}"
+
+        caption = self._local_caption(encoded)
+        if caption:
+            augmented_prompt += (
+                "\n\n[INTERNAL SCENE CAPTION — factual grounding only, do NOT "
+                f"copy this text verbatim into your description]: {caption}"
+            )
+
+        result = self._md_model.query(encoded, augmented_prompt)
         return str(result.get("answer", ""))
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
@@ -1745,6 +2158,12 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
         if not frames:
             return ""
 
+        camera = getattr(self, "_current_camera", "")
+        car_applies = bool(
+            self._car_description
+            and (not self._car_cameras or camera in self._car_cameras)
+        )
+
         best_response = ""
         best_is_suspicious = False
         best_confidence = 0.0
@@ -1753,7 +2172,7 @@ class MoondreamLocalAnalyzer(BaseAnalyzer):
             try:
                 loop = asyncio.get_running_loop()
                 resp = await loop.run_in_executor(
-                    None, self._run_inference_sync, frame, prompt
+                    None, self._analyze_frame_sync, frame, prompt, car_applies
                 )
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error("Moondream local inference failed: %s", exc)

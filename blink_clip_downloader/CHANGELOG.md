@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.0.8
+
+### Moondream — accurate captions on every camera, fewer false positives
+
+- **Fix: non-car cameras stopped producing captions.** Animal detection was
+  only run when a protected vehicle applied to the camera, and non-car
+  cameras had no vehicle detection at all — so a camera with no person in
+  frame (e.g. a cat crossing the yard, or a car simply passing by) always
+  hit the hardcoded "no subject detected" skip response instead of reaching
+  the model, silently suppressing captions for every camera except the one
+  watching the protected vehicle. Animal detection now always runs, and
+  non-car cameras also run a generic vehicle detect, so any person, animal,
+  or vehicle visible on any camera reaches captioning.
+- **Fix false "very close to"/"right next to the car" alerts for ordinary
+  passing traffic.** Two vehicle bounding boxes can appear close or even
+  touching in a single 2D frame while being many feet apart in real depth —
+  a car driving past on the street routinely overlaps a parked car's box in
+  screen space purely from camera perspective. The proximity hint shared
+  with person/animal detection (where 2D distance is a reasonable proxy,
+  since they share the vehicle's ground plane) was being applied to
+  vehicle-to-vehicle proximity too, and instructed the model to parrot
+  phrases like "right next to the car" from bounding-box gap alone. A
+  dedicated, more conservative `_vehicle_proximity_hint` now handles
+  vehicle-to-vehicle cases: it never suggests proximity language and only
+  allows `suspicious=true` when the frames themselves show the other
+  vehicle actually stopping, parking, or backing up close to the protected
+  vehicle — ordinary through-traffic is described plainly (e.g. "a car
+  drove up the street") with `suspicious=false`.
+- Non-car cameras now inject a labeled position hint (Person/Animal/Vehicle)
+  built from whichever subjects are actually detected on that camera, so
+  each camera's caption reflects only what its own frames show — no
+  borrowed car/driveway language from a different camera's perspective.
+- Person/animal proximity rules (touching, within 1 foot, 1–3 feet, several
+  feet) are unchanged: contact with or lingering within a foot of the
+  protected vehicle still reliably produces `suspicious=true` at
+  confidence ≥0.8.
+- Applies identically to `moondream_cloud` and `moondream_local` — both
+  share the same detection/hint pipeline via `_MoondreamDetectionMixin`.
+
 ## 3.0.7
 
 ### Dependencies
