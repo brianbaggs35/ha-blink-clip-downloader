@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.0.7
+
+### Dependencies
+
+- **blinkpy** stays at `>=0.25.7` (already current).
+- **aiohttp** bumped from `>=3.11.0` to `>=3.14.1`.
+- **aiofiles** bumped from `>=24.1.0` to `>=25.1.0`.
+- **aiosqlite** bumped from `>=0.21.0` to `>=0.22.1`.
+- **aiosmtplib** bumped from `>=3.0.0` to `>=5.1.2`.
+- **Pillow** bumped from `>=11.0.0` to `>=12.3.0`.
+- **anthropic** bumped from `>=0.100.0` to `>=0.115.1`.
+- **openai** bumped from `>=1.0.0` to `>=2.44.0` — note this crosses the
+  OpenAI SDK's v1 → v2 major version boundary; `OpenAIAnalyzer` was verified
+  against 2.x and required no code changes.
+- Test-only dependencies bumped: **pytest** `>=8.0` → `>=9.1.1`, **pytest-asyncio**
+  `>=0.23` → `>=1.4.0`, **pytest-cov** `>=5.0` → `>=7.1.0`, **aioresponses**
+  `>=0.7.6` → `>=0.7.9`.
+- `requirements.txt` (the Dockerfile's pre-install layer) now also lists
+  **anthropic** and **openai** directly, instead of only picking them up via
+  the later `pip install /app` step — keeps the Docker layer cache warm when
+  only the app package changes.
+
+If any of these updates cause problems, pin back to the 3.0.6 add-on version
+to roll back to the prior dependency floors.
+
 ## 3.0.6
 
 ### AI analysis — world-class accuracy pass
