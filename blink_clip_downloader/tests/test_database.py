@@ -961,3 +961,99 @@ async def test_record_scene_baseline_uninitialised_db() -> None:
     d = ClipDatabase(Path("/tmp/neveropened_scene2.db"))
     # Should not raise even when the db is not open
     await d.record_scene_baseline("Camera", [0.5] * 4)
+
+
+async def _scene_streak(db: ClipDatabase, camera: str) -> int:
+    assert db._db is not None
+    async with db._db.execute(
+        "SELECT consecutive_deviation_count FROM camera_scene_baselines WHERE camera=?",
+        (camera,),
+    ) as cur:
+        row = await cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+async def test_record_scene_baseline_fast_refresh_on_persistent_change(
+    db: ClipDatabase,
+) -> None:
+    """Once established, 5 consecutive elevated-deviation clips in a row are
+    treated as a persistent scene change and snap the baseline toward the
+    new normal in one fast blend, instead of the ~0.23 an unassisted slow
+    EMA would reach after the same 5 samples."""
+    old_scene = [0.0] * 4
+    new_scene = [1.0] * 4
+    for _ in range(20):
+        await db.record_scene_baseline("Patio", old_scene)
+    deviation_before = await db.get_scene_deviation("Patio", new_scene)
+    assert deviation_before is not None
+    assert deviation_before > 0.5
+
+    for _ in range(5):
+        await db.record_scene_baseline("Patio", new_scene)
+    assert await _scene_streak(db, "Patio") == 0  # streak resets once it fires
+
+    deviation_after = await db.get_scene_deviation("Patio", new_scene)
+    assert deviation_after is not None
+    assert deviation_after < deviation_before
+    assert deviation_after < 0.5
+
+
+async def test_record_scene_baseline_streak_resets_on_matching_sample(
+    db: ClipDatabase,
+) -> None:
+    """A deviation streak interrupted by a sample close to the current
+    baseline resets to zero rather than accumulating toward the fast-refresh
+    threshold, so a one-off flicker doesn't get treated as a real change."""
+    old_scene = [0.0] * 4
+    new_scene = [1.0] * 4
+    for _ in range(20):
+        await db.record_scene_baseline("Alley", old_scene)
+
+    await db.record_scene_baseline("Alley", new_scene)
+    await db.record_scene_baseline("Alley", new_scene)
+    assert await _scene_streak(db, "Alley") == 2
+
+    # Baseline has only drifted slightly toward new_scene so far — a sample
+    # back at the original scene is still close enough to reset the streak.
+    await db.record_scene_baseline("Alley", old_scene)
+    assert await _scene_streak(db, "Alley") == 0
+
+    for _ in range(4):
+        await db.record_scene_baseline("Alley", new_scene)
+    # Never reached 5 *consecutive* elevated hits, so no fast refresh fired.
+    assert await _scene_streak(db, "Alley") == 4
+    deviation = await db.get_scene_deviation("Alley", new_scene)
+    assert deviation is not None
+    assert deviation > 0.6
+
+
+async def test_record_scene_baseline_no_streak_before_established(
+    db: ClipDatabase,
+) -> None:
+    """While a camera's baseline is still ramping up (below the minimum
+    sample count), elevated deviation between clips doesn't accumulate a
+    fast-refresh streak — the fast early-sample alpha already adapts quickly."""
+    for i in range(10):
+        # Alternate wildly so every sample would count as "elevated" if the
+        # streak counter were active this early.
+        scene = [float(i % 2)] * 4
+        await db.record_scene_baseline("Yard", scene)
+    assert await _scene_streak(db, "Yard") == 0
+
+
+async def test_record_scene_baseline_restart_resets_streak(
+    db: ClipDatabase,
+) -> None:
+    """A thumbnail-size change restarts sample_count *and* the deviation
+    streak, so a stale streak can't immediately trigger a fast refresh
+    against the freshly-restarted baseline."""
+    old_scene = [0.0] * 4
+    new_scene = [1.0] * 4
+    for _ in range(20):
+        await db.record_scene_baseline("Roof", old_scene)
+    for _ in range(3):
+        await db.record_scene_baseline("Roof", new_scene)
+    assert await _scene_streak(db, "Roof") == 3
+
+    await db.record_scene_baseline("Roof", [0.5, 0.5, 0.5])  # size change
+    assert await _scene_streak(db, "Roof") == 0

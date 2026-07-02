@@ -1,5 +1,52 @@
 # Changelog
 
+## 3.0.6
+
+### AI analysis — world-class accuracy pass
+
+- **Fix custom prompts silently reverting after being cleared in the UI.**
+  The car-camera fix in 3.0.5 made `is_car_camera` a true full replace on the
+  live analyzer, but per-camera `custom_prompt` was still merged with
+  `dict.update()` — clearing a camera's custom prompt in the AI tab saved the
+  change to `camera_configs.json` correctly, but the running analyzer kept
+  using the last non-empty prompt until the add-on restarted. Descriptions,
+  custom prompts, and car-camera flags are now all pushed to the live
+  analyzer through dedicated `update_camera_prompts()` / `update_car_cameras()`
+  methods that fully replace their mapping, matching the full-replace
+  contract `update_camera_descriptions()` already had.
+- **Sharpen car-camera distance rules to cut false positives on people
+  passing at a distance.** The protected-vehicle rules now key off
+  *lingering or contact* versus *simply passing through* rather than raw
+  distance alone: someone or something walking, running, or driving past
+  without stopping is never flagged regardless of how close their path
+  happens to run, while touching/reaching/circling the vehicle — or an
+  animal investigating it, or another vehicle stopping close beside it —
+  is. The "not suspicious" distance floor also tightened from 5 feet to 3
+  feet so genuinely nearby lingering isn't waved through.
+- **Fix Moondream Cloud car cameras silently missing animals and second
+  vehicles.** The detect-augmented fast path short-circuited to "not
+  suspicious" for any frame where `/detect` found zero people — even on a
+  car camera where a dog sniffing at the car, or another car stopping right
+  beside it, should have been caught. Car-camera frames with no person now
+  also check for an animal or a second vehicle near the protected car before
+  being written off, and inject the same proximity-hint language used for
+  people so the model still gets an evidence-based distance estimate.
+- **Scene-baseline "smart brain" now refreshes after a persistent change.**
+  The per-camera visual baseline learned in 3.0.5 used a slow exponential
+  average (floor alpha 0.05) that could take 45+ clips to catch up after
+  something was genuinely added to or removed from a camera's view. Once a
+  baseline is established, 5 consecutive ordinary (non-suspicious) clips in
+  a row showing elevated deviation are now treated as a real, lasting scene
+  change and snap the baseline toward the new normal in one fast blend,
+  instead of waiting dozens of samples for the slow steady-state average to
+  catch up. A one-off flicker that doesn't repeat 5 times running still
+  decays back to the slow EMA as before.
+- **Strengthen how per-camera descriptions steer suspicion.** The camera
+  "location and purpose" text configured in the AI tab now explicitly
+  instructs the model to use that stated purpose to calibrate what counts as
+  routine versus worth scrutiny for that specific camera, instead of relying
+  on the model to infer scope from the description alone.
+
 ## 3.0.5
 
 ### AI analysis — full-clip frame coverage

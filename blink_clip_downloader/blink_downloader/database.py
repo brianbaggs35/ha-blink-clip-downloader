@@ -90,6 +90,19 @@ CREATE TABLE IF NOT EXISTS camera_scene_baselines (
 # enough to report a deviation score — see get_scene_deviation().
 _SCENE_BASELINE_MIN_SAMPLES = 20
 
+# Deviation (see get_scene_deviation()) at or above this level counts as
+# "elevated" for the purposes of detecting a persistent scene change, once
+# the baseline is already established. Mirrors analyzer._SCENE_DEVIATION_ALERT_THRESHOLD.
+_SCENE_REFRESH_DEVIATION_THRESHOLD = 0.12
+# Number of consecutive ordinary (non-suspicious) clips that must show
+# elevated deviation before the baseline is treated as a persistent change
+# (something added/removed from the scene) rather than transient noise.
+_SCENE_REFRESH_STREAK = 5
+# Blend weight applied the one time the streak threshold is hit, so the
+# baseline snaps to the new normal quickly instead of waiting 45+ samples
+# for the slow steady-state EMA (alpha floor 0.05) to catch up.
+_SCENE_REFRESH_ALPHA = 0.5
+
 
 def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
     d = dict(row)
@@ -129,6 +142,11 @@ class ClipDatabase:
             ("analysis_results", "tokens_prompt", "INTEGER DEFAULT 0"),
             ("analysis_results", "tokens_completion", "INTEGER DEFAULT 0"),
             ("analysis_results", "anomaly_score", "REAL DEFAULT 0.0"),
+            (
+                "camera_scene_baselines",
+                "consecutive_deviation_count",
+                "INTEGER DEFAULT 0",
+            ),
         ]
         for table, col, definition in new_columns:
             try:
@@ -689,11 +707,19 @@ class ClipDatabase:
         first clip or two happened to show) and settles into a slow-moving
         average once established, so gradual lighting/seasonal drift is
         absorbed without letting any single clip swing the baseline.
+
+        Once established, if several consecutive ordinary clips in a row
+        show elevated deviation from the current baseline, that's treated as
+        a persistent scene change (something was actually added to or
+        removed from the background) rather than transient noise, and the
+        baseline is snapped toward the new normal in one fast blend instead
+        of waiting 45+ samples for the slow steady-state average to catch up.
         """
         if self._db is None:
             return
         async with self._db.execute(
-            "SELECT thumbnail, sample_count FROM camera_scene_baselines WHERE camera=?",
+            "SELECT thumbnail, sample_count, consecutive_deviation_count "
+            "FROM camera_scene_baselines WHERE camera=?",
             (camera,),
         ) as cur:
             row = await cur.fetchone()
@@ -702,8 +728,9 @@ class ClipDatabase:
         if row is None:
             await self._db.execute(
                 """
-                INSERT INTO camera_scene_baselines (camera, thumbnail, sample_count, updated_at)
-                VALUES (?, ?, 1, ?)
+                INSERT INTO camera_scene_baselines
+                    (camera, thumbnail, sample_count, updated_at, consecutive_deviation_count)
+                VALUES (?, ?, 1, ?, 0)
                 """,
                 (camera, json.dumps(thumbnail), now),
             )
@@ -715,23 +742,38 @@ class ClipDatabase:
         except (json.JSONDecodeError, TypeError):
             existing = []
         count = int(row[1])
+        streak = int(row[2]) if row[2] is not None else 0
 
         if not existing or len(existing) != len(thumbnail):
             # Thumbnail size changed (or prior data was corrupt) — restart
             # the baseline from this sample rather than blending mismatched data.
             blended = thumbnail
             count = 0
+            streak = 0
         else:
             alpha = max(0.05, 1.0 / (count + 1))
+            if count < _SCENE_BASELINE_MIN_SAMPLES:
+                # Still ramping up — the fast early-sample alpha above already
+                # converges quickly, so don't also track a deviation streak
+                # against a baseline that isn't considered trustworthy yet.
+                streak = 0
+            else:
+                diff = sum(abs(e - t) for e, t in zip(existing, thumbnail)) / len(
+                    existing
+                )
+                streak = streak + 1 if diff >= _SCENE_REFRESH_DEVIATION_THRESHOLD else 0
+                if streak >= _SCENE_REFRESH_STREAK:
+                    alpha = _SCENE_REFRESH_ALPHA
+                    streak = 0
             blended = [e * (1 - alpha) + t * alpha for e, t in zip(existing, thumbnail)]
 
         await self._db.execute(
             """
             UPDATE camera_scene_baselines
-            SET thumbnail = ?, sample_count = ?, updated_at = ?
+            SET thumbnail = ?, sample_count = ?, updated_at = ?, consecutive_deviation_count = ?
             WHERE camera = ?
             """,
-            (json.dumps(blended), count + 1, now, camera),
+            (json.dumps(blended), count + 1, now, streak, camera),
         )
         await self._db.commit()
 

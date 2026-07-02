@@ -2597,6 +2597,53 @@ def test_update_camera_descriptions() -> None:
     assert "Side entrance to the house" in prompt
 
 
+def test_update_camera_prompts_replaces_not_merges() -> None:
+    """update_camera_prompts fully replaces the mapping so clearing a
+    camera's custom prompt in the AI tab actually stops it from applying,
+    instead of a dict.update() merge leaving the stale value in place."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        camera_prompts={"Garage": "Watch for tools", "Driveway": "Watch for cars"},
+    )
+    assert "Watch for tools" in a._build_prompt("Garage")
+
+    a.update_camera_prompts({"Driveway": "Watch for cars"})
+    # Garage's custom prompt was dropped from the new mapping entirely, so it
+    # must fall back to the base prompt rather than keep the old override.
+    garage_prompt = a._build_prompt("Garage")
+    assert "Watch for tools" not in garage_prompt
+    assert garage_prompt.startswith("Analyze.")
+    assert "Watch for cars" in a._build_prompt("Driveway")
+
+
+def test_update_car_cameras_replaces_not_merges() -> None:
+    """update_car_cameras fully replaces the set, so a camera dropped from
+    the new set stops being treated as protected — a dict/set merge would
+    leave it car-camera-flagged forever."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="a red sedan",
+        car_cameras=["Driveway", "Garage"],
+    )
+    assert "PROTECTED VEHICLE" in a._build_prompt("Driveway")
+    assert "PROTECTED VEHICLE" in a._build_prompt("Garage")
+
+    a.update_car_cameras({"Driveway"})
+    assert "PROTECTED VEHICLE" in a._build_prompt("Driveway")
+    assert "PROTECTED VEHICLE" not in a._build_prompt("Garage")
+
+    # Empty car_cameras is documented, intentional behavior meaning "applies
+    # to all cameras" (see CLAUDE.md) — update_car_cameras must preserve
+    # that semantic rather than treating an empty set as "no cameras".
+    a.update_car_cameras(set())
+    assert "PROTECTED VEHICLE" in a._build_prompt("Driveway")
+    assert "PROTECTED VEHICLE" in a._build_prompt("Garage")
+
+
 def test_build_prompt_car_description_with_distance_rules() -> None:
     """Distance rules appear in prompt when car_description is set."""
     a = ClipAnalyzer(
@@ -3408,6 +3455,65 @@ def test_bbox_min_gap_multiple_pairs() -> None:
 
 
 # ------------------------------------------------------------------
+# _bbox_min_pairwise_gap (vehicle-to-vehicle proximity within one list)
+# ------------------------------------------------------------------
+
+
+def test_bbox_min_pairwise_gap_fewer_than_two_boxes() -> None:
+    """With 0 or 1 boxes there's no pair to compare — returns max separation."""
+    assert MoondreamCloudAnalyzer._bbox_min_pairwise_gap([]) == 1.0
+    box = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.5, "y_max": 0.5}]
+    assert MoondreamCloudAnalyzer._bbox_min_pairwise_gap(box) == 1.0
+
+
+def test_bbox_min_pairwise_gap_overlapping_boxes() -> None:
+    """Two overlapping boxes (e.g. cars parked right next to each other) → 0.0."""
+    boxes = [
+        {"x_min": 0.0, "y_min": 0.0, "x_max": 0.5, "y_max": 0.5},
+        {"x_min": 0.4, "y_min": 0.0, "x_max": 0.9, "y_max": 0.5},
+    ]
+    assert MoondreamCloudAnalyzer._bbox_min_pairwise_gap(boxes) == 0.0
+
+
+def test_bbox_min_pairwise_gap_finds_closest_of_three() -> None:
+    """With 3+ boxes, returns the minimum gap across all distinct pairs."""
+    boxes = [
+        {"x_min": 0.0, "y_min": 0.0, "x_max": 0.1, "y_max": 0.1},
+        {"x_min": 0.9, "y_min": 0.9, "x_max": 1.0, "y_max": 1.0},
+        {"x_min": 0.0, "y_min": 0.0, "x_max": 0.1, "y_max": 0.1},  # duplicates box 1
+    ]
+    gap = MoondreamCloudAnalyzer._bbox_min_pairwise_gap(boxes)
+    assert gap == 0.0  # boxes 1 and 3 coincide
+
+
+# ------------------------------------------------------------------
+# _proximity_hint tiers
+# ------------------------------------------------------------------
+
+
+def test_proximity_hint_touching() -> None:
+    hint = MoondreamCloudAnalyzer._proximity_hint(0.0, "dog")
+    assert "touching" in hint.lower()
+
+
+def test_proximity_hint_under_one_foot() -> None:
+    hint = MoondreamCloudAnalyzer._proximity_hint(0.04, "person or animal")
+    assert "less than 1 foot" in hint
+
+
+def test_proximity_hint_one_to_three_feet() -> None:
+    hint = MoondreamCloudAnalyzer._proximity_hint(0.10, "other vehicle")
+    assert "1–3 feet" in hint
+    assert "do NOT flag as suspicious" in hint
+
+
+def test_proximity_hint_far_away() -> None:
+    hint = MoondreamCloudAnalyzer._proximity_hint(0.5, "person or animal")
+    assert "several feet" in hint
+    assert "NOT suspicious" in hint
+
+
+# ------------------------------------------------------------------
 # _call_model with detect-based analysis
 # ------------------------------------------------------------------
 
@@ -3464,6 +3570,121 @@ async def test_moondream_cloud_call_model_no_person_skips_query() -> None:
     # Only 2 detect calls (one per frame), no query calls
     assert session.post.call_count == 2
     assert "No person detected" in result
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_call_model_car_camera_no_subject_still_skips_query() -> (
+    None
+):
+    """Car camera with no person, no animal, and only a single car in frame
+    (the protected vehicle itself, not a second one) still skips /query —
+    the extra animal/car detect calls shouldn't cause false triggers."""
+    car_boxes = [{"x_min": 0.3, "y_min": 0.2, "x_max": 0.8, "y_max": 0.9}]
+
+    def side_effect(url, **kwargs):
+        obj = kwargs.get("json", {}).get("object", "")
+        if obj == "car":
+            return _make_detect_resp(car_boxes)
+        return _make_detect_resp([])  # no person, no animal
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    a._session = session
+    a._current_camera = "Driveway"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    # detect:person, detect:animal, detect:car — but no /query call
+    assert session.post.call_count == 3
+    assert "No person detected" in result
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_call_model_car_camera_animal_near_car_triggers_query() -> (
+    None
+):
+    """Car camera: an animal near the protected vehicle (no person in frame)
+    must not be silently written off — /query still runs with a proximity
+    hint about the animal instead of a hardcoded 'not suspicious' result."""
+    animal_boxes = [{"x_min": 0.55, "y_min": 0.5, "x_max": 0.65, "y_max": 0.9}]
+    car_boxes = [{"x_min": 0.3, "y_min": 0.2, "x_max": 0.8, "y_max": 0.9}]
+    query_answer = (
+        '{"suspicious": true, "confidence": 0.6, "description": "Dog sniffing at car."}'
+    )
+
+    injected_prompts: list[str] = []
+
+    def side_effect(url, **kwargs):
+        if "detect" in url:
+            obj = kwargs.get("json", {}).get("object", "")
+            if obj == "animal":
+                return _make_detect_resp(animal_boxes)
+            if obj == "car":
+                return _make_detect_resp(car_boxes)
+            return _make_detect_resp([])  # no person
+        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
+        return _make_query_resp(query_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    a._session = session
+    a._current_camera = "Driveway"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    assert "Dog sniffing at car" in result
+    assert injected_prompts
+    assert "INTERNAL PROXIMITY HINT" in injected_prompts[0]
+    assert "person or animal" in injected_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_call_model_car_camera_multiple_vehicles_triggers_query() -> (
+    None
+):
+    """Car camera: a second vehicle stopped close to the protected car (no
+    person or animal in frame) must still trigger /query with a
+    vehicle-to-vehicle proximity hint, not the hardcoded skip result."""
+    car_boxes = [
+        {"x_min": 0.1, "y_min": 0.2, "x_max": 0.5, "y_max": 0.9},
+        {"x_min": 0.5, "y_min": 0.2, "x_max": 0.9, "y_max": 0.9},
+    ]
+    query_answer = '{"suspicious": true, "confidence": 0.55, "description": "Another car parked beside it."}'
+
+    injected_prompts: list[str] = []
+
+    def side_effect(url, **kwargs):
+        if "detect" in url:
+            obj = kwargs.get("json", {}).get("object", "")
+            if obj == "car":
+                return _make_detect_resp(car_boxes)
+            return _make_detect_resp([])  # no person, no animal
+        injected_prompts.append(kwargs.get("json", {}).get("question", ""))
+        return _make_query_resp(query_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    a._session = session
+    a._current_camera = "Driveway"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    assert "Another car parked beside it" in result
+    assert injected_prompts
+    assert "INTERNAL PROXIMITY HINT" in injected_prompts[0]
+    assert "other vehicle" in injected_prompts[0]
 
 
 @pytest.mark.asyncio

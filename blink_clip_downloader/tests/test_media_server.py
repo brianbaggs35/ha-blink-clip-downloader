@@ -70,8 +70,6 @@ def _make_analyzer(provider: str = "ollama", **overrides) -> MagicMock:
         return_value=overrides.get("analyze_result", _make_analysis_result())
     )
     analyzer.model_pricing.return_value = overrides.get("pricing", (3.0, 15.0))
-    analyzer._camera_prompts = {}
-    analyzer._car_cameras = set()
     return analyzer
 
 
@@ -1112,8 +1110,10 @@ async def test_ai_camera_configs_put_updates_live_analyzer(
         analyzer.update_camera_descriptions.assert_called_once_with(
             {"Driveway": "Points at the driveway"}
         )
-        assert analyzer._camera_prompts == {"Driveway": "Watch for cars"}
-        assert analyzer._car_cameras == {"Driveway"}
+        analyzer.update_camera_prompts.assert_called_once_with(
+            {"Driveway": "Watch for cars"}
+        )
+        analyzer.update_car_cameras.assert_called_once_with({"Driveway"})
     finally:
         await tc.close()
 
@@ -1125,7 +1125,6 @@ async def test_ai_camera_configs_put_can_clear_car_cameras(
     car-camera set, not silently preserve the previous one — camera_configs.json
     is the single source of truth for is_car_camera."""
     analyzer = _make_analyzer()
-    analyzer._car_cameras = {"Driveway"}
     server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
@@ -1149,7 +1148,44 @@ async def test_ai_camera_configs_put_can_clear_car_cameras(
                 headers={"Content-Type": "application/json"},
             )
         assert resp.status == 200
-        assert analyzer._car_cameras == set()
+        analyzer.update_car_cameras.assert_called_once_with(set())
+    finally:
+        await tc.close()
+
+
+async def test_ai_camera_configs_put_clears_removed_custom_prompt(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Clearing a camera's custom prompt in the AI tab must actually clear it
+    on the live analyzer — a naive dict.update() merge would silently keep
+    the stale prompt around until the add-on restarted."""
+    analyzer = _make_analyzer()
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        cfg_file = tmp_path / "camera_configs.json"
+        payload = [
+            {
+                "camera": "Driveway",
+                "description": "Points at the driveway",
+                "custom_prompt": "",
+                "is_car_camera": False,
+            }
+        ]
+        with patch(
+            "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+            new=cfg_file,
+        ):
+            resp = await tc.put(
+                "/api/ai/camera-configs",
+                data=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status == 200
+        # Empty custom_prompt values are dropped from the payload entirely,
+        # so the live analyzer gets an empty dict rather than a stale entry.
+        analyzer.update_camera_prompts.assert_called_once_with({})
     finally:
         await tc.close()
 

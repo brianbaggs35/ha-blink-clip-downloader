@@ -313,6 +313,24 @@ class BaseAnalyzer(abc.ABC):
         """Update per-camera descriptions at runtime without restart."""
         self._camera_descriptions = descriptions
 
+    def update_camera_prompts(self, prompts: dict[str, str]) -> None:
+        """Replace per-camera custom prompts at runtime without restart.
+
+        Full replace, not a merge — a camera whose custom prompt was cleared
+        in the AI tab must stop overriding the base prompt immediately rather
+        than keep using the last non-empty value it was ever set to.
+        """
+        self._camera_prompts = prompts
+
+    def update_car_cameras(self, car_cameras: set[str] | list[str]) -> None:
+        """Replace the car-camera set at runtime without restart.
+
+        Full replace, not a merge — unchecking every "protected vehicle" box
+        in the AI tab must actually clear car-proximity rules from the live
+        analyzer, not just leave the previous set in place.
+        """
+        self._car_cameras = set(car_cameras)
+
     def attach_scene_baseline_db(self, db: ClipDatabase) -> None:
         """Enable the visual scene-baseline ("smart brain") feature.
 
@@ -748,10 +766,19 @@ class BaseAnalyzer(abc.ABC):
         base = self._camera_prompts.get(camera, self._base_prompt)
         parts = [base]
 
-        # Camera location / purpose
+        # Camera location / purpose. Explicitly ties the description to what
+        # counts as normal here, so e.g. a mailbox camera cares about someone
+        # lingering at the box while a backyard camera treats wildlife as
+        # routine — the same activity can be normal on one camera and worth
+        # flagging on another.
         camera_desc = self._camera_descriptions.get(camera, "")
         if camera_desc:
-            parts.append(f"\n\nCamera location and purpose — {camera}: {camera_desc}")
+            parts.append(
+                f"\n\nCamera location and purpose — {camera}: {camera_desc}\n"
+                "Use this specific purpose to calibrate what is normal versus "
+                "suspicious for this camera — what it is meant to watch for is "
+                "what deserves scrutiny; everything else on this camera is routine."
+            )
         else:
             parts.append(f"\n\nCamera: {camera}")
 
@@ -823,30 +850,42 @@ class BaseAnalyzer(abc.ABC):
                 "First identify whether each subject is a person, a vehicle, or an "
                 "animal — never apply these vehicle-distance rules to a person unless a "
                 "vehicle is also genuinely visible in frame. Then apply these distance "
-                "rules STRICTLY. They cover anyone or anything getting close to the "
-                "vehicle — people, animals, or other vehicles — not just pedestrians:\n"
-                "• A person, animal, or object touching or within 1 foot of the vehicle: "
-                "suspicious=true, confidence ≥0.8\n"
-                "• A person 1–2 feet away AND facing or reaching toward the vehicle: "
-                "suspicious=true, confidence ≥0.6\n"
+                "and behavior rules STRICTLY. They cover anyone or anything getting close "
+                "to the vehicle — people, animals, or other vehicles — not just "
+                "pedestrians. The single most important distinction is LINGERING OR "
+                "CONTACT versus simply PASSING THROUGH:\n"
+                "• Touching, pressing against, reaching into, or within 1 foot of the "
+                "vehicle (person, animal, or object): suspicious=true, confidence ≥0.8\n"
+                "• A person 1–3 feet from the vehicle who stops, lingers, circles it, "
+                "faces it, or reaches toward it: suspicious=true, confidence ≥0.6\n"
+                "• An animal 1–3 feet from the vehicle that stops to sniff, paw at, jump "
+                "on, or otherwise investigate it: suspicious=true, confidence ≥0.5\n"
                 "• Another vehicle stopping, parking, or backing within 2 feet of the "
                 "protected vehicle: suspicious=true, confidence ≥0.6\n"
-                "• A person or animal walking past more than 2 feet from the vehicle "
-                "without stopping: suspicious=false\n"
+                "• A person, animal, bicycle, or other vehicle simply walking, running, "
+                "or driving past — even within a few feet — WITHOUT stopping, lingering, "
+                "or reaching toward the protected vehicle: suspicious=false. Passing near "
+                "a parked car on a sidewalk, driveway, or yard is completely normal and "
+                "must NOT be flagged just because the path happens to run close to it — "
+                "distance alone is never enough, only distance combined with stopping or "
+                "reaching matters.\n"
                 "• A vehicle driving past on the street without slowing or stopping near "
                 "the protected vehicle: suspicious=false — ordinary through-traffic is NOT "
                 "suspicious no matter how frequent. Describe it plainly as simply driving "
                 "up or down the street; do not say it was 'near' the protected vehicle or "
                 "anything else just because it passed through the frame.\n"
-                "• Anyone or anything more than 5 feet from the vehicle: suspicious=false "
-                "unless actively tampering\n"
+                "• Anyone or anything more than 3 feet from the vehicle and not actively "
+                "approaching it: suspicious=false unless there is other clear evidence of "
+                "tampering\n"
                 "Reference: a car door handle is about 4 feet off the ground; a typical car "
                 "is about 6 feet wide.\n"
-                "When something is genuinely close to the vehicle, always include a "
-                "natural-language distance estimate in your description, such as 'right "
-                "next to the car', 'about 2 feet from the driver door', or 'well away from "
-                "the vehicle'. For ordinary passing traffic or pedestrians, skip distance "
-                "language entirely and just describe the movement."
+                "When something is genuinely close to or lingering near the vehicle, always "
+                "include a natural-language distance estimate in your description, such as "
+                "'right next to the car', 'about 2 feet from the driver door', or 'well away "
+                "from the vehicle'. For ordinary passing traffic, pedestrians, or animals "
+                "that don't stop, skip distance language entirely and just describe the "
+                "movement — do not call routine passers-by suspicious merely because they "
+                "were near the vehicle at some point."
             )
         elif self._car_description and self._car_cameras:
             # A protected vehicle exists elsewhere on the property, but this camera
@@ -1304,26 +1343,85 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             return []
 
     @staticmethod
-    def _bbox_min_gap(
-        boxes_a: list[dict[str, float]], boxes_b: list[dict[str, float]]
-    ) -> float:
-        """Return the minimum Euclidean gap between any pair of bounding boxes.
+    def _bbox_gap(a: dict[str, float], b: dict[str, float]) -> float:
+        """Return the Euclidean gap between two bounding boxes.
 
         0.0 means the boxes overlap; 1.0 means maximum separation.
         Uses normalised coordinates (0–1 relative to image width/height).
         """
+        ax1, ay1 = a.get("x_min", 0.0), a.get("y_min", 0.0)
+        ax2, ay2 = a.get("x_max", 1.0), a.get("y_max", 1.0)
+        bx1, by1 = b.get("x_min", 0.0), b.get("y_min", 0.0)
+        bx2, by2 = b.get("x_max", 1.0), b.get("y_max", 1.0)
+        x_gap = max(0.0, max(ax1, bx1) - min(ax2, bx2))
+        y_gap = max(0.0, max(ay1, by1) - min(ay2, by2))
+        return (x_gap**2 + y_gap**2) ** 0.5
+
+    @classmethod
+    def _bbox_min_gap(
+        cls,
+        boxes_a: list[dict[str, float]],
+        boxes_b: list[dict[str, float]],
+    ) -> float:
+        """Return the minimum gap between any pair of boxes across two lists."""
         min_gap = 1.0
         for a in boxes_a:
-            ax1, ay1 = a.get("x_min", 0.0), a.get("y_min", 0.0)
-            ax2, ay2 = a.get("x_max", 1.0), a.get("y_max", 1.0)
             for b in boxes_b:
-                bx1, by1 = b.get("x_min", 0.0), b.get("y_min", 0.0)
-                bx2, by2 = b.get("x_max", 1.0), b.get("y_max", 1.0)
-                x_gap = max(0.0, max(ax1, bx1) - min(ax2, bx2))
-                y_gap = max(0.0, max(ay1, by1) - min(ay2, by2))
-                gap = (x_gap**2 + y_gap**2) ** 0.5
-                min_gap = min(min_gap, gap)
+                min_gap = min(min_gap, cls._bbox_gap(a, b))
         return min_gap
+
+    @classmethod
+    def _bbox_min_pairwise_gap(cls, boxes: list[dict[str, float]]) -> float:
+        """Return the minimum gap between any two distinct boxes in one list.
+
+        Used to detect a second vehicle parked or stopped close to the
+        protected vehicle when no person or animal is in frame — e.g. two
+        detected "car" boxes sitting right next to each other.
+        """
+        if len(boxes) < 2:
+            return 1.0
+        min_gap = 1.0
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                min_gap = min(min_gap, cls._bbox_gap(boxes[i], boxes[j]))
+        return min_gap
+
+    @staticmethod
+    def _proximity_hint(gap: float, subject: str) -> str:
+        """Build an [INTERNAL PROXIMITY HINT] string tiering *subject*'s
+        distance from the protected vehicle (or another vehicle) from
+        touching down to several feet away. Shared by the person/animal-to-
+        car and vehicle-to-vehicle proximity checks so both use the same
+        distance calibration and wording.
+        """
+        prefix = (
+            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
+            "do NOT copy this text into the description]: "
+        )
+        if gap == 0.0:
+            return (
+                f"{prefix}The {subject} appears to be directly touching or pressed "
+                "against the vehicle. Describe this as 'right next to' "
+                "or 'touching the car' in plain English."
+            )
+        if gap < 0.05:
+            return (
+                f"{prefix}The {subject} appears to be less than 1 foot from the vehicle. "
+                "Describe this as 'very close to the car' in plain English."
+            )
+        if gap < 0.15:
+            return (
+                f"{prefix}The {subject} appears to be roughly 1–3 feet from the vehicle. "
+                "This is close but not touching — do NOT flag as suspicious "
+                "unless actively lingering, reaching for, or touching the car. "
+                "Describe this as 'a couple of feet from the car' in plain English."
+            )
+        return (
+            f"{prefix}The {subject} appears to be several feet from the vehicle — "
+            "this distance is NOT suspicious on its own. "
+            "Set suspicious=false unless there is other clear evidence of tampering. "
+            "Describe this as 'well away from the car' in plain English."
+        )
 
     async def _call_api_frame(self, frame: bytes, prompt: str) -> str:
         """Send a single JPEG frame to the Moondream Cloud /query endpoint.
@@ -1387,12 +1485,17 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
         """Analyse frames via Moondream Cloud with detect-augmented analysis.
 
         For each frame:
-        1. Run ``/detect`` for "person" — if no person found, skip the
-           expensive ``/query`` and record a clear result for that frame.
-        2. For car cameras: also run ``/detect`` for "car" and inject
+        1. Run ``/detect`` for "person". For car cameras, a frame with no
+           person still gets checked for an animal near the vehicle or a
+           second vehicle parked/stopped close to it before being written
+           off — a car camera's job is to catch anyone or anything getting
+           close to the protected vehicle, not just people.
+        2. If nothing of interest was found, skip the expensive ``/query``
+           and record a clear result for that frame.
+        3. For car cameras: also run ``/detect`` for "car" and inject
            precise bounding-box proximity data into the query prompt so the
            model can make an evidence-based suspicious/clear decision.
-        3. Run ``/query`` (with reasoning=True) on the augmented prompt and
+        4. Run ``/query`` (with reasoning=True) on the augmented prompt and
            pick the most alarming result across all frames.
 
         Respects the 2 req/s rate limit with a 0.55 s delay between requests.
@@ -1411,74 +1514,66 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
         best_confidence = 0.0
 
         for i, frame in enumerate(frames):
+            is_last = i == len(frames) - 1
+
             # ── Phase 1: detect persons ──────────────────────────────────
             persons = await self._detect_objects(frame, "person")
             await asyncio.sleep(0.55)
 
-            if not persons:
-                # No person in this frame — motion likely caused by something else.
-                # Record a clear result and move on without spending query tokens.
-                no_person_resp = (
+            # ── Phase 1b: car cameras still need to check for an animal or
+            # a second vehicle near the protected car even with no person —
+            # otherwise a dog sniffing at the car, or another car pulling up
+            # tight beside it, would be silently written off below.
+            animals: list[dict[str, float]] = []
+            car_boxes: list[dict[str, float]] = []
+            if not persons and car_applies:
+                animals = await self._detect_objects(frame, "animal")
+                await asyncio.sleep(0.55)
+                car_boxes = await self._detect_objects(frame, "car")
+                await asyncio.sleep(0.55)
+
+            multiple_vehicles = car_applies and len(car_boxes) > 1
+            if not persons and not animals and not multiple_vehicles:
+                # Nothing of interest in this frame — motion likely caused by
+                # something else. Record a clear result and move on without
+                # spending query tokens.
+                no_subject_resp = (
                     '{"suspicious": false, "confidence": 0.9, '
                     '"description": "No person detected in this frame. '
                     'Motion likely caused by a vehicle, animal, or environmental factor."}'
                 )
                 if not best_response:
-                    best_response = no_person_resp
-                if i < len(frames) - 1:
+                    best_response = no_subject_resp
+                if not is_last:
                     await asyncio.sleep(0.55)
                 continue
 
             # ── Phase 2: augment prompt with spatial context ─────────────
             augmented_prompt = prompt
+            subjects = persons + animals
 
             if car_applies:
-                car_boxes = await self._detect_objects(frame, "car")
-                await asyncio.sleep(0.55)
+                if not car_boxes:
+                    car_boxes = await self._detect_objects(frame, "car")
+                    await asyncio.sleep(0.55)
 
-                if car_boxes:
-                    gap = self._bbox_min_gap(persons, car_boxes)
-                    if gap == 0.0:
-                        spatial_note = (
-                            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
-                            "do NOT copy this text into the description]: "
-                            "The person appears to be directly touching or pressed "
-                            "against the vehicle. Describe this as 'right next to' "
-                            "or 'touching the car' in plain English."
-                        )
-                    elif gap < 0.05:
-                        spatial_note = (
-                            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
-                            "do NOT copy this text into the description]: "
-                            "The person appears to be less than 1 foot from the vehicle. "
-                            "Describe this as 'very close to the car' in plain English."
-                        )
-                    elif gap < 0.15:
-                        spatial_note = (
-                            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
-                            "do NOT copy this text into the description]: "
-                            "The person appears to be roughly 1–3 feet from the vehicle. "
-                            "This is close but not touching — do NOT flag as suspicious "
-                            "unless actively reaching for or touching the car. "
-                            "Describe this as 'a couple of feet from the car' in plain English."
-                        )
-                    else:
-                        spatial_note = (
-                            "[INTERNAL PROXIMITY HINT — use for reasoning only, "
-                            "do NOT copy this text into the description]: "
-                            "The person appears to be several feet from the vehicle — "
-                            "this distance is NOT suspicious on its own. "
-                            "Set suspicious=false unless there is other clear evidence of tampering. "
-                            "Describe this as 'well away from the car' in plain English."
-                        )
-                    augmented_prompt += f"\n\n{spatial_note}"
+                if subjects and car_boxes:
+                    gap = self._bbox_min_gap(subjects, car_boxes)
+                    augmented_prompt += (
+                        f"\n\n{self._proximity_hint(gap, 'person or animal')}"
+                    )
+                elif multiple_vehicles:
+                    gap = self._bbox_min_pairwise_gap(car_boxes)
+                    augmented_prompt += (
+                        f"\n\n{self._proximity_hint(gap, 'other vehicle')}"
+                    )
                 else:
                     # Car not detected in this frame — suppress car rules to
                     # avoid the model hallucinating car proximity.
                     augmented_prompt += (
                         "\n\n[INTERNAL PROXIMITY HINT — use for reasoning only]: "
                         "The protected vehicle is not visible in this frame. "
-                        "Evaluate the person's behaviour based on the camera "
+                        "Evaluate the subject's behaviour based on the camera "
                         "location description only."
                     )
 
@@ -1504,7 +1599,7 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
             # ── Phase 3: full query with augmented prompt ────────────────
             resp = await self._call_api_frame(frame, augmented_prompt)
             if not resp:
-                if i < len(frames) - 1:
+                if not is_last:
                     await asyncio.sleep(0.55)
                 continue
 
@@ -1521,7 +1616,7 @@ class MoondreamCloudAnalyzer(BaseAnalyzer):
                 best_is_suspicious = susp
                 best_confidence = conf
 
-            if i < len(frames) - 1:
+            if not is_last:
                 await asyncio.sleep(0.55)
 
         return best_response

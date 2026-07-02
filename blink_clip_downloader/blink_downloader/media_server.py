@@ -2807,25 +2807,23 @@ class MediaServer:
         except OSError as exc:
             _LOGGER.warning("Could not save camera configs: %s", exc)
 
-        # Update the live analyzer without restart
+        # Update the live analyzer without restart. Every field is a full
+        # replace, not a merge — camera_configs.json is the single source of
+        # truth for these settings (see CLAUDE.md), so clearing a value in
+        # the AI tab must stop it from applying immediately rather than
+        # leaving the last non-empty value in place until a restart.
         if self._analyzer is not None:
             descriptions = {
                 c["camera"]: c["description"] for c in configs if c.get("description")
             }
             self._analyzer.update_camera_descriptions(descriptions)
-            # Update camera-specific prompts
             prompts = {
                 c["camera"]: c["custom_prompt"]
                 for c in configs
                 if c.get("custom_prompt")
             }
-            self._analyzer._camera_prompts.update(prompts)  # noqa: SLF001
-            # Update car-camera set from checkbox selections. camera_configs.json
-            # is the single source of truth for is_car_camera (see CLAUDE.md), so
-            # this must apply even when the new set is empty — otherwise
-            # unchecking every "protected vehicle" box in the UI could never
-            # actually clear car-proximity rules from the running analyzer.
+            self._analyzer.update_camera_prompts(prompts)
             car_cameras = {c["camera"] for c in configs if c.get("is_car_camera")}
-            self._analyzer._car_cameras = car_cameras  # noqa: SLF001
+            self._analyzer.update_car_cameras(car_cameras)
 
         return web.json_response({"saved": True, "count": len(configs)})
