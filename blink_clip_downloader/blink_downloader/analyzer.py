@@ -1833,15 +1833,10 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                         else self._bbox_min_pairwise_gap(other_vehicle_boxes)
                     )
                     augmented_prompt += f"\n\n{self._vehicle_proximity_hint(gap)}"
-                else:
-                    # Car not detected in this frame — suppress car rules to
-                    # avoid the model hallucinating car proximity.
-                    augmented_prompt += (
-                        "\n\n[INTERNAL PROXIMITY HINT — use for reasoning only]: "
-                        "The protected vehicle is not visible in this frame. "
-                        "Evaluate the subject's behaviour based on the camera "
-                        "location description only."
-                    )
+                # else: car detect returned nothing — no proximity hint; the base
+                # prompt's vehicle-distance rules still apply if the model can see
+                # the car in the frames. Explicit suppression here caused missed
+                # alerts when detect failed despite the car being visibly in frame.
 
             else:
                 # Non-car camera: inject subject positions (person, animal,
@@ -2122,13 +2117,9 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                     else self._bbox_min_pairwise_gap(other_vehicle_boxes)
                 )
                 augmented_prompt += f"\n\n{self._vehicle_proximity_hint(gap)}"
-            else:
-                augmented_prompt += (
-                    "\n\n[INTERNAL PROXIMITY HINT — use for reasoning only]: "
-                    "The protected vehicle is not visible in this frame. "
-                    "Evaluate the subject's behaviour based on the camera "
-                    "location description only."
-                )
+            # else: car detect returned nothing — no proximity hint; the base
+            # prompt's vehicle-distance rules still apply if the model can see
+            # the car in the frames.
         else:
             labeled_subjects = (
                 [("Person", p) for p in persons]

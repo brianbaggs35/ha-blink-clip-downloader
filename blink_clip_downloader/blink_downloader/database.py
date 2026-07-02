@@ -133,7 +133,29 @@ class ClipDatabase:
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
         await self._migrate()
+        await self._reset_stale_processing()
         _LOGGER.debug("Clip database opened at %s", self._path)
+
+    async def _reset_stale_processing(self) -> None:
+        """Reset any items stuck in 'processing' back to 'pending'.
+
+        Items land in 'processing' when the app crashes or is restarted
+        mid-analysis. They are never retried otherwise because the queue
+        only fetches status='pending'.
+        """
+        assert self._db is not None
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM analysis_queue WHERE status='processing'"
+        ) as cur:
+            row = await cur.fetchone()
+            count = row[0] if row else 0
+        if count:
+            await self._db.execute(
+                "UPDATE analysis_queue SET status='pending', completed_at='', "
+                "error_message='' WHERE status='processing'"
+            )
+            await self._db.commit()
+            _LOGGER.info("Reset %d stale processing item(s) to pending", count)
 
     async def _migrate(self) -> None:
         """Apply incremental schema migrations for existing databases."""
@@ -157,6 +179,28 @@ class ClipDatabase:
                 _LOGGER.debug("Migrated: added %s.%s", table, col)
             except Exception:  # noqa: BLE001
                 pass  # Column already exists — safe to ignore
+
+        await self._normalize_legacy_model_names()
+
+    async def _normalize_legacy_model_names(self) -> None:
+        """Fold pre-3.0 Moondream Cloud rows into the current model identifier.
+
+        Early versions stored the provider name (``moondream-cloud`` /
+        ``moondream_cloud``) in ``analysis_results.model`` instead of the
+        actual model ID, and predate per-request token tracking. This left
+        those rows permanently split out from ``moondream3-preview`` in the
+        Per-Model Breakdown with 0 tokens, looking like a second, broken
+        model. They're the same model, just analyzed before token tracking
+        existed, so merge them into the current identifier.
+        """
+        assert self._db is not None
+        await self._db.execute(
+            """
+            UPDATE analysis_results SET model = 'moondream3-preview'
+            WHERE model IN ('moondream-cloud', 'moondream_cloud')
+            """
+        )
+        await self._db.commit()
 
     async def close(self) -> None:
         if self._db:
@@ -539,10 +583,18 @@ class ClipDatabase:
     async def get_analysis_stats(self) -> dict[str, Any]:
         if self._db is None:
             return {}
+        today = datetime.now(timezone.utc).date().isoformat()
         queries = {
             "total_analyzed": "SELECT COUNT(*) FROM analysis_results",
             "suspicious_count": (
                 "SELECT COUNT(*) FROM analysis_results WHERE is_suspicious=1"
+            ),
+            "total_frames_analyzed": (
+                "SELECT COALESCE(SUM(frame_count),0) FROM analysis_results"
+            ),
+            "frames_analyzed_today": (
+                "SELECT COALESCE(SUM(frame_count),0) FROM analysis_results "
+                f"WHERE analyzed_at LIKE '{today}%'"
             ),
         }
         results: dict[str, Any] = {}

@@ -428,10 +428,28 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             local_clips = await self._downloader.download_local_storage_clips()
             downloaded = [*downloaded, *local_clips]
 
-        self._session_downloads += len(downloaded)
+        # Clips already present on disk get re-linked into the tracker (see
+        # BlinkDownloader._download_clip) rather than re-downloaded, which
+        # happens whenever the tracker/database falls behind the files under
+        # download_path — most commonly after restoring an older HA backup.
+        # These are not new content, so they must not trigger notifications,
+        # webhooks, or (critically) AI analysis — that would silently re-run
+        # and re-bill analysis for clips that were likely already analyzed
+        # before the restore.
+        new_clips = [c for c in downloaded if not c.get("skipped")]
+        rediscovered = len(downloaded) - len(new_clips)
+        if rediscovered:
+            _LOGGER.info(
+                "%d clip(s) already on disk were re-linked into the tracker "
+                "without notifications or AI analysis (tracker/database "
+                "reset, e.g. after a backup restore)",
+                rediscovered,
+            )
 
-        if downloaded:
-            await self._on_clips_downloaded(downloaded)
+        self._session_downloads += len(new_clips)
+
+        if new_clips:
+            await self._on_clips_downloaded(new_clips)
 
         # Gradually fill in thumbnails for clips downloaded before
         # download_thumbnails was enabled (or re-imported after a reinstall).

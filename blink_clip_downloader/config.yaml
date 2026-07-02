@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v3.0.8"
+version: "v3.0.11"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-

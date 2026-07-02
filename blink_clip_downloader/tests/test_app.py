@@ -69,6 +69,62 @@ async def test_poll_cycle_with_new_clips(app):
     assert app._session_downloads == 1
 
 
+async def test_poll_cycle_skipped_clips_trigger_no_notifications_or_analysis(app):
+    """Clips re-linked into the tracker (already on disk) are not "new".
+
+    This happens when the tracker/database falls behind the files under
+    download_path (e.g. after restoring an older HA backup) — the downloader
+    re-links them instead of re-downloading, but they must not be treated as
+    freshly downloaded clips or they'd trigger AI re-analysis and burn tokens
+    on clips that were likely already analyzed before the restore.
+    """
+    clips = [
+        {
+            "id": "1",
+            "camera": "Porch",
+            "path": "/share/blink-clips/1.mp4",
+            "timestamp": "2024-06-01T08:30:00+00:00",
+            "size_bytes": 1024,
+            "skipped": True,
+        }
+    ]
+    app._downloader.download_new_clips = AsyncMock(return_value=clips)
+    app._on_clips_downloaded = AsyncMock()
+
+    await app._poll_cycle()
+
+    app._on_clips_downloaded.assert_not_awaited()
+    app._notifier.notify.assert_not_awaited()
+    assert app._session_downloads == 0
+
+
+async def test_poll_cycle_mix_of_skipped_and_new_clips(app):
+    clips = [
+        {
+            "id": "1",
+            "camera": "Porch",
+            "path": "/p/1.mp4",
+            "timestamp": "t",
+            "size_bytes": 1,
+            "skipped": True,
+        },
+        {
+            "id": "2",
+            "camera": "Porch",
+            "path": "/p/2.mp4",
+            "timestamp": "t",
+            "size_bytes": 1,
+        },
+    ]
+    app._downloader.download_new_clips = AsyncMock(return_value=clips)
+    app._on_clips_downloaded = AsyncMock()
+
+    await app._poll_cycle()
+
+    app._on_clips_downloaded.assert_awaited_once_with([clips[1]])
+    assert app._session_downloads == 1
+
+
 async def test_poll_cycle_quota_exceeded_skips_download(app):
     app._storage.is_over_quota = MagicMock(return_value=True)
 

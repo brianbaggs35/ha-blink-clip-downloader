@@ -1427,6 +1427,23 @@ async def test_ai_status_includes_queue_status(
         await tc.close()
 
 
+async def test_ai_status_includes_frame_analysis_stats(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(_make_analysis_result("c1").to_dict())
+    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/status")
+        data = await resp.json()
+        assert data["analysis_stats"]["total_frames_analyzed"] == 3
+        assert "frames_analyzed_today" in data["analysis_stats"]
+    finally:
+        await tc.close()
+
+
 async def test_ai_usage_enabled_non_anthropic(db: ClipDatabase, tmp_path: Path) -> None:
     analyzer = _make_analyzer(provider="ollama")
     server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
