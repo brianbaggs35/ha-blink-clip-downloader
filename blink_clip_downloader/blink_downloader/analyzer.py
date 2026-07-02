@@ -914,6 +914,15 @@ class BaseAnalyzer(abc.ABC):
             "as if explaining to a homeowner what happened, and must describe ONLY what is "
             f"actually visible in these specific frames from the {camera} camera — never assume "
             "objects or areas seen by other cameras on the property are visible here. "
+            "Keep it SHORT: one sentence, or at most two only when genuinely necessary — "
+            "about the length of 'A person is walking past the car' or 'A person is standing "
+            "very close to the car and appears to be looking inside it'. State only the "
+            "notable person, vehicle, or animal and what they are doing, from a security-"
+            "monitoring perspective focused on this property's assets. Do NOT list or "
+            "describe static background scenery that isn't part of the notable activity — "
+            "other parked vehicles that aren't involved, houses, weather, foliage or grass, "
+            "utility poles, power lines, and general neighborhood description all add nothing "
+            "to a security summary and must be left out entirely. "
             + example_phrase
             + "Identify subjects accurately: state plainly whether you see a person, a "
             "vehicle (car, truck, van, motorcycle), or an animal — never describe a "
@@ -1587,17 +1596,24 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         """Call Moondream Cloud's dedicated ``/caption`` endpoint for a
         factual, grounding description of *frame*.
 
-        The caption skill is tuned specifically for comprehensive scene
-        description (elements, context, colors, positioning) rather than
-        free-form Q&A, so injecting its output into the ``/query`` prompt as
-        grounding context measurably reduces hallucination in the final
-        structured description compared to relying on ``/query`` alone.
-        Returns "" on any error so callers can skip the grounding hint.
+        The caption skill is tuned specifically for scene description
+        (elements, context, colors, positioning) rather than free-form Q&A,
+        so injecting its output into the ``/query`` prompt as grounding
+        context measurably reduces hallucination in the final structured
+        description compared to relying on ``/query`` alone. Uses
+        ``length="short"`` rather than ``"normal"`` — a short caption
+        grounds the query with the notable subject and its immediate
+        surroundings in one concise sentence instead of an exhaustive,
+        multi-sentence inventory of everything in frame (background
+        vehicles, foliage, utility poles, etc.), which was leaking into the
+        final description and driving up completion tokens for little
+        security value. Returns "" on any error so callers can skip the
+        grounding hint.
         """
         image_b64 = base64.b64encode(frame).decode("ascii")
         payload: dict[str, Any] = {
             "image_url": f"data:image/jpeg;base64,{image_b64}",
-            "length": "normal",
+            "length": "short",
             "stream": False,
         }
         if self._finetune_model:
@@ -2017,12 +2033,13 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
     def _local_caption(self, encoded: Any) -> str:
         """Call the local model's ``caption`` for factual grounding context.
 
-        Mirrors :meth:`MoondreamCloudAnalyzer._caption_frame`. Returns "" on
-        any error so callers can skip the grounding hint.
+        Mirrors :meth:`MoondreamCloudAnalyzer._caption_frame`, including the
+        ``length="short"`` choice — see that method's docstring for why.
+        Returns "" on any error so callers can skip the grounding hint.
         """
         try:
             return str(
-                self._md_model.caption(encoded, length="normal").get("caption", "")
+                self._md_model.caption(encoded, length="short").get("caption", "")
             )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.debug("Moondream local caption failed: %s", exc)

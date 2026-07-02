@@ -318,7 +318,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 /* ── Status page ──────────────────────────────────────── */
 #page-status{overflow-y:auto;padding:1.5rem}
 .status-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));
-             gap:1rem;max-width:1050px;margin:0 auto}
+             gap:1rem;max-width:1050px;margin:0 auto;min-width:0}
 .status-card{background:var(--card);border:1px solid var(--border);
              border-radius:var(--radius);padding:1rem 1.15rem}
 .status-card h3{font-size:.88rem;font-weight:600;margin-bottom:.75rem;
@@ -356,6 +356,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
                  line-height:1.15;margin-bottom:.2rem}
 .usage-stat .lbl{font-size:.76rem;color:var(--muted);text-transform:uppercase;
                  letter-spacing:.07em}
+.table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .usage-table{width:100%;border-collapse:collapse;font-size:.82rem;margin:.4rem 0 1.2rem}
 .usage-table th{background:var(--card2);padding:.4rem .75rem;text-align:left;
                 color:var(--muted);font-size:.73rem;font-weight:700;
@@ -363,7 +364,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 .usage-table td{padding:.4rem .75rem;border-bottom:1px solid var(--border)}
 .usage-table tr:last-child td{border-bottom:none}
 .usage-table tr:hover td{background:var(--card2)}
-.auto-content{max-width:820px;margin:0 auto}
+.auto-content{max-width:820px;margin:0 auto;min-width:0;width:100%}
 .auto-content h2{font-size:1.08rem;font-weight:700;margin-bottom:.9rem}
 .auto-content h3{font-size:.9rem;font-weight:600;color:var(--accent);
                  margin:.9rem 0 .35rem;display:flex;align-items:center;gap:.35rem}
@@ -520,6 +521,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
        snippets into <code>automations.yaml</code> or the HA automation editor.</p>
 
     <h3>📡 Events &amp; Sensors</h3>
+    <div class="table-scroll">
     <table class="event-table">
       <thead><tr><th>Type</th><th>Name</th><th>Description</th></tr></thead>
       <tbody>
@@ -529,6 +531,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
             <td>Per-clip event: clip_id, camera, path, timestamp, size_bytes, duration, source</td></tr>
       </tbody>
     </table>
+    </div>
 
     <h3>⚡ Notify on any new clip</h3>
     <div class="code-block" id="auto1"><button class="copy-btn" data-target="auto1">Copy</button>alias: "Blink – new clip notification"
@@ -630,7 +633,7 @@ action:
 
       <!-- Per-model breakdown table -->
       <h3 style="margin-bottom:.6rem">Per-Model Breakdown</h3>
-      <div id="usage-model-table-wrap">
+      <div id="usage-model-table-wrap" class="table-scroll">
         <table class="usage-table">
           <thead>
             <tr>

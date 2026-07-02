@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v3.0.11"
+version: "v3.1.0"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -188,7 +188,10 @@ options:
     from assets, or when only vehicles/animals/environmental motion is visible.
     Confidence = how clearly you can see the scene (0.1=very dark/blurry, 1.0=crystal clear).
     Respond ONLY with this exact JSON and no other text:
-    {"suspicious": true/false, "confidence": 0.1-1.0, "description": "2-3 sentence plain-English description"}
+    {"suspicious": true/false, "confidence": 0.1-1.0, "description": "one short plain-English
+    sentence naming the notable person, vehicle, or animal and what they are doing (e.g. 'A
+    person is walking past the car') — omit static background scenery like parked vehicles
+    that aren't involved, weather, foliage, or utility poles/power lines"}
   # Optional description of a vehicle to protect. When set, the AI applies strict
   # distance rules and flags anyone within ~2 feet of the vehicle as suspicious.
   # Example: "Silver Kia Forte, parked in the driveway"

@@ -227,18 +227,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         for sig in (signal.SIGTERM, signal.SIGINT):
             self._loop.add_signal_handler(sig, self._handle_shutdown)
 
-        # Init database.
+        # Init database. Schema setup is cheap (a few CREATE TABLE IF NOT
+        # EXISTS statements) so it's fine to await inline here.
         if self._config.enable_library_db:
             await self._db.init()
-
-            # Re-populate the library with any clip files left behind under
-            # download_path from a previous installation (e.g. /data was
-            # wiped on uninstall but /share/blink-clips was not).
-            imported = await import_existing_clips(self._db, self._config.download_path)
-            if imported:
-                _LOGGER.info(
-                    "Library re-import: added %d pre-existing clip(s)", imported
-                )
 
         # ── Web server FIRST ─────────────────────────────────────────────────
         # Must start before any blocking auth call so HA ingress always finds
@@ -249,6 +241,19 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             )
             # Yield once so the server task begins binding before we continue.
             await asyncio.sleep(0)
+
+        if self._config.enable_library_db:
+            # Re-populate the library with any clip files left behind under
+            # download_path from a previous installation (e.g. /data was
+            # wiped on uninstall but /share/blink-clips was not). Runs as a
+            # background task — a large library means an unbounded number of
+            # rglob()/stat() syscalls, and awaiting it inline here used to
+            # delay the media server task above from ever getting scheduled,
+            # leaving HA ingress with nothing listening on port 8099 (seen as
+            # a 504) for however long the filesystem walk took.
+            self._bg_tasks.append(
+                asyncio.create_task(self._reimport_library(), name="library_reimport")
+            )
 
         # ── Configuration error mode ─────────────────────────────────────────
         # options.json was missing or invalid.  Show the error on the Status
@@ -628,6 +633,11 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             STATS_FILE.write_text(json.dumps(payload, indent=2))
         except OSError as exc:
             _LOGGER.warning("Could not write stats file: %s", exc)
+
+    async def _reimport_library(self) -> None:
+        imported = await import_existing_clips(self._db, self._config.download_path)
+        if imported:
+            _LOGGER.info("Library re-import: added %d pre-existing clip(s)", imported)
 
     # ------------------------------------------------------------------
     # Shutdown

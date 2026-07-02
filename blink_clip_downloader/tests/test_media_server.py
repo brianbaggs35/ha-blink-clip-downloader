@@ -111,6 +111,33 @@ async def test_index_returns_html(client: TestClient) -> None:
     assert "video.js" in body
 
 
+async def test_index_mobile_pages_constrain_width(client: TestClient) -> None:
+    """Status/Automations/AI/Usage pages must not force horizontal page overflow.
+
+    Regression test: `.page.active{display:flex}` makes `.status-grid` and
+    `.auto-content` flex items. Flex items default to `min-width:auto`, so
+    content with a large intrinsic width (the activity chart, or a table
+    with long unbreakable `<code>` identifiers) forced the whole page far
+    wider than the viewport on mobile, with no way to scroll back since
+    `body{overflow:hidden}` silently clipped the excess. `min-width:0` lets
+    these containers actually shrink to the available width; the tables
+    that still can't shrink below their content (event-table, usage-table)
+    get their own `.table-scroll{overflow-x:auto}` wrapper instead of
+    blowing out the page.
+    """
+    resp = await client.get("/")
+    body = await resp.text()
+    assert ".status-grid{display:grid" in body
+    assert (
+        "min-width:0" in body.split(".status-grid{display:grid", 1)[1].split("}", 1)[0]
+    )
+    assert ".auto-content{" in body
+    assert "min-width:0" in body.split(".auto-content{", 1)[1].split("}", 1)[0]
+    assert ".table-scroll{overflow-x:auto" in body
+    assert '<div class="table-scroll">' in body
+    assert 'id="usage-model-table-wrap" class="table-scroll"' in body
+
+
 async def test_index_has_security_headers(client: TestClient) -> None:
     resp = await client.get("/")
     assert resp.headers.get("X-Content-Type-Options") == "nosniff"

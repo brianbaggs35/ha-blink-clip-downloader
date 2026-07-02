@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.11
+## 3.1.0
 
 ### Features
 
@@ -8,6 +8,41 @@
   underneath Storage with the total number of frames/images the AI has
   analyzed, and how many were analyzed today. This is tracked separately
   from clip counts since each clip's AI analysis inspects multiple frames.
+
+### Improvements
+
+- **Shorter, cheaper, still-accurate AI descriptions.** 3.0.8's richer
+  Moondream pipeline improved detection accuracy but also made descriptions
+  noticeably more verbose — narrating background scenery (other parked
+  vehicles, utility poles, power lines, foliage, general neighborhood
+  description) that adds nothing to a security summary while driving up
+  completion tokens. Descriptions are now capped at one sentence (two only
+  when genuinely necessary), scoped strictly to the notable person, vehicle,
+  or animal and what they're doing, e.g. "A person is walking past the car."
+  Static background scenery is explicitly excluded. Moondream Cloud/local
+  grounding captions now request `length="short"` instead of `"normal"`,
+  avoiding the exhaustive scene inventory that was leaking into final
+  descriptions. The detect-augmented accuracy pipeline (person/vehicle/animal
+  detection, proximity hints, reasoning) is unchanged — only the verbosity of
+  the final text and the grounding caption's detail level were reduced.
+
+### Bug fixes
+
+- **Fix: Status/AI Usage/Automations/AI pages could be forced up to ~3x
+  wider than the mobile viewport, clipping content with no way to scroll
+  back.** `.page.active{display:flex}` makes `.status-grid` and
+  `.auto-content` flex items, which default to `min-width:auto` — so
+  content with a large intrinsic width (the 7-day activity chart, or the
+  Automations event table's long unbreakable `sensor.blink_downloader_status`
+  / `blink_clip_downloaded` identifiers) silently forced the whole page
+  hundreds of pixels past the screen edge, and `body{overflow:hidden}`
+  clipped the overflow with no scroll gesture able to reach it. Both
+  containers now get `min-width:0` so they properly shrink to the viewport,
+  and the two data tables (Automations event table, AI Usage per-model
+  breakdown) are wrapped in a dedicated horizontally-scrollable container so
+  content that genuinely can't shrink further (like those identifiers)
+  scrolls locally instead of blowing out the page. Desktop layout is
+  unchanged.
 
 ### Notes
 

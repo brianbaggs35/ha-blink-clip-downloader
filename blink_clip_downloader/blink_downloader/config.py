@@ -133,7 +133,11 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
         "(0.1 = very dark or blurry, 1.0 = crystal-clear daylight).\n\n"
         "Respond ONLY with this exact JSON — no other text:\n"
         '{"suspicious": true/false, "confidence": 0.1-1.0, '
-        '"description": "2-3 sentence plain-English description of what you see and why it is or is not suspicious"}'
+        '"description": "one short plain-English sentence naming the notable person, '
+        "vehicle, or animal and what they are doing (e.g. 'A person is walking past the "
+        "car' or 'A person is standing very close to the car and appears to be looking "
+        "inside it') — omit static background scenery like parked vehicles that aren't "
+        'involved, weather, foliage, or utility poles/power lines"}'
     )
     ai_car_description: str = ""
     ai_max_frames: int = 5
