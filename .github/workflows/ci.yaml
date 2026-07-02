@@ -97,10 +97,10 @@ jobs:
           pytest blink_clip_downloader/tests \
             -v \
             --tb=short \
-            --cov=blink_downloader \
+            --cov=blink_clip_downloader \
+            --cov-branch \
             --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
-            --cov --cov-branch --cov-report=xml
+            --cov-report=xml:coverage.xml
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
@@ -112,6 +112,8 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: false
 
   build:
     name: Build Add-on Image
