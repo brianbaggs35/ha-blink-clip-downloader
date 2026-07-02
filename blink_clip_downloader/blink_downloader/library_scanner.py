@@ -9,6 +9,7 @@ files and add them to the database so they reappear in the web UI.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -35,7 +36,14 @@ async def import_existing_clips(db: ClipDatabase, download_path: Path) -> int:
     known = await db.get_all_file_paths()
     added = 0
 
-    for file_path in sorted(download_path.rglob("*.mp4")):
+    # rglob()/stat() are blocking syscalls; a large library means an
+    # unbounded number of them, so yield periodically to keep this from
+    # starving the event loop (and anything else on it, like the media
+    # server) for the whole scan.
+    for i, file_path in enumerate(sorted(download_path.rglob("*.mp4"))):
+        if i % 25 == 0:
+            await asyncio.sleep(0)
+
         if not file_path.is_file():
             continue
         if _ARCHIVE_DIR in file_path.relative_to(download_path).parts[:-1]:

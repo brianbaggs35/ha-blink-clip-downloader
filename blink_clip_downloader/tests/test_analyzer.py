@@ -260,6 +260,22 @@ def test_build_prompt_no_car(analyzer: ClipAnalyzer) -> None:
     assert "1 foot" not in prompt
 
 
+def test_build_prompt_output_rules_favor_brief_security_focused_descriptions(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """OUTPUT RULES caps description length and rules out scenery-listing.
+
+    Regression test for overly detailed descriptions (e.g. narrating power
+    lines, utility poles, and every parked car in frame) that inflated
+    completion tokens without adding security value.
+    """
+    prompt = analyzer._build_prompt("Front Door")
+    assert "Keep it SHORT" in prompt
+    assert "static background scenery" in prompt
+    assert "utility poles" in prompt
+    assert "power lines" in prompt
+
+
 def test_build_prompt_with_car() -> None:
     a = ClipAnalyzer(
         ollama_url="http://localhost:11434",
@@ -795,6 +811,19 @@ def test_local_caption_success() -> None:
     a._md_model = mock_model
 
     assert a._local_caption("encoded") == "A quiet driveway scene."
+
+
+def test_local_caption_requests_short_length() -> None:
+    """Mirrors the cloud analyzer's length="short" grounding-cost fix."""
+    mock_model = MagicMock()
+    mock_model.caption.return_value = {"caption": "A person near a car."}
+    a = MoondreamLocalAnalyzer(prompt="p")
+    a._md_model = mock_model
+
+    a._local_caption("encoded")
+
+    _, kwargs = mock_model.caption.call_args
+    assert kwargs["length"] == "short"
 
 
 def test_local_caption_exception_returns_empty() -> None:
@@ -3795,6 +3824,26 @@ async def test_caption_frame_includes_finetune_model() -> None:
 
     _, kwargs = session.post.call_args
     assert kwargs["json"]["model"] == "moondream3-preview/abc123@50"
+
+
+@pytest.mark.asyncio
+async def test_caption_frame_requests_short_length() -> None:
+    """/caption uses length="short" to keep grounding context (and cost) low.
+
+    Regression test: a "normal"-length caption enumerates every visible
+    element (background vehicles, foliage, utility poles, ...) and that
+    detail was leaking into the final description, driving up completion
+    tokens for little security value.
+    """
+    resp = _make_caption_resp("A person near a car.")
+    session = _mock_session(post=MagicMock(return_value=resp))
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p")
+    a._session = session
+
+    await a._caption_frame(b"fake_frame")
+
+    _, kwargs = session.post.call_args
+    assert kwargs["json"]["length"] == "short"
 
 
 # ------------------------------------------------------------------

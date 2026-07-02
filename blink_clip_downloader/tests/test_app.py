@@ -669,6 +669,13 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
     async def _fake_poll():
         nonlocal poll_count
         poll_count += 1
+        # The library reimport now runs as a background task (so it never
+        # delays the media server from binding — see app.py). Let it finish
+        # before we stop the run loop, since _shutdown() cancels bg tasks
+        # rather than waiting for them.
+        for t in app._bg_tasks:
+            if t.get_name() == "library_reimport":
+                await t
         app._running = False
 
     app._poll_cycle = _fake_poll
