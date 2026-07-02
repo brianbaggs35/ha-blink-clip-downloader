@@ -49,6 +49,34 @@ async def test_double_close_is_safe(db: ClipDatabase) -> None:
     await db.close()  # should not raise
 
 
+async def test_init_resets_stale_processing_items(tmp_path: Path) -> None:
+    """A crash/restart while a clip is mid-analysis must not strand it forever.
+
+    Items stuck in 'processing' are never retried by the queue (it only
+    fetches status='pending'), so init() must reset them back to pending.
+    """
+    db_path = tmp_path / "stale.db"
+    d = ClipDatabase(db_path)
+    await d.init()
+    await d.add_clip(_make_clip("c1"))
+    await d.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await d.update_queue_status("c1", "processing")
+    await d.close()
+
+    d2 = ClipDatabase(db_path)
+    await d2.init()
+    try:
+        counts = await d2.get_queue_counts()
+        assert counts["processing"] == 0
+        assert counts["pending"] == 1
+        pending = await d2.get_pending_analysis()
+        assert pending[0]["clip_id"] == "c1"
+        assert pending[0]["completed_at"] == ""
+        assert pending[0]["error_message"] == ""
+    finally:
+        await d2.close()
+
+
 # ------------------------------------------------------------------
 # add_clip / get_clip
 # ------------------------------------------------------------------
@@ -452,12 +480,32 @@ async def test_get_suspicious_clips(db: ClipDatabase) -> None:
 async def test_get_analysis_stats(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_clip(_make_clip("c2"))
-    await db.add_analysis_result(_make_analysis("c1", is_suspicious=True))
-    await db.add_analysis_result(_make_analysis("c2", is_suspicious=False))
+    await db.add_analysis_result(
+        _make_analysis("c1", is_suspicious=True, frame_count=3)
+    )
+    await db.add_analysis_result(
+        _make_analysis("c2", is_suspicious=False, frame_count=5)
+    )
     stats = await db.get_analysis_stats()
     assert stats["total_analyzed"] == 2
     assert stats["suspicious_count"] == 1
     assert stats["last_analysis"] is not None
+    assert stats["total_frames_analyzed"] == 8
+    # Both results use a fixed 2024-06-01 timestamp, not today.
+    assert stats["frames_analyzed_today"] == 0
+
+
+async def test_get_analysis_stats_frames_analyzed_today(db: ClipDatabase) -> None:
+    today = datetime.now(timezone.utc).isoformat()
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_analysis_result(_make_analysis("c1", frame_count=4, analyzed_at=today))
+    await db.add_analysis_result(
+        _make_analysis("c2", frame_count=2, analyzed_at="2024-06-01T09:00:00+00:00")
+    )
+    stats = await db.get_analysis_stats()
+    assert stats["total_frames_analyzed"] == 6
+    assert stats["frames_analyzed_today"] == 4
 
 
 async def test_analysis_stats_empty(db: ClipDatabase) -> None:
@@ -465,6 +513,8 @@ async def test_analysis_stats_empty(db: ClipDatabase) -> None:
     assert stats["total_analyzed"] == 0
     assert stats["suspicious_count"] == 0
     assert stats["last_analysis"] is None
+    assert stats["total_frames_analyzed"] == 0
+    assert stats["frames_analyzed_today"] == 0
 
 
 # ------------------------------------------------------------------
@@ -751,6 +801,46 @@ async def test_migrate_adds_columns_idempotent(tmp_path: Path) -> None:
     await d.close()
     d2 = ClipDatabase(tmp_path / "migrate_test.db")
     await d2.init()  # should not raise
+    await d2.close()
+
+
+async def test_migrate_normalizes_legacy_moondream_cloud_model_name(
+    db: ClipDatabase,
+) -> None:
+    """Pre-3.0 rows stored the provider name, not the model ID, in `model`.
+
+    This split them out from `moondream3-preview` in the Per-Model Breakdown
+    as a separate, permanently-0-tokens "model". Migration should fold them
+    into the current identifier so usage stats reflect one real model.
+    """
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_analysis_result(_make_analysis("c1", model="moondream-cloud"))
+    await db.add_analysis_result(_make_analysis("c2", model="moondream_cloud"))
+
+    await db._normalize_legacy_model_names()
+
+    stats = await db.get_token_usage_stats()
+    assert len(stats["by_model"]) == 1
+    assert stats["by_model"][0]["model"] == "moondream3-preview"
+    assert stats["by_model"][0]["analyses"] == 2
+
+
+async def test_migrate_normalizes_legacy_model_name_runs_on_init(
+    tmp_path: Path,
+) -> None:
+    """The normalization also runs automatically as part of init()/_migrate()."""
+    d = ClipDatabase(tmp_path / "legacy_model.db")
+    await d.init()
+    await d.add_clip(_make_clip("c1"))
+    await d.add_analysis_result(_make_analysis("c1", model="moondream-cloud"))
+    await d.close()
+
+    d2 = ClipDatabase(tmp_path / "legacy_model.db")
+    await d2.init()
+    result = await d2.get_analysis_for_clip("c1")
+    assert result is not None
+    assert result["model"] == "moondream3-preview"
     await d2.close()
 
 

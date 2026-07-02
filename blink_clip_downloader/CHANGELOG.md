@@ -1,5 +1,68 @@
 # Changelog
 
+## 3.0.11
+
+### Features
+
+- **New "Frames Analyzed" status card.** The Status page now shows a card
+  underneath Storage with the total number of frames/images the AI has
+  analyzed, and how many were analyzed today. This is tracked separately
+  from clip counts since each clip's AI analysis inspects multiple frames.
+
+### Notes
+
+- Verified the AI tab's Queue Status card (Pending/Processing/Completed/
+  Failed) already counts one entry per clip, not per frame — the
+  `analysis_queue` table enforces a unique row per clip and the analyzer
+  always returns a single result per clip regardless of how many frames it
+  inspects internally. No change was needed there.
+
+## 3.0.10
+
+### Bug fixes
+
+- **Fix: restoring an HA backup could trigger a wave of AI re-analysis,
+  burning tokens.** When a backup restore rolls `/data` (the download
+  tracker and clip database) back to an older snapshot while `/share` keeps
+  the newer clip files, the next poll cycle re-fetches those clips from
+  Blink, finds them already on disk, and re-links them into the tracker
+  instead of re-downloading. Those re-linked clips were still being routed
+  through the same pipeline as freshly-downloaded ones, including
+  notifications, webhooks, and — critically — the AI analysis queue,
+  silently re-running (and re-billing) analysis for clips that had likely
+  already been analyzed before the restore. Re-linked clips are no longer
+  treated as new downloads.
+- **Fix: legacy Moondream Cloud rows split the Per-Model Breakdown into two
+  "models".** Pre-3.0 analyses were stored under the provider name
+  (`moondream-cloud` / `moondream_cloud`) instead of the actual model ID, and
+  predate per-request token tracking, so they showed up as a second entry
+  stuck at 0 tokens next to `moondream3-preview`. Those rows are now
+  normalized to `moondream3-preview` on startup so usage stats reflect one
+  real model.
+
+## 3.0.9
+
+### Bug fixes
+
+- **Fix: "processing" queue items stuck forever after a restart.** When the
+  add-on was restarted or crashed while analyzing a clip, those items were
+  left with `status='processing'` in the database and never retried — the
+  queue only picks up `status='pending'` entries. On startup the database now
+  resets any stale processing items back to pending so they are retried on
+  the next analysis cycle. This was the cause of the perpetual "X processing"
+  count in the AI tab even with no active analysis.
+- **Fix: missed car-proximity alerts when Moondream detect fails to find the
+  car.** 3.0.8 introduced an explicit "The protected vehicle is not visible
+  in this frame" hint whenever a person was detected but the `/detect car`
+  call returned nothing. This actively suppressed the base prompt's
+  vehicle-distance rules even when the car was genuinely in frame but the
+  detect call happened to miss it — resulting in no alert despite the person
+  being right next to the vehicle. The suppression hint is removed; the base
+  prompt's rules ("never apply vehicle-distance rules unless a vehicle is
+  genuinely visible in frame") remain in effect and let the model make its
+  own judgment from the visual evidence. Applies to both `moondream_cloud`
+  and `moondream_local`.
+
 ## 3.0.8
 
 ### Moondream — accurate captions on every camera, fewer false positives

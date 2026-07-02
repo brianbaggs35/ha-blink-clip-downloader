@@ -998,8 +998,8 @@ def test_analyze_frame_sync_car_camera_person_near_car_uses_proximity_hint() -> 
 
 
 def test_analyze_frame_sync_car_camera_person_no_car_visible() -> None:
-    """Car camera: a person is present but the protected vehicle is not
-    visible in this frame — should note the car's absence, not guess."""
+    """Car camera: a person is present but car detect returns empty — base
+    prompt rules apply without an explicit suppression hint injected."""
     person_boxes = [{"x_min": 0.35, "y_min": 0.2, "x_max": 0.55, "y_max": 0.9}]
 
     def fake_detect(encoded: Any, object_name: str) -> dict[str, Any]:
@@ -1023,7 +1023,9 @@ def test_analyze_frame_sync_car_camera_person_no_car_visible() -> None:
 
     assert "Person walking past" in result
     prompt_arg = mock_model.query.call_args[0][1]
-    assert "not visible in this frame" in prompt_arg
+    # No suppression hint — the base prompt's vehicle-distance rules handle it.
+    assert "not visible in this frame" not in prompt_arg
+    assert "PROXIMITY HINT" not in prompt_arg
 
 
 # ------------------------------------------------------------------
@@ -4355,7 +4357,8 @@ async def test_moondream_cloud_call_model_car_camera_with_car_detected() -> None
 
 @pytest.mark.asyncio
 async def test_moondream_cloud_call_model_car_camera_no_car_in_frame() -> None:
-    """Car camera: when car not detected, spatial note about car visibility added."""
+    """Car camera: when car detect returns empty, no suppression hint is injected —
+    the base prompt's vehicle-distance rules apply without interference."""
     person_boxes = [{"x_min": 0.4, "y_min": 0.1, "x_max": 0.6, "y_max": 0.9}]
     query_answer = (
         '{"suspicious": false, "confidence": 0.7, "description": "Person at door."}'
@@ -4393,9 +4396,10 @@ async def test_moondream_cloud_call_model_car_camera_no_car_in_frame() -> None:
         result = await a._call_model([_FAKE_JPEG], "base prompt")
 
     assert result != ""
-    # Car not in frame → suppression note injected
+    # Car detect failed → no suppression hint, no proximity hint either
     assert injected_prompts
-    assert "not visible" in injected_prompts[0].lower()
+    assert "not visible" not in injected_prompts[0].lower()
+    assert "PROXIMITY HINT" not in injected_prompts[0]
 
 
 @pytest.mark.asyncio

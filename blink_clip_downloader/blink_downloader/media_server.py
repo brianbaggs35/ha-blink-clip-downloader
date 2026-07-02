@@ -1488,6 +1488,15 @@ async function loadStatus() {
         + `</div>`;
     }
 
+    // Frames analyzed
+    const frameStats = (aiData && aiData.analysis_stats) || {};
+    if (frameStats.total_frames_analyzed) {
+      html += `<div class="status-card"><h3>🖼️ Frames Analyzed</h3>`
+        + `<div class="status-row"><span class="lbl">Total frames</span><span class="val">${frameStats.total_frames_analyzed}</span></div>`
+        + `<div class="status-row"><span class="lbl">Today</span><span class="val">${frameStats.frames_analyzed_today || 0}</span></div>`
+        + `</div>`;
+    }
+
     // Cameras
     if (cams.length) {
       html += `<div class="status-card"><h3>📷 Cameras (${cams.length})</h3>`;
@@ -1505,7 +1514,7 @@ async function loadStatus() {
       const provLabel = provNames[prov] || prov;
       const online = aiData.ai_online;
       const qs = aiData.queue || {};
-      const as_ = aiData.analysis_stats || {};
+      const as_ = frameStats;
       html += `<div class="status-card"><h3>🤖 AI Analysis</h3>`
         + `<div class="status-row"><span class="lbl">Status</span><span class="val ${online ? 'ok' : 'err'}">${online ? 'Online' : 'Offline'}</span></div>`
         + `<div class="status-row"><span class="lbl">Provider</span><span class="val">${_esc(provLabel)}</span></div>`
