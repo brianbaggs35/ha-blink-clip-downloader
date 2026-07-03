@@ -247,6 +247,50 @@ def test_parse_response_confidence_clamped(analyzer: ClipAnalyzer) -> None:
     assert confidence == 1.0
 
 
+def test_parse_response_json_description_capped_to_two_sentences(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """A JSON description with many distinct sentences is capped to two."""
+    description = (
+        "A person is standing near the middle of a silver Kia Forte parked on "
+        "the driveway. The person is facing the car. The person is standing "
+        "about 2 feet from the car's driver-side door. The person is standing "
+        "near the car's passenger-side door."
+    )
+    response = json.dumps(
+        {"suspicious": True, "confidence": 0.3, "description": description}
+    )
+    _, _, summary = analyzer.parse_response(response)
+    assert summary == (
+        "A person is standing near the middle of a silver Kia Forte parked on "
+        "the driveway. The person is facing the car."
+    )
+
+
+def test_parse_response_json_description_repetition_loop_collapsed(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """A degenerate repeated-sentence loop is cut at the first repeat."""
+    description = (
+        "The person is standing near the car door, facing the vehicle. " * 10
+    ).strip()
+    response = json.dumps(
+        {"suspicious": True, "confidence": 0.3, "description": description}
+    )
+    _, _, summary = analyzer.parse_response(response)
+    assert summary == "The person is standing near the car door, facing the vehicle."
+
+
+def test_clean_summary_empty_string() -> None:
+    assert ClipAnalyzer._clean_summary("") == ""
+
+
+def test_clean_summary_no_punctuation_truncated_with_ellipsis() -> None:
+    summary = ClipAnalyzer._clean_summary("x" * 250)
+    assert len(summary) == 201
+    assert summary.endswith("…")
+
+
 # ------------------------------------------------------------------
 # Prompt building
 # ------------------------------------------------------------------

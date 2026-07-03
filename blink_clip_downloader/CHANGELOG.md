@@ -46,6 +46,35 @@
   a *confident* suspicious verdict (confidence ≥ 0.5) now withholds a clip's
   frame from the baseline; a genuine intruder is still never absorbed into
   what's normal for that camera.
+- **Fix: some AI notifications contained wall-of-text, repetitive
+  descriptions instead of the one-or-two-sentence summary the analysis
+  prompt asks for.** Small vision models (chiefly Moondream) occasionally
+  ignore the prompt's length instructions and fall into a degenerate
+  repetition loop instead of stopping — e.g. repeating "the person is
+  standing near the car's rear ___" once per body part in view, or
+  answering with a list of nearly every sentence it could think of. Because
+  that text arrives as valid JSON in the `description` field, it previously
+  passed through completely uncapped — only the non-JSON keyword-matching
+  fallback path had a length limit. `parse_response()` now runs every
+  description (JSON or fallback) through a new `_clean_summary()` step that
+  keeps at most the first two sentences, cuts off immediately at the first
+  sentence that repeats one already kept, and falls back to a hard
+  character cap for text with no sentence punctuation to split on at all.
+- **Fix: restarting the add-on could knock Home Assistant's own Blink
+  integration offline (camera battery levels etc. showing "unavailable"
+  until that integration was manually reloaded).** `disconnect()` — run on
+  every graceful shutdown, including ordinary Supervisor restarts — called
+  Blink's `/client/{id}/logout` endpoint, revoking this add-on's own auth
+  token server-side every time it stopped. That defeated the token caching
+  `connect()` is built around (`AUTH_FILE`): the next start would find its
+  cached token already revoked and fall back to a full username/password
+  OAuth login instead of a quiet token-based reconnect. A full re-login is
+  an account-wide auth event that can transiently invalidate other
+  sessions on the same Blink account, including Home Assistant's own Blink
+  integration. `disconnect()` no longer calls Blink's logout endpoint at
+  all — it only closes this add-on's local HTTP session, leaving the
+  persisted token valid server-side so restarts reconnect quietly and
+  never disturb any other client authenticated on the same account.
 
 ## 3.1.0
 

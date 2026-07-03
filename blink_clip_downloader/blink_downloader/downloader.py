@@ -200,12 +200,23 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         _LOGGER.info("Connected to Blink (account_id=%s)", self._blink.account_id)
 
     async def disconnect(self) -> None:
-        """Log out from Blink and close the HTTP session."""
-        if self._blink:
-            try:
-                await blink_api.request_logout(self._blink)
-            except Exception:  # noqa: BLE001 pylint: disable=broad-exception-caught
-                pass
+        """Close the local HTTP session on shutdown, without revoking the
+        Blink auth token server-side.
+
+        This deliberately does NOT call Blink's ``/client/{id}/logout``
+        endpoint. Add-on restarts (Supervisor restart, watchdog, a config
+        change) go through this same shutdown path, and revoking the token
+        here defeats the whole point of persisting it in ``AUTH_FILE`` for
+        reuse (see :meth:`connect`) — every restart would then be forced
+        into a full username/password OAuth login instead of a quiet
+        token-based reconnect. A full re-login is exactly the kind of
+        account-wide auth event that can knock other clients on the same
+        Blink account (e.g. Home Assistant's own Blink integration) into a
+        temporarily unauthenticated state, surfacing as camera sensors
+        (battery, etc.) going "unavailable" until that integration reloads.
+        Leaving the token valid server-side means our own restarts never
+        trigger that.
+        """
         if self._session and not self._session.closed:
             await self._session.close()
 

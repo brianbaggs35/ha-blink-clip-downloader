@@ -1,0 +1,13 @@
+{
+  "name": "blink-clip-downloader-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Playwright smoke check for the Blink Clip Downloader media server web UI. Not part of the add-on itself (see CLAUDE.md: the app has no frontend toolchain) - this is test-only tooling invoked by scripts/smoke-test.sh.",
+  "type": "module",
+  "scripts": {
+    "smoke": "node smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
