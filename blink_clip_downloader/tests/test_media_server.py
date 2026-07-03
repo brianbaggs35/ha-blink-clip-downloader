@@ -1571,7 +1571,7 @@ async def test_ai_analyze_now_clip_not_found(db: ClipDatabase, tmp_path: Path) -
 
 
 async def test_ai_analyze_now_success(db: ClipDatabase, tmp_path: Path) -> None:
-    await db.add_clip(_make_clip("an1"))
+    await db.add_clip(_make_clip("an1", duration=47))
     analyzer = _make_analyzer(analyze_result=_make_analysis_result("an1"))
     server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
@@ -1583,6 +1583,10 @@ async def test_ai_analyze_now_success(db: ClipDatabase, tmp_path: Path) -> None:
         assert data["clip_id"] == "an1"
         stored = await db.get_analysis_for_clip("an1")
         assert stored is not None
+        # Ground-truth clip duration (from the Blink API metadata already in
+        # the DB) must reach the analyzer so long-clip frame doubling is
+        # driven by the real duration, not an estimate.
+        assert analyzer.analyze_clip.call_args.kwargs["clip_duration"] == 47.0
     finally:
         await tc.close()
 
@@ -1610,7 +1614,7 @@ async def test_ai_test_no_clips_in_library(db: ClipDatabase, tmp_path: Path) -> 
 
 
 async def test_ai_test_success(db: ClipDatabase, tmp_path: Path) -> None:
-    await db.add_clip(_make_clip("at1"))
+    await db.add_clip(_make_clip("at1", duration=52))
     analyzer = _make_analyzer(analyze_result=_make_analysis_result("at1"))
     server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
@@ -1621,6 +1625,7 @@ async def test_ai_test_success(db: ClipDatabase, tmp_path: Path) -> None:
         data = await resp.json()
         assert data["success"] is True
         assert data["clip_id"] == "at1"
+        assert analyzer.analyze_clip.call_args.kwargs["clip_duration"] == 52.0
     finally:
         await tc.close()
 

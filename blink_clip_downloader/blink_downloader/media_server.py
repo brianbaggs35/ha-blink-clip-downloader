@@ -27,6 +27,12 @@ _LOGGER = logging.getLogger(__name__)
 
 _MOONDREAM_PACKAGES_DIR = Path("/data/moondream_packages")
 
+# Pinned to the >=1.3,<2 range for the same reason as the Dockerfile's build-time
+# install — see the comment there and analyzer.py's
+# MoondreamLocalAnalyzer._load_model_sync for the version-drift incident this
+# guards against.
+_MOONDREAM_PIP_SPEC = "moondream>=1.3,<2"
+
 _moondream_install_state: dict = {"status": "idle", "log": ""}
 
 
@@ -2632,6 +2638,7 @@ class MediaServer:
             clip_path=clip["file_path"],
             clip_id=clip_id,
             camera=clip["camera"],
+            clip_duration=float(clip.get("duration") or 0),
         )
         await self._db.add_analysis_result(result.to_dict())
         return web.json_response(result.to_dict())
@@ -2654,6 +2661,7 @@ class MediaServer:
                 clip_path=clip["file_path"],
                 clip_id=clip["id"],
                 camera=clip["camera"],
+                clip_duration=float(clip.get("duration") or 0),
             )
             await self._db.add_analysis_result(result.to_dict())
             return web.json_response(
@@ -2704,7 +2712,10 @@ class MediaServer:
             _LOGGER.warning("Could not create moondream packages dir: %s", exc)
         _moondream_install_state = {
             "status": "installing",
-            "log": f"Starting: pip install --target {_MOONDREAM_PACKAGES_DIR} moondream\n",
+            "log": (
+                f"Starting: pip install --target {_MOONDREAM_PACKAGES_DIR} "
+                f"{_MOONDREAM_PIP_SPEC}\n"
+            ),
         }
 
         async def _run_install() -> None:
@@ -2716,7 +2727,7 @@ class MediaServer:
                     "--no-cache-dir",
                     "--target",
                     str(_MOONDREAM_PACKAGES_DIR),
-                    "moondream",
+                    _MOONDREAM_PIP_SPEC,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                 )

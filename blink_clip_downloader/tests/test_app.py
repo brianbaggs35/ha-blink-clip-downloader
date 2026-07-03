@@ -754,3 +754,241 @@ async def test_poll_cycle_backfills_thumbnails(app):
     app._downloader.backfill_thumbnails.assert_awaited_once_with(
         _THUMBNAIL_BACKFILL_BATCH
     )
+
+
+# ---------------------------------------------------------------------------
+# __init__ — AI analyzer wiring: camera_configs.json (web UI) merged with
+# options.json, then passed to create_analyzer(). This is the machinery
+# that gives each camera its own perspective/description/car-camera flag.
+# ---------------------------------------------------------------------------
+
+
+def _build_app_with_camera_configs(
+    base_config, tmp_path, cfg_entries, **config_overrides
+):
+    """Construct a BlinkClipDownloaderApp with AI enabled and a fake
+    camera_configs.json, capturing the kwargs passed to create_analyzer()."""
+    import dataclasses
+
+    cfg_file = tmp_path / "camera_configs.json"
+    if cfg_entries is not None:
+        cfg_file.write_text(json.dumps(cfg_entries))
+
+    config = dataclasses.replace(
+        base_config,
+        ai_analysis_enabled=True,
+        ollama_url="http://localhost:11434",
+        **config_overrides,
+    )
+
+    with (
+        patch("blink_downloader.app.Path", return_value=cfg_file),
+        patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
+    ):
+        mock_create_analyzer.return_value = MagicMock()
+        app = BlinkClipDownloaderApp(config)
+
+    return app, mock_create_analyzer
+
+
+def test_init_camera_configs_ui_file_populates_descriptions_and_car_cameras(
+    base_config, tmp_path
+):
+    """Each camera's own description and car-camera flag from the web UI
+    AI tab must reach the analyzer, giving cameras independent perspectives
+    (e.g. a driveway camera watching the car vs. a front-door camera
+    watching for package theft)."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        [
+            {
+                "camera": "Driveway",
+                "description": "Watches the driveway and the owner's car",
+                "custom_prompt": "",
+                "is_car_camera": True,
+            },
+            {
+                "camera": "Front Door",
+                "description": "Watches for package theft and unauthorized entry",
+                "custom_prompt": "Flag anyone lingering near the porch.",
+                "is_car_camera": False,
+            },
+        ],
+    )
+
+    kwargs = mock_create_analyzer.call_args.kwargs
+    assert kwargs["camera_descriptions"] == {
+        "Driveway": "Watches the driveway and the owner's car",
+        "Front Door": "Watches for package theft and unauthorized entry",
+    }
+    assert kwargs["camera_prompts"] == {
+        "Front Door": "Flag anyone lingering near the porch."
+    }
+    assert kwargs["car_cameras"] == ["Driveway"]
+
+
+def test_init_camera_configs_options_json_fills_gaps_not_covered_by_ui(
+    base_config, tmp_path
+):
+    """options.json ai_camera_descriptions/ai_camera_prompts only apply to
+    cameras the web UI file doesn't already cover (backward compatibility)."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        [
+            {
+                "camera": "Driveway",
+                "description": "UI description",
+                "custom_prompt": "",
+                "is_car_camera": False,
+            }
+        ],
+        ai_camera_descriptions=[
+            {
+                "camera": "Driveway",
+                "description": "options.json description (should be ignored)",
+            },
+            {"camera": "Backyard", "description": "options.json backyard description"},
+        ],
+    )
+
+    kwargs = mock_create_analyzer.call_args.kwargs
+    assert kwargs["camera_descriptions"] == {
+        "Driveway": "UI description",
+        "Backyard": "options.json backyard description",
+    }
+
+
+def test_init_camera_prompts_options_json_fills_gaps_not_covered_by_ui(
+    base_config, tmp_path
+):
+    """options.json ai_camera_prompts mirrors the descriptions fallback: it
+    only fills in cameras the web UI file doesn't already cover, and
+    malformed entries in the UI file (no "camera" key) are skipped."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        [
+            {
+                "camera": "Driveway",
+                "description": "",
+                "custom_prompt": "UI prompt",
+                "is_car_camera": False,
+            },
+            {"description": "missing camera key, should be skipped"},
+            "not even a dict",
+        ],
+        ai_camera_prompts=[
+            {"camera": "Driveway", "prompt": "options.json prompt (should be ignored)"},
+            {"camera": "Backyard", "prompt": "options.json backyard prompt"},
+        ],
+    )
+
+    kwargs = mock_create_analyzer.call_args.kwargs
+    assert kwargs["camera_prompts"] == {
+        "Driveway": "UI prompt",
+        "Backyard": "options.json backyard prompt",
+    }
+
+
+def test_init_car_cameras_ui_checkboxes_take_priority_over_options(
+    base_config, tmp_path
+):
+    """A non-empty web-UI car-camera selection overrides options.json's
+    legacy ai_car_cameras list entirely (not merged)."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        [
+            {
+                "camera": "Driveway",
+                "description": "",
+                "custom_prompt": "",
+                "is_car_camera": True,
+            }
+        ],
+        ai_car_cameras=["Front Door"],
+    )
+
+    assert mock_create_analyzer.call_args.kwargs["car_cameras"] == ["Driveway"]
+
+
+def test_init_car_cameras_falls_back_to_options_when_ui_file_has_none_checked(
+    base_config, tmp_path
+):
+    """No web-UI file at all falls back to options.json's ai_car_cameras."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        None,  # no camera_configs.json written
+        ai_car_cameras=["Front Door"],
+    )
+
+    assert mock_create_analyzer.call_args.kwargs["car_cameras"] == ["Front Door"]
+
+
+def test_init_corrupt_camera_configs_file_falls_back_to_options_json(
+    base_config, tmp_path
+):
+    """A corrupt camera_configs.json must not crash startup — options.json
+    values should still reach the analyzer."""
+    import dataclasses
+
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text("{not valid json")
+
+    config = dataclasses.replace(
+        base_config,
+        ai_analysis_enabled=True,
+        ollama_url="http://localhost:11434",
+        ai_camera_descriptions=[
+            {"camera": "Driveway", "description": "fallback description"}
+        ],
+    )
+
+    with (
+        patch("blink_downloader.app.Path", return_value=cfg_file),
+        patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
+    ):
+        mock_create_analyzer.return_value = MagicMock()
+        BlinkClipDownloaderApp(config)
+
+    assert mock_create_analyzer.call_args.kwargs["camera_descriptions"] == {
+        "Driveway": "fallback description"
+    }
+
+
+def test_init_attaches_scene_baseline_db_and_creates_analysis_queue(
+    base_config, tmp_path
+):
+    """When create_analyzer() succeeds, the app must wire up the scene
+    baseline DB and background analysis queue so the smart-brain baseline
+    and long-clip frame doubling actually run."""
+    app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config, tmp_path, None
+    )
+
+    mock_create_analyzer.return_value.attach_scene_baseline_db.assert_called_once_with(
+        app._db
+    )
+    assert app._analysis_queue is not None
+    assert app._alert_dispatcher is not None
+
+
+def test_init_analyzer_disabled_skips_queue_creation(base_config, tmp_path):
+    """create_analyzer() returning None (e.g. missing ollama_url) must leave
+    the analysis queue and dispatcher unset rather than wiring up a queue
+    around a nonexistent analyzer."""
+    import dataclasses
+
+    config = dataclasses.replace(
+        base_config,
+        ai_analysis_enabled=True,
+        ollama_url="",  # ClipAnalyzer requires this; create_analyzer returns None
+    )
+    app = BlinkClipDownloaderApp(config)
+
+    assert app._analyzer is None
+    assert app._analysis_queue is None
+    assert app._alert_dispatcher is None

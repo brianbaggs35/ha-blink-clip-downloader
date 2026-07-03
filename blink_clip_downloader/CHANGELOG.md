@@ -1,5 +1,52 @@
 # Changelog
 
+## 3.1.1
+
+### Bug fixes
+
+- **Fix: `moondream_local` silently sent camera frames to Moondream Cloud,
+  unauthenticated, instead of running on-device.** The `moondream` PyPI
+  package's local-inference architecture changed considerably since this
+  provider was written — a `moondream>=0.0.5` version pin that once made
+  `md.vl(model=...)` load an on-device CPU model was later dropped in favor
+  of an unpinned install, and current versions of the package default to
+  `CloudVL` (the hosted API) whenever the now-required `local=True` flag is
+  omitted. Because this provider never passed that flag, every detect/
+  caption/query call was silently routed to `api.moondream.ai` with no API
+  key attached — clips were leaving the device despite `moondream_local`
+  being chosen specifically to avoid that, and every call failed
+  unauthenticated (HTTP 401), so analysis silently produced empty results
+  while `health_check()` still reported the provider as ready. `local=True`
+  is now passed explicitly, so hosts without a supported GPU fail loudly and
+  cleanly (`_ensure_model()` correctly reports the provider as unavailable)
+  instead of silently degrading into a cloud data leak. The `moondream`
+  install (Dockerfile build step and the AI tab's **Install** button) is now
+  pinned to `>=1.3,<2` instead of unpinned, so a future upstream rewrite
+  can't silently break this provider again. See `DOCS.md`'s Moondream Local
+  section for the current on-device hardware requirement (CUDA or Apple
+  Silicon GPU — pure-CPU inference is no longer offered by the package).
+- **Fix: long clips (>30s) were under-sampled relative to short ones.**
+  `_target_frame_count()` previously added a flat `+2` bonus frames for
+  clips over the 30s threshold; a 55-60s clip now covers roughly twice the
+  timeline of a 30s clip, so it gets its full configured frame budget
+  **doubled** instead, keeping sampling density roughly constant from a
+  10s clip up to Blink's 60s ceiling. The frame budget is now sized from the
+  clip's real duration (from Blink API metadata) when the caller has it,
+  rather than only estimating from the extracted frame count — plumbed
+  through from `AnalysisQueue` and the AI tab's **Analyze Now**/**Test**
+  buttons in the web UI.
+- **Fix: a low-confidence "suspicious" hedge could permanently block the
+  scene baseline from learning a new normal.** The visual scene-baseline
+  ("smart brain") feature only folded non-suspicious clips into the learned
+  background, so a persistent-but-benign change (a car parked overnight, a
+  trash can put out for collection) that the model flagged out of caution
+  — often because the scene-deviation hint itself nudged it to "look
+  closer" — would never get absorbed into "normal," causing the same hint
+  and the same hedge to keep firing on every future clip indefinitely. Only
+  a *confident* suspicious verdict (confidence ≥ 0.5) now withholds a clip's
+  frame from the baseline; a genuine intruder is still never absorbed into
+  what's normal for that camera.
+
 ## 3.1.0
 
 ### Features
