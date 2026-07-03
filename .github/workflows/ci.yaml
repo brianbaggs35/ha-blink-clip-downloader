@@ -235,7 +235,8 @@ jobs:
       - name: Smoke test media server endpoints
         run: |
           echo "GET / (web UI shell)"
-          curl -fsS http://localhost:8099/ | grep -q "<title>Blink Clip Library</title>"
+          index_body=$(curl -fsS http://localhost:8099/)
+          grep -q "<title>Blink Clip Library</title>" <<<"$index_body"
 
           echo "GET /api/clips"
           curl -fsS http://localhost:8099/api/clips | jq -e 'type == "array"' >/dev/null

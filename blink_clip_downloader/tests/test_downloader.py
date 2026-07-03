@@ -1081,6 +1081,53 @@ async def test_connect_passes_through_password_with_symbols(dl, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# disconnect()
+# ---------------------------------------------------------------------------
+
+
+async def test_disconnect_does_not_revoke_token_server_side(dl):
+    """disconnect() must not call Blink's logout endpoint.
+
+    Doing so on every add-on restart would invalidate the persisted auth
+    token this add-on relies on for a quiet reconnect (see connect()), and
+    a resulting full username/password re-login can knock other clients on
+    the same Blink account — e.g. Home Assistant's own Blink integration —
+    into a temporarily unauthenticated state.
+    """
+    dl._blink = MagicMock()
+    dl._session = AsyncMock()
+    dl._session.closed = False
+
+    with patch("blink_downloader.downloader.blink_api.request_logout") as mock_logout:
+        await dl.disconnect()
+
+    mock_logout.assert_not_called()
+    dl._session.close.assert_awaited_once()
+
+
+async def test_disconnect_closes_session_without_blink_instance(dl):
+    """disconnect() tolerates never having connected (no self._blink)."""
+    dl._blink = None
+    dl._session = AsyncMock()
+    dl._session.closed = False
+
+    await dl.disconnect()
+
+    dl._session.close.assert_awaited_once()
+
+
+async def test_disconnect_skips_closed_session(dl):
+    """disconnect() does not try to close an already-closed session."""
+    dl._blink = MagicMock()
+    dl._session = AsyncMock()
+    dl._session.closed = True
+
+    await dl.disconnect()
+
+    dl._session.close.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # _fetch_clip_list — pagination
 # ---------------------------------------------------------------------------
 

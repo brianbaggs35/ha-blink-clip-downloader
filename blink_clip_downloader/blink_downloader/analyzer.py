@@ -19,6 +19,7 @@ import base64
 import json
 import logging
 import math
+import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -67,6 +68,16 @@ _SCENE_DEVIATION_ALERT_THRESHOLD: float = 0.12
 # baseline what the camera's new normal looks like. Only a confident verdict
 # withholds that frame, so a genuine intruder isn't absorbed into "normal".
 _SCENE_BASELINE_SUSPICION_CONFIDENCE_THRESHOLD: float = 0.5
+
+# The analysis prompt's OUTPUT RULES ask for one sentence, or at most two,
+# but small vision models sometimes ignore that and emit a degenerate loop
+# of near-identical sentences instead of stopping (e.g. repeating "the
+# person is standing near the car's rear ___" once per body part in view).
+# parse_response() caps every description to this many sentences, plus a
+# hard character backstop for responses with no sentence punctuation to
+# split on at all.
+_MAX_SUMMARY_SENTENCES: int = 2
+_MAX_SUMMARY_CHARS: int = 200
 
 # Ollama model-name fragments that indicate vision capability.
 # Checked case-insensitively as a substring of the full model name.
@@ -999,7 +1010,7 @@ class BaseAnalyzer(abc.ABC):
                 lower = (summary + " " + response).lower()
                 matched = [k for k in self._suspicious_keywords if k in lower]
                 confidence = min(1.0, len(matched) * 0.3) if matched else 0.5
-            return is_suspicious, confidence, summary
+            return is_suspicious, confidence, self._clean_summary(summary)
 
         # Fallback: keyword matching
         lower = response.lower()
@@ -1007,11 +1018,43 @@ class BaseAnalyzer(abc.ABC):
         is_suspicious = len(matched) > 0
         confidence = min(1.0, len(matched) * 0.3) if matched else 0.1
 
-        summary = response[:200].strip()
-        if len(response) > 200:
-            summary += "…"
+        summary = self._clean_summary(response)
 
         return is_suspicious, confidence, summary
+
+    @staticmethod
+    def _clean_summary(text: str) -> str:
+        """Cap a description to the short form the OUTPUT RULES prompt asks for.
+
+        Keeps at most :data:`_MAX_SUMMARY_SENTENCES` sentences, dropping
+        everything from the point a sentence repeats one already kept
+        (case/punctuation-insensitive) — the signature of the degenerate
+        repetition loop described above. Falls back to a hard character cap
+        for text with no sentence-ending punctuation to split on.
+        """
+        text = text.strip()
+        if not text:
+            return text
+
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        kept: list[str] = []
+        seen: set[str] = set()
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            normalized = re.sub(r"[^a-z0-9]+", " ", sentence.lower()).strip()
+            if normalized in seen:
+                break
+            seen.add(normalized)
+            kept.append(sentence)
+            if len(kept) >= _MAX_SUMMARY_SENTENCES:
+                break
+
+        result = " ".join(kept)
+        if len(result) > _MAX_SUMMARY_CHARS:
+            result = result[:_MAX_SUMMARY_CHARS].rstrip() + "…"
+        return result
 
     @staticmethod
     def _try_parse_json(response: str) -> tuple[bool, float, str]:
