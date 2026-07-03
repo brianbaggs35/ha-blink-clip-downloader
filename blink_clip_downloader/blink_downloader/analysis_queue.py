@@ -134,6 +134,7 @@ class AnalysisQueue:
                     camera=item["camera"],
                     anomaly_score=anomaly_score,
                     clip_timestamp=clip_timestamp,
+                    clip_duration=clip_duration,
                 )
                 await self._db.add_analysis_result(result.to_dict())
                 await self._db.update_queue_status(clip_id, "completed")

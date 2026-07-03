@@ -5366,7 +5366,7 @@ def test_target_frame_count_short_clip_uses_max_frames() -> None:
     assert a._target_frame_count(15) == 3
 
 
-def test_target_frame_count_long_clip_gets_bonus_frames() -> None:
+def test_target_frame_count_long_clip_doubles_frame_budget() -> None:
     a = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
@@ -5375,12 +5375,29 @@ def test_target_frame_count_long_clip_gets_bonus_frames() -> None:
         frame_interval=2.0,
     )
     # 16 frames * 2.0s = 32s — over the 30s threshold.
-    assert a._target_frame_count(16) == 5  # max_frames (3) + bonus (2)
+    assert a._target_frame_count(16) == 6  # max_frames (3) * multiplier (2)
+
+
+def test_target_frame_count_prefers_known_clip_duration_over_estimate() -> None:
+    """A precise clip_duration should override the raw-frame-count estimate."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        max_frames=3,
+        frame_interval=2.0,
+    )
+    # Raw frame count alone would estimate 10s (under threshold), but the
+    # real duration (45s) is over it and must win.
+    assert a._target_frame_count(5, clip_duration=45.0) == 6
+    # Raw frame count alone would estimate 40s (over threshold), but the
+    # real duration (20s) is under it and must win.
+    assert a._target_frame_count(20, clip_duration=20.0) == 3
 
 
 @pytest.mark.asyncio
 async def test_analyze_clip_long_clip_sends_bonus_frames() -> None:
-    """A clip estimated to run past 30s should send more than max_frames."""
+    """A clip estimated to run past 30s should send double max_frames."""
     analyzer = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
@@ -5389,7 +5406,7 @@ async def test_analyze_clip_long_clip_sends_bonus_frames() -> None:
         max_frames=3,
         frame_interval=2.0,
     )
-    # 20 raw frames * 2.0s = 40s (> 30s) → target = 3 + 2 = 5
+    # 20 raw frames * 2.0s = 40s (> 30s) → target = 3 * 2 = 6
     many_frames = _FAKE_JPEG * 20
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock(return_value=(many_frames, b""))
@@ -5408,12 +5425,49 @@ async def test_analyze_clip_long_clip_sends_bonus_frames() -> None:
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
         result = await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
 
-    assert result.frame_count == 5
+    assert result.frame_count == 6
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_uses_known_clip_duration_over_estimate() -> None:
+    """A precise clip_duration passed to analyze_clip should drive the doubling
+    decision instead of the raw-frame-count estimate."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="uniform",
+        max_frames=3,
+        frame_interval=2.0,
+    )
+    # Only 10 raw frames extracted (would estimate 20s, under threshold), but
+    # the real clip_duration (50s) is over it and must still double the budget.
+    few_frames = _FAKE_JPEG * 10
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(few_frames, b""))
+    mock_proc.returncode = 0
+
+    good_resp = json.dumps(
+        {"suspicious": False, "confidence": 0.8, "description": "Clear"}
+    )
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": good_resp})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await analyzer.analyze_clip(
+            "/clips/test.mp4", "c1", "Driveway", clip_duration=50.0
+        )
+
+    assert result.frame_count == 6
 
 
 @pytest.mark.asyncio
 async def test_analyze_clip_short_clip_keeps_configured_max_frames() -> None:
-    """A clip estimated at or under 30s must not get bonus frames."""
+    """A clip estimated at or under 30s must not get a doubled frame budget."""
     analyzer = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
@@ -5511,6 +5565,7 @@ def test_attach_scene_baseline_db_sets_attribute() -> None:
 
 async def _run_analyze_clip_with_mock_db(
     is_suspicious: bool,
+    confidence: float | None = None,
 ) -> tuple[MagicMock, object]:
     analyzer = ClipAnalyzer(
         ollama_url="http://localhost:11434",
@@ -5528,10 +5583,12 @@ async def _run_analyze_clip_with_mock_db(
     mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(), b""))
     mock_proc.returncode = 0
 
+    if confidence is None:
+        confidence = 0.9 if is_suspicious else 0.5
     resp_json = json.dumps(
         {
             "suspicious": is_suspicious,
-            "confidence": 0.9 if is_suspicious else 0.5,
+            "confidence": confidence,
             "description": "Someone prying at the door" if is_suspicious else "OK",
         }
     )
@@ -5564,9 +5621,30 @@ async def test_analyze_clip_records_scene_baseline_when_not_suspicious() -> None
 
 @pytest.mark.asyncio
 async def test_analyze_clip_skips_scene_baseline_recording_when_suspicious() -> None:
-    """A suspicious clip must never be folded into the 'normal' baseline."""
-    mock_db, _ = await _run_analyze_clip_with_mock_db(is_suspicious=True)
+    """A confidently suspicious clip must never be folded into the 'normal' baseline."""
+    mock_db, _ = await _run_analyze_clip_with_mock_db(
+        is_suspicious=True, confidence=0.9
+    )
     mock_db.record_scene_baseline.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_analyze_clip_records_scene_baseline_when_suspicious_but_low_confidence() -> (
+    None
+):
+    """A low-confidence suspicious hedge must still teach the baseline.
+
+    Otherwise a persistent but benign change (a car parked overnight, trash
+    put out for collection) that the model only flags out of caution because
+    of the scene-deviation hint would never get absorbed into "normal",
+    causing the same hint — and the same hedge — to fire on every future
+    clip forever.
+    """
+    mock_db, _ = await _run_analyze_clip_with_mock_db(
+        is_suspicious=True, confidence=0.4
+    )
+    mock_db.record_scene_baseline.assert_called_once()
+    assert mock_db.record_scene_baseline.call_args[0][0] == "Driveway"
 
 
 # ---------------------------------------------------------------------------

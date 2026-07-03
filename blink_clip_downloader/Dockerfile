@@ -18,10 +18,16 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 # Optional: moondream local model support (moondream_local provider).
 # Only attempted on amd64 — the moondream package has no pre-built wheels for
 # aarch64 musllinux and its TVM compilation hangs indefinitely on that platform.
+# Pinned to the >=1.3,<2 range: the moondream package rewrote its local-
+# inference architecture between the 0.x and 1.x lines (0.x: CPU-only ONNX;
+# 1.x: GPU-only "Photon" engine via kestrel/torch, requires an API key even
+# for local mode) without a matching major-version bump at the time, and an
+# unpinned install here previously let that rewrite silently break this
+# provider — see analyzer.py's MoondreamLocalAnalyzer._load_model_sync.
 # Non-fatal: if the install fails the moondream_local provider reports "not
 # installed" at runtime and the image still starts normally.
 RUN if [ "${BUILD_ARCH}" = "amd64" ]; then \
-        pip3 install --no-cache-dir moondream 2>&1 | tail -5 || \
+        pip3 install --no-cache-dir "moondream>=1.3,<2" 2>&1 | tail -5 || \
         echo "INFO: moondream install failed; moondream_local provider will be unavailable"; \
     else \
         echo "INFO: moondream is not supported on ${BUILD_ARCH}; moondream_local provider will be unavailable"; \

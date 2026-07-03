@@ -288,12 +288,15 @@ request; reasoning mode is enabled by default for better spatial analysis.
 
 #### Moondream Local — `moondream_local`
 
-Runs the Moondream 0.5B INT8 model directly on the host device. The model file (~430 MB)
-is downloaded automatically the first time via the **Install** button in the AI tab.
+Runs Moondream directly on the host device via the **Install** button in the AI tab.
 
-> **Architecture note:** Moondream Local requires an x86_64 (amd64) host. On aarch64
-> (Raspberry Pi), the AI tab shows an unsupported-architecture notice — use
-> `moondream_cloud` or `ollama` instead.
+> **Hardware note:** as of the `moondream` package's 1.x line, on-device inference
+> requires an NVIDIA CUDA or Apple Silicon GPU — pure-CPU inference is no longer
+> offered by the package. Most Home Assistant OS hosts do not have a GPU passed
+> through to the add-on container, so this provider will report itself as
+> unavailable on them; use `moondream_cloud` or `ollama` instead. On aarch64
+> (Raspberry Pi) the AI tab additionally shows an unsupported-architecture notice,
+> since the package has no pre-built wheels for that platform.
 
 #### Anthropic (Claude) — `anthropic`
 
@@ -589,7 +592,7 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/two_fa_code.txt` | Write your 2FA code here when prompted |
 | `/data/trigger_download` | Touch to force an immediate poll |
 | `/data/camera_configs.json` | Per-camera descriptions, custom prompts, and car-camera flags set via the web UI |
-| `/data/moondream_packages/` | Moondream Local model files (downloaded on first use; persists across restarts) |
+| `/data/moondream_packages/` | The `moondream` Python package itself, installed here via the AI tab's **Install** button so it persists across restarts |
 
 > All `/data/` files are stored inside the add-on's private data directory and are
 > automatically removed by the supervisor when the add-on is uninstalled.
@@ -644,6 +647,14 @@ Downloaded clips are saved under the `share` folder, accessible via:
 **Moondream Local fails to install on Raspberry Pi**
 - Moondream Local (`moondream_local`) only supports x86_64 (amd64) hosts. Use
   `moondream_cloud` or `ollama` instead on aarch64 devices.
+
+**Moondream Local installs successfully but health-checks as unavailable / analysis
+never returns results**
+- On-device Moondream inference requires an NVIDIA CUDA or Apple Silicon GPU (the
+  `moondream` package no longer supports pure-CPU inference). Check the add-on log
+  for "Failed to load Moondream local model" — if the host has no such GPU passed
+  through to the container, this is expected; use `moondream_cloud` or `ollama`
+  instead.
 
 **AI suspicious-activity alerts are not being sent**
 - Check `ai_min_confidence` — if set above 0.0, low-confidence results are stored

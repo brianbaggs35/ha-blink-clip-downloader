@@ -41,12 +41,13 @@ _HEALTH_TIMEOUT = aiohttp.ClientTimeout(total=10)
 _MAX_CLIP_COVERAGE_SECONDS: float = 60.0
 
 # max_frames/frame_interval are honored exactly for clips at or under this
-# length. Longer clips (Blink's ceiling is 60s) get a few bonus frames on top
-# of max_frames — the configured budget alone tends to under-sample a 45-60s
-# clip (missing the start, the end, or the middle), while still keeping token
-# usage far below analyzing every extracted frame.
+# length. Longer clips (Blink's ceiling is 60s) get their frame budget
+# doubled — the configured budget alone tends to under-sample a 45-60s clip
+# (missing the start, the end, or the middle), and a 60s clip covers twice
+# the timeline of a 30s one, so it needs roughly twice the frames to keep the
+# same effective sampling density across the whole event.
 _LONG_CLIP_THRESHOLD_SECONDS: float = 30.0
-_LONG_CLIP_BONUS_FRAMES: int = 2
+_LONG_CLIP_FRAME_MULTIPLIER: int = 2
 
 # Fixed-size grayscale thumbnail used for the visual scene-baseline ("smart
 # brain") comparison — see BaseAnalyzer._scene_thumbnail(). Small enough to
@@ -57,6 +58,15 @@ _SCENE_THUMBNAIL_SIZE: tuple[int, int] = (16, 16)
 # Deviation score (0.0-1.0, see ClipDatabase.get_scene_deviation) at or above
 # which the prompt calls out that the scene looks different from usual.
 _SCENE_DEVIATION_ALERT_THRESHOLD: float = 0.12
+
+# Minimum confidence for a "suspicious" verdict to block that clip's frame
+# from being folded into the scene baseline (see analyze_clip()). A clip
+# marked suspicious only as a low-confidence hedge — e.g. because the scene
+# deviation hint above nudged the model to "look closer" at a newly parked
+# car or a trash can put out for collection — should still teach the
+# baseline what the camera's new normal looks like. Only a confident verdict
+# withholds that frame, so a genuine intruder isn't absorbed into "normal".
+_SCENE_BASELINE_SUSPICION_CONFIDENCE_THRESHOLD: float = 0.5
 
 # Ollama model-name fragments that indicate vision capability.
 # Checked case-insensitively as a substring of the full model name.
@@ -385,8 +395,15 @@ class BaseAnalyzer(abc.ABC):
         camera: str,
         anomaly_score: float = 0.0,
         clip_timestamp: str = "",
+        clip_duration: float = 0.0,
     ) -> AnalysisResult:
-        """Full pipeline: extract frames → select best → call AI → parse response."""
+        """Full pipeline: extract frames → select best → call AI → parse response.
+
+        ``clip_duration`` is the clip's real length in seconds (from Blink API
+        metadata), when the caller has it available — passing it lets
+        :meth:`_target_frame_count` size the frame budget off the ground-truth
+        duration instead of estimating from the extracted frame count.
+        """
         from datetime import datetime, timezone
 
         self._last_prompt_tokens = 0
@@ -432,10 +449,11 @@ class BaseAnalyzer(abc.ABC):
         # "smart" and "sequential" both benefit from motion-weighted picks
         # (entry/peak/exit) since sequential analyses each frame individually
         # and gets more value from a few well-chosen frames than an arbitrary
-        # early slice of the clip. Clips estimated to run longer than
-        # _LONG_CLIP_THRESHOLD_SECONDS get a few bonus frames on top of
-        # max_frames — see _target_frame_count().
-        target_frame_count = self._target_frame_count(len(frames))
+        # early slice of the clip. Clips longer than _LONG_CLIP_THRESHOLD_SECONDS
+        # get their frame budget doubled — see _target_frame_count().
+        target_frame_count = self._target_frame_count(
+            len(frames), clip_duration=clip_duration
+        )
         if len(frames) > target_frame_count:
             if self._frame_strategy == "uniform":
                 frames = self._select_uniform_frames(frames, target_frame_count)
@@ -456,13 +474,23 @@ class BaseAnalyzer(abc.ABC):
 
         is_suspicious, confidence, summary = self.parse_response(response)
 
-        # Only fold ordinary (non-suspicious) clips into the learned scene
-        # baseline, so a genuine intruder is never absorbed into "what's
-        # normal here".
+        # Fold this clip's opening frame into the learned scene baseline
+        # unless it was a *confident* suspicious call — a low-confidence
+        # hedge (often just the scene-deviation hint above making the model
+        # cautious about a persistent but benign change, e.g. a car parked
+        # overnight or trash put out for collection) must not block the
+        # baseline from ever learning that new normal, or the same hint
+        # keeps firing on every future clip. A confidently suspicious clip
+        # is still withheld so a genuine intruder is never absorbed into
+        # "what's normal here".
+        confident_suspicious = (
+            is_suspicious
+            and confidence >= _SCENE_BASELINE_SUSPICION_CONFIDENCE_THRESHOLD
+        )
         if (
             scene_thumbnail is not None
             and self._scene_baseline_db is not None
-            and not is_suspicious
+            and not confident_suspicious
         ):
             await self._scene_baseline_db.record_scene_baseline(camera, scene_thumbnail)
 
@@ -548,24 +576,35 @@ class BaseAnalyzer(abc.ABC):
 
         return self._split_jpeg_frames(stdout or b"")
 
-    def _target_frame_count(self, raw_frame_count: int) -> int:
+    def _target_frame_count(
+        self, raw_frame_count: int, clip_duration: float = 0.0
+    ) -> int:
         """How many frames to actually send the AI, given the raw extracted pool.
 
         ``max_frames``/``frame_interval`` are honored exactly for clips at or
-        under :data:`_LONG_CLIP_THRESHOLD_SECONDS`. Longer clips get
-        :data:`_LONG_CLIP_BONUS_FRAMES` extra on top of ``max_frames`` — the
-        configured budget alone tends to under-sample a 45-60s clip, and a
-        couple of extra frames is a small token cost for materially better
-        coverage of what happened across the whole event.
+        under :data:`_LONG_CLIP_THRESHOLD_SECONDS`. Longer clips get their
+        frame budget doubled (:data:`_LONG_CLIP_FRAME_MULTIPLIER`) — the
+        configured budget alone tends to under-sample a 45-60s clip, and
+        doubling keeps sampling density roughly constant across the whole
+        event instead of thinning out as clips approach Blink's 60s ceiling.
 
-        Duration is estimated from the already-extracted frame count and
-        ``frame_interval`` (frames are spaced ``frame_interval`` seconds
-        apart) rather than probing the file again with ffprobe.
+        ``clip_duration`` — the clip's real length in seconds, when known
+        (e.g. from Blink API metadata already stored in the database) — is
+        preferred over estimating from the extracted frame count, since a
+        ground-truth duration is immune to ffmpeg under/over-emitting frames
+        for a given clip. Pass ``0`` (the default) to fall back to estimating
+        duration from ``raw_frame_count * frame_interval`` (frames are spaced
+        ``frame_interval`` seconds apart) when the real duration isn't
+        available, e.g. for direct/standalone analyzer calls.
         """
-        estimated_duration = raw_frame_count * self._frame_interval
+        estimated_duration = (
+            clip_duration
+            if clip_duration > 0
+            else raw_frame_count * self._frame_interval
+        )
         if estimated_duration <= _LONG_CLIP_THRESHOLD_SECONDS:
             return self._max_frames
-        return self._max_frames + _LONG_CLIP_BONUS_FRAMES
+        return self._max_frames * _LONG_CLIP_FRAME_MULTIPLIER
 
     @staticmethod
     def _scene_thumbnail(frame: bytes) -> list[float] | None:
@@ -1970,15 +2009,22 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         self._model_ready = False
 
     def _load_model_sync(self) -> None:
-        """Load / download the Moondream model (blocking — run in executor)."""
+        """Load the Moondream model for on-device inference (blocking — run in executor).
+
+        ``local=True`` is passed explicitly and is load-bearing: the
+        ``moondream`` package silently falls back to Moondream *Cloud* when
+        ``local`` is omitted, which would send every camera frame off-device
+        to api.moondream.ai — with no API key configured, unauthenticated —
+        while this provider is meant to be fully on-device. On-device
+        inference requires a CUDA or Apple Silicon GPU (via the package's
+        "Photon" engine); hosts without one raise cleanly here instead of
+        silently degrading into a cloud leak, and ``_ensure_model`` reports
+        the provider as unavailable rather than a false "ready".
+        """
         import moondream as md  # noqa: PLC0415  # type: ignore[import-not-found]
 
-        _LOGGER.info(
-            "Loading Moondream local model '%s' "
-            "(may download ~430 MB on first run — this can take a few minutes)",
-            self._MODEL_ID,
-        )
-        self._md_model = md.vl(model=self._MODEL_ID)
+        _LOGGER.info("Loading Moondream local model '%s'", self._MODEL_ID)
+        self._md_model = md.vl(model=self._MODEL_ID, local=True)
         self._model_ready = True
         _LOGGER.info("Moondream local model ready")
 
@@ -1994,14 +2040,22 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._load_model_sync)
                 return True
-            except ImportError:
+            except ImportError as exc:
                 _LOGGER.error(
-                    "moondream package is not installed. "
-                    "Install it with: pip install moondream"
+                    "moondream package (or a local-inference dependency it "
+                    "requires, such as kestrel or torch) is not installed: %s. "
+                    "Install it with: pip install moondream",
+                    exc,
                 )
                 return False
             except Exception as exc:  # noqa: BLE001
-                _LOGGER.error("Failed to load Moondream local model: %s", exc)
+                _LOGGER.error(
+                    "Failed to load Moondream local model: %s. On-device "
+                    "Moondream inference requires a CUDA or Apple Silicon GPU — "
+                    "if this host doesn't have one, use moondream_cloud or "
+                    "ollama instead.",
+                    exc,
+                )
                 return False
 
     async def health_check(self) -> bool:
@@ -2156,6 +2210,10 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 f"copy this text verbatim into your description]: {caption}"
             )
 
+        # No reasoning=True here (unlike MoondreamCloudAnalyzer._call_api_frame):
+        # the local `moondream` package's query() signature is
+        # query(image, question, stream=False) — it has no reasoning parameter.
+        # Reasoning mode is a Moondream Cloud-only capability, not an oversight.
         result = self._md_model.query(encoded, augmented_prompt)
         return str(result.get("answer", ""))
 
