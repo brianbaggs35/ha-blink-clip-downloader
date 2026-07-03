@@ -182,7 +182,7 @@ jobs:
             "notify_ha": false,
             "create_clip_manifest": false,
             "enable_library_db": true,
-            "enable_media_server": false,
+            "enable_media_server": true,
             "watch_ha_events": false,
             "fast_poll_duration": 120,
             "fast_poll_interval": 15,
@@ -198,6 +198,7 @@ jobs:
         run: |
           docker run -d --name addon \
             -e TZ=UTC \
+            -p 8099:8099 \
             -v "${{ github.workspace }}/smoke-test/data:/data" \
             -v "${{ github.workspace }}/smoke-test/share:/share" \
             ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
@@ -216,6 +217,62 @@ jobs:
           fi
 
           docker logs addon
+
+      - name: Verify media server responds
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS http://localhost:8099/health; then
+              echo "Media server is up"
+              exit 0
+            fi
+            echo "Media server not reachable yet (attempt $i/10), retrying..."
+            sleep 3
+          done
+          echo "Media server never became reachable on port 8099"
+          docker logs addon
+          exit 1
+
+      - name: Smoke test media server endpoints
+        run: |
+          echo "GET / (web UI shell)"
+          curl -fsS http://localhost:8099/ | grep -q "<title>Blink Clip Library</title>"
+
+          echo "GET /api/clips"
+          curl -fsS http://localhost:8099/api/clips | jq -e 'type == "array"' >/dev/null
+
+          echo "GET /api/stats"
+          curl -fsS http://localhost:8099/api/stats | jq -e 'has("total_count")' >/dev/null
+
+          echo "GET /api/cameras"
+          curl -fsS http://localhost:8099/api/cameras | jq -e 'type == "array"' >/dev/null
+
+          echo "GET /api/auth/status"
+          curl -fsS http://localhost:8099/api/auth/status | jq -e 'has("state")' >/dev/null
+
+          echo "All media server endpoints responded as expected"
+
+      - name: Verify container is still healthy after smoke tests
+        run: |
+          if ! docker ps \
+            --filter "name=addon" \
+            --filter "status=running" \
+            | grep addon; then
+            echo "Container is no longer running after smoke tests"
+            docker logs addon
+            exit 1
+          fi
+
+          if docker logs addon 2>&1 | grep -q "Traceback (most recent call last)"; then
+            echo "Found an unhandled exception in container logs:"
+            docker logs addon
+            exit 1
+          fi
+
+          echo "Container still running with no unhandled exceptions"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs addon || true
 
       - name: Cleanup
         if: always()
