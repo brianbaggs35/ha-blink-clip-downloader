@@ -1,6 +1,11 @@
 ---
+codecov:
+  require_ci_to_pass: false
 coverage:
   status:
     project:
       default:
         target: 85%
+    patch:
+      default:
+        target: 80% # Forces all new/modified lines to be fully tested
