@@ -228,6 +228,15 @@ def test_ai_analysis_defaults_to_disabled():
     assert cfg.ai_schedule_end == ""
     assert cfg.ai_batch_size == 10
     assert cfg.ai_check_interval == 60
+    assert cfg.ai_min_confidence == 0.5
+
+
+def test_ai_min_confidence_can_be_lowered_to_zero():
+    """0.0 is a legitimate explicit override (alert on every result) and
+    must not be confused with "unset" — only an absent key falls back to
+    the 0.5 default."""
+    cfg = _parse_config({"username": "u", "password": "p", "ai_min_confidence": 0.0})
+    assert cfg.ai_min_confidence == 0.0
 
 
 def test_ai_analysis_full_config():
