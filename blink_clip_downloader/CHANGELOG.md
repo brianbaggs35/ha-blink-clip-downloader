@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.1.5
+
+### AI analysis improvements
+
+- **Fix: parked/passing vehicles near the protected vehicle were flagged as
+  "suspicious" with no person involved.** Users were seeing notifications
+  like "A silver Kia Forte is parked in the driveway, close to the
+  protected vehicle" or "Three cars are parked in the driveway" — routine
+  parking with no person or animal in frame, marked suspicious purely on
+  vehicle-to-vehicle proximity. The `PROTECTED VEHICLE` prompt rules (used
+  by every provider) now state that another vehicle parking, stopping, or
+  passing near the protected one is always `suspicious=false` when no
+  person or animal is involved, no matter how close it parks — only a
+  person or animal actually touching, lingering near, or reaching toward a
+  vehicle is suspicious.
+- **Moondream (Cloud and local): the above policy is now also enforced in
+  code, not just the prompt.** Moondream's small vision-language model
+  doesn't reliably honor negative instructions, so a frame where detection
+  found only vehicle-to-vehicle proximity (no person or animal) now has its
+  `suspicious` verdict forced to `false` after the model responds,
+  regardless of what the model itself reported — closing the gap that let
+  a "close to the protected vehicle" description slip through as a
+  notification anyway. `_vehicle_proximity_hint()` was also reworded to be
+  unconditional rather than gap-dependent, since even a vehicle genuinely
+  stopping or parking close by isn't a security concern by itself.
+
 ## 3.1.4
 
 ### New features

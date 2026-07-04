@@ -947,23 +947,28 @@ class BaseAnalyzer(abc.ABC):
                 "vehicles are also visible (e.g. a neighbor's car, street parking, passing "
                 "traffic), apply the distance and behavior rules below ONLY to the vehicle "
                 "matching this description — a different vehicle parked or passing nearby is "
-                "not itself suspicious, and should only be flagged under the 'another "
-                "vehicle' rule below if it approaches the protected vehicle.\n"
+                "not itself suspicious no matter how close it parks, and should only be "
+                "flagged if a person or animal is also involved per the rules below.\n"
                 "First identify whether each subject is a person, a vehicle, or an "
                 "animal — never apply these vehicle-distance rules to a person unless a "
                 "vehicle is also genuinely visible in frame. Then apply these distance "
-                "and behavior rules STRICTLY. They cover anyone or anything getting close "
-                "to the vehicle — people, animals, or other vehicles — not just "
-                "pedestrians. The single most important distinction is LINGERING OR "
-                "CONTACT versus simply PASSING THROUGH:\n"
+                "and behavior rules STRICTLY. Only a person or animal near the vehicle can "
+                "make a scene suspicious — a second vehicle parked or stopped near the "
+                "protected one is always described, never flagged, on its own. The single "
+                "most important distinction is LINGERING OR CONTACT versus simply PASSING "
+                "THROUGH:\n"
                 "• Touching, pressing against, reaching into, or within 1 foot of the "
                 "vehicle (person, animal, or object): suspicious=true, confidence ≥0.8\n"
                 "• A person 1–3 feet from the vehicle who stops, lingers, circles it, "
                 "faces it, or reaches toward it: suspicious=true, confidence ≥0.6\n"
                 "• An animal 1–3 feet from the vehicle that stops to sniff, paw at, jump "
                 "on, or otherwise investigate it: suspicious=true, confidence ≥0.5\n"
-                "• Another vehicle stopping, parking, or backing within 2 feet of the "
-                "protected vehicle: suspicious=true, confidence ≥0.6\n"
+                "• Another vehicle parking, stopping, or passing near the protected "
+                "vehicle, with no person or animal on foot approaching either vehicle: "
+                "suspicious=false, no matter how close the vehicles appear — a second "
+                "household car, a visitor parking, a neighbor's car, or ordinary curbside "
+                "parking is routine. Describe it plainly, e.g. 'a second car is parked in "
+                "the driveway near the protected vehicle', without alarm language.\n"
                 "• A person, animal, bicycle, or other vehicle simply walking, running, "
                 "or driving past — even within a few feet — WITHOUT stopping, lingering, "
                 "or reaching toward the protected vehicle: suspicious=false. Passing near "
@@ -1550,32 +1555,37 @@ class _MoondreamDetectionMixin:
         touching in a 2D frame while being many feet apart in real depth —
         a car driving past on the street behind or beside a parked car
         routinely overlaps it in screen space purely from camera
-        perspective. Treating that bounding-box gap the same way as a
-        person's produces frequent false "right next to the car" /
-        "touching the car" alerts for ordinary passing traffic, so this
-        hint is deliberately conservative: it never instructs the model to
-        parrot proximity language and only allows suspicious=true when the
-        frames themselves — not the bounding-box gap alone — show the other
-        vehicle actually stopping, parking, or backing up close to the
-        protected vehicle.
+        perspective. More fundamentally, even a vehicle that genuinely does
+        park or stop close to the protected one — a second household car, a
+        visitor, a neighbor — is routine and not a security concern by
+        itself; only a person or animal actually near the vehicle makes a
+        scene worth flagging (see :meth:`_proximity_hint`). This hint is
+        therefore unconditional rather than gap-dependent: it never asks the
+        model to weigh the bounding-box distance, only to describe the scene
+        accurately and leave suspicious=false. The analyzer also enforces
+        this in code (see the ``multiple_vehicles``-and-no-subjects override
+        in ``_call_model``), so an instruction-following slip here — small
+        vision models don't reliably honor negative constraints — can't by
+        itself produce a false alert.
         """
         return (
             "[INTERNAL VEHICLE PROXIMITY HINT — use for reasoning only, do "
             "NOT copy this text into the description]: Another vehicle's "
-            f"bounding box is close to or overlapping the protected "
+            "bounding box is close to or overlapping the protected "
             f"vehicle's in this single 2D frame (estimated gap {gap:.2f}). "
             "This overlap can happen purely from camera perspective — a car "
             "driving past on the street behind or beside the parked vehicle "
             "commonly appears adjacent to or touching it in the frame while "
-            "actually being many feet away in real distance. Bounding-box "
-            "proximity alone is NOT reliable evidence for two vehicles. "
-            "Only set suspicious=true if the frames clearly show the other "
-            "vehicle stopping, parking, or backing up right next to the "
-            "protected vehicle. If it is simply moving through the frame, "
-            "describe it plainly as driving up or down the street and set "
-            "suspicious=false — do not say it was 'near', 'right next to', "
-            "or 'touching' the protected vehicle just because their boxes "
-            "are close in this one frame."
+            "actually being many feet away in real distance. Even when the "
+            "other vehicle genuinely is parked or stopped close by, that is "
+            "routine (a second household car, a visitor, a neighbor) and "
+            "NOT suspicious on its own — set suspicious=false regardless of "
+            "how close the vehicles appear or whether one is stopping, "
+            "parking, or backing up. Describe the scene plainly, e.g. 'a "
+            "second car is parked near the protected vehicle' or 'a car "
+            "drove up the street', without alarm language. Only set "
+            "suspicious=true if a person or animal is also visible actually "
+            "touching, lingering near, or reaching toward either vehicle."
         )
 
     @staticmethod
@@ -1636,6 +1646,37 @@ class _MoondreamDetectionMixin:
             '"description": "No person detected in this frame. '
             'Motion likely caused by a vehicle, animal, or environmental factor."}'
         )
+
+    @staticmethod
+    def _force_not_suspicious(response: str) -> str:
+        """Rewrite a raw model JSON response to force ``suspicious: false``.
+
+        Called when detection evidence shows the only thing that could have
+        driven a "suspicious" verdict for this frame was vehicle-to-vehicle
+        proximity with no person or animal present (see
+        :meth:`_vehicle_proximity_hint`). That hint asks the model to always
+        answer suspicious=false in this case, but small vision-language
+        models don't reliably follow negative instructions, so this enforces
+        the policy in code instead of trusting the model's own fields.
+        Returns *response* unchanged if it isn't parseable JSON or is already
+        not suspicious.
+        """
+        start = response.find("{")
+        end = response.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return response
+        try:
+            obj = json.loads(response[start : end + 1])
+        except json.JSONDecodeError:
+            return response
+        if not obj.get("suspicious"):
+            return response
+        obj["suspicious"] = False
+        try:
+            obj["confidence"] = min(0.3, float(obj.get("confidence", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            obj["confidence"] = 0.0
+        return json.dumps(obj)
 
 
 class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
@@ -2077,6 +2118,9 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                     await asyncio.sleep(0.55)
                 continue
 
+            if multiple_vehicles and not subjects:
+                resp = self._force_not_suspicious(resp)
+
             susp, conf, desc = self._try_parse_json(resp)
             if not desc:
                 if not best_response:
@@ -2369,7 +2413,10 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         # query(image, question, stream=False) — it has no reasoning parameter.
         # Reasoning mode is a Moondream Cloud-only capability, not an oversight.
         result = self._md_model.query(encoded, augmented_prompt)
-        return str(result.get("answer", ""))
+        answer = str(result.get("answer", ""))
+        if multiple_vehicles and not subjects:
+            answer = self._force_not_suspicious(answer)
+        return answer
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
         """Run the local model on all extracted frames and return the most alarming result."""

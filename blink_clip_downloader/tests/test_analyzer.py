@@ -1071,6 +1071,11 @@ def test_analyze_frame_sync_car_camera_multiple_vehicles_uses_vehicle_proximity_
     assert "INTERNAL VEHICLE PROXIMITY HINT" in prompt_arg
     assert "camera perspective" in prompt_arg
 
+    # Even though the (mocked) model answered suspicious=true, no person or
+    # animal was in frame — the vehicle-only override must force this false.
+    is_suspicious, _, _ = MoondreamLocalAnalyzer._try_parse_json(result)
+    assert is_suspicious is False
+
 
 def test_analyze_frame_sync_car_camera_person_near_car_uses_proximity_hint() -> None:
     """Car camera: a person detected alongside the protected vehicle re-runs
@@ -4224,25 +4229,28 @@ def test_proximity_hint_far_away() -> None:
 
 def test_vehicle_proximity_hint_warns_about_camera_perspective() -> None:
     """The vehicle-to-vehicle hint must never instruct the model to parrot
-    'touching'/'right next to' language purely from bbox gap — that was the
+    'touching'/'right next to' language purely from bbox gap — that was one
     root cause of false suspicious alerts for ordinary passing traffic."""
     hint = MoondreamCloudAnalyzer._vehicle_proximity_hint(0.0)
     assert "INTERNAL VEHICLE PROXIMITY HINT" in hint
     assert "camera perspective" in hint
-    assert "NOT reliable evidence" in hint
     assert "Describe this as" not in hint
 
 
-def test_vehicle_proximity_hint_requires_stopping_or_parking() -> None:
+def test_vehicle_proximity_hint_is_unconditional_suspicious_false() -> None:
+    """A second vehicle parked or stopped close to the protected one — even
+    at a near-zero gap — must never be suspicious on its own; only a person
+    or animal near either vehicle can make the scene worth flagging."""
     hint = MoondreamCloudAnalyzer._vehicle_proximity_hint(0.02)
-    assert "stopping, parking, or backing up" in hint
+    assert "set suspicious=false regardless of" in hint
     assert "0.02" in hint
 
 
 def test_vehicle_proximity_hint_suggests_plain_driving_description() -> None:
     hint = MoondreamCloudAnalyzer._vehicle_proximity_hint(0.3)
-    assert "driving up or down the street" in hint
+    assert "a car drove up the street" in hint
     assert "suspicious=false" in hint
+    assert "Only set suspicious=true if a person or animal" in hint
 
 
 # ------------------------------------------------------------------
@@ -4402,6 +4410,40 @@ def test_no_subject_response_is_valid_clear_json() -> None:
     assert is_suspicious is False
     assert confidence == pytest.approx(0.9)
     assert "No person detected" in summary
+
+
+# ------------------------------------------------------------------
+# _force_not_suspicious
+# ------------------------------------------------------------------
+
+
+def test_force_not_suspicious_overrides_true_verdict() -> None:
+    """A model-reported suspicious=true is rewritten to false, with
+    confidence capped and the description left intact — used to enforce the
+    vehicle-only-is-never-suspicious policy even if the model itself doesn't
+    honor the prompt's negative instruction."""
+    response = (
+        '{"suspicious": true, "confidence": 0.5, '
+        '"description": "A silver Kia Forte is parked close to the protected vehicle."}'
+    )
+    rewritten = MoondreamCloudAnalyzer._force_not_suspicious(response)
+    is_suspicious, confidence, summary = MoondreamCloudAnalyzer._try_parse_json(
+        rewritten
+    )
+    assert is_suspicious is False
+    assert confidence <= 0.3
+    assert "silver Kia Forte" in summary
+
+
+def test_force_not_suspicious_leaves_already_clear_response_untouched() -> None:
+    response = (
+        '{"suspicious": false, "confidence": 0.1, "description": "Nothing notable."}'
+    )
+    assert MoondreamCloudAnalyzer._force_not_suspicious(response) == response
+
+
+def test_force_not_suspicious_leaves_unparseable_response_untouched() -> None:
+    assert MoondreamCloudAnalyzer._force_not_suspicious("not json") == "not json"
 
 
 # ------------------------------------------------------------------
@@ -4587,6 +4629,11 @@ async def test_moondream_cloud_call_model_car_camera_multiple_vehicles_triggers_
     assert injected_prompts
     assert "INTERNAL VEHICLE PROXIMITY HINT" in injected_prompts[0]
     assert "camera perspective" in injected_prompts[0]
+
+    # Even though the (mocked) model answered suspicious=true, no person or
+    # animal was in frame — the vehicle-only override must force this false.
+    is_suspicious, _, _ = MoondreamCloudAnalyzer._try_parse_json(result)
+    assert is_suspicious is False
 
 
 @pytest.mark.asyncio
