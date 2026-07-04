@@ -332,7 +332,7 @@ as the most cost-effective option.
 | `ai_prompt` | _(see config.yaml)_ | Global prompt sent to the AI for each clip. Must request a JSON response with `"suspicious"`, `"confidence"`, and `"description"` keys. |
 | `ai_car_description` | `""` | Description of a vehicle to protect (e.g. `"Silver Kia Forte, parked in the driveway"`). When set, the AI applies strict distance rules and flags anyone within ~2 feet of the vehicle as suspicious. |
 | `ai_car_cameras` | `[]` | Camera names for which car-proximity rules apply. Must exactly match your Blink camera name (case-sensitive). Leave empty to apply to all cameras. Cameras not listed focus only on their own description, preventing false positives on cameras that cannot see the car. Easier to set via the **Camera Configurations** panel in the web UI AI tab, which lists your actual cameras instead of requiring you to type the name. |
-| `ai_min_confidence` | `0.0` | Minimum confidence threshold (0.0–1.0) for sending suspicious-activity alerts. Clips are still analysed and stored; only alert dispatch is gated. Example: `0.3` to suppress low-confidence detections. |
+| `ai_min_confidence` | `0.5` | Minimum confidence threshold (0.0–1.0) for sending suspicious-activity alerts. Clips are still analysed and stored; only alert dispatch is gated. The default matches the confidence floor the AI prompt itself uses for a genuine suspicious verdict, so low-confidence hedges don't spam notifications. Set to `0.0` to send alerts for every result, or higher (e.g. `0.7`) to only alert when the AI is very certain. |
 | `ai_suspicious_keywords` | _(list)_ | Words that trigger a suspicious flag when found in an AI plain-text response (used as fallback when the AI does not return valid JSON). |
 
 ### Frame Extraction

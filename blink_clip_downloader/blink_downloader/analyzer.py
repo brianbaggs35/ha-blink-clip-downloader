@@ -918,7 +918,12 @@ class BaseAnalyzer(abc.ABC):
                     "\n\nSCENE BASELINE: This camera's view currently differs from its "
                     f"usual background (deviation {scene_deviation:.2f}/1.00). Something "
                     "not normally present — an object, vehicle, or obstruction — may be "
-                    "in frame. Treat this as a hint to look closer, not a verdict on its own."
+                    "in frame. Treat this as a hint to look closer, not a verdict on its own. "
+                    "This deviation is frequently just lighting, weather, shadows, or the "
+                    "day/night transition — none of which are suspicious by themselves. "
+                    "Only raise suspicion if the frames themselves clearly show a specific "
+                    "new person, animal, or vehicle; if you cannot identify one, describe "
+                    "the scene plainly and set suspicious=false."
                 )
             else:
                 parts.append(
@@ -1022,9 +1027,22 @@ class BaseAnalyzer(abc.ABC):
             "or property is routine traffic — describe it plainly, e.g. 'a car drove up "
             "the street', and do not say it was 'near' anyone or anything unless it "
             "actually stopped or slowed close to a specific person, vehicle, or entryway. "
+            "A person or animal simply walking, running, or otherwise passing through the "
+            "frame — on a sidewalk, street, or yard — without stopping, lingering, or "
+            "interacting with anything on the property is routine and must be marked "
+            "suspicious=false: merely being visible to a security camera is never "
+            "suspicious by itself, only stopping, lingering, tampering, or clearly "
+            "unusual behavior is. "
             "Write in the calm, factual tone of a professional security analyst — state "
             "only what is observable, avoid speculation or alarmist language, and reserve "
             "words like 'suspicious' for genuine cause for concern. "
+            "If you set suspicious=true, confidence must be at least 0.5 — that value is "
+            "not a hedge, it means you identified a specific person, animal, or vehicle "
+            "actually behaving in a concerning way (lingering, tampering, or approaching "
+            "closely as described above). An ambient change alone — lighting, weather, "
+            "shadows, or a shift in background scenery — is never sufficient for "
+            "suspicious=true. If your certainty is below 0.5, set suspicious=false instead "
+            "of reporting a low-confidence guess. "
             "NEVER include any of these technical terms in the description: "
             "'bounding box', 'normalized', 'frame width', 'frame percentage', 'spatial data', "
             "'INTERNAL', 'CONTEXT', 'proximity analysis', 'overlap', 'gap 0.', or any decimal coordinates. "
@@ -1409,6 +1427,47 @@ class _MoondreamDetectionMixin:
         return intersection / union
 
     @classmethod
+    def _dedupe_boxes(
+        cls, boxes: list[dict[str, float]], iou_threshold: float = 0.3
+    ) -> list[dict[str, float]]:
+        """Collapse duplicate detections of the same physical object.
+
+        Zero-shot open-vocabulary detectors like Moondream's ``/detect`` can
+        return more than one box for a single physical object — e.g. a
+        generic "car" query matching both the vehicle's full body and a
+        tighter crop of the same vehicle as two separate boxes. Left
+        undeduplicated, two boxes for one parked car get treated by
+        :meth:`_other_vehicle_boxes` as two distinct vehicles, producing a
+        false "another vehicle stopped right next to the protected vehicle"
+        alert for a car that is simply parked alone in its own driveway.
+        Boxes with IoU at or above *iou_threshold* are treated as the same
+        object; the larger (by area) box of each overlapping pair suppresses
+        the smaller one. Surviving boxes are returned in their original
+        input order — only overlap decides what's removed, never reordering
+        the untouched majority of non-overlapping boxes.
+        """
+        if len(boxes) <= 1:
+            return boxes
+
+        def area(b: dict[str, float]) -> float:
+            return max(0.0, b.get("x_max", 1.0) - b.get("x_min", 0.0)) * max(
+                0.0, b.get("y_max", 1.0) - b.get("y_min", 0.0)
+            )
+
+        priority = sorted(range(len(boxes)), key=lambda i: area(boxes[i]), reverse=True)
+        suppressed: set[int] = set()
+        for pos, i in enumerate(priority):
+            if i in suppressed:
+                continue
+            for j in priority[pos + 1 :]:
+                if (
+                    j not in suppressed
+                    and cls._bbox_iou(boxes[i], boxes[j]) >= iou_threshold
+                ):
+                    suppressed.add(j)
+        return [b for idx, b in enumerate(boxes) if idx not in suppressed]
+
+    @classmethod
     def _other_vehicle_boxes(
         cls,
         protected_boxes: list[dict[str, float]],
@@ -1787,6 +1846,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
 
         Returns ``(protected_vehicle_boxes, other_vehicle_boxes)``.
         """
+        all_car_boxes = self._dedupe_boxes(all_car_boxes)
         if len(all_car_boxes) <= 1 or not self._car_description:
             return all_car_boxes, []
 
@@ -2193,6 +2253,7 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         present (see that method for the full rationale). Returns
         ``(protected_vehicle_boxes, other_vehicle_boxes)``.
         """
+        all_car_boxes = self._dedupe_boxes(all_car_boxes)
         if len(all_car_boxes) <= 1 or not self._car_description:
             return all_car_boxes, []
 

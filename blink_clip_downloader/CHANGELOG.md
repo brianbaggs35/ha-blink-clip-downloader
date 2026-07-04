@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.1.3
+
+### AI analysis improvements
+
+- **Reduced low-value/false-positive suspicious-activity notifications.**
+  Several changes work together to cut down on alerts describing static
+  background scenery, routine passersby, or low-confidence hedges instead of
+  genuine security concerns:
+  - The analysis prompt now explicitly states that a scene-baseline
+    deviation is frequently just lighting, weather, shadows, or a day/night
+    transition, and instructs the model to set `suspicious=false` unless a
+    specific new person, animal, or vehicle is clearly visible.
+  - A new prompt rule ties `suspicious=true` to a documented confidence
+    floor of 0.5 — the model is told this is not a hedge value, and that an
+    ambient scene change alone is never sufficient grounds for a suspicious
+    verdict.
+  - The "a person or animal simply passing through is not suspicious"
+    guidance is now camera-agnostic instead of only applying to cameras with
+    a protected vehicle configured, so false-positive reduction benefits
+    every camera, not just driveway/car cameras.
+  - `ai_min_confidence` now defaults to `0.5` instead of `0.0`, aligning the
+    alert-dispatch gate with the confidence floor the prompt itself uses for
+    a genuine suspicious verdict, so low-confidence guesses no longer
+    trigger notifications (results are still analyzed and stored either
+    way).
+
+### Bug fixes
+
+- **Fix: Moondream's vehicle-disambiguation pipeline could report a car
+  parked alone as "another vehicle stopped right next to the protected
+  vehicle."** A single parked car sometimes produces two overlapping
+  bounding boxes from Moondream's generic `car` detection query (e.g. a
+  full-body box and a tighter crop of the same car). These duplicate boxes
+  were never deduplicated against each other before being compared to the
+  protected-vehicle detection result, so the second box for the *same* car
+  was mistaken for a second, distinct vehicle. Both `MoondreamCloudAnalyzer`
+  and `MoondreamLocalAnalyzer` now collapse heavily-overlapping duplicate
+  boxes (IoU ≥ 0.3) before running vehicle disambiguation.
+
 ## 3.1.2
 
 ### Bug fixes

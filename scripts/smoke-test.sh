@@ -16,6 +16,19 @@
 
 set -euo pipefail
 
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1 (install hint: $2)" >&2
+    exit 1
+  fi
+}
+require_cmd docker "https://docs.docker.com/engine/install/"
+require_cmd curl "install via your OS package manager, e.g. apt install curl"
+require_cmd jq "install via your OS package manager, e.g. apt install jq / brew install jq"
+if [ "${SMOKE_TEST_SKIP_E2E:-}" != "1" ]; then
+  require_cmd node "https://nodejs.org/, or re-run with SMOKE_TEST_SKIP_E2E=1 to skip the e2e check"
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${1:-blink-clip-downloader:smoke-test-local}"
 CONTAINER_NAME="blink-clip-downloader-smoke-test"

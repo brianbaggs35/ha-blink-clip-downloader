@@ -149,7 +149,12 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     ai_schedule_end: str = ""
     ai_batch_size: int = 10
     ai_check_interval: int = 60
-    ai_min_confidence: float = 0.0
+    # Below 0.5, the AI provider itself was never instructed to call something
+    # suspicious (see the confidence-floor rule in analyzer._build_prompt) —
+    # a lower default let low-confidence hedges ("maybe suspicious", never a
+    # real detection) spam notifications. 0.5 aligns the alert gate with the
+    # prompt's own stated floor for a genuine suspicious verdict.
+    ai_min_confidence: float = 0.5
     ai_camera_prompts: list[dict] = field(default_factory=list)
     ai_camera_descriptions: list[dict] = field(default_factory=list)
     # Frame extraction strategy:
@@ -311,7 +316,7 @@ def _parse_config(data: dict) -> AppConfig:
         ai_schedule_end=str(data.get("ai_schedule_end", "") or "").strip(),
         ai_batch_size=max(1, min(50, int(data.get("ai_batch_size", 10)))),
         ai_check_interval=max(10, min(3600, int(data.get("ai_check_interval", 60)))),
-        ai_min_confidence=max(0.0, min(1.0, float(data.get("ai_min_confidence", 0.0)))),
+        ai_min_confidence=max(0.0, min(1.0, float(data.get("ai_min_confidence", 0.5)))),
         ai_camera_prompts=[
             {"camera": str(item["camera"]), "prompt": str(item["prompt"])}
             for item in data.get("ai_camera_prompts", [])

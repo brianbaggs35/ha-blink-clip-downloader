@@ -944,6 +944,24 @@ def test_detect_protected_vehicle_sync_falls_back_when_nothing_found() -> None:
     assert other == []
 
 
+def test_detect_protected_vehicle_sync_dedupes_duplicate_boxes_for_same_car() -> None:
+    """Local-inference counterpart to the cloud dedup regression test: a
+    single parked car detected twice by the generic "car" query must not
+    surface as "another vehicle" next to itself."""
+    same_car_a = {"x_min": 0.10, "y_min": 0.10, "x_max": 0.50, "y_max": 0.90}
+    same_car_b = {"x_min": 0.12, "y_min": 0.10, "x_max": 0.50, "y_max": 0.90}
+    mock_model = MagicMock()
+    mock_model.detect.side_effect = AssertionError("should not be called")
+    a = MoondreamLocalAnalyzer(prompt="p", car_description="Silver Kia")
+    a._md_model = mock_model
+
+    protected, other = a._detect_protected_vehicle_sync(
+        "encoded", [same_car_a, same_car_b]
+    )
+    assert protected == [same_car_a]
+    assert other == []
+
+
 # ------------------------------------------------------------------
 # MoondreamLocalAnalyzer — _analyze_frame_sync ambient detection
 # ------------------------------------------------------------------
@@ -4028,6 +4046,49 @@ async def test_detect_protected_vehicle_falls_back_when_nothing_found() -> None:
     assert other == []
 
 
+@pytest.mark.asyncio
+async def test_detect_protected_vehicle_dedupes_duplicate_boxes_for_same_car() -> None:
+    """A single parked car detected as two heavily-overlapping boxes by the
+    generic "car" query must NOT be reported as "another vehicle" next to
+    itself — this was the root cause of false "vehicle parked right next to
+    the protected vehicle" alerts for a car simply parked alone."""
+    same_car_a = {"x_min": 0.10, "y_min": 0.10, "x_max": 0.50, "y_max": 0.90}
+    same_car_b = {"x_min": 0.12, "y_min": 0.10, "x_max": 0.50, "y_max": 0.90}
+    duplicate_boxes = [same_car_a, same_car_b]
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    with patch.object(
+        a, "_detect_objects", side_effect=AssertionError("should not be called")
+    ):
+        protected, other = await a._detect_protected_vehicle(b"frame", duplicate_boxes)
+
+    assert protected == [same_car_a]
+    assert other == []
+
+
+@pytest.mark.asyncio
+async def test_detect_protected_vehicle_still_finds_genuinely_separate_car() -> None:
+    """A duplicate-detected protected car plus one genuinely separate
+    vehicle → the separate vehicle still surfaces as "other", only the
+    duplicate collapses."""
+    same_car_a = {"x_min": 0.05, "y_min": 0.10, "x_max": 0.45, "y_max": 0.90}
+    same_car_b = {"x_min": 0.07, "y_min": 0.10, "x_max": 0.45, "y_max": 0.90}
+    separate_car = {"x_min": 0.60, "y_min": 0.10, "x_max": 0.95, "y_max": 0.90}
+    all_boxes = [same_car_a, same_car_b, separate_car]
+
+    async def fake_detect(frame: bytes, object_name: str) -> list[dict[str, float]]:
+        assert object_name == "Silver Kia"
+        return [same_car_a]
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    with patch.object(a, "_detect_objects", side_effect=fake_detect):
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            protected, other = await a._detect_protected_vehicle(b"frame", all_boxes)
+
+    assert protected == [same_car_a]
+    assert other == [separate_car]
+
+
 # ------------------------------------------------------------------
 # _bbox_min_gap
 # ------------------------------------------------------------------
@@ -4185,6 +4246,43 @@ def test_bbox_iou_partial_overlap() -> None:
     b = {"x_min": 0.25, "y_min": 0.0, "x_max": 0.75, "y_max": 0.5}
     # intersection: 0.25*0.5 = 0.125; union: 0.25 + 0.25 - 0.125 = 0.375
     assert MoondreamCloudAnalyzer._bbox_iou(a, b) == pytest.approx(0.125 / 0.375)
+
+
+# ------------------------------------------------------------------
+# _dedupe_boxes
+# ------------------------------------------------------------------
+
+
+def test_dedupe_boxes_empty_or_single_passthrough() -> None:
+    assert MoondreamCloudAnalyzer._dedupe_boxes([]) == []
+    box = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.5, "y_max": 0.5}]
+    assert MoondreamCloudAnalyzer._dedupe_boxes(box) == box
+
+
+def test_dedupe_boxes_collapses_heavily_overlapping_duplicates() -> None:
+    """Two boxes for the same physical object (high IoU) collapse to one —
+    the larger of the pair survives."""
+    bigger = {"x_min": 0.10, "y_min": 0.10, "x_max": 0.50, "y_max": 0.90}
+    smaller = {"x_min": 0.12, "y_min": 0.10, "x_max": 0.50, "y_max": 0.90}
+    result = MoondreamCloudAnalyzer._dedupe_boxes([smaller, bigger])
+    assert result == [bigger]
+
+
+def test_dedupe_boxes_keeps_distinct_non_overlapping_boxes() -> None:
+    """Two genuinely separate objects (IoU below threshold) both survive."""
+    a = {"x_min": 0.0, "y_min": 0.0, "x_max": 0.2, "y_max": 0.2}
+    b = {"x_min": 0.8, "y_min": 0.8, "x_max": 1.0, "y_max": 1.0}
+    result = MoondreamCloudAnalyzer._dedupe_boxes([a, b])
+    assert result == [a, b]
+
+
+def test_dedupe_boxes_respects_custom_iou_threshold() -> None:
+    """A lower iou_threshold merges boxes that a higher one would keep apart."""
+    a = {"x_min": 0.0, "y_min": 0.0, "x_max": 0.5, "y_max": 0.5}
+    b = {"x_min": 0.25, "y_min": 0.0, "x_max": 0.75, "y_max": 0.5}
+    # IoU here is 0.125/0.375 ≈ 0.333 (see test_bbox_iou_partial_overlap)
+    assert MoondreamCloudAnalyzer._dedupe_boxes([a, b], iou_threshold=0.5) == [a, b]
+    assert MoondreamCloudAnalyzer._dedupe_boxes([a, b], iou_threshold=0.3) == [a]
 
 
 # ------------------------------------------------------------------
@@ -5765,6 +5863,17 @@ def test_build_prompt_scene_deviation_high_flags_change() -> None:
     assert "0.50" in prompt
 
 
+def test_build_prompt_scene_deviation_high_warns_lighting_not_suspicious() -> None:
+    """A high scene-baseline deviation is frequently just lighting/weather/
+    day-night transition — the prompt must say so explicitly so weaker models
+    don't treat ambient change alone as evidence of something suspicious."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam", scene_deviation=0.5)
+    assert "lighting, weather, shadows" in prompt
+    assert "day/night transition" in prompt
+    assert "set suspicious=false" in prompt
+
+
 def test_build_prompt_scene_deviation_low_confirms_normal() -> None:
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
     prompt = a._build_prompt("Cam", scene_deviation=0.02)
@@ -5813,3 +5922,25 @@ def test_build_prompt_car_applies_passing_traffic_no_near_language() -> None:
     prompt = a._build_prompt("Driveway")
     assert "driving up or down the street" in prompt
     assert "do not say it was 'near' the protected vehicle" in prompt
+
+
+def test_build_prompt_passerby_not_suspicious_camera_agnostic() -> None:
+    """The "just passing through" guidance for a person/animal must appear
+    even when no protected vehicle is configured for this camera — false-
+    positive reduction shouldn't require a car to be set up."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam")
+    assert "without stopping, lingering, or" in prompt
+    assert "must be marked suspicious=false" in prompt
+    assert "never suspicious by itself, only stopping, lingering, tampering" in prompt
+
+
+def test_build_prompt_confidence_floor_rule_present() -> None:
+    """suspicious=true must be tied to a documented confidence floor so the
+    alert-confidence gate (config ai_min_confidence default 0.5) matches what
+    the model is actually instructed to do."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam")
+    assert "confidence must be at least 0.5" in prompt
+    assert "ambient change alone" in prompt
+    assert "set suspicious=false instead of reporting a low-confidence guess" in prompt
