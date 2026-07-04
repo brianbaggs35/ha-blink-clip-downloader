@@ -1,5 +1,50 @@
 # Changelog
 
+## 3.1.4
+
+### New features
+
+- **Notification filter for the clip library.** A "🔔 Notified" checkbox in
+  the Library filter bar (alongside "★ Starred") restricts the clip grid to
+  clips whose AI analysis was suspicious at or above the currently
+  configured `ai_min_confidence` — the same clips that would have triggered
+  a notification — so you no longer have to scroll through every clip to
+  find the ones worth reviewing. Clips matching this now also show a 🔔
+  badge on their thumbnail. Backed by a new indexed, schema-migration-free
+  `EXISTS` query in `get_clips()`, so it scales the same way existing
+  filters do even with thousands of clips.
+
+### AI analysis improvements
+
+- **Refined protected-vehicle scoping for multi-car scenes.** The
+  `PROTECTED VEHICLE` prompt section now explicitly tells the model that
+  when more than one vehicle is visible (e.g. an apartment parking lot, a
+  neighbor's car, street parking), the distance/tampering rules apply only
+  to the vehicle matching the configured description — a different vehicle
+  parked or passing nearby is not itself suspicious. This directly
+  addresses multi-vehicle properties where the described car needs to be
+  identified and monitored as "the" protected vehicle, distinct from any
+  other car in frame.
+
+### Bug fixes
+
+- **Fix: a non-numeric `confidence` value in an otherwise-valid AI JSON
+  response crashed that clip's analysis.** `_try_parse_json()` parsed
+  `confidence` with `float(...)` outside the `try`/`except` that guards
+  JSON decoding, so a provider returning valid JSON with e.g.
+  `"confidence": null` raised an uncaught `TypeError` instead of falling
+  back to `0.0` like every other malformed-response case.
+- **Fix: `download_local_storage_clips()` never persisted the download
+  tracker.** Unlike `download_new_clips()`, the Sync Module USB
+  local-storage download path only called `tracker.mark_downloaded()` in
+  memory and relied on the clean-shutdown `save()` to flush it — an
+  add-on container OOM-kill or ungraceful Supervisor stop between polls
+  would lose those records, causing already-downloaded local-storage clips
+  to be re-counted (though not re-downloaded or corrupted) on the next
+  restart. Both the normal completion path and the early return on a
+  storage-quota breach now call `tracker.save()` directly, matching
+  `download_new_clips()`.
+
 ## 3.1.3
 
 ### AI analysis improvements

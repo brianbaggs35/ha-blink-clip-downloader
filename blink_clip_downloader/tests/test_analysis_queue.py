@@ -428,6 +428,20 @@ async def test_get_queue_status_includes_min_confidence(db: ClipDatabase) -> Non
     assert status["min_confidence"] == 0.35
 
 
+async def test_min_confidence_property(db: ClipDatabase) -> None:
+    """The min_confidence property exposes the same value synchronously,
+    for callers (e.g. the media server's notification filter) that can't
+    await get_queue_status()."""
+    analyzer = _make_analyzer_mock()
+    queue = AnalysisQueue(
+        analyzer=analyzer,
+        db=db,
+        dispatcher=None,
+        min_confidence=0.42,
+    )
+    assert queue.min_confidence == 0.42
+
+
 # ---------------------------------------------------------------------------
 # Coverage: line 59 (_process_pending called from start when healthy)
 # ---------------------------------------------------------------------------

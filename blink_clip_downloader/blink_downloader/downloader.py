@@ -359,6 +359,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     _LOGGER.warning(
                         "Storage quota reached — stopping local-storage download"
                     )
+                    self._tracker.save()
                     return results
 
                 camera_name: str = item.name or "Unknown"
@@ -433,6 +434,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     await self._db.add_clip(result)
                 results.append(result)
 
+        self._tracker.save()
         return results
 
     # ------------------------------------------------------------------

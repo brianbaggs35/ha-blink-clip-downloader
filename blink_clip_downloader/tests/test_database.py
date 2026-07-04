@@ -255,6 +255,43 @@ async def test_get_clips_filter_starred(db: ClipDatabase) -> None:
     assert starred[0]["id"] == "c1"
 
 
+async def test_get_clips_notified_flag_and_filter(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_clip(_make_clip("c3"))
+    # c1: suspicious above threshold -> notified
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "test",
+            "is_suspicious": True,
+            "confidence": 0.9,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    # c2: suspicious but below threshold -> not notified
+    await db.add_analysis_result(
+        {
+            "clip_id": "c2",
+            "camera": "Front Door",
+            "model": "test",
+            "is_suspicious": True,
+            "confidence": 0.2,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    # c3: no analysis at all -> not notified
+
+    all_clips = {c["id"]: c for c in await db.get_clips(min_confidence=0.5)}
+    assert all_clips["c1"]["notified"] is True
+    assert all_clips["c2"]["notified"] is False
+    assert all_clips["c3"]["notified"] is False
+
+    notified_only = await db.get_clips(notified_only=True, min_confidence=0.5)
+    assert [c["id"] for c in notified_only] == ["c1"]
+
+
 async def test_get_clips_search(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("abc123", camera="Garage"))
     await db.add_clip(_make_clip("xyz999", camera="Office"))

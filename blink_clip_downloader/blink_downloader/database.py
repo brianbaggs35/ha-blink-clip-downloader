@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS analysis_results (
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
+CREATE INDEX IF NOT EXISTS idx_analysis_notified ON analysis_results (clip_id, is_suspicious, confidence);
 
 CREATE TABLE IF NOT EXISTS analysis_queue (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,6 +109,8 @@ def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
     d = dict(row)
     d["starred"] = bool(d["starred"])
     d["archived"] = bool(d["archived"])
+    if "notified" in d:
+        d["notified"] = bool(d["notified"])
     try:
         d["tags"] = json.loads(d.get("tags", "[]") or "[]")
     except (json.JSONDecodeError, TypeError):
@@ -326,13 +329,26 @@ class ClipDatabase:
         sort: str = "newest",
         limit: int = 50,
         offset: int = 0,
+        notified_only: bool = False,
+        min_confidence: float = 0.0,
     ) -> list[dict[str, Any]]:
         """Query clips with optional filters and sort order.
 
         sort values: "newest" | "oldest" | "camera" | "size" | "duration"
+
+        Every returned clip includes a ``notified`` boolean (True if the clip
+        has an AI analysis result that was/would be suspicious at
+        *min_confidence* or higher — the same gate ``AnalysisQueue`` uses to
+        decide whether to dispatch a notification). Set *notified_only* to
+        restrict results to just those clips.
         """
         if self._db is None:
             return []
+
+        notified_exists = (
+            "EXISTS (SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
+            "AND ar.is_suspicious = 1 AND ar.confidence >= ?)"
+        )
 
         where: list[str] = [f"archived = {1 if archived else 0}"]
         params: list[Any] = []
@@ -358,6 +374,9 @@ class ClipDatabase:
         if search:
             where.append("(LOWER(camera) LIKE LOWER(?) OR id LIKE ?)")
             params += [f"%{search}%", f"%{search}%"]
+        if notified_only:
+            where.append(notified_exists)
+            params.append(min_confidence)
 
         _sort_map = {
             "newest": "timestamp DESC",
@@ -369,10 +388,10 @@ class ClipDatabase:
         order = _sort_map.get(sort, "timestamp DESC")
 
         sql = (
-            f"SELECT * FROM clips WHERE {' AND '.join(where)} "
-            f"ORDER BY {order} LIMIT ? OFFSET ?"
+            f"SELECT *, {notified_exists} AS notified FROM clips "
+            f"WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ? OFFSET ?"
         )
-        params += [limit, offset]
+        params = [min_confidence, *params, limit, offset]
 
         async with self._db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
