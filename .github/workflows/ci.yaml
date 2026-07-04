@@ -104,6 +104,12 @@ jobs:
             --cov-report=xml:../coverage.xml
 
       - name: Upload coverage artifact
+        # actions/upload-artifact@v4+ uses the GitHub Actions Results
+        # service, which `act` can't emulate (it fakes the runtime token,
+        # causing "Invalid token specified: missing part #2"). `act` sets
+        # ACT=true for every job, so skip this step there — the artifact
+        # isn't needed for a local `act` run anyway.
+        if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
@@ -140,6 +146,11 @@ jobs:
             -o addon-image.tar
 
       - name: Upload image artifact
+        # Skipped under `act` — see the coverage-artifact step above for why.
+        # `act` runs jobs against the host's Docker daemon, so the image
+        # `build` just created is already visible to `smoke-test` without
+        # needing to round-trip through the artifact service.
+        if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v7
         with:
           name: addon-image
@@ -154,12 +165,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
       - name: Download built image artifact
+        # Skipped under `act` — see the `build` job's upload step for why.
+        if: ${{ !env.ACT }}
         uses: actions/download-artifact@v8
         with:
           name: addon-image
 
       - name: Load Docker image
+        # Under `act`, the `build` job already loaded this image into the
+        # shared host Docker daemon, so there's no tarball to load here.
+        if: ${{ !env.ACT }}
         run: docker load -i addon-image.tar
 
       - name: Create smoke-test data directories
@@ -251,6 +282,10 @@ jobs:
           curl -fsS http://localhost:8099/api/auth/status | jq -e 'has("state")' >/dev/null
 
           echo "All media server endpoints responded as expected"
+
+      - name: Playwright e2e smoke check
+        working-directory: e2e
+        run: node smoke.mjs http://localhost:8099/
 
       - name: Verify container is still healthy after smoke tests
         run: |

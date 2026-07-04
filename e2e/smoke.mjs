@@ -54,6 +54,15 @@ try {
   });
   console.log("SPA shell loaded, library tab active by default");
 
+  // The smoke-test container boots with placeholder Blink credentials, so
+  // real Blink auth always fails and the app shows its 2FA/error modal
+  // (checkAuthStatus() in the app's own JS, polled every 3s) - which
+  // intercepts clicks on the rest of the page. That modal is real, correct
+  // behavior, not a bug; a CSS override (rather than a one-off class removal)
+  // keeps it hidden even as the poll keeps re-adding the "open" class, so the
+  // nav-tab click loop below can still exercise the SPA.
+  await page.addStyleTag({ content: "#twofa-overlay{display:none!important}" });
+
   for (const tab of TABS) {
     console.log(`Clicking tab: ${tab}`);
     await page.click(`.nav-tab[data-tab="${tab}"]`);
