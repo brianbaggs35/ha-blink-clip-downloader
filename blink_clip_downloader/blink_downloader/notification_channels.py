@@ -59,10 +59,13 @@ class NotificationDispatcher:
             await self._session.close()
 
     async def _get_session(self) -> aiohttp.ClientSession:
+        # No default headers here: this session is shared with
+        # send_discord(), which posts to an arbitrary user-configured Discord
+        # webhook URL. The Supervisor token is attached per-request in
+        # send_mobile() instead, so it's only ever sent to the HA API and
+        # never leaked to Discord's servers.
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                headers={"Authorization": f"Bearer {self._token}"}
-            )
+            self._session = aiohttp.ClientSession()
         return self._session
 
     # ------------------------------------------------------------------
@@ -103,6 +106,7 @@ class NotificationDispatcher:
             async with session.post(
                 f"{_HA_API}/services/notify/{self._mobile_target}",
                 json={"title": title, "message": message},
+                headers={"Authorization": f"Bearer {self._token}"},
                 timeout=_TIMEOUT,
             ) as resp:
                 if resp.status in (200, 201):
@@ -134,13 +138,19 @@ class NotificationDispatcher:
                 "%a, %d %b %Y %H:%M:%S +0000"
             )
 
+            # Port 465 is implicit TLS (the connection is TLS from the first
+            # byte); STARTTLS is a different, incompatible negotiation used
+            # by port 587/25. Sending start_tls=True to a 465 server hangs
+            # or fails the handshake, so branch on the configured port.
+            implicit_tls = self._smtp_port == 465
             await aiosmtplib.send(
                 msg,
                 hostname=self._smtp_host,
                 port=self._smtp_port,
                 username=self._smtp_user or None,
                 password=self._smtp_password or None,
-                start_tls=True,
+                start_tls=not implicit_tls,
+                use_tls=implicit_tls,
             )
             _LOGGER.info(
                 "Email sent to %s via %s", self._smtp_recipients, self._smtp_host

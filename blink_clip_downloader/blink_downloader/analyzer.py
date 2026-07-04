@@ -329,6 +329,20 @@ class BaseAnalyzer(abc.ABC):
         # feature. Unset (None) disables it entirely — set via
         # attach_scene_baseline_db() once the app has a database ready.
         self._scene_baseline_db: ClipDatabase | None = None
+        # analyze_clip() stashes per-call state (_current_camera,
+        # _last_prompt_tokens/_last_completion_tokens) on self across many
+        # awaited I/O calls, so two calls interleaving on the same analyzer
+        # instance would corrupt each other's results. That interleaving is
+        # reachable in practice: the background AnalysisQueue and the
+        # media server's on-demand "Analyze Now"/"Test" HTTP handlers share
+        # one analyzer instance. This lock serializes analyze_clip() so only
+        # one runs at a time per instance.
+        self._analyze_lock: asyncio.Lock | None = None
+
+    def _get_analyze_lock(self) -> asyncio.Lock:
+        if self._analyze_lock is None:
+            self._analyze_lock = asyncio.Lock()
+        return self._analyze_lock
 
     def update_camera_descriptions(self, descriptions: dict[str, str]) -> None:
         """Update per-camera descriptions at runtime without restart."""
@@ -414,14 +428,35 @@ class BaseAnalyzer(abc.ABC):
         metadata), when the caller has it available — passing it lets
         :meth:`_target_frame_count` size the frame budget off the ground-truth
         duration instead of estimating from the extracted frame count.
+
+        Serialized via ``_analyze_lock`` — see the comment in ``__init__`` for
+        why concurrent calls on the same instance are unsafe.
         """
+        async with self._get_analyze_lock():
+            return await self._analyze_clip_locked(
+                clip_path=clip_path,
+                clip_id=clip_id,
+                camera=camera,
+                anomaly_score=anomaly_score,
+                clip_timestamp=clip_timestamp,
+                clip_duration=clip_duration,
+            )
+
+    async def _analyze_clip_locked(
+        self,
+        clip_path: str,
+        clip_id: str,
+        camera: str,
+        anomaly_score: float = 0.0,
+        clip_timestamp: str = "",
+        clip_duration: float = 0.0,
+    ) -> AnalysisResult:
         from datetime import datetime, timezone
 
         self._last_prompt_tokens = 0
         self._last_completion_tokens = 0
         # Store camera name so provider subclasses can access it in _call_model.
-        # Safe under asyncio's single-threaded event loop — only one analyze_clip
-        # runs at a time per provider instance.
+        # Safe because analyze_clip() holds _analyze_lock for its whole body.
         self._current_camera: str = camera
         start = time.monotonic()
         frames = await self.extract_frames(clip_path)
@@ -568,12 +603,18 @@ class BaseAnalyzer(abc.ABC):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+        except OSError as exc:
+            _LOGGER.warning("ffmpeg not available: %s", exc)
+            return []
+
+        try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
         except asyncio.TimeoutError:
             _LOGGER.warning("ffmpeg timed out for %s", clip_path)
-            return []
-        except OSError as exc:
-            _LOGGER.warning("ffmpeg not available: %s", exc)
+            # communicate() timing out leaves the child process running;
+            # kill it and reap it so it doesn't linger as a zombie/orphan.
+            proc.kill()
+            await proc.wait()
             return []
 
         if proc.returncode != 0:

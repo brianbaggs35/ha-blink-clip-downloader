@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import platform
 import sys
@@ -1058,8 +1059,8 @@ async function loadCameras() {
       const el = document.createElement('div');
       el.className = 'cam-item' + (c.camera === currentCamera ? ' active' : '');
       el.dataset.camera = c.camera;
-      el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${c.camera}</span>`
-        + `<span class="cam-badge">${c.total || 0}</span>`;
+      el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${_esc(c.camera)}</span>`
+        + `<span class="cam-badge">${_esc(String(c.total || 0))}</span>`;
       nav.appendChild(el);
     });
     nav.querySelectorAll('.cam-item').forEach(el => el.addEventListener('click', () => {
@@ -1181,12 +1182,12 @@ function buildCard(c) {
     `<div class="sel-check">${selectedIds.has(c.id) ? '✓' : ''}</div>` +
     `</div>` +
     `<div class="clip-info">` +
-    `<div class="clip-camera">${c.camera}</div>` +
+    `<div class="clip-camera">${_esc(c.camera)}</div>` +
     `<div class="clip-time">${fmtTs(c.timestamp)}</div>` +
     `<div class="clip-meta">` +
-    (c.source ? `<span class="src-pill">${c.source}</span>` : '') +
+    (c.source ? `<span class="src-pill">${_esc(c.source)}</span>` : '') +
     `<span>${fmtSize(c.size_bytes)}</span>` +
-    (c.tags || []).map(t => `<span class="tag-pill">${t}</span>`).join('') +
+    (c.tags || []).map(t => `<span class="tag-pill">${_esc(t)}</span>`).join('') +
     `</div></div>`;
   div.addEventListener('click', () => {
     if (selectMode) { toggleSelect(c.id, div); return; }
@@ -1284,11 +1285,11 @@ async function openModal(clipId) {
 
     $('modal-title').textContent = `${c.camera} — ${fmtTs(c.timestamp)}`;
     $('modal-meta').innerHTML =
-      `<div>Camera</div><span>${c.camera}</span>` +
+      `<div>Camera</div><span>${_esc(c.camera)}</span>` +
       `<div>Recorded</div><span>${fmtTs(c.timestamp)}</span>` +
       `<div>Duration</div><span>${fmtDur(c.duration) || '—'}</span>` +
       `<div>Size</div><span>${fmtSize(c.size_bytes) || '—'}</span>` +
-      `<div>Source</div><span>${c.source || '—'}</span>` +
+      `<div>Source</div><span>${_esc(c.source || '—')}</span>` +
       `<div>Added</div><span>${fmtRelative(c.downloaded_at)}</span>`;
     updateStarBtn(c.starred);
     const dl = $('dl-link');
@@ -1326,7 +1327,7 @@ function updateStarBtn(starred) {
 function renderTags() {
   const list = $('tag-list');
   list.innerHTML = currentTags.map(t =>
-    `<span class="tag-item">${t}<span class="rm" data-tag="${t}">×</span></span>`
+    `<span class="tag-item">${_esc(t)}<span class="rm" data-tag="${_esc(t)}">×</span></span>`
   ).join('');
   list.querySelectorAll('.rm').forEach(el => el.addEventListener('click', async () => {
     currentTags = currentTags.filter(t => t !== el.dataset.tag);
@@ -1510,7 +1511,7 @@ async function loadStatus() {
     if (cams.length) {
       html += `<div class="status-card"><h3>📷 Cameras (${cams.length})</h3>`;
       cams.forEach(c => {
-        html += `<div class="status-row"><span class="lbl">${c.camera}</span>`
+        html += `<div class="status-row"><span class="lbl">${_esc(c.camera)}</span>`
           + `<span class="val">${c.total || 0} clips — ${c.today || 0} today</span></div>`;
       });
       html += `</div>`;
@@ -1966,7 +1967,16 @@ async function loadSuspiciousFeed() {
   } catch(e) { console.error('Suspicious feed error', e); }
 }
 
-function _esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+// Safe for both HTML text content AND quoted attribute values: the
+// textContent round-trip escapes &, <, > but leaves quote characters raw,
+// which is exploitable wherever the result is interpolated into
+// data-foo="${_esc(x)}" (an untrusted value containing a bare " would
+// otherwise break out of the attribute and inject arbitrary markup).
+function _esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 // ── Camera Configurations ──────────────────────────────────────────────────
 let _camConfigsData = [];
@@ -2347,8 +2357,16 @@ class MediaServer:
     async def _handle_index(self, request: web.Request) -> web.Response:
         # HA ingress sends X-Ingress-Path so the JS can prefix all API calls.
         # For direct port access the header is absent and the prefix is empty.
+        # The header value is attacker-controlled on any deployment where a
+        # client can set arbitrary request headers, so it must never be
+        # interpolated into the page verbatim: json.dumps() produces a
+        # properly quote/backslash-escaped JS string literal, and the
+        # "</" -> "<\/" swap additionally prevents a value like
+        # "</script><script>..." from closing out the surrounding <script>
+        # tag early.
         ingress_path = request.headers.get("X-Ingress-Path", "").rstrip("/")
-        html = _HTML.replace("'__HAROOT__'", f"'{ingress_path}'")
+        safe_literal = json.dumps(ingress_path).replace("</", "<\\/")
+        html = _HTML.replace("'__HAROOT__'", safe_literal)
         return web.Response(text=html, content_type="text/html")
 
     async def _handle_health(self, _request: web.Request) -> web.Response:
@@ -2357,8 +2375,11 @@ class MediaServer:
     async def _handle_list_clips(self, request: web.Request) -> web.Response:
         q = request.rel_url.query
         try:
-            limit = min(int(q.get("limit", 48)), 200)
-            offset = int(q.get("offset", 0))
+            # A negative SQLite LIMIT means "no limit", and a negative OFFSET
+            # is invalid - clamp both to non-negative so a crafted query
+            # string can't bypass pagination and dump the whole table.
+            limit = max(0, min(int(q.get("limit", 48)), 200))
+            offset = max(0, int(q.get("offset", 0)))
         except ValueError:
             limit, offset = 48, 0
 
@@ -2617,8 +2638,8 @@ class MediaServer:
     async def _handle_ai_suspicious(self, request: web.Request) -> web.Response:
         q = request.rel_url.query
         try:
-            limit = min(int(q.get("limit", 50)), 200)
-            offset = int(q.get("offset", 0))
+            limit = max(0, min(int(q.get("limit", 50)), 200))
+            offset = max(0, int(q.get("offset", 0)))
         except ValueError:
             limit, offset = 50, 0
         results = await self._db.get_suspicious_clips(limit=limit, offset=offset)

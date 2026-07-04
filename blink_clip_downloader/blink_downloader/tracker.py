@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,7 +20,11 @@ class ClipTracker:
 
     def __init__(self, tracker_file: Path = DEFAULT_TRACKER_FILE) -> None:
         self._file = tracker_file
-        self._downloaded: set[str] = set()
+        # Insertion-ordered so _prune_if_needed() can actually drop the oldest
+        # IDs first — a plain set()'s iteration order is a hash-table
+        # artifact in CPython, not insertion order, so pruning "from the
+        # front" of list(a_set) discards an arbitrary subset instead.
+        self._downloaded: dict[str, None] = {}
         self._last_download_time: datetime | None = None
         self._stats: dict = {
             "total_downloaded": 0,
@@ -38,13 +43,23 @@ class ClipTracker:
 
     def mark_downloaded(self, clip_id: str, size_bytes: int = 0) -> None:
         """Record that *clip_id* was successfully downloaded."""
-        self._downloaded.add(clip_id)
+        self._downloaded[clip_id] = None
         self._last_download_time = datetime.now(timezone.utc)
         self._stats["total_downloaded"] += 1
         self._stats["total_bytes"] += size_bytes
 
     def increment_session_count(self) -> None:
         self._stats["session_count"] += 1
+
+    def set_last_download_time(self, when: datetime) -> None:
+        """Explicitly (re)set the polling cursor.
+
+        Used by the downloader to hold the cursor back when a poll leaves
+        backlog clips undownloaded (e.g. capped by ``max_clips_per_poll``),
+        since ``mark_downloaded()`` would otherwise advance it to "now" and
+        cause the Blink API's ``since`` filter to permanently skip them.
+        """
+        self._last_download_time = when
 
     def save(self) -> None:
         """Persist state to disk."""
@@ -58,7 +73,12 @@ class ClipTracker:
             ),
             "stats": self._stats,
         }
-        self._file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        # Write to a temp file and rename over the target so a crash mid-write
+        # (or a concurrent read) never observes a truncated/corrupt JSON file
+        # — os.replace() is atomic on the same filesystem.
+        tmp_path = self._file.with_suffix(self._file.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp_path, self._file)
 
     # ------------------------------------------------------------------
     # Properties
@@ -81,7 +101,7 @@ class ClipTracker:
             return
         try:
             data = json.loads(self._file.read_text(encoding="utf-8"))
-            self._downloaded = set(data.get("downloaded_ids", []))
+            self._downloaded = dict.fromkeys(data.get("downloaded_ids", []))
             raw_time = data.get("last_download_time")
             if raw_time:
                 self._last_download_time = datetime.fromisoformat(raw_time)
@@ -92,8 +112,12 @@ class ClipTracker:
             )
 
     def _prune_if_needed(self) -> None:
-        """Trim the ID set when it grows too large."""
+        """Trim the oldest IDs when the tracked set grows too large."""
         if len(self._downloaded) > _MAX_TRACKED_IDS:
             excess = len(self._downloaded) - _MAX_TRACKED_IDS
-            self._downloaded = set(list(self._downloaded)[excess:])
+            # dict preserves insertion order, so the first `excess` keys are
+            # genuinely the oldest-recorded IDs (unlike a set(), whose
+            # iteration order has no relationship to insertion order).
+            for clip_id in list(self._downloaded)[:excess]:
+                del self._downloaded[clip_id]
             _LOGGER.debug("Pruned %d old clip IDs from tracker", excess)

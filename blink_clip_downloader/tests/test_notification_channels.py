@@ -56,6 +56,26 @@ async def test_send_mobile_success() -> None:
     assert result is True
 
 
+async def test_send_mobile_attaches_authorization_header() -> None:
+    """Legitimate HA API calls still get the Supervisor token (security fix)."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        supervisor_token="secret-token",
+        mobile_app_target="mobile_app_phone",
+        mobile_app_enabled=True,
+    )
+    post = MagicMock(return_value=mock_resp)
+    dispatcher._session = _mock_session(post=post)
+
+    await dispatcher.send_mobile("Alert", "Test message")
+
+    assert post.call_args.kwargs["headers"] == {"Authorization": "Bearer secret-token"}
+
+
 async def test_send_mobile_disabled() -> None:
     dispatcher = NotificationDispatcher(mobile_app_enabled=False)
     assert await dispatcher.send_mobile("Alert", "Test") is False
@@ -111,6 +131,42 @@ async def test_send_email_success() -> None:
     assert call_kwargs.kwargs["port"] == 587
 
 
+async def test_send_email_port_465_uses_implicit_tls() -> None:
+    """Port 465 is implicit TLS; start_tls must not be sent to that server."""
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=True,
+        smtp_host="smtp.example.com",
+        smtp_port=465,
+        smtp_user="user@example.com",
+        smtp_password="pass",
+        smtp_recipients=["admin@example.com"],
+        smtp_sender="noreply@example.com",
+    )
+    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
+        result = await dispatcher.send_email("Alert", "Body text")
+
+    assert result is True
+    call_kwargs = mock_send.call_args
+    assert call_kwargs.kwargs["port"] == 465
+    assert call_kwargs.kwargs["use_tls"] is True
+    assert call_kwargs.kwargs["start_tls"] is False
+
+
+async def test_send_email_port_587_uses_starttls() -> None:
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=True,
+        smtp_host="smtp.example.com",
+        smtp_port=587,
+        smtp_recipients=["admin@example.com"],
+    )
+    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
+        await dispatcher.send_email("Alert", "Body text")
+
+    call_kwargs = mock_send.call_args
+    assert call_kwargs.kwargs["use_tls"] is False
+    assert call_kwargs.kwargs["start_tls"] is True
+
+
 async def test_send_email_disabled() -> None:
     dispatcher = NotificationDispatcher(smtp_enabled=False)
     assert await dispatcher.send_email("Alert", "Body") is False
@@ -150,6 +206,7 @@ async def test_send_discord_success() -> None:
     mock_resp.__aexit__ = AsyncMock(return_value=False)
 
     dispatcher = NotificationDispatcher(
+        supervisor_token="secret-token",
         discord_enabled=True,
         discord_webhook_url="https://discord.com/api/webhooks/123/abc",
     )
@@ -161,6 +218,9 @@ async def test_send_discord_success() -> None:
     call_kwargs = dispatcher._session.post.call_args
     payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
     assert payload["embeds"][0]["color"] == 0xFF0000  # high confidence = red
+    # Security: the Supervisor token must never be sent to a third-party
+    # Discord webhook URL.
+    assert "headers" not in call_kwargs.kwargs
 
 
 async def test_send_discord_disabled() -> None:

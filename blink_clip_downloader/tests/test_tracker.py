@@ -77,6 +77,16 @@ def test_save_and_reload(tmp_path):
     assert t2.stats["total_bytes"] == 300
 
 
+def test_save_does_not_leave_tmp_file_behind(tmp_path):
+    f = tmp_path / "tracker.json"
+    t = ClipTracker(f)
+    t.mark_downloaded("a", 100)
+    t.save()
+
+    assert f.exists()
+    assert not (tmp_path / "tracker.json.tmp").exists()
+
+
 def test_last_download_time_persisted(tmp_path):
     f = tmp_path / "tracker.json"
     t1 = ClipTracker(f)
@@ -114,12 +124,16 @@ def test_prune_keeps_max_ids(tmp_path):
     t = make_tracker(tmp_path)
     overflow = 200
     for i in range(_MAX_TRACKED_IDS + overflow):
-        t._downloaded.add(f"id_{i}")
+        t._downloaded[f"id_{i}"] = None
 
     t.save()
 
     t2 = ClipTracker(tmp_path / "tracker.json")
     assert len(t2._downloaded) == _MAX_TRACKED_IDS
+    # The oldest IDs (lowest indices) must be the ones dropped.
+    assert "id_0" not in t2._downloaded
+    assert f"id_{overflow}" in t2._downloaded
+    assert f"id_{_MAX_TRACKED_IDS + overflow - 1}" in t2._downloaded
 
 
 # ---------------------------------------------------------------------------

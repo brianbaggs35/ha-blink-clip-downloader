@@ -95,6 +95,24 @@ async def test_extract_frames_ffmpeg_timeout(analyzer: ClipAnalyzer) -> None:
     assert frames == []
 
 
+async def test_extract_frames_kills_ffmpeg_process_on_communicate_timeout(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """A hung ffmpeg process must be killed/reaped, not leaked, when
+    communicate() times out (the process itself started fine)."""
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+    mock_proc.kill = MagicMock()
+    mock_proc.wait = AsyncMock()
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        frames = await analyzer.extract_frames("/clips/test.mp4")
+
+    assert frames == []
+    mock_proc.kill.assert_called_once()
+    mock_proc.wait.assert_awaited_once()
+
+
 async def test_extract_frames_ffmpeg_not_found(analyzer: ClipAnalyzer) -> None:
     with patch(
         "asyncio.create_subprocess_exec",
@@ -1269,6 +1287,43 @@ async def test_analyze_clip_includes_token_counts(analyzer: ClipAnalyzer) -> Non
     assert result.tokens_completion == 50
     assert result.to_dict()["tokens_prompt"] == 200
     assert result.to_dict()["tokens_completion"] == 50
+
+
+async def test_analyze_clip_serializes_concurrent_calls(analyzer: ClipAnalyzer) -> None:
+    """Two concurrent analyze_clip() calls on the same instance must not
+    interleave, since the pipeline stashes per-call state on self
+    (_current_camera, _last_prompt_tokens/_last_completion_tokens) across many
+    awaited I/O steps. Regression test for the _analyze_lock added to
+    BaseAnalyzer.__init__."""
+    concurrent_calls = 0
+    max_concurrent = 0
+    seen_cameras: list[str] = []
+
+    async def fake_extract_frames(_path: str) -> list[bytes]:
+        return [_FAKE_JPEG]
+
+    async def fake_call_model(_frames: list[bytes], _prompt: str) -> str:
+        nonlocal concurrent_calls, max_concurrent
+        concurrent_calls += 1
+        max_concurrent = max(max_concurrent, concurrent_calls)
+        await asyncio.sleep(0)
+        seen_cameras.append(analyzer._current_camera)
+        await asyncio.sleep(0)
+        concurrent_calls -= 1
+        return json.dumps({"suspicious": False, "confidence": 0.1, "description": "ok"})
+
+    with (
+        patch.object(analyzer, "extract_frames", side_effect=fake_extract_frames),
+        patch.object(analyzer, "_call_model", side_effect=fake_call_model),
+    ):
+        results = await asyncio.gather(
+            analyzer.analyze_clip("/clips/a.mp4", "clip-a", "Front Door"),
+            analyzer.analyze_clip("/clips/b.mp4", "clip-b", "Driveway"),
+        )
+
+    assert max_concurrent == 1
+    assert sorted(seen_cameras) == ["Driveway", "Front Door"]
+    assert {r.camera for r in results} == {"Front Door", "Driveway"}
 
 
 # ------------------------------------------------------------------

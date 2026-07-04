@@ -116,27 +116,47 @@ class StorageManager:
 
         Returns the number of files deleted.
         """
+        deleted_count, _ = self._apply_retention_policy()
+        return deleted_count
+
+    def apply_retention_policy_paths(self) -> list[Path]:
+        """Delete clips (and thumbnails) older than *retention_days*.
+
+        Same as :meth:`apply_retention_policy` but returns the deleted clip
+        (``.mp4``) paths so the caller can remove the matching rows from the
+        ClipDatabase — this class has no DB reference of its own, so callers
+        that run with ``enable_library_db`` must reconcile the two
+        themselves or the DB accumulates orphaned rows for files that no
+        longer exist on disk.
+        """
+        _, deleted_clips = self._apply_retention_policy()
+        return deleted_clips
+
+    def _apply_retention_policy(self) -> tuple[int, list[Path]]:
         if self._retention_days == 0 or not self._base.exists():
-            return 0
+            return 0, []
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=self._retention_days)
         cutoff_ts = cutoff.timestamp()
-        deleted = 0
+        deleted_clips: list[Path] = []
+        deleted_count = 0
 
         for pattern in (_CLIP_GLOB, _THUMB_GLOB):
             for f in self._base.rglob(pattern):
                 try:
                     if f.stat().st_mtime < cutoff_ts:
                         f.unlink()
-                        deleted += 1
+                        deleted_count += 1
+                        if pattern == _CLIP_GLOB:
+                            deleted_clips.append(f)
                 except OSError as exc:
                     _LOGGER.warning("Could not delete %s: %s", f, exc)
 
         _cleanup_empty_dirs(self._base)
 
-        if deleted:
-            _LOGGER.info("Retention policy removed %d file(s)", deleted)
-        return deleted
+        if deleted_count:
+            _LOGGER.info("Retention policy removed %d file(s)", deleted_count)
+        return deleted_count, deleted_clips
 
     # ------------------------------------------------------------------
     # Stats

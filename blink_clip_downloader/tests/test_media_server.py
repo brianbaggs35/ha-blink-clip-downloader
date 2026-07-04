@@ -145,6 +145,92 @@ async def test_index_has_security_headers(client: TestClient) -> None:
     assert "Content-Security-Policy" in resp.headers
 
 
+async def test_index_ingress_path_header_is_used_when_present(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/", headers={"X-Ingress-Path": "/api/hassio_ingress/abc"})
+    body = await resp.text()
+    assert 'const _R = "/api/hassio_ingress/abc";' in body
+
+
+async def test_index_ingress_path_header_escapes_script_breakout(
+    client: TestClient,
+) -> None:
+    """A malicious X-Ingress-Path must not be able to break out of the
+    surrounding JS string literal or close the <script> tag early."""
+    malicious = "</script><script>alert(1)</script>"
+    resp = await client.get("/", headers={"X-Ingress-Path": malicious})
+    body = await resp.text()
+    assert "<script>alert(1)</script>" not in body
+    assert "<\\/script><script>alert(1)<\\/script>" in body
+
+
+async def test_index_ingress_path_header_escapes_quote_breakout(
+    client: TestClient,
+) -> None:
+    # Note: no trailing "/" in the payload - the handler's legitimate
+    # .rstrip("/") normalization (for a real ingress path like "/foo/") would
+    # otherwise strip it and mask what this test is actually checking.
+    malicious = "'; alert(1); x"
+    resp = await client.get("/", headers={"X-Ingress-Path": malicious})
+    body = await resp.text()
+    assert "const _R = '';" not in body
+    assert "alert(1); x" in body  # present, but safely inside a JSON string
+    assert 'const _R = "\'; alert(1); x";' in body
+
+
+# ---------------------------------------------------------------------------
+# Stored XSS regressions: server-rendered camera/tag values must go through
+# the client-side _esc() helper wherever they're interpolated into innerHTML,
+# and _esc() itself must also neutralize quote characters since several call
+# sites embed its output inside an HTML attribute (data-cam="...", not just
+# text content).
+# ---------------------------------------------------------------------------
+
+
+async def test_esc_helper_escapes_quotes_for_attribute_contexts(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/")
+    body = await resp.text()
+    assert "d.innerHTML.replace(/\"/g, '&quot;').replace(/'/g, '&#39;')" in body
+
+
+async def test_load_cameras_escapes_camera_name(client: TestClient) -> None:
+    resp = await client.get("/")
+    body = await resp.text()
+    assert "${_esc(c.camera)}</span>`" in body
+    assert "${c.camera}</span>`" not in body
+
+
+async def test_build_card_escapes_camera_source_and_tags(client: TestClient) -> None:
+    resp = await client.get("/")
+    body = await resp.text()
+    assert '<div class="clip-camera">${_esc(c.camera)}</div>' in body
+    assert '<span class="src-pill">${_esc(c.source)}</span>' in body
+    assert '<span class="tag-pill">${_esc(t)}</span>' in body
+
+
+async def test_open_modal_escapes_camera_and_source(client: TestClient) -> None:
+    resp = await client.get("/")
+    body = await resp.text()
+    assert "<div>Camera</div><span>${_esc(c.camera)}</span>" in body
+    assert "<div>Source</div><span>${_esc(c.source || '—')}</span>" in body
+
+
+async def test_render_tags_escapes_tag_text_and_attribute(client: TestClient) -> None:
+    resp = await client.get("/")
+    body = await resp.text()
+    assert '<span class="tag-item">${_esc(t)}' in body
+    assert 'data-tag="${_esc(t)}"' in body
+
+
+async def test_load_status_escapes_camera_name(client: TestClient) -> None:
+    resp = await client.get("/")
+    body = await resp.text()
+    assert '<span class="lbl">${_esc(c.camera)}</span>' in body
+
+
 # ---------------------------------------------------------------------------
 # /api/clips
 # ---------------------------------------------------------------------------
@@ -1277,6 +1363,18 @@ async def test_list_clips_invalid_limit_offset_falls_back(client: TestClient) ->
     assert resp.status == 200
 
 
+async def test_list_clips_negative_limit_and_offset_are_clamped(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """A negative SQLite LIMIT means "no limit" - clamp to 0 so a crafted
+    query string can't bypass pagination and dump the whole table."""
+    with patch.object(db, "get_clips", AsyncMock(return_value=[])) as mock_get_clips:
+        resp = await client.get("/api/clips?limit=-1&offset=-5")
+    assert resp.status == 200
+    assert mock_get_clips.call_args.kwargs["limit"] == 0
+    assert mock_get_clips.call_args.kwargs["offset"] == 0
+
+
 # ---------------------------------------------------------------------------
 # /api/clips/{id} DELETE — thumbnail cleanup + OSError handling
 # ---------------------------------------------------------------------------
@@ -1556,6 +1654,18 @@ async def test_ai_clip_result_found(client: TestClient, db: ClipDatabase) -> Non
 async def test_ai_suspicious_invalid_limit_falls_back(client: TestClient) -> None:
     resp = await client.get("/api/ai/suspicious?limit=notanumber")
     assert resp.status == 200
+
+
+async def test_ai_suspicious_negative_limit_and_offset_are_clamped(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    with patch.object(
+        db, "get_suspicious_clips", AsyncMock(return_value=[])
+    ) as mock_get_suspicious:
+        resp = await client.get("/api/ai/suspicious?limit=-10&offset=-1")
+    assert resp.status == 200
+    assert mock_get_suspicious.call_args.kwargs["limit"] == 0
+    assert mock_get_suspicious.call_args.kwargs["offset"] == 0
 
 
 async def test_ai_analyze_now_clip_not_found(db: ClipDatabase, tmp_path: Path) -> None:

@@ -213,6 +213,36 @@ async def test_update_sensor_no_token():
 
 
 # ---------------------------------------------------------------------------
+# Security: the Supervisor token must never be sent to the user-configured
+# webhook URL, only to the HA API itself.
+# ---------------------------------------------------------------------------
+
+
+async def test_post_attaches_authorization_header():
+    notifier = HANotifier("secret-token", enabled=True, title="T")
+    resp = _make_mock_resp(200)
+    notifier._session = _make_mock_session(resp)
+
+    await notifier.notify("Hello world")
+
+    headers = notifier._session.post.call_args.kwargs["headers"]
+    assert headers == {"Authorization": "Bearer secret-token"}
+
+
+async def test_call_webhook_does_not_attach_authorization_header():
+    notifier = HANotifier(
+        "secret-token", enabled=True, title="T", webhook_url="https://hook.test/"
+    )
+    resp = _make_mock_resp(200)
+    notifier._session = _make_mock_session(resp)
+
+    await notifier.call_webhook({"data": 1})
+
+    _, kwargs = notifier._session.post.call_args
+    assert "headers" not in kwargs
+
+
+# ---------------------------------------------------------------------------
 # Coverage: call_webhook with HTTP 400+ response (lines 86-89)
 # ---------------------------------------------------------------------------
 
@@ -251,5 +281,5 @@ async def test_get_session_creates_session_when_none():
         "blink_downloader.notifier.aiohttp.ClientSession", return_value=mock_session
     ) as MockCS:
         session = await notifier._get_session()
-    MockCS.assert_called_once_with(headers={"Authorization": "Bearer mytoken"})
+    MockCS.assert_called_once_with()
     assert session is mock_session

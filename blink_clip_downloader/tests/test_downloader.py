@@ -246,6 +246,52 @@ async def test_stream_to_file_deletes_partial_on_failure(dl, tmp_path):
     assert not dest.exists()
 
 
+async def test_stream_to_file_timeout_error_retries_and_cleans_up(dl, tmp_path):
+    """asyncio.TimeoutError from a ClientTimeout(total=...) expiry is not an
+    aiohttp.ClientError subclass, so it must be caught explicitly or a
+    slow/hung server would skip retries and leave a partial file behind."""
+    dest = tmp_path / "clip.mp4"
+    dl._config.retry_attempts = 2
+    dl._config.retry_delay = 0.0
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(side_effect=asyncio.TimeoutError)
+    mock_session.closed = False
+    dl._session = mock_session
+    dl._blink = MagicMock()
+    dl._blink.auth.header = {}
+
+    dest.write_bytes(b"partial")
+    result = await dl._stream_to_file("https://host/clip.mp4", dest)
+    assert result is None
+    assert not dest.exists()
+    assert mock_session.get.call_count == 2
+
+
+async def test_stream_to_file_non_200_retries_then_gives_up(dl, tmp_path):
+    """A non-200 response gets the same retry treatment as a ClientError
+    instead of giving up on the first attempt."""
+    dest = tmp_path / "clip.mp4"
+    dl._config.retry_attempts = 3
+    dl._config.retry_delay = 0.0
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 503
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    dl._session = mock_session
+    dl._blink = MagicMock()
+    dl._blink.auth.header = {}
+
+    result = await dl._stream_to_file("https://host/clip.mp4", dest)
+    assert result is None
+    assert mock_session.get.call_count == 3
+
+
 # ---------------------------------------------------------------------------
 # _generate_thumbnail / backfill_thumbnails
 # ---------------------------------------------------------------------------
@@ -330,6 +376,30 @@ async def test_generate_thumbnail_handles_ffmpeg_producing_no_output(dl, tmp_pat
 
     assert created is False
     assert not thumb.exists()
+
+
+async def test_generate_thumbnail_kills_ffmpeg_process_on_timeout(dl, tmp_path):
+    """A hung ffmpeg process must be killed/reaped, not awaited forever."""
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake video data")
+    thumb = tmp_path / "clip.jpg"
+
+    mock_proc = AsyncMock()
+    # First call (inside wait_for) simulates the timeout expiring; the
+    # second call is the kill-then-reap cleanup in the except branch.
+    mock_proc.wait = AsyncMock(side_effect=[asyncio.TimeoutError(), 0])
+    mock_proc.kill = MagicMock()
+
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ):
+        created = await dl._generate_thumbnail(video, thumb)
+
+    assert created is False
+    assert not thumb.exists()
+    mock_proc.kill.assert_called_once()
+    assert mock_proc.wait.await_count == 2
 
 
 async def test_backfill_thumbnails_disabled_returns_zero(dl):
@@ -429,6 +499,52 @@ async def test_download_new_clips_respects_max_clips(dl, sample_clip):
         await dl.download_new_clips()
 
     assert len(downloaded) == 2
+
+
+async def test_download_new_clips_holds_cursor_when_backlog_remains(dl, sample_clip):
+    """When max_clips_per_poll truncates the backlog, the tracker cursor must
+    not advance past the clips left undownloaded, or the Blink API's since=
+    filter would permanently skip them on the next poll."""
+    dl._config.max_clips_per_poll = 2
+    dl._blink = MagicMock()
+    clips = [{**sample_clip, "id": i} for i in range(1, 6)]  # 5 new clips, limit 2
+
+    original_since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    dl._tracker.set_last_download_time(original_since)
+
+    async def _fake_download(clip, sem):
+        dl._tracker.mark_downloaded(str(clip["id"]), 100)
+        return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=clips)),
+        patch.object(dl, "_download_clip", side_effect=_fake_download),
+    ):
+        await dl.download_new_clips()
+
+    # The cursor must be held back at the pre-poll `since`, not advanced to
+    # "now" (which is what mark_downloaded() would otherwise leave behind).
+    assert dl._tracker.last_download_time == original_since
+
+
+async def test_download_new_clips_advances_cursor_when_backlog_cleared(dl, sample_clip):
+    """When every fetched clip is downloaded (no backlog), the cursor is free
+    to advance normally so the next poll's window moves forward."""
+    dl._config.max_clips_per_poll = 10
+    dl._blink = MagicMock()
+    clips = [{**sample_clip, "id": i} for i in range(1, 4)]  # 3 new clips, limit 10
+
+    async def _fake_download(clip, sem):
+        dl._tracker.mark_downloaded(str(clip["id"]), 100)
+        return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=clips)),
+        patch.object(dl, "_download_clip", side_effect=_fake_download),
+    ):
+        await dl.download_new_clips()
+
+    assert dl._tracker.last_download_time is not None
 
 
 async def test_download_new_clips_no_clips(dl):
@@ -1184,6 +1300,19 @@ def test_persist_auth_writes_file(dl, tmp_path):
 
     data = json.loads(auth_path.read_text())
     assert data["token"] == "tok123"
+
+
+def test_persist_auth_does_not_leave_tmp_file_behind(dl, tmp_path):
+    auth_path = tmp_path / "auth.json"
+    mock_blink = MagicMock()
+    mock_blink.auth.login_attributes = {"token": "tok123", "host": "prod"}
+    dl._blink = mock_blink
+
+    with patch("blink_downloader.downloader.AUTH_FILE", auth_path):
+        dl._persist_auth()
+
+    assert auth_path.exists()
+    assert not (tmp_path / "auth.json.tmp").exists()
 
 
 def test_persist_auth_handles_exception(dl):

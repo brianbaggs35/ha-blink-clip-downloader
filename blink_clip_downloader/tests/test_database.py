@@ -186,6 +186,46 @@ async def test_delete_nonexistent_returns_false(db: ClipDatabase) -> None:
     assert await db.delete_clip("ghost") is False
 
 
+async def test_delete_clip_by_path(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip())
+    assert await db.delete_clip_by_path("/share/blink-clips/clip1.mp4") is True
+    assert await db.get_clip("clip1") is None
+
+
+async def test_delete_clip_by_path_nonexistent_returns_false(db: ClipDatabase) -> None:
+    assert await db.delete_clip_by_path("/no/such/file.mp4") is False
+
+
+async def test_delete_clip_cascades_to_analysis_tables(db: ClipDatabase) -> None:
+    """PRAGMA foreign_keys must be ON or ON DELETE CASCADE is a silent no-op."""
+    await db.add_clip(_make_clip())
+    await db.add_analysis_result(
+        {
+            "clip_id": "clip1",
+            "camera": "Front Door",
+            "model": "test-model",
+            "analyzed_at": "2024-06-01T08:00:05+00:00",
+        }
+    )
+    await db.enqueue_for_analysis("clip1", "Front Door", "/share/blink-clips/clip1.mp4")
+
+    assert await db.delete_clip("clip1") is True
+
+    assert db._db is not None
+    async with db._db.execute(
+        "SELECT COUNT(*) FROM analysis_results WHERE clip_id='clip1'"
+    ) as cur:
+        row = await cur.fetchone()
+        assert row is not None
+        assert row[0] == 0
+    async with db._db.execute(
+        "SELECT COUNT(*) FROM analysis_queue WHERE clip_id='clip1'"
+    ) as cur:
+        row = await cur.fetchone()
+        assert row is not None
+        assert row[0] == 0
+
+
 # ------------------------------------------------------------------
 # get_clips (filtered)
 # ------------------------------------------------------------------

@@ -130,6 +130,11 @@ class ClipDatabase:
         """Open the database and create tables if needed."""
         self._db = await aiosqlite.connect(self._path)
         self._db.row_factory = aiosqlite.Row
+        # SQLite ignores declared FOREIGN KEY ... ON DELETE CASCADE constraints
+        # unless this pragma is enabled per-connection — without it,
+        # delete_clip() leaves orphaned analysis_results/analysis_queue rows
+        # behind instead of cascading the delete.
+        await self._db.execute("PRAGMA foreign_keys=ON")
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
         await self._migrate()
@@ -275,6 +280,22 @@ class ClipDatabase:
         if self._db is None:
             return False
         cursor = await self._db.execute("DELETE FROM clips WHERE id=?", (clip_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def delete_clip_by_path(self, file_path: str) -> bool:
+        """Remove a clip record by its file_path.
+
+        Used by retention cleanup, which deletes files directly from the
+        filesystem (glob + unlink) rather than by clip ID, so it doesn't
+        leave an orphaned DB row (and orphaned analysis_results/
+        analysis_queue rows) behind for a file that no longer exists.
+        """
+        if self._db is None:
+            return False
+        cursor = await self._db.execute(
+            "DELETE FROM clips WHERE file_path=?", (file_path,)
+        )
         await self._db.commit()
         return cursor.rowcount > 0
 
