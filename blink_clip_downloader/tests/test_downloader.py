@@ -1439,6 +1439,72 @@ async def test_download_local_storage_downloads_new_clip(dl, tmp_path):
     assert dl._tracker.is_downloaded("local_5555")
 
 
+async def test_download_local_storage_persists_tracker(dl, tmp_path):
+    """A crash right after this call must not lose the downloaded-clip record —
+    download_local_storage_clips() must flush the tracker to disk itself,
+    the same way download_new_clips() does, rather than relying solely on a
+    clean-shutdown save() that a container OOM-kill/SIGKILL would skip."""
+    from pathlib import Path as _Path
+
+    mock_item = MagicMock()
+    mock_item.id = 8888
+    mock_item.name = "Driveway"
+    mock_item.created_at = datetime(2024, 6, 1, 8, 0, tzinfo=timezone.utc)
+    mock_item.size = 2_000_000
+    mock_item.prepare_download = AsyncMock(return_value=True)
+
+    async def _fake_download(blink, file_name, max_retries=4):
+        _Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+        _Path(file_name).write_bytes(b"V" * 100)
+        return True
+
+    mock_item.download_video = _fake_download
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m1"}
+
+    mock_blink = MagicMock()
+    mock_blink.sync = {"Network": mock_sync}
+    dl._blink = mock_blink
+    dl._db = None
+
+    await dl.download_local_storage_clips()
+
+    reloaded = ClipTracker(tmp_path / "tracker.json")
+    assert reloaded.is_downloaded("local_8888")
+
+
+async def test_download_local_storage_over_quota_persists_tracker(dl, tmp_path):
+    """Stopping early for a quota breach must still flush whatever was
+    downloaded before the breach was detected, not just clips downloaded
+    to completion — otherwise a later clip in the same manifest hitting
+    quota loses the tracker record for an earlier clip in this run."""
+    mock_item = MagicMock()
+    mock_item.id = 9999
+    mock_item.name = "Garage"
+    mock_item.created_at = datetime(2024, 6, 1, 8, 0, tzinfo=timezone.utc)
+    mock_item.size = 1024
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m1"}
+
+    mock_blink = MagicMock()
+    mock_blink.sync = {"Network": mock_sync}
+    dl._blink = mock_blink
+    dl._storage.is_over_quota = MagicMock(return_value=True)
+    dl._tracker.mark_downloaded("local_1111")
+
+    results = await dl.download_local_storage_clips()
+    assert results == []
+
+    reloaded = ClipTracker(tmp_path / "tracker.json")
+    assert reloaded.is_downloaded("local_1111")
+
+
 async def test_download_local_storage_download_failure_skipped(dl, tmp_path):
     """A failed download_video call is logged and skipped, not raised."""
 

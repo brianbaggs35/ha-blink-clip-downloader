@@ -943,6 +943,12 @@ class BaseAnalyzer(abc.ABC):
         if car_applies:
             parts.append(
                 f"\n\nPROTECTED VEHICLE: {self._car_description}\n"
+                "This description identifies the SPECIFIC vehicle to protect. If other "
+                "vehicles are also visible (e.g. a neighbor's car, street parking, passing "
+                "traffic), apply the distance and behavior rules below ONLY to the vehicle "
+                "matching this description — a different vehicle parked or passing nearby is "
+                "not itself suspicious, and should only be flagged under the 'another "
+                "vehicle' rule below if it approaches the protected vehicle.\n"
                 "First identify whether each subject is a person, a vehicle, or an "
                 "animal — never apply these vehicle-distance rules to a person unless a "
                 "vehicle is also genuinely visible in frame. Then apply these distance "
@@ -1129,7 +1135,10 @@ class BaseAnalyzer(abc.ABC):
             return False, 0.0, ""
 
         suspicious = bool(obj.get("suspicious", False))
-        confidence = max(0.0, min(1.0, float(obj.get("confidence", 0.0))))
+        try:
+            confidence = max(0.0, min(1.0, float(obj.get("confidence", 0.0))))
+        except (TypeError, ValueError):
+            confidence = 0.0
         description = str(obj.get("description", "") or "")
         return suspicious, confidence, description
 

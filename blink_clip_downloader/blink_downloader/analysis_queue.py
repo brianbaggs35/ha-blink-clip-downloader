@@ -72,6 +72,16 @@ class AnalysisQueue:
     async def stop(self) -> None:
         self._running = False
 
+    @property
+    def min_confidence(self) -> float:
+        """Confidence threshold a suspicious result must meet to notify.
+
+        Also used to determine whether a clip counts as "notified" for the
+        media server's notification filter, so that filter always reflects
+        the currently configured threshold.
+        """
+        return self._min_confidence
+
     # ------------------------------------------------------------------
     # Enqueue
     # ------------------------------------------------------------------

@@ -236,6 +236,8 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
            color:#fff;font-size:.68rem;padding:.1rem .35rem;border-radius:3px}
 .star-badge{position:absolute;top:.3rem;left:.3rem;font-size:.9rem;
             color:var(--starred);filter:drop-shadow(0 1px 2px #000)}
+.notified-badge{position:absolute;bottom:.3rem;left:.3rem;font-size:.9rem;
+                filter:drop-shadow(0 1px 2px #000)}
 .sel-check{position:absolute;top:.3rem;right:.3rem;width:17px;height:17px;
            background:rgba(0,0,0,.55);border:1.5px solid rgba(255,255,255,.35);
            border-radius:4px;display:flex;align-items:center;justify-content:center;
@@ -483,6 +485,7 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
       <option value="duration">⏱ Duration</option>
     </select>
     <label class="chk"><input type="checkbox" id="starred-only"> ★ Starred</label>
+    <label class="chk"><input type="checkbox" id="notified-only"> 🔔 Notified</label>
     <button class="btn ghost sm" id="select-mode-btn">☐ Select</button>
   </div>
 
@@ -1179,6 +1182,7 @@ function buildCard(c) {
     `<div class="no-thumb" style="display:none">🎬</div>` +
     (c.duration ? `<div class="dur-badge">${fmtDur(c.duration)}</div>` : '') +
     (c.starred ? '<div class="star-badge">★</div>' : '') +
+    (c.notified ? '<div class="notified-badge">🔔</div>' : '') +
     `<div class="sel-check">${selectedIds.has(c.id) ? '✓' : ''}</div>` +
     `</div>` +
     `<div class="clip-info">` +
@@ -1205,6 +1209,7 @@ async function loadClips(page = 0) {
   const sr = $('search').value.trim(); if (sr) p.set('search', sr);
   const dr = sinceDate($('date-range').value); if (dr) p.set('since', dr);
   if ($('starred-only').checked) p.set('starred', '1');
+  if ($('notified-only').checked) p.set('notified', '1');
   const src = $('source-filter').value; if (src) p.set('source', src);
   const tf = $('tag-filter').value; if (tf) p.set('tag', tf);
   p.set('sort', $('sort-order').value || 'newest');
@@ -1451,7 +1456,7 @@ $('help-overlay').addEventListener('click', e => { if (e.target === $('help-over
 
 // Debounced filter listeners
 let _dbt;
-['search', 'date-range', 'starred-only', 'source-filter', 'tag-filter', 'sort-order'].forEach(id => {
+['search', 'date-range', 'starred-only', 'notified-only', 'source-filter', 'tag-filter', 'sort-order'].forEach(id => {
   $(id).addEventListener(id === 'search' ? 'input' : 'change', () => {
     clearTimeout(_dbt); _dbt = setTimeout(() => { currentPage = 0; $('clip-grid').innerHTML = ''; loadClips(0); }, 380);
   });
@@ -1571,7 +1576,7 @@ function renderActivity(rows) {
     const label = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     return `<div class="act-row">
       <span class="act-date">${label}</span>
-      <div class="act-bar-wrap" title="${total} clips" onclick="filterByDate('${date}')">
+      <div class="act-bar-wrap" title="${total} clips" onclick="filterByDate('${_escJs(date)}')">
         <div class="act-bar" style="width:${pct.toFixed(1)}%"></div>
       </div>
       <span class="act-count">${total}</span>
@@ -1768,7 +1773,7 @@ async function loadClipAIResult(clipId) {
     if (!r) {
       content.innerHTML =
         '<div style="color:var(--muted);font-size:.8rem;margin-bottom:.45rem">Not analyzed yet</div>' +
-        '<button class="btn sm" onclick="analyzeClipNow(\'' + clipId + '\')">🔬 Analyze Now</button>';
+        '<button class="btn sm" onclick="analyzeClipNow(\'' + _escJs(clipId) + '\')">🔬 Analyze Now</button>';
       const badge = $('ai-panel-badge');
       if (badge) { badge.textContent = ''; badge.style.color = ''; }
       return;
@@ -1797,7 +1802,7 @@ async function loadClipAIResult(clipId) {
           (r.frame_count ? ' &nbsp;·&nbsp; ' + r.frame_count + ' frame(s) analyzed' : '') +
         '</div>' +
         '<div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">' +
-          '<button class="btn sm ghost" onclick="analyzeClipNow(\'' + clipId + '\')">↺ Re-analyze</button>' +
+          '<button class="btn sm ghost" onclick="analyzeClipNow(\'' + _escJs(clipId) + '\')">↺ Re-analyze</button>' +
           '<button class="btn sm ghost" id="ai-raw-toggle-btn" onclick="toggleRawResponse()">📄 Full response</button>' +
         '</div>' +
         '<div id="ai-raw-response" style="display:none;margin-top:.4rem;font-size:.73rem;font-family:monospace;' +
@@ -1951,7 +1956,7 @@ async function loadSuspiciousFeed() {
       const dt = new Date(r.analyzed_at).toLocaleString();
       const conf = Math.round((r.confidence||0)*100);
       const confColor = conf > 70 ? 'var(--danger)' : 'var(--warn)';
-      return '<div class="card" style="padding:.8rem;display:flex;align-items:center;gap:1rem;cursor:pointer" onclick="openModal(\''+r.clip_id+'\')">'+
+      return '<div class="card" style="padding:.8rem;display:flex;align-items:center;gap:1rem;cursor:pointer" onclick="openModal(\''+_escJs(r.clip_id)+'\')">'+
         '<div style="font-size:1.3rem">⚠️</div>'+
         '<div style="flex:1;min-width:0">'+
           '<div style="font-weight:600;font-size:.85rem">'+_esc(r.camera)+'</div>'+
@@ -1976,6 +1981,16 @@ function _esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// For interpolating into a single-quoted JS string literal that itself sits
+// inside an HTML attribute (e.g. onclick="fn('${_escJs(x)}')"). The browser
+// HTML-decodes the attribute value before handing it to the JS parser, so a
+// bare _esc() quote-escape (-> &#39;) round-trips back to a literal ' and
+// would still let the string break out early — escaping the backslash/quote
+// for the JS layer first, then _esc() for the HTML layer, survives both.
+function _escJs(s) {
+  return _esc(String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
 }
 
 // ── Camera Configurations ──────────────────────────────────────────────────
@@ -2385,6 +2400,10 @@ class MediaServer:
 
         starred_raw = q.get("starred")
         starred = True if starred_raw == "1" else False if starred_raw == "0" else None
+        notified_only = q.get("notified") == "1"
+        min_confidence = (
+            self._analysis_queue.min_confidence if self._analysis_queue else 0.0
+        )
 
         clips = await self._db.get_clips(
             camera=q.get("camera") or None,
@@ -2397,6 +2416,8 @@ class MediaServer:
             sort=q.get("sort") or "newest",
             limit=limit,
             offset=offset,
+            notified_only=notified_only,
+            min_confidence=min_confidence,
         )
         return web.json_response(clips)
 

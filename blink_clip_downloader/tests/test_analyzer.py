@@ -1828,6 +1828,19 @@ def test_try_parse_json_malformed_json() -> None:
     assert ClipAnalyzer._try_parse_json("{not: valid json!!!}") == (False, 0.0, "")
 
 
+def test_try_parse_json_null_confidence_defaults_to_zero() -> None:
+    """Valid JSON with a non-numeric confidence (e.g. null) must not raise —
+    it should fall back to 0.0 instead of crashing the clip's analysis."""
+    response = '{"suspicious": true, "confidence": null, "description": "test"}'
+    assert ClipAnalyzer._try_parse_json(response) == (True, 0.0, "test")
+
+
+def test_try_parse_json_non_numeric_confidence_defaults_to_zero() -> None:
+    """A string confidence value is likewise swallowed, not raised."""
+    response = '{"suspicious": false, "confidence": "high", "description": "x"}'
+    assert ClipAnalyzer._try_parse_json(response) == (False, 0.0, "x")
+
+
 # ------------------------------------------------------------------
 # Additional coverage: ClipAnalyzer internals
 # ------------------------------------------------------------------
@@ -2987,6 +3000,21 @@ def test_build_prompt_car_proximity_message() -> None:
     assert "Blue Toyota Camry" in prompt
     assert "1 foot" in prompt
     assert "PROTECTED VEHICLE" in prompt
+
+
+def test_build_prompt_scopes_distance_rules_to_described_vehicle() -> None:
+    """When multiple vehicles may be visible (e.g. apartment parking), the
+    prompt must tell the model to apply distance/tampering rules only to
+    the vehicle matching the description — not any vehicle in frame."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Blue Toyota Camry",
+    )
+    prompt = a._build_prompt("Driveway")
+    assert "SPECIFIC vehicle" in prompt
+    assert "ONLY to the vehicle matching this description" in prompt
 
 
 # ------------------------------------------------------------------

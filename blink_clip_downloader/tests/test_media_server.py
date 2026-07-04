@@ -272,6 +272,40 @@ async def test_list_clips_starred_filter(client: TestClient, db: ClipDatabase) -
     assert data[0]["id"] == "s1"
 
 
+async def test_list_clips_notified_filter(db: ClipDatabase, tmp_path: Path) -> None:
+    await db.add_clip(_make_clip("n1"))
+    await db.add_clip(_make_clip("n2"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "n1",
+            "camera": "Front Door",
+            "model": "test",
+            "is_suspicious": True,
+            "confidence": 0.9,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    queue = MagicMock()
+    queue.min_confidence = 0.5
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analysis_queue=queue)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/clips?notified=1")
+        data = await resp.json()
+        assert len(data) == 1
+        assert data[0]["id"] == "n1"
+        assert data[0]["notified"] is True
+
+        resp_all = await tc.get("/api/clips")
+        data_all = await resp_all.json()
+        by_id = {c["id"]: c for c in data_all}
+        assert by_id["n1"]["notified"] is True
+        assert by_id["n2"]["notified"] is False
+    finally:
+        await tc.close()
+
+
 async def test_list_clips_sort_param(client: TestClient, db: ClipDatabase) -> None:
     for i in range(3):
         await db.add_clip(
