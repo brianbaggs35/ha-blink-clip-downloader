@@ -208,6 +208,25 @@ def test_retention_removes_thumbnails_too(tmp_path):
     assert deleted == 2
 
 
+def test_retention_paths_returns_only_clip_files(tmp_path):
+    """apply_retention_policy_paths() must return the .mp4 paths (for DB
+    cleanup) and not the .jpg thumbnails, which have no DB row of their own."""
+    s = make_storage(tmp_path, retention_days=7)
+    s.ensure_directory()
+    clip = tmp_path / "clips" / "old.mp4"
+    thumb = tmp_path / "clips" / "old.jpg"
+    clip.write_bytes(b"c")
+    thumb.write_bytes(b"t")
+    _age_file(clip, 10)
+    _age_file(thumb, 10)
+
+    deleted_paths = s.apply_retention_policy_paths()
+
+    assert deleted_paths == [clip]
+    assert not clip.exists()
+    assert not thumb.exists()
+
+
 def test_retention_cleans_empty_dirs(tmp_path):
     s = make_storage(tmp_path, retention_days=7)
     subdir = tmp_path / "clips" / "2024-01-01"

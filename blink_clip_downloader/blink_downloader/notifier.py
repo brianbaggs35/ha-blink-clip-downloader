@@ -96,10 +96,12 @@ class HANotifier:
     # ------------------------------------------------------------------
 
     async def _get_session(self) -> aiohttp.ClientSession:
+        # No default headers here: this session is shared with call_webhook(),
+        # which posts to an arbitrary user-configured URL. The Supervisor
+        # token is attached per-request in _post() instead, so it's only ever
+        # sent to the HA API and never leaked to a third-party webhook.
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(
-                headers={"Authorization": f"Bearer {self._token}"}
-            )
+            self._session = aiohttp.ClientSession()
         return self._session
 
     async def _post(self, url: str, payload: dict[str, Any]) -> bool:
@@ -108,6 +110,7 @@ class HANotifier:
             async with session.post(
                 url,
                 json=payload,
+                headers={"Authorization": f"Bearer {self._token}"},
                 timeout=_TIMEOUT,
             ) as resp:
                 if resp.status in (200, 201):

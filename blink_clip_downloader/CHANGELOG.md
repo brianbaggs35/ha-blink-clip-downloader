@@ -1,5 +1,109 @@
 # Changelog
 
+## 3.1.2
+
+### Bug fixes
+
+- **Fix: the Home Assistant Supervisor token could be sent to a
+  user-configured Discord webhook or mobile-notification service.**
+  `HANotifier` and `NotificationDispatcher` each attached the Supervisor
+  bearer token as a default header on their shared `aiohttp.ClientSession`,
+  so *every* request made through that session carried it — including
+  `call_webhook()` and `send_discord()`, which POST to an arbitrary
+  user-supplied URL. The token is now attached per-request only on the
+  actual HA API calls (`_post()`'s notify call, `send_mobile()`), so
+  third-party webhook/Discord requests never see it.
+- **Fix: SMTP notifications over port 465 hung or failed the TLS
+  handshake.** Email always sent with `start_tls=True`, but port 465 is
+  *implicit* TLS (the socket is TLS from the first byte) — an
+  incompatible negotiation from STARTTLS on 587/25. The SMTP channel now
+  branches on the configured port and passes `use_tls=True` instead for
+  465.
+- **Fix: reflected XSS via the `X-Ingress-Path` request header.** The web
+  UI's `_handle_index()` interpolated this header directly into a
+  `<script>` block (`_HTML.replace("'__HAROOT__'", f"'{ingress_path}'")`)
+  with no escaping, so a value like `'};alert(1);//` broke out of the JS
+  string literal. The header is now serialized with `json.dumps()` (proper
+  quote/backslash escaping) with `</` additionally swapped to `<\/` so a
+  value containing `</script>` can't close the surrounding tag early.
+- **Fix: stored XSS via camera names, tags, and clip source fields
+  rendered in the web UI.** Several `innerHTML` call sites (camera list,
+  clip cards, the clip detail modal, tag chips, the status page) inserted
+  these values without escaping. All of them now go through `_esc()`.
+  `_esc()` itself was also fixed: its textContent round-trip escaped `&`,
+  `<`, `>` but left quote characters raw, which was exploitable anywhere
+  the result was placed inside a quoted HTML attribute (e.g.
+  `data-tag="${_esc(t)}"`) — it now also escapes `"` and `'`.
+- **Fix: negative `limit`/`offset` query parameters could bypass
+  pagination and dump the entire clip or suspicious-clips table.** SQLite
+  treats a negative `LIMIT` as "no limit" and a negative `OFFSET` as
+  invalid; `_handle_list_clips()` and `_handle_ai_suspicious()` now clamp
+  both to non-negative values.
+- **Fix: concurrent `analyze_clip()` calls on the same analyzer instance
+  could corrupt each other's results.** `analyze_clip()` stashes per-call
+  state (`_current_camera`, token counters) on `self` across many awaited
+  I/O calls, which is only safe if calls never interleave — an assumption
+  the background `AnalysisQueue` and the media server's on-demand
+  "Analyze Now"/"Test" HTTP handlers (which share one analyzer instance)
+  could violate. `analyze_clip()` now serializes its body behind a
+  per-instance `asyncio.Lock`.
+- **Fix: a timed-out `ffmpeg` frame-extraction process was left running
+  as an orphan/zombie.** `extract_frames()` awaited
+  `proc.communicate()` under `asyncio.wait_for(..., timeout=30)` but on
+  timeout just returned `[]` without touching the still-running child
+  process. It now calls `proc.kill()` and awaits `proc.wait()` before
+  returning.
+- **Fix: a `ZipFile` handle kept open across an entire month's clip batch
+  in `archiver.py` risked losing the whole archive on a crash mid-batch**
+  (the central directory is only written on `close()`). `_archive_month()`
+  now opens and closes the archive once per clip, so a crash can lose at
+  most the one clip in flight instead of the month's whole archive.
+- **Fix: `app.py`'s `_shutdown()` could skip later cleanup steps (closing
+  the database, persisting tracker state) if an earlier step raised.**
+  Each shutdown step now runs in its own try/except via a `_shutdown_step`
+  helper, so one failing step (e.g. `analyzer.close()`) no longer prevents
+  the database from closing or the tracker from saving.
+- **Fix: `ON DELETE CASCADE` constraints in the clip database schema were
+  silently inert.** SQLite requires `PRAGMA foreign_keys=ON` per
+  connection; `database.py` never set it, so deleting a clip left orphaned
+  rows in its analysis tables instead of cascading. The pragma is now set
+  immediately after connecting.
+- **Fix: `tracker.json` and the Blink `auth_credentials.json` file could
+  be left truncated/corrupt if the add-on crashed mid-write.** Both are
+  now written to a temp file and moved into place with `os.replace()`
+  (atomic on the same filesystem) instead of being written in place.
+- **Fix: `ClipTracker`'s downloaded-ID pruning could drop an arbitrary
+  subset of IDs instead of the oldest ones.** `_downloaded` was a
+  `set[str]`; CPython set iteration order is a hash-table artifact, not
+  insertion order, so `_prune_if_needed()`'s "keep the last N" slicing
+  wasn't actually keeping the most recently downloaded IDs. It's now an
+  insertion-ordered `dict[str, None]`, so pruning genuinely drops the
+  oldest entries.
+- **Fix: clips beyond `max_clips_per_poll` could be permanently skipped
+  instead of picked up on a later poll.** `download_new_clips()` advanced
+  the tracker's `since` cursor to "now" on every poll regardless of
+  whether the per-poll cap left clips undownloaded; because Blink's API is
+  filtered by `since=`, any clip behind that advanced cursor was never
+  fetched again. When a poll leaves a backlog, the cursor is now held back
+  at the pre-poll `since` value instead of advancing.
+- **Fix: `_stream_to_file()` didn't retry on request timeout and left a
+  partial file behind on failure.** It only caught `aiohttp.ClientError`,
+  but a `ClientTimeout` expiry raises a bare `asyncio.TimeoutError`, which
+  went unhandled; a non-200 response also returned immediately instead of
+  retrying like other failures. It now catches both exception types,
+  retries non-200 responses with the same backoff as exceptions, and
+  unlinks the partial destination file before retrying.
+- **Fix: `_generate_thumbnail()`'s `ffmpeg` subprocess had no timeout** and
+  could hang indefinitely on a corrupt clip. `proc.wait()` is now wrapped
+  in a 30s `asyncio.wait_for()`; on timeout the process is killed and
+  reaped before returning failure.
+- **Fix: files deleted by the storage retention policy left orphaned rows
+  in the clip database.** `apply_retention_policy()` only touched the
+  filesystem with no awareness of `ClipDatabase`. A new
+  `apply_retention_policy_paths()` returns the deleted clip paths, and
+  `app.py`'s poll cycle now removes the matching database row for each one
+  when `enable_library_db` is set.
+
 ## 3.1.1
 
 ### Bug fixes

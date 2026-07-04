@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -254,6 +255,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             _LOGGER.debug("All %d clip(s) already downloaded", len(clips))
             return []
 
+        has_backlog = len(new_clips) > self._config.max_clips_per_poll
         new_clips = new_clips[: self._config.max_clips_per_poll]
         _LOGGER.info("Downloading %d new clip(s)", len(new_clips))
 
@@ -267,6 +269,24 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 _LOGGER.error("Failed to download clip %s: %s", clip.get("id"), result)
             elif isinstance(result, dict):
                 results.append(result)
+
+        if has_backlog:
+            # mark_downloaded() advances the tracker's cursor to "now" for
+            # every clip downloaded above, but max_clips_per_poll left some
+            # older clips in `clips` undownloaded. If the cursor were allowed
+            # to advance, the next poll's since= filter would start after
+            # those clips' creation time and the Blink API would never
+            # return them again — permanently dropping backlog. Holding the
+            # cursor at this poll's `since` means the next poll re-fetches
+            # the same window; already-downloaded clips are filtered out via
+            # is_downloaded() as usual, so only the real backlog remains.
+            self._tracker.set_last_download_time(since)
+            _LOGGER.info(
+                "Backlog remains after this poll (max_clips_per_poll=%d); "
+                "holding download cursor at %s",
+                self._config.max_clips_per_poll,
+                since.isoformat(),
+            )
 
         self._tracker.save()
         self._persist_auth()
@@ -621,8 +641,19 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 ) as resp:
                     if resp.status != 200:
                         _LOGGER.warning(
-                            "HTTP %d for %s (attempt %d)", resp.status, url, attempt
+                            "HTTP %d for %s (attempt %d/%d)",
+                            resp.status,
+                            url,
+                            attempt,
+                            self._config.retry_attempts,
                         )
+                        # Non-200 gets the same retry treatment as a
+                        # ClientError instead of giving up immediately - a
+                        # transient 5xx/429 from Blink's API is exactly the
+                        # kind of failure retry_attempts exists to ride out.
+                        if attempt < self._config.retry_attempts:
+                            await asyncio.sleep(self._config.retry_delay * attempt)
+                            continue
                         return None
 
                     size = 0
@@ -632,7 +663,12 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                             size += len(chunk)
                     return size
 
-            except aiohttp.ClientError as exc:
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                # aiohttp raises asyncio.TimeoutError (not a ClientError
+                # subclass) when the ClientTimeout(total=...) above expires,
+                # so it must be caught alongside ClientError or a slow/hung
+                # server would skip retries entirely and leave a partial file
+                # behind (only the loop-exit cleanup below removes it).
                 _LOGGER.warning(
                     "Download attempt %d/%d failed for %s: %s",
                     attempt,
@@ -640,6 +676,8 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     url,
                     exc,
                 )
+                if dest.exists():
+                    dest.unlink()
                 if attempt < self._config.retry_attempts:
                     await asyncio.sleep(self._config.retry_delay * attempt)
 
@@ -674,9 +712,18 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            await proc.wait()
         except OSError as exc:
             _LOGGER.warning("Could not run ffmpeg to generate thumbnail: %s", exc)
+            return False
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=30)
+        except asyncio.TimeoutError:
+            _LOGGER.warning("ffmpeg timed out generating thumbnail for %s", video_path)
+            # Timing out leaves the child process running; kill it and reap
+            # it so it doesn't linger as a zombie/orphan.
+            proc.kill()
+            await proc.wait()
             return False
 
         if not thumb_path.exists():
@@ -808,7 +855,12 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         if self._blink and self._blink.auth:
             try:
                 attrs = self._blink.auth.login_attributes
-                AUTH_FILE.write_text(json.dumps(attrs, indent=2))
+                # Write to a temp file and rename over the target so a crash
+                # mid-write can't leave a truncated/corrupt AUTH_FILE behind —
+                # os.replace() is atomic on the same filesystem.
+                tmp_path = AUTH_FILE.with_suffix(AUTH_FILE.suffix + ".tmp")
+                tmp_path.write_text(json.dumps(attrs, indent=2))
+                os.replace(tmp_path, AUTH_FILE)
             except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
                 _LOGGER.warning("Could not persist auth credentials: %s", exc)
 

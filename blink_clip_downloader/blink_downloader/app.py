@@ -408,9 +408,16 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
     async def _poll_cycle(self) -> None:
         _LOGGER.debug("Poll cycle started")
 
-        deleted = self._storage.apply_retention_policy()
-        if deleted:
-            _LOGGER.info("Retention removed %d file(s)", deleted)
+        deleted_paths = self._storage.apply_retention_policy_paths()
+        if deleted_paths:
+            _LOGGER.info("Retention removed %d file(s)", len(deleted_paths))
+            if self._config.enable_library_db:
+                # apply_retention_policy_paths() only touches the
+                # filesystem — without this, a deleted clip's row (and its
+                # tags/analysis results) would linger in the DB forever,
+                # pointing at a file that no longer exists.
+                for path in deleted_paths:
+                    await self._db.delete_clip_by_path(str(path))
 
         archived = await self._archiver.run()
         if archived:
@@ -647,6 +654,16 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         _LOGGER.info("Shutdown signal received")
         self._running = False
 
+    async def _shutdown_step(self, name: str, coro) -> None:
+        # Each cleanup step is isolated so one failure (e.g. media_server.stop()
+        # raising) can't skip the rest — in particular db.close() and
+        # tracker.save() must always run or we risk a corrupt DB handle or a
+        # lost session count on the next start.
+        try:
+            await coro
+        except Exception:
+            _LOGGER.exception("Error during shutdown step %r", name)
+
     async def _shutdown(self) -> None:
         _LOGGER.info("Shutting down gracefully …")
 
@@ -656,18 +673,27 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         if self._bg_tasks:
             await asyncio.gather(*self._bg_tasks, return_exceptions=True)
 
-        await self._media_server.stop()
-        await self._event_watcher.stop()
+        await self._shutdown_step("media_server.stop", self._media_server.stop())
+        await self._shutdown_step("event_watcher.stop", self._event_watcher.stop())
         if self._analysis_queue:
-            await self._analysis_queue.stop()
+            await self._shutdown_step(
+                "analysis_queue.stop", self._analysis_queue.stop()
+            )
         if self._analyzer:
-            await self._analyzer.close()
+            await self._shutdown_step("analyzer.close", self._analyzer.close())
         if self._alert_dispatcher:
-            await self._alert_dispatcher.close()
-        await self._downloader.disconnect()
-        await self._notifier.close()
-        await self._db.close()
-        self._tracker.save()
+            await self._shutdown_step(
+                "alert_dispatcher.close", self._alert_dispatcher.close()
+            )
+        await self._shutdown_step(
+            "downloader.disconnect", self._downloader.disconnect()
+        )
+        await self._shutdown_step("notifier.close", self._notifier.close())
+        await self._shutdown_step("db.close", self._db.close())
+        try:
+            self._tracker.save()
+        except Exception:
+            _LOGGER.exception("Error during shutdown step 'tracker.save'")
 
         _LOGGER.info(
             "Blink Clip Downloader stopped. Session downloads: %d",

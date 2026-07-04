@@ -32,6 +32,7 @@ def app(base_config):
     a._notifier.call_webhook = AsyncMock(return_value=True)
     a._notifier.close = AsyncMock()
     a._storage.apply_retention_policy = MagicMock(return_value=0)
+    a._storage.apply_retention_policy_paths = MagicMock(return_value=[])
     a._storage.is_over_quota = MagicMock(return_value=False)
     a._storage.disk_stats = MagicMock(return_value={"used_mb": 1.0, "free_gb": 99.0})
     # _shutdown() always runs at the end of run(); mock save() so it doesn't
@@ -140,7 +141,21 @@ async def test_poll_cycle_quota_exceeded_skips_download(app):
 
 async def test_poll_cycle_calls_retention(app):
     await app._poll_cycle()
-    app._storage.apply_retention_policy.assert_called_once()
+    app._storage.apply_retention_policy_paths.assert_called_once()
+
+
+async def test_poll_cycle_retention_removes_orphaned_db_rows(app):
+    """Files deleted by retention must have their DB row removed too, or the
+    library keeps a dead entry for a clip that no longer exists on disk."""
+    app._config.enable_library_db = True
+    app._db.delete_clip_by_path = AsyncMock(return_value=True)
+    app._storage.apply_retention_policy_paths = MagicMock(
+        return_value=[Path("/share/blink-clips/old.mp4")]
+    )
+
+    await app._poll_cycle()
+
+    app._db.delete_clip_by_path.assert_awaited_once_with("/share/blink-clips/old.mp4")
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +299,24 @@ async def test_shutdown_disconnects_and_saves_tracker(app):
 
     app._downloader.disconnect.assert_awaited_once()
     app._notifier.close.assert_awaited_once()
+    app._tracker.save.assert_called_once()
+
+
+async def test_shutdown_isolates_step_failures(app):
+    """A failing cleanup step must not skip the remaining ones (esp. db.close/tracker.save)."""
+    app._media_server.stop = AsyncMock(side_effect=RuntimeError("boom"))
+    app._event_watcher.stop = AsyncMock(side_effect=RuntimeError("boom"))
+    app._downloader.disconnect = AsyncMock(side_effect=RuntimeError("boom"))
+    app._db.close = AsyncMock(side_effect=RuntimeError("boom"))
+    app._tracker.save = MagicMock(side_effect=RuntimeError("boom"))
+
+    await app._shutdown()
+
+    app._media_server.stop.assert_awaited_once()
+    app._event_watcher.stop.assert_awaited_once()
+    app._downloader.disconnect.assert_awaited_once()
+    app._notifier.close.assert_awaited_once()
+    app._db.close.assert_awaited_once()
     app._tracker.save.assert_called_once()
 
 

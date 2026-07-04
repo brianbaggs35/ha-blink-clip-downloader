@@ -66,26 +66,30 @@ class ClipArchiver:
         zip_path = self._archive_dir / f"blink_archive_{month}.zip"
         archived = 0
 
-        try:
-            with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_DEFLATED) as zf:
-                for clip in clips:
-                    src = Path(str(clip.get("file_path", "")))
-                    if not src.exists():
-                        # File already gone — just mark DB record as archived.
-                        await self._db.mark_archived(str(clip["id"]), str(zip_path))
-                        archived += 1
-                        continue
-                    try:
-                        # Store relative name to avoid path collisions in the ZIP.
-                        arcname = f"{clip.get('camera', 'unknown')}/{src.name}"
-                        zf.write(src, arcname)
-                        await self._db.mark_archived(str(clip["id"]), str(zip_path))
-                        src.unlink()
-                        archived += 1
-                        _LOGGER.debug("Archived %s → %s", src.name, zip_path.name)
-                    except OSError as exc:
-                        _LOGGER.warning("Could not archive %s: %s", src, exc)
-        except (zipfile.BadZipFile, OSError) as exc:
-            _LOGGER.error("Failed to write archive %s: %s", zip_path, exc)
+        for clip in clips:
+            src = Path(str(clip.get("file_path", "")))
+            if not src.exists():
+                # File already gone — just mark DB record as archived.
+                await self._db.mark_archived(str(clip["id"]), str(zip_path))
+                archived += 1
+                continue
+            try:
+                # Open/close the archive once per clip instead of keeping one
+                # ZipFile open across the whole month's batch: the central
+                # directory is only written on close(), so a crash mid-batch
+                # with a single long-lived handle would leave the ZIP unreadable
+                # and its already-unlinked source clips unrecoverable. Closing
+                # after every file finalizes the central directory each time,
+                # so a crash can lose at most the one clip in flight.
+                with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_DEFLATED) as zf:
+                    # Store relative name to avoid path collisions in the ZIP.
+                    arcname = f"{clip.get('camera', 'unknown')}/{src.name}"
+                    zf.write(src, arcname)
+                await self._db.mark_archived(str(clip["id"]), str(zip_path))
+                src.unlink()
+                archived += 1
+                _LOGGER.debug("Archived %s → %s", src.name, zip_path.name)
+            except (zipfile.BadZipFile, OSError) as exc:
+                _LOGGER.warning("Could not archive %s: %s", src, exc)
 
         return archived
