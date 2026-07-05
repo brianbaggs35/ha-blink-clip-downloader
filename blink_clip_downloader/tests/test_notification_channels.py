@@ -195,6 +195,76 @@ async def test_send_email_connection_error() -> None:
 
 
 # ------------------------------------------------------------------
+# Test email (bypasses smtp_enabled)
+# ------------------------------------------------------------------
+
+
+async def test_send_test_email_ignores_smtp_enabled_false() -> None:
+    """send_test_email works even when smtp_enabled is off, unlike send_email."""
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=False,
+        smtp_host="smtp.example.com",
+        smtp_recipients=["admin@example.com"],
+    )
+    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
+        ok, message = await dispatcher.send_test_email()
+    assert ok is True
+    assert "admin@example.com" in message
+    mock_send.assert_awaited_once()
+
+
+async def test_send_test_email_no_host() -> None:
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=True, smtp_host="", smtp_recipients=["a@b.com"]
+    )
+    ok, message = await dispatcher.send_test_email()
+    assert ok is False
+    assert "host" in message.lower()
+
+
+async def test_send_test_email_no_recipients() -> None:
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=True, smtp_host="smtp.example.com", smtp_recipients=[]
+    )
+    ok, message = await dispatcher.send_test_email()
+    assert ok is False
+    assert "recipient" in message.lower()
+
+
+async def test_send_test_email_failure_message() -> None:
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=True,
+        smtp_host="bad.host",
+        smtp_recipients=["a@b.com"],
+    )
+    with patch(
+        "aiosmtplib.send",
+        new_callable=AsyncMock,
+        side_effect=OSError("Connection refused"),
+    ):
+        ok, message = await dispatcher.send_test_email()
+    assert ok is False
+    assert "log" in message.lower()
+
+
+def test_smtp_configured_true() -> None:
+    dispatcher = NotificationDispatcher(
+        smtp_host="smtp.example.com", smtp_recipients=["a@b.com"]
+    )
+    assert dispatcher.smtp_configured is True
+
+
+def test_smtp_configured_false_without_recipients() -> None:
+    dispatcher = NotificationDispatcher(smtp_host="smtp.example.com")
+    assert dispatcher.smtp_configured is False
+
+
+def test_smtp_configured_false_without_host() -> None:
+    dispatcher = NotificationDispatcher(smtp_recipients=["a@b.com"])
+    assert dispatcher.smtp_configured is False
+
+
+# ------------------------------------------------------------------
 # Discord Webhook
 # ------------------------------------------------------------------
 

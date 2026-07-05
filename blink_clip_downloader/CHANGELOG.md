@@ -1,5 +1,62 @@
 # Changelog
 
+## 3.1.8
+
+### New features
+
+- **Add-on icon and logo.** The add-on previously used the Supervisor's
+  generic puzzle-piece placeholder; it now has a dedicated `icon.png` and
+  `logo.png`.
+- **Custom confirmation modal for "Clear Stats".** Replaced the native
+  browser `confirm()` dialog (which HA ingress iframes can suppress or
+  render inconsistently) with an in-app modal, matching the styling of the
+  rest of the web UI. Only this button was changed — clip-delete
+  confirmations are unaffected.
+- **"Send Test Email" button in the AI tab.** Once `smtp_host` and
+  `smtp_recipients` are configured, an Email Alerts card appears with a
+  button that sends a one-off test email — even while `smtp_enabled` is
+  still `false` — so SMTP credentials can be verified before waiting for a
+  real suspicious-activity alert.
+- **Car-protection status surfaced in the web UI.** The AI tab now shows a
+  warning banner under Camera Configurations when a camera is checked
+  "Protected vehicle visible from this camera" but `ai_car_description` is
+  empty — previously the checkbox silently had no effect in that case with
+  no indication why.
+- **Shorter add-on store description that leads with AI analysis.** The
+  Supervisor add-on card previously truncated the description mid-sentence;
+  it's now short enough to display in full and mentions AI-powered
+  suspicious activity detection up front.
+
+### Bug fixes
+
+- **Fix: default AI prompt could under-flag genuinely suspicious activity
+  on car/driveway cameras while over-flagging routine front-door entries.**
+  The default `ai_prompt` required ALL of three unrelated behaviours to
+  co-occur for a "suspicious" verdict — a bar routine activity already
+  clears by matching just one of them (e.g. "touching the door"), while
+  effectively suppressing rarer but genuinely suspicious car-camera events.
+  Rewritten as a clearer set of specific ANY-of-these-applies criteria
+  (tampering with a lock, entry through an unusual opening, hiding beside
+  property, fleeing after contact) with explicit non-suspicious examples
+  for ordinary door use. The prompt's definition of "confidence" was also
+  corrected from image clarity (which systematically favours well-lit
+  cameras like a front door over dimmer or farther ones) to certainty in
+  the suspicious/not-suspicious verdict itself.
+- **Fix: `openai_escalation_model` had no label or description in the
+  Configuration tab.** It rendered as the raw snake_case key with no
+  explanation; added a proper translation entry.
+- **Fix: missing `claude-sonnet-5` pricing entry.** Anthropic's Claude
+  Sonnet 5 was not in the pricing table or fallback model list, so
+  selecting it fell back to a generic/incorrect rate; added with its
+  current tiered rate.
+
+### Documentation
+
+- Added a prerequisite note under Per-Camera Configuration: the "Protected
+  vehicle visible from this camera" checkbox does nothing until
+  `ai_car_description` is also set.
+- Documented the new "Send Test Email" button under Email (SMTP).
+
 ## 3.1.7
 
 ### New features

@@ -1011,8 +1011,10 @@ def test_init_attaches_scene_baseline_db_and_creates_analysis_queue(
 
 def test_init_analyzer_disabled_skips_queue_creation(base_config, tmp_path):
     """create_analyzer() returning None (e.g. missing ollama_url) must leave
-    the analysis queue and dispatcher unset rather than wiring up a queue
-    around a nonexistent analyzer."""
+    the analysis queue unset rather than wiring up a queue around a
+    nonexistent analyzer. The notification dispatcher is still constructed
+    unconditionally so the web UI's "Send Test Email" button works even
+    before AI analysis is configured."""
     import dataclasses
 
     config = dataclasses.replace(
@@ -1024,4 +1026,4 @@ def test_init_analyzer_disabled_skips_queue_creation(base_config, tmp_path):
 
     assert app._analyzer is None
     assert app._analysis_queue is None
-    assert app._alert_dispatcher is None
+    assert app._alert_dispatcher is not None

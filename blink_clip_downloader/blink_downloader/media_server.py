@@ -19,6 +19,7 @@ from .database import ClipDatabase
 if TYPE_CHECKING:
     from .analysis_queue import AnalysisQueue
     from .analyzer import BaseAnalyzer
+    from .notification_channels import NotificationDispatcher
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -774,6 +775,23 @@ action:
             </div>
           </div>
         </div>
+        <!-- Notifications Card -->
+        <div class="card" style="padding:1.2rem" id="ai-notifications-card">
+          <h3 style="margin-bottom:.8rem">Email Alerts</h3>
+          <div id="ai-smtp-not-configured" style="display:none;font-size:.82rem;color:var(--muted)">
+            No SMTP settings configured — set <code>smtp_host</code> and
+            <code>smtp_recipients</code> in the add-on's <strong>Configuration</strong> tab
+            to enable email alerts.
+          </div>
+          <div id="ai-smtp-configured" style="display:none">
+            <button class="btn sm ghost" id="ai-test-email-btn">✉️ Send Test Email</button>
+            <p style="font-size:.73rem;color:var(--muted);margin:.3rem 0 0">
+              Sends a one-off test email to verify SMTP settings, even if
+              <code>smtp_enabled</code> is currently off.
+            </p>
+            <div id="ai-test-email-result" style="display:none;margin-top:.45rem;font-size:.8rem"></div>
+          </div>
+        </div>
       </div>
 
       <!-- Camera Configurations -->
@@ -784,6 +802,11 @@ action:
             — Set per-camera purpose and custom prompts
           </span>
         </h3>
+        <div id="ai-car-protection-warning" style="display:none;background:rgba(245,158,11,.12);border:1px solid var(--warn,#f59e0b);border-radius:.4rem;padding:.6rem .8rem;font-size:.78rem;margin-bottom:.65rem">
+          ⚠️ A camera below is marked "Protected vehicle visible from this camera", but no
+          <strong>Protected Vehicle Description</strong> is set — car-proximity rules will not
+          activate until you set one in the add-on's <strong>Configuration</strong> tab.
+        </div>
         <div id="ai-cam-configs-loading" style="color:var(--muted);font-size:.85rem;padding:1rem">Loading…</div>
         <div id="ai-cam-configs-list" style="display:flex;flex-direction:column;gap:.65rem"></div>
         <div style="margin-top:.75rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
@@ -914,6 +937,20 @@ action:
   </div>
 </div>
 
+<!-- ── Generic confirmation modal (replaces native confirm() for destructive actions) ── -->
+<div class="modal-bg" id="confirm-overlay" style="z-index:200">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-body" style="padding:1.6rem 1.5rem">
+      <div class="modal-title" id="confirm-title" style="font-size:1.05rem;margin-bottom:.5rem">Are you sure?</div>
+      <p id="confirm-message" style="color:var(--muted);font-size:.86rem;line-height:1.55;margin-bottom:1.3rem"></p>
+      <div style="display:flex;gap:.6rem;justify-content:flex-end">
+        <button class="btn sm ghost" id="confirm-cancel-btn">Cancel</button>
+        <button class="btn sm danger" id="confirm-ok-btn">Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1004,6 +1041,24 @@ function toast(msg, isErr = false, dur = 2800) {
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.remove('show'), dur);
 }
+
+// ── Custom confirmation modal (replaces native confirm() for destructive actions) ──
+let _confirmResolve = null;
+function showConfirmModal(message, title = 'Are you sure?') {
+  return new Promise(resolve => {
+    $('confirm-title').textContent = title;
+    $('confirm-message').textContent = message;
+    _confirmResolve = resolve;
+    $('confirm-overlay').classList.add('open');
+  });
+}
+function _closeConfirmModal(result) {
+  $('confirm-overlay').classList.remove('open');
+  if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+}
+$('confirm-ok-btn').addEventListener('click', () => _closeConfirmModal(true));
+$('confirm-cancel-btn').addEventListener('click', () => _closeConfirmModal(false));
+$('confirm-overlay').addEventListener('click', e => { if (e.target === $('confirm-overlay')) _closeConfirmModal(false); });
 
 // ── Formatting ─────────────────────────────────────────────────────────────
 function fmtSize(b) {
@@ -1428,6 +1483,7 @@ document.addEventListener('keydown', e => {
   if (e.key === '?') { $('help-overlay').classList.toggle('open'); return; }
   if (e.key === 'Escape') {
     if ($('help-overlay').classList.contains('open')) { $('help-overlay').classList.remove('open'); return; }
+    if ($('confirm-overlay').classList.contains('open')) { _closeConfirmModal(false); return; }
     if ($('modal-bg').classList.contains('open')) { closeModal(); }
     return;
   }
@@ -1897,12 +1953,48 @@ async function runAITest() {
   }
 }
 
+// ── AI tab: send test email ────────────────────────────────
+async function runTestEmail() {
+  const btn = $('ai-test-email-btn');
+  const resultEl = $('ai-test-email-result');
+  if (!btn || !resultEl) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Sending…';
+  resultEl.style.display = 'block';
+  resultEl.style.color = 'var(--muted)';
+  resultEl.textContent = 'Sending test email…';
+  try {
+    const r = await api('/api/notifications/test-email', { method: 'POST' });
+    resultEl.style.color = r.success ? 'var(--success)' : 'var(--danger)';
+    resultEl.textContent = (r.success ? '✓ ' : '✗ ') + r.message;
+    toast(r.success ? 'Test email sent' : 'Test email failed', !r.success);
+  } catch(e) {
+    resultEl.style.color = 'var(--danger)';
+    resultEl.textContent = '✗ Failed to send test email — check the add-on logs';
+    toast('Test email failed', true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✉️ Send Test Email';
+  }
+}
+
 // ── AI Analysis Tab ──────────────────────────────────────
 let _aiEnabled = false;
+let _carProtectionActive = null;
+function _updateCarProtectionWarning() {
+  const el = $('ai-car-protection-warning');
+  if (!el) return;
+  const anyCarCamera = (_camConfigsData || []).some(c => c.is_car_camera);
+  el.style.display = (anyCarCamera && _carProtectionActive === false) ? 'block' : 'none';
+}
 async function loadAIStatus() {
   try {
     const d = await api('/api/ai/status');
     _aiEnabled = d.enabled;
+    _carProtectionActive = 'car_protection_active' in d ? d.car_protection_active : null;
+    _updateCarProtectionWarning();
+    $('ai-smtp-configured').style.display = d.smtp_configured ? 'block' : 'none';
+    $('ai-smtp-not-configured').style.display = d.smtp_configured ? 'none' : 'block';
     $('ai-disabled-msg').style.display = d.enabled ? 'none' : 'block';
     $('ai-content').style.display = d.enabled ? 'block' : 'none';
     if (!d.enabled) return;
@@ -2018,6 +2110,7 @@ async function loadCameraConfigs() {
   try {
     _camConfigsData = await api('/api/ai/camera-configs');
     loadingEl.style.display = 'none';
+    _updateCarProtectionWarning();
     if (!_camConfigsData.length) {
       listEl.innerHTML = '<div style="color:var(--muted);font-size:.84rem;padding:.5rem 0">No cameras found. Download at least one clip to populate the camera list.</div>';
       return;
@@ -2078,6 +2171,8 @@ async function saveCameraConfigs() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    _camConfigsData = payload;
+    _updateCarProtectionWarning();
     toast('Camera configs saved ✓');
   } catch(e) { toast('Failed to save camera configs', true); }
   finally {
@@ -2182,6 +2277,7 @@ $('ai-install-moondream-btn').addEventListener('click', _startMoondreamInstall);
 $('ai-retry-moondream-btn').addEventListener('click', _startMoondreamInstall);
 $('ai-panel-hdr').addEventListener('click', () => toggleAIPanel());
 $('ai-test-btn').addEventListener('click', () => runAITest());
+$('ai-test-email-btn').addEventListener('click', () => runTestEmail());
 
 // Load AI tab when selected
 document.querySelectorAll('.nav-tab').forEach(t => {
@@ -2314,7 +2410,11 @@ async function loadAIUsage() {
 }
 
 $('usage-clear-btn').addEventListener('click', async () => {
-  if (!confirm('Clear all AI usage stats (tokens, cost, escalations)? Per-clip analysis results are not affected.')) return;
+  const ok = await showConfirmModal(
+    'Clear all AI usage stats (tokens, cost, escalations)? Per-clip analysis results are not affected.',
+    'Clear AI usage stats?'
+  );
+  if (!ok) return;
   try {
     await api('/api/ai/usage', { method: 'DELETE' });
     toast('AI usage stats cleared');
@@ -2346,6 +2446,7 @@ class MediaServer:
         auth_state_getter: Callable[[], dict] | None = None,
         analyzer: BaseAnalyzer | None = None,
         analysis_queue: AnalysisQueue | None = None,
+        notification_dispatcher: NotificationDispatcher | None = None,
     ) -> None:
         self._db = db
         self._download_path = download_path
@@ -2355,6 +2456,7 @@ class MediaServer:
         self._auth_state_getter = auth_state_getter
         self._analyzer = analyzer
         self._analysis_queue = analysis_queue
+        self._notification_dispatcher = notification_dispatcher
         self._runner: web.AppRunner | None = None
         self.extra_status: dict = {}
 
@@ -2414,6 +2516,7 @@ class MediaServer:
         app.router.add_post("/api/ai/moondream/install", self._handle_moondream_install)
         app.router.add_get("/api/ai/camera-configs", self._handle_ai_camera_configs_get)
         app.router.add_put("/api/ai/camera-configs", self._handle_ai_camera_configs_put)
+        app.router.add_post("/api/notifications/test-email", self._handle_test_email)
         return app
 
     # ------------------------------------------------------------------
@@ -2663,9 +2766,14 @@ class MediaServer:
             data["ai_online"] = await self._analyzer.health_check()
             data["provider"] = self._analyzer.provider_name
             data["model"] = self._analyzer.model_name()
+            data["car_protection_active"] = self._analyzer.car_protection_active
             if self._analyzer.provider_name == "moondream_local":
                 data["moondream_installed"] = _is_moondream_installed()
                 data["moondream_arch_supported"] = _moondream_arch_supported()
+        data["smtp_configured"] = bool(
+            self._notification_dispatcher
+            and self._notification_dispatcher.smtp_configured
+        )
         if self._analysis_queue:
             data["queue"] = await self._analysis_queue.get_queue_status()
         data["analysis_stats"] = await self._db.get_analysis_stats()
@@ -2792,6 +2900,18 @@ class MediaServer:
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("AI test analysis failed: %s", exc)
             return web.json_response({"error": str(exc)}, status=500)
+
+    async def _handle_test_email(self, _request: web.Request) -> web.Response:
+        """Send a one-off test email using the configured SMTP settings."""
+        if not self._notification_dispatcher:
+            return web.json_response(
+                {"success": False, "message": "Notifications not configured"},
+                status=400,
+            )
+        ok, message = await self._notification_dispatcher.send_test_email()
+        return web.json_response(
+            {"success": ok, "message": message}, status=200 if ok else 400
+        )
 
     async def _handle_moondream_install_status(
         self, _request: web.Request

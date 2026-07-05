@@ -1534,6 +1534,13 @@ def test_anthropic_model_pricing_sonnet() -> None:
     assert out == 15.00
 
 
+def test_anthropic_model_pricing_sonnet_5() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-sonnet-5", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 2.00
+    assert out == 10.00
+
+
 def test_anthropic_model_pricing_unknown_falls_back_to_sonnet() -> None:
     a = AnthropicAnalyzer(api_key="key", model="claude-future-99b", prompt="test")
     inp, out = a.model_pricing()
@@ -3671,6 +3678,28 @@ def test_update_car_cameras_replaces_not_merges() -> None:
     a.update_car_cameras(set())
     assert "PROTECTED VEHICLE" in a._build_prompt("Driveway")
     assert "PROTECTED VEHICLE" in a._build_prompt("Garage")
+
+
+def test_car_protection_active_reflects_car_description() -> None:
+    """car_protection_active is False until car_description is set, regardless
+    of is_car_camera checkboxes — the AI tab checkbox alone does nothing
+    without a Configuration-tab vehicle description to match against."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_cameras=["Driveway"],
+    )
+    assert a.car_protection_active is False
+
+    a2 = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Silver Kia Forte",
+        car_cameras=["Driveway"],
+    )
+    assert a2.car_protection_active is True
 
 
 def test_build_prompt_car_description_with_distance_rules() -> None:

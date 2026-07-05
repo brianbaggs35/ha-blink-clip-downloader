@@ -50,6 +50,11 @@ class NotificationDispatcher:
         self._discord_enabled = discord_enabled
         self._session: aiohttp.ClientSession | None = None
 
+    @property
+    def smtp_configured(self) -> bool:
+        """True if enough SMTP settings are present to attempt sending."""
+        return bool(self._smtp_host and self._smtp_recipients)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -126,7 +131,29 @@ class NotificationDispatcher:
         """Send an email via SMTP."""
         if not self._smtp_enabled or not self._smtp_host or not self._smtp_recipients:
             return False
+        return await self._send_email_now(subject, body)
 
+    async def send_test_email(self) -> tuple[bool, str]:
+        """Send a one-off test email, ignoring smtp_enabled.
+
+        Lets a user verify SMTP host/credentials from the web UI before
+        flipping smtp_enabled on, since real alerts only fire when a clip
+        is actually flagged suspicious.
+        """
+        if not self._smtp_host:
+            return False, "SMTP host is not configured."
+        if not self._smtp_recipients:
+            return False, "No SMTP recipients configured."
+        ok = await self._send_email_now(
+            "Blink Clip Downloader — Test Email",
+            "This is a test email from the Blink Clip Downloader add-on. "
+            "If you received this, your SMTP settings are working correctly.",
+        )
+        if ok:
+            return True, f"Test email sent to {', '.join(self._smtp_recipients)}."
+        return False, "Failed to send test email — check the add-on logs for details."
+
+    async def _send_email_now(self, subject: str, body: str) -> bool:
         try:
             import aiosmtplib
 

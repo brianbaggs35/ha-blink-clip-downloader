@@ -396,6 +396,11 @@ The **"Protected vehicle visible from this camera"** checkbox in the Camera Conf
 panel enables car-proximity rules for individual cameras without editing `ai_car_cameras`
 in the add-on options.
 
+> **Prerequisite:** The checkbox alone has no effect until `ai_car_description`
+> (Configuration tab) is also set — the AI needs to know *what vehicle* to protect, not
+> just which camera can see it. If a camera is checked but `ai_car_description` is empty,
+> the AI tab shows a warning banner under Camera Configurations until you set one.
+
 > **Priority:** `camera_configs.json` (set via the web UI) is the primary source for
 > descriptions, custom prompts, and car-camera flags. `ai_camera_descriptions` and
 > `ai_camera_prompts` in `options.json` serve as fallbacks for cameras not yet
@@ -467,6 +472,11 @@ in addition to HA persistent notifications.
 | `smtp_password` | `""` | SMTP login password |
 | `smtp_recipients` | `[]` | List of email addresses to send alerts to |
 | `smtp_sender` | `""` | From address used in outgoing alert emails |
+
+Once `smtp_host` and `smtp_recipients` are set, the **AI tab** shows a **✉️ Send Test
+Email** button (in the Email Alerts card) that sends a one-off test message using those
+settings — even while `smtp_enabled` is still `false` — so you can confirm your SMTP
+credentials work before turning real alerts on.
 
 ### Discord
 

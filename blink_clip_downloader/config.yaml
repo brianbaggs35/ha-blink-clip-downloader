@@ -1,13 +1,11 @@
 ---
 name: Blink Clip Downloader
-version: "v3.1.7"
+version: "v3.1.8"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
-  Continuously downloads Blink camera clips to local storage with timestamps,
-  per-camera organisation, retention policies, storage quotas, HA notifications,
-  motion/time-window filtering, SQLite clip library, Video.js web UI, and
-  event-driven instant download after motion events.
+  Downloads Blink camera clips locally with AI-powered suspicious activity
+  detection, retention policies, storage quotas, and a web clip library.
 url: "https://github.com/brianbaggs35/ha-blink-clip-downloader"
 arch:
   - aarch64
