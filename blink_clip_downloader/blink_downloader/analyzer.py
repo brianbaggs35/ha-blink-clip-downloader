@@ -282,6 +282,9 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-4-7": (5.00, 25.00),
     "claude-opus-4-6": (5.00, 25.00),
     "claude-opus-4-5": (5.00, 25.00),
+    # Rate through 2026-08-31; rises to (3.00, 15.00) on 2026-09-01 per the
+    # pricing page above — bump this when that date arrives.
+    "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4-5": (3.00, 15.00),
     "claude-haiku-4-5": (1.00, 5.00),
@@ -292,6 +295,10 @@ _ANTHROPIC_FALLBACK_MODELS: list[dict] = [
     {
         "name": "claude-opus-4-8",
         "display_name": "Claude Opus 4.8 ($5/$25 per 1M tokens)",
+    },
+    {
+        "name": "claude-sonnet-5",
+        "display_name": "Claude Sonnet 5 ($2/$10 per 1M tokens through Aug 2026)",
     },
     {
         "name": "claude-sonnet-4-6",
@@ -491,6 +498,17 @@ class BaseAnalyzer(abc.ABC):
         analyzer, not just leave the previous set in place.
         """
         self._car_cameras = set(car_cameras)
+
+    @property
+    def car_protection_active(self) -> bool:
+        """True if the protected-vehicle distance rules will apply to any camera.
+
+        Requires ``ai_car_description`` (Configuration tab) to be non-empty —
+        checking "Protected vehicle visible from this camera" in the AI tab
+        alone does nothing until that description is also set, since the
+        rules need to know what vehicle to protect.
+        """
+        return bool(self._car_description)
 
     def attach_scene_baseline_db(self, db: ClipDatabase) -> None:
         """Enable the visual scene-baseline ("smart brain") feature.

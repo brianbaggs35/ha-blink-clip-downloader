@@ -70,6 +70,7 @@ def _make_analyzer(provider: str = "ollama", **overrides) -> MagicMock:
         return_value=overrides.get("analyze_result", _make_analysis_result())
     )
     analyzer.model_pricing.return_value = overrides.get("pricing", (3.0, 15.0))
+    analyzer.car_protection_active = overrides.get("car_protection_active", False)
     return analyzer
 
 
@@ -1680,7 +1681,48 @@ async def test_ai_status_enabled_ollama(db: ClipDatabase, tmp_path: Path) -> Non
         assert data["ai_online"] is True
         assert data["provider"] == "ollama"
         assert data["model"] == "llava:7b"
+        assert data["car_protection_active"] is False
+        assert data["smtp_configured"] is False
         assert "moondream_installed" not in data
+    finally:
+        await tc.close()
+
+
+async def test_ai_status_smtp_configured_true(db: ClipDatabase, tmp_path: Path) -> None:
+    from blink_downloader.notification_channels import NotificationDispatcher
+
+    analyzer = _make_analyzer(provider="ollama")
+    dispatcher = NotificationDispatcher(
+        smtp_host="smtp.example.com", smtp_recipients=["a@b.com"]
+    )
+    server = MediaServer(
+        db=db,
+        download_path=tmp_path,
+        port=0,
+        analyzer=analyzer,
+        notification_dispatcher=dispatcher,
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/status")
+        data = await resp.json()
+        assert data["smtp_configured"] is True
+    finally:
+        await tc.close()
+
+
+async def test_ai_status_car_protection_active_true(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    analyzer = _make_analyzer(provider="openai", car_protection_active=True)
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/status")
+        data = await resp.json()
+        assert data["car_protection_active"] is True
     finally:
         await tc.close()
 
@@ -1936,6 +1978,60 @@ async def test_ai_test_analyze_exception_returns_500(
         assert resp.status == 500
         data = await resp.json()
         assert "model unreachable" in data["error"]
+    finally:
+        await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# /api/notifications/test-email
+# ---------------------------------------------------------------------------
+
+
+async def test_test_email_no_dispatcher(client: TestClient) -> None:
+    resp = await client.post("/api/notifications/test-email")
+    assert resp.status == 400
+    data = await resp.json()
+    assert data["success"] is False
+
+
+async def test_test_email_success(db: ClipDatabase, tmp_path: Path) -> None:
+    from blink_downloader.notification_channels import NotificationDispatcher
+
+    dispatcher = NotificationDispatcher(
+        smtp_host="smtp.example.com", smtp_recipients=["a@b.com"]
+    )
+    dispatcher.send_test_email = AsyncMock(
+        return_value=(True, "Test email sent to a@b.com.")
+    )
+    server = MediaServer(
+        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/notifications/test-email")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is True
+        assert "a@b.com" in data["message"]
+    finally:
+        await tc.close()
+
+
+async def test_test_email_failure(db: ClipDatabase, tmp_path: Path) -> None:
+    from blink_downloader.notification_channels import NotificationDispatcher
+
+    dispatcher = NotificationDispatcher(smtp_host="", smtp_recipients=[])
+    server = MediaServer(
+        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/notifications/test-email")
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["success"] is False
     finally:
         await tc.close()
 

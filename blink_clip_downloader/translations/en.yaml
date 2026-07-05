@@ -207,6 +207,14 @@ configuration:
     description: >-
       GPT model to use. gpt-4o-mini is the most cost-effective vision option.
       Use "Fetch Models" in the web UI AI tab.
+  openai_escalation_model:
+    name: OpenAI Escalation Model (optional)
+    description: >-
+      OpenAI only. Optional stronger second-tier model. Every clip is first
+      analyzed with OpenAI Model above; only clips flagged suspicious are
+      re-analyzed with this model for a closer second opinion, which becomes
+      the recorded verdict. Leave empty to disable escalation. Example:
+      OpenAI Model "gpt-4o-mini" with this set to "gpt-4o".
   ai_prompt:
     name: AI Analysis Prompt
     description: >-

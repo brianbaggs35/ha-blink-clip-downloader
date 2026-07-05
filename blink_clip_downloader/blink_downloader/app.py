@@ -80,7 +80,23 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # --- AI Analysis (optional) ---
         self._analyzer: BaseAnalyzer | None = None
         self._analysis_queue: AnalysisQueue | None = None
-        self._alert_dispatcher: NotificationDispatcher | None = None
+        # Constructed unconditionally (not gated by ai_analysis_enabled) so the
+        # web UI's "Send Test Email" button works even before AI analysis —
+        # and therefore real suspicious-activity alerts — is turned on.
+        self._alert_dispatcher = NotificationDispatcher(
+            supervisor_token=config.supervisor_token,
+            mobile_app_target=config.mobile_app_target,
+            mobile_app_enabled=config.mobile_app_enabled,
+            smtp_host=config.smtp_host,
+            smtp_port=config.smtp_port,
+            smtp_user=config.smtp_user,
+            smtp_password=config.smtp_password,
+            smtp_recipients=config.smtp_recipients,
+            smtp_sender=config.smtp_sender,
+            smtp_enabled=config.smtp_enabled,
+            discord_webhook_url=config.discord_webhook_url,
+            discord_enabled=config.discord_enabled,
+        )
 
         if config.ai_analysis_enabled:
             # Load per-camera settings from the web UI config file
@@ -150,20 +166,6 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             )
             if self._analyzer is not None:
                 self._analyzer.attach_scene_baseline_db(self._db)
-                self._alert_dispatcher = NotificationDispatcher(
-                    supervisor_token=config.supervisor_token,
-                    mobile_app_target=config.mobile_app_target,
-                    mobile_app_enabled=config.mobile_app_enabled,
-                    smtp_host=config.smtp_host,
-                    smtp_port=config.smtp_port,
-                    smtp_user=config.smtp_user,
-                    smtp_password=config.smtp_password,
-                    smtp_recipients=config.smtp_recipients,
-                    smtp_sender=config.smtp_sender,
-                    smtp_enabled=config.smtp_enabled,
-                    discord_webhook_url=config.discord_webhook_url,
-                    discord_enabled=config.discord_enabled,
-                )
                 self._analysis_queue = AnalysisQueue(
                     analyzer=self._analyzer,
                     db=self._db,
@@ -189,6 +191,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             },
             analyzer=self._analyzer,
             analysis_queue=self._analysis_queue,
+            notification_dispatcher=self._alert_dispatcher,
         )
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,
