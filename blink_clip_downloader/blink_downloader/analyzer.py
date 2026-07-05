@@ -376,11 +376,41 @@ class BaseAnalyzer(abc.ABC):
         # one analyzer instance. This lock serializes analyze_clip() so only
         # one runs at a time per instance.
         self._analyze_lock: asyncio.Lock | None = None
+        # Cache for health_check() on providers that hit a real external API
+        # (see _cached_health_check_result/_store_health_check_result below).
+        self._last_health_check_time: float = 0.0
+        self._last_health_check_result: bool = False
 
     def _get_analyze_lock(self) -> asyncio.Lock:
         if self._analyze_lock is None:
             self._analyze_lock = asyncio.Lock()
         return self._analyze_lock
+
+    # Health-check results are cached for this many seconds on providers that
+    # hit a real external API (OpenAI, Anthropic, Ollama Cloud, Moondream
+    # Cloud). Without this, both the web UI (polling /api/ai/status every 10s
+    # while the AI tab is open) and the background AnalysisQueue (polling
+    # every ai_check_interval seconds) each trigger a fresh authenticated API
+    # call — e.g. OpenAI's GET /v1/models — showing up as constant traffic in
+    # logs and needlessly counting against provider rate limits. Local/LAN
+    # providers (plain Ollama, Moondream local) don't use this since a cheap
+    # LAN ping benefits from being fresh rather than cached.
+    _HEALTH_CHECK_CACHE_SECONDS: float = 30.0
+
+    def _cached_health_check_result(self) -> bool | None:
+        """Return a still-fresh cached health_check() result, or None if stale."""
+        if (
+            time.monotonic() - self._last_health_check_time
+            < self._HEALTH_CHECK_CACHE_SECONDS
+        ):
+            return self._last_health_check_result
+        return None
+
+    def _store_health_check_result(self, result: bool) -> bool:
+        """Cache *result* as the current health_check() outcome and return it."""
+        self._last_health_check_time = time.monotonic()
+        self._last_health_check_result = result
+        return result
 
     def update_camera_descriptions(self, descriptions: dict[str, str]) -> None:
         """Update per-camera descriptions at runtime without restart."""
@@ -1383,11 +1413,19 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
         return self._session
 
     async def health_check(self) -> bool:
-        """Return False immediately if no API key is configured."""
+        """Return False immediately if no API key is configured.
+
+        Cached for ``_HEALTH_CHECK_CACHE_SECONDS`` since this hits Ollama
+        Cloud's real API — see the cache helpers on :class:`BaseAnalyzer` for
+        why.
+        """
+        cached = self._cached_health_check_result()
+        if cached is not None:
+            return cached
         if not self._api_key:
             _LOGGER.warning("Ollama Cloud: no API key configured")
-            return False
-        return await super().health_check()
+            return self._store_health_check_result(False)
+        return self._store_health_check_result(await super().health_check())
 
 
 # ---------------------------------------------------------------------------
@@ -1775,10 +1813,18 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             await self._session.close()
 
     async def health_check(self) -> bool:
-        """Return True if the API key is set and the cloud endpoint is reachable."""
+        """Return True if the API key is set and the cloud endpoint is reachable.
+
+        Cached for ``_HEALTH_CHECK_CACHE_SECONDS`` since this hits Moondream
+        Cloud's real API — see the cache helpers on :class:`BaseAnalyzer` for
+        why.
+        """
+        cached = self._cached_health_check_result()
+        if cached is not None:
+            return cached
         if not self._api_key:
             _LOGGER.warning("Moondream Cloud: no API key configured")
-            return False
+            return self._store_health_check_result(False)
         try:
             session = await self._get_session()
             async with session.get(
@@ -1786,10 +1832,10 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 timeout=_HEALTH_TIMEOUT,
                 allow_redirects=True,
             ) as resp:
-                return resp.status < 500
+                return self._store_health_check_result(resp.status < 500)
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             _LOGGER.debug("Moondream Cloud health check failed: %s", exc)
-            return False
+            return self._store_health_check_result(False)
 
     def model_pricing(self) -> tuple[float, float]:
         """Return (input_price, output_price) per 1M tokens for Moondream Cloud."""
@@ -2918,10 +2964,17 @@ class AnthropicAnalyzer(BaseAnalyzer):
             self._client = None
 
     async def health_check(self) -> bool:
-        """Return True when the API key is valid and the Anthropic API is reachable."""
+        """Return True when the API key is valid and the Anthropic API is reachable.
+
+        Cached for ``_HEALTH_CHECK_CACHE_SECONDS`` since this hits Anthropic's
+        real API — see the cache helpers on :class:`BaseAnalyzer` for why.
+        """
+        cached = self._cached_health_check_result()
+        if cached is not None:
+            return cached
         if not self._api_key:
             _LOGGER.warning("Anthropic: no API key configured")
-            return False
+            return self._store_health_check_result(False)
         try:
             import anthropic as _anthropic  # noqa: PLC0415
         except ImportError:
@@ -2929,25 +2982,25 @@ class AnthropicAnalyzer(BaseAnalyzer):
                 "anthropic package is not installed. "
                 "Install it with: pip install anthropic"
             )
-            return False
+            return self._store_health_check_result(False)
         try:
             client = self._get_client()
             await client.models.list(limit=1)
-            return True
+            return self._store_health_check_result(True)
         except _anthropic.AuthenticationError:
             _LOGGER.error(
                 "Anthropic: invalid API key (AuthenticationError) — "
                 "check your anthropic_api_key in the add-on settings"
             )
-            return False
+            return self._store_health_check_result(False)
         except _anthropic.PermissionDeniedError:
             _LOGGER.error(
                 "Anthropic: API key does not have permission to access this resource"
             )
-            return False
+            return self._store_health_check_result(False)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Anthropic health check failed: %s", exc)
-            return False
+            return self._store_health_check_result(False)
 
     async def fetch_models(self) -> list[dict[str, Any]]:
         """Fetch available models from the Anthropic API; falls back to a hardcoded list."""
@@ -3195,35 +3248,42 @@ class OpenAIAnalyzer(BaseAnalyzer):
             self._client = None
 
     async def health_check(self) -> bool:
-        """Return True when the API key is valid and the OpenAI API is reachable."""
+        """Return True when the API key is valid and the OpenAI API is reachable.
+
+        Cached for ``_HEALTH_CHECK_CACHE_SECONDS`` since this hits OpenAI's real
+        API — see the cache helpers on :class:`BaseAnalyzer` for why.
+        """
+        cached = self._cached_health_check_result()
+        if cached is not None:
+            return cached
         if not self._api_key:
             _LOGGER.warning("OpenAI: no API key configured")
-            return False
+            return self._store_health_check_result(False)
         try:
             import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
         except ImportError:
             _LOGGER.error(
                 "openai package is not installed. Install it with: pip install openai"
             )
-            return False
+            return self._store_health_check_result(False)
         try:
             client = self._get_client()
             await client.models.list()
-            return True
+            return self._store_health_check_result(True)
         except _openai.AuthenticationError:
             _LOGGER.error(
                 "OpenAI: invalid API key (AuthenticationError) — "
                 "check your openai_api_key in the add-on settings"
             )
-            return False
+            return self._store_health_check_result(False)
         except _openai.PermissionDeniedError:
             _LOGGER.error(
                 "OpenAI: API key does not have permission to access this resource"
             )
-            return False
+            return self._store_health_check_result(False)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("OpenAI health check failed: %s", exc)
-            return False
+            return self._store_health_check_result(False)
 
     async def fetch_models(self) -> list[dict[str, Any]]:
         """Fetch vision-capable models from the OpenAI API; falls back to a hardcoded list."""
@@ -3313,8 +3373,8 @@ class OpenAIAnalyzer(BaseAnalyzer):
         ):
             return response
 
-        suspicious, _, description = self._try_parse_json(response)
-        if not suspicious or not description:
+        suspicious, _, _ = self._try_parse_json(response)
+        if not suspicious:
             return response
 
         _LOGGER.info(

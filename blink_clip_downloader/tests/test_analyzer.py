@@ -538,6 +538,21 @@ async def test_ollama_cloud_health_check_offline() -> None:
     assert await a.health_check() is False
 
 
+async def test_ollama_cloud_health_check_caches_result() -> None:
+    """A second call within the cache TTL must not hit the API again."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    get_mock = MagicMock(return_value=mock_resp)
+
+    a = OllamaCloudAnalyzer(api_key="test-key", model="llava:7b", prompt="test")
+    a._session = _mock_session(get=get_mock)
+    assert await a.health_check() is True
+    assert await a.health_check() is True
+    assert get_mock.call_count == 1
+
+
 def test_ollama_cloud_provider_name() -> None:
     a = OllamaCloudAnalyzer(api_key="key", model="llava:7b", prompt="test")
     assert a.provider_name == "ollama_cloud"
@@ -682,6 +697,21 @@ async def test_moondream_cloud_health_check_offline() -> None:
         get=MagicMock(side_effect=aiohttp.ClientConnectionError("refused"))
     )
     assert await a.health_check() is False
+
+
+async def test_moondream_cloud_health_check_caches_result() -> None:
+    """A second call within the cache TTL must not hit the API again."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    get_mock = MagicMock(return_value=mock_resp)
+
+    a = MoondreamCloudAnalyzer(api_key="test-key", prompt="test")
+    a._session = _mock_session(get=get_mock)
+    assert await a.health_check() is True
+    assert await a.health_check() is True
+    assert get_mock.call_count == 1
 
 
 async def test_moondream_cloud_call_model_success() -> None:
@@ -1510,6 +1540,25 @@ async def test_anthropic_health_check_success(monkeypatch: pytest.MonkeyPatch) -
         a._client = mock_mod.AsyncAnthropic.return_value
         result = await a.health_check()
     assert result is True
+
+
+async def test_anthropic_health_check_caches_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second call within the cache TTL must not hit the Anthropic API again."""
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="valid-key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        first = await a.health_check()
+        second = await a.health_check()
+    assert first is True
+    assert second is True
+    assert mock_mod.AsyncAnthropic.return_value.models.list.call_count == 1
 
 
 async def test_anthropic_health_check_auth_error(
@@ -2465,6 +2514,48 @@ async def test_openai_health_check_generic_exception(
     assert result is False
 
 
+async def test_openai_health_check_caches_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second call within the cache TTL must not hit the OpenAI API again."""
+    import sys
+
+    mock_mod = _make_openai_module()
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="valid-key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        first = await a.health_check()
+        second = await a.health_check()
+    assert first is True
+    assert second is True
+    assert mock_mod.AsyncOpenAI.return_value.models.list.call_count == 1
+
+
+async def test_openai_health_check_cache_expires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the TTL elapses, health_check must hit the API again."""
+    import sys
+
+    import blink_downloader.analyzer as analyzer_module
+
+    mock_mod = _make_openai_module()
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="valid-key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+
+    fake_now = 1000.0
+    monkeypatch.setattr(analyzer_module.time, "monotonic", lambda: fake_now)
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a.health_check()
+        fake_now += a._HEALTH_CHECK_CACHE_SECONDS + 1
+        await a.health_check()
+    assert mock_mod.AsyncOpenAI.return_value.models.list.call_count == 2
+
+
 # ------------------------------------------------------------------
 # OpenAIAnalyzer — fetch_models
 # ------------------------------------------------------------------
@@ -2924,6 +3015,39 @@ async def test_openai_escalation_skipped_on_malformed_json(
     create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
     assert create_call.await_count == 1
     assert result == "not valid json at all"
+
+
+async def test_openai_escalation_triggers_with_empty_description(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A suspicious verdict still escalates even if description is empty."""
+    import sys
+
+    tier1_resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.7, "description": ""}',
+    )
+    tier2_resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.95, "description": "Confirmed intruder"}',
+    )
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=[tier1_resp, tier2_resp]
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(
+        api_key="key",
+        model="gpt-4o-mini",
+        prompt="test",
+        escalation_model="gpt-4o",
+    )
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    assert create_call.await_count == 2
+    assert "Confirmed intruder" in result
 
 
 async def test_openai_escalation_triggers_and_sums_tokens(

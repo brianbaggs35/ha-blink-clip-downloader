@@ -171,12 +171,14 @@ options:
   # [OpenAI] GPT model to use. Use "Fetch Models" in the web UI to see available
   # models. gpt-4o-mini is the most cost-effective vision option.
   openai_model: "gpt-4o-mini"
-  # [OpenAI] Optional second-tier model for two-tier escalation. When set, every
-  # clip is first analyzed with the cheap/fast openai_model above; only clips it
-  # flags as suspicious are re-analyzed with this stronger model for a closer
-  # second opinion, and that verdict is what gets recorded. Leave empty to
-  # disable escalation and always use openai_model alone. Example pairing:
-  # openai_model: "gpt-4o-mini" with openai_escalation_model: "gpt-4o".
+  # [OpenAI only — has no effect for any other ai_provider] Optional second-tier
+  # model for two-tier escalation. When set, every clip is first analyzed with
+  # the cheap/fast openai_model above; only clips it flags as suspicious are
+  # re-analyzed with this stronger model for a closer second opinion, and that
+  # verdict is what gets recorded. Leave empty to disable escalation and always
+  # use openai_model alone. Example pairing: openai_model: "gpt-4o-mini" with
+  # openai_escalation_model: "gpt-4o". Not available for Moondream Cloud, which
+  # only offers a single selectable model.
   openai_escalation_model: ""
   # Base prompt sent to the AI for each clip. Must request a JSON response with
   # "suspicious", "confidence", and "description" keys. This is the global default;
