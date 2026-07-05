@@ -149,7 +149,7 @@ def _vision_model_score(name: str) -> int:
 
 
 # OpenAI model pricing: (input_$/1M_tokens, output_$/1M_tokens)
-# Source: https://platform.openai.com/docs/pricing
+# Source: https://developers.openai.com/api/docs/pricing (standard tier)
 # More specific model-family prefixes (mini/nano/dotted variants) must be
 # listed before their shorter/bare prefix (e.g. "gpt-5.4-mini" before
 # "gpt-5.4" before "gpt-5") since model_pricing() below returns the first
@@ -162,9 +162,9 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "o4-mini": (1.10, 4.40),
     "gpt-4o": (2.50, 10.00),
     "gpt-4.1": (2.00, 8.00),
-    "o1-mini": (3.00, 12.00),
+    "o1-mini": (1.10, 4.40),
     "o1": (15.00, 60.00),
-    "o3": (10.00, 40.00),
+    "o3": (2.00, 8.00),
     "gpt-4-turbo": (10.00, 30.00),
     "gpt-5.4-nano": (0.20, 1.25),
     "gpt-5.4-mini": (0.75, 4.50),
@@ -172,6 +172,8 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gpt-5-mini": (0.25, 2.00),
     "gpt-5.4": (2.50, 15.00),
     "gpt-5.5": (5.00, 30.00),
+    "gpt-5.2": (1.75, 14.00),
+    "gpt-5.1": (1.25, 10.00),
     "gpt-5": (1.25, 10.00),
 }
 
@@ -190,6 +192,27 @@ _OPENAI_VISION_PREFIXES: frozenset[str] = frozenset(
         "o4-mini",
     }
 )
+
+# Structured Outputs (response_format=json_schema, strict=True) guarantees the
+# response matches this schema exactly — unlike json_object mode, which only
+# guarantees *some* valid JSON — so parsing never has to fall back to
+# keyword-matching an incorrectly-shaped object. Supported on gpt-4o-2024-08-06+,
+# gpt-4.1, gpt-5, and o4-mini; gpt-4-turbo predates Structured Outputs and only
+# supports the older json_object mode.
+_OPENAI_STRUCTURED_OUTPUT_SCHEMA: dict[str, Any] = {
+    "name": "clip_analysis",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "suspicious": {"type": "boolean"},
+            "confidence": {"type": "number"},
+            "description": {"type": "string"},
+        },
+        "required": ["suspicious", "confidence", "description"],
+        "additionalProperties": False,
+    },
+}
 
 # Fallback model list when the OpenAI API cannot be reached.
 _OPENAI_FALLBACK_MODELS: list[dict] = [
@@ -285,6 +308,23 @@ _ANTHROPIC_FALLBACK_MODELS: list[dict] = [
 ]
 
 
+def lookup_model_pricing(model: str) -> tuple[float, float] | None:
+    """Best-effort (input, output) $/1M-token pricing lookup for *model*.
+
+    Checks the OpenAI and Anthropic pricing tables — their model-id
+    namespaces don't overlap, so no provider hint is needed. Returns None for
+    models this add-on can't price per-token (Ollama, Moondream, or an
+    unrecognized/fine-tuned id) so callers can render an explicit "N/A"
+    instead of guessing at a price.
+    """
+    lower = (model or "").lower()
+    for table in (_OPENAI_MODEL_PRICING, _ANTHROPIC_MODEL_PRICING):
+        for prefix, pricing in table.items():
+            if lower.startswith(prefix) or prefix in lower:
+                return pricing
+    return None
+
+
 def is_moondream_installed() -> bool:
     """Return True if the moondream package is importable."""
     try:
@@ -311,6 +351,14 @@ class AnalysisResult:
     tokens_prompt: int = 0
     tokens_completion: int = 0
     anomaly_score: float = 0.0
+    # Set only when a tier-1 verdict escalated to a stronger OpenAI model
+    # (see BaseAnalyzer._call_model / openai_escalation_model). Tracked
+    # separately from tokens_prompt/tokens_completion (tier 1's own usage) so
+    # the AI Usage tab can attribute and price each tier's tokens correctly
+    # instead of folding tier 2's cost into tier 1's model row.
+    escalation_model: str = ""
+    escalation_tokens_prompt: int = 0
+    escalation_tokens_completion: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -327,6 +375,9 @@ class AnalysisResult:
             "tokens_prompt": self.tokens_prompt,
             "tokens_completion": self.tokens_completion,
             "anomaly_score": self.anomaly_score,
+            "escalation_model": self.escalation_model,
+            "escalation_tokens_prompt": self.escalation_tokens_prompt,
+            "escalation_tokens_completion": self.escalation_tokens_completion,
         }
 
 
@@ -363,6 +414,13 @@ class BaseAnalyzer(abc.ABC):
         # Reset to 0 at the start of each analyze_clip() call.
         self._last_prompt_tokens: int = 0
         self._last_completion_tokens: int = 0
+        # Set only by OpenAIAnalyzer._call_model() when a tier-1 verdict
+        # escalates to a stronger model. Left at their defaults (empty/0) by
+        # every other provider and reset at the start of each analyze_clip()
+        # call alongside the tokens above.
+        self._last_escalation_model: str = ""
+        self._last_escalation_prompt_tokens: int = 0
+        self._last_escalation_completion_tokens: int = 0
         # Optional ClipDatabase for the visual scene-baseline ("smart brain")
         # feature. Unset (None) disables it entirely — set via
         # attach_scene_baseline_db() once the app has a database ready.
@@ -523,6 +581,9 @@ class BaseAnalyzer(abc.ABC):
 
         self._last_prompt_tokens = 0
         self._last_completion_tokens = 0
+        self._last_escalation_model = ""
+        self._last_escalation_prompt_tokens = 0
+        self._last_escalation_completion_tokens = 0
         # Store camera name so provider subclasses can access it in _call_model.
         # Safe because analyze_clip() holds _analyze_lock for its whole body.
         self._current_camera: str = camera
@@ -622,6 +683,9 @@ class BaseAnalyzer(abc.ABC):
             tokens_prompt=self._last_prompt_tokens,
             tokens_completion=self._last_completion_tokens,
             anomaly_score=anomaly_score,
+            escalation_model=self._last_escalation_model,
+            escalation_tokens_prompt=self._last_escalation_prompt_tokens,
+            escalation_tokens_completion=self._last_escalation_completion_tokens,
         )
 
     # ------------------------------------------------------------------
@@ -2945,11 +3009,10 @@ class AnthropicAnalyzer(BaseAnalyzer):
 
     def model_pricing(self) -> tuple[float, float]:
         """Return (input_price, output_price) per 1M tokens for the current model."""
-        lower = self._model.lower()
-        for prefix, pricing in _ANTHROPIC_MODEL_PRICING.items():
-            if lower.startswith(prefix) or prefix in lower:
-                return pricing
-        return (3.00, 15.00)  # Sonnet-level fallback for unknown models
+        return lookup_model_pricing(self._model) or (
+            3.00,
+            15.00,
+        )  # Sonnet-level fallback for unknown models
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -3015,7 +3078,9 @@ class AnthropicAnalyzer(BaseAnalyzer):
                     page = await client.models.list()
                     result = []
                     for m in page.data:
-                        inp, out = _ANTHROPIC_MODEL_PRICING.get(m.id, (3.00, 15.00))
+                        # Prefix match (not exact dict lookup) in case the API
+                        # returns a dated snapshot id rather than the bare alias.
+                        inp, out = lookup_model_pricing(m.id) or (3.00, 15.00)
                         display = getattr(m, "display_name", m.id)
                         result.append(
                             {
@@ -3229,11 +3294,10 @@ class OpenAIAnalyzer(BaseAnalyzer):
 
     def model_pricing(self) -> tuple[float, float]:
         """Return (input_price, output_price) per 1M tokens for the current model."""
-        lower = self._model.lower()
-        for prefix, pricing in _OPENAI_MODEL_PRICING.items():
-            if lower.startswith(prefix) or prefix in lower:
-                return pricing
-        return (2.50, 10.00)  # gpt-4o level fallback for unknown models
+        return lookup_model_pricing(self._model) or (
+            2.50,
+            10.00,
+        )  # gpt-4o level fallback for unknown models
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -3300,7 +3364,10 @@ class OpenAIAnalyzer(BaseAnalyzer):
                     for m in pages.data:
                         if not is_openai_vision_model(m.id):
                             continue
-                        inp, out = _OPENAI_MODEL_PRICING.get(m.id, (2.50, 10.00))
+                        # Prefix match (not exact dict lookup) since the API
+                        # often returns dated snapshot ids like
+                        # "gpt-4o-mini-2024-07-18" rather than the bare alias.
+                        inp, out = lookup_model_pricing(m.id) or (2.50, 10.00)
                         # Use a friendly pricing suffix only for known models
                         suffix = f" (${inp:.2f}/${out:.2f} per 1M tokens)"
                         result.append(
@@ -3360,10 +3427,15 @@ class OpenAIAnalyzer(BaseAnalyzer):
         Every clip is analyzed with ``self._model`` first. If an
         ``escalation_model`` is configured and tier 1 returns a suspicious,
         well-formed JSON verdict, the same frames are re-analyzed with the
-        escalation model and its response is returned instead — the tier-1
-        token cost is added to whatever tier 2 reports so downstream cost
-        tracking reflects both calls. Non-suspicious (the common case) or
-        malformed tier-1 results are returned as-is with no second call.
+        escalation model and its response is returned instead. Tier 1's
+        tokens stay in ``_last_prompt_tokens``/``_last_completion_tokens`` and
+        tier 2's are recorded separately in ``_last_escalation_model``/
+        ``_last_escalation_prompt_tokens``/``_last_escalation_completion_tokens``
+        — kept apart (rather than summed under one model) so the AI Usage tab
+        can price and count each tier against its own model instead of
+        overstating tier-1's usage or hiding tier-2's entirely. Non-suspicious
+        (the common case) or malformed tier-1 results are returned as-is with
+        no second call.
         """
         response = await self._call_openai_model(frames, prompt, self._model)
         if (
@@ -3397,8 +3469,11 @@ class OpenAIAnalyzer(BaseAnalyzer):
             self._last_completion_tokens = tier1_completion_tokens
             return response
 
-        self._last_prompt_tokens += tier1_prompt_tokens
-        self._last_completion_tokens += tier1_completion_tokens
+        self._last_escalation_model = self._escalation_model
+        self._last_escalation_prompt_tokens = self._last_prompt_tokens
+        self._last_escalation_completion_tokens = self._last_completion_tokens
+        self._last_prompt_tokens = tier1_prompt_tokens
+        self._last_completion_tokens = tier1_completion_tokens
         return escalated
 
     async def _call_openai_model(
@@ -3448,13 +3523,11 @@ class OpenAIAnalyzer(BaseAnalyzer):
                 {"role": "user", "content": content},
             ]
 
-            # json_object response format is supported on the gpt-4o, gpt-4.1,
-            # gpt-4-turbo, and gpt-5 families — it guarantees the model
-            # returns valid JSON.
             model_lower = model.lower()
-            supports_json_object = any(
+            is_reasoning_model = model_lower.startswith(("o1", "o3", "o4", "gpt-5"))
+            supports_structured_outputs = any(
                 prefix in model_lower
-                for prefix in ("gpt-4o", "gpt-4.1", "gpt-4-turbo", "gpt-5", "o4-mini")
+                for prefix in ("gpt-4o", "gpt-4.1", "gpt-5", "o4-mini")
             )
             create_kwargs: dict[str, Any] = {
                 "model": model,
@@ -3462,12 +3535,28 @@ class OpenAIAnalyzer(BaseAnalyzer):
             }
             # The o1/o3/o4-mini reasoning models and the gpt-5 family reject the
             # legacy `max_tokens` param (HTTP 400 "unsupported_parameter") and
-            # require `max_completion_tokens` instead.
-            if model_lower.startswith(("o1", "o3", "o4", "gpt-5")):
-                create_kwargs["max_completion_tokens"] = 512
+            # require `max_completion_tokens` instead. Their invisible reasoning
+            # tokens are billed from the same budget as the visible completion,
+            # so give them extra headroom over the 512 used for non-reasoning
+            # models to avoid a truncated/empty response on a harder clip.
+            if is_reasoning_model:
+                create_kwargs["max_completion_tokens"] = 1024
+                # This is a short, well-defined classification task (suspicious
+                # yes/no + one-sentence description), not multi-step reasoning,
+                # so the lowest effort setting keeps latency/cost down without
+                # sacrificing verdict quality. "-pro" tier reasoning models
+                # (e.g. gpt-5.2-pro) reject anything but "high", so they're
+                # excluded from this optimization.
+                if not model_lower.endswith("-pro"):
+                    create_kwargs["reasoning_effort"] = "low"
             else:
                 create_kwargs["max_tokens"] = 512
-            if supports_json_object:
+            if supports_structured_outputs:
+                create_kwargs["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": _OPENAI_STRUCTURED_OUTPUT_SCHEMA,
+                }
+            elif "gpt-4-turbo" in model_lower:
                 create_kwargs["response_format"] = {"type": "json_object"}
 
             response = await client.chat.completions.create(**create_kwargs)
