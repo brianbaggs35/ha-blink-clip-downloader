@@ -107,6 +107,7 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     anthropic_model: str = "claude-haiku-4-5"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    openai_escalation_model: str = ""
     ai_prompt: str = (
         "You are a security camera analyst. Review this motion-triggered clip and determine "
         "if anything suspicious is happening.\n\n"
@@ -300,6 +301,9 @@ def _parse_config(data: dict) -> AppConfig:
         or "claude-haiku-4-5",
         openai_api_key=str(data.get("openai_api_key", "") or "").strip(),
         openai_model=str(data.get("openai_model", "") or "").strip() or "gpt-4o-mini",
+        openai_escalation_model=str(
+            data.get("openai_escalation_model", "") or ""
+        ).strip(),
         ai_prompt=str(data.get("ai_prompt", "") or "").strip() or AppConfig.ai_prompt,
         ai_car_description=str(data.get("ai_car_description", "") or "").strip(),
         ai_max_frames=max(1, min(100, int(data.get("ai_max_frames", 5)))),

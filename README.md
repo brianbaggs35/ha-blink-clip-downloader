@@ -118,6 +118,19 @@ and performs well for security-camera analysis. `gpt-4o` ($2.50/$10 per 1M token
 offers higher accuracy, while `gpt-4.1-nano` ($0.10/$0.40 per 1M tokens) is the
 lowest-cost option available.
 
+## Model Testing Status
+
+The following providers/models have been tested and are working or were fixed:
+
+| Version         | Working (Tested)   |
+| ----------------| -------------------|
+| GPT-4o-mini     | :white_check_mark: |
+| GPT-5 models    | :white_check_mark: |
+| Moondream cloud | :white_check_mark: |
+| Anthropic models| :x:                |
+| Ollama models   | :x:                |
+| Moondream local | :x:                |
+
 ## Support
 
 Open an issue at <https://github.com/brianbaggs35/ha-blink-clip-downloader/issues>.

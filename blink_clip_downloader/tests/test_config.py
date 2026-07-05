@@ -266,6 +266,26 @@ def test_ai_analysis_full_config():
     assert cfg.ai_schedule_end == "06:00"
 
 
+def test_openai_escalation_model_defaults_empty():
+    """Empty means escalation is disabled — unlike openai_model, there is no
+    fallback default."""
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.openai_escalation_model == ""
+
+
+def test_openai_escalation_model_parsed_and_stripped():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "openai_model": "gpt-4o-mini",
+            "openai_escalation_model": "  gpt-4o  ",
+        }
+    )
+    assert cfg.openai_model == "gpt-4o-mini"
+    assert cfg.openai_escalation_model == "gpt-4o"
+
+
 def test_ai_max_frames_clamped():
     cfg = _parse_config({"username": "u", "password": "p", "ai_max_frames": 150})
     assert cfg.ai_max_frames == 100

@@ -150,6 +150,10 @@ def _vision_model_score(name: str) -> int:
 
 # OpenAI model pricing: (input_$/1M_tokens, output_$/1M_tokens)
 # Source: https://platform.openai.com/docs/pricing
+# More specific model-family prefixes (mini/nano/dotted variants) must be
+# listed before their shorter/bare prefix (e.g. "gpt-5.4-mini" before
+# "gpt-5.4" before "gpt-5") since model_pricing() below returns the first
+# matching entry in insertion order.
 _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "gpt-4.1-nano": (0.10, 0.40),
     "gpt-4o-mini": (0.15, 0.60),
@@ -162,15 +166,25 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "o1": (15.00, 60.00),
     "o3": (10.00, 40.00),
     "gpt-4-turbo": (10.00, 30.00),
+    "gpt-5.4-nano": (0.20, 1.25),
+    "gpt-5.4-mini": (0.75, 4.50),
+    "gpt-5-nano": (0.05, 0.40),
+    "gpt-5-mini": (0.25, 2.00),
+    "gpt-5.4": (2.50, 15.00),
+    "gpt-5.5": (5.00, 30.00),
+    "gpt-5": (1.25, 10.00),
 }
 
 # Vision-capable OpenAI model ID prefixes (checked as substring of model id).
+# "gpt-5" alone covers every dotted/mini/nano variant in that family (e.g.
+# "gpt-5.4-mini", "gpt-5.5") since they all contain "gpt-5" as a substring.
 _OPENAI_VISION_PREFIXES: frozenset[str] = frozenset(
     {
         "gpt-4o",
         "gpt-4-turbo",
         "gpt-4-vision",
         "gpt-4.1",
+        "gpt-5",
         "o1",
         "o3",
         "o4-mini",
@@ -180,12 +194,28 @@ _OPENAI_VISION_PREFIXES: frozenset[str] = frozenset(
 # Fallback model list when the OpenAI API cannot be reached.
 _OPENAI_FALLBACK_MODELS: list[dict] = [
     {
+        "name": "gpt-5.4-mini",
+        "display_name": "GPT-5.4 mini — Best Value ($0.75/$4.50 per 1M tokens)",
+    },
+    {
+        "name": "gpt-5.4-nano",
+        "display_name": "GPT-5.4 nano — Lowest Cost ($0.20/$1.25 per 1M tokens)",
+    },
+    {
+        "name": "gpt-5.4",
+        "display_name": "GPT-5.4 ($2.50/$15 per 1M tokens)",
+    },
+    {
+        "name": "gpt-5.5",
+        "display_name": "GPT-5.5 — Highest Intelligence ($5/$30 per 1M tokens)",
+    },
+    {
         "name": "gpt-4o",
         "display_name": "GPT-4o ($2.50/$10 per 1M tokens)",
     },
     {
         "name": "gpt-4o-mini",
-        "display_name": "GPT-4o mini — Best Value ($0.15/$0.60 per 1M tokens)",
+        "display_name": "GPT-4o mini ($0.15/$0.60 per 1M tokens)",
     },
     {
         "name": "gpt-4.1",
@@ -197,7 +227,7 @@ _OPENAI_FALLBACK_MODELS: list[dict] = [
     },
     {
         "name": "gpt-4.1-nano",
-        "display_name": "GPT-4.1 nano — Lowest Cost ($0.10/$0.40 per 1M tokens)",
+        "display_name": "GPT-4.1 nano ($0.10/$0.40 per 1M tokens)",
     },
     {
         "name": "gpt-4-turbo",
@@ -207,8 +237,16 @@ _OPENAI_FALLBACK_MODELS: list[dict] = [
 
 
 def is_openai_vision_model(model_id: str) -> bool:
-    """Return True if an OpenAI model id looks vision-capable."""
+    """Return True if an OpenAI model id looks vision-capable via Chat Completions.
+
+    "-pro" tier reasoning models (e.g. ``gpt-5.5-pro``) are excluded even
+    though they match a vision prefix — they are only available via OpenAI's
+    Responses/Batch APIs, not Chat Completions, which is the only API this
+    analyzer speaks.
+    """
     lower = model_id.lower()
+    if lower.endswith("-pro"):
+        return False
     return any(p in lower for p in _OPENAI_VISION_PREFIXES)
 
 
@@ -3084,9 +3122,18 @@ class AnthropicAnalyzer(BaseAnalyzer):
 class OpenAIAnalyzer(BaseAnalyzer):
     """Analyzes clips via the OpenAI Chat Completions API (platform.openai.com).
 
-    Sends JPEG frames as base64 image_url content to a GPT-4o / GPT-4.1 model
-    and extracts token usage for cost tracking.  Authentication errors are logged
-    clearly so the user knows to check ``openai_api_key`` in the add-on settings.
+    Sends JPEG frames as base64 image_url content to a GPT-4o / GPT-4.1 / GPT-5
+    model and extracts token usage for cost tracking.  Authentication errors are
+    logged clearly so the user knows to check ``openai_api_key`` in the add-on
+    settings.
+
+    Supports optional two-tier escalation: when ``escalation_model`` is set,
+    every clip is first analyzed with the cheap/fast ``model`` (tier 1). Only
+    clips tier 1 flags as suspicious are re-analyzed with ``escalation_model``
+    (tier 2) for a more careful second opinion, and the tier-2 verdict is
+    returned instead. Most motion clips are not suspicious, so this keeps the
+    bulk of analyses on the cheaper model while reserving the stronger model
+    for the minority of cases that actually warrant closer reasoning.
     """
 
     def __init__(
@@ -3102,6 +3149,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
         camera_descriptions: dict[str, str] | None = None,
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
+        escalation_model: str = "",
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -3116,6 +3164,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
         )
         self._api_key = api_key
         self._model = model or "gpt-4o-mini"
+        self._escalation_model = (escalation_model or "").strip()
         self._client: Any = None
 
     @property
@@ -3246,7 +3295,56 @@ class OpenAIAnalyzer(BaseAnalyzer):
         return frame_bytes
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
-        """Send frames to the OpenAI Chat Completions API."""
+        """Run tier-1 analysis, escalating to a stronger model when configured.
+
+        Every clip is analyzed with ``self._model`` first. If an
+        ``escalation_model`` is configured and tier 1 returns a suspicious,
+        well-formed JSON verdict, the same frames are re-analyzed with the
+        escalation model and its response is returned instead — the tier-1
+        token cost is added to whatever tier 2 reports so downstream cost
+        tracking reflects both calls. Non-suspicious (the common case) or
+        malformed tier-1 results are returned as-is with no second call.
+        """
+        response = await self._call_openai_model(frames, prompt, self._model)
+        if (
+            not response
+            or not self._escalation_model
+            or self._escalation_model == self._model
+        ):
+            return response
+
+        suspicious, _, description = self._try_parse_json(response)
+        if not suspicious or not description:
+            return response
+
+        _LOGGER.info(
+            "OpenAI: tier-1 model %s flagged a suspicious result; "
+            "escalating to %s for a closer look",
+            self._model,
+            self._escalation_model,
+        )
+        tier1_prompt_tokens = self._last_prompt_tokens
+        tier1_completion_tokens = self._last_completion_tokens
+        escalated = await self._call_openai_model(
+            frames, prompt, self._escalation_model
+        )
+        if not escalated:
+            # Tier 2 produced no usable content — restore tier-1's token
+            # counts (tier 2 may still have recorded its own usage above
+            # before failing) so cost tracking reflects only the response
+            # we're actually returning.
+            self._last_prompt_tokens = tier1_prompt_tokens
+            self._last_completion_tokens = tier1_completion_tokens
+            return response
+
+        self._last_prompt_tokens += tier1_prompt_tokens
+        self._last_completion_tokens += tier1_completion_tokens
+        return escalated
+
+    async def _call_openai_model(
+        self, frames: list[bytes], prompt: str, model: str
+    ) -> str:
+        """Send frames to a specific OpenAI Chat Completions model."""
         if not frames:
             return ""
 
@@ -3290,18 +3388,25 @@ class OpenAIAnalyzer(BaseAnalyzer):
                 {"role": "user", "content": content},
             ]
 
-            # json_object response format is supported on gpt-4o, gpt-4.1, and
-            # gpt-4-turbo families — it guarantees the model returns valid JSON.
-            model_lower = self._model.lower()
+            # json_object response format is supported on the gpt-4o, gpt-4.1,
+            # gpt-4-turbo, and gpt-5 families — it guarantees the model
+            # returns valid JSON.
+            model_lower = model.lower()
             supports_json_object = any(
                 prefix in model_lower
-                for prefix in ("gpt-4o", "gpt-4.1", "gpt-4-turbo", "o4-mini")
+                for prefix in ("gpt-4o", "gpt-4.1", "gpt-4-turbo", "gpt-5", "o4-mini")
             )
             create_kwargs: dict[str, Any] = {
-                "model": self._model,
+                "model": model,
                 "messages": messages_to_send,
-                "max_tokens": 512,
             }
+            # The o1/o3/o4-mini reasoning models and the gpt-5 family reject the
+            # legacy `max_tokens` param (HTTP 400 "unsupported_parameter") and
+            # require `max_completion_tokens` instead.
+            if model_lower.startswith(("o1", "o3", "o4", "gpt-5")):
+                create_kwargs["max_completion_tokens"] = 512
+            else:
+                create_kwargs["max_tokens"] = 512
             if supports_json_object:
                 create_kwargs["response_format"] = {"type": "json_object"}
 
@@ -3328,7 +3433,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
             _LOGGER.error(
                 "OpenAI: permission denied — "
                 "check that your API key has access to model '%s'",
-                self._model,
+                model,
             )
             return ""
         except _openai.RateLimitError:
@@ -3384,6 +3489,7 @@ def create_analyzer(
     anthropic_model: str = "",
     openai_api_key: str = "",
     openai_model: str = "",
+    openai_escalation_model: str = "",
 ) -> BaseAnalyzer | None:
     """Return an analyzer for *ai_provider*, or ``None`` if configuration is invalid."""
     if ai_provider == "ollama":
@@ -3502,6 +3608,7 @@ def create_analyzer(
             camera_descriptions=camera_descriptions,
             frame_strategy=frame_strategy,
             car_cameras=car_cameras,
+            escalation_model=openai_escalation_model,
         )
 
     _LOGGER.warning(

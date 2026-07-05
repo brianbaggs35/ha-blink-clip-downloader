@@ -1,5 +1,36 @@
 # Changelog
 
+## 3.1.6
+
+### New features
+
+- **GPT-5 family support for the OpenAI provider.** `gpt-5`, `gpt-5-mini`,
+  `gpt-5-nano`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, and `gpt-5.5` are
+  now recognized as vision-capable models with accurate pricing shown in
+  **Fetch Models** and the AI usage panel. `gpt-5.5-pro` is intentionally
+  excluded — it's only available via OpenAI's Responses/Batch APIs, not the
+  Chat Completions API this add-on uses.
+- **Two-tier escalation for the OpenAI provider.** A new `openai_escalation_model`
+  option lets you pair a cheap/fast model (`openai_model`) with a stronger one:
+  every clip is analyzed with the cheap model first, and only clips it flags as
+  suspicious get a second, more careful analysis from the escalation model,
+  whose verdict is what's recorded and alerted on. Most motion clips aren't
+  suspicious, so this cuts cost on the common case while still applying a
+  stronger model where it matters. Leave `openai_escalation_model` empty
+  (the default) to keep the previous single-model behaviour.
+- **OpenAI cost estimate now shown in the web UI.** The AI usage panel's
+  "Estimated cost" figure previously only appeared for the Anthropic
+  provider even though OpenAI pricing/token tracking was already
+  implemented — it now also renders for `openai`.
+
+### Bug fixes
+
+- **Fix: OpenAI requests to `gpt-5`-family and `o1`/`o3`/`o4-mini` models
+  failed with HTTP 400 `Unsupported parameter: 'max_tokens'`.** These models
+  reject the legacy `max_tokens` chat-completions parameter and require
+  `max_completion_tokens` instead; the OpenAI analyzer now selects the
+  correct parameter based on the model name.
+
 ## 3.1.5
 
 ### AI analysis improvements
