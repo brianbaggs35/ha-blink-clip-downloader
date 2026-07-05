@@ -616,7 +616,10 @@ action:
 <!-- ── AI Usage ────────────────────────────────────────── -->
 <div class="page" id="page-usage">
   <div class="auto-content">
-    <h2>AI Token Usage</h2>
+    <h2 style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
+      <span>AI Token Usage</span>
+      <button class="btn sm danger" id="usage-clear-btn">🗑 Clear Stats</button>
+    </h2>
     <div id="usage-disabled-msg" style="display:none">
       <div class="status-card" style="padding:2rem;text-align:center;color:var(--muted)">
         <p style="font-size:1.2rem;margin-bottom:.8rem">📊 No AI Usage Data</p>
@@ -630,6 +633,8 @@ action:
         <div class="usage-stat"><div class="num" id="usage-total-tokens">—</div><div class="lbl">Total Tokens</div></div>
         <div class="usage-stat"><div class="num" id="usage-prompt-tokens">—</div><div class="lbl">Prompt Tokens</div></div>
         <div class="usage-stat"><div class="num" id="usage-completion-tokens">—</div><div class="lbl">Completion Tokens</div></div>
+        <div class="usage-stat" id="usage-escalations-stat" style="display:none"><div class="num" id="usage-escalations-value">—</div><div class="lbl">Escalations</div></div>
+        <div class="usage-stat" id="usage-escalation-tokens-stat" style="display:none"><div class="num" id="usage-escalation-tokens-value">—</div><div class="lbl">Escalation Tokens</div></div>
         <div class="usage-stat" id="usage-cost-stat" style="display:none"><div class="num" id="usage-cost-value">—</div><div class="lbl">Estimated Cost</div></div>
       </div>
 
@@ -652,6 +657,7 @@ action:
               <th style="text-align:right">Prompt Tokens</th>
               <th style="text-align:right">Completion Tokens</th>
               <th style="text-align:right">Total Tokens</th>
+              <th style="text-align:right">Est. Cost</th>
             </tr>
           </thead>
           <tbody id="usage-model-tbody"></tbody>
@@ -692,7 +698,13 @@ action:
             <select class="sel" id="ai-model-select" style="min-width:175px">
               <option value="">Select a model…</option>
             </select>
+            <button class="btn sm ghost" id="ai-copy-model-btn" title="Copy the selected model id, then paste it into this add-on's configuration (openai_model / anthropic_model / ollama_model)">📋 Copy</button>
           </div>
+          <p style="font-size:.72rem;color:var(--muted);margin-top:.35rem">
+            Selecting a model here does not change the running configuration — copy the
+            id and paste it into the add-on's <strong>Configuration</strong> tab, then
+            restart the add-on.
+          </p>
           <!-- Moondream local: install / status section -->
           <div id="ai-moondream-local-section" style="display:none;margin-top:.75rem">
             <div id="ai-md-arch-unsupported" style="display:none">
@@ -2100,6 +2112,14 @@ $('ai-fetch-models-btn').addEventListener('click', async () => {
   btn.disabled = false; btn.textContent = '⟳ Fetch Models';
 });
 
+$('ai-copy-model-btn').addEventListener('click', () => {
+  const modelId = $('ai-model-select').value;
+  if (!modelId) { toast('Fetch models and pick one first', true); return; }
+  navigator.clipboard.writeText(modelId)
+    .then(() => toast('Copied "' + modelId + '" — paste into the add-on Configuration tab'))
+    .catch(() => toast(modelId, true));
+});
+
 // ── Moondream local install ───────────────────────────────
 let _moondreamArchSupported = true;
 
@@ -2197,8 +2217,13 @@ const _PROVIDER_NOTES = {
   moondream_cloud: 'Moondream Cloud bills per API request. Each frame is analysed individually with reasoning mode enabled for better spatial accuracy. Token counts shown are <em>estimates</em> (256 image tokens + text tokens per frame) — the Moondream API does not return usage stats. Only one model is selectable for this provider, so two-tier escalation (OpenAI-only, see below) is not available here. Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for authoritative billing.',
   moondream_local: 'Moondream Local runs entirely on-device — no cloud costs and no token tracking. The analysis count shows how many clips have been processed.',
   anthropic: 'Anthropic (Claude) charges per token. Input and output tokens are tracked for every analysis. Use <strong>Claude Haiku 4.5</strong> for best cost efficiency ($1/$5 per 1M tokens). Estimated cost is calculated from your token usage and the model\'s current pricing.',
-  openai: 'OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis. OpenAI is the only provider that supports two-tier escalation (<code>openai_escalation_model</code>): if configured, estimated cost is calculated using the primary model\'s pricing for all tokens and may understate spend on clips that escalate.',
+  openai: 'OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis. OpenAI is the only provider that supports two-tier escalation (<code>openai_escalation_model</code>): if configured, tier-1 and escalation tokens are tracked and priced separately (see the escalation row in the table below), so the estimated cost reflects both calls.',
 };
+
+function _fmtCost(cost) {
+  if (cost == null) return 'N/A';
+  return cost < 0.001 ? '<$0.001' : '$' + cost.toFixed(4);
+}
 
 async function loadAIUsage() {
   try {
@@ -2208,6 +2233,7 @@ async function loadAIUsage() {
     const totalTokens = d.total_tokens || 0;
     const promptTokens = d.total_tokens_prompt || 0;
     const completionTokens = d.total_tokens_completion || 0;
+    const totalEscalations = d.total_escalations || 0;
     const byModel = d.by_model || [];
 
     $('usage-total-analyses').textContent = _fmtNum(totalAnalyses);
@@ -2232,18 +2258,28 @@ async function loadAIUsage() {
     const showTokens = provider === 'ollama' || provider === 'ollama_cloud'
       || provider === 'anthropic' || provider === 'openai' || provider === 'moondream_cloud';
 
-    // Anthropic: show estimated cost based on token usage and model pricing
-    const costStatEl = $('usage-cost-stat');
-    if ((provider === 'anthropic' || provider === 'openai') && d.cost_per_1m_input !== undefined && totalTokens > 0) {
-      const estimatedCost = (promptTokens * d.cost_per_1m_input + completionTokens * d.cost_per_1m_output) / 1000000;
-      const costStr = estimatedCost < 0.001 ? '<$0.001' : '$' + estimatedCost.toFixed(4);
-      if (costStatEl) {
-        costStatEl.style.display = '';
-        const valEl = $('usage-cost-value');
-        if (valEl) valEl.textContent = costStr;
-      }
+    // Escalations only apply to OpenAI's two-tier feature
+    const escStatEl = $('usage-escalations-stat');
+    const escTokensStatEl = $('usage-escalation-tokens-stat');
+    if (totalEscalations > 0) {
+      escStatEl.style.display = '';
+      $('usage-escalations-value').textContent = _fmtNum(totalEscalations);
+      escTokensStatEl.style.display = '';
+      $('usage-escalation-tokens-value').textContent = _fmtNum(d.total_escalation_tokens || 0);
     } else {
-      if (costStatEl) costStatEl.style.display = 'none';
+      escStatEl.style.display = 'none';
+      escTokensStatEl.style.display = 'none';
+    }
+
+    // Estimated cost: computed server-side per model row (each priced with
+    // its own rate, not a blanket "current model" rate), so it stays
+    // accurate across model switches and OpenAI escalation.
+    const costStatEl = $('usage-cost-stat');
+    if (d.total_estimated_cost != null && totalTokens > 0) {
+      costStatEl.style.display = '';
+      $('usage-cost-value').textContent = _fmtCost(d.total_estimated_cost);
+    } else {
+      costStatEl.style.display = 'none';
     }
     document.getElementById('usage-total-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
     document.getElementById('usage-prompt-tokens').closest('.usage-stat').style.display = showTokens ? '' : 'none';
@@ -2264,7 +2300,9 @@ async function loadAIUsage() {
         const tokensHtml = showTokens
           ? `<td style="text-align:right">${_fmtNum(tp)}</td><td style="text-align:right">${_fmtNum(tc)}</td><td style="text-align:right">${_fmtNum(tt)}</td>`
           : `<td style="text-align:right;color:var(--muted)">N/A</td><td style="text-align:right;color:var(--muted)">N/A</td><td style="text-align:right;color:var(--muted)">N/A</td>`;
-        return `<tr><td>${_esc(m.model||'—')}</td><td style="text-align:right">${_fmtNum(m.analyses||0)}</td>${tokensHtml}</tr>`;
+        const costHtml = `<td style="text-align:right">${_esc(_fmtCost(m.cost))}</td>`;
+        const modelLabel = _esc(m.model || '—') + (m.escalated ? ' <span style="color:var(--muted);font-size:.75em">(escalated)</span>' : '');
+        return `<tr><td>${modelLabel}</td><td style="text-align:right">${_fmtNum(m.analyses||0)}</td>${tokensHtml}${costHtml}</tr>`;
       }).join('');
     }
 
@@ -2274,6 +2312,17 @@ async function loadAIUsage() {
     console.error('AI usage error', e);
   }
 }
+
+$('usage-clear-btn').addEventListener('click', async () => {
+  if (!confirm('Clear all AI usage stats (tokens, cost, escalations)? Per-clip analysis results are not affected.')) return;
+  try {
+    await api('/api/ai/usage', { method: 'DELETE' });
+    toast('AI usage stats cleared');
+    loadAIUsage();
+  } catch (e) {
+    toast('Failed to clear usage stats', true);
+  }
+});
 </script>
 </body>
 </html>"""
@@ -2352,6 +2401,7 @@ class MediaServer:
         # AI Analysis endpoints
         app.router.add_get("/api/ai/status", self._handle_ai_status)
         app.router.add_get("/api/ai/usage", self._handle_ai_usage)
+        app.router.add_delete("/api/ai/usage", self._handle_ai_usage_clear)
         app.router.add_get("/api/ai/models", self._handle_ai_models)
         app.router.add_get("/api/ai/queue", self._handle_ai_queue)
         app.router.add_get("/api/ai/results/{clip_id}", self._handle_ai_clip_result)
@@ -2622,6 +2672,8 @@ class MediaServer:
         return web.json_response(data)
 
     async def _handle_ai_usage(self, _request: web.Request) -> web.Response:
+        from .analyzer import lookup_model_pricing  # noqa: PLC0415
+
         enabled = self._analyzer is not None
         data: dict = {"enabled": enabled}
         if enabled:
@@ -2635,8 +2687,35 @@ class MediaServer:
                 data["cost_per_1m_input"] = inp
                 data["cost_per_1m_output"] = out
         usage = await self._db.get_token_usage_stats()
+
+        # Price each model row against its *own* pricing table entry (rather
+        # than the blanket "current model" rate above) so a per-model
+        # breakdown that spans an escalation model, or leftover rows from a
+        # provider the user has since switched away from, isn't priced as if
+        # every token cost what the active model costs.
+        total_cost = 0.0
+        any_priced = False
+        for row in usage.get("by_model", []):
+            pricing = lookup_model_pricing(row.get("model", ""))
+            if pricing is None:
+                row["cost"] = None
+                continue
+            inp, out = pricing
+            row_cost = (
+                int(row.get("tokens_prompt") or 0) * inp
+                + int(row.get("tokens_completion") or 0) * out
+            ) / 1_000_000
+            row["cost"] = row_cost
+            total_cost += row_cost
+            any_priced = True
+        usage["total_estimated_cost"] = total_cost if any_priced else None
+
         data.update(usage)
         return web.json_response(data)
+
+    async def _handle_ai_usage_clear(self, _request: web.Request) -> web.Response:
+        await self._db.clear_ai_usage_stats()
+        return web.json_response({"cleared": True})
 
     async def _handle_ai_models(self, _request: web.Request) -> web.Response:
         if not self._analyzer:

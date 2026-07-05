@@ -920,6 +920,138 @@ async def test_ai_usage_returns_token_stats(
     assert data["by_model"][0]["model"] == "llava:7b"
 
 
+async def test_ai_usage_computes_cost_for_known_model(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """by_model rows are priced from the real per-model pricing table.
+
+    "llava:7b" isn't a priced model (Ollama), so its row gets cost=None and
+    doesn't contribute to the total; "gpt-4o-mini" is priced at
+    $0.15/$0.60 per 1M tokens regardless of which analyzer is currently active.
+    """
+    await db.add_clip(_make_clip("u1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "u1",
+            "camera": "Front Door",
+            "model": "gpt-4o-mini",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "tokens_prompt": 1_000_000,
+            "tokens_completion": 1_000_000,
+        }
+    )
+    resp = await client.get("/api/ai/usage")
+    data = await resp.json()
+
+    row = next(m for m in data["by_model"] if m["model"] == "gpt-4o-mini")
+    assert row["cost"] == pytest.approx(0.15 + 0.60)
+    assert data["total_estimated_cost"] == pytest.approx(0.15 + 0.60)
+
+
+async def test_ai_usage_unpriced_model_cost_is_none(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("u1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "u1",
+            "camera": "Front Door",
+            "model": "llava:7b",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "tokens_prompt": 100,
+            "tokens_completion": 40,
+        }
+    )
+    resp = await client.get("/api/ai/usage")
+    data = await resp.json()
+
+    row = next(m for m in data["by_model"] if m["model"] == "llava:7b")
+    assert row["cost"] is None
+    assert data["total_estimated_cost"] is None
+
+
+async def test_ai_usage_escalation_row_priced_separately(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """An OpenAI escalation shows up as its own by_model row, priced at the
+    escalation model's own rate rather than folded into tier 1's row."""
+    await db.add_clip(_make_clip("u1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "u1",
+            "camera": "Front Door",
+            "model": "gpt-4o-mini",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.9,
+            "summary": "Escalated",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "tokens_prompt": 1_000_000,
+            "tokens_completion": 1_000_000,
+            "escalation_model": "gpt-4o",
+            "escalation_tokens_prompt": 1_000_000,
+            "escalation_tokens_completion": 1_000_000,
+        }
+    )
+    resp = await client.get("/api/ai/usage")
+    data = await resp.json()
+
+    assert data["total_escalations"] == 1
+    assert data["total_escalation_tokens"] == 2_000_000
+    tier1 = next(m for m in data["by_model"] if m["model"] == "gpt-4o-mini")
+    escalated = next(m for m in data["by_model"] if m["model"] == "gpt-4o")
+    assert tier1["escalated"] is False
+    assert escalated["escalated"] is True
+    assert tier1["cost"] == pytest.approx(0.15 + 0.60)
+    assert escalated["cost"] == pytest.approx(2.50 + 10.00)
+    assert data["total_estimated_cost"] == pytest.approx(0.15 + 0.60 + 2.50 + 10.00)
+
+
+async def test_ai_usage_clear_endpoint(client: TestClient, db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("u1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "u1",
+            "camera": "Front Door",
+            "model": "llava:7b",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "tokens_prompt": 120,
+            "tokens_completion": 40,
+        }
+    )
+    resp = await client.get("/api/ai/usage")
+    assert (await resp.json())["total_analyses"] == 1
+
+    clear_resp = await client.delete("/api/ai/usage")
+    assert clear_resp.status == 200
+    assert (await clear_resp.json())["cleared"] is True
+
+    resp = await client.get("/api/ai/usage")
+    data = await resp.json()
+    assert data["total_analyses"] == 0
+    assert data["by_model"] == []
+
+
 async def test_ai_models_disabled(client: TestClient) -> None:
     resp = await client.get("/api/ai/models")
     assert resp.status == 200

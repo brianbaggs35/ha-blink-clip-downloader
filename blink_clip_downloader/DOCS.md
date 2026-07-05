@@ -334,10 +334,9 @@ set, every clip is first analyzed with the cheap/fast `openai_model` (tier 1). O
 clips tier 1 flags as suspicious are re-analyzed with `openai_escalation_model` (tier 2)
 for a closer second opinion, and the tier-2 verdict — not tier 1's — is what gets
 recorded and alerted on. Recommended pairings: `gpt-4o-mini` + `gpt-4o`, or
-`gpt-5.4-nano` + `gpt-5.4`. Token usage from both calls is summed for cost tracking, but
-the web UI's "Estimated cost" figure is calculated using only `openai_model`'s
-per-token pricing — it will understate actual spend on installs where escalation fires
-often, since the stored usage doesn't distinguish which tier each token came from.
+`gpt-5.4-nano` + `gpt-5.4`. Tier-1 and tier-2 token usage are tracked separately —
+the AI Usage tab shows the escalation model as its own row (priced at its own rate)
+plus a running count of how many clips were escalated.
 
 This option only applies to the `openai` provider — it has no effect for `ollama`,
 `ollama_cloud`, `moondream_cloud`, `moondream_local`, or `anthropic`. Moondream Cloud in
@@ -504,7 +503,11 @@ from any browser without leaving Home Assistant.
   **Full response** toggle.
 - **AI Usage tab** — per-provider token usage statistics including prompt tokens,
   completion tokens, per-model breakdown, and estimated API cost (for Anthropic and
-  OpenAI). Moondream Cloud shows request count with a billing note.
+  OpenAI, priced per model). Moondream Cloud shows request count with a billing note.
+  When `openai_escalation_model` is configured, escalated analyses appear as their own
+  row and count toward a separate "Escalations" total. A **Clear Stats** button resets
+  these counters — handy after switching providers so old usage doesn't keep piling
+  into the total — without touching per-clip analysis history.
 - **Camera Configurations panel** (AI tab) — set per-camera descriptions, custom
   prompts, and the "Protected vehicle" checkbox without editing YAML. Changes apply
   immediately without restarting.

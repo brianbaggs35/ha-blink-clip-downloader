@@ -309,6 +309,16 @@ def test_clean_summary_no_punctuation_truncated_with_ellipsis() -> None:
     assert summary.endswith("…")
 
 
+def test_clean_summary_drops_repeated_sentence() -> None:
+    """Stops at the first sentence that repeats one already kept (the
+    degenerate-repetition-loop failure mode some models fall into)."""
+    summary = ClipAnalyzer._clean_summary(
+        "A person walks up the driveway. A person walks up the driveway. "
+        "They knock on the door."
+    )
+    assert summary == "A person walks up the driveway."
+
+
 # ------------------------------------------------------------------
 # Prompt building
 # ------------------------------------------------------------------
@@ -848,6 +858,31 @@ async def test_moondream_local_call_model(monkeypatch: pytest.MonkeyPatch) -> No
 
     # Should pick the suspicious result
     assert "Person near car" in result
+
+
+async def test_moondream_local_call_model_skips_empty_and_unparseable_responses() -> (
+    None
+):
+    """An empty inference result is skipped entirely; an unparseable one is
+    kept only as a last-resort fallback if nothing better comes along."""
+    mock_model = MagicMock()
+    mock_model.detect.return_value = {
+        "objects": [{"x_min": 0.2, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    }
+    mock_model.caption.return_value = {"caption": "A person stands in the yard."}
+    mock_model.query.side_effect = [
+        {"answer": ""},
+        {"answer": "not valid json"},
+    ]
+
+    a = MoondreamLocalAnalyzer(prompt="Analyze.")
+    a._md_model = mock_model
+    a._model_ready = True
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "Analyze this scene.")
+
+    assert result == "not valid json"
 
 
 async def test_moondream_local_call_model_no_frames() -> None:
@@ -2868,7 +2903,30 @@ async def test_openai_call_model_uses_max_completion_tokens_for_gpt5(
     create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
     kwargs = create_call.call_args.kwargs
     assert "max_tokens" not in kwargs
-    assert kwargs["max_completion_tokens"] == 512
+    assert kwargs["max_completion_tokens"] == 1024
+    assert kwargs["reasoning_effort"] == "low"
+
+
+async def test_openai_call_model_omits_reasoning_effort_for_pro_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "-pro" tier reasoning models only support "high" reasoning_effort, so the
+    "low" optimization must not be applied to them."""
+    import sys
+
+    resp = _make_openai_response()
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5.2-pro", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    kwargs = create_call.call_args.kwargs
+    assert kwargs["max_completion_tokens"] == 1024
+    assert "reasoning_effort" not in kwargs
 
 
 async def test_openai_call_model_uses_max_completion_tokens_for_o_series(
@@ -2889,7 +2947,8 @@ async def test_openai_call_model_uses_max_completion_tokens_for_o_series(
     create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
     kwargs = create_call.call_args.kwargs
     assert "max_tokens" not in kwargs
-    assert kwargs["max_completion_tokens"] == 512
+    assert kwargs["max_completion_tokens"] == 1024
+    assert kwargs["reasoning_effort"] == "low"
 
 
 async def test_openai_call_model_uses_max_tokens_for_gpt4(
@@ -2911,6 +2970,72 @@ async def test_openai_call_model_uses_max_tokens_for_gpt4(
     kwargs = create_call.call_args.kwargs
     assert "max_completion_tokens" not in kwargs
     assert kwargs["max_tokens"] == 512
+    assert "reasoning_effort" not in kwargs
+
+
+async def test_openai_call_model_uses_structured_outputs_for_gpt4o(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gpt-4o family gets Structured Outputs (json_schema/strict), not json_object."""
+    import sys
+
+    resp = _make_openai_response()
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    kwargs = create_call.call_args.kwargs
+    assert kwargs["response_format"]["type"] == "json_schema"
+    assert kwargs["response_format"]["json_schema"]["strict"] is True
+    schema = kwargs["response_format"]["json_schema"]["schema"]
+    assert set(schema["required"]) == {"suspicious", "confidence", "description"}
+    assert schema["additionalProperties"] is False
+
+
+async def test_openai_call_model_uses_json_object_for_gpt4_turbo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gpt-4-turbo predates Structured Outputs, so it stays on json_object mode."""
+    import sys
+
+    resp = _make_openai_response()
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4-turbo", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    kwargs = create_call.call_args.kwargs
+    assert kwargs["response_format"] == {"type": "json_object"}
+
+
+async def test_openai_call_model_uses_structured_outputs_for_gpt5_and_o4_mini(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gpt-5 and o4-mini also get Structured Outputs, not just legacy json_object."""
+    import sys
+
+    for model in ("gpt-5.4-mini", "o4-mini"):
+        resp = _make_openai_response()
+        mock_mod = _make_openai_module(response=resp)
+        monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+        a = OpenAIAnalyzer(api_key="key", model=model, prompt="test")
+        a._client = mock_mod.AsyncOpenAI.return_value
+        with patch.dict(sys.modules, {"openai": mock_mod}):
+            await a._call_model([_FAKE_JPEG], "prompt")
+
+        create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+        kwargs = create_call.call_args.kwargs
+        assert kwargs["response_format"]["type"] == "json_schema", model
 
 
 # ------------------------------------------------------------------
@@ -3053,7 +3178,7 @@ async def test_openai_escalation_triggers_with_empty_description(
 async def test_openai_escalation_triggers_and_sums_tokens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Suspicious tier-1 verdict escalates to tier 2; tokens are summed."""
+    """Suspicious tier-1 verdict escalates to tier 2; tokens are tracked per tier."""
     import sys
 
     tier1_resp = _make_openai_response(
@@ -3087,8 +3212,11 @@ async def test_openai_escalation_triggers_and_sums_tokens(
     assert create_call.await_args_list[0].kwargs["model"] == "gpt-4o-mini"
     assert create_call.await_args_list[1].kwargs["model"] == "gpt-4o"
     assert "Confirmed intruder" in result
-    assert a._last_prompt_tokens == 800
-    assert a._last_completion_tokens == 130
+    assert a._last_prompt_tokens == 300
+    assert a._last_completion_tokens == 50
+    assert a._last_escalation_model == "gpt-4o"
+    assert a._last_escalation_prompt_tokens == 500
+    assert a._last_escalation_completion_tokens == 80
 
 
 async def test_openai_escalation_falls_back_when_tier2_fails(
@@ -3993,7 +4121,37 @@ def test_build_prompt_morning_time() -> None:
         prompt="p",
     )
     prompt = a._build_prompt("Cam", clip_timestamp="2026-06-28T10:00:00+00:00")
-    assert "morning" in prompt
+    assert "Time of day: morning" in prompt
+
+
+def test_build_prompt_early_morning_time() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+    )
+    prompt = a._build_prompt("Cam", clip_timestamp="2026-06-28T06:00:00+00:00")
+    assert "Time of day: early morning" in prompt
+
+
+def test_build_prompt_afternoon_time() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+    )
+    prompt = a._build_prompt("Cam", clip_timestamp="2026-06-28T14:00:00+00:00")
+    assert "Time of day: afternoon" in prompt
+
+
+def test_build_prompt_night_time() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+    )
+    prompt = a._build_prompt("Cam", clip_timestamp="2026-06-28T21:00:00+00:00")
+    assert "Time of day: night" in prompt
 
 
 def test_build_prompt_no_anomaly_alert_below_threshold() -> None:
@@ -4887,6 +5045,31 @@ def test_force_not_suspicious_leaves_already_clear_response_untouched() -> None:
 
 def test_force_not_suspicious_leaves_unparseable_response_untouched() -> None:
     assert MoondreamCloudAnalyzer._force_not_suspicious("not json") == "not json"
+
+
+def test_force_not_suspicious_leaves_malformed_braces_untouched() -> None:
+    """Braces are present (so start/end are found) but the contents aren't
+    valid JSON — hits the JSONDecodeError branch rather than the "no braces"
+    early return."""
+    response = "{suspicious: true, not valid json}"
+    assert MoondreamCloudAnalyzer._force_not_suspicious(response) == response
+
+
+def test_force_not_suspicious_defaults_confidence_when_unconvertible() -> None:
+    """A non-numeric confidence field can't be coerced to float; the rewrite
+    should still force suspicious=false and fall back to confidence=0.0
+    instead of raising."""
+    response = (
+        '{"suspicious": true, "confidence": "very high", '
+        '"description": "A car is parked nearby."}'
+    )
+    rewritten = MoondreamCloudAnalyzer._force_not_suspicious(response)
+    is_suspicious, confidence, summary = MoondreamCloudAnalyzer._try_parse_json(
+        rewritten
+    )
+    assert is_suspicious is False
+    assert confidence == 0.0
+    assert "car is parked nearby" in summary
 
 
 # ------------------------------------------------------------------

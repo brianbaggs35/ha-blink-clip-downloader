@@ -452,6 +452,8 @@ async def test_operations_without_init_are_safe() -> None:
     assert await d.star_clip("x", True) is False
     assert await d.set_tags("x", []) is False
     assert await d.delete_clip("x") is False
+    assert await d.delete_clip_by_path("/tmp/x.mp4") is False
+    assert await d.get_scene_deviation("front", [0.1, 0.2]) is None
 
 
 # ------------------------------------------------------------------
@@ -857,7 +859,117 @@ async def test_get_token_usage_stats_without_init() -> None:
     d = ClipDatabase(Path("/tmp/neveropened_tu.db"))
     stats = await d.get_token_usage_stats()
     assert stats["total_analyses"] == 0
+    assert stats["total_escalations"] == 0
+    assert stats["total_escalation_tokens"] == 0
     assert stats["by_model"] == []
+
+
+def _make_analysis_escalation(
+    clip_id: str = "c1",
+    model: str = "gpt-4o-mini",
+    escalation_model: str = "gpt-4o",
+    tokens_prompt: int = 100,
+    tokens_completion: int = 20,
+    escalation_tokens_prompt: int = 300,
+    escalation_tokens_completion: int = 60,
+) -> dict:
+    result = _make_analysis_tokens(clip_id, model, tokens_prompt, tokens_completion)
+    result["escalation_model"] = escalation_model
+    result["escalation_tokens_prompt"] = escalation_tokens_prompt
+    result["escalation_tokens_completion"] = escalation_tokens_completion
+    return result
+
+
+async def test_get_token_usage_stats_breaks_out_escalation_model(
+    db: ClipDatabase,
+) -> None:
+    """Escalation tokens get their own by_model row, not folded into tier 1's."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(_make_analysis_escalation("c1"))
+
+    stats = await db.get_token_usage_stats()
+
+    assert stats["total_analyses"] == 1
+    assert stats["total_escalations"] == 1
+    assert stats["total_tokens_prompt"] == 400  # 100 tier-1 + 300 escalation
+    assert stats["total_tokens_completion"] == 80  # 20 tier-1 + 60 escalation
+    assert stats["total_escalation_tokens"] == 360  # 300 + 60, escalation-only
+    assert len(stats["by_model"]) == 2
+
+    tier1 = next(m for m in stats["by_model"] if m["model"] == "gpt-4o-mini")
+    assert tier1["escalated"] is False
+    assert tier1["tokens_prompt"] == 100
+    assert tier1["tokens_completion"] == 20
+
+    escalated = next(m for m in stats["by_model"] if m["model"] == "gpt-4o")
+    assert escalated["escalated"] is True
+    assert escalated["analyses"] == 1
+    assert escalated["tokens_prompt"] == 300
+    assert escalated["tokens_completion"] == 60
+
+
+async def test_get_token_usage_stats_no_escalation_by_default(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis_tokens("c1", tokens_prompt=100, tokens_completion=20)
+    )
+
+    stats = await db.get_token_usage_stats()
+    assert stats["total_escalations"] == 0
+    assert stats["total_escalation_tokens"] == 0
+    assert all(not m["escalated"] for m in stats["by_model"])
+
+
+async def test_clear_ai_usage_stats_resets_counters(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis_tokens("c1", tokens_prompt=100, tokens_completion=20)
+    )
+
+    stats_before = await db.get_token_usage_stats()
+    assert stats_before["total_analyses"] == 1
+
+    await db.clear_ai_usage_stats()
+
+    stats_after = await db.get_token_usage_stats()
+    assert stats_after["total_analyses"] == 0
+    assert stats_after["by_model"] == []
+
+    # Per-clip analysis history (used by Suspicious Clips / clip detail) is
+    # untouched by the reset — only the aggregate usage view is cleared.
+    result = await db.get_analysis_for_clip("c1")
+    assert result is not None
+    assert result["tokens_prompt"] == 100
+
+
+async def test_clear_ai_usage_stats_only_hides_rows_before_reset(
+    db: ClipDatabase,
+) -> None:
+    """Clearing stats sets a cutoff — it doesn't retroactively wipe rows,
+    and analyses recorded after the clear count normally again."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis_tokens("c1", tokens_prompt=100, tokens_completion=20)
+    )
+    await db.clear_ai_usage_stats()
+
+    reset_at = await db._get_ai_usage_reset_at()
+    later = datetime.fromisoformat(reset_at) + timedelta(seconds=1)
+
+    await db.add_clip(_make_clip("c2"))
+    row = _make_analysis_tokens("c2", tokens_prompt=50, tokens_completion=10)
+    row["analyzed_at"] = later.isoformat()
+    await db.add_analysis_result(row)
+
+    stats = await db.get_token_usage_stats()
+    assert stats["total_analyses"] == 1
+    assert stats["total_tokens_prompt"] == 50
+    assert stats["total_tokens_completion"] == 10
+
+
+async def test_clear_ai_usage_stats_without_init() -> None:
+    d = ClipDatabase(Path("/tmp/neveropened_clear.db"))
+    await d.clear_ai_usage_stats()  # must not raise
 
 
 async def test_analysis_result_stores_tokens(db: ClipDatabase) -> None:
@@ -1117,6 +1229,43 @@ async def test_record_scene_baseline_adapts_toward_new_normal(
     deviation_from_new = await db.get_scene_deviation("Yard", new_scene)
     assert deviation_from_new is not None
     assert deviation_from_new < 0.2
+
+
+async def test_get_scene_deviation_corrupt_thumbnail_returns_none(
+    db: ClipDatabase,
+) -> None:
+    """A row whose stored ``thumbnail`` isn't valid JSON (e.g. from a prior
+    schema/format change) should be treated as no usable baseline rather than
+    raising."""
+    assert db._db is not None
+    await db._db.execute(
+        "INSERT INTO camera_scene_baselines (camera, thumbnail, sample_count, "
+        "updated_at) VALUES (?, ?, ?, ?)",
+        ("Corrupt", "not valid json", 25, "2024-01-01T00:00:00"),
+    )
+    await db._db.commit()
+    assert await db.get_scene_deviation("Corrupt", [0.5] * 4) is None
+
+
+async def test_record_scene_baseline_recovers_from_corrupt_existing_data(
+    db: ClipDatabase,
+) -> None:
+    """If the stored thumbnail is corrupt JSON, recording a new sample should
+    restart the baseline from scratch instead of raising."""
+    assert db._db is not None
+    await db._db.execute(
+        "INSERT INTO camera_scene_baselines (camera, thumbnail, sample_count, "
+        "updated_at) VALUES (?, ?, ?, ?)",
+        ("Corrupt2", "not valid json", 5, "2024-01-01T00:00:00"),
+    )
+    await db._db.commit()
+    await db.record_scene_baseline("Corrupt2", [0.5, 0.5])
+    # Restarted at sample_count=1 (0 + 1) since the prior data was unusable.
+    for _ in range(19):
+        await db.record_scene_baseline("Corrupt2", [0.5, 0.5])
+    deviation = await db.get_scene_deviation("Corrupt2", [0.5, 0.5])
+    assert deviation is not None
+    assert deviation < 0.05
 
 
 async def test_get_scene_deviation_uninitialised_db() -> None:

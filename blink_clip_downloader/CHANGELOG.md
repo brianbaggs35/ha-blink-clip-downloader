@@ -1,5 +1,69 @@
 # Changelog
 
+## 3.1.7
+
+### New features
+
+- **Escalation count and cost now tracked in the AI Usage tab.** When
+  `openai_escalation_model` is configured, escalation-tier analyses now
+  appear as their own row in the AI Usage panel (tagged "escalated"),
+  with their own token counts and cost estimate, plus a new "Escalations"
+  total. Previously escalation-tier tokens were silently merged into the
+  tier-1 model's totals and never shown separately.
+- **"Clear Stats" button for the AI Usage tab.** Lets you reset the
+  token/cost/escalation counters — useful after switching AI providers so
+  old provider's usage doesn't keep accumulating into the total. This only
+  resets the displayed counters; per-clip analysis history (Suspicious
+  Clips, clip detail view) is untouched.
+- **Escalation token count now shown in the AI Usage tab.** A new
+  "Escalation Tokens" stat sits alongside "Escalations" so you can see the
+  token cost of tier-2 re-analysis at a glance, not just how many clips
+  were escalated.
+- **Copy button next to "Fetch Models".** After fetching the live model
+  list, click **Copy** to copy the selected model id to the clipboard for
+  pasting into `openai_model`/`anthropic_model`/`ollama_model` in the
+  add-on configuration. There's no supported way for an add-on to write
+  directly into another add-on's YAML options from its own web UI, so copy
+  and paste remains the safest option.
+- **OpenAI: adopted Structured Outputs for schema-conformant JSON.**
+  `gpt-4o`, `gpt-4.1`, the `gpt-5` family (including `gpt-5.4-nano` and
+  `gpt-5.4`), and `o4-mini` now request `response_format:
+  {"type": "json_schema", ...}` with `strict: true` instead of the looser
+  `json_object` mode, guaranteeing the `suspicious`/`confidence`/
+  `description` fields are always present with the right types. Older
+  models that don't support Structured Outputs (e.g. `gpt-4-turbo`) keep
+  using `json_object`.
+- **OpenAI: reasoning models now use `reasoning_effort: "low"` and a larger
+  token budget.** `o1`/`o3`/`o4`/`gpt-5`-family requests now set
+  `reasoning_effort="low"` — appropriate for this add-on's single-verdict
+  classification task — and `max_completion_tokens` was raised from 512 to
+  1024, since these models bill invisible reasoning tokens from the same
+  budget as the visible completion and 512 could leave too little room for
+  the actual JSON response on a harder clip.
+
+### Bug fixes
+
+- **Fix: AI Usage cost estimate used a single blanket rate for all rows.**
+  Cost is now computed per model/tier using that model's actual pricing,
+  so usage from multiple providers or models no longer gets mis-priced
+  against whichever model happened to be selected most recently.
+- **Fix: `fetch_models()` mis-priced dated OpenAI/Anthropic model
+  snapshots.** The live models list can return dated ids like
+  `gpt-4o-mini-2024-07-18` instead of the bare alias; pricing lookup now
+  matches by prefix instead of requiring an exact key match, so these
+  snapshots get correct pricing instead of falling back to a generic
+  default.
+- **Fix: stale/incorrect OpenAI pricing for `o3` and `o1-mini`.** Both were
+  priced against outdated per-token rates; corrected to match OpenAI's
+  current published pricing. `gpt-5.2` also had no explicit entry and was
+  silently mispriced by falling through to the bare `gpt-5` rate; it now
+  has its own entry (`gpt-5.1` was added alongside it for clarity, though
+  it already resolved to the same rate via fallback).
+- **Fix: `reasoning_effort: "low"` could be sent to "-pro" tier reasoning
+  models** (e.g. `gpt-5.2-pro`), which the OpenAI API only accepts `"high"`
+  for and would reject the request. These models are no longer sent a
+  `reasoning_effort` value, letting the API fall back to its own default.
+
 ## 3.1.6
 
 ### New features

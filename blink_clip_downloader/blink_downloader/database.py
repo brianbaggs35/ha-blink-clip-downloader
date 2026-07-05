@@ -49,11 +49,23 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     analyzed_at       TEXT    NOT NULL,
     tokens_prompt     INTEGER DEFAULT 0,
     tokens_completion INTEGER DEFAULT 0,
+    escalation_model             TEXT    DEFAULT '',
+    escalation_tokens_prompt     INTEGER DEFAULT 0,
+    escalation_tokens_completion INTEGER DEFAULT 0,
     FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
 CREATE INDEX IF NOT EXISTS idx_analysis_notified ON analysis_results (clip_id, is_suspicious, confidence);
+
+-- Single-row marker for the AI Usage tab's "Clear Stats" button: usage
+-- queries only aggregate analysis_results rows analyzed after reset_at,
+-- so clearing stats doesn't delete per-clip analysis history (still used
+-- by the Suspicious Clips list and clip detail view).
+CREATE TABLE IF NOT EXISTS ai_usage_reset (
+    id       INTEGER PRIMARY KEY CHECK (id = 1),
+    reset_at TEXT NOT NULL DEFAULT ''
+);
 
 CREATE TABLE IF NOT EXISTS analysis_queue (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,6 +184,9 @@ class ClipDatabase:
             ("analysis_results", "tokens_prompt", "INTEGER DEFAULT 0"),
             ("analysis_results", "tokens_completion", "INTEGER DEFAULT 0"),
             ("analysis_results", "anomaly_score", "REAL DEFAULT 0.0"),
+            ("analysis_results", "escalation_model", "TEXT DEFAULT ''"),
+            ("analysis_results", "escalation_tokens_prompt", "INTEGER DEFAULT 0"),
+            ("analysis_results", "escalation_tokens_completion", "INTEGER DEFAULT 0"),
             (
                 "camera_scene_baselines",
                 "consecutive_deviation_count",
@@ -560,8 +575,9 @@ class ClipDatabase:
             INSERT INTO analysis_results
               (clip_id, camera, model, response_text, is_suspicious,
                confidence, summary, frame_count, analysis_duration, analyzed_at,
-               tokens_prompt, tokens_completion, anomaly_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               tokens_prompt, tokens_completion, anomaly_score,
+               escalation_model, escalation_tokens_prompt, escalation_tokens_completion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(result.get("clip_id") or ""),
@@ -577,6 +593,9 @@ class ClipDatabase:
                 int(result.get("tokens_prompt") or 0),
                 int(result.get("tokens_completion") or 0),
                 float(result.get("anomaly_score") or 0.0),
+                str(result.get("escalation_model") or ""),
+                int(result.get("escalation_tokens_prompt") or 0),
+                int(result.get("escalation_tokens_completion") or 0),
             ),
         )
         await self._db.commit()
@@ -650,41 +669,121 @@ class ClipDatabase:
         results["last_analysis"] = row[0] if row else None
         return results
 
-    async def get_token_usage_stats(self) -> dict[str, Any]:
-        """Return per-model token usage totals for the AI Usage tab."""
+    async def _get_ai_usage_reset_at(self) -> str:
+        """Return the AI Usage "Clear Stats" cutoff timestamp, or '' if never reset."""
+        assert self._db is not None
+        async with self._db.execute(
+            "SELECT reset_at FROM ai_usage_reset WHERE id = 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+        return str(row["reset_at"]) if row else ""
+
+    async def clear_ai_usage_stats(self) -> None:
+        """Reset the AI Usage tab's token/cost/escalation counters.
+
+        Only bumps the cutoff timestamp used by :meth:`get_token_usage_stats`
+        — per-clip ``analysis_results`` rows (is_suspicious, summary, etc.)
+        are left intact since the Suspicious Clips list and clip detail view
+        still depend on that history.
+        """
         if self._db is None:
-            return {
-                "total_analyses": 0,
-                "total_tokens_prompt": 0,
-                "total_tokens_completion": 0,
-                "total_tokens": 0,
-                "by_model": [],
-            }
+            return
+        reset_at = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            "INSERT INTO ai_usage_reset (id, reset_at) VALUES (1, ?) "
+            "ON CONFLICT(id) DO UPDATE SET reset_at = excluded.reset_at",
+            (reset_at,),
+        )
+        await self._db.commit()
+
+    async def get_token_usage_stats(self) -> dict[str, Any]:
+        """Return per-model token usage totals for the AI Usage tab.
+
+        Escalation-model usage (see ``analysis_results.escalation_model``) is
+        broken out into its own ``by_model`` entries — tagged
+        ``"escalated": True`` — rather than folded into the tier-1 model's
+        row, so a configured ``openai_escalation_model`` gets its own
+        accurately-priced line instead of silently inflating tier-1's totals.
+        """
+        empty: dict[str, Any] = {
+            "total_analyses": 0,
+            "total_tokens_prompt": 0,
+            "total_tokens_completion": 0,
+            "total_tokens": 0,
+            "total_escalations": 0,
+            "total_escalation_tokens": 0,
+            "by_model": [],
+        }
+        if self._db is None:
+            return empty
+
+        reset_at = await self._get_ai_usage_reset_at()
+        since_clause = "WHERE analyzed_at > ?" if reset_at else ""
+        since_params: tuple[str, ...] = (reset_at,) if reset_at else ()
 
         async with self._db.execute(
-            """
+            f"""
             SELECT
                 model,
                 COUNT(*)                             AS analyses,
                 COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
                 COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
             FROM analysis_results
+            {since_clause}
             GROUP BY model
             ORDER BY analyses DESC
-            """
+            """,
+            since_params,
         ) as cursor:
-            rows = await cursor.fetchall()
+            primary_rows = await cursor.fetchall()
 
-        by_model = [dict(r) for r in rows]
+        escalation_since_clause = (
+            "WHERE escalation_model != '' AND analyzed_at > ?"
+            if reset_at
+            else "WHERE escalation_model != ''"
+        )
+        async with self._db.execute(
+            f"""
+            SELECT
+                escalation_model                              AS model,
+                COUNT(*)                                      AS analyses,
+                COALESCE(SUM(escalation_tokens_prompt), 0)     AS tokens_prompt,
+                COALESCE(SUM(escalation_tokens_completion), 0) AS tokens_completion
+            FROM analysis_results
+            {escalation_since_clause}
+            GROUP BY escalation_model
+            ORDER BY analyses DESC
+            """,
+            since_params,
+        ) as cursor:
+            escalation_rows = await cursor.fetchall()
+
+        by_model: list[dict[str, Any]] = []
+        for r in primary_rows:
+            d = dict(r)
+            d["escalated"] = False
+            by_model.append(d)
+        for r in escalation_rows:
+            d = dict(r)
+            d["escalated"] = True
+            by_model.append(d)
+
         total_prompt = sum(int(m["tokens_prompt"]) for m in by_model)
         total_completion = sum(int(m["tokens_completion"]) for m in by_model)
-        total_analyses = sum(int(m["analyses"]) for m in by_model)
+        total_analyses = sum(int(m["analyses"]) for m in primary_rows)
+        total_escalations = sum(int(m["analyses"]) for m in escalation_rows)
+        total_escalation_tokens = sum(
+            int(m["tokens_prompt"]) + int(m["tokens_completion"])
+            for m in escalation_rows
+        )
 
         return {
             "total_analyses": total_analyses,
             "total_tokens_prompt": total_prompt,
             "total_tokens_completion": total_completion,
             "total_tokens": total_prompt + total_completion,
+            "total_escalations": total_escalations,
+            "total_escalation_tokens": total_escalation_tokens,
             "by_model": by_model,
         }
 
