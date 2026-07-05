@@ -2287,6 +2287,55 @@ def test_openai_model_pricing_unknown_falls_back_to_gpt4o() -> None:
     assert out == 10.00
 
 
+def test_openai_model_pricing_gpt5() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 1.25
+    assert out == 10.00
+
+
+def test_openai_model_pricing_gpt5_mini() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5-mini", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 0.25
+    assert out == 2.00
+
+
+def test_openai_model_pricing_gpt5_nano() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5-nano", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 0.05
+    assert out == 0.40
+
+
+def test_openai_model_pricing_gpt54() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5.4", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 2.50
+    assert out == 15.00
+
+
+def test_openai_model_pricing_gpt54_mini() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5.4-mini", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 0.75
+    assert out == 4.50
+
+
+def test_openai_model_pricing_gpt54_nano() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5.4-nano", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 0.20
+    assert out == 1.25
+
+
+def test_openai_model_pricing_gpt55() -> None:
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5.5", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 5.00
+    assert out == 30.00
+
+
 # ------------------------------------------------------------------
 # OpenAIAnalyzer — is_openai_vision_model
 # ------------------------------------------------------------------
@@ -2319,6 +2368,20 @@ def test_is_openai_vision_model_non_vision() -> None:
     assert is_openai_vision_model("text-davinci-003") is False
     assert is_openai_vision_model("whisper-1") is False
     assert is_openai_vision_model("text-embedding-ada-002") is False
+
+
+def test_is_openai_vision_model_gpt5_family() -> None:
+    assert is_openai_vision_model("gpt-5") is True
+    assert is_openai_vision_model("gpt-5-mini") is True
+    assert is_openai_vision_model("gpt-5-nano") is True
+    assert is_openai_vision_model("gpt-5.4") is True
+    assert is_openai_vision_model("gpt-5.4-mini") is True
+    assert is_openai_vision_model("gpt-5.4-nano") is True
+    assert is_openai_vision_model("gpt-5.5") is True
+
+
+def test_is_openai_vision_model_excludes_pro_suffix() -> None:
+    assert is_openai_vision_model("gpt-5.5-pro") is False
 
 
 # ------------------------------------------------------------------
@@ -2696,6 +2759,250 @@ async def test_openai_call_model_empty_choices(monkeypatch: pytest.MonkeyPatch) 
     assert result == ""
 
 
+async def test_openai_call_model_uses_max_completion_tokens_for_gpt5(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gpt-5 family models must use max_completion_tokens, not max_tokens."""
+    import sys
+
+    resp = _make_openai_response()
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5.4-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    kwargs = create_call.call_args.kwargs
+    assert "max_tokens" not in kwargs
+    assert kwargs["max_completion_tokens"] == 512
+
+
+async def test_openai_call_model_uses_max_completion_tokens_for_o_series(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """o1/o3/o4-mini reasoning models must use max_completion_tokens too."""
+    import sys
+
+    resp = _make_openai_response()
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="o4-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    kwargs = create_call.call_args.kwargs
+    assert "max_tokens" not in kwargs
+    assert kwargs["max_completion_tokens"] == 512
+
+
+async def test_openai_call_model_uses_max_tokens_for_gpt4(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy gpt-4 family models keep using max_tokens."""
+    import sys
+
+    resp = _make_openai_response()
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    kwargs = create_call.call_args.kwargs
+    assert "max_completion_tokens" not in kwargs
+    assert kwargs["max_tokens"] == 512
+
+
+# ------------------------------------------------------------------
+# OpenAIAnalyzer — two-tier escalation
+# ------------------------------------------------------------------
+
+
+async def test_openai_escalation_disabled_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No escalation_model configured means only tier 1 is ever called."""
+    import sys
+
+    resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.9, "description": "Intruder"}'
+    )
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    assert create_call.await_count == 1
+
+
+async def test_openai_escalation_skipped_when_not_suspicious(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 1 result that isn't suspicious never triggers tier 2."""
+    import sys
+
+    resp = _make_openai_response(
+        '{"suspicious": false, "confidence": 0.1, "description": "Empty scene"}'
+    )
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(
+        api_key="key",
+        model="gpt-4o-mini",
+        prompt="test",
+        escalation_model="gpt-4o",
+    )
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    assert create_call.await_count == 1
+    assert "Empty scene" in result
+
+
+async def test_openai_escalation_skipped_when_model_matches_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """escalation_model equal to the tier-1 model never triggers a second call."""
+    import sys
+
+    resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.9, "description": "Intruder"}'
+    )
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(
+        api_key="key",
+        model="gpt-4o-mini",
+        prompt="test",
+        escalation_model="gpt-4o-mini",
+    )
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    assert create_call.await_count == 1
+
+
+async def test_openai_escalation_skipped_on_malformed_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed/non-JSON tier-1 response never triggers escalation."""
+    import sys
+
+    resp = _make_openai_response("not valid json at all")
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(
+        api_key="key",
+        model="gpt-4o-mini",
+        prompt="test",
+        escalation_model="gpt-4o",
+    )
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    assert create_call.await_count == 1
+    assert result == "not valid json at all"
+
+
+async def test_openai_escalation_triggers_and_sums_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Suspicious tier-1 verdict escalates to tier 2; tokens are summed."""
+    import sys
+
+    tier1_resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.7, "description": "Person near door"}',
+        prompt_tokens=300,
+        completion_tokens=50,
+    )
+    tier2_resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.95, "description": "Confirmed intruder"}',
+        prompt_tokens=500,
+        completion_tokens=80,
+    )
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=[tier1_resp, tier2_resp]
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(
+        api_key="key",
+        model="gpt-4o-mini",
+        prompt="test",
+        escalation_model="gpt-4o",
+    )
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    assert create_call.await_count == 2
+    assert create_call.await_args_list[0].kwargs["model"] == "gpt-4o-mini"
+    assert create_call.await_args_list[1].kwargs["model"] == "gpt-4o"
+    assert "Confirmed intruder" in result
+    assert a._last_prompt_tokens == 800
+    assert a._last_completion_tokens == 130
+
+
+async def test_openai_escalation_falls_back_when_tier2_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the escalation call returns nothing, the tier-1 result is kept."""
+    import sys
+
+    tier1_resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.7, "description": "Person near door"}',
+        prompt_tokens=300,
+        completion_tokens=50,
+    )
+    tier2_resp = _make_openai_response("")
+    tier2_resp.choices = []
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=[tier1_resp, tier2_resp]
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(
+        api_key="key",
+        model="gpt-4o-mini",
+        prompt="test",
+        escalation_model="gpt-4o",
+    )
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    assert create_call.await_count == 2
+    assert "Person near door" in result
+    assert a._last_prompt_tokens == 300
+    assert a._last_completion_tokens == 50
+
+
 # ------------------------------------------------------------------
 # OpenAIAnalyzer — close / _get_client
 # ------------------------------------------------------------------
@@ -2847,6 +3154,18 @@ def test_create_analyzer_openai_with_model() -> None:
 def test_create_analyzer_openai_no_key() -> None:
     a = create_analyzer("openai", "prompt")
     assert a is None
+
+
+def test_create_analyzer_openai_with_escalation_model() -> None:
+    a = create_analyzer(
+        "openai",
+        "prompt",
+        openai_api_key="sk-test",
+        openai_model="gpt-4o-mini",
+        openai_escalation_model="gpt-4o",
+    )
+    assert isinstance(a, OpenAIAnalyzer)
+    assert a._escalation_model == "gpt-4o"
 
 
 # ------------------------------------------------------------------

@@ -314,16 +314,30 @@ the most cost-effective option.
 #### OpenAI (GPT) — `openai`
 
 Uses the OpenAI API for vision analysis. Billed per token. Any OpenAI vision model is
-supported (GPT-4o, GPT-4.1, GPT-4-Turbo, and variants).
+supported (GPT-4o, GPT-4.1, GPT-4-Turbo, GPT-5, and variants).
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `openai_api_key` | `""` | API key from [platform.openai.com](https://platform.openai.com) |
 | `openai_model` | `"gpt-4o-mini"` | GPT model to use. Use **Fetch Models** in the web UI to browse models with pricing. |
+| `openai_escalation_model` | `""` | Optional second-tier model for two-tier escalation (see below). Leave empty to disable. |
 
 GPT models use `response_format: json_object` to guarantee valid JSON output, and
 `"high"` image detail for better scene analysis. `gpt-4o-mini` is selected by default
-as the most cost-effective option.
+as the most cost-effective option. The o1/o3/o4-mini reasoning models and the entire
+GPT-5 family use `max_completion_tokens` instead of the legacy `max_tokens` parameter;
+this is handled automatically based on the model name.
+
+**Two-tier escalation.** Most motion clips are not suspicious, so paying for a strong
+model on every clip is wasted spend. When `openai_escalation_model` is set, every clip
+is first analyzed with the cheap/fast `openai_model` (tier 1). Only clips tier 1 flags
+as suspicious are re-analyzed with `openai_escalation_model` (tier 2) for a closer
+second opinion, and the tier-2 verdict — not tier 1's — is what gets recorded and
+alerted on. Recommended pairings: `gpt-4o-mini` + `gpt-4o`, or `gpt-5.4-nano` +
+`gpt-5.4`. Token usage from both calls is summed for cost tracking, but the web UI's
+"Estimated cost" figure is calculated using only `openai_model`'s per-token pricing —
+it will understate actual spend on installs where escalation fires often, since the
+stored usage doesn't distinguish which tier each token came from.
 
 ### Analysis Prompt & Behaviour
 

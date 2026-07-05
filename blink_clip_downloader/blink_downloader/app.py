@@ -146,6 +146,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 anthropic_model=config.anthropic_model,
                 openai_api_key=config.openai_api_key,
                 openai_model=config.openai_model,
+                openai_escalation_model=config.openai_escalation_model,
             )
             if self._analyzer is not None:
                 self._analyzer.attach_scene_baseline_db(self._db)

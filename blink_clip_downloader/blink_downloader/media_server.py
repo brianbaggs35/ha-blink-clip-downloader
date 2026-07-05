@@ -2196,7 +2196,7 @@ const _PROVIDER_NOTES = {
   moondream_cloud: 'Moondream Cloud bills per API request. Each frame is analysed individually with reasoning mode enabled for better spatial accuracy. Token counts shown are <em>estimates</em> (256 image tokens + text tokens per frame) — the Moondream API does not return usage stats. Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for authoritative billing.',
   moondream_local: 'Moondream Local runs entirely on-device — no cloud costs and no token tracking. The analysis count shows how many clips have been processed.',
   anthropic: 'Anthropic (Claude) charges per token. Input and output tokens are tracked for every analysis. Use <strong>Claude Haiku 4.5</strong> for best cost efficiency ($1/$5 per 1M tokens). Estimated cost is calculated from your token usage and the model\'s current pricing.',
-  openai: 'OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis.',
+  openai: 'OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis. If a two-tier escalation model is configured, estimated cost is calculated using the primary model\'s pricing for all tokens and may understate spend on clips that escalate.',
 };
 
 async function loadAIUsage() {
@@ -2215,7 +2215,7 @@ async function loadAIUsage() {
     $('usage-completion-tokens').textContent = _fmtNum(completionTokens);
 
     const provider = d.provider || '';
-    const provLabels = {ollama:'Ollama (Local/LAN)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)',anthropic:'Anthropic (Claude)'};
+    const provLabels = {ollama:'Ollama (Local/LAN)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)',anthropic:'Anthropic (Claude)',openai:'OpenAI (GPT)'};
     $('usage-provider-name').textContent = provLabels[provider] || (provider || '—');
     $('usage-model-name').textContent = d.model || '—';
 
@@ -2233,7 +2233,7 @@ async function loadAIUsage() {
 
     // Anthropic: show estimated cost based on token usage and model pricing
     const costStatEl = $('usage-cost-stat');
-    if (provider === 'anthropic' && d.cost_per_1m_input !== undefined && totalTokens > 0) {
+    if ((provider === 'anthropic' || provider === 'openai') && d.cost_per_1m_input !== undefined && totalTokens > 0) {
       const estimatedCost = (promptTokens * d.cost_per_1m_input + completionTokens * d.cost_per_1m_output) / 1000000;
       const costStr = estimatedCost < 0.001 ? '<$0.001' : '$' + estimatedCost.toFixed(4);
       if (costStatEl) {
@@ -2627,7 +2627,7 @@ class MediaServer:
             assert self._analyzer is not None
             data["provider"] = self._analyzer.provider_name
             data["model"] = self._analyzer.model_name()
-            if self._analyzer.provider_name == "anthropic" and hasattr(
+            if self._analyzer.provider_name in ("anthropic", "openai") and hasattr(
                 self._analyzer, "model_pricing"
             ):
                 inp, out = self._analyzer.model_pricing()  # type: ignore[union-attr]

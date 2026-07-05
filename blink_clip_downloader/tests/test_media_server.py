@@ -1634,6 +1634,22 @@ async def test_ai_usage_enabled_anthropic_includes_pricing(
         await tc.close()
 
 
+async def test_ai_usage_enabled_openai_includes_pricing(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    analyzer = _make_analyzer(provider="openai", pricing=(2.5, 10.0))
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/usage")
+        data = await resp.json()
+        assert data["cost_per_1m_input"] == 2.5
+        assert data["cost_per_1m_output"] == 10.0
+    finally:
+        await tc.close()
+
+
 async def test_ai_models_enabled(db: ClipDatabase, tmp_path: Path) -> None:
     analyzer = _make_analyzer(models=[{"name": "llava:7b"}])
     server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
