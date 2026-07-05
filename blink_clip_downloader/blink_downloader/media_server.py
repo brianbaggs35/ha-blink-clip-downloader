@@ -1524,7 +1524,7 @@ async function loadStatus() {
 
     // AI Analysis status card
     if (aiData && aiData.enabled) {
-      const provNames = {ollama:'Ollama (Local)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)',anthropic:'Anthropic (Claude)'};
+      const provNames = {ollama:'Ollama (Local)',ollama_cloud:'Ollama Cloud',moondream_cloud:'Moondream Cloud',moondream_local:'Moondream Local (0.5B)',anthropic:'Anthropic (Claude)',openai:'OpenAI (GPT)'};
       const prov = aiData.provider || 'ollama';
       const provLabel = provNames[prov] || prov;
       const online = aiData.ai_online;

@@ -957,6 +957,30 @@ async def test_connect_proceeds_without_cached_file(dl, tmp_path):
     assert call_kwargs["login_data"]["username"] == "test@example.com"
 
 
+async def test_connect_falls_back_when_auth_file_is_wrong_shape(dl, tmp_path):
+    """A valid-JSON-but-wrong-shape auth cache (e.g. a bare list) must not
+    raise out of connect() — it should be treated like any other corrupt file
+    and fall back to a fresh login."""
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps([1, 2, 3]))
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock()
+    mock_blink.account_id = 1
+    mock_blink.auth = MagicMock()
+    mock_blink.auth.login_attributes = {}
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", auth_file),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth") as MockAuth,
+    ):
+        await dl.connect()
+
+    call_kwargs = MockAuth.call_args[1]
+    assert call_kwargs["login_data"]["username"] == "test@example.com"
+
+
 async def test_connect_cached_credentials_do_not_override_config(dl, tmp_path):
     """Cached username/password must not override the current config.
 

@@ -103,6 +103,16 @@ def test_safe_name_in_path(tmp_path):
     assert "\\" not in p.parent.name
 
 
+def test_resolve_path_sanitizes_clip_id(tmp_path):
+    """clip_id comes from the Blink API and must not be trusted to build a
+    path — a value containing traversal characters must not escape base."""
+    s = make_storage(tmp_path)
+    p = s.resolve_path("Cam", TS, "../../../etc/passwd")
+    assert p.parent == tmp_path / "clips" / "Cam" / "2024-06-15"
+    assert ".." not in p.name
+    assert "/" not in p.name
+
+
 # ---------------------------------------------------------------------------
 # Quota
 # ---------------------------------------------------------------------------

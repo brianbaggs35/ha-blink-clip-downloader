@@ -115,6 +115,16 @@ def test_empty_file_starts_fresh(tmp_path):
     assert t.stats["total_downloaded"] == 0
 
 
+def test_wrong_shape_json_starts_fresh(tmp_path):
+    """Valid JSON that isn't the expected object shape (e.g. a bare array) must
+    not raise — it should be treated the same as any other corrupt file."""
+    f = tmp_path / "tracker.json"
+    f.write_text("[1, 2, 3]")
+    t = ClipTracker(f)
+    assert t.stats["total_downloaded"] == 0
+    assert not t.is_downloaded("any_id")
+
+
 # ---------------------------------------------------------------------------
 # Pruning
 # ---------------------------------------------------------------------------

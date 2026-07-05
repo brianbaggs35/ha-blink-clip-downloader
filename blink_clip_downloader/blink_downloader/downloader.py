@@ -123,7 +123,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 login_data["password"] = self._config.password
                 use_cached = True
                 _LOGGER.debug("Loaded cached Blink auth credentials")
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                 _LOGGER.warning("Cached auth file is corrupt; will re-authenticate")
 
         # blinkpy's OAuth v2 flow identifies this installation to Blink with a

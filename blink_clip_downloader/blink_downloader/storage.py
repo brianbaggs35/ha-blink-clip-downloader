@@ -54,6 +54,7 @@ class StorageManager:
     ) -> Path:
         """Return the destination :class:`Path` for a given clip."""
         safe_cam = _safe_name(camera_name)
+        safe_id = _safe_name(clip_id)
         date_str = timestamp.strftime("%Y-%m-%d")
         time_str = timestamp.strftime("%H%M%S")
         ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
@@ -64,7 +65,7 @@ class StorageManager:
                 timestamp=ts_str,
                 date=date_str,
                 time=time_str,
-                id=clip_id,
+                id=safe_id,
             )
             + extension
         )
