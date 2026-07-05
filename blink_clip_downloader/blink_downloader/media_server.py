@@ -1901,6 +1901,7 @@ async function loadAIStatus() {
       moondream_cloud: 'Moondream Cloud',
       moondream_local: 'Moondream Local (0.5B)',
       anthropic: 'Anthropic (Claude)',
+      openai: 'OpenAI (GPT)',
     };
     const provider = d.provider || 'ollama';
     if (d.ai_online) {
@@ -1913,7 +1914,7 @@ async function loadAIStatus() {
     $('ai-provider-label').textContent = providerLabels[provider] || provider;
     $('ai-model-name').textContent = d.model || '—';
     const modelPicker = $('ai-model-picker');
-    const showPicker = provider === 'ollama' || provider === 'ollama_cloud' || provider === 'anthropic';
+    const showPicker = provider === 'ollama' || provider === 'ollama_cloud' || provider === 'anthropic' || provider === 'openai';
     if (modelPicker) modelPicker.style.display = showPicker ? 'flex' : 'none';
     // Moondream local: show install section and poll install state
     const mdSection = $('ai-moondream-local-section');
@@ -2193,10 +2194,10 @@ function _fmtNum(n) {
 const _PROVIDER_NOTES = {
   ollama: 'Ollama (Local/LAN) runs on your own hardware or another device on your network — no cloud costs. Token counts are extracted from the Ollama API response (<code>prompt_eval_count</code> / <code>eval_count</code>). Some cached responses may show 0 prompt tokens.',
   ollama_cloud: 'Ollama Cloud (api.ollama.com) is a hosted Ollama service. Token counts are extracted from the API response. API usage may incur costs — check your Ollama Cloud account dashboard.',
-  moondream_cloud: 'Moondream Cloud bills per API request. Each frame is analysed individually with reasoning mode enabled for better spatial accuracy. Token counts shown are <em>estimates</em> (256 image tokens + text tokens per frame) — the Moondream API does not return usage stats. Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for authoritative billing.',
+  moondream_cloud: 'Moondream Cloud bills per API request. Each frame is analysed individually with reasoning mode enabled for better spatial accuracy. Token counts shown are <em>estimates</em> (256 image tokens + text tokens per frame) — the Moondream API does not return usage stats. Only one model is selectable for this provider, so two-tier escalation (OpenAI-only, see below) is not available here. Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for authoritative billing.',
   moondream_local: 'Moondream Local runs entirely on-device — no cloud costs and no token tracking. The analysis count shows how many clips have been processed.',
   anthropic: 'Anthropic (Claude) charges per token. Input and output tokens are tracked for every analysis. Use <strong>Claude Haiku 4.5</strong> for best cost efficiency ($1/$5 per 1M tokens). Estimated cost is calculated from your token usage and the model\'s current pricing.',
-  openai: 'OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis. If a two-tier escalation model is configured, estimated cost is calculated using the primary model\'s pricing for all tokens and may understate spend on clips that escalate.',
+  openai: 'OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis. OpenAI is the only provider that supports two-tier escalation (<code>openai_escalation_model</code>): if configured, estimated cost is calculated using the primary model\'s pricing for all tokens and may understate spend on clips that escalate.',
 };
 
 async function loadAIUsage() {

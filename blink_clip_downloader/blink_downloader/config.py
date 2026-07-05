@@ -107,6 +107,10 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     anthropic_model: str = "claude-haiku-4-5"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
+    # Two-tier escalation is an OpenAI-only feature: no other ai_provider reads
+    # this field. Moondream Cloud in particular has just one selectable model
+    # (see MoondreamCloudAnalyzer.fetch_models()), so there is no second tier
+    # to escalate to for that provider.
     openai_escalation_model: str = ""
     ai_prompt: str = (
         "You are a security camera analyst. Review this motion-triggered clip and determine "

@@ -30,6 +30,33 @@
   reject the legacy `max_tokens` chat-completions parameter and require
   `max_completion_tokens` instead; the OpenAI analyzer now selects the
   correct parameter based on the model name.
+- **Fix: a suspicious tier-1 verdict with an empty `description` field never
+  escalated to the tier-2 model.** Two-tier escalation required both
+  `suspicious=true` and a non-empty description before re-analyzing with
+  `openai_escalation_model`; a terse tier-1 response that set `suspicious`
+  but left `description` blank silently skipped the stronger second look it
+  was supposed to get. Escalation now triggers on `suspicious=true` alone.
+- **Fix: repeated, uncached health-check calls to cloud AI provider APIs
+  showed up as constant traffic in the logs.** The web UI polls the AI
+  status endpoint every 10 seconds while the AI tab is open, and the
+  background analysis queue polls independently every `ai_check_interval`
+  seconds — each poll triggered a fresh authenticated API call (e.g.
+  OpenAI's `GET /v1/models`) for every cloud provider (OpenAI, Anthropic,
+  Ollama Cloud, Moondream Cloud). Health-check results are now cached for
+  30 seconds per provider, cutting redundant API traffic without affecting
+  how quickly a real outage is detected.
+- **Fix: the OpenAI provider was missing from the AI status card's model
+  picker.** The "Fetch Models" button never appeared for `openai` in the AI
+  status card due to a missing provider entry, even though the picker
+  worked correctly in the AI Usage tab.
+
+### Documentation
+
+- Clarified in `config.yaml`, `DOCS.md`, and the web UI's AI usage notes
+  that two-tier escalation (`openai_escalation_model`) is an OpenAI-only
+  feature — it has no effect for any other provider, and is not available
+  for Moondream Cloud in particular since that provider only exposes a
+  single selectable model.
 
 ## 3.1.5
 
