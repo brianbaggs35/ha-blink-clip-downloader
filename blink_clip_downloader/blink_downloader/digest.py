@@ -101,7 +101,7 @@ class DailyDigest:
         try:
             data = json.loads(self._state_file.read_text(encoding="utf-8"))
             return date.fromisoformat(data["last_sent"])
-        except (KeyError, ValueError, json.JSONDecodeError):
+        except (KeyError, ValueError, TypeError, json.JSONDecodeError):
             return None
 
     def _save_last_sent(self) -> None:

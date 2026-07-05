@@ -155,6 +155,15 @@ def test_load_last_sent_corrupt_file(tmp_path: Path) -> None:
     assert digest._last_sent is None
 
 
+def test_load_last_sent_wrong_shape_json(tmp_path: Path) -> None:
+    """Valid JSON that isn't the expected object shape (e.g. a bare list)
+    must not raise — it should be treated the same as any other corrupt file."""
+    state_file = tmp_path / "last_digest.json"
+    state_file.write_text(json.dumps([1, 2, 3]))
+    digest, _, _ = _make_digest(tmp_path)
+    assert digest._last_sent is None
+
+
 # ------------------------------------------------------------------
 # Coverage gap tests
 # ------------------------------------------------------------------
