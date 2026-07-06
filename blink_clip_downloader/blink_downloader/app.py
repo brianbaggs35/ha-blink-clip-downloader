@@ -434,7 +434,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             )
             _LOGGER.warning(msg)
             await self._notifier.notify(msg, title="Blink Downloader: Storage Full")
-            await self._write_stats()
+            self._write_stats()
             return
 
         downloaded = await self._downloader.download_new_clips()
@@ -481,7 +481,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # even when no new clips were downloaded this cycle.
         self._media_server.extra_status["disk"] = self._storage.disk_stats()
 
-        await self._write_stats()
+        self._write_stats()
         _LOGGER.debug("Poll cycle finished (%d new clip(s))", len(downloaded))
 
     async def _on_clips_downloaded(self, clips: list[dict[str, Any]]) -> None:
@@ -633,7 +633,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
     # Stats
     # ------------------------------------------------------------------
 
-    async def _write_stats(self) -> None:
+    def _write_stats(self) -> None:
         payload: dict[str, Any] = {
             "last_poll": datetime.now(timezone.utc).isoformat(),
             "session_downloads": self._session_downloads,

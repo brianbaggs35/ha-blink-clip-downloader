@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+_CLIP_NOT_FOUND = "Clip not found"
+
 # ---------------------------------------------------------------------------
 # Moondream local install state (persists for the lifetime of the process)
 # ---------------------------------------------------------------------------
@@ -2459,6 +2461,10 @@ class MediaServer:
         self._notification_dispatcher = notification_dispatcher
         self._runner: web.AppRunner | None = None
         self.extra_status: dict = {}
+        # Holds a strong reference to the background moondream-install task —
+        # asyncio only keeps a weak reference internally, so an unreferenced
+        # task can be garbage-collected mid-install.
+        self._moondream_install_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -2579,14 +2585,14 @@ class MediaServer:
         clip_id = request.match_info["id"]
         clip = await self._db.get_clip(clip_id)
         if not clip:
-            raise web.HTTPNotFound(text="Clip not found")
+            raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
         return web.json_response(clip)
 
     async def _handle_delete_clip(self, request: web.Request) -> web.Response:
         clip_id = request.match_info["id"]
         clip = await self._db.get_clip(clip_id)
         if not clip:
-            raise web.HTTPNotFound(text="Clip not found")
+            raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
         file_path = Path(clip["file_path"])
         if file_path.exists():
             try:
@@ -2608,7 +2614,7 @@ class MediaServer:
             starred = True
         found = await self._db.star_clip(clip_id, starred)
         if not found:
-            raise web.HTTPNotFound(text="Clip not found")
+            raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
         return web.json_response({"id": clip_id, "starred": starred})
 
     async def _handle_set_tags(self, request: web.Request) -> web.Response:
@@ -2620,14 +2626,14 @@ class MediaServer:
             raise web.HTTPBadRequest(text="Invalid JSON body")
         found = await self._db.set_tags(clip_id, tags)
         if not found:
-            raise web.HTTPNotFound(text="Clip not found")
+            raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
         return web.json_response({"id": clip_id, "tags": tags})
 
     async def _handle_stream(self, request: web.Request) -> web.StreamResponse:
         clip_id = request.match_info["id"]
         clip = await self._db.get_clip(clip_id)
         if not clip:
-            raise web.HTTPNotFound(text="Clip not found")
+            raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
 
         file_path = Path(clip["file_path"])
         if not file_path.exists():
@@ -2862,7 +2868,7 @@ class MediaServer:
         clip_id = request.match_info["clip_id"]
         clip = await self._db.get_clip(clip_id)
         if not clip:
-            raise web.HTTPNotFound(text="Clip not found")
+            raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
 
         result = await self._analyzer.analyze_clip(
             clip_path=clip["file_path"],
@@ -2995,7 +3001,7 @@ class MediaServer:
             except Exception as exc:  # noqa: BLE001
                 _moondream_install_state = {"status": "failed", "log": str(exc)}
 
-        asyncio.create_task(_run_install())
+        self._moondream_install_task = asyncio.create_task(_run_install())
         return web.json_response({"status": "installing"})
 
     _CAMERA_CONFIGS_FILE = Path("/data/camera_configs.json")

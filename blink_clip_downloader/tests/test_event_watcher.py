@@ -372,6 +372,16 @@ async def test_connect_and_watch_ws_error_breaks_loop() -> None:
     await w._connect_and_watch()
 
 
+def test_handle_ws_message_ignores_unrecognized_type() -> None:
+    """A message type that's neither TEXT nor ERROR/CLOSE/CLOSED (e.g. PING)
+    is ignored — the connection stays open and the loop keeps consuming."""
+    import aiohttp
+
+    w, _, _ = _make_watcher()
+    msg = _make_ws_message(aiohttp.WSMsgType.PING)
+    assert w._handle_ws_message(msg) is False
+
+
 async def test_connect_and_watch_stops_when_not_running() -> None:
     """If _running is set to False during iteration, loop exits."""
     import aiohttp

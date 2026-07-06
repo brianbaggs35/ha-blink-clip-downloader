@@ -158,6 +158,12 @@ async def test_poll_cycle_retention_removes_orphaned_db_rows(app):
     app._db.delete_clip_by_path.assert_awaited_once_with("/share/blink-clips/old.mp4")
 
 
+async def test_poll_cycle_logs_when_archiver_compresses_clips(app):
+    app._archiver.run = AsyncMock(return_value=3)
+    await app._poll_cycle()
+    app._archiver.run.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # _on_clips_downloaded
 # ---------------------------------------------------------------------------
@@ -233,15 +239,68 @@ async def test_on_clips_downloaded_skips_manifest_when_disabled(app):
     app._manifest.append.assert_not_called()
 
 
+async def test_on_clips_downloaded_enqueues_for_analysis_when_configured(app):
+    """When the AI analysis queue is wired up, every downloaded clip must be
+    enqueued for analysis — the base test config has ai_analysis_enabled=False
+    so _analysis_queue is normally None and this path is never exercised."""
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.enqueue = AsyncMock()
+    clips = [
+        {"id": "1", "camera": "C", "path": "/p", "timestamp": "t", "size_bytes": 5}
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._analysis_queue.enqueue.assert_awaited_once_with(clips[0])
+
+
+async def test_on_clips_downloaded_records_baseline_when_library_db_enabled(app):
+    """With enable_library_db=True, each clip's camera/hour/duration is
+    recorded into the anomaly-detection baseline."""
+    app._config.enable_library_db = True
+    app._db.record_clip_baseline = AsyncMock()
+    clips = [
+        {
+            "id": "1",
+            "camera": "Front Door",
+            "path": "/p",
+            "timestamp": "2024-06-01T08:30:00+00:00",
+            "size_bytes": 5,
+            "duration": 12,
+        }
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._db.record_clip_baseline.assert_awaited_once_with(
+        camera="Front Door", hour=8, duration=12.0
+    )
+
+
+async def test_on_clips_downloaded_baseline_failure_is_swallowed(app):
+    """A failure recording the anomaly baseline (e.g. DB error) must not
+    interrupt the rest of the post-download flow (notifications, sensor
+    update, etc.)."""
+    app._config.enable_library_db = True
+    app._db.record_clip_baseline = AsyncMock(side_effect=RuntimeError("db locked"))
+    clips = [
+        {"id": "1", "camera": "C", "path": "/p", "timestamp": "t", "size_bytes": 5}
+    ]
+
+    await app._on_clips_downloaded(clips)  # must not raise
+
+    app._notifier.update_sensor.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # _write_stats
 # ---------------------------------------------------------------------------
 
 
-async def test_write_stats_creates_file(app, tmp_path):
+def test_write_stats_creates_file(app, tmp_path):
     stats_path = tmp_path / "stats.json"
     with patch("blink_downloader.app.STATS_FILE", stats_path):
-        await app._write_stats()
+        app._write_stats()
 
     data = json.loads(stats_path.read_text())
     assert "last_poll" in data
@@ -249,10 +308,10 @@ async def test_write_stats_creates_file(app, tmp_path):
     assert "disk" in data
 
 
-async def test_write_stats_handles_oserror(app, tmp_path):
+def test_write_stats_handles_oserror(app, tmp_path):
     # Should not raise even if the file can't be written.
     with patch("blink_downloader.app.STATS_FILE", Path("/nonexistent/deep/stats.json")):
-        await app._write_stats()  # no exception
+        app._write_stats()  # no exception
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +346,55 @@ async def test_running_false_exits_wait_early(app):
     await app._wait_with_trigger_check()
 
 
+async def test_wait_logs_fast_poll_mode(app):
+    """When fast-poll mode is active, the (short) fast_poll_interval is used
+    and logged instead of the normal poll_interval."""
+    app._config.fast_poll_interval = 0
+    app._fast_poll_until = _time.monotonic() + 100
+    app._running = True
+
+    await app._wait_with_trigger_check()  # in_fast_mode branch, returns immediately
+
+
+async def test_wait_ignores_trigger_file_unlink_oserror(app):
+    """If the trigger file can't be deleted (e.g. permissions), the manual
+    trigger must still be honored rather than raising."""
+    app._config.poll_interval = 300
+    app._running = True
+    trigger = MagicMock()
+    trigger.exists.return_value = True
+    trigger.unlink.side_effect = OSError("permission denied")
+
+    with patch("blink_downloader.app.TRIGGER_FILE", trigger):
+        await app._wait_with_trigger_check()  # must not raise
+
+    trigger.unlink.assert_called_once()
+
+
+async def test_wait_returns_early_when_fast_poll_activated_mid_sleep(app, monkeypatch):
+    """If motion activates fast-poll mode while _wait_with_trigger_check is
+    already sleeping toward the (longer) normal poll_interval, it must notice
+    on the next re-check and return early instead of sleeping out the full
+    interval."""
+    app._config.poll_interval = 10
+    app._fast_poll_until = 0.0  # not in fast mode at the start of the wait
+    app._running = True
+
+    sleep_calls = 0
+
+    async def _fake_sleep(_delay):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        # Simulate motion being detected partway through the wait.
+        app._fast_poll_until = _time.monotonic() + 100
+
+    monkeypatch.setattr("blink_downloader.app.asyncio.sleep", _fake_sleep)
+
+    await app._wait_with_trigger_check()
+
+    assert sleep_calls == 1
+
+
 # ---------------------------------------------------------------------------
 # Shutdown
 # ---------------------------------------------------------------------------
@@ -318,6 +426,25 @@ async def test_shutdown_isolates_step_failures(app):
     app._notifier.close.assert_awaited_once()
     app._db.close.assert_awaited_once()
     app._tracker.save.assert_called_once()
+
+
+async def test_shutdown_closes_analysis_queue_analyzer_and_dispatcher_when_present(
+    app,
+):
+    """When AI analysis is configured, _shutdown() must also stop the
+    analysis queue and close the analyzer — these are skipped entirely when
+    ai_analysis_enabled=False (the base test config), so this path is
+    otherwise never exercised."""
+    app._tracker.save = MagicMock()
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.stop = AsyncMock()
+    app._analyzer = MagicMock()
+    app._analyzer.close = AsyncMock()
+
+    await app._shutdown()
+
+    app._analysis_queue.stop.assert_awaited_once()
+    app._analyzer.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +596,35 @@ async def test_connect_with_retry_returns_false_on_sigterm(app):
     assert result is False
 
 
+async def test_connect_with_retry_interruptible_wait_returns_false(app, monkeypatch):
+    """The interruptible per-second wait between retries must notice
+    _running being cleared mid-wait (not just at the top of the outer while
+    loop) and return False promptly rather than sleeping out the full
+    reconnect_interval."""
+    app._running = True
+    app._reconnect_interval = 5
+
+    async def _connect():
+        raise RuntimeError("fail")
+
+    app._downloader.connect = _connect
+
+    sleep_calls = 0
+
+    async def _fake_sleep(_delay):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        if sleep_calls == 1:
+            app._running = False
+
+    monkeypatch.setattr("blink_downloader.app.asyncio.sleep", _fake_sleep)
+
+    result = await app._connect_with_retry()
+
+    assert result is False
+    assert sleep_calls == 1
+
+
 async def test_connect_with_retry_notifies_on_two_fa_timeout(app):
     """TwoFARequired triggers an HA notification before retrying."""
     app._running = True
@@ -549,6 +705,78 @@ async def test_run_one_iteration_then_stop(app, tmp_path):
     app._downloader.disconnect.assert_awaited_once()
 
 
+async def test_run_poll_cycle_exception_is_caught_and_loop_continues(app, tmp_path):
+    """An unhandled exception from _poll_cycle must be logged and swallowed,
+    not crash the whole run() loop — a transient failure in one poll cycle
+    shouldn't take down the add-on."""
+    from blink_downloader.tracker import ClipTracker
+
+    app._storage.ensure_directory = MagicMock()
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+
+    call_count = 0
+
+    async def _fake_poll():
+        nonlocal call_count
+        call_count += 1
+        raise RuntimeError("boom")
+
+    async def _fake_wait():
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = _fake_wait
+
+    await app.run()
+
+    assert call_count == 1
+    app._downloader.disconnect.assert_awaited_once()
+
+
+async def test_run_starts_media_server_event_watcher_and_analysis_queue(app, tmp_path):
+    """run() must launch the media server, HA event watcher, and analysis
+    queue as background tasks when their respective config flags are on —
+    the base test config disables all three (enable_media_server=False,
+    watch_ha_events=False, ai_analysis_enabled=False) so this path is
+    otherwise never exercised."""
+    import dataclasses
+
+    from blink_downloader.tracker import ClipTracker
+
+    app._config = dataclasses.replace(
+        app._config,
+        enable_media_server=True,
+        watch_ha_events=True,
+        supervisor_token="test_supervisor_token",
+    )
+    app._storage.ensure_directory = MagicMock()
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+
+    app._media_server.start = AsyncMock()
+    app._media_server.stop = AsyncMock()
+    app._event_watcher.start = AsyncMock()
+    app._event_watcher.stop = AsyncMock()
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.start = AsyncMock()
+    app._analysis_queue.stop = AsyncMock()
+
+    async def _fake_poll():
+        # Let the just-launched background tasks get a turn before we stop
+        # and _shutdown() cancels them.
+        await asyncio.sleep(0)
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    app._media_server.start.assert_awaited_once()
+    app._event_watcher.start.assert_awaited_once()
+    app._analysis_queue.start.assert_awaited_once()
+    app._analysis_queue.stop.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # Signal handler
 # ---------------------------------------------------------------------------
@@ -572,6 +800,14 @@ def test_on_blink_motion_sets_fast_poll_until(app):
     assert app._fast_poll_until >= before + 59
 
 
+async def test_trigger_immediate_download_activates_fast_poll(app):
+    """The media server's Sync Now button calls this to force a near-term
+    poll rather than waiting out the full poll_interval."""
+    before = _time.monotonic()
+    await app._trigger_immediate_download()
+    assert app._fast_poll_until >= before + 29
+
+
 def test_activate_fast_poll_sets_fast_poll_until(app):
     app._config.fast_poll_duration = 30
     before = _time.monotonic()
@@ -588,6 +824,19 @@ def test_on_blink_motion_cleared_schedules_timer(app):
     app._on_blink_motion_cleared("Garage")
 
     loop.call_later.assert_called_once_with(15, app._activate_fast_poll)
+
+
+def test_on_blink_motion_cleared_handles_no_running_event_loop(app):
+    """When called with no _loop cached and no event loop running (this is a
+    plain sync test — there's genuinely no loop running here), the
+    RuntimeError from asyncio.get_running_loop() must be caught rather than
+    propagating out to the HAEventWatcher callback."""
+    app._loop = None
+    app._config.post_motion_delay = 15
+
+    app._on_blink_motion_cleared("Garage")  # must not raise
+
+    assert app._loop is None
 
 
 # ---------------------------------------------------------------------------
@@ -787,6 +1036,12 @@ async def test_poll_cycle_backfills_thumbnails(app):
     app._downloader.backfill_thumbnails.assert_awaited_once_with(
         _THUMBNAIL_BACKFILL_BATCH
     )
+
+
+async def test_poll_cycle_logs_when_thumbnails_backfilled(app):
+    app._downloader.backfill_thumbnails = AsyncMock(return_value=2)
+    await app._poll_cycle()
+    app._downloader.backfill_thumbnails.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

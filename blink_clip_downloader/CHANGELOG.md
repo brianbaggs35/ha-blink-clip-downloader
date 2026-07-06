@@ -1,5 +1,110 @@
 # Changelog
 
+## 3.1.9
+
+Static-analysis cleanup pass (SonarQube). No user-facing behavior changes.
+
+### Bug fixes
+
+- **Fix: the moondream local-install background task could be garbage
+  collected mid-install.** `asyncio.create_task()`'s result wasn't kept
+  anywhere — asyncio only holds a weak reference to a running task, so an
+  unreferenced task can be silently collected before it finishes. The task
+  is now held on the `MediaServer` instance for its duration.
+- **Fix: two `except` clauses listed `json.JSONDecodeError` alongside
+  `ValueError`.** `JSONDecodeError` is a `ValueError` subclass, so the extra
+  entry was redundant (harmless, but flagged as dead code) in the cached
+  Blink auth loader (`downloader.py`) and the daily-digest state loader
+  (`digest.py`).
+
+### Code quality
+
+- Replaced several `logger.error(...)` calls inside `except` blocks with
+  `logger.exception(...)` so the full traceback is captured in the add-on
+  log for genuinely unexpected failures (Moondream model loading/fine-tune
+  calls, Blink authentication, Anthropic/OpenAI API errors) — same log
+  level, more diagnostic detail, no behavior change.
+- Two floating-point equality checks (`confidence == 0.0`, `gap == 0.0`)
+  were rewritten as `<= 0.0`. Both values are already clamped to be
+  non-negative before the comparison, so this is behaviorally identical but
+  no longer trips a "don't compare floats for equality" warning.
+- Extracted two nested ternary expressions (subject left/right and top/
+  bottom framing in the AI position hint) into plain `if`/`elif`/`else`
+  statements for readability.
+- De-duplicated the repeated vision-provider system prompt (Ollama,
+  Anthropic, OpenAI each had their own copy of the same 5-line string) into
+  one shared `_VISION_SYSTEM_PROMPT` constant, and the repeated `"Clip not
+  found"` HTTP 404 literal in `media_server.py` into `_CLIP_NOT_FOUND`.
+- Reduced cognitive complexity in two functions by extracting a helper with
+  identical behavior: `StorageManager._apply_retention_policy` (the per-file
+  delete-if-expired check moved to `_delete_if_expired`) and
+  `HAEventWatcher._connect_and_watch` (the per-message WebSocket handling
+  moved to `_handle_ws_message`).
+- Converted `BlinkClipDownloaderApp._write_stats` from `async def` to a
+  plain method — it did no `await`-ing of its own and both call sites were
+  plain sequential calls, not part of any interface that requires it to stay
+  a coroutine.
+- Fixed a stray U+2013 "–" (en dash) in `__init__.py`'s module docstring,
+  replaced with a plain ASCII hyphen.
+
+### Reviewed, left unchanged (documented reasoning)
+
+A larger set of SonarQube findings were reviewed and intentionally left as
+they are — either because the "fix" would change or risk behavior for a
+purely cosmetic gain, or because the finding doesn't hold up once this
+add-on's specific design is taken into account:
+
+- **"Use asynchronous features or remove `async`" (~20 locations).** Verified
+  every instance: they're either (a) `@abc.abstractmethod` declarations on
+  `BaseAnalyzer` (`health_check`, `fetch_models`, `_call_model`, `close`)
+  that every concrete provider subclass overrides with real `await`-ing
+  code, (b) a `_get_session()`/`stop()`/`close()` lifecycle method called
+  generically through a uniform async interface elsewhere (e.g.
+  `app.py`'s `_shutdown_step`), or (c) an aiohttp route handler, which
+  **must** be `async def` to satisfy `aiohttp`'s router regardless of
+  whether that specific handler awaits anything. Removing `async` from any
+  of these would require rewriting the calling convention everywhere that
+  provider/handler is used polymorphically, for no functional benefit.
+- **"Ensure `asyncio.CancelledError` is re-raised" (`analysis_queue.py`,
+  `event_watcher.py`).** Both loops deliberately catch cancellation to exit
+  their `while` loop cleanly on shutdown instead of propagating — this is
+  intentional, existing, and covered by a test for each
+  (`test_is_in_schedule_uses_local_time_not_utc`-style regression tests
+  exist for this exact "breaks the loop without re-raising" behavior).
+  Re-raising would skip that clean-exit path for no observable benefit,
+  since both tasks are already cancelled and gathered with
+  `return_exceptions=True` during shutdown.
+- **Cognitive Complexity (~15 functions, up to 65).** Left as-is beyond the
+  two smallest/safest extractions above. These are large, business-critical
+  functions (AI prompt building, config loading, database queries, app
+  orchestration) where a mechanical split carries real risk of changing
+  control flow in a subtle way, for a style-only benefit. Happy to tackle
+  specific ones on request.
+- **`create_analyzer` has 20 parameters (limit 13).** Bundling them into a
+  config object would touch the one call site and every test that
+  constructs an analyzer — deferred as a larger, lower-value change.
+- **Dockerfile: "image might run as root."** Confirmed intentional and
+  required: this add-on's base image starts via s6-overlay's `/init`
+  (documented in the Dockerfile), which needs root to supervise services
+  inside the container — this is the standard pattern for virtually all
+  Home Assistant add-ons. Security is instead enforced via the add-on's
+  `apparmor.txt` profile (confines filesystem/capability access) plus
+  Supervisor-managed container isolation, not a non-root Docker `USER`.
+  Switching to a non-root user would very likely break add-on startup.
+
+### Testing
+
+- Added ~20 regression tests closing previously-uncovered branches found
+  while verifying the fixes above, focused entirely on `app.py`'s main
+  orchestration (`run()`/`_shutdown()`'s conditional background-task and
+  cleanup paths for the media server, HA event watcher, and AI analysis
+  queue; `_connect_with_retry`'s interruptible per-second wait;
+  `_wait_with_trigger_check`'s fast-poll and trigger-file-unlink-failure
+  branches; anomaly-baseline recording in `_on_clips_downloaded`) — these
+  were only reachable with config flags the shared test fixture disables by
+  default. `app.py` went from 89% to 100% coverage; overall project coverage
+  raised from 98.5% to 99.4%.
+
 ## 3.1.8
 
 ### New features

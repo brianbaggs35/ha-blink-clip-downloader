@@ -123,7 +123,8 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 login_data["password"] = self._config.password
                 use_cached = True
                 _LOGGER.debug("Loaded cached Blink auth credentials")
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError):
+                # json.JSONDecodeError is a ValueError subclass, already covered.
                 _LOGGER.warning("Cached auth file is corrupt; will re-authenticate")
 
         # blinkpy's OAuth v2 flow identifies this installation to Blink with a
@@ -156,7 +157,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         except Exception as e:  # noqa: BLE001 pylint: disable=broad-exception-caught
             self.auth_state = "error"
             self.auth_message = "Authentication failed. Check your Blink credentials."
-            _LOGGER.error("Authentication error: %s", str(e))
+            _LOGGER.exception("Authentication error: %s", str(e))
             # Delete cached auth to force fresh login on next retry
             AUTH_FILE.unlink(missing_ok=True)
             raise
@@ -394,7 +395,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                         max_retries=self._config.retry_attempts,
                     )
                 except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
-                    _LOGGER.error(
+                    _LOGGER.exception(
                         "Error downloading local-storage clip %s: %s", item.id, exc
                     )
                     if dest.exists():
