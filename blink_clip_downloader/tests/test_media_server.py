@@ -469,6 +469,27 @@ async def test_activity_invalid_days_falls_back(client: TestClient) -> None:
     assert resp.status == 200  # falls back to 7 days, no error
 
 
+async def test_activity_zero_or_negative_days_clamped_to_one(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """A non-positive `days` must not shift get_activity_data()'s cutoff to
+    today/the future and silently return nothing — it should be clamped up
+    to 1 (today), matching how limit/offset are clamped elsewhere in this
+    file, so a clip recorded today still shows up."""
+    from datetime import datetime, timezone
+
+    ts = datetime.now(timezone.utc).isoformat()
+    await db.add_clip(_make_clip("act-clamped", timestamp=ts))
+
+    resp_zero = await client.get("/api/activity?days=0")
+    assert resp_zero.status == 200
+    assert len(await resp_zero.json()) >= 1
+
+    resp_negative = await client.get("/api/activity?days=-5")
+    assert resp_negative.status == 200
+    assert len(await resp_negative.json()) >= 1
+
+
 # ---------------------------------------------------------------------------
 # /api/tags
 # ---------------------------------------------------------------------------
@@ -1921,6 +1942,29 @@ async def test_ai_analyze_now_success(db: ClipDatabase, tmp_path: Path) -> None:
         # the DB) must reach the analyzer so long-clip frame doubling is
         # driven by the real duration, not an estimate.
         assert analyzer.analyze_clip.call_args.kwargs["clip_duration"] == 47.0
+    finally:
+        await tc.close()
+
+
+async def test_ai_analyze_now_exception_returns_500(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """An unexpected analyze_clip() failure must return a clean {"error": ...}
+    JSON response (mirroring /api/ai/test's error handling) rather than
+    propagating and surfacing as aiohttp's generic HTML 500 page."""
+    await db.add_clip(_make_clip("an2"))
+    analyzer = _make_analyzer()
+    analyzer.analyze_clip = AsyncMock(side_effect=RuntimeError("model unreachable"))
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/ai/analyze/an2")
+        assert resp.status == 500
+        data = await resp.json()
+        assert "model unreachable" in data["error"]
+        # The failed analysis must not be persisted to the DB.
+        assert await db.get_analysis_for_clip("an2") is None
     finally:
         await tc.close()
 

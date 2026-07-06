@@ -6,7 +6,23 @@ from pathlib import Path
 
 import pytest
 
-from blink_downloader.config import _parse_config, load_config
+from blink_downloader.config import AppConfig, _parse_config, load_config
+
+# ---------------------------------------------------------------------------
+# Default ai_prompt content
+# ---------------------------------------------------------------------------
+
+
+def test_default_ai_prompt_treats_leaving_home_as_routine():
+    """A resident opening the front door and stepping out to leave (work,
+    trash, walking to the car) must be covered by an explicit NOT SUSPICIOUS
+    carve-out, symmetric with the existing "opening it... and going inside"
+    rule — otherwise only entering the house is treated as routine and
+    ordinary departures get flagged as suspicious."""
+    prompt = AppConfig.ai_prompt
+    assert "going inside" in prompt
+    assert "stepping out to leave" in prompt
+
 
 # ---------------------------------------------------------------------------
 # _parse_config

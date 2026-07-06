@@ -1,5 +1,56 @@
 # Changelog
 
+## 3.2.0
+
+Bug-hunting pass across the codebase (excluding `analyzer.py`, covered
+previously), prompted by a user report of routine front-door coming-and-going
+being flagged suspicious.
+
+### Bug fixes
+
+- **Fix: `/api/activity?days=N` silently returned no data for `days<=0`.**
+  `_handle_activity` only clamped the upper bound (`min(..., 30)`) — a zero
+  or negative value shifted the activity query's cutoff to today or into the
+  future, so the endpoint returned an empty result instead of erroring or
+  behaving sensibly. Now clamped to `max(1, min(..., 30))`, matching the
+  `limit`/`offset` clamping already used by `_handle_list_clips` and
+  `_handle_ai_suspicious` in the same file.
+- **Fix: `/api/ai/analyze/{clip_id}` ("Analyze Now" button) could return a
+  raw HTML 500 error page instead of a clean JSON error.** Unlike the
+  sibling `/api/ai/test` endpoint, this handler didn't wrap the
+  `analyze_clip()` call in a try/except — an unexpected analyzer failure
+  (network blip, corrupt clip, etc.) would propagate out of the handler and
+  surface as aiohttp's generic error page, breaking the web UI's error
+  display instead of showing `{"error": "..."}`. Now mirrors `/api/ai/test`'s
+  error handling.
+
+### AI prompt
+
+- **Fix: a resident leaving through the front door could be flagged
+  suspicious.** The default `ai_prompt`'s NOT SUSPICIOUS rules only
+  explicitly covered a person walking up to the front door, opening it, and
+  going *inside* — opening the door and stepping *out* to leave (for work,
+  to take out trash, walking to a car, etc.) had no matching carve-out, so
+  it fell through to a more alarming reading purely for "opening a door and
+  walking away." Added a symmetric rule: exiting the front door and calmly
+  walking off is exactly as routine as entering, unless the person then
+  lingers, repeatedly looks around, or otherwise matches one of the existing
+  SUSPICIOUS behaviors (casing, fleeing after tampering, etc.) — those are
+  untouched, so this only narrows the specific "calm exit" false-positive
+  pattern and does not weaken detection of genuine intrusion/tampering
+  behavior.
+- Note: true person-recognition ("learn who I am") would need a much larger
+  feature (face embeddings, a trusted-persons registry, biometric data
+  handling) with real privacy tradeoffs — not attempted here. See the
+  conversation notes for the fuller discussion of why the prompt fix above
+  was chosen instead.
+
+### Testing
+
+- Added regression tests for both media-server fixes and the new AI-prompt
+  carve-out. `media_server.py` reaches 100% coverage; overall project
+  coverage holds at 99.4%.
+
 ## 3.1.9
 
 Static-analysis cleanup pass (SonarQube). No user-facing behavior changes.
