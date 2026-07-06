@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,6 +26,25 @@ from blink_downloader.tracker import ClipTracker
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _force_utc_timezone():
+    """time_window_start/end are documented as local HH:MM and _in_time_window
+    converts the UTC clip timestamp to local time before comparing — pin the
+    process timezone to UTC so those tests are deterministic regardless of
+    the machine running them."""
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    time.tzset()
+    try:
+        yield
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time.tzset()
 
 
 @pytest.fixture
@@ -147,6 +168,47 @@ def test_time_window_invalid_timestamp_keeps_clip(dl):
     assert len(result) == 1
 
 
+def test_time_window_start_only_keeps_clips_after_start(dl, sample_clip):
+    """With only time_window_start configured (no end), clips at or after
+    that time of day are kept regardless of how late they run."""
+    dl._config.time_window_start = "08:00"
+    dl._config.time_window_end = ""
+    before = {**sample_clip, "id": 1, "created_at": "2024-06-15T05:00:00+00:00"}
+    after = {**sample_clip, "id": 2, "created_at": "2024-06-15T23:00:00+00:00"}
+    result = dl._apply_filters([before, after])
+    assert [c["id"] for c in result] == [2]
+
+
+def test_time_window_end_only_keeps_clips_before_end(dl, sample_clip):
+    """With only time_window_end configured (no start), clips at or before
+    that time of day are kept."""
+    dl._config.time_window_start = ""
+    dl._config.time_window_end = "10:00"
+    before = {**sample_clip, "id": 1, "created_at": "2024-06-15T05:00:00+00:00"}
+    after = {**sample_clip, "id": 2, "created_at": "2024-06-15T23:00:00+00:00"}
+    result = dl._apply_filters([before, after])
+    assert [c["id"] for c in result] == [1]
+
+
+def test_min_clip_duration_filter(dl, sample_clip):
+    dl._config.min_clip_duration = 10
+    clips = [
+        {**sample_clip, "id": 1, "duration": 5},
+        {**sample_clip, "id": 2, "duration": 15},
+    ]
+    result = dl._apply_filters(clips)
+    assert [c["id"] for c in result] == [2]
+
+
+def test_in_time_window_returns_true_when_unconfigured(dl, sample_clip):
+    """_in_time_window() itself (not just _apply_filters, which skips calling
+    it when both bounds are empty) defaults to keeping the clip when neither
+    bound is set."""
+    dl._config.time_window_start = ""
+    dl._config.time_window_end = ""
+    assert dl._in_time_window(sample_clip) is True
+
+
 # ---------------------------------------------------------------------------
 # _resolve_url
 # ---------------------------------------------------------------------------
@@ -263,6 +325,45 @@ async def test_stream_to_file_timeout_error_retries_and_cleans_up(dl, tmp_path):
 
     dest.write_bytes(b"partial")
     result = await dl._stream_to_file("https://host/clip.mp4", dest)
+    assert result is None
+    assert not dest.exists()
+    assert mock_session.get.call_count == 2
+
+
+async def test_stream_to_file_oserror_during_write_retries_and_cleans_up(dl, tmp_path):
+    """An OSError (e.g. disk full) raised while writing chunks must be caught
+    like a ClientError/TimeoutError — otherwise the partial file is left on
+    disk and a later poll's `dest.exists()` pre-check in _download_clip
+    would treat that truncated file as a completed download permanently."""
+    dest = tmp_path / "clip.mp4"
+    dl._config.retry_attempts = 2
+    dl._config.retry_delay = 0.0
+
+    async def _iter_chunks(chunk_size):
+        yield b"fake video"
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.content.iter_chunked = _iter_chunks
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    dl._session = mock_session
+    dl._blink = MagicMock()
+    dl._blink.auth.header = {}
+
+    mock_file = AsyncMock()
+    mock_file.write = AsyncMock(side_effect=OSError("No space left on device"))
+    mock_file.__aenter__ = AsyncMock(return_value=mock_file)
+    mock_file.__aexit__ = AsyncMock(return_value=False)
+
+    dest.write_bytes(b"partial")
+    with patch("blink_downloader.downloader.aiofiles.open", return_value=mock_file):
+        result = await dl._stream_to_file("https://host/clip.mp4", dest)
+
     assert result is None
     assert not dest.exists()
     assert mock_session.get.call_count == 2
@@ -554,6 +655,35 @@ async def test_download_new_clips_no_clips(dl):
     assert results == []
 
 
+async def test_download_new_clips_raises_without_connect(dl):
+    """download_new_clips() before connect() must fail loudly, not silently
+    return an empty list — callers rely on this to know setup was skipped."""
+    dl._blink = None
+    with pytest.raises(RuntimeError, match="connect"):
+        await dl.download_new_clips()
+
+
+async def test_download_new_clips_logs_and_skips_failed_clip(dl, sample_clip):
+    """One clip's download raising must not abort the whole batch — the
+    other clips in the same poll still get downloaded and returned."""
+    dl._blink = MagicMock()
+    clips = [{**sample_clip, "id": 1}, {**sample_clip, "id": 2}]
+
+    async def _fake_download(clip, sem):
+        if clip["id"] == 1:
+            raise RuntimeError("network blip")
+        return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=clips)),
+        patch.object(dl, "_download_clip", side_effect=_fake_download),
+    ):
+        results = await dl.download_new_clips()
+
+    assert len(results) == 1
+    assert results[0]["id"] == "2"
+
+
 async def test_download_clip_null_api_fields(dl, tmp_path):
     """_download_clip must not raise TypeError when the Blink API returns null
     for duration, network_id, or source (present key, None value).
@@ -676,6 +806,153 @@ async def test_download_clip_skips_thumbnail_when_disabled(dl, tmp_path):
 
     assert result is not None
     mock_gen.assert_not_called()
+
+
+async def test_download_clip_no_media_url_returns_none(dl):
+    """A clip with no media URL is skipped rather than attempting a download."""
+    clip = {"id": 1, "device_name": "Front Door", "media": "", "deleted": False}
+    sem = asyncio.Semaphore(1)
+    assert await dl._download_clip(clip, sem) is None
+
+
+async def test_download_clip_over_quota_returns_none(dl, tmp_path):
+    """A clip is skipped once storage is over quota, without attempting a
+    network download."""
+    clip = {
+        "id": 2,
+        "device_name": "Front Door",
+        "media": "/api/v1/accounts/1/clip/2.mp4",
+        "created_at": "2024-06-01T08:30:00+00:00",
+        "deleted": False,
+    }
+    dl._storage.is_over_quota = MagicMock(return_value=True)  # type: ignore[method-assign]
+    sem = asyncio.Semaphore(1)
+    assert await dl._download_clip(clip, sem) is None
+
+
+async def test_download_clip_invalid_created_at_falls_back_to_now(dl, tmp_path):
+    """An unparseable created_at must not raise — the clip still downloads,
+    filed under the current time instead of a parsed timestamp."""
+    clip = {
+        "id": 3,
+        "device_name": "Front Door",
+        "media": "/api/v1/accounts/1/clip/3.mp4",
+        "created_at": "not-a-timestamp",
+        "duration": 5,
+        "network_id": 1,
+        "source": "pir",
+        "deleted": False,
+    }
+    content = b"fake video data"
+
+    async def _iter_chunks(chunk_size):
+        yield content
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.content.iter_chunked = _iter_chunks
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    dl._session = mock_session
+
+    mock_blink = MagicMock()
+    mock_blink.auth.header = {}
+    mock_blink.urls.base_url = "https://rest-prod.immedia-semi.com"
+    dl._blink = mock_blink
+    dl._db = None
+
+    sem = asyncio.Semaphore(1)
+    result = await dl._download_clip(clip, sem)
+
+    assert result is not None
+    assert result["timestamp"]  # a real ISO timestamp was generated
+
+
+async def test_download_clip_already_on_disk_marks_downloaded(dl, tmp_path):
+    """A clip file already present on disk (e.g. tracker was reset) is not
+    re-downloaded — it's marked downloaded from the existing file's size and
+    flagged 'skipped'."""
+    clip = {
+        "id": 4,
+        "device_name": "Front Door",
+        "media": "/api/v1/accounts/1/clip/4.mp4",
+        "created_at": "2024-06-01T08:30:00+00:00",
+        "deleted": False,
+    }
+    dest = tmp_path / "existing.mp4"
+    dest.write_bytes(b"already here")
+    dl._storage.resolve_path = MagicMock(return_value=dest)  # type: ignore[method-assign]
+
+    sem = asyncio.Semaphore(1)
+    result = await dl._download_clip(clip, sem)
+
+    assert result is not None
+    assert result["skipped"] is True
+    assert result["size_bytes"] == len(b"already here")
+    assert dl._tracker.is_downloaded("4")
+
+
+async def test_download_clip_stream_failure_returns_none(dl, tmp_path):
+    """A failed/aborted stream (all retries exhausted) makes _download_clip
+    return None rather than a partial result."""
+    clip = {
+        "id": 5,
+        "device_name": "Front Door",
+        "media": "/api/v1/accounts/1/clip/5.mp4",
+        "created_at": "2024-06-01T08:30:00+00:00",
+        "deleted": False,
+    }
+    with patch.object(dl, "_stream_to_file", AsyncMock(return_value=None)):
+        sem = asyncio.Semaphore(1)
+        result = await dl._download_clip(clip, sem)
+
+    assert result is None
+
+
+async def test_download_clip_writes_to_db_when_configured(dl, tmp_path):
+    """When a ClipDatabase is attached, a successfully downloaded clip is
+    persisted to it."""
+    clip = {
+        "id": 6,
+        "device_name": "Front Door",
+        "media": "/api/v1/accounts/1/clip/6.mp4",
+        "created_at": "2024-06-01T08:30:00+00:00",
+        "duration": 5,
+        "network_id": 1,
+        "source": "pir",
+        "deleted": False,
+    }
+    content = b"fake video data"
+
+    async def _iter_chunks(chunk_size):
+        yield content
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.content.iter_chunked = _iter_chunks
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    dl._session = mock_session
+
+    mock_blink = MagicMock()
+    mock_blink.auth.header = {}
+    mock_blink.urls.base_url = "https://rest-prod.immedia-semi.com"
+    dl._blink = mock_blink
+    dl._db = AsyncMock()
+
+    sem = asyncio.Semaphore(1)
+    result = await dl._download_clip(clip, sem)
+
+    assert result is not None
+    dl._db.add_clip.assert_awaited_once_with(result)
 
 
 # ---------------------------------------------------------------------------
@@ -906,6 +1183,53 @@ async def test_connect_sets_auth_state_connected(dl, tmp_path):
         await dl.connect()
 
     assert dl.auth_state == "connected"
+
+
+async def test_connect_start_raises_two_fa_required_calls_handle_2fa(dl, tmp_path):
+    """If blink.start() itself raises BlinkTwoFARequiredError (not just
+    send_2fa_code), connect() must run the 2FA flow and still finish
+    connecting rather than propagating the exception."""
+    missing_auth = tmp_path / "no_auth.json"
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock(side_effect=BlinkTwoFARequiredError("2FA required"))
+    mock_blink.account_id = 99
+    mock_blink.auth = MagicMock()
+    mock_blink.auth.login_attributes = {}
+
+    dl._handle_2fa = AsyncMock()  # type: ignore[method-assign]
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", missing_auth),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth"),
+    ):
+        await dl.connect()
+
+    dl._handle_2fa.assert_awaited_once()
+    assert dl.auth_state == "connected"
+
+
+async def test_connect_generic_exception_sets_error_and_deletes_cache(dl, tmp_path):
+    """An unexpected exception from blink.start() must set auth_state to
+    'error', delete the (now-possibly-invalid) cached auth file, and re-raise
+    rather than being silently swallowed."""
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps({"token": "cached_token", "host": "rest-us"}))
+
+    mock_blink = AsyncMock()
+    mock_blink.start = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", auth_file),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth"),
+    ):
+        with pytest.raises(RuntimeError):
+            await dl.connect()
+
+    assert dl.auth_state == "error"
+    assert not auth_file.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1291,6 +1615,41 @@ async def test_fetch_clip_list_paginates(dl, sample_clip):
     assert len(result) == 25
 
 
+async def test_fetch_clip_list_stops_on_partial_page(dl, sample_clip):
+    """A single page with fewer than _PAGE_SIZE items means there is no next
+    page — pagination must stop after that one page instead of requesting
+    page 1 unnecessarily."""
+    partial_page = [{**sample_clip, "id": i} for i in range(10)]
+
+    dl._blink = MagicMock()
+    dl._blink.account_id = 1
+
+    with patch(
+        "blink_downloader.downloader.blink_api.request_videos",
+        side_effect=[{"media": partial_page}],
+    ) as mock_request:
+        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+
+    assert len(result) == 10
+    assert mock_request.await_count == 1
+
+
+async def test_fetch_clip_list_handles_unexpected_response_type(dl):
+    """request_videos returning something other than a dict (e.g. blinkpy
+    changing its return type in a future version) must stop pagination
+    cleanly instead of crashing on `.get()`."""
+    dl._blink = MagicMock()
+    dl._blink.account_id = 1
+
+    with patch(
+        "blink_downloader.downloader.blink_api.request_videos",
+        return_value=None,
+    ):
+        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+
+    assert result == []
+
+
 async def test_fetch_clip_list_handles_api_error(dl):
     """Returns an empty list when blinkpy raises an exception for a failed request.
 
@@ -1424,6 +1783,197 @@ async def test_download_local_storage_skips_already_tracked(dl):
     assert results == []
 
 
+async def test_download_local_storage_empty_manifest_skipped(dl):
+    """A sync module with local storage active but an empty manifest is
+    skipped cleanly, without raising."""
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": set(), "last_manifest_id": "m1"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+
+    results = await dl.download_local_storage_clips()
+    assert results == []
+
+
+async def test_download_local_storage_parses_string_created_at(dl, tmp_path):
+    """blinkpy can report a manifest item's created_at as an ISO string
+    rather than a datetime — it must be parsed rather than passed through
+    raw to StorageManager.resolve_path()."""
+    from pathlib import Path as _Path
+
+    mock_item = MagicMock()
+    mock_item.id = 4242
+    mock_item.name = "Patio"
+    mock_item.created_at = "2024-06-01T08:00:00+00:00"
+    mock_item.size = 1024
+    mock_item.prepare_download = AsyncMock(return_value=True)
+
+    async def _fake_download(blink, file_name, max_retries=4):
+        _Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+        _Path(file_name).write_bytes(b"V" * 50)
+        return True
+
+    mock_item.download_video = _fake_download
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m2"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = None
+
+    results = await dl.download_local_storage_clips()
+
+    assert len(results) == 1
+    assert results[0]["timestamp"].startswith("2024-06-01T08:00:00")
+
+
+async def test_download_local_storage_unparseable_created_at_falls_back_to_now(
+    dl, tmp_path
+):
+    """An unparseable string created_at must not raise — it falls back to
+    the current time instead."""
+    from pathlib import Path as _Path
+
+    mock_item = MagicMock()
+    mock_item.id = 4243
+    mock_item.name = "Patio"
+    mock_item.created_at = "not-a-timestamp"
+    mock_item.size = 1024
+    mock_item.prepare_download = AsyncMock(return_value=True)
+
+    async def _fake_download(blink, file_name, max_retries=4):
+        _Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+        _Path(file_name).write_bytes(b"V" * 50)
+        return True
+
+    mock_item.download_video = _fake_download
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m3"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = None
+
+    results = await dl.download_local_storage_clips()
+
+    assert len(results) == 1
+    assert results[0]["timestamp"]  # a real (fallback) ISO timestamp
+
+
+async def test_download_local_storage_already_on_disk_marks_downloaded(dl, tmp_path):
+    """A local-storage clip file already present on disk is not re-fetched —
+    it's marked downloaded straight from the existing file's size."""
+    mock_item = MagicMock()
+    mock_item.id = 4244
+    mock_item.name = "Patio"
+    mock_item.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    mock_item.size = 1024
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m4"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = None
+
+    existing = tmp_path / "existing_local.mp4"
+    existing.write_bytes(b"already here")
+    dl._storage.resolve_path = MagicMock(return_value=existing)  # type: ignore[method-assign]
+
+    results = await dl.download_local_storage_clips()
+
+    assert results == []  # already-on-disk clips aren't added to the result list
+    assert dl._tracker.is_downloaded("local_4244")
+
+
+async def test_download_local_storage_prepare_download_exception_cleans_up(
+    dl, tmp_path
+):
+    """An exception from prepare_download()/download_video() is logged and
+    skipped, cleaning up any partial file left on disk."""
+    from pathlib import Path as _Path
+
+    mock_item = MagicMock()
+    mock_item.id = 4245
+    mock_item.name = "Patio"
+    mock_item.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    mock_item.size = 1024
+
+    async def _failing_prepare(blink):
+        # Simulate a partial file being written before the failure.
+        dest = dl._storage.resolve_path(
+            mock_item.name, mock_item.created_at, f"local_{mock_item.id}"
+        )
+        _Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        _Path(dest).write_bytes(b"partial")
+        raise RuntimeError("sync module offline")
+
+    mock_item.prepare_download = _failing_prepare
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m5"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = None
+
+    results = await dl.download_local_storage_clips()
+
+    assert results == []
+    assert not dl._tracker.is_downloaded("local_4245")
+    dest = dl._storage.resolve_path(
+        mock_item.name, mock_item.created_at, f"local_{mock_item.id}"
+    )
+    assert not dest.exists()
+
+
+async def test_download_local_storage_writes_to_db_when_configured(dl, tmp_path):
+    """When a ClipDatabase is attached, a successfully downloaded
+    local-storage clip is persisted to it."""
+    from pathlib import Path as _Path
+
+    mock_item = MagicMock()
+    mock_item.id = 4246
+    mock_item.name = "Patio"
+    mock_item.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    mock_item.size = 1024
+    mock_item.prepare_download = AsyncMock(return_value=True)
+
+    async def _fake_download(blink, file_name, max_retries=4):
+        _Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+        _Path(file_name).write_bytes(b"V" * 50)
+        return True
+
+    mock_item.download_video = _fake_download
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m6"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = AsyncMock()
+
+    results = await dl.download_local_storage_clips()
+
+    assert len(results) == 1
+    dl._db.add_clip.assert_awaited_once_with(results[0])
+
+
 async def test_download_local_storage_downloads_new_clip(dl, tmp_path):
     """Successfully downloads a new clip from USB local storage."""
     from pathlib import Path as _Path
@@ -1552,3 +2102,41 @@ async def test_download_local_storage_download_failure_skipped(dl, tmp_path):
     results = await dl.download_local_storage_clips()
     assert results == []
     assert not dl._tracker.is_downloaded("local_6666")
+
+
+async def test_download_local_storage_download_failure_cleans_up_partial_file(
+    dl, tmp_path
+):
+    """A failed download_video call must remove any partial file it left
+    behind on disk, not just skip marking the clip downloaded."""
+
+    mock_item = MagicMock()
+    mock_item.id = 6667
+    mock_item.name = "Backyard"
+    mock_item.created_at = datetime(2024, 6, 2, tzinfo=timezone.utc)
+    mock_item.size = 500_000
+
+    dest = dl._storage.resolve_path(
+        mock_item.name, mock_item.created_at, f"local_{mock_item.id}"
+    )
+
+    async def _fake_prepare(blink):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"partial")
+
+    mock_item.prepare_download = _fake_prepare
+    mock_item.download_video = AsyncMock(return_value=False)  # download fails
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "mx2"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = None
+
+    results = await dl.download_local_storage_clips()
+    assert results == []
+    assert not dl._tracker.is_downloaded("local_6667")
+    assert not dest.exists()

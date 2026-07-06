@@ -131,6 +131,20 @@ def test_is_in_schedule_overnight_window() -> None:
     assert isinstance(result, bool)
 
 
+def test_is_in_schedule_uses_local_time_not_utc() -> None:
+    """ai_schedule_start/end are documented as local HH:MM — _is_in_schedule
+    must read the local wall-clock, not UTC, or the window silently runs on
+    the wrong hours whenever the host isn't in UTC."""
+    analyzer = _make_analyzer_mock()
+    db_mock = MagicMock(spec=ClipDatabase)
+    queue = _make_queue(analyzer, db_mock, schedule_start="09:00", schedule_end="10:00")
+
+    with patch("blink_downloader.analysis_queue.datetime") as mock_dt:
+        mock_dt.now.return_value.time.return_value = time(9, 30)
+        assert queue._is_in_schedule() is True
+        mock_dt.now.assert_called_with()
+
+
 def test_parse_time_valid() -> None:
     assert AnalysisQueue._parse_time("08:30") == time(8, 30)
     assert AnalysisQueue._parse_time("22:00") == time(22, 0)

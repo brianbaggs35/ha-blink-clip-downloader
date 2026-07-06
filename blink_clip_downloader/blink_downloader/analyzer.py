@@ -1119,6 +1119,13 @@ class BaseAnalyzer(abc.ABC):
                 "household car, a visitor parking, a neighbor's car, or ordinary curbside "
                 "parking is routine. Describe it plainly, e.g. 'a second car is parked in "
                 "the driveway near the protected vehicle', without alarm language.\n"
+                "• Another vehicle making physical contact with the protected vehicle — "
+                "bumping, scraping, or sideswiping it while parking, passing, or backing "
+                "out — is ALWAYS suspicious=true, confidence ≥0.8, even a minor low-speed "
+                "contact and even if the other vehicle stops and its driver gets out "
+                "afterward, or drives off without stopping (hit-and-run). This is the one "
+                "case where contact with another vehicle, not just a person, makes the "
+                "protected vehicle's safety the concern.\n"
                 "• A person, animal, bicycle, or other vehicle simply walking, running, "
                 "or driving past — even within a few feet — WITHOUT stopping, lingering, "
                 "or reaching toward the protected vehicle: suspicious=false. Passing near "
@@ -1134,6 +1141,11 @@ class BaseAnalyzer(abc.ABC):
                 "• Anyone or anything more than 3 feet from the vehicle and not actively "
                 "approaching it: suspicious=false unless there is other clear evidence of "
                 "tampering\n"
+                "• Lawn equipment (a mower, trimmer, or blower) being operated near the "
+                "vehicle by a neighbor or landscaper, or a trash can, lid, or branch blown "
+                "into the vehicle by the wind with no person involved: suspicious=false — "
+                "routine yard maintenance and wind-blown debris are not tampering, even "
+                "though they bring an object right up to the vehicle.\n"
                 "Reference: a car door handle is about 4 feet off the ground; a typical car "
                 "is about 6 feet wide.\n"
                 "When something is genuinely close to or lingering near the vehicle, always "
@@ -1296,6 +1308,26 @@ class BaseAnalyzer(abc.ABC):
             confidence = 0.0
         description = str(obj.get("description", "") or "")
         return suspicious, confidence, description
+
+    @staticmethod
+    def _is_well_formed_json_object(response: str) -> bool:
+        """Return True if *response* contains a syntactically complete JSON object.
+
+        Distinguishes a genuine "not suspicious" verdict from a truncated or
+        malformed response (e.g. a reasoning model's invisible thinking tokens
+        ate its completion budget before the JSON closed) — ``_try_parse_json``
+        collapses both cases to ``(False, 0.0, "")``, which is indistinguishable
+        from a real negative verdict without this check.
+        """
+        start = response.find("{")
+        end = response.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return False
+        try:
+            json.loads(response[start : end + 1])
+        except json.JSONDecodeError:
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -3478,11 +3510,20 @@ class OpenAIAnalyzer(BaseAnalyzer):
         escalated = await self._call_openai_model(
             frames, prompt, self._escalation_model
         )
-        if not escalated:
-            # Tier 2 produced no usable content — restore tier-1's token
-            # counts (tier 2 may still have recorded its own usage above
-            # before failing) so cost tracking reflects only the response
-            # we're actually returning.
+        if not escalated or not self._is_well_formed_json_object(escalated):
+            # Tier 2 produced no usable content, or a truncated/malformed
+            # response (e.g. a reasoning model's invisible thinking tokens ate
+            # its completion budget before the JSON closed) — restore tier-1's
+            # token counts (tier 2 may still have recorded its own usage above
+            # before failing) and fall back to tier 1's verdict. Trusting a
+            # broken parse here would silently downgrade a genuine tier-1
+            # suspicious call to "not suspicious" and suppress the alert.
+            if escalated:
+                _LOGGER.warning(
+                    "OpenAI: escalation model %s returned a malformed/truncated "
+                    "response; keeping tier-1's suspicious verdict",
+                    self._escalation_model,
+                )
             self._last_prompt_tokens = tier1_prompt_tokens
             self._last_completion_tokens = tier1_completion_tokens
             return response

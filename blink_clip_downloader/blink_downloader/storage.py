@@ -189,11 +189,20 @@ class StorageManager:
 
 
 def _safe_name(name: str) -> str:
-    """Convert *name* to a filesystem-safe string (spaces become underscores)."""
+    """Convert *name* to a filesystem-safe string (spaces become underscores).
+
+    A result made up entirely of dots (e.g. ``"."`` or ``".."``) is rejected
+    and replaced with ``"unknown"`` — sanitization otherwise leaves those
+    characters untouched, and passing ``".."`` through as a path component
+    (see :meth:`StorageManager.resolve_path`) would let a malicious or
+    malformed camera/clip name escape the configured base directory.
+    """
     result = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name).strip(
         "_"
     )
-    return result if result else "unknown"
+    if not result or set(result) <= {"."}:
+        return "unknown"
+    return result
 
 
 def _cleanup_empty_dirs(root: Path) -> None:
