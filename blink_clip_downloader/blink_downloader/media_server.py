@@ -2687,7 +2687,12 @@ class MediaServer:
 
     async def _handle_activity(self, request: web.Request) -> web.Response:
         try:
-            days = min(int(request.rel_url.query.get("days", 7)), 30)
+            # A zero/negative `days` shifts get_activity_data()'s cutoff to
+            # today or into the future, silently returning no data instead of
+            # erroring — clamp the lower bound like the other paginated
+            # endpoints in this file (_handle_list_clips, _handle_ai_suspicious)
+            # already do for limit/offset.
+            days = max(1, min(int(request.rel_url.query.get("days", 7)), 30))
         except ValueError:
             days = 7
         data = await self._db.get_activity_data(days)
@@ -2870,14 +2875,22 @@ class MediaServer:
         if not clip:
             raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
 
-        result = await self._analyzer.analyze_clip(
-            clip_path=clip["file_path"],
-            clip_id=clip_id,
-            camera=clip["camera"],
-            clip_duration=float(clip.get("duration") or 0),
-        )
-        await self._db.add_analysis_result(result.to_dict())
-        return web.json_response(result.to_dict())
+        try:
+            result = await self._analyzer.analyze_clip(
+                clip_path=clip["file_path"],
+                clip_id=clip_id,
+                camera=clip["camera"],
+                clip_duration=float(clip.get("duration") or 0),
+            )
+            await self._db.add_analysis_result(result.to_dict())
+            return web.json_response(result.to_dict())
+        except Exception as exc:  # noqa: BLE001
+            # Mirrors _handle_ai_test's error handling — without this, an
+            # unexpected failure here would surface as aiohttp's generic
+            # HTML 500 page instead of the {"error": ...} JSON contract the
+            # rest of the AI API uses, breaking the web UI's error display.
+            _LOGGER.warning("AI analyze-now failed for clip %s: %s", clip_id, exc)
+            return web.json_response({"error": str(exc)}, status=500)
 
     async def _handle_ai_test(self, _request: web.Request) -> web.Response:
         """Test AI by analyzing the most recently downloaded clip."""
