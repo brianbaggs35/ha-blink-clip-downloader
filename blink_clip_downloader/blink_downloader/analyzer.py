@@ -79,6 +79,20 @@ _SCENE_BASELINE_SUSPICION_CONFIDENCE_THRESHOLD: float = 0.5
 _MAX_SUMMARY_SENTENCES: int = 2
 _MAX_SUMMARY_CHARS: int = 200
 
+# Shared system-prompt text for the three providers (Ollama, Anthropic,
+# OpenAI) that support a separate system role — keeps the role and output
+# format instructions apart from user content, improving JSON compliance and
+# stopping the model from leaking internal analysis terms into the
+# description field.
+_VISION_SYSTEM_PROMPT: str = (
+    "You are a security camera analyst. "
+    "You respond ONLY with a single valid JSON object and nothing else. "
+    "Write the description field in plain English as if speaking to a homeowner. "
+    "Never include technical terms such as 'bounding box', 'normalized', "
+    "'frame percentage', 'spatial data', 'INTERNAL', or decimal coordinates "
+    "in the description field."
+)
+
 # Ollama model-name fragments that indicate vision capability.
 # Checked case-insensitively as a substring of the full model name.
 _VISION_MODEL_PATTERNS: frozenset[str] = frozenset(
@@ -1238,7 +1252,7 @@ class BaseAnalyzer(abc.ABC):
             # when marking something suspicious because they don't calibrate
             # scores. Derive a non-zero confidence from keyword matching so
             # downstream thresholds and Discord embeds show a useful value.
-            if is_suspicious and confidence == 0.0:
+            if is_suspicious and confidence <= 0.0:
                 lower = (summary + " " + response).lower()
                 matched = [k for k in self._suspicious_keywords if k in lower]
                 confidence = min(1.0, len(matched) * 0.3) if matched else 0.5
@@ -1434,14 +1448,7 @@ class ClipAnalyzer(BaseAnalyzer):
 
         payload = {
             "model": self._model,
-            "system": (
-                "You are a security camera analyst. "
-                "You respond ONLY with a single valid JSON object and nothing else. "
-                "Write the description field in plain English as if speaking to a homeowner. "
-                "Never include technical terms such as 'bounding box', 'normalized', "
-                "'frame percentage', 'spatial data', 'INTERNAL', or decimal coordinates "
-                "in the description field."
-            ),
+            "system": _VISION_SYSTEM_PROMPT,
             "prompt": prompt,
             "images": images,
             "stream": False,
@@ -1709,7 +1716,7 @@ class _MoondreamDetectionMixin:
             "[INTERNAL PROXIMITY HINT — use for reasoning only, "
             "do NOT copy this text into the description]: "
         )
-        if gap == 0.0:
+        if gap <= 0.0:
             return (
                 f"{prefix}The {subject} appears to be directly touching or pressed "
                 "against the vehicle. Describe this as 'right next to' "
@@ -1794,8 +1801,18 @@ class _MoondreamDetectionMixin:
             label_counts[label] = label_counts.get(label, 0) + 1
             cx = (box.get("x_min", 0.0) + box.get("x_max", 1.0)) / 2
             cy = (box.get("y_min", 0.0) + box.get("y_max", 1.0)) / 2
-            side = "left" if cx < 0.33 else ("right" if cx > 0.67 else "centre")
-            vert = "top" if cy < 0.33 else ("bottom" if cy > 0.67 else "middle")
+            if cx < 0.33:
+                side = "left"
+            elif cx > 0.67:
+                side = "right"
+            else:
+                side = "centre"
+            if cy < 0.33:
+                vert = "top"
+            elif cy > 0.67:
+                vert = "bottom"
+            else:
+                vert = "middle"
             position_notes.append(
                 f"{label} {label_counts[label]} is in the {vert}-{side} of the frame"
             )
@@ -2436,7 +2453,7 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 await loop.run_in_executor(None, self._load_model_sync)
                 return True
             except ImportError as exc:
-                _LOGGER.error(
+                _LOGGER.exception(
                     "moondream package (or a local-inference dependency it "
                     "requires, such as kestrel or torch) is not installed: %s. "
                     "Install it with: pip install moondream",
@@ -2444,7 +2461,7 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 )
                 return False
             except Exception as exc:  # noqa: BLE001
-                _LOGGER.error(
+                _LOGGER.exception(
                     "Failed to load Moondream local model: %s. On-device "
                     "Moondream inference requires a CUDA or Apple Silicon GPU — "
                     "if this host doesn't have one, use moondream_cloud or "
@@ -2640,7 +2657,7 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                     None, self._analyze_frame_sync, frame, prompt, car_applies
                 )
             except Exception as exc:  # noqa: BLE001
-                _LOGGER.error("Moondream local inference failed: %s", exc)
+                _LOGGER.exception("Moondream local inference failed: %s", exc)
                 continue
 
             if not resp:
@@ -2736,7 +2753,7 @@ class MoondreamFineTuneManager:
                 fid = str(data.get("finetune_id", ""))
                 return fid or None
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            _LOGGER.error("Moondream create_finetune failed: %s", exc)
+            _LOGGER.exception("Moondream create_finetune failed: %s", exc)
             return None
 
     async def list_finetunes(
@@ -3216,14 +3233,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
             # System prompt keeps the role and output format instructions
             # separate from user content, improving JSON compliance and
             # preventing the model from leaking internal analysis terms.
-            system_prompt = (
-                "You are a security camera analyst. "
-                "You respond ONLY with a single valid JSON object and nothing else. "
-                "Write the description field in plain English as if speaking to a homeowner. "
-                "Never include technical terms such as 'bounding box', 'normalized', "
-                "'frame percentage', 'spatial data', 'INTERNAL', or decimal coordinates "
-                "in the description field."
-            )
+            system_prompt = _VISION_SYSTEM_PROMPT
 
             response = await client.messages.create(
                 model=self._model,
@@ -3260,14 +3270,14 @@ class AnthropicAnalyzer(BaseAnalyzer):
             )
             return ""
         except _anthropic.BadRequestError as exc:
-            _LOGGER.error(
+            _LOGGER.exception(
                 "Anthropic: bad request (HTTP 400) — %s; "
                 "check that the selected model supports vision",
                 exc.message,
             )
             return ""
         except _anthropic.APIStatusError as exc:
-            _LOGGER.error(
+            _LOGGER.exception(
                 "Anthropic API error HTTP %d: %s", exc.status_code, exc.message
             )
             return ""
@@ -3569,14 +3579,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
             # System message keeps role and format rules separate from user
             # content, improving JSON compliance and stopping the model from
             # leaking internal analysis terms into the description field.
-            system_content = (
-                "You are a security camera analyst. "
-                "You respond ONLY with a single valid JSON object and nothing else. "
-                "Write the description field in plain English as if speaking to a homeowner. "
-                "Never include technical terms such as 'bounding box', 'normalized', "
-                "'frame percentage', 'spatial data', 'INTERNAL', or decimal coordinates "
-                "in the description field."
-            )
+            system_content = _VISION_SYSTEM_PROMPT
             messages_to_send: list[dict[str, Any]] = [
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": content},
@@ -3651,14 +3654,16 @@ class OpenAIAnalyzer(BaseAnalyzer):
             )
             return ""
         except _openai.BadRequestError as exc:
-            _LOGGER.error(
+            _LOGGER.exception(
                 "OpenAI: bad request (HTTP 400) — %s; "
                 "check that the selected model supports vision",
                 exc.message,
             )
             return ""
         except _openai.APIStatusError as exc:
-            _LOGGER.error("OpenAI API error HTTP %d: %s", exc.status_code, exc.message)
+            _LOGGER.exception(
+                "OpenAI API error HTTP %d: %s", exc.status_code, exc.message
+            )
             return ""
         except _openai.APIConnectionError as exc:
             _LOGGER.warning("OpenAI: connection error — %s", exc)

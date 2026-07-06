@@ -114,22 +114,27 @@ class HAEventWatcher:
 
             # Step 4: consume events.
             async for msg in ws:
-                if not self._running:
+                if not self._running or self._handle_ws_message(msg):
                     break
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    try:
-                        data = json.loads(msg.data)
-                    except json.JSONDecodeError:
-                        continue
-                    if data.get("type") == "event":
-                        self._handle_state_changed(data.get("event", {}))
-                elif msg.type in (
-                    aiohttp.WSMsgType.ERROR,
-                    aiohttp.WSMsgType.CLOSE,
-                    aiohttp.WSMsgType.CLOSED,
-                ):
-                    _LOGGER.debug("WebSocket closed (type=%s)", msg.type)
-                    break
+
+    def _handle_ws_message(self, msg: aiohttp.WSMessage) -> bool:
+        """Process one WebSocket message. Returns True if the connection should close."""
+        if msg.type == aiohttp.WSMsgType.TEXT:
+            try:
+                data = json.loads(msg.data)
+            except json.JSONDecodeError:
+                return False
+            if data.get("type") == "event":
+                self._handle_state_changed(data.get("event", {}))
+            return False
+        if msg.type in (
+            aiohttp.WSMsgType.ERROR,
+            aiohttp.WSMsgType.CLOSE,
+            aiohttp.WSMsgType.CLOSED,
+        ):
+            _LOGGER.debug("WebSocket closed (type=%s)", msg.type)
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Internal: event parsing

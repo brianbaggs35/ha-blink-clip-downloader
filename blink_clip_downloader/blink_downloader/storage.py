@@ -144,20 +144,28 @@ class StorageManager:
 
         for pattern in (_CLIP_GLOB, _THUMB_GLOB):
             for f in self._base.rglob(pattern):
-                try:
-                    if f.stat().st_mtime < cutoff_ts:
-                        f.unlink()
-                        deleted_count += 1
-                        if pattern == _CLIP_GLOB:
-                            deleted_clips.append(f)
-                except OSError as exc:
-                    _LOGGER.warning("Could not delete %s: %s", f, exc)
+                if not self._delete_if_expired(f, cutoff_ts):
+                    continue
+                deleted_count += 1
+                if pattern == _CLIP_GLOB:
+                    deleted_clips.append(f)
 
         _cleanup_empty_dirs(self._base)
 
         if deleted_count:
             _LOGGER.info("Retention policy removed %d file(s)", deleted_count)
         return deleted_count, deleted_clips
+
+    @staticmethod
+    def _delete_if_expired(f: Path, cutoff_ts: float) -> bool:
+        """Delete *f* if its mtime predates *cutoff_ts*; return whether it was deleted."""
+        try:
+            if f.stat().st_mtime < cutoff_ts:
+                f.unlink()
+                return True
+        except OSError as exc:
+            _LOGGER.warning("Could not delete %s: %s", f, exc)
+        return False
 
     # ------------------------------------------------------------------
     # Stats

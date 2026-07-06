@@ -52,7 +52,7 @@ def main() -> None:
         # Do NOT call sys.exit() — the process must stay alive so the web
         # server can start and HA ingress remains reachable.  The app will run
         # in web-only mode and display the error on the Status tab.
-        _logger.error("Configuration error — starting in web-only mode: %s", exc)
+        _logger.exception("Configuration error — starting in web-only mode: %s", exc)
         config = AppConfig(username="", password="", startup_error=str(exc))
 
     app = BlinkClipDownloaderApp(config)
