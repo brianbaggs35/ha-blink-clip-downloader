@@ -113,6 +113,25 @@ def test_resolve_path_sanitizes_clip_id(tmp_path):
     assert "/" not in p.name
 
 
+def test_resolve_path_dot_dot_camera_name_does_not_escape_base(tmp_path):
+    """camera_name comes from the Blink device name and is used as a
+    directory path component when organize_by_camera is set — a value of
+    ".." must not let the resolved path escape the configured base dir."""
+    s = make_storage(tmp_path)
+    p = s.resolve_path("..", TS, "clip123")
+    base = (tmp_path / "clips").resolve()
+    assert base in p.resolve().parents
+    assert p.parent.name != ".."
+
+
+def test_resolve_path_single_dot_camera_name_does_not_escape_base(tmp_path):
+    s = make_storage(tmp_path)
+    p = s.resolve_path(".", TS, "clip123")
+    base = (tmp_path / "clips").resolve()
+    assert base in p.resolve().parents
+    assert p.parent.name != "."
+
+
 # ---------------------------------------------------------------------------
 # Quota
 # ---------------------------------------------------------------------------
@@ -282,6 +301,12 @@ def test_safe_name_preserves_dashes_dots():
 def test_safe_name_empty_becomes_unknown():
     assert _safe_name("") == "unknown"
     assert _safe_name("!!!") == "unknown"
+
+
+def test_safe_name_dot_only_becomes_unknown():
+    assert _safe_name("..") == "unknown"
+    assert _safe_name(".") == "unknown"
+    assert _safe_name("...") == "unknown"
 
 
 # ---------------------------------------------------------------------------

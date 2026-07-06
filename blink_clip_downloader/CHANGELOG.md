@@ -29,6 +29,54 @@
 
 ### Bug fixes
 
+- **Fix: a truncated or malformed escalation-tier (tier 2) response could
+  silently suppress a genuine suspicious alert.** When `openai_escalation_model`
+  is configured, a suspicious tier-1 verdict is re-checked by the stronger
+  model; if that tier-2 response came back non-empty but truncated (e.g. a
+  reasoning model's invisible "thinking" tokens consumed its completion
+  budget before the JSON closed), it failed to parse and was treated as an
+  implicit `suspicious: false` — silently overriding and discarding tier 1's
+  correct suspicious call, with no alert sent. The escalation call now
+  verifies tier 2's response is syntactically complete JSON before trusting
+  it; a truncated/malformed tier-2 response now falls back to tier 1's
+  verdict instead of being mistaken for a real "not suspicious" result.
+- **Fix: `ai_schedule_start`/`ai_schedule_end` were compared against UTC
+  instead of local time.** The analysis schedule window is documented (and
+  configured) in local wall-clock time, matching `digest_time` elsewhere in
+  the add-on, but the queue was checking it against `datetime.now(UTC)` —
+  on any host not already in UTC, the configured window silently ran on the
+  wrong hours.
+- **Fix: `time_window_start`/`time_window_end` clip filtering compared
+  against UTC instead of local time.** Same class of bug as above, in the
+  downloader's per-clip time-window filter: Blink's `created_at` timestamp
+  is UTC and was compared directly against the documented-as-local window
+  bounds without converting to local time first.
+- **Fix: a camera name of `.` or `..` could resolve outside the configured
+  storage directory.** `_safe_name()` sanitizes camera/clip names for use as
+  filesystem path components but left an all-dots result (e.g. `".."`)
+  untouched, which `StorageManager.resolve_path()` would then use as a
+  literal path segment — a malformed or malicious camera name could escape
+  the configured base download directory. All-dots results now fall back to
+  `"unknown"` like other unusable names.
+- **Fix: a disk I/O error mid-download (e.g. disk full) left a permanent
+  partial clip file on disk.** `_stream_to_file()` retried on network errors
+  (`aiohttp.ClientError`/`asyncio.TimeoutError`) but not `OSError` raised
+  while writing chunks to disk — an `OSError` skipped the retry/cleanup path
+  entirely, leaving a truncated file behind that a later poll's
+  `dest.exists()` pre-check would mistake for a completed download,
+  permanently. `OSError` is now caught alongside the network errors.
+- **Fix: several genuinely suspicious car-camera and general scenarios were
+  not covered by the default AI prompt.** Added explicit rules for: another
+  vehicle making physical contact with the protected vehicle (bump/scrape/
+  sideswipe, including hit-and-run); a person tampering with a security
+  camera itself; repeated door/lock handle manipulation beyond normal use;
+  casing behavior (repeatedly peering into windows/vehicles or pacing with
+  no clear purpose); and the mail/package-theft signature of picking up a
+  delivery and leaving instead of entering the home. Also added explicit
+  non-suspicious carve-outs for routine lawn equipment operated near a
+  vehicle and wind-blown debris contacting a vehicle or property, so those
+  don't get flagged just because they bring an object physically close to
+  the protected vehicle.
 - **Fix: default AI prompt could under-flag genuinely suspicious activity
   on car/driveway cameras while over-flagging routine front-door entries.**
   The default `ai_prompt` required ALL of three unrelated behaviours to
@@ -56,6 +104,14 @@
   vehicle visible from this camera" checkbox does nothing until
   `ai_car_description` is also set.
 - Documented the new "Send Test Email" button under Email (SMTP).
+
+### Testing
+
+- Added regression tests for every fix above, plus additional coverage for
+  previously-untested error paths in the OpenAI two-tier escalation flow,
+  Blink connect()/2FA edge cases, clip-list pagination and time-window
+  filtering, and USB Sync Module local-storage downloads. Overall coverage
+  raised from 97.3% to 98.5%.
 
 ## 3.1.7
 

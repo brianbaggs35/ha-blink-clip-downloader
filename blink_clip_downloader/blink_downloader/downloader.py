@@ -515,7 +515,10 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         raw = clip.get("created_at", "")
         try:
             ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            clip_time = ts.strftime("%H:%M")
+            # time_window_start/end are documented as local HH:MM; the Blink
+            # API returns created_at in UTC, so convert before comparing or
+            # the window silently anchors to UTC instead of local wall-clock.
+            clip_time = ts.astimezone().strftime("%H:%M")
         except (ValueError, AttributeError):
             return True  # Keep clip if we can't parse the time.
 
@@ -665,12 +668,17 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                             size += len(chunk)
                     return size
 
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
                 # aiohttp raises asyncio.TimeoutError (not a ClientError
                 # subclass) when the ClientTimeout(total=...) above expires,
                 # so it must be caught alongside ClientError or a slow/hung
                 # server would skip retries entirely and leave a partial file
                 # behind (only the loop-exit cleanup below removes it).
+                # OSError (e.g. disk full, permission error) from the aiofiles
+                # write must be caught the same way — otherwise a partial file
+                # is left on disk and a later poll's `dest.exists()` pre-check
+                # in _download_clip treats that truncated file as a completed
+                # download, permanently.
                 _LOGGER.warning(
                     "Download attempt %d/%d failed for %s: %s",
                     attempt,

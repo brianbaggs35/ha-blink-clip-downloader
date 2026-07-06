@@ -12,6 +12,7 @@ import pytest
 
 from blink_downloader.analyzer import (
     AnthropicAnalyzer,
+    BaseAnalyzer,
     ClipAnalyzer,
     MoondreamCloudAnalyzer,
     MoondreamFineTuneManager,
@@ -3262,6 +3263,70 @@ async def test_openai_escalation_falls_back_when_tier2_fails(
     assert a._last_completion_tokens == 50
 
 
+async def test_openai_escalation_falls_back_on_truncated_tier2_json(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A non-empty but truncated/malformed tier-2 response (e.g. a reasoning
+    model's thinking tokens ate its completion budget before the JSON closed)
+    must not be trusted as a genuine "not suspicious" verdict — it must fall
+    back to tier 1's suspicious result instead of silently suppressing the
+    alert."""
+    import sys
+
+    tier1_resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.9, "description": "Person at car door"}',
+        prompt_tokens=300,
+        completion_tokens=50,
+    )
+    # Truncated mid-value: non-empty, but not parseable JSON.
+    tier2_resp = _make_openai_response(
+        '{"suspicious": true, "confidence": 0.95, "descri',
+        prompt_tokens=900,
+        completion_tokens=1024,
+    )
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=[tier1_resp, tier2_resp]
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(
+        api_key="key",
+        model="gpt-4o-mini",
+        prompt="test",
+        escalation_model="gpt-5",
+    )
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}), caplog.at_level("WARNING"):
+        result = await a._call_model([_FAKE_JPEG], "prompt")
+
+    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
+    assert create_call.await_count == 2
+    assert "Person at car door" in result
+    is_suspicious, _, _ = a._try_parse_json(result)
+    assert is_suspicious is True
+    assert a._last_prompt_tokens == 300
+    assert a._last_completion_tokens == 50
+    assert "malformed/truncated" in caplog.text
+
+
+def test_is_well_formed_json_object_true_for_complete_json() -> None:
+    assert BaseAnalyzer._is_well_formed_json_object(
+        '{"suspicious": false, "confidence": 0.1, "description": "Empty"}'
+    )
+
+
+def test_is_well_formed_json_object_false_for_truncated_json() -> None:
+    assert not BaseAnalyzer._is_well_formed_json_object(
+        '{"suspicious": true, "confidence": 0.9, "descri'
+    )
+
+
+def test_is_well_formed_json_object_false_for_no_braces() -> None:
+    assert not BaseAnalyzer._is_well_formed_json_object("not json at all")
+
+
 # ------------------------------------------------------------------
 # OpenAIAnalyzer — close / _get_client
 # ------------------------------------------------------------------
@@ -4016,6 +4081,30 @@ async def test_analyze_sequentially_skips_empty_responses() -> None:
     analyzer._call_model = fake_call_model  # type: ignore[method-assign]
     result = await analyzer._analyze_sequentially([_FAKE_JPEG, _FAKE_JPEG_2], "p")
     assert "All clear" in result
+
+
+@pytest.mark.asyncio
+async def test_analyze_sequentially_malformed_frame_kept_only_as_last_resort() -> None:
+    """A frame whose response has no parseable description is kept only as a
+    last-resort placeholder — a later frame with a real (even non-suspicious)
+    description must still replace it, and a genuinely suspicious later frame
+    must never be shadowed by an earlier malformed one."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+    )
+    malformed = "not valid json"
+    suspicious = json.dumps(
+        {"suspicious": True, "confidence": 0.8, "description": "Person at car door"}
+    )
+
+    async def fake_call_model(frames: list, prompt: str) -> str:
+        return malformed if frames[0] == _FAKE_JPEG else suspicious
+
+    analyzer._call_model = fake_call_model  # type: ignore[method-assign]
+    result = await analyzer._analyze_sequentially([_FAKE_JPEG, _FAKE_JPEG_2], "p")
+    assert "Person at car door" in result
 
 
 @pytest.mark.asyncio
