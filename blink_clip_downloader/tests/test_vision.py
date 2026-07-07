@@ -37,7 +37,7 @@ from blink_downloader.vision import (
     RecognizedFace,
     VisionConfig,
     VisionPipeline,
-    _best_person_vehicle_pair,
+    _best_subject_vehicle_pair,
     _box_gap,
     _build_contact_hint,
     _build_depth_hint,
@@ -196,7 +196,7 @@ def test_frame_enhancer_falls_back_on_per_frame_exception(
 
 
 # ------------------------------------------------------------------
-# Pure helpers: _box_gap / _proximity_label / _best_person_vehicle_pair /
+# Pure helpers: _box_gap / _proximity_label / _best_subject_vehicle_pair /
 # _build_detection_hint
 # ------------------------------------------------------------------
 
@@ -234,22 +234,38 @@ def test_proximity_label_zero_width_vehicle_uses_raw_gap() -> None:
     assert _proximity_label(0.05, 0.0) == "immediately adjacent to the detected vehicle"
 
 
-def test_best_person_vehicle_pair_picks_smallest_gap() -> None:
+def test_best_subject_vehicle_pair_picks_smallest_gap() -> None:
     detections = [
         DetectedObject("person", 0.9, (0, 0, 10, 10), None, 0),
         DetectedObject("car", 0.9, (50, 50, 100, 100), None, 0),
         DetectedObject("person", 0.9, (0, 0, 10, 10), None, 1),
         DetectedObject("car", 0.9, (5, 5, 20, 20), None, 1),
     ]
-    pair = _best_person_vehicle_pair(detections)
+    pair = _best_subject_vehicle_pair(detections)
     assert pair is not None
     _person, _vehicle, frame_idx = pair
     assert frame_idx == 1
 
 
-def test_best_person_vehicle_pair_none_when_no_pairing() -> None:
+def test_best_subject_vehicle_pair_none_when_no_pairing() -> None:
     detections = [DetectedObject("person", 0.9, (0, 0, 10, 10), None, 0)]
-    assert _best_person_vehicle_pair(detections) is None
+    assert _best_subject_vehicle_pair(detections) is None
+
+
+def test_best_subject_vehicle_pair_considers_animals() -> None:
+    """A dog near the protected vehicle must be picked up as a subject —
+    depth/contact analysis isn't just for people (e.g. a dog jumping on and
+    scratching a parked car)."""
+    detections = [
+        DetectedObject("dog", 0.9, (0, 0, 5, 5), None, 0),
+        DetectedObject("car", 0.9, (4, 4, 10, 10), None, 0),
+    ]
+    pair = _best_subject_vehicle_pair(detections)
+    assert pair is not None
+    subject, vehicle, frame_idx = pair
+    assert subject.label == "dog"
+    assert vehicle.label == "car"
+    assert frame_idx == 0
 
 
 def test_build_detection_hint_empty_detections_returns_none() -> None:
@@ -272,6 +288,16 @@ def test_build_detection_hint_includes_distance_when_car_described() -> None:
     hint = _build_detection_hint(detections, "Silver Kia")
     assert hint is not None
     assert "distance estimate" in hint
+
+
+def test_build_detection_hint_uses_animal_label_in_distance_wording() -> None:
+    detections = [
+        DetectedObject("dog", 0.9, (0, 0, 5, 5), None, 0),
+        DetectedObject("car", 0.9, (4, 4, 10, 10), None, 0),
+    ]
+    hint = _build_detection_hint(detections, "Silver Kia")
+    assert hint is not None
+    assert "detected dog's bounding box" in hint
 
 
 def test_build_detection_hint_skips_distance_without_car_description() -> None:
@@ -1183,11 +1209,92 @@ async def test_vision_pipeline_full_stack(monkeypatch: pytest.MonkeyPatch) -> No
     )
     pipeline = VisionPipeline(config)
     hints = await pipeline.process_clip(
-        [_real_jpeg_bytes()], car_description="Silver Kia"
+        [_real_jpeg_bytes()],
+        car_description="Silver Kia",
+        car_protection_applies=True,
     )
     assert hints.detection_hint is not None
+    assert "distance estimate" in hints.detection_hint
     assert hints.depth_hint is not None
     assert hints.contact_hint is not None
+
+
+async def test_vision_pipeline_skips_vehicle_analysis_on_non_car_camera(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A camera not designated to view the protected vehicle must never
+    generate vehicle-distance/depth/contact hints, even if it happens to
+    detect an unrelated person and an unrelated car in frame — camera
+    isolation is enforced by car_protection_applies, not by whether a
+    protected vehicle description merely exists somewhere on the property."""
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    boxes = _FakeBoxes(
+        cls=[0, 2],
+        conf=[0.9, 0.9],
+        xyxy=[(0.0, 0.0, 5.0, 5.0), (5.0, 5.0, 10.0, 10.0)],
+        ids=None,
+    )
+    fake_model = MagicMock()
+    fake_model.track.return_value = [_FakeYoloResult(boxes, {0: "person", 2: "car"})]
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+    config = VisionConfig(
+        object_detection_enabled=True,
+        depth_estimation_enabled=True,
+        segmentation_enabled=True,
+    )
+    pipeline = VisionPipeline(config)
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes()],
+        car_description="Silver Kia",
+        car_protection_applies=False,
+    )
+    # Detected-classes line still appears (generically useful), but never
+    # the vehicle-distance language, and depth/contact never run at all.
+    assert hints.detection_hint is not None
+    assert "distance estimate" not in hints.detection_hint
+    assert hints.depth_hint is None
+    assert hints.contact_hint is None
+
+
+async def test_vision_pipeline_dog_vehicle_contact_detected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dog (not a person) near the protected vehicle must still get the
+    full depth/contact treatment — this is exactly the "dog jumps on the
+    car and scratches it" scenario, not just a person-proximity case."""
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    boxes = _FakeBoxes(
+        cls=[16, 2],  # dog, car
+        conf=[0.9, 0.9],
+        xyxy=[(0.0, 0.0, 5.0, 5.0), (4.0, 4.0, 10.0, 10.0)],
+        ids=None,
+    )
+    fake_model = MagicMock()
+    fake_model.track.return_value = [_FakeYoloResult(boxes, {16: "dog", 2: "car"})]
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+    pipeline = VisionPipeline(VisionConfig(object_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes()],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+    )
+    assert hints.detection_hint is not None
+    assert "dog" in hints.detection_hint
+    assert "distance estimate" in hints.detection_hint
 
 
 async def test_vision_pipeline_tracking_hint_across_multiple_frames(

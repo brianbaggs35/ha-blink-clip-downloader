@@ -344,14 +344,17 @@ def _proximity_label(gap: float, vehicle_width: float) -> str:
     return "well away from the detected vehicle"
 
 
-def _best_person_vehicle_pair(
+def _best_subject_vehicle_pair(
     detections: list[DetectedObject],
 ) -> tuple[DetectedObject, DetectedObject, int] | None:
-    """Return the (person, vehicle, frame_index) pair with the smallest gap.
+    """Return the (subject, vehicle, frame_index) pair with the smallest gap.
 
+    "Subject" is a person *or* an animal (see :data:`_SUBJECT_CLASSES`) — a
+    dog jumping on a parked car or a cat pawing at one is exactly the kind
+    of vehicle contact this pipeline needs to catch, not just a person's.
     Used to pick which single frame/box-pair the heavier depth and contact
     stages spend their budget refining. None if no sampled frame contains
-    both a person and a vehicle detection.
+    both a subject and a vehicle detection.
     """
     best: tuple[DetectedObject, DetectedObject, int] | None = None
     best_gap: float | None = None
@@ -359,34 +362,41 @@ def _best_person_vehicle_pair(
     for d in detections:
         by_frame.setdefault(d.frame_index, []).append(d)
     for frame_idx, items in by_frame.items():
-        people = [d for d in items if d.label == "person"]
+        subjects = [d for d in items if d.label in _SUBJECT_CLASSES]
         vehicles = [d for d in items if d.label in _VEHICLE_CLASSES]
-        for p in people:
+        for s in subjects:
             for v in vehicles:
-                gap = _box_gap(p.box, v.box)
+                gap = _box_gap(s.box, v.box)
                 if best_gap is None or gap < best_gap:
                     best_gap = gap
-                    best = (p, v, frame_idx)
+                    best = (s, v, frame_idx)
     return best
 
 
 def _build_detection_hint(
     detections: list[DetectedObject], car_description: str
 ) -> str | None:
-    """Render detections into an OBJECT DETECTION prompt hint, or None if empty."""
+    """Render detections into an OBJECT DETECTION prompt hint, or None if empty.
+
+    *car_description* being empty means this camera isn't under
+    protected-vehicle rules (see :meth:`VisionPipeline.process_clip`) — the
+    detected-classes line is still useful generically, but the
+    vehicle-distance estimate is skipped since there's no protected vehicle
+    for it to be relevant to on this camera.
+    """
     if not detections:
         return None
     labels = sorted({d.label for d in detections})
     lines = [f"Detected object classes across sampled frames: {', '.join(labels)}."]
 
-    pair = _best_person_vehicle_pair(detections) if car_description else None
+    pair = _best_subject_vehicle_pair(detections) if car_description else None
     if pair is not None:
-        person, vehicle, _ = pair
+        subject, vehicle, _ = pair
         vehicle_width = vehicle.box[2] - vehicle.box[0]
-        gap = _box_gap(person.box, vehicle.box)
+        gap = _box_gap(subject.box, vehicle.box)
         proximity = _proximity_label(gap, vehicle_width)
         lines.append(
-            "Object-detection distance estimate: the detected person's "
+            f"Object-detection distance estimate: the detected {subject.label}'s "
             f"bounding box is {proximity} (pixel-based estimate from the "
             "object detector, not a physical measurement)."
         )
@@ -475,7 +485,7 @@ class DepthComparison:
     """Relative-depth comparison between two detected regions in one frame."""
 
     similar_depth: bool
-    person_depth: float
+    subject_depth: float
     vehicle_depth: float
 
 
@@ -534,7 +544,7 @@ class DepthEstimator:
     def _compare_sync(
         self,
         frame: bytes,
-        person_box: tuple[float, float, float, float],
+        subject_box: tuple[float, float, float, float],
         vehicle_box: tuple[float, float, float, float],
     ) -> DepthComparison | None:
         import numpy as np  # noqa: PLC0415
@@ -554,23 +564,23 @@ class DepthEstimator:
             region = depth_arr[yi1:yi2, xi1:xi2]
             return float(region.mean()) if region.size else None
 
-        person_depth = region_mean(person_box)
+        subject_depth = region_mean(subject_box)
         vehicle_depth = region_mean(vehicle_box)
-        if person_depth is None or vehicle_depth is None:
+        if subject_depth is None or vehicle_depth is None:
             return None
 
         depth_range = max(float(depth_arr.max() - depth_arr.min()), 1e-6)
-        normalized_diff = abs(person_depth - vehicle_depth) / depth_range
+        normalized_diff = abs(subject_depth - vehicle_depth) / depth_range
         return DepthComparison(
             similar_depth=normalized_diff < _DEPTH_SIMILARITY_FRACTION,
-            person_depth=person_depth,
+            subject_depth=subject_depth,
             vehicle_depth=vehicle_depth,
         )
 
     async def compare(
         self,
         frame: bytes,
-        person_box: tuple[float, float, float, float],
+        subject_box: tuple[float, float, float, float],
         vehicle_box: tuple[float, float, float, float],
     ) -> DepthComparison | None:
         if not await self.ensure_ready():
@@ -578,7 +588,7 @@ class DepthEstimator:
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
-                None, self._compare_sync, frame, person_box, vehicle_box
+                None, self._compare_sync, frame, subject_box, vehicle_box
             )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Depth estimation failed: %s", exc)
@@ -588,18 +598,18 @@ class DepthEstimator:
 def _build_depth_hint(result: DepthComparison) -> str:
     if result.similar_depth:
         body = (
-            "the detected person and detected vehicle appear to be at "
-            "roughly the same distance from the camera — consistent with "
-            "the person actually being near the vehicle in 3D space, not "
+            "the detected person/animal and detected vehicle appear to be "
+            "at roughly the same distance from the camera — consistent "
+            "with them actually being near the vehicle in 3D space, not "
             "just overlapping it in the 2D frame"
         )
     else:
         body = (
-            "the detected person and detected vehicle appear to be at "
-            "noticeably different distances from the camera — they may "
+            "the detected person/animal and detected vehicle appear to be "
+            "at noticeably different distances from the camera — they may "
             "only appear close together because one is in front of the "
-            "other from this camera's angle, not because the person is "
-            "actually near the vehicle"
+            "other from this camera's angle, not because they're actually "
+            "near the vehicle"
         )
     return (
         "\n\nDEPTH ESTIMATE: A monocular depth model estimates that "
@@ -683,7 +693,7 @@ class ContactSegmenter:
     def _check_sync(
         self,
         frame: bytes,
-        person_box: tuple[float, float, float, float],
+        subject_box: tuple[float, float, float, float],
         vehicle_box: tuple[float, float, float, float],
     ) -> ContactResult | None:
         import cv2  # noqa: PLC0415  # type: ignore[import-not-found]
@@ -692,7 +702,7 @@ class ContactSegmenter:
         from PIL import Image  # noqa: PLC0415
 
         image = Image.open(io.BytesIO(frame)).convert("RGB")
-        input_boxes = [[list(person_box), list(vehicle_box)]]
+        input_boxes = [[list(subject_box), list(vehicle_box)]]
         inputs = self._processor(
             images=image, input_boxes=input_boxes, return_tensors="pt"
         )
@@ -723,7 +733,7 @@ class ContactSegmenter:
     async def check_contact(
         self,
         frame: bytes,
-        person_box: tuple[float, float, float, float],
+        subject_box: tuple[float, float, float, float],
         vehicle_box: tuple[float, float, float, float],
     ) -> ContactResult | None:
         if not await self.ensure_ready():
@@ -731,7 +741,7 @@ class ContactSegmenter:
         try:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
-                None, self._check_sync, frame, person_box, vehicle_box
+                None, self._check_sync, frame, subject_box, vehicle_box
             )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Contact segmentation failed: %s", exc)
@@ -951,9 +961,22 @@ class VisionPipeline:
         self._config = config
 
     async def process_clip(
-        self, frames: list[bytes], car_description: str = ""
+        self,
+        frames: list[bytes],
+        car_description: str = "",
+        car_protection_applies: bool = False,
     ) -> VisionHints:
-        """Run every enabled stage against *frames* and return the resulting hints."""
+        """Run every enabled stage against *frames* and return the resulting hints.
+
+        *car_protection_applies* must reflect whether protected-vehicle
+        rules apply to *this specific camera* (see
+        BaseAnalyzer._car_protection_applies) — not merely whether a
+        protected vehicle is described somewhere on the property. Vehicle
+        distance/depth/contact analysis is skipped entirely when False, so
+        a camera that doesn't view the protected vehicle never generates
+        vehicle-proximity hints just because it happened to detect an
+        unrelated car and a person in frame.
+        """
         hints = VisionHints()
         if not frames:
             return hints
@@ -966,25 +989,35 @@ class VisionPipeline:
         if self._config.object_detection_enabled:
             detections = await self._detector.detect(frames)
             if detections:
+                # Vehicle-distance language (and the depth/contact stages
+                # below) is only relevant on a camera actually designated to
+                # view the protected vehicle — car_protection_applies is
+                # False for any other camera even when a protected vehicle
+                # is described elsewhere on the property, so those cameras
+                # stay properly isolated (see BaseAnalyzer._car_protection_applies).
                 hints.detection_hint = _build_detection_hint(
-                    detections, car_description
+                    detections, car_description if car_protection_applies else ""
                 )
                 hints.tracking_hint = _build_tracking_hint(detections, len(frames))
 
-        pair = _best_person_vehicle_pair(detections) if detections else None
+        pair = (
+            _best_subject_vehicle_pair(detections)
+            if detections and car_protection_applies
+            else None
+        )
 
         if pair and self._config.depth_estimation_enabled:
-            person, vehicle, frame_idx = pair
+            subject, vehicle, frame_idx = pair
             depth_result = await self._depth.compare(
-                frames[frame_idx], person.box, vehicle.box
+                frames[frame_idx], subject.box, vehicle.box
             )
             if depth_result is not None:
                 hints.depth_hint = _build_depth_hint(depth_result)
 
         if pair and self._config.segmentation_enabled:
-            person, vehicle, frame_idx = pair
+            subject, vehicle, frame_idx = pair
             contact_result = await self._segmenter.check_contact(
-                frames[frame_idx], person.box, vehicle.box
+                frames[frame_idx], subject.box, vehicle.box
             )
             if contact_result is not None:
                 hints.contact_hint = _build_contact_hint(contact_result)

@@ -63,6 +63,34 @@ until a toggle is turned on.
   size for every install by tens of MB even with the entire CV pipeline
   left disabled, since it's a different base OS, not an optional layer.
 
+### Bug fixes — camera isolation and animal-vehicle contact
+
+- **Fix: vehicle-proximity/depth/contact hints were not actually isolated
+  per camera.** `VisionPipeline.process_clip()` only checked whether a
+  protected-vehicle description existed *anywhere* in config, not whether
+  *this specific camera* is one of the cameras designated to view it (the
+  same distinction `ai_car_cameras`/`_car_protection_applies` already
+  enforces for the base prompt). A camera outside `ai_car_cameras` that
+  happened to detect an unrelated car and an unrelated person — a front
+  door camera catching a passing vehicle, say — could have generated an
+  OBJECT DETECTION/DEPTH/CONTACT hint about vehicle proximity that had
+  nothing to do with the protected vehicle. `process_clip()` now takes an
+  explicit `car_protection_applies` flag (computed the same way as the
+  prompt's own car rules) and skips all vehicle-distance/depth/contact
+  analysis entirely when it's False — the detected-classes listing itself
+  still appears (that's generically useful), just never the vehicle
+  distance language.
+- **Fix: depth/contact analysis only ever considered a detected *person*
+  near the vehicle, never an animal.** The base prompt has always flagged
+  an animal jumping on, pawing at, or otherwise contacting the protected
+  vehicle (e.g. a dog scratching a parked car) — but the more rigorous
+  depth-estimation and pixel-level contact-segmentation stages silently
+  excluded animals from consideration, so they never got that same level
+  of scrutiny. `_best_person_vehicle_pair` (now `_best_subject_vehicle_pair`)
+  considers dogs/cats/birds/horses as candidate subjects too, and the
+  OBJECT DETECTION hint's distance wording now names the actual subject
+  ("the detected dog's bounding box...") instead of assuming "person".
+
 ### New feature — object-tracking dwell/lingering signal
 
 - Object detection's ByteTrack integration was tracking people across

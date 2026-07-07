@@ -3978,6 +3978,46 @@ def test_attach_vision_pipeline_sets_field() -> None:
     assert a._vision_pipeline is pipeline
 
 
+async def test_analyze_clip_prompt_identical_with_fully_disabled_vision_pipeline() -> (
+    None
+):
+    """AI analysis with a real VisionPipeline attached but every stage
+    toggled off (the default AppConfig state) must produce byte-identical
+    prompt text to having no pipeline attached at all — enabling
+    ai_analysis_enabled must never itself change behavior; only actually
+    turning on a specific CV toggle should."""
+    from blink_downloader.vision import VisionConfig, VisionPipeline
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+
+    a_without = ClipAnalyzer(
+        ollama_url="http://localhost:11434", model="llava", prompt="p"
+    )
+    a_without.set_prompt_debug(True)
+    a_without._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "Clear"}'
+    )
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result_without = await a_without.analyze_clip(
+            "/clips/test.mp4", "c1", "Driveway"
+        )
+
+    a_with = ClipAnalyzer(
+        ollama_url="http://localhost:11434", model="llava", prompt="p"
+    )
+    a_with.set_prompt_debug(True)
+    a_with.attach_vision_pipeline(VisionPipeline(VisionConfig()))
+    a_with._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "Clear"}'
+    )
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result_with = await a_with.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result_without.prompt_text == result_with.prompt_text
+
+
 async def test_analyze_clip_with_vision_pipeline_injects_hints_and_enhanced_frames() -> (
     None
 ):
@@ -4013,6 +4053,41 @@ async def test_analyze_clip_with_vision_pipeline_injects_hints_and_enhanced_fram
     assert "a person and a car were detected" in result.prompt_text
     call_frames = a._call_model.call_args.args[0]
     assert call_frames == enhanced
+
+
+async def test_analyze_clip_passes_car_protection_applies_per_camera() -> None:
+    """The vision pipeline must be told whether *this specific camera* is
+    under protected-vehicle rules — not just whether a description exists —
+    so a camera outside ai_car_cameras never gets vehicle-proximity hints
+    just because it happens to see an unrelated car and person."""
+    from blink_downloader.vision import VisionHints
+
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="Silver Honda Civic",
+        car_cameras=["Driveway"],
+    )
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(return_value=VisionHints())
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "Clear"}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+        await a.analyze_clip("/clips/test.mp4", "c2", "Front Door")
+
+    driveway_kwargs = fake_pipeline.process_clip.call_args_list[0].kwargs
+    front_door_kwargs = fake_pipeline.process_clip.call_args_list[1].kwargs
+    assert driveway_kwargs["car_protection_applies"] is True
+    assert front_door_kwargs["car_protection_applies"] is False
 
 
 # ------------------------------------------------------------------

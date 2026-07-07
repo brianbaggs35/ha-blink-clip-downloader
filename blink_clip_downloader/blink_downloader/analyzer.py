@@ -832,7 +832,9 @@ class BaseAnalyzer(abc.ABC):
         vision_hints = None
         if self._vision_pipeline is not None:
             vision_hints = await self._vision_pipeline.process_clip(
-                frames, car_description=self._car_description
+                frames,
+                car_description=self._car_description,
+                car_protection_applies=self._car_protection_applies(camera),
             )
             if vision_hints.enhanced_frames is not None:
                 frames = vision_hints.enhanced_frames
