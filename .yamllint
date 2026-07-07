@@ -1,6 +1,7 @@
 ---
 ignore: |
   **/node_modules/**
+  FUNDING.yml
 
 extends: default
 
