@@ -537,6 +537,27 @@ async def test_add_and_get_analysis_result(db: ClipDatabase) -> None:
     assert result["confidence"] == 0.2
 
 
+async def test_add_analysis_result_stores_prompt_text(db: ClipDatabase) -> None:
+    """v4.0.0 ai_prompt_debug_enabled: prompt_text round-trips through the DB."""
+    await db.add_clip(_make_clip("clip1"))
+    result = _make_analysis("clip1")
+    result["prompt_text"] = "the exact prompt sent to the model"
+    await db.add_analysis_result(result)
+    stored = await db.get_analysis_for_clip("clip1")
+    assert stored is not None
+    assert stored["prompt_text"] == "the exact prompt sent to the model"
+
+
+async def test_add_analysis_result_prompt_text_defaults_empty(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("clip1"))
+    await db.add_analysis_result(_make_analysis("clip1"))
+    stored = await db.get_analysis_for_clip("clip1")
+    assert stored is not None
+    assert stored["prompt_text"] == ""
+
+
 async def test_get_analysis_for_clip_missing(db: ClipDatabase) -> None:
     assert await db.get_analysis_for_clip("ghost") is None
 
@@ -906,6 +927,22 @@ async def test_get_token_usage_stats_breaks_out_escalation_model(
     assert escalated["analyses"] == 1
     assert escalated["tokens_prompt"] == 300
     assert escalated["tokens_completion"] == 60
+
+
+async def test_add_analysis_result_stores_escalation_provider(
+    db: ClipDatabase,
+) -> None:
+    """escalation_provider (v4.0.0, cross-provider escalation) is stored and
+    surfaced on the escalated by_model row so the AI Usage tab can label it
+    correctly even when tier 2 is a different provider than tier 1."""
+    await db.add_clip(_make_clip("c1"))
+    result = _make_analysis_escalation("c1")
+    result["escalation_provider"] = "moondream_cloud"
+    await db.add_analysis_result(result)
+
+    stats = await db.get_token_usage_stats()
+    escalated = next(m for m in stats["by_model"] if m["model"] == "gpt-4o")
+    assert escalated["provider"] == "moondream_cloud"
 
 
 async def test_get_token_usage_stats_no_escalation_by_default(db: ClipDatabase) -> None:
@@ -1373,3 +1410,369 @@ async def test_record_scene_baseline_restart_resets_streak(
 
     await db.record_scene_baseline("Roof", [0.5, 0.5, 0.5])  # size change
     assert await _scene_streak(db, "Roof") == 0
+
+
+# ===========================================================================
+# v4.0.0 — Adaptive learning from feedback (analysis_feedback)
+# ===========================================================================
+
+
+async def test_add_and_get_feedback_for_clip(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        correction_note="It was just the mail carrier.",
+        corrected_suspicious=False,
+    )
+    fb = await db.get_feedback_for_clip("c1")
+    assert fb is not None
+    assert fb["camera"] == "Front Door"
+    assert fb["original_suspicious"] is True
+    assert fb["correct"] is False
+    assert fb["correction_note"] == "It was just the mail carrier."
+    assert fb["corrected_suspicious"] is False
+
+
+async def test_get_feedback_for_clip_missing_returns_none(db: ClipDatabase) -> None:
+    assert await db.get_feedback_for_clip("ghost") is None
+
+
+async def test_add_feedback_without_init_is_noop() -> None:
+    d = ClipDatabase(Path("/nonexistent/no.db"))
+    await d.add_feedback(
+        clip_id="c1",
+        camera="Cam",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.5,
+        correct=True,
+    )  # should not raise
+
+
+async def test_add_feedback_resubmission_replaces_previous(db: ClipDatabase) -> None:
+    """One feedback row per clip — resubmitting replaces, not accumulates."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+    )
+    await db.add_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=True,
+        correction_note="actually correct after all",
+    )
+    fb = await db.get_feedback_for_clip("c1")
+    assert fb is not None
+    assert fb["correct"] is True
+    assert fb["correction_note"] == "actually correct after all"
+
+    recent = await db.get_recent_feedback("Front Door")
+    assert len(recent) == 1
+
+
+async def test_get_recent_feedback_filters_by_camera(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_clip(_make_clip("c2", camera="Driveway"))
+    await db.add_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=True,
+        corrected_suspicious=True,
+    )
+    await db.add_feedback(
+        clip_id="c2",
+        camera="Driveway",
+        analysis_result_id=None,
+        original_suspicious=False,
+        original_confidence=0.2,
+        correct=True,
+    )
+    front_door = await db.get_recent_feedback("Front Door")
+    assert len(front_door) == 1
+    assert front_door[0]["camera"] == "Front Door"
+
+    all_feedback = await db.get_recent_feedback()
+    assert len(all_feedback) == 2
+
+
+async def test_get_recent_feedback_without_init_returns_empty() -> None:
+    d = ClipDatabase(Path("/nonexistent/no.db"))
+    assert await d.get_recent_feedback("Cam") == []
+
+
+async def test_get_feedback_stats_counts_correct_and_incorrect(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_clip(_make_clip("c2", camera="Front Door"))
+    await db.add_clip(_make_clip("c3", camera="Front Door"))
+    # False positive: AI said suspicious, human says incorrect.
+    await db.add_feedback(
+        "c1",
+        "Front Door",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+    )
+    # False negative: AI said not suspicious, human says incorrect (missed it).
+    await db.add_feedback(
+        "c2",
+        "Front Door",
+        None,
+        original_suspicious=False,
+        original_confidence=0.1,
+        correct=False,
+    )
+    # Correct verdict.
+    await db.add_feedback(
+        "c3",
+        "Front Door",
+        None,
+        original_suspicious=True,
+        original_confidence=0.9,
+        correct=True,
+    )
+
+    stats = await db.get_feedback_stats("Front Door")
+    assert stats["total"] == 3
+    assert stats["correct"] == 1
+    assert stats["incorrect"] == 2
+    assert stats["false_positive"] == 1
+    assert stats["false_negative"] == 1
+
+
+async def test_get_feedback_stats_without_init_returns_empty() -> None:
+    d = ClipDatabase(Path("/nonexistent/no.db"))
+    stats = await d.get_feedback_stats()
+    assert stats["total"] == 0
+
+
+async def test_get_feedback_stats_global_when_no_camera_given(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_clip(_make_clip("c2", camera="Driveway"))
+    await db.add_feedback(
+        "c1",
+        "Front Door",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=True,
+    )
+    await db.add_feedback(
+        "c2",
+        "Driveway",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=True,
+    )
+    stats = await db.get_feedback_stats()
+    assert stats["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# get_effective_confidence_threshold
+# ---------------------------------------------------------------------------
+
+
+async def _add_n_feedback(
+    db: ClipDatabase, camera: str, n: int, false_positives: int
+) -> None:
+    """Add n feedback rows for camera, with the first false_positives of them
+    marked as false positives (suspicious=True, correct=False) and the rest
+    marked correct."""
+    for i in range(n):
+        clip_id = f"{camera}-{i}"
+        await db.add_clip(_make_clip(clip_id, camera=camera))
+        is_fp = i < false_positives
+        await db.add_feedback(
+            clip_id,
+            camera,
+            None,
+            original_suspicious=True,
+            original_confidence=0.8,
+            correct=not is_fp,
+        )
+
+
+async def test_effective_threshold_unchanged_below_min_samples(
+    db: ClipDatabase,
+) -> None:
+    """Fewer than the minimum feedback rows for a camera means no adjustment
+    at all, regardless of how many false positives are among them."""
+    await _add_n_feedback(db, "Front Door", n=5, false_positives=5)
+    threshold = await db.get_effective_confidence_threshold("Front Door", 0.5)
+    assert threshold == 0.5
+
+
+async def test_effective_threshold_unchanged_with_no_false_positives(
+    db: ClipDatabase,
+) -> None:
+    await _add_n_feedback(db, "Front Door", n=15, false_positives=0)
+    threshold = await db.get_effective_confidence_threshold("Front Door", 0.5)
+    assert threshold == 0.5
+
+
+async def test_effective_threshold_steps_up_with_false_positives(
+    db: ClipDatabase,
+) -> None:
+    """Every 3 false positives in the trailing window nudges the threshold up
+    by 0.05, so 6 false positives out of 15 samples means 2 steps (+0.10)."""
+    await _add_n_feedback(db, "Front Door", n=15, false_positives=6)
+    threshold = await db.get_effective_confidence_threshold("Front Door", 0.5)
+    assert threshold == pytest.approx(0.6)
+
+
+async def test_effective_threshold_capped_at_max_steps(db: ClipDatabase) -> None:
+    """Even with every sample a false positive, the adjustment never exceeds
+    3 steps (+0.15) so a burst of bad luck can't push the threshold to
+    near-certainty."""
+    await _add_n_feedback(db, "Front Door", n=20, false_positives=20)
+    threshold = await db.get_effective_confidence_threshold("Front Door", 0.5)
+    assert threshold == pytest.approx(0.65)
+
+
+async def test_effective_threshold_never_exceeds_ceiling(db: ClipDatabase) -> None:
+    await _add_n_feedback(db, "Front Door", n=20, false_positives=20)
+    threshold = await db.get_effective_confidence_threshold("Front Door", 0.9)
+    assert threshold <= 0.95
+
+
+async def test_effective_threshold_without_init_returns_base(tmp_path: Path) -> None:
+    d = ClipDatabase(tmp_path / "unopened.db")
+    threshold = await d.get_effective_confidence_threshold("Cam", 0.5)
+    assert threshold == 0.5
+
+
+# ---------------------------------------------------------------------------
+# get_prompt_corrections
+# ---------------------------------------------------------------------------
+
+
+async def test_prompt_corrections_only_includes_notes(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_clip(_make_clip("c2", camera="Front Door"))
+    # No note — not eligible for prompt injection.
+    await db.add_feedback(
+        "c1",
+        "Front Door",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+    )
+    # Has a note — eligible.
+    await db.add_feedback(
+        "c2",
+        "Front Door",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        correction_note="Just a cat.",
+        corrected_suspicious=False,
+    )
+    corrections = await db.get_prompt_corrections("Front Door")
+    assert len(corrections) == 1
+    assert corrections[0]["correction_note"] == "Just a cat."
+    assert corrections[0]["corrected_suspicious"] is False
+
+
+async def test_prompt_corrections_excludes_correct_verdicts(
+    db: ClipDatabase,
+) -> None:
+    """Only feedback marking the AI WRONG is a correction — a confirmed
+    correct verdict has nothing to teach the prompt."""
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_feedback(
+        "c1",
+        "Front Door",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=True,
+        correction_note="yep, correct",
+    )
+    corrections = await db.get_prompt_corrections("Front Door")
+    assert corrections == []
+
+
+async def test_prompt_corrections_limited_to_three(db: ClipDatabase) -> None:
+    for i in range(5):
+        clip_id = f"c{i}"
+        await db.add_clip(_make_clip(clip_id, camera="Front Door"))
+        await db.add_feedback(
+            clip_id,
+            "Front Door",
+            None,
+            original_suspicious=True,
+            original_confidence=0.8,
+            correct=False,
+            correction_note=f"note {i}",
+        )
+    corrections = await db.get_prompt_corrections("Front Door")
+    assert len(corrections) == 3
+
+
+async def test_prompt_corrections_excludes_other_cameras(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_clip(_make_clip("c2", camera="Driveway"))
+    await db.add_feedback(
+        "c1",
+        "Front Door",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        correction_note="front door note",
+    )
+    await db.add_feedback(
+        "c2",
+        "Driveway",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        correction_note="driveway note",
+    )
+    corrections = await db.get_prompt_corrections("Front Door")
+    assert len(corrections) == 1
+    assert corrections[0]["correction_note"] == "front door note"
+
+
+async def test_prompt_corrections_without_init_returns_empty() -> None:
+    d = ClipDatabase(Path("/nonexistent/no.db"))
+    assert await d.get_prompt_corrections("Cam") == []
+
+
+async def test_feedback_cascades_on_clip_delete(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_feedback(
+        "c1",
+        "Front Door",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+    )
+    await db.delete_clip("c1")
+    assert await db.get_feedback_for_clip("c1") is None

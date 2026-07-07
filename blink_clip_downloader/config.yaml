@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v3.2.0"
+version: "v4.0.0"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -159,6 +159,13 @@ options:
   ollama_cloud_api_key: ""
   # [Moondream Cloud] API key from moondream.ai.
   moondream_api_key: ""
+  # [Moondream Cloud] Fine-tuned checkpoint model ID to use for inference
+  # instead of the base model, e.g. "moondream3-preview/abc123@50". Leave
+  # empty to use the base model. Set this via the AI tab's Fine-Tuning panel
+  # (Activate button) rather than typing it by hand — that panel lists your
+  # actual fine-tunes/checkpoints. A value set live via the panel takes
+  # effect immediately but only persists across restarts if also saved here.
+  moondream_finetune_model: ""
   # [Anthropic] API key from console.anthropic.com. Keep this secret.
   anthropic_api_key: ""
   # [Anthropic] Claude model to use. Use "Fetch Models" in the web UI to see
@@ -169,36 +176,76 @@ options:
   # [OpenAI] GPT model to use. Use "Fetch Models" in the web UI to see available
   # models. gpt-4o-mini is the most cost-effective vision option.
   openai_model: "gpt-4o-mini"
-  # [OpenAI only — has no effect for any other ai_provider] Optional second-tier
-  # model for two-tier escalation. When set, every clip is first analyzed with
-  # the cheap/fast openai_model above; only clips it flags as suspicious are
-  # re-analyzed with this stronger model for a closer second opinion, and that
-  # verdict is what gets recorded. Leave empty to disable escalation and always
-  # use openai_model alone. Example pairing: openai_model: "gpt-4o-mini" with
-  # openai_escalation_model: "gpt-4o". Not available for Moondream Cloud, which
-  # only offers a single selectable model.
+  # Deprecated — use ai_escalation_provider + ai_escalation_model below, which
+  # support escalating to ANY provider, not just a second OpenAI model. Still
+  # honored automatically if ai_escalation_provider is unset and ai_provider
+  # is "openai", so existing installs keep working unchanged after upgrading.
   openai_escalation_model: ""
+  # Optional second-tier ("tier 2") provider for two-tier escalation. When
+  # set, every clip is first analyzed with ai_provider/model above (tier 1);
+  # only clips tier 1 flags as suspicious are re-analyzed by this provider
+  # for a closer second opinion, and that verdict is what gets recorded.
+  # May be a DIFFERENT provider than ai_provider (e.g. tier 1 = openai,
+  # tier 2 = moondream_cloud) — reuses that provider's own credentials
+  # already set above, no separate API key needed. Leave empty to disable.
+  # Options: "" (disabled) | "ollama" | "ollama_cloud" | "moondream_cloud" |
+  # "moondream_local" | "anthropic" | "openai"
+  ai_escalation_provider: ""
+  # Model ID to use for ai_escalation_provider above (e.g. "gpt-4o",
+  # "claude-opus-4-5", or a moondream fine-tune ID). Leave empty to use that
+  # provider's default/base model. Not applicable to moondream_local, which
+  # has no selectable model.
+  ai_escalation_model: ""
   # Base prompt sent to the AI for each clip. Must request a JSON response with
   # "suspicious", "confidence", and "description" keys. This is the global default;
   # use the Camera Configurations section in the web UI (AI tab) to override for
   # individual cameras, or set ai_camera_prompts below for advanced YAML-based config.
-  ai_prompt: >-
-    You are a security camera analyst. Review this motion-triggered clip and determine
-    if anything suspicious is happening. Step 1: Identify what triggered the motion
-    (person, animal, passing vehicle, shadow/reflection, wind/leaves, or environmental).
-    A car or shadow moving on a public road is NOT suspicious. Step 2: If a person is
-    present, observe where they are, which direction they are moving, how close they are
-    to any vehicles or property, and what they appear to be doing. Step 3: Apply rules:
-    SUSPICIOUS when a person is physically touching or trying to open a vehicle/door/window,
-    crouching beside property, or running away after contacting property. NOT SUSPICIOUS
-    when a person walks along a road/sidewalk without stopping, stands more than 3 feet
-    from assets, or when only vehicles/animals/environmental motion is visible.
-    Confidence = how clearly you can see the scene (0.1=very dark/blurry, 1.0=crystal clear).
-    Respond ONLY with this exact JSON and no other text:
-    {"suspicious": true/false, "confidence": 0.1-1.0, "description": "one short plain-English
-    sentence naming the notable person, vehicle, or animal and what they are doing (e.g. 'A
-    person is walking past the car') — omit static background scenery like parked vehicles
-    that aren't involved, weather, foliage, or utility poles/power lines"}
+  # yamllint disable rule:line-length
+  ai_prompt: |-
+    You are a security camera analyst. Review this motion-triggered clip and determine if anything suspicious is happening.
+
+    Step 1 — Identify what triggered the motion:
+    - Person, animal, passing vehicle, shadow/reflection, wind/leaves, or environmental motion.
+    - A car or shadow moving on a public road is NOT suspicious — distinguish carefully.
+
+    Step 2 — If a person is present, observe:
+    - Where they are standing or moving, and in which direction.
+    - How close they are to any vehicles, doors, windows, or other property.
+    - What they appear to be doing (walking past, lingering, reaching, running, etc.).
+    - Lighting and visibility conditions.
+
+    Step 3 — Apply these rules:
+    SUSPICIOUS (suspicious=true) — ANY of these applies:
+      • Person is prying, forcing, kicking, shouldering, or otherwise tampering with a locked door, window, or vehicle — not simply opening or using it normally.
+      • Person repeatedly jiggles, pulls on, or manipulates a door handle or lock beyond a single normal key/fob/code use, or otherwise appears to be trying to force a lock.
+      • Person attempts entry through a window, side gate, or any opening other than the normal front entrance.
+      • Person touches, reaches for, covers, sprays, or otherwise tampers with a security camera itself.
+      • A vehicle makes physical contact with — bumps, scrapes, or sideswipes — another vehicle or parked property, even a minor low-speed contact, regardless of whether the other party stops or drives away afterward.
+      • Person scrapes, bangs into, kicks, or otherwise physically contacts a parked vehicle.
+      • Person is crouching beside or hiding next to property.
+      • Person repeatedly looks around, peers into windows or vehicles, or paces the property without any clear purpose (casing behavior) — favor flagging this as suspicious when in doubt, since this pattern is otherwise easy to miss.
+      • Person picks up mail or a delivered package and then leaves the property on foot or by vehicle instead of entering the home — a mail/package theft signature.
+      • Person runs away immediately after contacting property.
+      • An animal (e.g. a dog) jumps on, paws at, or urinates/defecates on a vehicle or other protected property — flag this even though no person is involved.
+      • Lawn equipment flings a rock, stick, or debris that visibly strikes a vehicle with force, or wind-blown debris (a trash can, lid, branch, or similar) visibly strikes, bounces off, dents, or scrapes a vehicle rather than merely resting against it — flag this even with no person at fault and even if unintentional; any event that visibly damages or risks damaging a protected asset is worth reporting.
+    NOT SUSPICIOUS (suspicious=false):
+      • A person walking up to the front door, unlocking or opening it normally, and going inside — this is ordinary coming and going (a resident or expected visitor) and must NOT be flagged just because they touched or opened the door.
+      • A person opening the front door from inside and stepping out to leave — e.g. leaving for work, taking out trash or mail, or walking to a car — is exactly as routine as entering and must NOT be flagged simply for opening the door and walking away. Only flag it if the person then lingers, repeatedly looks around, or otherwise matches one of the SUSPICIOUS behaviors above (e.g. casing, running immediately after tampering) — opening a door and calmly walking off on its own is never enough.
+      • A person walking up to a mailbox or porch, picking up mail or a package, and going back inside the home — this is the resident retrieving their own delivery and is routine even though the camera cannot confirm who they are; judge this by the retrieve-then-enter pattern, not by identity.
+      • Person walking along a public road, sidewalk, or across the scene without stopping.
+      • Person standing more than 3 feet from protected assets.
+      • Vehicle, bicycle, or shadow passing on the street.
+      • Animal, insect, or environmental motion (wind, leaves, lights).
+      • Lawn care equipment (mower, trimmer, blower) being operated near a vehicle by a neighbor or landscaper, with no visible impact on the vehicle — routine yard maintenance, not suspicious.
+      • Wind-blown debris — a trash can, lid, or branch — merely coming to rest against or blowing near a vehicle or property, with no person involved and no visible impact.
+      • Delivery driver at the front door (under 60 seconds).
+      • ANY of the above lawn-equipment or wind-blown-debris scenarios where the object visibly strikes, bounces off, dents, or scrapes the vehicle rather than merely resting near or against it is a DIFFERENT case — see SUSPICIOUS above. Damage or risk of damage to a protected asset is always worth reporting, even with no person at fault and even if unintentional.
+
+    Confidence = how certain you are in the suspicious/not-suspicious verdict above, based on how clearly the BEHAVIOR itself is visible — NOT how bright or sharp the video looks. A dim or distant clip that still clearly shows tampering deserves high confidence; a bright, clear clip of ordinary activity is not suspicious regardless of image quality (0.1 = you can barely tell what is happening, 1.0 = the behavior is unambiguous). When genuinely uncertain whether behavior is suspicious (e.g. it could be casing or could be innocent loitering), prefer a lower-confidence suspicious=true over suppressing it entirely — occasional false positives are acceptable, but missing real suspicious activity is not.
+
+    Respond ONLY with this exact JSON — no other text:
+    {"suspicious": true/false, "confidence": 0.1-1.0, "description": "one short plain-English sentence naming the notable person, vehicle, or animal and what they are doing (e.g. 'A person is walking past the car' or 'A person is standing very close to the car and appears to be looking inside it') — omit static background scenery like parked vehicles that aren't involved, weather, foliage, or utility poles/power lines"}
+  # yamllint enable rule:line-length
   # Optional description of a vehicle to protect. When set, the AI applies strict
   # distance rules and flags anyone within ~2 feet of the vehicle as suspicious.
   # Example: "Silver Kia Forte, parked in the driveway"
@@ -268,6 +315,11 @@ options:
   # your actual camera names, so there's nothing to type or get wrong.
   # Example: ["Driveway", "Front Door"]
   ai_car_cameras: []
+  # Store each clip's exact prompt text (not the image frames) so it can be
+  # inspected via the "📝 Prompt" button in the web UI's AI panel — useful
+  # for understanding and fine-tuning what's actually being sent. Off by
+  # default since prompts are long and this is an opt-in debugging aid.
+  ai_prompt_debug_enabled: false
 
   # --- Extended Notifications (AI alerts) ---
   # HA mobile app entity to push AI suspicious-activity alerts to.
@@ -342,11 +394,14 @@ schema:
   ollama_model: "str?"
   ollama_cloud_api_key: "password?"
   moondream_api_key: "password?"
+  moondream_finetune_model: "str?"
   anthropic_api_key: "password?"
   anthropic_model: "str?"
   openai_api_key: "password?"
   openai_model: "str?"
   openai_escalation_model: "str?"
+  ai_escalation_provider: "str?"
+  ai_escalation_model: "str?"
   ai_prompt: "str?"
   ai_car_description: "str?"
   ai_max_frames: "int(1,100)"
@@ -367,6 +422,7 @@ schema:
   ai_frame_strategy: "list(smart|sequential|uniform)"
   ai_car_cameras:
     - "str?"
+  ai_prompt_debug_enabled: "bool"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"
   smtp_host: "str?"

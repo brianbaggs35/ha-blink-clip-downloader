@@ -10,7 +10,7 @@ import platform
 import sys
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from aiohttp import web
 
@@ -18,7 +18,7 @@ from .database import ClipDatabase
 
 if TYPE_CHECKING:
     from .analysis_queue import AnalysisQueue
-    from .analyzer import BaseAnalyzer
+    from .analyzer import BaseAnalyzer, MoondreamFineTuneManager
     from .notification_channels import NotificationDispatcher
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,24 +105,19 @@ _HTML = r"""<!DOCTYPE html>
 <link href="https://cdn.jsdelivr.net/npm/video.js@8.10.0/dist/video-js.min.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/video.js@8.10.0/dist/video.min.js"></script>
 <style>
-/* Light theme (default – matches HA's default light UI) */
+/* Dark theme — the default as of v4.0.0 (this add-on ships dark-first).
+   :root itself now holds the dark palette; body.light is the explicit
+   opt-out below. There is no prefers-color-scheme fallback anymore — see
+   the theme-init script for why (a deliberate product default, not
+   OS-driven). */
 :root{
-  --bg:#f3f4f6;--surface:#ffffff;--card:#f9fafb;--card2:#f0f2f5;
-  --border:#e5e7eb;--accent:#2563eb;--accent2:#1d4ed8;--success:#16a34a;
-  --danger:#dc2626;--warn:#d97706;--text:#111827;--muted:#6b7280;
-  --starred:#f59e0b;--radius:8px;--nav-h:56px;
-  --btn-text:#ffffff;--badge-ok-bg:#dcfce7;--badge-err-bg:#fee2e2;
-  --tag-bg:#dbeafe;--tag-text:#1d4ed8;--code-color:#1e40af
-}
-/* Dark theme – activates when OS/browser prefers dark (matches HA dark theme) */
-@media(prefers-color-scheme:dark){:root{
   --bg:#0d1117;--surface:#161b22;--card:#1c2128;--card2:#21262d;
   --border:#30363d;--accent:#58a6ff;--accent2:#1f6feb;--success:#3fb950;
   --danger:#f85149;--warn:#d29922;--text:#c9d1d9;--muted:#8b949e;
-  --starred:#e3b341;
+  --starred:#e3b341;--radius:10px;--nav-h:56px;--nav-w:225px;
   --btn-text:#0d1117;--badge-ok-bg:#0d2818;--badge-err-bg:#2d1313;
   --tag-bg:#1a3055;--tag-text:#79b8ff;--code-color:#a9d1f7
-}}
+}
 /* Manual override classes (toggled by the ☀/🌙 button, stored in localStorage) */
 body.dark{
   --bg:#0d1117;--surface:#161b22;--card:#1c2128;--card2:#21262d;
@@ -145,26 +140,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,san
      background:var(--bg);color:var(--text);
      /* dvh re-measures on iOS Companion WKWebView bg/fg cycles; vh is the fallback */
      height:100vh;height:100dvh;display:flex;
-     flex-direction:column;overflow:hidden}
+     /* Sidebar dashboard shell on desktop — nav is a column on the left,
+        the active .page fills the rest. Reverts to a top bar on narrow
+        viewports, see @media(max-width:600px) at the end of this stylesheet. */
+     flex-direction:row;overflow:hidden}
 button,input,select{font:inherit}
 a{color:var(--accent);text-decoration:none}
 code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
      padding:.1em .4em;font-family:monospace;font-size:.85em}
 
-/* ── Navigation ──────────────────────────────────────── */
-.nav{background:var(--surface);border-bottom:1px solid var(--border);
-     height:var(--nav-h);display:flex;align-items:center;gap:.5rem;
-     padding:0 1rem;flex-shrink:0;z-index:10}
-.nav-brand{font-size:1.05rem;font-weight:700;color:var(--accent);
-           white-space:nowrap;margin-right:.5rem}
+/* ── Navigation (sidebar) ──────────────────────────────── */
+.nav{background:var(--surface);border-right:1px solid var(--border);
+     width:var(--nav-w);display:flex;flex-direction:column;align-items:stretch;
+     gap:.3rem;padding:1.1rem .85rem;flex-shrink:0;z-index:10;overflow-y:auto}
+.nav-brand{font-size:1.18rem;font-weight:700;color:var(--accent);
+           white-space:nowrap;margin-bottom:.9rem;padding:0 .3rem}
 .nav-brand span{opacity:.5;font-weight:400}
-.nav-tabs{display:flex;gap:.2rem;flex:1}
+.nav-tabs{display:flex;flex-direction:column;gap:.15rem;flex:1}
 .nav-tab{background:transparent;border:none;color:var(--muted);
-         padding:.4rem .8rem;border-radius:var(--radius);cursor:pointer;
+         width:100%;text-align:left;display:flex;align-items:center;gap:.6rem;
+         padding:.55rem .7rem;border-radius:var(--radius);cursor:pointer;
          font-size:.88rem;font-weight:500;transition:.15s;white-space:nowrap}
 .nav-tab:hover{color:var(--text);background:var(--card)}
 .nav-tab.active{color:var(--accent);background:var(--card2)}
-.nav-actions{display:flex;align-items:center;gap:.45rem;margin-left:auto}
+.nav-actions{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap;
+             margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--border)}
 
 .btn{background:var(--accent);color:var(--btn-text);border:none;border-radius:var(--radius);
      padding:.4rem .9rem;font-size:.85rem;font-weight:600;cursor:pointer;
@@ -226,9 +226,10 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 /* ── Clip grid ────────────────────────────────────────── */
 .clip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(228px,100%),1fr));gap:.8rem}
 .clip-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
-           overflow:hidden;cursor:pointer;transition:.15s;position:relative;user-select:none}
+           overflow:hidden;cursor:pointer;transition:.15s;position:relative;user-select:none;
+           box-shadow:0 1px 3px rgba(0,0,0,.18)}
 .clip-card:hover{border-color:var(--accent2);transform:translateY(-2px);
-                 box-shadow:0 4px 16px rgba(31,111,235,.2)}
+                 box-shadow:0 6px 18px rgba(31,111,235,.25)}
 .clip-card.selected{border-color:var(--accent);box-shadow:0 0 0 2px rgba(88,166,255,.3)}
 .thumb-wrap{position:relative;aspect-ratio:16/9;background:#000;overflow:hidden}
 .thumb-wrap img{width:100%;height:100%;object-fit:cover;opacity:.85;transition:.2s}
@@ -271,11 +272,17 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);
           z-index:100;align-items:flex-start;justify-content:center;
           padding:1rem;overflow-y:auto}
-.modal-bg.open{display:flex}
+.modal-bg.open{display:flex;animation:fadeIn .15s ease}
+.modal-bg.open .modal{animation:modalIn .18s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes modalIn{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){
+  .modal-bg.open,.modal-bg.open .modal{animation:none}
+}
 .modal{background:var(--surface);border:1px solid var(--border);
-       border-radius:12px;max-width:980px;width:100%;margin:auto;
-       overflow:hidden;position:relative}
-.modal.theater{max-width:100%;border-radius:0;border:none}
+       border-radius:14px;max-width:980px;width:100%;margin:auto;
+       overflow:hidden;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.modal.theater{max-width:100%;border-radius:0;border:none;box-shadow:none}
 
 .modal-close{position:absolute;top:.65rem;right:.65rem;background:rgba(0,0,0,.6);
              border:none;color:var(--muted);font-size:1.35rem;cursor:pointer;
@@ -327,12 +334,20 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
 .modal-options label{display:flex;align-items:center;gap:.3rem;cursor:pointer}
 .modal-options input[type=checkbox]{accent-color:var(--accent)}
 
+/* ── Generic card (AI tab panels, suspicious-feed rows) ─ */
+.card{background:var(--card);border:1px solid var(--border);
+      border-radius:var(--radius);box-shadow:0 1px 3px rgba(0,0,0,.2);
+      transition:.15s}
+.card:hover{border-color:var(--accent2);box-shadow:0 4px 14px rgba(0,0,0,.28)}
+
 /* ── Status page ──────────────────────────────────────── */
 #page-status{overflow-y:auto;padding:1.5rem}
 .status-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));
              gap:1rem;max-width:1050px;margin:0 auto;min-width:0}
 .status-card{background:var(--card);border:1px solid var(--border);
-             border-radius:var(--radius);padding:1rem 1.15rem}
+             border-radius:var(--radius);padding:1rem 1.15rem;
+             box-shadow:0 1px 3px rgba(0,0,0,.2);transition:.15s}
+.status-card:hover{box-shadow:0 4px 14px rgba(0,0,0,.28)}
 .status-card h3{font-size:.88rem;font-weight:600;margin-bottom:.75rem;
                 display:flex;align-items:center;gap:.45rem}
 .status-row{display:flex;justify-content:space-between;align-items:center;
@@ -425,15 +440,21 @@ code{background:var(--card2);border:1px solid var(--border);border-radius:4px;
   .sidebar{display:none} .nav-tab span{display:none} .search{width:120px}
   .meta-grid{grid-template-columns:auto 1fr}
 
+  /* The sidebar dashboard shell is a desktop affordance — a vertical nav
+     would eat too much width from the content on a phone, so narrow
+     viewports revert to the original horizontal top bar. */
+  body{flex-direction:column}
   /* Unwrapped nav overflowed narrow viewports, clipping trailing buttons via body's overflow:hidden */
-  .nav{flex-wrap:wrap;height:auto;min-height:var(--nav-h);
-       padding:.4rem .6rem;row-gap:.35rem}
-  .nav-brand{font-size:.92rem}
+  .nav{flex-direction:row;flex-wrap:wrap;width:100%;height:auto;min-height:var(--nav-h);
+       border-right:none;border-bottom:1px solid var(--border);
+       align-items:center;padding:.4rem .6rem;row-gap:.35rem}
+  .nav-brand{font-size:.92rem;margin-bottom:0}
   .nav-brand span{display:none}
-  .nav-tabs{order:3;flex:1 1 100%;overflow-x:auto;-webkit-overflow-scrolling:touch;
-            scrollbar-width:none}
+  .nav-tabs{order:3;flex:1 1 100%;flex-direction:row;overflow-x:auto;
+            -webkit-overflow-scrolling:touch;scrollbar-width:none}
   .nav-tabs::-webkit-scrollbar{display:none}
-  .nav-actions{gap:.3rem}
+  .nav-tab{width:auto;padding:.4rem .8rem}
+  .nav-actions{gap:.3rem;margin-top:0;padding-top:0;border-top:none}
   .nav-actions .btn.sm{padding:.3rem .55rem;font-size:.75rem}
 }
 </style>
@@ -696,6 +717,10 @@ action:
           <div style="font-size:.82rem;color:var(--muted);margin-bottom:.6rem">
             Model: <strong id="ai-model-name">—</strong>
           </div>
+          <div id="ai-escalation-info" style="display:none;font-size:.78rem;color:var(--muted);margin-bottom:.6rem;padding:.4rem .6rem;background:var(--card2);border-radius:var(--radius)">
+            🪜 Escalation tier 2: <strong id="ai-escalation-label">—</strong>
+            <span id="ai-escalation-status"></span>
+          </div>
           <div id="ai-model-picker" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
             <button class="btn sm" id="ai-fetch-models-btn">⟳ Fetch Models</button>
             <select class="sel" id="ai-model-select" style="min-width:175px">
@@ -794,6 +819,49 @@ action:
             <div id="ai-test-email-result" style="display:none;margin-top:.45rem;font-size:.8rem"></div>
           </div>
         </div>
+        <!-- Adaptive Learning Card -->
+        <div class="card" style="padding:1.2rem" id="ai-adaptive-card">
+          <h3 style="margin-bottom:.8rem">🧠 Adaptive Learning</h3>
+          <div id="ai-adaptive-content" style="font-size:.85rem">
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem;margin-bottom:.5rem">
+              <div style="text-align:center">
+                <div id="ai-fb-total" style="font-size:1.4rem;font-weight:700;color:var(--accent)">0</div>
+                <div style="font-size:.7rem;color:var(--muted)">Feedback given</div>
+              </div>
+              <div style="text-align:center">
+                <div id="ai-fb-accuracy" style="font-size:1.4rem;font-weight:700;color:var(--success)">—</div>
+                <div style="font-size:.7rem;color:var(--muted)">Accuracy</div>
+              </div>
+            </div>
+            <div id="ai-fb-breakdown" style="color:var(--muted);font-size:.78rem"></div>
+            <p style="font-size:.72rem;color:var(--muted);margin-top:.5rem">
+              Mark verdicts 👍/👎 on the Suspicious Activity Feed below, or in a clip's
+              AI panel, to auto-tune per-camera alert thresholds and teach future
+              analyses from your corrections.
+            </p>
+          </div>
+        </div>
+        <!-- Moondream Fine-Tuning Card (moondream_cloud only) -->
+        <div class="card" style="padding:1.2rem;display:none" id="ai-finetune-card">
+          <h3 style="margin-bottom:.8rem">🎯 Fine-Tuning</h3>
+          <div id="ai-finetune-list" style="display:flex;flex-direction:column;gap:.4rem;margin-bottom:.6rem">
+            <div style="color:var(--muted);font-size:.8rem">Loading…</div>
+          </div>
+          <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
+            <input class="tag-input" id="ai-finetune-name" placeholder="New fine-tune name">
+            <select class="sel" id="ai-finetune-rank">
+              <option value="8">Rank 8</option>
+              <option value="16" selected>Rank 16</option>
+              <option value="24">Rank 24</option>
+              <option value="32">Rank 32</option>
+            </select>
+            <button class="btn sm" id="ai-finetune-create-btn">+ New Fine-tune</button>
+          </div>
+          <p style="font-size:.72rem;color:var(--muted);margin-top:.4rem">
+            Fine-tunes train in Moondream Cloud. Once a checkpoint finishes, activate it
+            below to switch live inference immediately — no restart needed.
+          </p>
+        </div>
       </div>
 
       <!-- Camera Configurations -->
@@ -883,6 +951,23 @@ action:
   </div>
 </div>
 
+<!-- ── AI prompt-debug overlay (only reachable when ai_prompt_debug_enabled) ── -->
+<div class="modal-bg" id="prompt-overlay">
+  <div class="modal" style="max-width:700px">
+    <button class="modal-close" id="prompt-close" title="Close (Esc)">×</button>
+    <div class="modal-body">
+      <div class="modal-title" style="margin-bottom:.7rem">📝 Prompt Sent to AI</div>
+      <p style="font-size:.78rem;color:var(--muted);margin-bottom:.6rem">
+        The exact text sent to the model for this clip (image frames are not shown).
+      </p>
+      <pre id="prompt-overlay-content" style="font-size:.78rem;font-family:monospace;
+           background:var(--card2);border:1px solid var(--border);border-radius:var(--radius);
+           padding:.75rem .9rem;white-space:pre-wrap;word-break:break-word;
+           max-height:60vh;overflow-y:auto;color:var(--text)"></pre>
+    </div>
+  </div>
+</div>
+
 <!-- ── Keyboard help overlay ────────────────────────────── -->
 <div class="modal-bg" id="help-overlay">
   <div class="modal" style="max-width:460px">
@@ -960,17 +1045,17 @@ action:
 // Ingress root prefix injected by server (empty for direct access, /api/hassio_ingress/TOKEN for ingress)
 const _R = '__HAROOT__';
 
-// ── Theme (light default; follows OS/browser prefers-color-scheme; manual override stored in localStorage) ─
+// ── Theme (dark default as of v4.0.0; manual override stored in localStorage) ─
+// Dark is the shipped default regardless of OS/browser preference — an
+// explicit stored choice (either way) is always honored, but unset means
+// dark, not a prefers-color-scheme lookup.
 (function(){
   const t = localStorage.getItem('blink_theme');
-  if (t === 'dark') document.body.classList.add('dark');
-  else if (t === 'light') document.body.classList.add('light');
-  // If nothing stored, CSS media query handles it automatically.
+  if (t === 'light') document.body.classList.add('light');
+  else document.body.classList.add('dark');
 })();
 function _isDark() {
-  if (document.body.classList.contains('dark')) return true;
-  if (document.body.classList.contains('light')) return false;
-  return window.matchMedia('(prefers-color-scheme:dark)').matches;
+  return !document.body.classList.contains('light');
 }
 function updateThemeBtn() {
   const btn = $('theme-btn');
@@ -1235,8 +1320,6 @@ $('theme-btn').addEventListener('click', () => {
   localStorage.setItem('blink_theme', wasDark ? 'light' : 'dark');
   updateThemeBtn();
 });
-// Sync button icon when OS preference changes (e.g. system-wide dark mode toggle).
-window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', updateThemeBtn);
 updateThemeBtn();
 
 // ── Clip card ──────────────────────────────────────────────────────────────
@@ -1485,6 +1568,7 @@ document.addEventListener('keydown', e => {
   if (e.key === '?') { $('help-overlay').classList.toggle('open'); return; }
   if (e.key === 'Escape') {
     if ($('help-overlay').classList.contains('open')) { $('help-overlay').classList.remove('open'); return; }
+    if ($('prompt-overlay').classList.contains('open')) { $('prompt-overlay').classList.remove('open'); return; }
     if ($('confirm-overlay').classList.contains('open')) { _closeConfirmModal(false); return; }
     if ($('modal-bg').classList.contains('open')) { closeModal(); }
     return;
@@ -1523,6 +1607,14 @@ $('load-more').addEventListener('click', () => loadClips(currentPage + 1));
 $('help-btn').addEventListener('click', () => $('help-overlay').classList.toggle('open'));
 $('help-close').addEventListener('click', () => $('help-overlay').classList.remove('open'));
 $('help-overlay').addEventListener('click', e => { if (e.target === $('help-overlay')) $('help-overlay').classList.remove('open'); });
+
+// AI prompt-debug overlay wiring
+function showPromptModal(promptText) {
+  $('prompt-overlay-content').textContent = promptText || 'No prompt was captured for this clip.';
+  $('prompt-overlay').classList.add('open');
+}
+$('prompt-close').addEventListener('click', () => $('prompt-overlay').classList.remove('open'));
+$('prompt-overlay').addEventListener('click', e => { if (e.target === $('prompt-overlay')) $('prompt-overlay').classList.remove('open'); });
 
 // Debounced filter listeners
 let _dbt;
@@ -1850,6 +1942,7 @@ async function loadClipAIResult(clipId) {
     }
     const conf = Math.round((r.confidence || 0) * 100);
     const isSusp = r.is_suspicious;
+    _currentPromptText = r.prompt_text || '';
     const badge = $('ai-panel-badge');
     if (badge) {
       badge.textContent = isSusp ? ' ⚠' : ' ✓';
@@ -1859,6 +1952,8 @@ async function loadClipAIResult(clipId) {
       ? '<span class="ai-badge-suspicious">⚠ Suspicious</span>'
       : '<span class="ai-badge-clean">✓ Clear</span>';
     const confColor = isSusp ? 'var(--danger)' : 'var(--success)';
+    let feedback = null;
+    try { feedback = await api('/api/ai/feedback/' + clipId); } catch(e) { /* non-fatal */ }
     content.innerHTML =
       '<div class="ai-result-box">' +
         '<div style="display:flex;align-items:center;gap:.55rem;margin-bottom:.4rem">' +
@@ -1874,17 +1969,94 @@ async function loadClipAIResult(clipId) {
         '<div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">' +
           '<button class="btn sm ghost" onclick="analyzeClipNow(\'' + _escJs(clipId) + '\')">↺ Re-analyze</button>' +
           '<button class="btn sm ghost" id="ai-raw-toggle-btn" onclick="toggleRawResponse()">📄 Full response</button>' +
+          (_promptDebugEnabled ? '<button class="btn sm ghost" onclick="showPromptModal(_currentPromptText)">📝 Prompt</button>' : '') +
         '</div>' +
         '<div id="ai-raw-response" style="display:none;margin-top:.4rem;font-size:.73rem;font-family:monospace;' +
              'background:var(--card2);border-radius:4px;padding:.4rem .5rem;white-space:pre-wrap;' +
              'color:var(--muted);max-height:120px;overflow-y:auto">' +
           _esc(r.response_text || '') +
         '</div>' +
+        '<div id="ai-feedback-block" style="margin-top:.55rem;padding-top:.5rem;border-top:1px solid var(--border)">' +
+          _feedbackButtonsHtml(clipId, feedback) +
+        '</div>' +
       '</div>';
   } catch(e) {
     const content2 = $('ai-panel-content');
     if (content2) content2.innerHTML = '<span style="color:var(--danger);font-size:.8rem">Failed to load analysis</span>';
   }
+}
+
+// ── Adaptive learning: feedback on stored AI verdicts ──────────────────────
+async function submitFeedback(clipId, correct, note, correctedSuspicious) {
+  try {
+    await api('/api/ai/feedback/' + clipId, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        correct: correct,
+        correction_note: note || '',
+        corrected_suspicious: correctedSuspicious === undefined ? null : correctedSuspicious,
+      }),
+    });
+    toast('Feedback recorded — thanks!');
+    return true;
+  } catch(e) {
+    toast('Failed to save feedback', true);
+    return false;
+  }
+}
+
+function _feedbackButtonsHtml(clipId, fb) {
+  if (fb) {
+    const verdict = fb.correct
+      ? '<span style="color:var(--success)">👍 Marked correct</span>'
+      : '<span style="color:var(--warn)">👎 Marked incorrect' +
+        (fb.correction_note ? ' — "' + _esc(fb.correction_note) + '"' : '') + '</span>';
+    return '<div style="font-size:.78rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">' +
+        verdict +
+        '<button class="btn sm ghost" onclick="_resetFeedbackForm(\'' + _escJs(clipId) + '\')">Change</button>' +
+      '</div><div id="ai-feedback-form"></div>';
+  }
+  return '<div style="font-size:.78rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">' +
+      '<span style="color:var(--muted)">Was this verdict correct?</span>' +
+      '<button class="btn sm ghost" onclick="_quickFeedback(\'' + _escJs(clipId) + '\', true)">👍 Correct</button>' +
+      '<button class="btn sm ghost" onclick="_showFeedbackNoteForm(\'' + _escJs(clipId) + '\')">👎 Incorrect</button>' +
+    '</div><div id="ai-feedback-form"></div>';
+}
+
+function _resetFeedbackForm(clipId) {
+  const block = $('ai-feedback-block');
+  if (block) block.innerHTML = _feedbackButtonsHtml(clipId, null);
+}
+
+async function _quickFeedback(clipId, correct) {
+  const ok = await submitFeedback(clipId, correct);
+  if (ok) await loadClipAIResult(clipId);
+}
+
+function _showFeedbackNoteForm(clipId) {
+  const form = $('ai-feedback-form');
+  if (!form) return;
+  form.innerHTML =
+    '<div style="margin-top:.4rem;display:flex;flex-direction:column;gap:.35rem">' +
+      '<input class="tag-input" style="width:100%" id="feedback-note-input" placeholder="What actually happened? (optional)">' +
+      '<label style="font-size:.75rem;color:var(--muted);display:flex;align-items:center;gap:.3rem">' +
+        '<input type="checkbox" id="feedback-corrected-suspicious"> Should have been flagged suspicious instead' +
+      '</label>' +
+      '<div style="display:flex;gap:.4rem">' +
+        '<button class="btn sm" onclick="_submitFeedbackForm(\'' + _escJs(clipId) + '\')">Submit</button>' +
+        '<button class="btn sm ghost" onclick="$(\'ai-feedback-form\').innerHTML=\'\'">Cancel</button>' +
+      '</div>' +
+    '</div>';
+}
+
+async function _submitFeedbackForm(clipId) {
+  const noteInput = $('feedback-note-input');
+  const note = noteInput ? noteInput.value : '';
+  const correctedCheckbox = $('feedback-corrected-suspicious');
+  const correctedSuspicious = correctedCheckbox && correctedCheckbox.checked ? true : undefined;
+  const ok = await submitFeedback(clipId, false, note, correctedSuspicious);
+  if (ok) await loadClipAIResult(clipId);
 }
 
 function toggleRawResponse() {
@@ -1982,6 +2154,8 @@ async function runTestEmail() {
 
 // ── AI Analysis Tab ──────────────────────────────────────
 let _aiEnabled = false;
+let _promptDebugEnabled = false;
+let _currentPromptText = '';
 let _carProtectionActive = null;
 function _updateCarProtectionWarning() {
   const el = $('ai-car-protection-warning');
@@ -1993,6 +2167,7 @@ async function loadAIStatus() {
   try {
     const d = await api('/api/ai/status');
     _aiEnabled = d.enabled;
+    _promptDebugEnabled = !!d.prompt_debug_enabled;
     _carProtectionActive = 'car_protection_active' in d ? d.car_protection_active : null;
     _updateCarProtectionWarning();
     $('ai-smtp-configured').style.display = d.smtp_configured ? 'block' : 'none';
@@ -2029,6 +2204,27 @@ async function loadAIStatus() {
       _moondreamArchSupported = d.moondream_arch_supported !== false;
       _updateMoondreamInstallUI(d.moondream_installed);
     }
+    const escInfo = $('ai-escalation-info');
+    if (escInfo) {
+      if (d.escalation_provider) {
+        escInfo.style.display = 'block';
+        const escLabel = (providerLabels[d.escalation_provider] || d.escalation_provider) + ' — ' + (d.escalation_model || '—');
+        $('ai-escalation-label').textContent = escLabel;
+        const escStatus = $('ai-escalation-status');
+        if (escStatus) {
+          escStatus.textContent = d.escalation_online ? ' 🟢 online' : ' 🔴 unreachable — falling back to tier 1';
+          escStatus.style.color = d.escalation_online ? 'var(--success)' : 'var(--danger)';
+        }
+      } else {
+        escInfo.style.display = 'none';
+      }
+    }
+    const finetuneCard = $('ai-finetune-card');
+    if (finetuneCard) {
+      finetuneCard.style.display = provider === 'moondream_cloud' ? 'block' : 'none';
+      if (provider === 'moondream_cloud') loadFinetunePanel();
+    }
+    loadAdaptiveLearning();
     if (d.queue) {
       $('ai-q-pending').textContent = d.queue.pending || 0;
       $('ai-q-processing').textContent = d.queue.processing || 0;
@@ -2074,9 +2270,139 @@ async function loadSuspiciousFeed() {
           '<div style="font-size:1.1rem;font-weight:700;color:'+confColor+'">'+conf+'%</div>'+
           '<div style="font-size:.65rem;color:var(--muted)">confidence</div>'+
         '</div>'+
+        '<div style="display:flex;gap:.25rem" onclick="event.stopPropagation()">'+
+          '<button class="btn sm ghost" title="Correct" onclick="_feedQuickFeedback(\''+_escJs(r.clip_id)+'\', true, this)">👍</button>'+
+          '<button class="btn sm ghost" title="Incorrect" onclick="_feedQuickFeedback(\''+_escJs(r.clip_id)+'\', false, this)">👎</button>'+
+        '</div>'+
       '</div>';
     }).join('');
   } catch(e) { console.error('Suspicious feed error', e); }
+}
+
+async function _feedQuickFeedback(clipId, correct, btnEl) {
+  const ok = await submitFeedback(clipId, correct);
+  if (ok && btnEl && btnEl.parentElement) {
+    btnEl.parentElement.innerHTML = '<span style="font-size:.72rem;color:var(--muted)">Thanks!</span>';
+  }
+}
+
+// ── Adaptive Learning card ──────────────────────────────────────────────
+async function loadAdaptiveLearning() {
+  try {
+    const stats = await api('/api/ai/feedback/stats');
+    const totalEl = $('ai-fb-total');
+    const accuracyEl = $('ai-fb-accuracy');
+    const breakdownEl = $('ai-fb-breakdown');
+    if (!totalEl || !accuracyEl || !breakdownEl) return;
+    totalEl.textContent = stats.total || 0;
+    if (stats.total > 0) {
+      const pct = Math.round((stats.correct / stats.total) * 100);
+      accuracyEl.textContent = pct + '%';
+      accuracyEl.style.color = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warn)' : 'var(--danger)';
+      breakdownEl.textContent = (stats.false_positive || 0) + ' false positive(s), ' +
+        (stats.false_negative || 0) + ' false negative(s) reported';
+    } else {
+      accuracyEl.textContent = '—';
+      accuracyEl.style.color = 'var(--muted)';
+      breakdownEl.textContent = 'No feedback recorded yet.';
+    }
+  } catch(e) { console.error('Adaptive learning stats error', e); }
+}
+
+// ── Moondream Fine-Tuning card ──────────────────────────────────────────
+async function loadFinetunePanel() {
+  const listEl = $('ai-finetune-list');
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:var(--muted);font-size:.8rem">Loading…</div>';
+  try {
+    const d = await api('/api/ai/finetune');
+    if (!d.enabled || !d.finetunes || d.finetunes.length === 0) {
+      listEl.innerHTML = '<div style="color:var(--muted);font-size:.8rem">No fine-tunes yet — create one below.</div>';
+      return;
+    }
+    listEl.innerHTML = d.finetunes.map(ft => {
+      const id = _escJs(ft.finetune_id || ft.id || '');
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.4rem .55rem;background:var(--card2);border-radius:var(--radius)">' +
+        '<span style="font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + _esc(ft.name || ft.finetune_id || '—') + '</span>' +
+        '<div style="display:flex;gap:.3rem;flex-shrink:0">' +
+          '<button class="btn sm ghost" onclick="_viewFinetuneCheckpoints(\'' + id + '\')">Checkpoints</button>' +
+          '<button class="btn sm danger" onclick="_deleteFinetune(\'' + id + '\')">🗑</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    listEl.innerHTML = '<div style="color:var(--danger);font-size:.8rem">Failed to load fine-tunes</div>';
+  }
+}
+
+async function _createFinetune() {
+  const nameInput = $('ai-finetune-name');
+  const rankSelect = $('ai-finetune-rank');
+  const name = nameInput ? nameInput.value.trim() : '';
+  if (!name) { toast('Enter a name for the fine-tune', true); return; }
+  const rank = rankSelect ? parseInt(rankSelect.value, 10) : 16;
+  try {
+    await api('/api/ai/finetune', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, rank: rank }),
+    });
+    toast('Fine-tune created');
+    if (nameInput) nameInput.value = '';
+    await loadFinetunePanel();
+  } catch(e) {
+    toast('Failed to create fine-tune', true);
+  }
+}
+
+async function _deleteFinetune(finetuneId) {
+  const ok = await showConfirmModal(
+    'Delete this fine-tune and all its checkpoints? This cannot be undone.',
+    'Delete fine-tune?'
+  );
+  if (!ok) return;
+  try {
+    await api('/api/ai/finetune/' + finetuneId, { method: 'DELETE' });
+    toast('Fine-tune deleted');
+    await loadFinetunePanel();
+  } catch(e) {
+    toast('Failed to delete fine-tune', true);
+  }
+}
+
+async function _viewFinetuneCheckpoints(finetuneId) {
+  const listEl = $('ai-finetune-list');
+  if (!listEl) return;
+  try {
+    const d = await api('/api/ai/finetune/' + finetuneId + '/checkpoints');
+    const checkpoints = d.checkpoints || [];
+    if (checkpoints.length === 0) {
+      toast('No checkpoints saved yet for this fine-tune');
+      return;
+    }
+    listEl.innerHTML = checkpoints.map(cp => {
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.4rem .55rem;background:var(--card2);border-radius:var(--radius)">' +
+        '<span style="font-size:.82rem">Step ' + _esc(String(cp.step)) + '</span>' +
+        '<button class="btn sm" onclick="_activateFinetune(\'' + _escJs(finetuneId) + '\', ' + JSON.stringify(cp.step) + ')">Activate</button>' +
+      '</div>';
+    }).join('') + '<button class="btn sm ghost" style="margin-top:.4rem" onclick="loadFinetunePanel()">← Back to fine-tunes</button>';
+  } catch(e) {
+    toast('Failed to load checkpoints', true);
+  }
+}
+
+async function _activateFinetune(finetuneId, step) {
+  try {
+    const r = await api('/api/ai/finetune/' + finetuneId + '/activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ step: step }),
+    });
+    toast('Activated: ' + r.model);
+    await loadAIStatus();
+  } catch(e) {
+    toast('Failed to activate checkpoint', true);
+  }
 }
 
 // Safe for both HTML text content AND quoted attribute values: the
@@ -2136,10 +2462,30 @@ async function loadCameraConfigs() {
         </div>
         <div style="display:flex;align-items:center;gap:.5rem;padding:.4rem .55rem;background:var(--bg2,rgba(255,255,255,.04));border-radius:.4rem;border:1px solid var(--border,rgba(255,255,255,.1))">
           <input type="checkbox" id="cam-car-chk-${i}" data-cam="${_esc(c.camera)}" data-field="is_car_camera"
-            ${c.is_car_camera ? 'checked' : ''} style="cursor:pointer;width:1rem;height:1rem;accent-color:var(--accent,#5b9cf6)">
+            ${c.is_car_camera ? 'checked' : ''} style="cursor:pointer;width:1rem;height:1rem;accent-color:var(--accent,#5b9cf6)"
+            onchange="document.getElementById('cam-zone-${i}').style.display = this.checked ? 'block' : 'none'">
           <label for="cam-car-chk-${i}" style="font-size:.76rem;color:var(--fg,#e2e8f0);cursor:pointer;line-height:1.3">
             <strong>Protected vehicle visible from this camera</strong> — enables car-proximity alert rules
           </label>
+        </div>
+        <div id="cam-zone-${i}" style="display:${c.is_car_camera ? 'block' : 'none'};margin-top:.45rem;padding:.5rem .55rem;background:var(--bg2,rgba(255,255,255,.04));border-radius:.4rem;border:1px solid var(--border,rgba(255,255,255,.1))">
+          <label style="font-size:.76rem;color:var(--muted);display:block;margin-bottom:.35rem">
+            Car zone (optional) — roughly where the vehicle normally sits, as % of the frame (0 = left/top edge, 100 = right/bottom edge). Sharpens accuracy when detection is ambiguous. Leave blank to skip.
+          </label>
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(min(70px,100%),1fr));gap:.4rem">
+            <input type="number" class="tag-input" placeholder="Left %" min="0" max="100" step="1"
+              data-cam="${_esc(c.camera)}" data-zone-field="x_min"
+              value="${c.car_zone ? Math.round(c.car_zone.x_min * 100) : ''}">
+            <input type="number" class="tag-input" placeholder="Top %" min="0" max="100" step="1"
+              data-cam="${_esc(c.camera)}" data-zone-field="y_min"
+              value="${c.car_zone ? Math.round(c.car_zone.y_min * 100) : ''}">
+            <input type="number" class="tag-input" placeholder="Right %" min="0" max="100" step="1"
+              data-cam="${_esc(c.camera)}" data-zone-field="x_max"
+              value="${c.car_zone ? Math.round(c.car_zone.x_max * 100) : ''}">
+            <input type="number" class="tag-input" placeholder="Bottom %" min="0" max="100" step="1"
+              data-cam="${_esc(c.camera)}" data-zone-field="y_max"
+              value="${c.car_zone ? Math.round(c.car_zone.y_max * 100) : ''}">
+          </div>
         </div>
       </div>`
     ).join('');
@@ -2166,6 +2512,21 @@ async function saveCameraConfigs() {
       const cam = chk.dataset.cam;
       if (!byCamera[cam]) byCamera[cam] = { camera: cam, description: '', custom_prompt: '', is_car_camera: false };
       byCamera[cam][chk.dataset.field] = chk.checked;
+    });
+    // Car zone (4 % inputs -> normalised 0-1 rectangle, or null if incomplete)
+    const zoneRaw = {};
+    document.querySelectorAll('#ai-cam-configs-list input[type=number][data-zone-field]').forEach(inp => {
+      const cam = inp.dataset.cam;
+      if (!zoneRaw[cam]) zoneRaw[cam] = {};
+      const v = inp.value.trim();
+      if (v !== '') zoneRaw[cam][inp.dataset.zoneField] = parseFloat(v) / 100;
+    });
+    Object.keys(byCamera).forEach(cam => {
+      const z = zoneRaw[cam];
+      const complete = z && ['x_min', 'y_min', 'x_max', 'y_max'].every(
+        k => typeof z[k] === 'number' && !isNaN(z[k])
+      );
+      byCamera[cam].car_zone = complete ? z : null;
     });
     const payload = Object.values(byCamera);
     await api('/api/ai/camera-configs', {
@@ -2280,6 +2641,7 @@ $('ai-retry-moondream-btn').addEventListener('click', _startMoondreamInstall);
 $('ai-panel-hdr').addEventListener('click', () => toggleAIPanel());
 $('ai-test-btn').addEventListener('click', () => runAITest());
 $('ai-test-email-btn').addEventListener('click', () => runTestEmail());
+$('ai-finetune-create-btn').addEventListener('click', () => _createFinetune());
 
 // Load AI tab when selected
 document.querySelectorAll('.nav-tab').forEach(t => {
@@ -2312,11 +2674,12 @@ function _fmtNum(n) {
 const _PROVIDER_NOTES = {
   ollama: 'Ollama (Local/LAN) runs on your own hardware or another device on your network — no cloud costs. Token counts are extracted from the Ollama API response (<code>prompt_eval_count</code> / <code>eval_count</code>). Some cached responses may show 0 prompt tokens.',
   ollama_cloud: 'Ollama Cloud (api.ollama.com) is a hosted Ollama service. Token counts are extracted from the API response. API usage may incur costs — check your Ollama Cloud account dashboard.',
-  moondream_cloud: 'Moondream Cloud bills per API request. Each frame is analysed individually with reasoning mode enabled for better spatial accuracy. Token counts shown are <em>estimates</em> (256 image tokens + text tokens per frame) — the Moondream API does not return usage stats. Only one model is selectable for this provider, so two-tier escalation (OpenAI-only, see below) is not available here. Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for authoritative billing.',
+  moondream_cloud: 'Moondream Cloud bills per API request. Each frame is analysed individually with reasoning mode enabled for better spatial accuracy. Token counts shown are <em>estimates</em> (256 image tokens + text tokens per frame) — the Moondream API does not return usage stats. Also supports fine-tuning — see the Fine-Tuning card above. Check <a href="https://moondream.ai" target="_blank" rel="noopener">moondream.ai</a> for authoritative billing.',
   moondream_local: 'Moondream Local runs entirely on-device — no cloud costs and no token tracking. The analysis count shows how many clips have been processed.',
   anthropic: 'Anthropic (Claude) charges per token. Input and output tokens are tracked for every analysis. Use <strong>Claude Haiku 4.5</strong> for best cost efficiency ($1/$5 per 1M tokens). Estimated cost is calculated from your token usage and the model\'s current pricing.',
-  openai: 'OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis. OpenAI is the only provider that supports two-tier escalation (<code>openai_escalation_model</code>): if configured, tier-1 and escalation tokens are tracked and priced separately (see the escalation row in the table below), so the estimated cost reflects both calls.',
+  openai: 'OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis.',
 };
+const _ESCALATION_NOTE = 'Two-tier escalation (<code>ai_escalation_provider</code> / <code>ai_escalation_model</code>) works with any provider as tier 2, including a different one than tier 1 — e.g. a fast OpenAI model escalating to Moondream Cloud or Claude for a closer second look. When configured, tier-1 and escalation tokens/cost are tracked and priced separately (see the escalation row in the table below).';
 
 function _fmtCost(cost) {
   if (cost == null) return 'N/A';
@@ -2345,8 +2708,10 @@ async function loadAIUsage() {
     $('usage-model-name').textContent = d.model || '—';
 
     const noteEl = $('usage-provider-note');
-    if (_PROVIDER_NOTES[provider]) {
-      noteEl.innerHTML = _PROVIDER_NOTES[provider];
+    let providerNote = _PROVIDER_NOTES[provider] || '';
+    if (totalEscalations > 0) providerNote += (providerNote ? ' ' : '') + _ESCALATION_NOTE;
+    if (providerNote) {
+      noteEl.innerHTML = providerNote;
       noteEl.style.display = 'block';
     } else {
       noteEl.style.display = 'none';
@@ -2356,7 +2721,8 @@ async function loadAIUsage() {
     const showTokens = provider === 'ollama' || provider === 'ollama_cloud'
       || provider === 'anthropic' || provider === 'openai' || provider === 'moondream_cloud';
 
-    // Escalations only apply to OpenAI's two-tier feature
+    // Escalation may be to any provider as tier 2 (see ai_escalation_provider) —
+    // these stats reflect whatever the by_model breakdown tagged "escalated".
     const escStatEl = $('usage-escalations-stat');
     const escTokensStatEl = $('usage-escalation-tokens-stat');
     if (totalEscalations > 0) {
@@ -2449,6 +2815,8 @@ class MediaServer:
         analyzer: BaseAnalyzer | None = None,
         analysis_queue: AnalysisQueue | None = None,
         notification_dispatcher: NotificationDispatcher | None = None,
+        moondream_api_key: str = "",
+        prompt_debug_enabled: bool = False,
     ) -> None:
         self._db = db
         self._download_path = download_path
@@ -2459,6 +2827,15 @@ class MediaServer:
         self._analyzer = analyzer
         self._analysis_queue = analysis_queue
         self._notification_dispatcher = notification_dispatcher
+        # Used only to stand up a MoondreamFineTuneManager for the Fine-Tuning
+        # API/panel when provider == "moondream_cloud" — see _handle_finetune_*.
+        self._moondream_api_key = moondream_api_key
+        # Gates whether /api/ai/status advertises the feature and whether
+        # /api/ai/results/{clip_id} ever includes prompt_text — see
+        # ai_prompt_debug_enabled. Off means fully hidden, not just
+        # unpopulated, even if a prompt happens to be stored from when the
+        # feature was previously on.
+        self._prompt_debug_enabled = prompt_debug_enabled
         self._runner: web.AppRunner | None = None
         self.extra_status: dict = {}
         # Holds a strong reference to the background moondream-install task —
@@ -2522,6 +2899,26 @@ class MediaServer:
         app.router.add_post("/api/ai/moondream/install", self._handle_moondream_install)
         app.router.add_get("/api/ai/camera-configs", self._handle_ai_camera_configs_get)
         app.router.add_put("/api/ai/camera-configs", self._handle_ai_camera_configs_put)
+        # Adaptive learning (feedback) endpoints
+        app.router.add_get("/api/ai/feedback/stats", self._handle_ai_feedback_stats)
+        app.router.add_get("/api/ai/feedback/{clip_id}", self._handle_ai_feedback_get)
+        app.router.add_post(
+            "/api/ai/feedback/{clip_id}", self._handle_ai_feedback_submit
+        )
+        # Moondream Cloud fine-tuning endpoints
+        app.router.add_get("/api/ai/finetune", self._handle_finetune_list)
+        app.router.add_post("/api/ai/finetune", self._handle_finetune_create)
+        app.router.add_get("/api/ai/finetune/{finetune_id}", self._handle_finetune_get)
+        app.router.add_delete(
+            "/api/ai/finetune/{finetune_id}", self._handle_finetune_delete
+        )
+        app.router.add_get(
+            "/api/ai/finetune/{finetune_id}/checkpoints",
+            self._handle_finetune_checkpoints,
+        )
+        app.router.add_post(
+            "/api/ai/finetune/{finetune_id}/activate", self._handle_finetune_activate
+        )
         app.router.add_post("/api/notifications/test-email", self._handle_test_email)
         return app
 
@@ -2771,7 +3168,10 @@ class MediaServer:
 
     async def _handle_ai_status(self, _request: web.Request) -> web.Response:
         enabled = self._analyzer is not None
-        data: dict = {"enabled": enabled}
+        data: dict = {
+            "enabled": enabled,
+            "prompt_debug_enabled": self._prompt_debug_enabled,
+        }
         if enabled:
             assert self._analyzer is not None
             data["ai_online"] = await self._analyzer.health_check()
@@ -2781,6 +3181,14 @@ class MediaServer:
             if self._analyzer.provider_name == "moondream_local":
                 data["moondream_installed"] = _is_moondream_installed()
                 data["moondream_arch_supported"] = _moondream_arch_supported()
+            escalation = self._analyzer.escalation_analyzer
+            if escalation is not None:
+                data["escalation_provider"] = escalation.provider_name
+                data["escalation_model"] = escalation.model_name()
+                # A misconfigured tier 2 (e.g. wrong API key) should be
+                # visible here before it silently falls back on every
+                # suspicious clip — see BaseAnalyzer._maybe_escalate.
+                data["escalation_online"] = await escalation.health_check()
         data["smtp_configured"] = bool(
             self._notification_dispatcher
             and self._notification_dispatcher.smtp_configured
@@ -2799,9 +3207,7 @@ class MediaServer:
             assert self._analyzer is not None
             data["provider"] = self._analyzer.provider_name
             data["model"] = self._analyzer.model_name()
-            if self._analyzer.provider_name in ("anthropic", "openai") and hasattr(
-                self._analyzer, "model_pricing"
-            ):
+            if hasattr(self._analyzer, "model_pricing"):
                 inp, out = self._analyzer.model_pricing()  # type: ignore[union-attr]
                 data["cost_per_1m_input"] = inp
                 data["cost_per_1m_output"] = out
@@ -2853,6 +3259,11 @@ class MediaServer:
         result = await self._db.get_analysis_for_clip(clip_id)
         if not result:
             return web.json_response(None)
+        if not self._prompt_debug_enabled:
+            # Off means fully hidden — even a clip analyzed while the
+            # feature was previously on must not leak its stored prompt_text
+            # once the admin has turned this back off.
+            result.pop("prompt_text", None)
         return web.json_response(result)
 
     async def _handle_ai_suspicious(self, request: web.Request) -> web.Response:
@@ -3044,6 +3455,7 @@ class MediaServer:
                     "description": "",
                     "custom_prompt": "",
                     "is_car_camera": False,
+                    "car_zone": None,
                 },
             )
             result.append(
@@ -3052,6 +3464,7 @@ class MediaServer:
                     "description": str(entry.get("description", "")),
                     "custom_prompt": str(entry.get("custom_prompt", "")),
                     "is_car_camera": bool(entry.get("is_car_camera", False)),
+                    "car_zone": self._normalize_car_zone(entry.get("car_zone")),
                 }
             )
         # Also include configured cameras not in the current clip list
@@ -3063,9 +3476,27 @@ class MediaServer:
                         "description": str(entry.get("description", "")),
                         "custom_prompt": str(entry.get("custom_prompt", "")),
                         "is_car_camera": bool(entry.get("is_car_camera", False)),
+                        "car_zone": self._normalize_car_zone(entry.get("car_zone")),
                     }
                 )
         return web.json_response(result)
+
+    @staticmethod
+    def _normalize_car_zone(zone: Any) -> dict[str, float] | None:
+        """Validate and coerce a raw ``car_zone`` value from stored/incoming
+        JSON into a clean ``{x_min, y_min, x_max, y_max}`` dict, or ``None``
+        if it's missing, malformed, or not a sane rectangle (min >= max).
+        """
+        if not isinstance(zone, dict):
+            return None
+        try:
+            x_min, y_min = float(zone["x_min"]), float(zone["y_min"])
+            x_max, y_max = float(zone["x_max"]), float(zone["y_max"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not (0.0 <= x_min < x_max <= 1.0 and 0.0 <= y_min < y_max <= 1.0):
+            return None
+        return {"x_min": x_min, "y_min": y_min, "x_max": x_max, "y_max": y_max}
 
     async def _handle_ai_camera_configs_put(self, request: web.Request) -> web.Response:
         """Save per-camera AI configurations and update the live analyzer."""
@@ -3077,6 +3508,7 @@ class MediaServer:
                     "description": str(c.get("description", "")),
                     "custom_prompt": str(c.get("custom_prompt", "")),
                     "is_car_camera": bool(c.get("is_car_camera", False)),
+                    "car_zone": self._normalize_car_zone(c.get("car_zone")),
                 }
                 for c in body
                 if isinstance(c, dict) and c.get("camera")
@@ -3109,5 +3541,198 @@ class MediaServer:
             self._analyzer.update_camera_prompts(prompts)
             car_cameras = {c["camera"] for c in configs if c.get("is_car_camera")}
             self._analyzer.update_car_cameras(car_cameras)
+            car_zones = {
+                c["camera"]: c["car_zone"] for c in configs if c.get("car_zone")
+            }
+            self._analyzer.update_car_zones(car_zones)
 
         return web.json_response({"saved": True, "count": len(configs)})
+
+    # ------------------------------------------------------------------
+    # Adaptive learning (human feedback on AI verdicts)
+    # ------------------------------------------------------------------
+
+    async def _handle_ai_feedback_stats(self, request: web.Request) -> web.Response:
+        camera = request.rel_url.query.get("camera") or None
+        stats = await self._db.get_feedback_stats(camera)
+        return web.json_response(stats)
+
+    async def _handle_ai_feedback_get(self, request: web.Request) -> web.Response:
+        clip_id = request.match_info["clip_id"]
+        feedback = await self._db.get_feedback_for_clip(clip_id)
+        return web.json_response(feedback)
+
+    async def _handle_ai_feedback_submit(self, request: web.Request) -> web.Response:
+        """Record feedback on a clip's stored AI verdict.
+
+        Body: ``{"correct": bool, "correction_note": str,
+        "corrected_suspicious": true|false|null}``. Requires the clip to
+        already have a stored analysis result — feedback is a correction on
+        an existing verdict, not a substitute for one.
+        """
+        clip_id = request.match_info["clip_id"]
+        try:
+            body = await request.json()
+            correct = bool(body.get("correct"))
+            correction_note = str(body.get("correction_note", "") or "")
+            corrected_suspicious = body.get("corrected_suspicious")
+            if corrected_suspicious is not None:
+                corrected_suspicious = bool(corrected_suspicious)
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+
+        result = await self._db.get_analysis_for_clip(clip_id)
+        if not result:
+            return web.json_response(
+                {"error": "Clip has not been analyzed yet"}, status=400
+            )
+
+        try:
+            await self._db.add_feedback(
+                clip_id=clip_id,
+                camera=result["camera"],
+                analysis_result_id=result.get("id"),
+                original_suspicious=bool(result["is_suspicious"]),
+                original_confidence=float(result["confidence"]),
+                correct=correct,
+                correction_note=correction_note,
+                corrected_suspicious=corrected_suspicious,
+            )
+            return web.json_response({"saved": True})
+        except Exception as exc:  # noqa: BLE001
+            # Mirrors _handle_ai_analyze_now's error handling — an unexpected
+            # DB failure here must surface as clean JSON, not aiohttp's
+            # generic HTML 500 page.
+            _LOGGER.warning("Feedback submit failed for clip %s: %s", clip_id, exc)
+            return web.json_response({"error": str(exc)}, status=500)
+
+    # ------------------------------------------------------------------
+    # Moondream Cloud fine-tuning
+    # ------------------------------------------------------------------
+
+    def _get_finetune_manager(self) -> MoondreamFineTuneManager | None:
+        """Return a fine-tune manager, or None if not configured for it.
+
+        Only meaningful when the active provider is moondream_cloud — the
+        only one of the six providers with a fine-tuning API (see the
+        module docstring and CHANGELOG for why OpenAI/Anthropic aren't
+        supported here).
+        """
+        if (
+            self._analyzer is None
+            or self._analyzer.provider_name != "moondream_cloud"
+            or not self._moondream_api_key
+        ):
+            return None
+        from .analyzer import MoondreamFineTuneManager  # noqa: PLC0415
+
+        return MoondreamFineTuneManager(api_key=self._moondream_api_key)
+
+    async def _handle_finetune_list(self, _request: web.Request) -> web.Response:
+        manager = self._get_finetune_manager()
+        if manager is None:
+            return web.json_response({"enabled": False, "finetunes": []})
+        try:
+            finetunes = await manager.list_finetunes()
+            return web.json_response({"enabled": True, "finetunes": finetunes})
+        finally:
+            await manager.close()
+
+    async def _handle_finetune_create(self, request: web.Request) -> web.Response:
+        manager = self._get_finetune_manager()
+        if manager is None:
+            return web.json_response(
+                {"error": "Fine-tuning requires ai_provider=moondream_cloud"},
+                status=400,
+            )
+        try:
+            body = await request.json()
+            name = str(body.get("name", "") or "").strip()
+            rank = int(body.get("rank", 16))
+        except Exception:  # noqa: BLE001
+            await manager.close()
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+
+        if not name:
+            await manager.close()
+            return web.json_response({"error": "name is required"}, status=400)
+
+        try:
+            finetune_id = await manager.create_finetune(name, rank=rank)
+            if finetune_id is None:
+                return web.json_response(
+                    {"error": "Failed to create fine-tune"}, status=500
+                )
+            return web.json_response({"finetune_id": finetune_id})
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Moondream create_finetune failed: %s", exc)
+            return web.json_response({"error": str(exc)}, status=500)
+        finally:
+            await manager.close()
+
+    async def _handle_finetune_get(self, request: web.Request) -> web.Response:
+        manager = self._get_finetune_manager()
+        if manager is None:
+            return web.json_response(
+                {"error": "Fine-tuning not configured"}, status=400
+            )
+        finetune_id = request.match_info["finetune_id"]
+        try:
+            finetune = await manager.get_finetune(finetune_id)
+            if finetune is None:
+                raise web.HTTPNotFound(text="Fine-tune not found")
+            return web.json_response(finetune)
+        finally:
+            await manager.close()
+
+    async def _handle_finetune_delete(self, request: web.Request) -> web.Response:
+        manager = self._get_finetune_manager()
+        if manager is None:
+            return web.json_response(
+                {"error": "Fine-tuning not configured"}, status=400
+            )
+        finetune_id = request.match_info["finetune_id"]
+        try:
+            deleted = await manager.delete_finetune(finetune_id)
+            return web.json_response({"deleted": deleted})
+        finally:
+            await manager.close()
+
+    async def _handle_finetune_checkpoints(self, request: web.Request) -> web.Response:
+        manager = self._get_finetune_manager()
+        if manager is None:
+            return web.json_response({"enabled": False, "checkpoints": []})
+        finetune_id = request.match_info["finetune_id"]
+        try:
+            checkpoints = await manager.list_checkpoints(finetune_id)
+            return web.json_response({"enabled": True, "checkpoints": checkpoints})
+        finally:
+            await manager.close()
+
+    async def _handle_finetune_activate(self, request: web.Request) -> web.Response:
+        """Switch live inference to a fine-tuned checkpoint, no restart.
+
+        Body: ``{"step": int}``. Only valid when the active analyzer is a
+        MoondreamCloudAnalyzer (checked via _get_finetune_manager's
+        provider_name gate, but the hot-swap itself needs the concrete
+        analyzer instance, not just the manager).
+        """
+        from .analyzer import MoondreamCloudAnalyzer, MoondreamFineTuneManager  # noqa: PLC0415
+
+        if self._analyzer is None or not isinstance(
+            self._analyzer, MoondreamCloudAnalyzer
+        ):
+            return web.json_response(
+                {"error": "Fine-tuning requires ai_provider=moondream_cloud"},
+                status=400,
+            )
+        finetune_id = request.match_info["finetune_id"]
+        try:
+            body = await request.json()
+            step = int(body.get("step"))
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+
+        model_id = MoondreamFineTuneManager.get_model_id(finetune_id, step)
+        self._analyzer.set_finetune_model(model_id)
+        return web.json_response({"activated": True, "model": model_id})

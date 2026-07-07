@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blink-downloader"
-version = "3.2.0"
+version = "4.0.0"
 description = "Home Assistant add-on: Blink Clip Downloader"
 authors = [{name = "Brian Baggs", email = "brianbaggs@hotmail.com"}]
 requires-python = ">=3.12"
@@ -17,7 +17,7 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "aiosmtplib>=5.1.2",
     "Pillow>=12.3.0",
-    "anthropic>=0.115.1",
+    "anthropic>=0.116.0",
     "openai>=2.44.0",
 ]
 
@@ -27,6 +27,7 @@ test = [
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "aioresponses>=0.7.9",
+    "PyYAML>=6.0.1",
 ]
 
 [tool.setuptools.packages.find]

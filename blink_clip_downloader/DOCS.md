@@ -320,7 +320,6 @@ supported (GPT-4o, GPT-4.1, GPT-4-Turbo, GPT-5, and variants).
 |--------|---------|-------------|
 | `openai_api_key` | `""` | API key from [platform.openai.com](https://platform.openai.com) |
 | `openai_model` | `"gpt-4o-mini"` | GPT model to use. Use **Fetch Models** in the web UI to browse models with pricing. |
-| `openai_escalation_model` | `""` | Optional second-tier model for two-tier escalation (see below). Leave empty to disable. |
 
 GPT models use `response_format: json_object` to guarantee valid JSON output, and
 `"high"` image detail for better scene analysis. `gpt-4o-mini` is selected by default
@@ -328,20 +327,30 @@ as the most cost-effective option. The o1/o3/o4-mini reasoning models and the en
 GPT-5 family use `max_completion_tokens` instead of the legacy `max_tokens` parameter;
 this is handled automatically based on the model name.
 
-**Two-tier escalation (OpenAI only).** Most motion clips are not suspicious, so paying
-for a strong model on every clip is wasted spend. When `openai_escalation_model` is
-set, every clip is first analyzed with the cheap/fast `openai_model` (tier 1). Only
-clips tier 1 flags as suspicious are re-analyzed with `openai_escalation_model` (tier 2)
-for a closer second opinion, and the tier-2 verdict — not tier 1's — is what gets
-recorded and alerted on. Recommended pairings: `gpt-4o-mini` + `gpt-4o`, or
-`gpt-5.4-nano` + `gpt-5.4`. Tier-1 and tier-2 token usage are tracked separately —
-the AI Usage tab shows the escalation model as its own row (priced at its own rate)
-plus a running count of how many clips were escalated.
+#### Two-tier escalation (any provider)
 
-This option only applies to the `openai` provider — it has no effect for `ollama`,
-`ollama_cloud`, `moondream_cloud`, `moondream_local`, or `anthropic`. Moondream Cloud in
-particular only exposes a single selectable model (plus an optional fine-tune of that
-same model), so there is no second, stronger model to escalate to.
+Most motion clips are not suspicious, so paying for a strong model on every clip is
+wasted spend or wasted time. When `ai_escalation_provider` is set, every clip is first
+analyzed with the normal `ai_provider`/model (tier 1). Only clips tier 1 flags as
+suspicious are re-analyzed by the escalation provider (tier 2) for a closer second
+opinion, and the tier-2 verdict — not tier 1's — is what gets recorded and alerted on.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ai_escalation_provider` | `""` | Tier-2 provider: `""` (disabled), `"ollama"`, `"ollama_cloud"`, `"moondream_cloud"`, `"moondream_local"`, `"anthropic"`, or `"openai"`. May be a **different** provider than `ai_provider` (e.g. tier 1 = `openai`, tier 2 = `moondream_cloud`) — it reuses that provider's own credential fields already configured above, no separate API key needed. |
+| `ai_escalation_model` | `""` | Model ID for the escalation provider (e.g. `"gpt-4o"`, `"claude-opus-4-5"`, or a Moondream fine-tune ID). Leave empty to use that provider's default/base model. Not applicable to `moondream_local`, which has no selectable model. |
+
+Recommended pairings: `gpt-4o-mini` + `gpt-4o`, `gpt-5.4-nano` + `gpt-5.4`, or an
+inexpensive tier 1 escalating to a more capable tier 2 of a *different* provider
+entirely. Tier-1 and tier-2 token usage are tracked separately — the AI Usage tab
+shows the escalation model as its own row (priced at its own rate) plus a running
+count of how many clips were escalated.
+
+> **Deprecated:** `openai_escalation_model` (OpenAI-only, second OpenAI model) is
+> still honored automatically if `ai_escalation_provider` is unset and `ai_provider`
+> is `"openai"`, so existing installs keep working unchanged after upgrading — but
+> new setups should use `ai_escalation_provider`/`ai_escalation_model` above, which
+> work for every provider, not just OpenAI.
 
 ### Analysis Prompt & Behaviour
 
@@ -401,6 +410,17 @@ in the add-on options.
 > just which camera can see it. If a camera is checked but `ai_car_description` is empty,
 > the AI tab shows a warning banner under Camera Configurations until you set one.
 
+Once checked, a **car zone** section appears: four optional percentage fields (left/
+top/right/bottom, 0 = the frame's left/top edge, 100 = right/bottom edge) marking
+roughly where the protected vehicle normally sits. Since a Blink camera doesn't move,
+this is stable ground truth that doesn't depend on any single clip's object detection
+succeeding — it sharpens accuracy in two ways: a code-computed "zone motion" signal
+(what share of the clip's overall motion happened inside the zone vs. elsewhere) is
+added to the AI's evidence, and for Moondream providers it's used as a fallback
+proximity reference when a clip's vehicle detection finds nothing at all. Leave all
+four fields blank to skip — everything else (distance rules, the description-based
+disambiguation) works the same with or without a zone configured.
+
 > **Priority:** `camera_configs.json` (set via the web UI) is the primary source for
 > descriptions, custom prompts, and car-camera flags. `ai_camera_descriptions` and
 > `ai_camera_prompts` in `options.json` serve as fallbacks for cameras not yet
@@ -446,6 +466,43 @@ background normally looks like.
   normal.
 - This activates automatically — no configuration needed — and complements rather
   than replaces the anomaly score above.
+
+### Feedback & Adaptive Learning
+
+Every analysed clip's AI panel (in the clip modal) has **✅ Correct** / **❌ Not
+suspicious** buttons, plus an optional note. This feedback actually changes future
+behaviour, per camera, in two ways:
+
+- **Notification threshold auto-tuning.** Repeated "not suspicious" corrections on
+  false-positive alerts for a camera gradually raise that camera's effective
+  confidence threshold for sending a *notification* — clips are still analysed and
+  the description is still stored either way, only whether it's worth interrupting
+  you is affected. The adjustment decays automatically as old corrections age out of
+  the trailing window, so it never needs a manual reset.
+- **Prompt guidance.** Corrections with a note are folded into that camera's prompt
+  as bounded few-shot context ("a past clip on this camera was marked suspicious, but
+  a human reviewer said this was WRONG: ..."), so the same mistake — in either
+  direction, missed or over-flagged — is less likely to repeat.
+
+This is why accurate feedback matters: it's the mechanism for teaching the AI your
+specific cameras, routine, and protected assets over time, not just a rating left on
+a shelf.
+
+### Prompt Debugging
+
+`ai_prompt_debug_enabled` (off by default) stores each clip's exact prompt text
+(not the image frames) alongside its analysis, viewable via a **📝 Prompt** button in
+the clip's AI panel. Useful when tuning per-camera prompts/descriptions and wanting
+to see exactly what the model was asked, including the automatically injected
+proximity/zone/anomaly hints described above.
+
+### Moondream Fine-Tuning
+
+For `moondream_cloud`, the AI tab's **Fine-Tuning** panel manages Moondream's cloud
+fine-tuning API directly from the web UI: create a fine-tune from your own labeled
+examples, list checkpoints, and **Activate** one to use for live inference instead of
+the base model — this sets `moondream_finetune_model` live without a restart (save it
+in `config.yaml` too if you want it to persist across restarts).
 
 ---
 

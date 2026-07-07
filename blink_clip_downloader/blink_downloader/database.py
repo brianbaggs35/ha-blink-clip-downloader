@@ -97,6 +97,27 @@ CREATE TABLE IF NOT EXISTS camera_scene_baselines (
     sample_count INTEGER DEFAULT 0,
     updated_at   TEXT
 );
+
+-- Human feedback on stored AI verdicts (adaptive learning — "smart brain").
+-- One row per clip (resubmitting feedback for the same clip replaces it, see
+-- add_feedback()). Powers per-camera notification-threshold auto-tuning
+-- (get_effective_confidence_threshold) and bounded few-shot prompt guidance
+-- (get_prompt_corrections).
+CREATE TABLE IF NOT EXISTS analysis_feedback (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    clip_id              TEXT    NOT NULL,
+    camera               TEXT    NOT NULL,
+    analysis_result_id   INTEGER,
+    original_suspicious  INTEGER NOT NULL,
+    original_confidence  REAL    NOT NULL,
+    correct              INTEGER NOT NULL,
+    correction_note      TEXT    DEFAULT '',
+    corrected_suspicious INTEGER,
+    created_at           TEXT    NOT NULL,
+    FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_camera ON analysis_feedback (camera);
+CREATE INDEX IF NOT EXISTS idx_feedback_clip   ON analysis_feedback (clip_id);
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -115,6 +136,28 @@ _SCENE_REFRESH_STREAK = 5
 # baseline snaps to the new normal quickly instead of waiting 45+ samples
 # for the slow steady-state EMA (alpha floor 0.05) to catch up.
 _SCENE_REFRESH_ALPHA = 0.5
+
+# --- Adaptive learning from feedback (analysis_feedback) ---
+# Trailing window of feedback rows considered per camera by
+# get_effective_confidence_threshold() and get_prompt_corrections().
+_FEEDBACK_WINDOW = 20
+# Minimum feedback rows for a camera before its notification threshold is
+# auto-tuned at all — below this, too little history to trust an adjustment.
+_FEEDBACK_MIN_SAMPLES_FOR_THRESHOLD = 10
+# Every this many false positives in the trailing window nudges the
+# effective threshold up by _FEEDBACK_THRESHOLD_STEP.
+_FEEDBACK_FALSE_POSITIVES_PER_STEP = 3
+_FEEDBACK_THRESHOLD_STEP = 0.05
+# At most this many 0.05 steps apply (i.e. up to +0.15 total) — a burst of
+# false positives shouldn't be able to push the threshold to near-1.0.
+_FEEDBACK_THRESHOLD_MAX_STEPS = 3
+# The auto-tuned threshold is never allowed to drop the admin's own floor by
+# more than this, nor rise above this absolute ceiling.
+_FEEDBACK_THRESHOLD_FLOOR_DELTA = 0.15
+_FEEDBACK_THRESHOLD_CEILING = 0.95
+# Recent corrections folded into the prompt (see get_prompt_corrections) are
+# capped at this many, matching analyzer._build_prompt's own cap.
+_FEEDBACK_PROMPT_CORRECTIONS_LIMIT = 3
 
 
 def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
@@ -192,6 +235,8 @@ class ClipDatabase:
                 "consecutive_deviation_count",
                 "INTEGER DEFAULT 0",
             ),
+            ("analysis_results", "escalation_provider", "TEXT DEFAULT ''"),
+            ("analysis_results", "prompt_text", "TEXT DEFAULT ''"),
         ]
         for table, col, definition in new_columns:
             try:
@@ -576,8 +621,9 @@ class ClipDatabase:
               (clip_id, camera, model, response_text, is_suspicious,
                confidence, summary, frame_count, analysis_duration, analyzed_at,
                tokens_prompt, tokens_completion, anomaly_score,
-               escalation_model, escalation_tokens_prompt, escalation_tokens_completion)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               escalation_model, escalation_tokens_prompt, escalation_tokens_completion,
+               escalation_provider, prompt_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(result.get("clip_id") or ""),
@@ -596,6 +642,8 @@ class ClipDatabase:
                 str(result.get("escalation_model") or ""),
                 int(result.get("escalation_tokens_prompt") or 0),
                 int(result.get("escalation_tokens_completion") or 0),
+                str(result.get("escalation_provider") or ""),
+                str(result.get("prompt_text") or ""),
             ),
         )
         await self._db.commit()
@@ -699,10 +747,11 @@ class ClipDatabase:
     async def get_token_usage_stats(self) -> dict[str, Any]:
         """Return per-model token usage totals for the AI Usage tab.
 
-        Escalation-model usage (see ``analysis_results.escalation_model``) is
-        broken out into its own ``by_model`` entries — tagged
-        ``"escalated": True`` — rather than folded into the tier-1 model's
-        row, so a configured ``openai_escalation_model`` gets its own
+        Escalation-model usage (see ``analysis_results.escalation_model``/
+        ``escalation_provider``) is broken out into its own ``by_model``
+        entries — tagged ``"escalated": True`` — rather than folded into the
+        tier-1 model's row, so a configured ``ai_escalation_provider``/
+        ``ai_escalation_model`` (any provider, not just OpenAI) gets its own
         accurately-priced line instead of silently inflating tier-1's totals.
         """
         empty: dict[str, Any] = {
@@ -746,12 +795,13 @@ class ClipDatabase:
             f"""
             SELECT
                 escalation_model                              AS model,
+                escalation_provider                            AS provider,
                 COUNT(*)                                      AS analyses,
                 COALESCE(SUM(escalation_tokens_prompt), 0)     AS tokens_prompt,
                 COALESCE(SUM(escalation_tokens_completion), 0) AS tokens_completion
             FROM analysis_results
             {escalation_since_clause}
-            GROUP BY escalation_model
+            GROUP BY escalation_model, escalation_provider
             ORDER BY analyses DESC
             """,
             since_params,
@@ -786,6 +836,204 @@ class ClipDatabase:
             "total_escalation_tokens": total_escalation_tokens,
             "by_model": by_model,
         }
+
+    # ------------------------------------------------------------------
+    # Adaptive Learning (human feedback on AI verdicts — "smart brain")
+    # ------------------------------------------------------------------
+
+    async def add_feedback(
+        self,
+        clip_id: str,
+        camera: str,
+        analysis_result_id: int | None,
+        original_suspicious: bool,
+        original_confidence: float,
+        correct: bool,
+        correction_note: str = "",
+        corrected_suspicious: bool | None = None,
+    ) -> None:
+        """Record (or replace) human feedback on a clip's stored AI verdict.
+
+        One feedback row per clip — resubmitting for the same clip (e.g. the
+        user changes their mind) replaces the previous entry rather than
+        accumulating duplicates.
+        """
+        if self._db is None:
+            return
+        await self._db.execute(
+            "DELETE FROM analysis_feedback WHERE clip_id=?", (clip_id,)
+        )
+        await self._db.execute(
+            """
+            INSERT INTO analysis_feedback
+              (clip_id, camera, analysis_result_id, original_suspicious,
+               original_confidence, correct, correction_note,
+               corrected_suspicious, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                clip_id,
+                camera,
+                analysis_result_id,
+                1 if original_suspicious else 0,
+                float(original_confidence),
+                1 if correct else 0,
+                correction_note or "",
+                (
+                    None
+                    if corrected_suspicious is None
+                    else (1 if corrected_suspicious else 0)
+                ),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        await self._db.commit()
+
+    async def get_feedback_for_clip(self, clip_id: str) -> dict[str, Any] | None:
+        if self._db is None:
+            return None
+        async with self._db.execute(
+            "SELECT * FROM analysis_feedback WHERE clip_id=?", (clip_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["original_suspicious"] = bool(d["original_suspicious"])
+        d["correct"] = bool(d["correct"])
+        if d["corrected_suspicious"] is not None:
+            d["corrected_suspicious"] = bool(d["corrected_suspicious"])
+        return d
+
+    async def get_recent_feedback(
+        self, camera: str | None = None, limit: int = _FEEDBACK_WINDOW
+    ) -> list[dict[str, Any]]:
+        """Return the most recent feedback rows, optionally filtered by camera."""
+        if self._db is None:
+            return []
+        if camera:
+            query = (
+                "SELECT * FROM analysis_feedback WHERE camera=? "
+                "ORDER BY created_at DESC LIMIT ?"
+            )
+            params: tuple[Any, ...] = (camera, limit)
+        else:
+            query = "SELECT * FROM analysis_feedback ORDER BY created_at DESC LIMIT ?"
+            params = (limit,)
+        async with self._db.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            d["original_suspicious"] = bool(d["original_suspicious"])
+            d["correct"] = bool(d["correct"])
+            if d["corrected_suspicious"] is not None:
+                d["corrected_suspicious"] = bool(d["corrected_suspicious"])
+            results.append(d)
+        return results
+
+    async def get_feedback_stats(self, camera: str | None = None) -> dict[str, Any]:
+        """Return aggregate feedback accuracy counts, optionally per camera.
+
+        A "false positive" is a clip the AI flagged suspicious that a human
+        marked incorrect; a "false negative" is a clip the AI cleared that a
+        human marked incorrect (i.e. it should have been flagged).
+        """
+        empty = {
+            "total": 0,
+            "correct": 0,
+            "incorrect": 0,
+            "false_positive": 0,
+            "false_negative": 0,
+        }
+        if self._db is None:
+            return empty
+
+        where = "WHERE camera=?" if camera else ""
+        params: tuple[Any, ...] = (camera,) if camera else ()
+        async with self._db.execute(
+            f"""
+            SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN correct=1 THEN 1 ELSE 0 END), 0) AS correct,
+                COALESCE(SUM(CASE WHEN correct=0 THEN 1 ELSE 0 END), 0) AS incorrect,
+                COALESCE(SUM(CASE WHEN correct=0 AND original_suspicious=1
+                                   THEN 1 ELSE 0 END), 0) AS false_positive,
+                COALESCE(SUM(CASE WHEN correct=0 AND original_suspicious=0
+                                   THEN 1 ELSE 0 END), 0) AS false_negative
+            FROM analysis_feedback
+            {where}
+            """,
+            params,
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            return empty
+        return dict(row)
+
+    async def get_effective_confidence_threshold(
+        self, camera: str, base_threshold: float
+    ) -> float:
+        """Return *base_threshold* auto-tuned by recent feedback for *camera*.
+
+        Every :data:`_FEEDBACK_FALSE_POSITIVES_PER_STEP` false positives in
+        the trailing :data:`_FEEDBACK_WINDOW` feedback rows for this camera
+        nudges the threshold up by :data:`_FEEDBACK_THRESHOLD_STEP`, capped at
+        :data:`_FEEDBACK_THRESHOLD_MAX_STEPS` steps. Requires at least
+        :data:`_FEEDBACK_MIN_SAMPLES_FOR_THRESHOLD` feedback rows for this
+        camera before adjusting at all. Recomputed fresh from the trailing
+        window each call, so the adjustment decays automatically as old false
+        positives roll out of the window — no accumulator to reset. Only
+        gates notification-worthiness, never analysis or storage.
+        """
+        recent = await self.get_recent_feedback(camera, limit=_FEEDBACK_WINDOW)
+        if len(recent) < _FEEDBACK_MIN_SAMPLES_FOR_THRESHOLD:
+            return base_threshold
+
+        false_positives = sum(
+            1 for r in recent if not r["correct"] and r["original_suspicious"]
+        )
+        steps = min(
+            _FEEDBACK_THRESHOLD_MAX_STEPS,
+            false_positives // _FEEDBACK_FALSE_POSITIVES_PER_STEP,
+        )
+        adjusted = base_threshold + steps * _FEEDBACK_THRESHOLD_STEP
+        return max(
+            base_threshold - _FEEDBACK_THRESHOLD_FLOOR_DELTA,
+            min(_FEEDBACK_THRESHOLD_CEILING, adjusted),
+        )
+
+    async def get_prompt_corrections(
+        self, camera: str, limit: int = _FEEDBACK_PROMPT_CORRECTIONS_LIMIT
+    ) -> list[dict[str, Any]]:
+        """Return the most recent same-camera corrections with a usable note.
+
+        Only rows with a non-empty ``correction_note`` are eligible — a bare
+        correct/incorrect click with no note carries no reusable textual
+        signal for the prompt (see ``analyzer._build_prompt``'s RECENT HUMAN
+        CORRECTIONS block, which applies its own limit/length bounds too).
+        """
+        if self._db is None:
+            return []
+        async with self._db.execute(
+            """
+            SELECT * FROM analysis_feedback
+            WHERE camera=? AND correct=0 AND correction_note != ''
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (camera, limit),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            d["original_suspicious"] = bool(d["original_suspicious"])
+            d["correct"] = bool(d["correct"])
+            if d["corrected_suspicious"] is not None:
+                d["corrected_suspicious"] = bool(d["corrected_suspicious"])
+            results.append(d)
+        return results
 
     # ------------------------------------------------------------------
     # Behavior Memory (per-camera baseline learning)

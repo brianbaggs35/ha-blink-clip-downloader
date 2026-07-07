@@ -71,6 +71,12 @@ def _make_analyzer(provider: str = "ollama", **overrides) -> MagicMock:
     )
     analyzer.model_pricing.return_value = overrides.get("pricing", (3.0, 15.0))
     analyzer.car_protection_active = overrides.get("car_protection_active", False)
+    # A bare MagicMock auto-vivifies any attribute access (including this
+    # one) as a non-None child mock, which would make _handle_ai_status
+    # think escalation is always configured. Default to None (escalation
+    # disabled) like a real BaseAnalyzer with no tier 2 attached; tests that
+    # want to exercise the escalation-status path pass one explicitly.
+    analyzer.escalation_analyzer = overrides.get("escalation_analyzer", None)
     return analyzer
 
 
@@ -1303,6 +1309,166 @@ async def test_ai_camera_configs_put_saves_is_car_camera(
     assert front["is_car_camera"] is False
 
 
+async def test_ai_camera_configs_get_returns_car_zone_field(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """GET includes a normalised car_zone dict for cameras that have one."""
+    import json
+
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Driveway",
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": True,
+                    "car_zone": {
+                        "x_min": 0.2,
+                        "y_min": 0.3,
+                        "x_max": 0.8,
+                        "y_max": 0.9,
+                    },
+                }
+            ]
+        )
+    )
+
+    with patch(
+        "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+        new=cfg_file,
+    ):
+        resp = await client.get("/api/ai/camera-configs")
+
+    assert resp.status == 200
+    data = await resp.json()
+    driveway = next((c for c in data if c["camera"] == "Driveway"), None)
+    if driveway:
+        assert driveway["car_zone"] == {
+            "x_min": 0.2,
+            "y_min": 0.3,
+            "x_max": 0.8,
+            "y_max": 0.9,
+        }
+
+
+async def test_ai_camera_configs_get_malformed_car_zone_becomes_none(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A malformed stored car_zone (min >= max) must not be echoed back as-is."""
+    import json
+
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Driveway",
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": True,
+                    "car_zone": {
+                        "x_min": 0.8,
+                        "y_min": 0.3,
+                        "x_max": 0.2,
+                        "y_max": 0.9,
+                    },
+                }
+            ]
+        )
+    )
+
+    with patch(
+        "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+        new=cfg_file,
+    ):
+        resp = await client.get("/api/ai/camera-configs")
+
+    data = await resp.json()
+    driveway = next((c for c in data if c["camera"] == "Driveway"), None)
+    if driveway:
+        assert driveway["car_zone"] is None
+
+
+def test_normalize_car_zone_valid() -> None:
+    assert MediaServer._normalize_car_zone(
+        {"x_min": 0.1, "y_min": "0.2", "x_max": 0.9, "y_max": 0.95}
+    ) == {"x_min": 0.1, "y_min": 0.2, "x_max": 0.9, "y_max": 0.95}
+
+
+def test_normalize_car_zone_not_a_dict() -> None:
+    assert MediaServer._normalize_car_zone("not a dict") is None
+    assert MediaServer._normalize_car_zone(None) is None
+
+
+def test_normalize_car_zone_missing_key() -> None:
+    assert MediaServer._normalize_car_zone({"x_min": 0.1, "y_min": 0.2}) is None
+
+
+def test_normalize_car_zone_non_numeric_value() -> None:
+    assert (
+        MediaServer._normalize_car_zone(
+            {"x_min": "abc", "y_min": 0.2, "x_max": 0.9, "y_max": 0.95}
+        )
+        is None
+    )
+
+
+def test_normalize_car_zone_inverted_rectangle() -> None:
+    assert (
+        MediaServer._normalize_car_zone(
+            {"x_min": 0.9, "y_min": 0.2, "x_max": 0.1, "y_max": 0.95}
+        )
+        is None
+    )
+
+
+async def test_ai_camera_configs_put_saves_and_normalizes_car_zone(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """PUT persists a valid car_zone and drops an invalid one to null."""
+    payload = [
+        {
+            "camera": "Driveway",
+            "description": "",
+            "custom_prompt": "",
+            "is_car_camera": True,
+            "car_zone": {"x_min": "0.1", "y_min": 0.2, "x_max": 0.9, "y_max": 0.95},
+        },
+        {
+            "camera": "Front Door",
+            "description": "",
+            "custom_prompt": "",
+            "is_car_camera": False,
+            "car_zone": {"x_min": 0.9, "y_min": 0.2, "x_max": 0.1, "y_max": 0.95},
+        },
+    ]
+    cfg_file = tmp_path / "camera_configs.json"
+
+    with patch(
+        "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+        new=cfg_file,
+    ):
+        resp = await client.put(
+            "/api/ai/camera-configs",
+            data=json.dumps(payload),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert resp.status == 200
+    saved = json.loads(cfg_file.read_text())
+    driveway = next(c for c in saved if c["camera"] == "Driveway")
+    assert driveway["car_zone"] == {
+        "x_min": 0.1,
+        "y_min": 0.2,
+        "x_max": 0.9,
+        "y_max": 0.95,
+    }
+    front = next(c for c in saved if c["camera"] == "Front Door")
+    assert front["car_zone"] is None
+
+
 async def test_ai_camera_configs_put_bad_json(client: TestClient) -> None:
     """PUT with invalid JSON returns 400."""
     resp = await client.put(
@@ -1415,6 +1581,49 @@ async def test_ai_camera_configs_put_updates_live_analyzer(
             {"Driveway": "Watch for cars"}
         )
         analyzer.update_car_cameras.assert_called_once_with({"Driveway"})
+    finally:
+        await tc.close()
+
+
+async def test_ai_camera_configs_put_updates_live_analyzer_car_zones(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """PUT pushes a valid car_zone into the live analyzer, keyed by camera,
+    and omits cameras with no (or an invalid) zone configured."""
+    analyzer = _make_analyzer()
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        cfg_file = tmp_path / "camera_configs.json"
+        payload = [
+            {
+                "camera": "Driveway",
+                "description": "",
+                "custom_prompt": "",
+                "is_car_camera": True,
+                "car_zone": {"x_min": 0.2, "y_min": 0.3, "x_max": 0.8, "y_max": 0.9},
+            },
+            {
+                "camera": "Front Door",
+                "description": "",
+                "custom_prompt": "",
+                "is_car_camera": False,
+            },
+        ]
+        with patch(
+            "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+            new=cfg_file,
+        ):
+            resp = await tc.put(
+                "/api/ai/camera-configs",
+                data=json.dumps(payload),
+                headers={"Content-Type": "application/json"},
+            )
+        assert resp.status == 200
+        analyzer.update_car_zones.assert_called_once_with(
+            {"Driveway": {"x_min": 0.2, "y_min": 0.3, "x_max": 0.8, "y_max": 0.9}}
+        )
     finally:
         await tc.close()
 
@@ -1765,6 +1974,42 @@ async def test_ai_status_enabled_moondream_local(
         await tc.close()
 
 
+async def test_ai_status_includes_escalation_info_when_configured(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """v4.0.0: cross-provider escalation status is surfaced so a
+    misconfigured tier 2 is visible before it silently falls back."""
+    analyzer = _make_analyzer(provider="openai")
+    escalation = _make_analyzer(provider="moondream_cloud", health=True)
+    analyzer.escalation_analyzer = escalation
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/status")
+        data = await resp.json()
+        assert data["escalation_provider"] == "moondream_cloud"
+        assert data["escalation_model"] == "llava:7b"
+        assert data["escalation_online"] is True
+    finally:
+        await tc.close()
+
+
+async def test_ai_status_omits_escalation_info_when_not_configured(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    analyzer = _make_analyzer(provider="openai")
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/status")
+        data = await resp.json()
+        assert "escalation_provider" not in data
+    finally:
+        await tc.close()
+
+
 async def test_ai_status_includes_queue_status(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
@@ -1799,7 +2044,12 @@ async def test_ai_status_includes_frame_analysis_stats(
 
 
 async def test_ai_usage_enabled_non_anthropic(db: ClipDatabase, tmp_path: Path) -> None:
+    """Ollama has no model_pricing() at all (it's free/local) — the cost
+    header must be omitted based on that capability, not a provider-name
+    allowlist (see test_ai_usage_moondream_cloud_gets_cost_fields for the
+    v4.0.0 fix that made this hasattr()-based rather than name-based)."""
     analyzer = _make_analyzer(provider="ollama")
+    del analyzer.model_pricing
     server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
@@ -1894,6 +2144,88 @@ async def test_ai_clip_result_found(client: TestClient, db: ClipDatabase) -> Non
     assert resp.status == 200
     data = await resp.json()
     assert data["clip_id"] == "ar1"
+
+
+async def test_ai_clip_result_omits_prompt_text_when_debug_disabled(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Off means fully hidden, even if a prompt happens to be stored from
+    when ai_prompt_debug_enabled was previously on (v4.0.0)."""
+    await db.add_clip(_make_clip("ar2"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "ar2",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "prompt_text": "the exact prompt",
+        }
+    )
+    resp = await client.get("/api/ai/results/ar2")
+    data = await resp.json()
+    assert "prompt_text" not in data
+
+
+async def test_ai_clip_result_includes_prompt_text_when_debug_enabled(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = MediaServer(
+        db=db, download_path=tmp_path, port=0, prompt_debug_enabled=True
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        await db.add_clip(_make_clip("ar3"))
+        await db.add_analysis_result(
+            {
+                "clip_id": "ar3",
+                "camera": "Front Door",
+                "model": "llava",
+                "response_text": "",
+                "is_suspicious": False,
+                "confidence": 0.1,
+                "summary": "ok",
+                "frame_count": 1,
+                "analysis_duration": 1.0,
+                "analyzed_at": "2024-06-01T09:00:00+00:00",
+                "prompt_text": "the exact prompt",
+            }
+        )
+        resp = await tc.get("/api/ai/results/ar3")
+        data = await resp.json()
+        assert data["prompt_text"] == "the exact prompt"
+    finally:
+        await tc.close()
+
+
+async def test_ai_status_reports_prompt_debug_enabled(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = MediaServer(
+        db=db, download_path=tmp_path, port=0, prompt_debug_enabled=True
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/status")
+        data = await resp.json()
+        assert data["prompt_debug_enabled"] is True
+    finally:
+        await tc.close()
+
+
+async def test_ai_status_prompt_debug_disabled_by_default(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/api/ai/status")
+    data = await resp.json()
+    assert data["prompt_debug_enabled"] is False
 
 
 async def test_ai_suspicious_invalid_limit_falls_back(client: TestClient) -> None:
@@ -2222,3 +2554,470 @@ async def test_moondream_run_install_generic_exception(client: TestClient) -> No
     assert ms._moondream_install_state["status"] == "failed"
     assert "pip3 not found" in ms._moondream_install_state["log"]
     ms._moondream_install_state = {"status": "idle", "log": ""}
+
+
+# ===========================================================================
+# v4.0.0 — Adaptive learning feedback endpoints
+# ===========================================================================
+
+
+async def test_ai_feedback_get_missing(client: TestClient) -> None:
+    resp = await client.get("/api/ai/feedback/ghost")
+    assert resp.status == 200
+    assert await resp.json() is None
+
+
+async def test_ai_feedback_submit_requires_existing_analysis(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    resp = await client.post("/api/ai/feedback/c1", json={"correct": False})
+    assert resp.status == 400
+    data = await resp.json()
+    assert "not been analyzed" in data["error"]
+
+
+async def test_ai_feedback_submit_bad_json(client: TestClient) -> None:
+    resp = await client.post(
+        "/api/ai/feedback/c1", data="not json", headers={"Content-Type": "text/plain"}
+    )
+    assert resp.status == 400
+
+
+async def test_ai_feedback_submit_and_get(client: TestClient, db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.8,
+            "summary": "Person at door",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.post(
+        "/api/ai/feedback/c1",
+        json={
+            "correct": False,
+            "correction_note": "Just the mail carrier.",
+            "corrected_suspicious": False,
+        },
+    )
+    assert resp.status == 200
+    assert (await resp.json())["saved"] is True
+
+    resp = await client.get("/api/ai/feedback/c1")
+    data = await resp.json()
+    assert data["camera"] == "Front Door"
+    assert data["original_suspicious"] is True
+    assert data["correct"] is False
+    assert data["correction_note"] == "Just the mail carrier."
+    assert data["corrected_suspicious"] is False
+
+
+async def test_ai_feedback_stats_empty(client: TestClient) -> None:
+    resp = await client.get("/api/ai/feedback/stats")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["total"] == 0
+
+
+async def test_ai_feedback_stats_filters_by_camera(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_feedback(
+        "c1",
+        "Front Door",
+        None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=True,
+    )
+    resp = await client.get("/api/ai/feedback/stats?camera=Front Door")
+    data = await resp.json()
+    assert data["total"] == 1
+
+    resp2 = await client.get("/api/ai/feedback/stats?camera=Nowhere")
+    data2 = await resp2.json()
+    assert data2["total"] == 0
+
+
+async def test_ai_feedback_submit_db_failure_returns_500(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.8,
+            "summary": "Person at door",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    with patch.object(db, "add_feedback", side_effect=RuntimeError("db locked")):
+        resp = await client.post("/api/ai/feedback/c1", json={"correct": False})
+    assert resp.status == 500
+    data = await resp.json()
+    assert "db locked" in data["error"]
+
+
+# ===========================================================================
+# v4.0.0 — AI Usage cost header available for any priced provider
+# ===========================================================================
+
+
+async def test_ai_usage_moondream_cloud_gets_cost_fields(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Regression test: the cost_per_1m_* header used to be shown only for
+    anthropic/openai even though MoondreamCloudAnalyzer also has
+    model_pricing() — dropping that allowlist lets any priced provider's
+    AI Usage tab show its own cost rate."""
+    analyzer = _make_analyzer(provider="moondream_cloud", pricing=(3.0, 15.0))
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/usage")
+        data = await resp.json()
+        assert data["cost_per_1m_input"] == 3.0
+        assert data["cost_per_1m_output"] == 15.0
+    finally:
+        await tc.close()
+
+
+# ===========================================================================
+# v4.0.0 — Moondream Cloud fine-tuning endpoints
+# ===========================================================================
+
+
+async def test_finetune_list_not_configured(client: TestClient) -> None:
+    resp = await client.get("/api/ai/finetune")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data == {"enabled": False, "finetunes": []}
+
+
+async def test_finetune_list_wrong_provider(db: ClipDatabase, tmp_path: Path) -> None:
+    analyzer = _make_analyzer(provider="openai")
+    server = MediaServer(
+        db=db,
+        download_path=tmp_path,
+        port=0,
+        analyzer=analyzer,
+        moondream_api_key="md-key",
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/finetune")
+        data = await resp.json()
+        assert data["enabled"] is False
+    finally:
+        await tc.close()
+
+
+def _make_finetune_server(db: ClipDatabase, tmp_path: Path, analyzer=None):
+    from blink_downloader.analyzer import MoondreamCloudAnalyzer
+
+    if analyzer is None:
+        analyzer = MoondreamCloudAnalyzer(api_key="md-key", prompt="test")
+    return MediaServer(
+        db=db,
+        download_path=tmp_path,
+        port=0,
+        analyzer=analyzer,
+        moondream_api_key="md-key",
+    )
+
+
+async def test_finetune_list_success(db: ClipDatabase, tmp_path: Path) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.list_finetunes",
+                new=AsyncMock(return_value=[{"finetune_id": "ft1", "name": "test"}]),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.get("/api/ai/finetune")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["enabled"] is True
+        assert data["finetunes"] == [{"finetune_id": "ft1", "name": "test"}]
+    finally:
+        await tc.close()
+
+
+async def test_finetune_create_missing_name(db: ClipDatabase, tmp_path: Path) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+            new=AsyncMock(),
+        ):
+            resp = await tc.post("/api/ai/finetune", json={"name": "", "rank": 16})
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_finetune_create_success(db: ClipDatabase, tmp_path: Path) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.create_finetune",
+                new=AsyncMock(return_value="ft-new"),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.post(
+                "/api/ai/finetune", json={"name": "my-tune", "rank": 16}
+            )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["finetune_id"] == "ft-new"
+    finally:
+        await tc.close()
+
+
+async def test_finetune_create_not_configured(client: TestClient) -> None:
+    resp = await client.post("/api/ai/finetune", json={"name": "x"})
+    assert resp.status == 400
+
+
+async def test_finetune_create_bad_json(db: ClipDatabase, tmp_path: Path) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+            new=AsyncMock(),
+        ):
+            resp = await tc.post(
+                "/api/ai/finetune",
+                data="not json",
+                headers={"Content-Type": "text/plain"},
+            )
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_finetune_create_manager_returns_none(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.create_finetune",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.post("/api/ai/finetune", json={"name": "my-tune"})
+        assert resp.status == 500
+    finally:
+        await tc.close()
+
+
+async def test_finetune_create_raises_returns_500(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.create_finetune",
+                new=AsyncMock(side_effect=RuntimeError("network error")),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.post("/api/ai/finetune", json={"name": "my-tune"})
+        assert resp.status == 500
+        data = await resp.json()
+        assert "network error" in data["error"]
+    finally:
+        await tc.close()
+
+
+async def test_finetune_get_found(db: ClipDatabase, tmp_path: Path) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.get_finetune",
+                new=AsyncMock(return_value={"finetune_id": "ft1"}),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.get("/api/ai/finetune/ft1")
+        assert resp.status == 200
+    finally:
+        await tc.close()
+
+
+async def test_finetune_get_not_found(db: ClipDatabase, tmp_path: Path) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.get_finetune",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.get("/api/ai/finetune/ghost")
+        assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+async def test_finetune_get_not_configured(client: TestClient) -> None:
+    resp = await client.get("/api/ai/finetune/ft1")
+    assert resp.status == 400
+
+
+async def test_finetune_delete(db: ClipDatabase, tmp_path: Path) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.delete_finetune",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.delete("/api/ai/finetune/ft1")
+        assert resp.status == 200
+        assert (await resp.json())["deleted"] is True
+    finally:
+        await tc.close()
+
+
+async def test_finetune_delete_not_configured(client: TestClient) -> None:
+    resp = await client.delete("/api/ai/finetune/ft1")
+    assert resp.status == 400
+
+
+async def test_finetune_checkpoints(db: ClipDatabase, tmp_path: Path) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.list_checkpoints",
+                new=AsyncMock(return_value=[{"step": 50}]),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.get("/api/ai/finetune/ft1/checkpoints")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data == {"enabled": True, "checkpoints": [{"step": 50}]}
+    finally:
+        await tc.close()
+
+
+async def test_finetune_checkpoints_not_configured(client: TestClient) -> None:
+    resp = await client.get("/api/ai/finetune/ft1/checkpoints")
+    data = await resp.json()
+    assert data == {"enabled": False, "checkpoints": []}
+
+
+async def test_finetune_activate_success(db: ClipDatabase, tmp_path: Path) -> None:
+    from blink_downloader.analyzer import MoondreamCloudAnalyzer
+
+    analyzer = MoondreamCloudAnalyzer(api_key="md-key", prompt="test")
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/ai/finetune/ft1/activate", json={"step": 50})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["activated"] is True
+        assert analyzer.model_name() == data["model"]
+        assert "ft1" in analyzer.model_name()
+    finally:
+        await tc.close()
+
+
+async def test_finetune_activate_wrong_provider(client: TestClient) -> None:
+    resp = await client.post("/api/ai/finetune/ft1/activate", json={"step": 50})
+    assert resp.status == 400
+
+
+async def test_finetune_activate_bad_json(db: ClipDatabase, tmp_path: Path) -> None:
+    from blink_downloader.analyzer import MoondreamCloudAnalyzer
+
+    analyzer = MoondreamCloudAnalyzer(api_key="md-key", prompt="test")
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post(
+            "/api/ai/finetune/ft1/activate",
+            data="not json",
+            headers={"Content-Type": "text/plain"},
+        )
+        assert resp.status == 400
+    finally:
+        await tc.close()

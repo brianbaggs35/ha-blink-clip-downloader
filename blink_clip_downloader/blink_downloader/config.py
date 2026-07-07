@@ -12,6 +12,16 @@ _LOGGER = logging.getLogger(__name__)
 
 OPTIONS_FILE = Path("/data/options.json")
 _VALID_LOG_LEVELS = frozenset({"debug", "info", "warning", "error"})
+_VALID_AI_PROVIDERS = frozenset(
+    {
+        "ollama",
+        "ollama_cloud",
+        "moondream_cloud",
+        "moondream_local",
+        "anthropic",
+        "openai",
+    }
+)
 _DEFAULT_SUSPICIOUS_KEYWORDS = [
     "suspicious",
     "break-in",
@@ -103,15 +113,34 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     ollama_model: str = ""
     ollama_cloud_api_key: str = ""
     moondream_api_key: str = ""
+    # Model ID of a Moondream Cloud fine-tuned checkpoint to use for inference
+    # instead of the base model (e.g. "moondream3-preview/abc123@50"). Set by
+    # the AI tab's Fine-Tuning panel — see MoondreamFineTuneManager.get_model_id().
+    moondream_finetune_model: str = ""
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-haiku-4-5"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
-    # Two-tier escalation is an OpenAI-only feature: no other ai_provider reads
-    # this field. Moondream Cloud in particular has just one selectable model
-    # (see MoondreamCloudAnalyzer.fetch_models()), so there is no second tier
-    # to escalate to for that provider.
+    # Deprecated as of 4.0.0 — use ai_escalation_provider="openai" and
+    # ai_escalation_model instead, which support escalating to any provider,
+    # not just a second OpenAI model. Still honored for existing installs
+    # (see the migration in _parse_config) so upgrading doesn't silently drop
+    # a configured escalation model; will be removed in a future major version.
     openai_escalation_model: str = ""
+    # Two-tier escalation: when set, every clip is first analyzed with the
+    # normal ai_provider/model (tier 1); only clips tier 1 flags as suspicious
+    # are re-analyzed by this provider/model (tier 2) for a closer second
+    # opinion, and the tier-2 verdict is what gets recorded. Tier 2 may be any
+    # provider — including a different one than tier 1 (e.g. tier 1 = openai,
+    # tier 2 = moondream_cloud) — and reuses that provider's own credential
+    # fields already configured above (no separate API key needed). Leave
+    # empty to disable escalation.
+    ai_escalation_provider: str = ""
+    # Model ID to use for the ai_escalation_provider above. For moondream_cloud
+    # this is a fine-tuned checkpoint ID (like moondream_finetune_model); the
+    # base model is used if left empty. Not applicable to moondream_local,
+    # which has no selectable model.
+    ai_escalation_model: str = ""
     ai_prompt: str = (
         "You are a security camera analyst. Review this motion-triggered clip and determine "
         "if anything suspicious is happening.\n\n"
@@ -145,6 +174,14 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
         "  • Person picks up mail or a delivered package and then leaves the property on "
         "foot or by vehicle instead of entering the home — a mail/package theft signature.\n"
         "  • Person runs away immediately after contacting property.\n"
+        "  • An animal (e.g. a dog) jumps on, paws at, or urinates/defecates on a vehicle or "
+        "other protected property — flag this even though no person is involved.\n"
+        "  • Lawn equipment flings a rock, stick, or debris that visibly strikes a vehicle "
+        "with force, or wind-blown debris (a trash can, lid, branch, or similar) visibly "
+        "strikes, bounces off, dents, or scrapes a vehicle rather than merely resting "
+        "against it — flag this even with no person at fault and even if unintentional; "
+        "any event that visibly damages or risks damaging a protected asset is worth "
+        "reporting.\n"
         "NOT SUSPICIOUS (suspicious=false):\n"
         "  • A person walking up to the front door, unlocking or opening it normally, "
         "and going inside — this is ordinary coming and going (a resident or expected "
@@ -165,10 +202,17 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
         "  • Vehicle, bicycle, or shadow passing on the street.\n"
         "  • Animal, insect, or environmental motion (wind, leaves, lights).\n"
         "  • Lawn care equipment (mower, trimmer, blower) being operated near a vehicle by a "
-        "neighbor or landscaper — routine yard maintenance, not suspicious.\n"
-        "  • Wind-blown debris — a trash can, lid, or branch — being blown into or against a "
-        "vehicle or property by the wind, with no person involved.\n"
-        "  • Delivery driver at the front door (under 60 seconds).\n\n"
+        "neighbor or landscaper, with no visible impact on the vehicle — routine yard "
+        "maintenance, not suspicious.\n"
+        "  • Wind-blown debris — a trash can, lid, or branch — merely coming to rest against "
+        "or blowing near a vehicle or property, with no person involved and no visible "
+        "impact.\n"
+        "  • Delivery driver at the front door (under 60 seconds).\n"
+        "  • ANY of the above lawn-equipment or wind-blown-debris scenarios where the object "
+        "visibly strikes, bounces off, dents, or scrapes the vehicle rather than merely "
+        "resting near or against it is a DIFFERENT case — see SUSPICIOUS above. Damage or "
+        "risk of damage to a protected asset is always worth reporting, even with no person "
+        "at fault and even if unintentional.\n\n"
         "Confidence = how certain you are in the suspicious/not-suspicious verdict above, "
         "based on how clearly the BEHAVIOR itself is visible — NOT how bright or sharp "
         "the video looks. A dim or distant clip that still clearly shows tampering "
@@ -214,6 +258,11 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # When non-empty, car-protection distance rules are only injected into prompts
     # for cameras in this list.  Leave empty to apply to all cameras (default).
     ai_car_cameras: list[str] = field(default_factory=list)
+    # Debugging/prompt-tuning aid: store each clip's exact prompt text (not the
+    # image frames) so it can be inspected via the "Prompt" button in the web
+    # UI's AI panel. Off by default — prompts are long and this is opt-in,
+    # not something every install needs kept in the database.
+    ai_prompt_debug_enabled: bool = False
 
     # --- Extended Notifications (AI alerts) ---
     mobile_app_target: str = ""
@@ -291,6 +340,36 @@ def _parse_config(data: dict) -> AppConfig:
         if isinstance(c, str) and c.strip()
     ]
 
+    ai_provider = str(data.get("ai_provider", "ollama") or "ollama").strip().lower()
+
+    ai_escalation_provider = (
+        str(data.get("ai_escalation_provider", "") or "").strip().lower()
+    )
+    ai_escalation_model = str(data.get("ai_escalation_model", "") or "").strip()
+    legacy_openai_escalation_model = str(
+        data.get("openai_escalation_model", "") or ""
+    ).strip()
+    if (
+        not ai_escalation_provider
+        and legacy_openai_escalation_model
+        and ai_provider == "openai"
+    ):
+        _LOGGER.warning(
+            "openai_escalation_model is deprecated as of 4.0.0 — use "
+            "ai_escalation_provider='openai' and ai_escalation_model=%r "
+            "instead. Continuing to honor the legacy option for now.",
+            legacy_openai_escalation_model,
+        )
+        ai_escalation_provider = "openai"
+        ai_escalation_model = legacy_openai_escalation_model
+    if ai_escalation_provider and ai_escalation_provider not in _VALID_AI_PROVIDERS:
+        _LOGGER.warning(
+            "Unknown ai_escalation_provider %r, disabling escalation",
+            ai_escalation_provider,
+        )
+        ai_escalation_provider = ""
+        ai_escalation_model = ""
+
     return AppConfig(
         username=username,
         password=password,
@@ -338,19 +417,22 @@ def _parse_config(data: dict) -> AppConfig:
         download_local_storage=bool(data.get("download_local_storage", False)),
         # AI Video Analysis
         ai_analysis_enabled=bool(data.get("ai_analysis_enabled", False)),
-        ai_provider=str(data.get("ai_provider", "ollama") or "ollama").strip().lower(),
+        ai_provider=ai_provider,
         ollama_url=str(data.get("ollama_url", "") or "").strip().rstrip("/"),
         ollama_model=str(data.get("ollama_model", "") or "").strip(),
         ollama_cloud_api_key=str(data.get("ollama_cloud_api_key", "") or "").strip(),
         moondream_api_key=str(data.get("moondream_api_key", "") or "").strip(),
+        moondream_finetune_model=str(
+            data.get("moondream_finetune_model", "") or ""
+        ).strip(),
         anthropic_api_key=str(data.get("anthropic_api_key", "") or "").strip(),
         anthropic_model=str(data.get("anthropic_model", "") or "").strip()
         or "claude-haiku-4-5",
         openai_api_key=str(data.get("openai_api_key", "") or "").strip(),
         openai_model=str(data.get("openai_model", "") or "").strip() or "gpt-4o-mini",
-        openai_escalation_model=str(
-            data.get("openai_escalation_model", "") or ""
-        ).strip(),
+        openai_escalation_model=legacy_openai_escalation_model,
+        ai_escalation_provider=ai_escalation_provider,
+        ai_escalation_model=ai_escalation_model,
         ai_prompt=str(data.get("ai_prompt", "") or "").strip() or AppConfig.ai_prompt,
         ai_car_description=str(data.get("ai_car_description", "") or "").strip(),
         ai_max_frames=max(1, min(100, int(data.get("ai_max_frames", 5)))),
@@ -392,6 +474,7 @@ def _parse_config(data: dict) -> AppConfig:
             for c in data.get("ai_car_cameras", [])
             if isinstance(c, str) and c.strip()
         ],
+        ai_prompt_debug_enabled=bool(data.get("ai_prompt_debug_enabled", False)),
         # Extended notifications
         mobile_app_target=str(data.get("mobile_app_target", "") or "").strip(),
         mobile_app_enabled=bool(data.get("mobile_app_enabled", False)),

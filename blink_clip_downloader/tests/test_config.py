@@ -24,6 +24,36 @@ def test_default_ai_prompt_treats_leaving_home_as_routine():
     assert "stepping out to leave" in prompt
 
 
+def test_default_ai_prompt_distinguishes_impact_from_mere_presence():
+    """Lawn equipment/wind-blown debris merely being near a vehicle is
+    routine, but an object actually striking/damaging it must still be
+    flagged even with no person at fault — two opposite verdicts for the
+    same "object near vehicle" trigger, disambiguated by contact/impact."""
+    prompt = AppConfig.ai_prompt
+    assert "with no visible impact on the vehicle" in prompt
+    assert "visibly strikes a vehicle with force" in prompt
+    assert "risks damaging a protected asset is worth reporting" in prompt
+
+
+def test_default_ai_prompt_flags_animal_contact_with_vehicle():
+    prompt = AppConfig.ai_prompt
+    assert "urinates/defecates on a vehicle" in prompt
+
+
+def test_default_ai_prompt_matches_config_yaml_default():
+    """config.yaml's options.ai_prompt (what a fresh install actually gets)
+    must stay in sync with this Python-level default — a stale, weaker
+    config.yaml default would silently under-detect for every new install
+    that doesn't hand-edit the AI prompt before first use."""
+    import yaml
+
+    yaml_path = Path(__file__).resolve().parent.parent / "config.yaml"
+    with yaml_path.open() as f:
+        manifest = yaml.safe_load(f)
+
+    assert manifest["options"]["ai_prompt"] == AppConfig.ai_prompt
+
+
 # ---------------------------------------------------------------------------
 # _parse_config
 # ---------------------------------------------------------------------------
@@ -300,6 +330,121 @@ def test_openai_escalation_model_parsed_and_stripped():
     )
     assert cfg.openai_model == "gpt-4o-mini"
     assert cfg.openai_escalation_model == "gpt-4o"
+
+
+# ---------------------------------------------------------------------------
+# Cross-provider escalation (v4.0.0) + legacy openai_escalation_model migration
+# ---------------------------------------------------------------------------
+
+
+def test_ai_escalation_provider_and_model_parsed_and_stripped():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_provider": "openai",
+            "ai_escalation_provider": "  Moondream_Cloud  ",
+            "ai_escalation_model": "  moondream3-preview/abc@50  ",
+        }
+    )
+    assert cfg.ai_escalation_provider == "moondream_cloud"
+    assert cfg.ai_escalation_model == "moondream3-preview/abc@50"
+
+
+def test_ai_escalation_provider_defaults_empty():
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.ai_escalation_provider == ""
+    assert cfg.ai_escalation_model == ""
+
+
+def test_legacy_openai_escalation_model_migrates_when_provider_is_openai():
+    """Upgrading an existing install with openai_escalation_model set (and no
+    new ai_escalation_provider/model) must keep working without editing YAML."""
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_provider": "openai",
+            "openai_escalation_model": "gpt-4o",
+        }
+    )
+    assert cfg.ai_escalation_provider == "openai"
+    assert cfg.ai_escalation_model == "gpt-4o"
+    assert cfg.openai_escalation_model == "gpt-4o"
+
+
+def test_legacy_openai_escalation_model_not_migrated_for_other_providers():
+    """The legacy field only ever meant something for ai_provider='openai' —
+    migrating it for a different provider would silently enable escalation
+    to a provider the user never configured."""
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_provider": "anthropic",
+            "anthropic_api_key": "key",
+            "openai_escalation_model": "gpt-4o",
+        }
+    )
+    assert cfg.ai_escalation_provider == ""
+    assert cfg.ai_escalation_model == ""
+    assert cfg.openai_escalation_model == "gpt-4o"
+
+
+def test_explicit_escalation_provider_takes_precedence_over_legacy():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_provider": "openai",
+            "openai_escalation_model": "gpt-4o",
+            "ai_escalation_provider": "anthropic",
+            "ai_escalation_model": "claude-opus-4-5",
+        }
+    )
+    assert cfg.ai_escalation_provider == "anthropic"
+    assert cfg.ai_escalation_model == "claude-opus-4-5"
+
+
+def test_unknown_ai_escalation_provider_disables_escalation():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_escalation_provider": "not-a-real-provider",
+            "ai_escalation_model": "some-model",
+        }
+    )
+    assert cfg.ai_escalation_provider == ""
+    assert cfg.ai_escalation_model == ""
+
+
+def test_moondream_finetune_model_defaults_empty():
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.moondream_finetune_model == ""
+
+
+def test_moondream_finetune_model_parsed_and_stripped():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "moondream_finetune_model": "  moondream3-preview/abc123@50  ",
+        }
+    )
+    assert cfg.moondream_finetune_model == "moondream3-preview/abc123@50"
+
+
+def test_ai_prompt_debug_enabled_defaults_false():
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.ai_prompt_debug_enabled is False
+
+
+def test_ai_prompt_debug_enabled_can_be_turned_on():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "ai_prompt_debug_enabled": True}
+    )
+    assert cfg.ai_prompt_debug_enabled is True
 
 
 def test_ai_max_frames_clamped():

@@ -502,3 +502,125 @@ async def test_process_pending_exception_in_anomaly_score_is_swallowed(
     analyzer.analyze_clip.assert_awaited_once()
     counts = await db.get_queue_counts()
     assert counts["pending"] == 0  # item was processed
+
+
+# ===========================================================================
+# v4.0.0 — Adaptive learning integration (effective threshold + prompt
+# corrections)
+# ===========================================================================
+
+
+async def test_process_pending_passes_recent_corrections_to_analyzer(
+    db: ClipDatabase,
+) -> None:
+    """analyze_clip is called with recent_corrections populated from the
+    database's feedback history for this camera."""
+    await db.add_clip(_add_clip("c0"))
+    await db.add_feedback(
+        clip_id="c0",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        correction_note="Just the mail carrier.",
+    )
+
+    analyzer = _make_analyzer_mock()
+    queue = _make_queue(analyzer, db)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    analyzer.analyze_clip.assert_awaited_once()
+    _, kwargs = analyzer.analyze_clip.call_args
+    assert len(kwargs["recent_corrections"]) == 1
+    assert kwargs["recent_corrections"][0]["correction_note"] == (
+        "Just the mail carrier."
+    )
+
+
+async def test_process_pending_uses_effective_threshold_to_suppress_dispatch(
+    db: ClipDatabase,
+) -> None:
+    """A camera with enough recent false-positive feedback gets its
+    notification threshold auto-tuned up, suppressing a dispatch that would
+    otherwise have fired at the configured min_confidence."""
+    for i in range(15):
+        clip_id = f"fp{i}"
+        await db.add_clip(_add_clip(clip_id))
+        await db.add_feedback(
+            clip_id=clip_id,
+            camera="Front Door",
+            analysis_result_id=None,
+            original_suspicious=True,
+            original_confidence=0.8,
+            correct=False,  # false positive
+        )
+
+    # min_confidence=0.5, but 15/15 false positives caps the adjustment at
+    # +0.15 -> effective threshold 0.65, above this result's confidence 0.6.
+    suspicious_result = AnalysisResult(
+        clip_id="c1",
+        camera="Front Door",
+        model="llava",
+        response_text="Person near door",
+        is_suspicious=True,
+        confidence=0.6,
+        summary="Person near door",
+        frame_count=1,
+        analysis_duration=1.0,
+        analyzed_at="2024-06-01T09:00:00+00:00",
+    )
+    analyzer = _make_analyzer_mock(result=suspicious_result)
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock()
+
+    queue = AnalysisQueue(
+        analyzer=analyzer, db=db, dispatcher=dispatcher, min_confidence=0.5
+    )
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    dispatcher.dispatch.assert_not_awaited()
+
+
+async def test_process_pending_dispatches_when_no_feedback_history(
+    db: ClipDatabase,
+) -> None:
+    """With no feedback history, the effective threshold equals
+    min_confidence exactly — unchanged behavior from before v4.0.0."""
+    suspicious_result = AnalysisResult(
+        clip_id="c1",
+        camera="Front Door",
+        model="llava",
+        response_text="Intruder",
+        is_suspicious=True,
+        confidence=0.5,
+        summary="Person near car",
+        frame_count=1,
+        analysis_duration=1.0,
+        analyzed_at="2024-06-01T09:00:00+00:00",
+    )
+    analyzer = _make_analyzer_mock(result=suspicious_result)
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock()
+
+    queue = AnalysisQueue(
+        analyzer=analyzer, db=db, dispatcher=dispatcher, min_confidence=0.5
+    )
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    dispatcher.dispatch.assert_awaited_once()

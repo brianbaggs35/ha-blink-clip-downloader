@@ -138,6 +138,10 @@ class AnalysisQueue:
                 except Exception:  # noqa: BLE001
                     pass
 
+                recent_corrections = await self._db.get_prompt_corrections(
+                    item["camera"]
+                )
+
                 result = await self._analyzer.analyze_clip(
                     clip_path=item["clip_path"],
                     clip_id=clip_id,
@@ -145,6 +149,7 @@ class AnalysisQueue:
                     anomaly_score=anomaly_score,
                     clip_timestamp=clip_timestamp,
                     clip_duration=clip_duration,
+                    recent_corrections=recent_corrections,
                 )
                 await self._db.add_analysis_result(result.to_dict())
                 await self._db.update_queue_status(clip_id, "completed")
@@ -163,9 +168,12 @@ class AnalysisQueue:
                         result.confidence,
                     )
 
+                effective_threshold = await self._db.get_effective_confidence_threshold(
+                    item["camera"], self._min_confidence
+                )
                 should_alert = (
                     result.is_suspicious
-                    and result.confidence >= self._min_confidence
+                    and result.confidence >= effective_threshold
                     and self._dispatcher is not None
                 )
                 if should_alert and self._dispatcher:
