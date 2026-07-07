@@ -11,8 +11,10 @@ exercised for real wherever a stage doesn't itself need the mocked library.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -41,6 +43,7 @@ from blink_downloader.vision import (
     _build_depth_hint,
     _build_detection_hint,
     _build_recognition_hint,
+    _build_tracking_hint,
     _proximity_label,
     cosine_similarity,
     is_depth_estimation_available,
@@ -282,6 +285,71 @@ def test_build_detection_hint_skips_distance_without_car_description() -> None:
 
 
 # ------------------------------------------------------------------
+# _build_tracking_hint — dwell/lingering signal from ByteTrack continuity
+# ------------------------------------------------------------------
+
+
+def test_tracking_hint_none_with_too_few_frames() -> None:
+    detections = [DetectedObject("person", 0.9, (0, 0, 1, 1), 1, 0)]
+    assert _build_tracking_hint(detections, total_frames=2) is None
+
+
+def test_tracking_hint_none_without_any_tracked_person() -> None:
+    detections = [
+        DetectedObject("person", 0.9, (0, 0, 1, 1), None, 0),
+        DetectedObject("car", 0.9, (2, 2, 3, 3), 5, 0),
+    ]
+    assert _build_tracking_hint(detections, total_frames=5) is None
+
+
+def test_tracking_hint_lingering_for_high_frame_presence() -> None:
+    detections = [
+        DetectedObject("person", 0.9, (0, 0, 1, 1), 7, frame_idx)
+        for frame_idx in range(4)
+    ]
+    hint = _build_tracking_hint(detections, total_frames=5)
+    assert hint is not None
+    assert "TRACKING" in hint
+    assert "lingering or casing" in hint
+    assert "4 of 5" in hint
+
+
+def test_tracking_hint_brief_for_low_frame_presence() -> None:
+    detections = [DetectedObject("person", 0.9, (0, 0, 1, 1), 7, 0)]
+    hint = _build_tracking_hint(detections, total_frames=5)
+    assert hint is not None
+    assert "briefly passing through" in hint
+    assert "1 of 5" in hint
+
+
+def test_tracking_hint_none_for_ambiguous_middle_ground() -> None:
+    detections = [
+        DetectedObject("person", 0.9, (0, 0, 1, 1), 7, frame_idx)
+        for frame_idx in range(2)
+    ]
+    assert _build_tracking_hint(detections, total_frames=5) is None
+
+
+def test_tracking_hint_picks_track_with_most_frame_presence() -> None:
+    detections = [
+        DetectedObject("person", 0.9, (0, 0, 1, 1), 1, 0),
+        DetectedObject("person", 0.9, (5, 5, 6, 6), 2, 0),
+        DetectedObject("person", 0.9, (5, 5, 6, 6), 2, 1),
+        DetectedObject("person", 0.9, (5, 5, 6, 6), 2, 2),
+    ]
+    hint = _build_tracking_hint(detections, total_frames=4)
+    assert hint is not None
+    assert "3 of 4" in hint
+
+
+def test_tracking_hint_ignores_non_person_labels() -> None:
+    detections = [
+        DetectedObject("car", 0.9, (0, 0, 1, 1), 9, frame_idx) for frame_idx in range(4)
+    ]
+    assert _build_tracking_hint(detections, total_frames=5) is None
+
+
+# ------------------------------------------------------------------
 # ObjectDetector
 # ------------------------------------------------------------------
 
@@ -425,6 +493,43 @@ async def test_object_detector_ensure_ready_is_idempotent(
     mock_ultra.YOLO.assert_called_once()
 
 
+async def test_object_detector_ensure_ready_concurrent_calls_load_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two concurrent ensure_ready() calls must only load the model once —
+    exercises the double-checked-lock race branch where the second caller
+    finds the model already loaded by the time it acquires the lock."""
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.side_effect = lambda *_a, **_kw: (time.sleep(0.05), MagicMock())[1]
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+    detector = ObjectDetector()
+    results = await asyncio.gather(detector.ensure_ready(), detector.ensure_ready())
+    assert results == [True, True]
+    mock_ultra.YOLO.assert_called_once()
+
+
+async def test_object_detector_detect_skips_frame_with_empty_track_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`.track()` returning an empty list for a frame (no results at all,
+    distinct from a result with no boxes) must be skipped, not crash."""
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    fake_model = MagicMock()
+    fake_model.track.return_value = []
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+    detector = ObjectDetector()
+    detections = await detector.detect([b"frame0"])
+    assert detections == []
+
+
 # ------------------------------------------------------------------
 # DepthEstimator
 # ------------------------------------------------------------------
@@ -439,6 +544,22 @@ async def test_depth_estimator_ensure_ready_fails_when_missing(
         assert await estimator.ensure_ready() is False
 
 
+async def test_depth_estimator_ensure_ready_concurrent_calls_load_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_transformers = MagicMock()
+    mock_transformers.pipeline.side_effect = lambda **_kw: (
+        time.sleep(0.05),
+        MagicMock(),
+    )[1]
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+
+    estimator = DepthEstimator()
+    results = await asyncio.gather(estimator.ensure_ready(), estimator.ensure_ready())
+    assert results == [True, True]
+    mock_transformers.pipeline.assert_called_once()
+
+
 async def test_depth_estimator_ensure_ready_handles_generic_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -447,6 +568,17 @@ async def test_depth_estimator_ensure_ready_handles_generic_failure(
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     estimator = DepthEstimator()
     assert await estimator.ensure_ready() is False
+
+
+async def test_depth_estimator_ensure_ready_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_transformers = MagicMock()
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+    estimator = DepthEstimator()
+    assert await estimator.ensure_ready() is True
+    assert await estimator.ensure_ready() is True
+    mock_transformers.pipeline.assert_called_once()
 
 
 async def test_depth_estimator_compare_similar_depth(
@@ -592,6 +724,22 @@ async def test_contact_segmenter_ensure_ready_fails_when_missing(
         assert await segmenter.ensure_ready() is False
 
 
+async def test_contact_segmenter_ensure_ready_concurrent_calls_load_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_transformers = MagicMock()
+    mock_transformers.Sam2Model.from_pretrained.side_effect = lambda *_a, **_kw: (
+        time.sleep(0.05),
+        MagicMock(),
+    )[1]
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+
+    segmenter = ContactSegmenter()
+    results = await asyncio.gather(segmenter.ensure_ready(), segmenter.ensure_ready())
+    assert results == [True, True]
+    mock_transformers.Sam2Model.from_pretrained.assert_called_once()
+
+
 async def test_contact_segmenter_ensure_ready_handles_generic_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -600,6 +748,17 @@ async def test_contact_segmenter_ensure_ready_handles_generic_failure(
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     segmenter = ContactSegmenter()
     assert await segmenter.ensure_ready() is False
+
+
+async def test_contact_segmenter_ensure_ready_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_transformers = MagicMock()
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+    segmenter = ContactSegmenter()
+    assert await segmenter.ensure_ready() is True
+    assert await segmenter.ensure_ready() is True
+    mock_transformers.Sam2Model.from_pretrained.assert_called_once()
 
 
 async def test_contact_segmenter_touching_immediately(
@@ -753,6 +912,19 @@ async def test_face_embedder_ensure_ready_fails_when_missing(
         assert await embedder.ensure_ready() is False
 
 
+async def test_face_embedder_ensure_ready_concurrent_calls_load_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_fp = MagicMock()
+    mock_fp.MTCNN.side_effect = lambda **_kw: (time.sleep(0.05), MagicMock())[1]
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
+
+    embedder = FaceEmbedder()
+    results = await asyncio.gather(embedder.ensure_ready(), embedder.ensure_ready())
+    assert results == [True, True]
+    mock_fp.MTCNN.assert_called_once()
+
+
 async def test_face_embedder_ensure_ready_handles_generic_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -761,6 +933,17 @@ async def test_face_embedder_ensure_ready_handles_generic_failure(
     monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
     embedder = FaceEmbedder()
     assert await embedder.ensure_ready() is False
+
+
+async def test_face_embedder_ensure_ready_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_fp = MagicMock()
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
+    embedder = FaceEmbedder()
+    assert await embedder.ensure_ready() is True
+    assert await embedder.ensure_ready() is True
+    mock_fp.MTCNN.assert_called_once()
 
 
 async def test_face_embedder_embed_returns_empty_when_no_face(
@@ -1005,6 +1188,33 @@ async def test_vision_pipeline_full_stack(monkeypatch: pytest.MonkeyPatch) -> No
     assert hints.detection_hint is not None
     assert hints.depth_hint is not None
     assert hints.contact_hint is not None
+
+
+async def test_vision_pipeline_tracking_hint_across_multiple_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    boxes = _FakeBoxes(
+        cls=[0],
+        conf=[0.9],
+        xyxy=[(0.0, 0.0, 5.0, 5.0)],
+        ids=[42],
+    )
+    fake_model = MagicMock()
+    fake_model.track.return_value = [_FakeYoloResult(boxes, {0: "person"})]
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+    pipeline = VisionPipeline(VisionConfig(object_detection_enabled=True))
+    frames = [_real_jpeg_bytes()] * 5
+    hints = await pipeline.process_clip(frames)
+    assert hints.tracking_hint is not None
+    assert "lingering or casing" in hints.tracking_hint
 
 
 async def test_vision_pipeline_face_recognition(db: ClipDatabase) -> None:

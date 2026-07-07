@@ -63,6 +63,74 @@ until a toggle is turned on.
   size for every install by tens of MB even with the entire CV pipeline
   left disabled, since it's a different base OS, not an optional layer.
 
+### New feature — object-tracking dwell/lingering signal
+
+- Object detection's ByteTrack integration was tracking people across
+  sampled frames but nothing used the resulting track IDs — the actual
+  value tracking adds. Added a **TRACKING** prompt hint: when the same
+  tracked person appears in most of the sampled frames, that's surfaced as
+  a lingering/casing signal; when they appear in only one or two, that's
+  surfaced as briefly passing through. Ambiguous cases emit no hint rather
+  than a low-confidence guess. Requires `ai_object_detection_enabled`; no
+  new dependency.
+
+### Bug fixes — computer-vision pipeline install (found via an actual
+Docker build + container run, not just review)
+
+- **Fix: the entire CV pipeline silently failed to install.**
+  `facenet-pytorch`'s pinned `Pillow<10.3.0` has no Python 3.13 wheel, so
+  pip fell back to building Pillow 10.2.0 from source, which fails outright
+  under current setuptools (`KeyError: '__version__'`) — and since all four
+  packages were installed in one `pip install` call, this took down
+  `ultralytics`, `opencv-python-headless`, and `transformers` with it even
+  though none of them were actually the problem. Fixed by installing
+  `facenet-pytorch` in its own step with `--no-deps` — its runtime code
+  (MTCNN + InceptionResnetV1) only needs torch/torchvision/numpy/Pillow,
+  all already installed by that point, and was confirmed by hand to work
+  correctly against this project's actual Pillow>=12.3.0.
+- **Fix: `torchvision` resolved an ABI-incompatible build.** Only `torch`
+  was being installed from PyTorch's CPU-only wheel index; `torchvision`
+  (pulled in by `ultralytics`) resolved from default PyPI instead, which
+  targets mainline (CUDA) torch — despite satisfying the same version
+  range on paper, this raised `RuntimeError: operator torchvision::nms
+  does not exist` the moment `facenet_pytorch` (or anything else importing
+  torchvision) was imported. Fixed by installing `torchvision` from the
+  same CPU wheel index as `torch`, before `ultralytics` runs.
+- **Fix: moondream's install silently downgraded this project's own
+  Pillow requirement.** `moondream` pins `pillow<11.0.0`; pip's default
+  resolver applied that pin on top of the `Pillow>=12.3.0` already
+  installed from `requirements.txt`, only warning "incompatible" rather
+  than failing. This project's own package install already runs last in
+  the Dockerfile and re-upgrades Pillow back to >=12.3.0, so the shipped
+  image was correct, but the ordering dependency is now documented inline
+  so a future edit doesn't move the app-install step earlier and
+  reintroduce the downgrade.
+- All three were caught by actually building the Debian-based image end to
+  end and running the container (health check, `/api/ai/faces`, Playwright
+  e2e smoke check) rather than by code review alone — the non-fatal
+  `|| echo "INFO: ..."` fallback around the CV pipeline install would
+  otherwise have shipped a permanently-unavailable feature silently.
+
+### Bug fixes — other
+
+- **Fix: the web UI's "unsupported architecture" moondream notice was
+  stale.** `_moondream_arch_supported()` hardcoded `x86_64`-only, dating
+  from when Alpine/musllinux (not GPU availability) was the real
+  constraint. Now that the base image is Debian, moondream's dependencies
+  install on both amd64 and aarch64 (only local Photon *inference* still
+  needs an NVIDIA/Apple Silicon GPU, checked separately at model-load
+  time) — left unfixed, aarch64 users would have seen an inaccurate
+  "not supported on this architecture" message even though the package
+  now installs and could work on a GPU-equipped aarch64 host (e.g. Jetson).
+- **Fix: a real face-enrollment photo would be rejected with an opaque
+  413.** aiohttp's default 1 MB request-body limit is routinely exceeded
+  by a single base64-encoded phone photo. Raised to 10 MB for this app's
+  `web.Application`.
+- Moondream is now attempted on both architectures (previously amd64-only)
+  and installs after the computer-vision block so it reuses the CPU-only
+  torch already installed there instead of pulling in a second,
+  CUDA-enabled torch as a transitive dependency.
+
 ### Internal
 
 - Added the `face_enrollments` table (`database.py`) and
@@ -74,6 +142,8 @@ until a toggle is turned on.
   `facenet-pytorch`) for local development/testing; the Docker image
   installs these directly (see Dockerfile) since HA add-on users can't run
   `pip install` themselves.
+- CI's smoke-test job now also checks `/api/ai/faces` responds correctly
+  inside the real built container.
 
 ## 4.0.2
 

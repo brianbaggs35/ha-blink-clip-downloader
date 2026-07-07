@@ -61,18 +61,39 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 # require *some* compatible torch) reuse it instead of pulling the CUDA
 # build in as a transitive dependency.
 #
+# torchvision must *also* come from the CPU wheel index, not default PyPI —
+# ultralytics depends on it, and a torchvision built against mainline
+# (CUDA-targeted) torch is ABI-incompatible with the "+cpu" torch build
+# above despite both satisfying the same version range on paper. Installing
+# it here first, from the matching index, means ultralytics's own resolver
+# finds a compatible torchvision already present instead of pulling in a
+# mismatched one — verified by hand: without this, `import torchvision`
+# raises "RuntimeError: operator torchvision::nms does not exist" at runtime.
+#
+# facenet-pytorch is installed separately with --no-deps: its pinned
+# `Pillow<10.3.0,>=10.2.0` predates Python 3.13 wheel support, so pip falls
+# back to building Pillow 10.2.0 from source, which fails outright under
+# current setuptools (KeyError: '__version__' in Pillow's legacy setup.py) —
+# and 10.2.0 conflicts with this project's own Pillow>=12.3.0 requirement
+# regardless. --no-deps skips that broken/conflicting pin; facenet-pytorch's
+# actual runtime code (MTCNN + InceptionResnetV1) only needs torch,
+# torchvision, numpy, and Pillow — all already installed above by the time
+# this line runs — and was confirmed by hand to work correctly against
+# Pillow 12.3.0.
+#
 # Entirely non-fatal, matching the moondream block above: if this fails for
 # any reason (network hiccup, a wheel temporarily missing for one
 # architecture, disk pressure on an emulated aarch64 CI runner, etc.) the
 # add-on still builds and runs — the affected config toggles simply report
 # themselves unavailable at runtime (see vision.py's is_*_available() checks).
 RUN ( \
-        pip3 install --no-cache-dir "torch>=2.4,<3" --index-url https://download.pytorch.org/whl/cpu \
+        pip3 install --no-cache-dir "torch>=2.4,<3" "torchvision>=0.19,<1" \
+            --index-url https://download.pytorch.org/whl/cpu \
         && pip3 install --no-cache-dir \
             "ultralytics>=8.3,<9" \
             "opencv-python-headless>=4.10,<5" \
             "transformers>=4.56,<5" \
-            "facenet-pytorch>=2.6,<3" \
+        && pip3 install --no-cache-dir --no-deps "facenet-pytorch>=2.6,<3" \
         2>&1 | tail -20 \
     ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled and related toggles will report unavailable"
 
@@ -102,7 +123,17 @@ RUN ( \
 RUN pip3 install --no-cache-dir "moondream>=1.3,<2" 2>&1 | tail -5 || \
     echo "INFO: moondream install failed; moondream_local provider will be unavailable"
 
-# Install the app package so `python3 -m blink_downloader` works anywhere
+# Install the app package so `python3 -m blink_downloader` works anywhere.
+# Ordering note: this must stay the *last* install step. moondream pins
+# pillow<11.0.0 and silently downgrades the Pillow>=12.3.0 already installed
+# from requirements.txt above (pip's default resolver applies a later
+# package's pin even when it conflicts with one installed earlier, only
+# warning "incompatible" rather than failing). Installing this project's own
+# package last — with its own Pillow>=12.3.0 requirement — re-upgrades
+# Pillow back to the version this codebase actually needs. Verified by hand
+# that moondream still imports fine against Pillow 12.3.0 despite its
+# (overly conservative) pin. If a future dependency gets added after this
+# block, re-verify Pillow's final installed version doesn't regress.
 COPY pyproject.toml /app/pyproject.toml
 COPY blink_downloader/ /app/blink_downloader/
 RUN pip3 install --no-cache-dir /app \

@@ -34,10 +34,17 @@ test = [
 # ai_segmentation_enabled/ai_face_recognition_enabled config options — all
 # off by default). Not needed to run or test the add-on's core features;
 # only install this extra if you want to exercise the CV pipeline locally.
-# torch should be installed first from https://download.pytorch.org/whl/cpu
-# per PyTorch's own guidance (see Dockerfile) to avoid pulling its much
-# larger default CUDA build — this extra intentionally leaves torch itself
-# unpinned to whatever is already installed rather than re-resolving it.
+# See the Dockerfile for the exact install order/flags this mirrors and why
+# each is needed:
+#   1. torch + torchvision from https://download.pytorch.org/whl/cpu (both —
+#      not just torch — or torchvision resolves an ABI-incompatible build
+#      from default PyPI: "RuntimeError: operator torchvision::nms does not
+#      exist" at import time).
+#   2. ultralytics/opencv-python-headless/transformers normally.
+#   3. facenet-pytorch with --no-deps (its pinned Pillow<10.3.0 has no
+#      Python 3.13 wheel and conflicts with this project's own
+#      Pillow>=12.3.0 — its actual runtime code works fine with modern
+#      Pillow, only the stale pin is broken).
 vision = [
     "ultralytics>=8.3,<9",
     "opencv-python-headless>=4.10,<5",

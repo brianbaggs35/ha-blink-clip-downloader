@@ -3004,7 +3004,16 @@ class MediaServer:
     # ------------------------------------------------------------------
 
     def _build_app(self) -> web.Application:
-        app = web.Application(middlewares=[_security_middleware])
+        # aiohttp's default client_max_size (1 MB) is comfortably exceeded by
+        # a single base64-encoded face-enrollment photo (see
+        # _handle_faces_enroll) — a normal phone photo is routinely 2-8 MB
+        # even before the ~33% base64 overhead, which would otherwise fail
+        # every real-world enrollment with an opaque 413 before the handler
+        # ever runs. 10 MB comfortably fits a real photo while still
+        # bounding request size.
+        app = web.Application(
+            middlewares=[_security_middleware], client_max_size=10 * 1024 * 1024
+        )
         app.router.add_get("/", self._handle_index)
         app.router.add_get("/health", self._handle_health)
         app.router.add_get("/api/clips", self._handle_list_clips)

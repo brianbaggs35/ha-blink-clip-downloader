@@ -1659,6 +1659,7 @@ class BaseAnalyzer(abc.ABC):
         if vision_hints is not None:
             for hint in (
                 vision_hints.detection_hint,
+                vision_hints.tracking_hint,
                 vision_hints.depth_hint,
                 vision_hints.contact_hint,
                 vision_hints.recognized_resident_hint,

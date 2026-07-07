@@ -2986,6 +2986,32 @@ async def test_faces_enroll_success_then_list_then_delete(client: TestClient) ->
     assert data["faces"] == []
 
 
+async def test_faces_enroll_accepts_realistic_photo_size(client: TestClient) -> None:
+    """A real phone photo, base64-encoded, routinely exceeds aiohttp's
+    default 1 MB request-body limit — _build_app() raises client_max_size
+    specifically so a legitimate enrollment photo isn't rejected with an
+    opaque 413 before the handler even runs."""
+    import base64
+
+    large_payload = base64.b64encode(b"\xff" * (2 * 1024 * 1024)).decode()
+    with (
+        patch(
+            "blink_downloader.media_server.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.FaceEmbedder.embed",
+            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
+        ),
+    ):
+        resp = await client.post(
+            "/api/ai/faces",
+            json={"name": "Brian", "image_base64": large_payload},
+        )
+    assert resp.status != 413
+    assert resp.status == 200
+
+
 async def test_faces_delete_invalid_id(client: TestClient) -> None:
     resp = await client.delete("/api/ai/faces/not-a-number")
     assert resp.status == 400

@@ -3933,6 +3933,7 @@ def test_build_prompt_no_vision_hints_when_not_provided() -> None:
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
     prompt = a._build_prompt("Driveway")
     assert "OBJECT DETECTION" not in prompt
+    assert "TRACKING" not in prompt
     assert "DEPTH ESTIMATE" not in prompt
     assert "CONTACT ANALYSIS" not in prompt
     assert "RECOGNIZED RESIDENT" not in prompt
@@ -3944,12 +3945,14 @@ def test_build_prompt_includes_populated_vision_hints() -> None:
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
     hints = VisionHints(
         detection_hint="\n\nOBJECT DETECTION: test detection hint",
+        tracking_hint="\n\nTRACKING: test tracking hint",
         depth_hint="\n\nDEPTH ESTIMATE: test depth hint",
         contact_hint="\n\nCONTACT ANALYSIS: test contact hint",
         recognized_resident_hint="\n\nRECOGNIZED RESIDENT: test recognition hint",
     )
     prompt = a._build_prompt("Driveway", vision_hints=hints)
     assert "test detection hint" in prompt
+    assert "test tracking hint" in prompt
     assert "test depth hint" in prompt
     assert "test contact hint" in prompt
     assert "test recognition hint" in prompt

@@ -67,6 +67,14 @@ _RELEVANT_CLASSES = frozenset(
     }
 )
 _VEHICLE_CLASSES = frozenset({"car", "truck", "bus", "motorcycle"})
+# Classes eligible as the "subject" in vehicle-proximity/depth/contact
+# analysis — not just people. A dog jumping on a parked car (scratches) or
+# a cat pawing at one is exactly the kind of non-person vehicle contact the
+# base prompt's own rules already flag (see analyzer.py's default prompt,
+# "An animal ... jumps on, paws at, or urinates/defecates on a vehicle"), so
+# the more rigorous depth/contact stages need to consider animals as
+# candidate subjects too, not only people.
+_SUBJECT_CLASSES = frozenset({"person", "dog", "cat", "bird", "horse"})
 
 # Cosine-similarity floor (0.0-1.0, InceptionResnetV1 512-d embeddings) for
 # treating a detected face as matching an enrolled household member. Chosen
@@ -390,6 +398,70 @@ def _build_detection_hint(
         "actually detected and roughly where — cross-check it against what "
         "you can see in the frames yourself, since detector misses or "
         "false positives are possible."
+    )
+
+
+# Fraction of sampled frames a tracked person must appear in to count as
+# "lingering" vs. "briefly passing through" — see _build_tracking_hint.
+# Deliberately asymmetric (lingering needs a clear majority; passing-through
+# only needs a small minority) so an ambiguous middle ground emits no hint
+# at all rather than a low-confidence guess either way.
+_TRACKING_LINGER_FRACTION = 0.6
+_TRACKING_BRIEF_FRACTION = 0.3
+# Below this many sampled frames, "how many frames did this track appear
+# in" is too noisy a sample to characterize lingering vs. passing through.
+_TRACKING_MIN_FRAMES = 3
+
+
+def _build_tracking_hint(
+    detections: list[DetectedObject], total_frames: int
+) -> str | None:
+    """Render ByteTrack continuity into a TRACKING prompt hint, or None.
+
+    A single frame saying "person detected" says nothing about behavior
+    over time — the actual value ByteTrack adds (see ObjectDetector) is
+    knowing whether the *same* tracked person shows up across most of the
+    sampled frames (lingering/casing) or just one or two (passing through).
+    Uses whichever tracked person has the highest frame-presence fraction;
+    ties and untracked detections (track_id is None, e.g. tracking wasn't
+    available for this call) are simply not counted.
+    """
+    if total_frames < _TRACKING_MIN_FRAMES:
+        return None
+
+    frames_per_track: dict[int, set[int]] = {}
+    for d in detections:
+        if d.label != "person" or d.track_id is None:
+            continue
+        frames_per_track.setdefault(d.track_id, set()).add(d.frame_index)
+
+    if not frames_per_track:
+        return None
+
+    best_track_id = max(frames_per_track, key=lambda t: len(frames_per_track[t]))
+    frame_count = len(frames_per_track[best_track_id])
+    fraction = frame_count / total_frames
+
+    if fraction >= _TRACKING_LINGER_FRACTION:
+        body = (
+            f"the same tracked person appears in {frame_count} of "
+            f"{total_frames} sampled frames spanning this clip — consistent "
+            "with lingering or casing rather than simply passing through"
+        )
+    elif fraction <= _TRACKING_BRIEF_FRACTION:
+        body = (
+            f"the same tracked person appears in only {frame_count} of "
+            f"{total_frames} sampled frames — consistent with briefly "
+            "passing through rather than lingering"
+        )
+    else:
+        return None
+
+    return (
+        "\n\nTRACKING: Across the sampled frames, " + body + ". This is a "
+        "best-effort signal from tracking sparse sampled frames (seconds "
+        "apart), not continuous video, so treat it as a hint rather than a "
+        "precise measurement of how long anyone was actually present."
     )
 
 
@@ -848,6 +920,7 @@ class VisionHints:
 
     enhanced_frames: list[bytes] | None = None
     detection_hint: str | None = None
+    tracking_hint: str | None = None
     depth_hint: str | None = None
     contact_hint: str | None = None
     recognized_resident_hint: str | None = None
@@ -896,6 +969,7 @@ class VisionPipeline:
                 hints.detection_hint = _build_detection_hint(
                     detections, car_description
                 )
+                hints.tracking_hint = _build_tracking_hint(detections, len(frames))
 
         pair = _best_person_vehicle_pair(detections) if detections else None
 
