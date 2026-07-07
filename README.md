@@ -140,3 +140,8 @@ Open an issue at <https://github.com/brianbaggs35/ha-blink-clip-downloader/issue
 Have an idea for a new feature? Please create an issue at
 <https://github.com/brianbaggs35/ha-blink-clip-downloader/issues> and use the
 **Feature Request** label so it can be tracked and prioritised.
+
+## Note
+
+I pay for my Claude subscription out of pocket and that helps me develop and fix bugs quicker. If you want to
+help contribute, click the buy me a coffee link. Thank you!
