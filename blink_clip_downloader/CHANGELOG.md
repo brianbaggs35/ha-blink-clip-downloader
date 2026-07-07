@@ -1,5 +1,51 @@
 # Changelog
 
+## 4.0.1
+
+Bug-fix release addressing two real-world accuracy reports: a second
+protected-vehicle miss (distinct from the one fixed in 4.0.0) traced to the
+two-tier escalation system itself, and a pattern of ordinary front-door
+coming-and-going being flagged suspicious.
+
+### Bug fixes — two-tier escalation
+
+- **Fix: the two-tier escalation system only ever double-checked a
+  *suspicious* tier-1 verdict, never a "clear" one.** A user leaning
+  against, and resting a foot on, their protected vehicle was analyzed as
+  "clear" at 89% confidence by tier 1 — because that verdict wasn't
+  suspicious, tier 2 was never consulted, so a stronger model never got the
+  chance to catch what tier 1 missed. `_maybe_escalate` now applies a
+  high-recall policy on protected-vehicle cameras (`ai_car_cameras`, or
+  every camera when that list is empty): tier 2 is always consulted, and a
+  suspicious verdict from *either* tier wins. Every other camera keeps the
+  original, cost-optimized behavior — a non-suspicious tier-1 result is
+  still trusted outright and never escalated, since those cameras should
+  flag less, not more.
+
+### Bug fixes — front-door false positives
+
+- **Fix: brief, ordinary door interactions (unlocking, opening, stepping
+  out to leave) were frequently flagged suspicious** despite the prompt's
+  existing explicit rule that this is routine. Added a code-computed SHORT
+  EVENT hint: a clip at or under `_SHORT_EVENT_DURATION_SECONDS` (10s) now
+  tells the model that a brief, single interaction is far more consistent
+  with routine coming-and-going than with lingering, casing, or tampering —
+  framed as a hint the model can still override for a clip that visibly
+  shows real tampering.
+- **Fix: a thumbs-down with no typed note carried no reusable signal.**
+  `get_prompt_corrections` only folds corrections with a non-empty note
+  into future prompts, so a bare "incorrect" click — the most common way to
+  rate a clip — taught the system nothing. The feedback API now
+  auto-generates a correction note from the direction of the correction
+  (over-flagged vs. missed) whenever the reviewer doesn't type one, so
+  every negative rating becomes usable few-shot guidance.
+
+### Internal
+
+- De-duplicated three copies of the "does protected-vehicle protection
+  apply to this camera" check into a single `_car_protection_applies`
+  helper, shared by prompt-building and the new escalation policy.
+
 ## 4.0.0
 
 Major release: a security-intelligence pass on the AI analysis pipeline,

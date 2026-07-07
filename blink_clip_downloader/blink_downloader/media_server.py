@@ -3587,6 +3587,20 @@ class MediaServer:
                 {"error": "Clip has not been analyzed yet"}, status=400
             )
 
+        # A bare thumbs-down with no typed note carries no reusable signal
+        # for get_prompt_corrections (see database.py), which only folds in
+        # rows with a non-empty correction_note. Synthesize one from the
+        # direction of the correction so every "incorrect" rating still
+        # becomes usable few-shot guidance for future clips on this camera.
+        if not correct and not correction_note.strip():
+            correction_note = (
+                "Reviewer marked this as ordinary, routine activity that "
+                "was incorrectly flagged suspicious."
+                if result["is_suspicious"]
+                else "Reviewer marked this as genuinely suspicious activity "
+                "that was incorrectly cleared."
+            )
+
         try:
             await self._db.add_feedback(
                 clip_id=clip_id,

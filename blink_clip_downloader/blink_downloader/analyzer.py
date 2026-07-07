@@ -69,6 +69,14 @@ _SCENE_DEVIATION_ALERT_THRESHOLD: float = 0.12
 # withholds that frame, so a genuine intruder isn't absorbed into "normal".
 _SCENE_BASELINE_SUSPICION_CONFIDENCE_THRESHOLD: float = 0.5
 
+# A clip at or under this length (seconds) is far more consistent with a
+# single brief interaction — using a door, grabbing mail or a delivery,
+# walking to/from a car — than with lingering, casing, or tampering, which
+# typically take noticeably longer to unfold. See _build_prompt's SHORT
+# EVENT hint below, added specifically to counter small vision models
+# over-flagging ordinary quick coming-and-going as suspicious.
+_SHORT_EVENT_DURATION_SECONDS: float = 10.0
+
 # Motion-trajectory hint ("smart brain" movement reasoning) — see
 # BaseAnalyzer._compute_motion_trajectory_hint(). Reuses the same 64x64
 # grayscale thumbnail size _select_best_frames() already computes for its
@@ -584,6 +592,21 @@ class BaseAnalyzer(abc.ABC):
         """
         return bool(self._car_description)
 
+    def _car_protection_applies(self, camera: str) -> bool:
+        """True if protected-vehicle distance rules apply to *camera* specifically.
+
+        Requires ``car_description`` to be set (see :attr:`car_protection_active`).
+        When ``car_cameras`` is empty the rules apply to every camera (the
+        documented default — see ``ai_car_cameras``); otherwise only to
+        cameras in that set. Shared by :meth:`_build_prompt` (which cameras
+        get the distance-rule text) and :meth:`_maybe_escalate` (which
+        cameras get high-recall escalation).
+        """
+        return bool(
+            self._car_description
+            and (not self._car_cameras or camera in self._car_cameras)
+        )
+
     def set_escalation_analyzer(self, analyzer: BaseAnalyzer | None) -> None:
         """Attach (or clear) the tier-2 analyzer used for two-tier escalation.
 
@@ -796,6 +819,7 @@ class BaseAnalyzer(abc.ABC):
             trajectory_hint=trajectory_hint,
             recent_corrections=recent_corrections,
             zone_motion_fraction=zone_motion_fraction,
+            clip_duration=clip_duration,
         )
 
         if self._frame_strategy == "sequential":
@@ -869,31 +893,51 @@ class BaseAnalyzer(abc.ABC):
     async def _maybe_escalate(
         self, frames: list[bytes], prompt: str, response: str
     ) -> str:
-        """Escalate a suspicious tier-1 verdict to the attached tier-2 analyzer.
+        """Escalate a tier-1 verdict to the attached tier-2 analyzer.
+
+        Two escalation policies apply, chosen by whether the camera being
+        analyzed is under protected-vehicle asset protection (see
+        :meth:`_car_protection_applies`):
+
+        - **Asset-protection cameras** always get a tier-2 double-check,
+          even when tier 1 said "clear". A missed contact/proximity event
+          against a protected vehicle is worse than one extra API call, so
+          tier 1's "clear" is not trusted on its own here — only a tier-2
+          confirmation of "clear" is. If either tier says suspicious, that
+          verdict wins (see below).
+        - **Every other camera** keeps the original, cost-optimized
+          behavior: tier 2 is only consulted to confirm/refute a tier-1
+          suspicious call, and its well-formed response is authoritative. A
+          non-suspicious tier-1 result is trusted outright and never
+          escalated — these cameras should flag less, not more.
 
         Called with a tier-1 response already in hand — either from a single
         ``_call_model()`` call across all frames, or from
-        ``_analyze_sequentially()``'s single winning frame/response, so tier-2
-        cost is bounded to at most one extra call regardless of frame
-        strategy. No-op when no escalation analyzer is attached or tier-1
-        wasn't suspicious. A malformed/empty tier-2 response (e.g. a
-        reasoning model's invisible thinking tokens ate its completion
-        budget before the JSON closed) falls back to tier-1's own verdict
-        rather than risk silently downgrading a genuine suspicious call to
-        "not suspicious".
+        ``_analyze_sequentially()``'s single winning frame/response, so
+        tier-2 cost is bounded to at most one extra call regardless of frame
+        strategy. No-op when no escalation analyzer is attached. A
+        malformed/empty tier-2 response (e.g. a reasoning model's invisible
+        thinking tokens ate its completion budget before the JSON closed)
+        falls back to tier-1's own verdict rather than risk silently
+        overriding it with nothing.
         """
         if not response or self._escalation_analyzer is None:
             return response
 
         suspicious, _, _ = self._try_parse_json(response)
-        if not suspicious:
+        camera = getattr(self, "_current_camera", "")
+        high_recall = self._car_protection_applies(camera)
+        if not suspicious and not high_recall:
             return response
 
         tier2 = self._escalation_analyzer
         _LOGGER.info(
-            "%s/%s flagged a suspicious result; escalating to %s/%s for a closer look",
+            "%s/%s %s; escalating to %s/%s for a closer look",
             self.provider_name,
             self.model_name(),
+            "flagged a suspicious result"
+            if suspicious
+            else "cleared a protected-vehicle camera clip; double-checking",
             tier2.provider_name,
             tier2.model_name(),
         )
@@ -902,7 +946,7 @@ class BaseAnalyzer(abc.ABC):
             if escalated:
                 _LOGGER.warning(
                     "Escalation model %s/%s returned a malformed/truncated "
-                    "response; keeping tier-1's suspicious verdict",
+                    "response; keeping tier-1's verdict",
                     tier2.provider_name,
                     tier2.model_name(),
                 )
@@ -912,6 +956,16 @@ class BaseAnalyzer(abc.ABC):
         self._last_escalation_model = tier2.model_name()
         self._last_escalation_prompt_tokens = tier2.last_prompt_tokens
         self._last_escalation_completion_tokens = tier2.last_completion_tokens
+
+        if high_recall and not suspicious:
+            # Tier 1 said clear on a protected-vehicle camera — only trust
+            # that if tier 2 agrees. A tier-2 suspicious verdict caught
+            # something tier 1 missed and must win; two "clear" agreements
+            # keep tier 1's own response rather than swap in an equivalent
+            # one and lose its already-recorded frame/description pairing.
+            tier2_suspicious, _, _ = self._try_parse_json(escalated)
+            return escalated if tier2_suspicious else response
+
         return escalated
 
     # ------------------------------------------------------------------
@@ -1371,10 +1425,12 @@ class BaseAnalyzer(abc.ABC):
         trajectory_hint: str | None = None,
         recent_corrections: list[dict[str, Any]] | None = None,
         zone_motion_fraction: float | None = None,
+        clip_duration: float = 0.0,
     ) -> str:
         """Build a rich analysis prompt with camera context, temporal context,
         anomaly alert, scene-baseline signal, movement hint, recent human
-        corrections, zone-motion evidence, and asset-protection distance rules."""
+        corrections, zone-motion evidence, short-event hint, and asset-protection
+        distance rules."""
         base = self._camera_prompts.get(camera, self._base_prompt)
         parts = [base]
 
@@ -1428,13 +1484,32 @@ class BaseAnalyzer(abc.ABC):
                 "Apply heightened scrutiny to any persons or vehicles in the frame."
             )
 
+        # Short-event hint — a code-computed signal from the clip's real
+        # duration (see _SHORT_EVENT_DURATION_SECONDS) that a quick, single
+        # interaction is far more consistent with routine coming-and-going
+        # than with lingering, casing, or tampering. Framed as a hint the
+        # model can override, not a rule, since a genuinely short but
+        # visibly suspicious clip (e.g. a quick tamper-and-flee) must still
+        # be flagged on its own visible content.
+        if 0 < clip_duration <= _SHORT_EVENT_DURATION_SECONDS:
+            parts.append(
+                "\n\nSHORT EVENT: This entire clip lasts only "
+                f"{clip_duration:.0f} seconds. A brief, single interaction "
+                "like this — walking up, using a door, grabbing mail or a "
+                "delivery, or heading to a car — is far more consistent "
+                "with ordinary coming and going than with lingering, "
+                "casing, or tampering, which typically take noticeably "
+                "longer to unfold. Treat this as a hint favoring a routine "
+                "read, not a verdict on its own — only set suspicious=true "
+                "if the frames themselves clearly show concrete suspicious "
+                "behavior (forced entry, lock tampering, casing, etc.), "
+                "not brevity alone."
+            )
+
         # Protected vehicle applicability is needed here (as well as below)
         # to gate the scene-baseline "favor calm" framing immediately after —
         # see that block's comment for why.
-        car_applies = bool(
-            self._car_description
-            and (not self._car_cameras or camera in self._car_cameras)
-        )
+        car_applies = self._car_protection_applies(camera)
 
         # Visual scene-baseline ("smart brain") signal. This camera is fixed in
         # place, so its background should look almost the same clip after clip.
@@ -2724,10 +2799,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             return ""
 
         camera = getattr(self, "_current_camera", "")
-        car_applies = bool(
-            self._car_description
-            and (not self._car_cameras or camera in self._car_cameras)
-        )
+        car_applies = self._car_protection_applies(camera)
 
         best_response = ""
         best_is_suspicious = False
@@ -3201,10 +3273,7 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             return ""
 
         camera = getattr(self, "_current_camera", "")
-        car_applies = bool(
-            self._car_description
-            and (not self._car_cameras or camera in self._car_cameras)
-        )
+        car_applies = self._car_protection_applies(camera)
 
         best_response = ""
         best_is_suspicious = False
