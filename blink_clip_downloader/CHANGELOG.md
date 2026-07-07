@@ -1,5 +1,91 @@
 # Changelog
 
+## 4.0.0
+
+Major release: a security-intelligence pass on the AI analysis pipeline,
+prompted by a real-world false negative (a user leaning on, touching, and
+resting a foot on their own protected vehicle went unflagged, with the
+description incorrectly stating "not the protected vehicle").
+
+### Bug fixes — protected-vehicle accuracy
+
+- **Fix: a person directly touching the protected vehicle could go
+  unflagged when Moondream's vehicle disambiguation guessed the wrong
+  box.** `_detect_protected_vehicle`/`_detect_protected_vehicle_sync` run
+  two independent zero-shot `/detect` calls on the same frame — a generic
+  "car" query and a description-specific query — to tell the protected
+  vehicle apart from any other visible vehicle. These two calls can
+  legitimately draw slightly different boxes for the *same* physical car
+  (more so the moment a person leans on/touches it, since their body
+  changes what's visibly "car"), which was enough to push the boxes'
+  IoU below the match threshold and misclassify the real vehicle as
+  "another vehicle" right at the moment contact happens. Proximity is now
+  measured against every detected car box, not just the one disambiguation
+  labelled "protected" — vehicle identity still gates the vehicle-to-vehicle
+  case (a second car parked nearby), but a person's contact with *any*
+  vehicle on a car-protected camera is never missed on an identity guess.
+- **Fix: an unusual `ai_car_description` (e.g. including a license plate
+  number) could derail Moondream's disambiguation entirely.** A plate
+  number isn't a visual feature a zero-shot detector can ground, so
+  including it in the detect query risked matching the wrong region or
+  nothing at all. The description shown to the model in the text prompt is
+  unchanged (a plate there is useful reasoning context), but the text sent
+  to the `/detect` API call is now stripped of plate mentions first.
+- **Fix: the shared prompt (all 6 providers) had no guidance for the
+  "only one vehicle visible" case**, so an unconfirmed color/plate match
+  under night/infrared (often grayscale) conditions could make the model
+  hedge and describe a person's contact with their own car as involving
+  "the dark car, not the protected vehicle." The prompt now explicitly
+  says: if only one vehicle is visible at all, treat it as the protected
+  one by default — never withhold a contact finding over an unconfirmed
+  color/plate/make detail.
+- **Fix: routine lawn equipment/wind-blown debris rules didn't distinguish
+  "merely nearby" from "actually causing damage."** A rock flung by a
+  mower, or a trash bin blown with force into the vehicle, was previously
+  suspicious=false alongside ordinary yard maintenance. The rule now
+  splits: no-contact proximity stays routine, but a visible strike, dent,
+  or scrape is suspicious=true regardless of whether a person was at
+  fault. Animal contact (a dog jumping on or urinating on the vehicle) is
+  also now explicit rather than folded into "otherwise investigate."
+- **Fix: the add-on manifest's default `ai_prompt` (`config.yaml`, what a
+  fresh install actually gets) had drifted out of sync with the richer
+  Python-level default in `config.py`**, missing explicit coverage for
+  mail/package theft, security-camera tampering, casing behavior, and the
+  delivery-vs-theft distinction. Both defaults are now identical (enforced
+  by a new test), so a new install's actual prompt matches the one this
+  project has been tuning all along.
+
+### New feature — car zones
+
+- Added an optional **car zone**: a per-camera rectangle (set via the
+  Camera Configurations panel in the web UI's AI tab, shown once "Protected
+  vehicle visible from this camera" is checked) marking roughly where the
+  protected vehicle normally sits. Since Blink cameras are fixed in place,
+  this is stable ground truth that doesn't depend on any single frame's
+  object detection succeeding.
+  - A **zone-motion** signal is computed per clip (reusing the existing
+    grayscale frame-diff "smart brain" machinery, no new dependencies) and
+    fed into the prompt as structured evidence: what share of the clip's
+    overall motion actually happened inside the configured zone versus
+    elsewhere in the frame.
+  - For Moondream providers, the zone is also used as a **fallback
+    proximity reference** — if a clip's car detect finds no vehicle at all
+    this frame, a person standing where the car normally sits still
+    produces a proximity hint instead of silently applying none.
+  - Considered adding real OpenCV (`cv2`) for this — ruled out for this
+    add-on specifically because this Docker image is Alpine-based and
+    `opencv-python-headless` publishes no musllinux wheels, so it would
+    require compiling OpenCV from source in the build (slow, fragile, the
+    same class of problem already documented for `moondream_local` on
+    aarch64). The zone-motion feature reuses the existing Pillow-based
+    frame-diff approach instead, with identical functional value and zero
+    Docker build risk.
+
+### Testing
+
+- New/updated tests for all of the above; `media_server.py` reaches 100%
+  coverage, overall project coverage holds at 99.4%.
+
 ## 3.2.0
 
 Bug-hunting pass across the codebase (excluding `analyzer.py`, covered

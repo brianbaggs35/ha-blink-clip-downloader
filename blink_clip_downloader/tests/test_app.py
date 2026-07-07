@@ -440,11 +440,28 @@ async def test_shutdown_closes_analysis_queue_analyzer_and_dispatcher_when_prese
     app._analysis_queue.stop = AsyncMock()
     app._analyzer = MagicMock()
     app._analyzer.close = AsyncMock()
+    app._analyzer.escalation_analyzer = None
 
     await app._shutdown()
 
     app._analysis_queue.stop.assert_awaited_once()
     app._analyzer.close.assert_awaited_once()
+
+
+async def test_shutdown_closes_escalation_analyzer_when_present(app):
+    """When cross-provider escalation is configured, _shutdown() must also
+    close the tier-2 escalation analyzer (app.py only holds a reference to
+    the tier-1 analyzer, so this can't be exercised by analyzer.close() alone)."""
+    app._tracker.save = MagicMock()
+    app._analyzer = MagicMock()
+    app._analyzer.close = AsyncMock()
+    app._analyzer.escalation_analyzer = MagicMock()
+    app._analyzer.escalation_analyzer.close = AsyncMock()
+
+    await app._shutdown()
+
+    app._analyzer.close.assert_awaited_once()
+    app._analyzer.escalation_analyzer.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1114,6 +1131,87 @@ def test_init_camera_configs_ui_file_populates_descriptions_and_car_cameras(
         "Front Door": "Flag anyone lingering near the porch."
     }
     assert kwargs["car_cameras"] == ["Driveway"]
+
+
+def test_init_camera_configs_car_zone_reaches_analyzer(base_config, tmp_path) -> None:
+    """A valid car_zone rectangle in camera_configs.json must reach
+    create_analyzer() as a normalised float dict keyed by camera name."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        [
+            {
+                "camera": "Driveway",
+                "description": "",
+                "custom_prompt": "",
+                "is_car_camera": True,
+                "car_zone": {
+                    "x_min": "0.2",
+                    "y_min": 0.3,
+                    "x_max": 0.8,
+                    "y_max": 0.9,
+                },
+            },
+            {
+                "camera": "Front Door",
+                "description": "",
+                "custom_prompt": "",
+                "is_car_camera": False,
+            },
+        ],
+    )
+
+    kwargs = mock_create_analyzer.call_args.kwargs
+    assert kwargs["car_zones"] == {
+        "Driveway": {"x_min": 0.2, "y_min": 0.3, "x_max": 0.8, "y_max": 0.9}
+    }
+
+
+def test_init_camera_configs_malformed_car_zone_is_ignored(
+    base_config, tmp_path
+) -> None:
+    """A car_zone missing a required key must be skipped rather than crash
+    startup or reach the analyzer as a broken/partial rectangle."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        [
+            {
+                "camera": "Driveway",
+                "description": "",
+                "custom_prompt": "",
+                "is_car_camera": True,
+                "car_zone": {"x_min": 0.2, "y_min": 0.3, "x_max": 0.8},
+            }
+        ],
+    )
+
+    assert mock_create_analyzer.call_args.kwargs["car_zones"] is None
+
+
+def test_init_camera_configs_inverted_car_zone_is_ignored(
+    base_config, tmp_path
+) -> None:
+    """An inverted rectangle (x_min >= x_max) — e.g. from hand-editing
+    camera_configs.json outside the web UI — must be rejected the same way
+    the PUT handler rejects it, not silently reach the live analyzer as a
+    degenerate zone. Both paths share MediaServer._normalize_car_zone so
+    they can't drift out of sync."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        [
+            {
+                "camera": "Driveway",
+                "description": "",
+                "custom_prompt": "",
+                "is_car_camera": True,
+                "car_zone": {"x_min": 0.9, "y_min": 0.3, "x_max": 0.1, "y_max": 0.9},
+            }
+        ],
+    )
+
+    assert mock_create_analyzer.call_args.kwargs["car_zones"] is None
 
 
 def test_init_camera_configs_options_json_fills_gaps_not_covered_by_ui(

@@ -106,6 +106,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             camera_descriptions: dict[str, str] = {}
             camera_prompts: dict[str, str] = {}
             car_cameras_from_ui: list[str] = []
+            car_zones: dict[str, dict[str, float]] = {}
             if _cam_desc_file.exists():
                 try:
                     import json as _json
@@ -121,6 +122,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                             camera_prompts[_cam] = str(_c["custom_prompt"])
                         if _c.get("is_car_camera"):
                             car_cameras_from_ui.append(_cam)
+                        _zone = MediaServer._normalize_car_zone(_c.get("car_zone"))
+                        if _zone is not None:
+                            car_zones[_cam] = _zone
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -154,15 +158,19 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 camera_descriptions=camera_descriptions,
                 frame_strategy=config.ai_frame_strategy,
                 car_cameras=car_cameras,
+                car_zones=car_zones or None,
                 ollama_url=config.ollama_url,
                 ollama_model=config.ollama_model,
                 ollama_cloud_api_key=config.ollama_cloud_api_key,
                 moondream_api_key=config.moondream_api_key,
+                moondream_finetune_model=config.moondream_finetune_model,
                 anthropic_api_key=config.anthropic_api_key,
                 anthropic_model=config.anthropic_model,
                 openai_api_key=config.openai_api_key,
                 openai_model=config.openai_model,
-                openai_escalation_model=config.openai_escalation_model,
+                escalation_provider=config.ai_escalation_provider,
+                escalation_model=config.ai_escalation_model,
+                store_prompt_debug=config.ai_prompt_debug_enabled,
             )
             if self._analyzer is not None:
                 self._analyzer.attach_scene_baseline_db(self._db)
@@ -192,6 +200,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             analyzer=self._analyzer,
             analysis_queue=self._analysis_queue,
             notification_dispatcher=self._alert_dispatcher,
+            moondream_api_key=config.moondream_api_key,
+            prompt_debug_enabled=config.ai_prompt_debug_enabled,
         )
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,
@@ -685,6 +695,11 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             )
         if self._analyzer:
             await self._shutdown_step("analyzer.close", self._analyzer.close())
+            if self._analyzer.escalation_analyzer is not None:
+                await self._shutdown_step(
+                    "analyzer.escalation.close",
+                    self._analyzer.escalation_analyzer.close(),
+                )
         if self._alert_dispatcher:
             await self._shutdown_step(
                 "alert_dispatcher.close", self._alert_dispatcher.close()

@@ -13,3 +13,4 @@ __pycache__
 .claude/*
 .secrets
 smoke-test/
+*/node_modules

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from blink_downloader.analyzer import (
+    AnalysisResult,
     AnthropicAnalyzer,
     BaseAnalyzer,
     ClipAnalyzer,
@@ -1177,6 +1178,46 @@ def test_analyze_frame_sync_car_camera_person_near_car_uses_proximity_hint() -> 
     assert "person or animal" in prompt_arg
 
 
+def test_analyze_frame_sync_person_touching_misclassified_car_still_flagged() -> None:
+    """Local-analyzer counterpart of the cloud regression test: the person
+    is touching the real protected vehicle, but disambiguation happens to
+    label the OTHER car box as "protected" on this frame. Proximity must
+    still be measured against every detected car box so contact isn't
+    missed just because disambiguation picked the wrong box."""
+    person_boxes = [{"x_min": 0.65, "y_min": 0.2, "x_max": 0.75, "y_max": 0.9}]
+    left_car = {"x_min": 0.05, "y_min": 0.2, "x_max": 0.35, "y_max": 0.9}
+    right_car = {"x_min": 0.60, "y_min": 0.2, "x_max": 0.95, "y_max": 0.9}
+
+    def fake_detect(encoded: Any, object_name: str) -> dict[str, Any]:
+        if object_name == "person":
+            return {"objects": person_boxes}
+        if object_name == "car":
+            return {"objects": [left_car, right_car]}
+        if object_name == "Silver Kia":
+            return {"objects": [left_car]}
+        return {"objects": []}
+
+    mock_model = MagicMock()
+    mock_model.encode_image.return_value = "encoded"
+    mock_model.detect.side_effect = fake_detect
+    mock_model.caption.return_value = {"caption": "A person stands by a car."}
+    mock_model.query.return_value = {
+        "answer": '{"suspicious": true, "confidence": 0.85, "description": "Person touching the car."}'
+    }
+
+    a = MoondreamLocalAnalyzer(prompt="p", car_description="Silver Kia")
+    a._md_model = mock_model
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=True)
+
+    assert "Person touching the car" in result
+    prompt_arg = mock_model.query.call_args[0][1]
+    assert "INTERNAL PROXIMITY HINT" in prompt_arg
+    assert "touching or pressed against" in prompt_arg
+    assert "well away" not in prompt_arg
+
+
 def test_analyze_frame_sync_car_camera_person_no_car_visible() -> None:
     """Car camera: a person is present but car detect returns empty — base
     prompt rules apply without an explicit suppression hint injected."""
@@ -1206,6 +1247,44 @@ def test_analyze_frame_sync_car_camera_person_no_car_visible() -> None:
     # No suppression hint — the base prompt's vehicle-distance rules handle it.
     assert "not visible in this frame" not in prompt_arg
     assert "PROXIMITY HINT" not in prompt_arg
+
+
+def test_analyze_frame_sync_falls_back_to_car_zone_when_no_car_detected() -> None:
+    """Local analyzer counterpart: car detect finds nothing, but a fixed car
+    zone is configured for the current camera — proximity must still be
+    computed against the zone rather than emitting no hint at all."""
+    person_boxes = [{"x_min": 0.55, "y_min": 0.2, "x_max": 0.65, "y_max": 0.9}]
+
+    def fake_detect(encoded: Any, object_name: str) -> dict[str, Any]:
+        if object_name == "person":
+            return {"objects": person_boxes}
+        return {"objects": []}
+
+    mock_model = MagicMock()
+    mock_model.encode_image.return_value = "encoded"
+    mock_model.detect.side_effect = fake_detect
+    mock_model.caption.return_value = {"caption": "A person stands in the driveway."}
+    mock_model.query.return_value = {
+        "answer": '{"suspicious": true, "confidence": 0.8, "description": "Person at the car spot."}'
+    }
+
+    a = MoondreamLocalAnalyzer(
+        prompt="p",
+        car_description="Silver Kia",
+        car_zones={
+            "Driveway": {"x_min": 0.5, "y_min": 0.2, "x_max": 0.9, "y_max": 0.9}
+        },
+    )
+    a._md_model = mock_model
+    a._current_camera = "Driveway"
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=True)
+
+    assert "Person at the car spot" in result
+    prompt_arg = mock_model.query.call_args[0][1]
+    assert "INTERNAL PROXIMITY HINT" in prompt_arg
+    assert "touching or pressed against" in prompt_arg
 
 
 # ------------------------------------------------------------------
@@ -3047,268 +3126,215 @@ async def test_openai_call_model_uses_structured_outputs_for_gpt5_and_o4_mini(
 
 
 # ------------------------------------------------------------------
-# OpenAIAnalyzer — two-tier escalation
+# Cross-provider two-tier escalation (BaseAnalyzer._maybe_escalate /
+# _call_model_with_escalation) — tier 2 may be any provider, including one
+# different from tier 1.
 # ------------------------------------------------------------------
 
 
-async def test_openai_escalation_disabled_by_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No escalation_model configured means only tier 1 is ever called."""
-    import sys
-
-    resp = _make_openai_response(
-        '{"suspicious": true, "confidence": 0.9, "description": "Intruder"}'
+async def test_escalation_disabled_by_default() -> None:
+    """No escalation analyzer attached means only tier 1 is ever called."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="test")
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.9, "description": "Intruder"}'
     )
-    mock_mod = _make_openai_module(response=resp)
-    monkeypatch.setitem(sys.modules, "openai", mock_mod)
-
-    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
-    a._client = mock_mod.AsyncOpenAI.return_value
-    with patch.dict(sys.modules, {"openai": mock_mod}):
-        await a._call_model([_FAKE_JPEG], "prompt")
-
-    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
-    assert create_call.await_count == 1
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
+    a._call_model.assert_awaited_once()
+    assert "Intruder" in result
+    assert a._last_escalation_model == ""
+    assert a._last_escalation_provider == ""
 
 
-async def test_openai_escalation_skipped_when_not_suspicious(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_escalation_skipped_when_not_suspicious() -> None:
     """Tier 1 result that isn't suspicious never triggers tier 2."""
-    import sys
-
-    resp = _make_openai_response(
-        '{"suspicious": false, "confidence": 0.1, "description": "Empty scene"}'
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="test")
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "Empty scene"}'
     )
-    mock_mod = _make_openai_module(response=resp)
-    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock()  # type: ignore[method-assign]
+    a.set_escalation_analyzer(tier2)
 
-    a = OpenAIAnalyzer(
-        api_key="key",
-        model="gpt-4o-mini",
-        prompt="test",
-        escalation_model="gpt-4o",
-    )
-    a._client = mock_mod.AsyncOpenAI.return_value
-    with patch.dict(sys.modules, {"openai": mock_mod}):
-        result = await a._call_model([_FAKE_JPEG], "prompt")
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
 
-    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
-    assert create_call.await_count == 1
+    tier2._call_model.assert_not_awaited()
     assert "Empty scene" in result
 
 
-async def test_openai_escalation_skipped_when_model_matches_escalation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """escalation_model equal to the tier-1 model never triggers a second call."""
-    import sys
-
-    resp = _make_openai_response(
-        '{"suspicious": true, "confidence": 0.9, "description": "Intruder"}'
-    )
-    mock_mod = _make_openai_module(response=resp)
-    monkeypatch.setitem(sys.modules, "openai", mock_mod)
-
-    a = OpenAIAnalyzer(
-        api_key="key",
-        model="gpt-4o-mini",
-        prompt="test",
-        escalation_model="gpt-4o-mini",
-    )
-    a._client = mock_mod.AsyncOpenAI.return_value
-    with patch.dict(sys.modules, {"openai": mock_mod}):
-        await a._call_model([_FAKE_JPEG], "prompt")
-
-    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
-    assert create_call.await_count == 1
-
-
-async def test_openai_escalation_skipped_on_malformed_json(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_escalation_skipped_on_malformed_tier1_json() -> None:
     """Malformed/non-JSON tier-1 response never triggers escalation."""
-    import sys
-
-    resp = _make_openai_response("not valid json at all")
-    mock_mod = _make_openai_module(response=resp)
-    monkeypatch.setitem(sys.modules, "openai", mock_mod)
-
-    a = OpenAIAnalyzer(
-        api_key="key",
-        model="gpt-4o-mini",
-        prompt="test",
-        escalation_model="gpt-4o",
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="test")
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value="not valid json at all"
     )
-    a._client = mock_mod.AsyncOpenAI.return_value
-    with patch.dict(sys.modules, {"openai": mock_mod}):
-        result = await a._call_model([_FAKE_JPEG], "prompt")
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock()  # type: ignore[method-assign]
+    a.set_escalation_analyzer(tier2)
 
-    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
-    assert create_call.await_count == 1
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
+    tier2._call_model.assert_not_awaited()
     assert result == "not valid json at all"
 
 
-async def test_openai_escalation_triggers_with_empty_description(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_escalation_triggers_with_empty_description() -> None:
     """A suspicious verdict still escalates even if description is empty."""
-    import sys
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="test")
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.7, "description": ""}'
+    )
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.95, '
+            '"description": "Confirmed intruder"}'
+        )
+    )
+    a.set_escalation_analyzer(tier2)
 
-    tier1_resp = _make_openai_response(
-        '{"suspicious": true, "confidence": 0.7, "description": ""}',
-    )
-    tier2_resp = _make_openai_response(
-        '{"suspicious": true, "confidence": 0.95, "description": "Confirmed intruder"}',
-    )
-    mock_mod = _make_openai_module()
-    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
-        side_effect=[tier1_resp, tier2_resp]
-    )
-    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
 
-    a = OpenAIAnalyzer(
-        api_key="key",
-        model="gpt-4o-mini",
-        prompt="test",
-        escalation_model="gpt-4o",
-    )
-    a._client = mock_mod.AsyncOpenAI.return_value
-    with patch.dict(sys.modules, {"openai": mock_mod}):
-        result = await a._call_model([_FAKE_JPEG], "prompt")
-
-    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
-    assert create_call.await_count == 2
+    tier2._call_model.assert_awaited_once()
     assert "Confirmed intruder" in result
 
 
-async def test_openai_escalation_triggers_and_sums_tokens(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Suspicious tier-1 verdict escalates to tier 2; tokens are tracked per tier."""
-    import sys
+async def test_escalation_triggers_cross_provider_and_tracks_tokens_per_tier() -> None:
+    """Suspicious tier-1 verdict escalates to a DIFFERENT provider; each tier
+    tracks its own tokens independently since tier 1 and tier 2 are separate
+    BaseAnalyzer instances (no shared save/restore dance needed)."""
+    tier1 = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
 
-    tier1_resp = _make_openai_response(
-        '{"suspicious": true, "confidence": 0.7, "description": "Person near door"}',
-        prompt_tokens=300,
-        completion_tokens=50,
-    )
-    tier2_resp = _make_openai_response(
-        '{"suspicious": true, "confidence": 0.95, "description": "Confirmed intruder"}',
-        prompt_tokens=500,
-        completion_tokens=80,
-    )
-    mock_mod = _make_openai_module()
-    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
-        side_effect=[tier1_resp, tier2_resp]
-    )
-    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+    async def _tier1_call(frames: list, prompt: str) -> str:
+        tier1._last_prompt_tokens = 300
+        tier1._last_completion_tokens = 50
+        return (
+            '{"suspicious": true, "confidence": 0.7, "description": "Person near door"}'
+        )
 
-    a = OpenAIAnalyzer(
-        api_key="key",
-        model="gpt-4o-mini",
-        prompt="test",
-        escalation_model="gpt-4o",
-    )
-    a._client = mock_mod.AsyncOpenAI.return_value
-    with patch.dict(sys.modules, {"openai": mock_mod}):
-        result = await a._call_model([_FAKE_JPEG], "prompt")
+    tier1._call_model = _tier1_call  # type: ignore[method-assign]
 
-    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
-    assert create_call.await_count == 2
-    assert create_call.await_args_list[0].kwargs["model"] == "gpt-4o-mini"
-    assert create_call.await_args_list[1].kwargs["model"] == "gpt-4o"
+    tier2 = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+
+    async def _tier2_call(frames: list, prompt: str) -> str:
+        tier2._last_prompt_tokens = 500
+        tier2._last_completion_tokens = 80
+        return (
+            '{"suspicious": true, "confidence": 0.95, '
+            '"description": "Confirmed intruder"}'
+        )
+
+    tier2._call_model = _tier2_call  # type: ignore[method-assign]
+    tier1.set_escalation_analyzer(tier2)
+
+    result = await tier1._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
     assert "Confirmed intruder" in result
-    assert a._last_prompt_tokens == 300
-    assert a._last_completion_tokens == 50
-    assert a._last_escalation_model == "gpt-4o"
-    assert a._last_escalation_prompt_tokens == 500
-    assert a._last_escalation_completion_tokens == 80
+    assert tier1._last_prompt_tokens == 300
+    assert tier1._last_completion_tokens == 50
+    assert tier1._last_escalation_provider == "moondream_cloud"
+    assert tier1._last_escalation_model == tier2.model_name()
+    assert tier1._last_escalation_prompt_tokens == 500
+    assert tier1._last_escalation_completion_tokens == 80
 
 
-async def test_openai_escalation_falls_back_when_tier2_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_escalation_falls_back_when_tier2_fails() -> None:
     """If the escalation call returns nothing, the tier-1 result is kept."""
-    import sys
-
-    tier1_resp = _make_openai_response(
-        '{"suspicious": true, "confidence": 0.7, "description": "Person near door"}',
-        prompt_tokens=300,
-        completion_tokens=50,
+    tier1 = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    tier1._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.7, "description": "Person near door"}'
     )
-    tier2_resp = _make_openai_response("")
-    tier2_resp.choices = []
-    mock_mod = _make_openai_module()
-    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
-        side_effect=[tier1_resp, tier2_resp]
-    )
-    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+    tier1._last_prompt_tokens = 300
+    tier1._last_completion_tokens = 50
 
-    a = OpenAIAnalyzer(
-        api_key="key",
-        model="gpt-4o-mini",
-        prompt="test",
-        escalation_model="gpt-4o",
-    )
-    a._client = mock_mod.AsyncOpenAI.return_value
-    with patch.dict(sys.modules, {"openai": mock_mod}):
-        result = await a._call_model([_FAKE_JPEG], "prompt")
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock(return_value="")  # type: ignore[method-assign]
+    tier1.set_escalation_analyzer(tier2)
 
-    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
-    assert create_call.await_count == 2
+    result = await tier1._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
     assert "Person near door" in result
-    assert a._last_prompt_tokens == 300
-    assert a._last_completion_tokens == 50
+    assert tier1._last_prompt_tokens == 300
+    assert tier1._last_completion_tokens == 50
+    assert tier1._last_escalation_model == ""
+    assert tier1._last_escalation_provider == ""
 
 
-async def test_openai_escalation_falls_back_on_truncated_tier2_json(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_escalation_falls_back_on_truncated_tier2_json(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A non-empty but truncated/malformed tier-2 response (e.g. a reasoning
     model's thinking tokens ate its completion budget before the JSON closed)
     must not be trusted as a genuine "not suspicious" verdict — it must fall
     back to tier 1's suspicious result instead of silently suppressing the
-    alert."""
-    import sys
-
-    tier1_resp = _make_openai_response(
-        '{"suspicious": true, "confidence": 0.9, "description": "Person at car door"}',
-        prompt_tokens=300,
-        completion_tokens=50,
+    alert. This is provider-agnostic: tier 2 here is a completely different
+    provider than tier 1."""
+    tier1 = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    tier1._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.9, "description": "Person at car door"}'
     )
+    tier1._last_prompt_tokens = 300
+    tier1._last_completion_tokens = 50
+
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
     # Truncated mid-value: non-empty, but not parseable JSON.
-    tier2_resp = _make_openai_response(
-        '{"suspicious": true, "confidence": 0.95, "descri',
-        prompt_tokens=900,
-        completion_tokens=1024,
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.95, "descri'
     )
-    mock_mod = _make_openai_module()
-    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
-        side_effect=[tier1_resp, tier2_resp]
-    )
-    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+    tier1.set_escalation_analyzer(tier2)
 
-    a = OpenAIAnalyzer(
-        api_key="key",
-        model="gpt-4o-mini",
-        prompt="test",
-        escalation_model="gpt-5",
-    )
-    a._client = mock_mod.AsyncOpenAI.return_value
-    with patch.dict(sys.modules, {"openai": mock_mod}), caplog.at_level("WARNING"):
-        result = await a._call_model([_FAKE_JPEG], "prompt")
+    with caplog.at_level("WARNING"):
+        result = await tier1._call_model_with_escalation([_FAKE_JPEG], "prompt")
 
-    create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
-    assert create_call.await_count == 2
     assert "Person at car door" in result
-    is_suspicious, _, _ = a._try_parse_json(result)
+    is_suspicious, _, _ = tier1._try_parse_json(result)
     assert is_suspicious is True
-    assert a._last_prompt_tokens == 300
-    assert a._last_completion_tokens == 50
+    assert tier1._last_prompt_tokens == 300
+    assert tier1._last_completion_tokens == 50
     assert "malformed/truncated" in caplog.text
+
+
+async def test_escalation_via_sequential_strategy_escalates_once_on_winning_frame() -> (
+    None
+):
+    """When frame_strategy is 'sequential', escalation must fire at most once
+    — on the single winning frame/response from _analyze_sequentially — not
+    once per frame, to keep tier-2 cost bounded."""
+    tier1 = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="sequential",
+    )
+    susp = json.dumps(
+        {"suspicious": True, "confidence": 0.7, "description": "Person near car"}
+    )
+    non_susp = json.dumps(
+        {"suspicious": False, "confidence": 0.9, "description": "Empty street"}
+    )
+
+    async def fake_call_model(frames: list, prompt: str) -> str:
+        return susp if frames[0] == _FAKE_JPEG_2 else non_susp
+
+    tier1._call_model = fake_call_model  # type: ignore[method-assign]
+
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.95, '
+            '"description": "Confirmed intruder"}'
+        )
+    )
+    tier1.set_escalation_analyzer(tier2)
+
+    response, escalation_frame = await tier1._analyze_sequentially(
+        [_FAKE_JPEG, _FAKE_JPEG_2], "p"
+    )
+    assert escalation_frame == _FAKE_JPEG_2
+    assert escalation_frame is not None
+    final = await tier1._maybe_escalate([escalation_frame], "p", response)
+
+    tier2._call_model.assert_awaited_once()
+    assert "Confirmed intruder" in final
 
 
 def test_is_well_formed_json_object_true_for_complete_json() -> None:
@@ -3480,16 +3506,74 @@ def test_create_analyzer_openai_no_key() -> None:
     assert a is None
 
 
-def test_create_analyzer_openai_with_escalation_model() -> None:
+def test_create_analyzer_same_provider_escalation() -> None:
+    """Same-provider two-model escalation (today's OpenAI-only use case,
+    generalized) still works via ai_escalation_provider/ai_escalation_model."""
     a = create_analyzer(
         "openai",
         "prompt",
         openai_api_key="sk-test",
         openai_model="gpt-4o-mini",
-        openai_escalation_model="gpt-4o",
+        escalation_provider="openai",
+        escalation_model="gpt-4o",
     )
     assert isinstance(a, OpenAIAnalyzer)
-    assert a._escalation_model == "gpt-4o"
+    assert a.escalation_analyzer is not None
+    assert a.escalation_analyzer.provider_name == "openai"
+    assert a.escalation_analyzer.model_name() == "gpt-4o"
+
+
+def test_create_analyzer_cross_provider_escalation() -> None:
+    """Tier 2 may be a completely different provider than tier 1 — e.g. tier
+    1 = openai, tier 2 = moondream_cloud — reusing tier 1's own already-loaded
+    moondream_api_key rather than needing a separate credential field."""
+    a = create_analyzer(
+        "openai",
+        "prompt",
+        openai_api_key="sk-test",
+        openai_model="gpt-4o-mini",
+        moondream_api_key="md-test",
+        escalation_provider="moondream_cloud",
+    )
+    assert isinstance(a, OpenAIAnalyzer)
+    assert a.escalation_analyzer is not None
+    assert a.escalation_analyzer.provider_name == "moondream_cloud"
+
+
+def test_create_analyzer_escalation_disabled_when_unset() -> None:
+    a = create_analyzer("openai", "prompt", openai_api_key="sk-test")
+    assert isinstance(a, OpenAIAnalyzer)
+    assert a.escalation_analyzer is None
+
+
+def test_create_analyzer_escalation_noop_when_matches_tier1_exactly() -> None:
+    """Same provider and same (default) model as tier 1 is a no-op, not a
+    redundant second analyzer."""
+    a = create_analyzer(
+        "openai",
+        "prompt",
+        openai_api_key="sk-test",
+        openai_model="gpt-4o-mini",
+        escalation_provider="openai",
+        escalation_model="gpt-4o-mini",
+    )
+    assert isinstance(a, OpenAIAnalyzer)
+    assert a.escalation_analyzer is None
+
+
+def test_create_analyzer_escalation_tier2_build_failure_falls_back_to_tier1_only() -> (
+    None
+):
+    """A misconfigured tier 2 (e.g. missing credentials) disables escalation
+    but must not prevent tier 1 from being returned."""
+    a = create_analyzer(
+        "openai",
+        "prompt",
+        openai_api_key="sk-test",
+        escalation_provider="anthropic",  # no anthropic_api_key supplied
+    )
+    assert isinstance(a, OpenAIAnalyzer)
+    assert a.escalation_analyzer is None
 
 
 # ------------------------------------------------------------------
@@ -3665,6 +3749,62 @@ def test_build_prompt_scopes_distance_rules_to_described_vehicle() -> None:
     assert "ONLY to the vehicle matching this description" in prompt
 
 
+def test_build_prompt_car_single_vehicle_defaults_to_protected() -> None:
+    """The prompt must instruct the model to treat a single visible vehicle
+    as the protected one by default, and not withhold a contact/proximity
+    finding just because a color or plate can't be confirmed (e.g. at night
+    under infrared/grayscale conditions) — this is what let a person
+    touching their own car go unflagged as "not the protected vehicle"."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Grey Kia Forte, plate ABC1234",
+    )
+    prompt = a._build_prompt("Driveway")
+    assert "only ONE vehicle is visible" in prompt
+    assert "treat it as the protected vehicle by default" in prompt
+    assert "infrared footage" in prompt
+
+
+def test_build_prompt_car_distinguishes_impact_from_mere_presence() -> None:
+    """Lawn equipment/wind-blown debris merely near the protected vehicle is
+    not suspicious, but an object actually striking/damaging it must still
+    be flagged even with no person at fault."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Silver Kia Forte",
+    )
+    prompt = a._build_prompt("Driveway")
+    assert "no person involved and no visible impact" in prompt
+    assert "visibly strikes " in prompt
+    assert "urinate/defecate on" in prompt
+
+
+def test_build_prompt_zone_motion_high_fraction() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Driveway", zone_motion_fraction=0.82)
+    assert "ZONE MOTION" in prompt
+    assert "82%" in prompt
+    assert "concentrated at or near the protected vehicle" in prompt
+
+
+def test_build_prompt_zone_motion_low_fraction() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Driveway", zone_motion_fraction=0.10)
+    assert "ZONE MOTION" in prompt
+    assert "10%" in prompt
+    assert "elsewhere in the frame" in prompt
+
+
+def test_build_prompt_no_zone_motion_hint_when_not_provided() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Driveway")
+    assert "ZONE MOTION" not in prompt
+
+
 # ------------------------------------------------------------------
 # camera descriptions
 # ------------------------------------------------------------------
@@ -3743,6 +3883,32 @@ def test_update_car_cameras_replaces_not_merges() -> None:
     a.update_car_cameras(set())
     assert "PROTECTED VEHICLE" in a._build_prompt("Driveway")
     assert "PROTECTED VEHICLE" in a._build_prompt("Garage")
+
+
+def test_update_car_zones_replaces_not_merges() -> None:
+    """update_car_zones fully replaces the mapping, so a camera dropped from
+    the new mapping stops carrying zone data — mirrors update_car_cameras."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_zones={
+            "Driveway": {"x_min": 0.1, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9}
+        },
+    )
+    assert a._car_zones == {
+        "Driveway": {"x_min": 0.1, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9}
+    }
+
+    a.update_car_zones(
+        {"Garage": {"x_min": 0.2, "y_min": 0.2, "x_max": 0.8, "y_max": 0.8}}
+    )
+    assert a._car_zones == {
+        "Garage": {"x_min": 0.2, "y_min": 0.2, "x_max": 0.8, "y_max": 0.8}
+    }
+
+    a.update_car_zones({})
+    assert a._car_zones == {}
 
 
 def test_car_protection_active_reflects_car_description() -> None:
@@ -4048,8 +4214,11 @@ async def test_analyze_sequentially_picks_most_alarming() -> None:
         return susp if call_count == 2 else non_susp
 
     analyzer._call_model = fake_call_model  # type: ignore[method-assign]
-    result = await analyzer._analyze_sequentially([_FAKE_JPEG, _FAKE_JPEG_2], "p")
+    result, frame = await analyzer._analyze_sequentially(
+        [_FAKE_JPEG, _FAKE_JPEG_2], "p"
+    )
     assert "Person near car" in result
+    assert frame == _FAKE_JPEG_2
     assert call_count == 2
 
 
@@ -4060,8 +4229,9 @@ async def test_analyze_sequentially_empty_frames() -> None:
         model="llava",
         prompt="p",
     )
-    result = await analyzer._analyze_sequentially([], "prompt")
+    result, frame = await analyzer._analyze_sequentially([], "prompt")
     assert result == ""
+    assert frame is None
 
 
 @pytest.mark.asyncio
@@ -4079,8 +4249,11 @@ async def test_analyze_sequentially_skips_empty_responses() -> None:
         return "" if len(frames) == 1 and frames[0] == _FAKE_JPEG else good
 
     analyzer._call_model = fake_call_model  # type: ignore[method-assign]
-    result = await analyzer._analyze_sequentially([_FAKE_JPEG, _FAKE_JPEG_2], "p")
+    result, frame = await analyzer._analyze_sequentially(
+        [_FAKE_JPEG, _FAKE_JPEG_2], "p"
+    )
     assert "All clear" in result
+    assert frame == _FAKE_JPEG_2
 
 
 @pytest.mark.asyncio
@@ -4103,8 +4276,11 @@ async def test_analyze_sequentially_malformed_frame_kept_only_as_last_resort() -
         return malformed if frames[0] == _FAKE_JPEG else suspicious
 
     analyzer._call_model = fake_call_model  # type: ignore[method-assign]
-    result = await analyzer._analyze_sequentially([_FAKE_JPEG, _FAKE_JPEG_2], "p")
+    result, frame = await analyzer._analyze_sequentially(
+        [_FAKE_JPEG, _FAKE_JPEG_2], "p"
+    )
     assert "Person at car door" in result
+    assert frame == _FAKE_JPEG_2
 
 
 @pytest.mark.asyncio
@@ -4841,6 +5017,68 @@ async def test_detect_protected_vehicle_still_finds_genuinely_separate_car() -> 
     assert other == [separate_car]
 
 
+@pytest.mark.asyncio
+async def test_detect_protected_vehicle_uses_stripped_query_for_detect_call() -> None:
+    """A car_description containing a license plate must have the plate
+    stripped before it's sent to Moondream's zero-shot /detect — a plate
+    number isn't a visual feature the detector can ground, and including it
+    risks derailing the query onto the wrong box or nothing at all, which
+    would corrupt the whole disambiguation this method exists for."""
+    car_boxes = [
+        {"x_min": 0.1, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9},
+        {"x_min": 0.6, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9},
+    ]
+
+    async def fake_detect(frame: bytes, object_name: str) -> list[dict[str, float]]:
+        assert object_name == "Grey Kia Forte"
+        return [car_boxes[0]]
+
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="p",
+        car_description="Grey Kia Forte, plate ABC1234",
+    )
+    with patch.object(a, "_detect_objects", side_effect=fake_detect):
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
+
+    assert protected == [car_boxes[0]]
+    assert other == [car_boxes[1]]
+
+
+# ------------------------------------------------------------------
+# _visual_detect_query
+# ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        ("Grey Kia Forte, plate ABC1234", "Grey Kia Forte"),
+        ("Silver Kia Forte, license plate: XYZ-999", "Silver Kia Forte"),
+        (
+            "Red truck, plate #7GHK123, parked in driveway",
+            "Red truck, parked in driveway",
+        ),
+        ("Silver Kia Forte", "Silver Kia Forte"),
+        ("", ""),
+    ],
+)
+def test_visual_detect_query_strips_plate_mention(
+    description: str, expected: str
+) -> None:
+    assert MoondreamCloudAnalyzer._visual_detect_query(description) == expected
+
+
+def test_visual_detect_query_falls_back_when_nothing_left() -> None:
+    """If the entire description is just a plate mention, stripping it would
+    leave nothing usable — fall back to the original text rather than
+    sending an empty detect query."""
+    assert (
+        MoondreamCloudAnalyzer._visual_detect_query("plate ABC1234") == "plate ABC1234"
+    )
+
+
 # ------------------------------------------------------------------
 # _bbox_min_gap
 # ------------------------------------------------------------------
@@ -5381,6 +5619,65 @@ async def test_moondream_cloud_call_model_car_camera_multiple_vehicles_triggers_
 
 
 @pytest.mark.asyncio
+async def test_moondream_cloud_call_model_person_touching_misclassified_car_still_flagged() -> (
+    None
+):
+    """Regression test: the person is touching the REAL protected vehicle,
+    but the description-specific detect call (independently, on the same
+    frame) happens to match the *other* car box — e.g. because the person's
+    body now partially occludes the real car, shifting its box just enough
+    that the two independent zero-shot detections no longer agree. Before
+    the fix, the proximity gap was only measured against whichever box
+    disambiguation labelled "protected", so this exact scenario silently
+    produced a "well away from the vehicle" hint despite direct contact.
+    The fix measures proximity against every detected car box, so contact
+    is never missed regardless of which box wins disambiguation."""
+    person_boxes = [{"x_min": 0.65, "y_min": 0.2, "x_max": 0.75, "y_max": 0.9}]
+    left_car = {"x_min": 0.05, "y_min": 0.2, "x_max": 0.35, "y_max": 0.9}
+    right_car = {"x_min": 0.60, "y_min": 0.2, "x_max": 0.95, "y_max": 0.9}
+    query_answer = '{"suspicious": true, "confidence": 0.85, "description": "Person touching the car."}'
+
+    injected_prompts: list[str] = []
+
+    def detect(obj: str) -> list[dict[str, float]]:
+        if obj == "person":
+            return person_boxes
+        if obj == "car":
+            return [left_car, right_car]
+        if obj == "Silver Kia":
+            # Disambiguation matches the LEFT car as "protected" — the
+            # person is actually touching the RIGHT one.
+            return [left_car]
+        return []
+
+    def side_effect(url, **kwargs):
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=detect,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
+    a._session = session
+    a._current_camera = "Driveway"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "p")
+
+    assert "Person touching the car" in result
+    assert injected_prompts
+    assert "INTERNAL PROXIMITY HINT" in injected_prompts[0]
+    assert "touching or pressed against" in injected_prompts[0]
+    assert "well away" not in injected_prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_moondream_cloud_call_model_car_camera_with_car_detected() -> None:
     """Car camera: when car detected, proximity gap is injected into prompt."""
     person_boxes = [{"x_min": 0.0, "y_min": 0.0, "x_max": 0.1, "y_max": 0.9}]
@@ -5465,6 +5762,56 @@ async def test_moondream_cloud_call_model_car_camera_no_car_in_frame() -> None:
     assert injected_prompts
     assert "not visible" not in injected_prompts[0].lower()
     assert "PROXIMITY HINT" not in injected_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_moondream_cloud_call_model_falls_back_to_car_zone_when_no_car_detected() -> (
+    None
+):
+    """Car camera: car detect finds nothing at all, but a fixed car zone is
+    configured for this camera — the person's proximity to that zone must
+    still produce a proximity hint instead of silently applying no hint."""
+    person_boxes = [{"x_min": 0.55, "y_min": 0.2, "x_max": 0.65, "y_max": 0.9}]
+    query_answer = '{"suspicious": true, "confidence": 0.8, "description": "Person at the car spot."}'
+
+    injected_prompts: list[str] = []
+
+    def detect(obj: str) -> list[dict[str, float]]:
+        if obj == "person":
+            return person_boxes
+        return []  # car detect finds nothing, either query
+
+    def side_effect(url, **kwargs):
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=detect,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="base prompt",
+        car_description="Silver Kia",
+        car_zones={
+            "Driveway": {"x_min": 0.5, "y_min": 0.2, "x_max": 0.9, "y_max": 0.9}
+        },
+    )
+    a._session = session
+    a._current_camera = "Driveway"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "base prompt")
+
+    assert result != ""
+    assert injected_prompts
+    assert "INTERNAL PROXIMITY HINT" in injected_prompts[0]
+    assert "touching or pressed against" in injected_prompts[0]
 
 
 @pytest.mark.asyncio
@@ -6663,6 +7010,59 @@ async def test_analyze_clip_records_scene_baseline_when_suspicious_but_low_confi
     assert mock_db.record_scene_baseline.call_args[0][0] == "Driveway"
 
 
+@pytest.mark.asyncio
+async def test_analyze_clip_computes_zone_motion_fraction_end_to_end() -> None:
+    """Full analyze_clip() pipeline: a car_zone configured for the clip's
+    camera must reach _build_prompt as a computed zone_motion_fraction,
+    proving the wiring from extracted frames through to the prompt actually
+    runs, not just the unit-level pieces in isolation."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="uniform",
+        max_frames=2,
+        car_description="Silver Kia",
+        car_zones={
+            "Driveway": {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+        },
+    )
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(
+        return_value=(_real_jpeg_with_bar(5) + _real_jpeg_with_bar(45), b"")
+    )
+    mock_proc.returncode = 0
+
+    resp_json = json.dumps(
+        {"suspicious": False, "confidence": 0.3, "description": "Quiet driveway."}
+    )
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": resp_json})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+        patch.object(
+            analyzer,
+            "extract_frames",
+            new=AsyncMock(
+                return_value=[
+                    _real_jpeg_with_bar(5),
+                    _real_jpeg_with_bar(45),
+                ]
+            ),
+        ),
+        patch.object(analyzer, "_build_prompt", wraps=analyzer._build_prompt) as spy,
+    ):
+        await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert spy.call_args.kwargs["zone_motion_fraction"] is not None
+
+
 # ---------------------------------------------------------------------------
 # _build_prompt — scene_deviation wording (item d)
 # ---------------------------------------------------------------------------
@@ -6707,6 +7107,76 @@ def test_build_prompt_scene_deviation_zero_confirms_normal() -> None:
     prompt = a._build_prompt("Cam", scene_deviation=0.0)
     assert "SCENE BASELINE" in prompt
     assert "closely matches its usual background" in prompt
+
+
+# ---------------------------------------------------------------------------
+# v4.0.0 bug fix — "favor calm read" scene-baseline framing must never
+# undermine the strict PROTECTED VEHICLE distance rules on a car camera.
+#
+# Root cause of a real regression: a protected vehicle parked in its usual
+# spot IS the camera's learned "usual background", so a low scene-deviation
+# score on that camera is true on almost every clip regardless of whether a
+# person is currently touching/leaning on the vehicle (the opening frame the
+# score is computed from is captured at/near the start of motion, often
+# before a person has reached the car). The old code appended a "favor a
+# calm, routine read" instruction on every one of those clips, which measurably
+# competed with and could override the PROTECTED VEHICLE block's much
+# stricter "within 1 foot -> suspicious=true, confidence>=0.8" rule — even
+# for large, generally instruction-compliant providers like OpenAI, not just
+# smaller local models.
+# ---------------------------------------------------------------------------
+
+
+def test_build_prompt_omits_favor_calm_scene_baseline_for_car_camera() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="Silver Kia Forte, parked in the driveway",
+    )
+    prompt = a._build_prompt("Driveway", scene_deviation=0.02)
+    assert "favor a calm, routine read" not in prompt
+    assert "closely matches its usual background" not in prompt
+    # The strict distance rules must still be present and untouched.
+    assert "PROTECTED VEHICLE" in prompt
+    assert "confidence ≥0.8" in prompt
+
+
+def test_build_prompt_keeps_elevated_scene_baseline_for_car_camera() -> None:
+    """A HIGH deviation ('something new in frame') is still a useful signal
+    on a car camera — e.g. flags a second vehicle or object that wasn't
+    there before — only the low-deviation 'favor calm' framing is dropped."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="Silver Kia Forte, parked in the driveway",
+    )
+    prompt = a._build_prompt("Driveway", scene_deviation=0.5)
+    assert "SCENE BASELINE" in prompt
+    assert "differs from its usual background" in prompt
+
+
+def test_build_prompt_keeps_favor_calm_scene_baseline_for_non_car_camera() -> None:
+    """Non-car cameras (or a car camera list that excludes this one) are
+    unaffected by the fix — the calming framing is still valid there."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="Silver Kia Forte, parked in the driveway",
+        car_cameras=["Driveway"],
+    )
+    prompt = a._build_prompt("Front Door", scene_deviation=0.02)
+    assert "closely matches its usual background" in prompt
+    assert "Favor a calm, routine read" in prompt
+
+
+def test_build_prompt_keeps_favor_calm_scene_baseline_when_no_car_configured() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam", scene_deviation=0.02)
+    assert "closely matches its usual background" in prompt
+    assert "Favor a calm, routine read" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -6763,3 +7233,358 @@ def test_build_prompt_confidence_floor_rule_present() -> None:
     assert "confidence must be at least 0.5" in prompt
     assert "ambient change alone" in prompt
     assert "set suspicious=false instead of reporting a low-confidence guess" in prompt
+
+
+# ===========================================================================
+# v4.0.0 — motion-trajectory hint, cross-provider escalation, RECENT
+# CORRECTIONS prompt block, Moondream fine-tune hot-swap
+# ===========================================================================
+
+
+def _real_jpeg_with_bar(
+    bar_x: int,
+    width: int = 64,
+    height: int = 64,
+    bg: int = 20,
+    fg: int = 220,
+    bar_width: int = 10,
+) -> bytes:
+    """Build a decodable JPEG: a bright vertical bar on a dark background.
+
+    Used to construct frame sequences with a controllable, real motion
+    signal for :meth:`BaseAnalyzer._compute_motion_trajectory_hint` tests —
+    moving ``bar_x`` across frames simulates lateral movement, and varying
+    ``fg`` at a fixed ``bar_x`` simulates a growing/shrinking motion
+    intensity trend without a lateral shift.
+    """
+    import io
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", (width, height), color=(bg, bg, bg))
+    draw = ImageDraw.Draw(img)
+    x0 = max(0, bar_x)
+    x1 = min(width - 1, bar_x + bar_width)
+    draw.rectangle([x0, 0, x1, height - 1], fill=(fg, fg, fg))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Motion-trajectory hint
+# ---------------------------------------------------------------------------
+
+
+def test_motion_trajectory_hint_insufficient_frames() -> None:
+    frames = [_real_jpeg(100), _real_jpeg(100)]
+    assert BaseAnalyzer._compute_motion_trajectory_hint(frames) is None
+
+
+def test_motion_trajectory_hint_no_motion() -> None:
+    frames = [_real_jpeg(100)] * 4
+    assert BaseAnalyzer._compute_motion_trajectory_hint(frames) is None
+
+
+def test_motion_trajectory_hint_left_to_right() -> None:
+    frames = [
+        _real_jpeg_with_bar(2),
+        _real_jpeg_with_bar(18),
+        _real_jpeg_with_bar(34),
+        _real_jpeg_with_bar(50),
+    ]
+    hint = BaseAnalyzer._compute_motion_trajectory_hint(frames)
+    assert hint == "moving left to right across the frame"
+
+
+def test_motion_trajectory_hint_right_to_left() -> None:
+    frames = [
+        _real_jpeg_with_bar(50),
+        _real_jpeg_with_bar(34),
+        _real_jpeg_with_bar(18),
+        _real_jpeg_with_bar(2),
+    ]
+    hint = BaseAnalyzer._compute_motion_trajectory_hint(frames)
+    assert hint == "moving right to left across the frame"
+
+
+def test_motion_trajectory_hint_intensity_increasing() -> None:
+    frames = [
+        _real_jpeg_with_bar(27, fg=60),
+        _real_jpeg_with_bar(27, fg=100),
+        _real_jpeg_with_bar(27, fg=160),
+        _real_jpeg_with_bar(27, fg=230),
+    ]
+    hint = BaseAnalyzer._compute_motion_trajectory_hint(frames)
+    assert hint == "movement intensity increasing over time (may be approaching)"
+
+
+def test_motion_trajectory_hint_intensity_decreasing() -> None:
+    frames = [
+        _real_jpeg_with_bar(27, fg=230),
+        _real_jpeg_with_bar(27, fg=160),
+        _real_jpeg_with_bar(27, fg=100),
+        _real_jpeg_with_bar(27, fg=60),
+    ]
+    hint = BaseAnalyzer._compute_motion_trajectory_hint(frames)
+    assert hint == "movement intensity decreasing over time (may be retreating)"
+
+
+def test_motion_trajectory_hint_returns_none_on_pil_error() -> None:
+    """Non-decodable frames (e.g. PIL unavailable/corrupt JPEG) return None
+    rather than raising."""
+    frames = [_FAKE_JPEG, _FAKE_JPEG_2, _FAKE_JPEG_3]
+    assert BaseAnalyzer._compute_motion_trajectory_hint(frames) is None
+
+
+# ---------------------------------------------------------------------------
+# Zone-motion fraction
+# ---------------------------------------------------------------------------
+
+
+def test_zone_motion_fraction_concentrated_in_zone() -> None:
+    """A zone covering the whole frame captures ~100% of the clip's motion."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    assert fraction == pytest.approx(1.0, abs=0.02)
+
+
+def test_zone_motion_fraction_outside_zone() -> None:
+    """A zone that never overlaps either bar position captures ~0% of motion."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {"x_min": 20 / 64, "y_min": 0.0, "x_max": 40 / 64, "y_max": 1.0}
+    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    assert fraction == pytest.approx(0.0, abs=0.02)
+
+
+def test_zone_motion_fraction_partial_overlap() -> None:
+    """A zone covering only the destination bar position captures roughly
+    half the motion — the leading and trailing edges are similar in size."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {"x_min": 44 / 64, "y_min": 0.0, "x_max": 60 / 64, "y_max": 1.0}
+    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    assert fraction is not None
+    assert 0.3 < fraction < 0.7
+
+
+def test_zone_motion_fraction_insufficient_frames() -> None:
+    assert BaseAnalyzer._zone_motion_fraction([_real_jpeg(100)], {"x_min": 0}) is None
+
+
+def test_zone_motion_fraction_empty_zone() -> None:
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    assert BaseAnalyzer._zone_motion_fraction(frames, {}) is None
+
+
+def test_zone_motion_fraction_no_motion() -> None:
+    frames = [_real_jpeg(100)] * 3
+    zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+    assert BaseAnalyzer._zone_motion_fraction(frames, zone) is None
+
+
+def test_zone_motion_fraction_returns_none_on_pil_error() -> None:
+    frames = [_FAKE_JPEG, _FAKE_JPEG_2]
+    zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+    assert BaseAnalyzer._zone_motion_fraction(frames, zone) is None
+
+
+def test_build_prompt_includes_movement_hint() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt(
+        "Cam", trajectory_hint="moving left to right across the frame"
+    )
+    assert "MOVEMENT:" in prompt
+    assert "moving left to right across the frame" in prompt
+    assert "rough automated estimate" in prompt
+
+
+def test_build_prompt_omits_movement_hint_when_none() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam", trajectory_hint=None)
+    assert "MOVEMENT:" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# RECENT HUMAN CORRECTIONS prompt block
+# ---------------------------------------------------------------------------
+
+
+def test_build_prompt_includes_recent_corrections() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt(
+        "Cam",
+        recent_corrections=[
+            {
+                "original_suspicious": True,
+                "correction_note": "This was just the mail carrier.",
+            }
+        ],
+    )
+    assert "RECENT HUMAN CORRECTIONS" in prompt
+    assert "This was just the mail carrier." in prompt
+    assert "judge THIS clip on its own visible content" in prompt
+
+
+def test_build_prompt_omits_corrections_without_notes() -> None:
+    """A bare correct/incorrect click with no note carries no reusable
+    textual signal and must not appear in the prompt."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt(
+        "Cam",
+        recent_corrections=[
+            {"original_suspicious": False, "correction_note": ""},
+        ],
+    )
+    assert "RECENT HUMAN CORRECTIONS" not in prompt
+
+
+def test_build_prompt_caps_corrections_at_three() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    corrections = [
+        {"original_suspicious": True, "correction_note": f"note {i}"} for i in range(5)
+    ]
+    prompt = a._build_prompt("Cam", recent_corrections=corrections)
+    for i in range(3):
+        assert f"note {i}" in prompt
+    for i in range(3, 5):
+        assert f"note {i}" not in prompt
+
+
+def test_build_prompt_no_corrections_param_is_a_noop() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Cam")
+    assert "RECENT HUMAN CORRECTIONS" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Moondream Cloud fine-tune hot-swap
+# ---------------------------------------------------------------------------
+
+
+def test_moondream_cloud_set_finetune_model() -> None:
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    assert a.model_name() == "moondream3-preview"
+    a.set_finetune_model("moondream3-preview/abc123@50")
+    assert a.model_name() == "moondream3-preview/abc123@50"
+    a.set_finetune_model("")
+    assert a.model_name() == "moondream3-preview"
+
+
+# ---------------------------------------------------------------------------
+# analyze_clip threads recent_corrections through to _build_prompt
+# ---------------------------------------------------------------------------
+
+
+async def test_analyze_clip_passes_recent_corrections_to_prompt() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+
+    captured_prompts: list[str] = []
+
+    async def fake_call_model(frames: list, prompt: str) -> str:
+        captured_prompts.append(prompt)
+        return '{"suspicious": false, "confidence": 0.1, "description": "Clear"}'
+
+    a._call_model = fake_call_model  # type: ignore[method-assign]
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        await a.analyze_clip(
+            "/clips/test.mp4",
+            "c1",
+            "Driveway",
+            recent_corrections=[
+                {
+                    "original_suspicious": True,
+                    "correction_note": "Just the mail carrier.",
+                }
+            ],
+        )
+
+    assert captured_prompts
+    assert "Just the mail carrier." in captured_prompts[0]
+
+
+# ===========================================================================
+# v4.0.0 — Prompt-debug capture (ai_prompt_debug_enabled)
+# ===========================================================================
+
+
+def test_set_prompt_debug_toggles_flag() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    assert a._store_prompt_debug is False
+    a.set_prompt_debug(True)
+    assert a._store_prompt_debug is True
+    a.set_prompt_debug(False)
+    assert a._store_prompt_debug is False
+
+
+async def test_analyze_clip_omits_prompt_text_by_default() -> None:
+    """prompt_text stays empty unless set_prompt_debug(True) was called —
+    prompts are long and this is an opt-in debugging aid."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "Clear"}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.prompt_text == ""
+
+
+async def test_analyze_clip_captures_prompt_text_when_enabled() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    a.set_prompt_debug(True)
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "Clear"}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.prompt_text
+    assert result.prompt_text.startswith("p")
+    assert "OUTPUT RULES" in result.prompt_text
+
+
+def test_analysis_result_to_dict_includes_prompt_text() -> None:
+    result = AnalysisResult(
+        clip_id="c1",
+        camera="Front Door",
+        model="llava",
+        response_text="",
+        is_suspicious=False,
+        confidence=0.1,
+        summary="",
+        frame_count=1,
+        analysis_duration=1.0,
+        analyzed_at="2024-06-01T09:00:00+00:00",
+        prompt_text="the exact prompt",
+    )
+    assert result.to_dict()["prompt_text"] == "the exact prompt"
+
+
+def test_create_analyzer_wires_store_prompt_debug() -> None:
+    a = create_analyzer(
+        "ollama",
+        "prompt",
+        ollama_url="http://localhost:11434",
+        store_prompt_debug=True,
+    )
+    assert isinstance(a, ClipAnalyzer)
+    assert a._store_prompt_debug is True
+
+
+def test_create_analyzer_store_prompt_debug_defaults_false() -> None:
+    a = create_analyzer("ollama", "prompt", ollama_url="http://localhost:11434")
+    assert isinstance(a, ClipAnalyzer)
+    assert a._store_prompt_debug is False
