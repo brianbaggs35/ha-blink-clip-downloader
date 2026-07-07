@@ -3925,6 +3925,94 @@ def test_build_prompt_no_zone_motion_hint_when_not_provided() -> None:
 
 
 # ------------------------------------------------------------------
+# vision_hints — optional computer-vision pipeline hints (see vision.py)
+# ------------------------------------------------------------------
+
+
+def test_build_prompt_no_vision_hints_when_not_provided() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Driveway")
+    assert "OBJECT DETECTION" not in prompt
+    assert "DEPTH ESTIMATE" not in prompt
+    assert "CONTACT ANALYSIS" not in prompt
+    assert "RECOGNIZED RESIDENT" not in prompt
+
+
+def test_build_prompt_includes_populated_vision_hints() -> None:
+    from blink_downloader.vision import VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    hints = VisionHints(
+        detection_hint="\n\nOBJECT DETECTION: test detection hint",
+        depth_hint="\n\nDEPTH ESTIMATE: test depth hint",
+        contact_hint="\n\nCONTACT ANALYSIS: test contact hint",
+        recognized_resident_hint="\n\nRECOGNIZED RESIDENT: test recognition hint",
+    )
+    prompt = a._build_prompt("Driveway", vision_hints=hints)
+    assert "test detection hint" in prompt
+    assert "test depth hint" in prompt
+    assert "test contact hint" in prompt
+    assert "test recognition hint" in prompt
+
+
+def test_build_prompt_ignores_unset_vision_hint_fields() -> None:
+    from blink_downloader.vision import VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    hints = VisionHints(detection_hint="\n\nOBJECT DETECTION: only this one")
+    prompt = a._build_prompt("Driveway", vision_hints=hints)
+    assert "only this one" in prompt
+    assert "DEPTH ESTIMATE" not in prompt
+
+
+def test_attach_vision_pipeline_sets_field() -> None:
+    from blink_downloader.vision import VisionConfig, VisionPipeline
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    assert a._vision_pipeline is None
+    pipeline = VisionPipeline(VisionConfig())
+    a.attach_vision_pipeline(pipeline)
+    assert a._vision_pipeline is pipeline
+
+
+async def test_analyze_clip_with_vision_pipeline_injects_hints_and_enhanced_frames() -> (
+    None
+):
+    """End-to-end: an attached VisionPipeline's hints reach the final prompt,
+    and enhanced_frames (when set) replace the frames actually sent to the
+    AI model — exercising the wiring added to _analyze_clip_locked."""
+    from blink_downloader.vision import VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    a.set_prompt_debug(True)
+
+    enhanced = [_real_jpeg(50)]
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            enhanced_frames=enhanced,
+            detection_hint="\n\nOBJECT DETECTION: a person and a car were detected",
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "Clear"}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    fake_pipeline.process_clip.assert_awaited_once()
+    assert "a person and a car were detected" in result.prompt_text
+    call_frames = a._call_model.call_args.args[0]
+    assert call_frames == enhanced
+
+
+# ------------------------------------------------------------------
 # short-event hint — see _SHORT_EVENT_DURATION_SECONDS / _build_prompt
 # ------------------------------------------------------------------
 

@@ -1,37 +1,106 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.20
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:trixie
 FROM ${BUILD_FROM}
 
 # BUILD_ARCH is injected by the HA build system for multi-arch images.
 ARG BUILD_ARCH
 ARG BUILD_VERSION=2.8.1
 
-# Install C build tools needed by some Python wheels.
-# jpeg-dev + zlib-dev are required by Pillow.
-# make + cmake are only used by moondream on amd64 but are small enough to install unconditionally.
-RUN apk add --no-cache gcc g++ musl-dev libffi-dev openssl-dev ffmpeg jpeg-dev zlib-dev make cmake
+# Base image switched from Alpine to Debian (trixie, glibc) in 4.1.0 — the
+# optional computer-vision pipeline (ai_object_detection_enabled and friends,
+# see config.yaml) depends on torch, which has no official wheels for
+# musl/Alpine on any architecture. This is the same class of problem already
+# documented below for moondream's TVM build on aarch64 musllinux, just
+# affecting a much larger and more central set of dependencies. Debian's
+# "*-base-debian" images ship no interpreter at all (unlike the old
+# "*-base-python" Alpine images), so Python itself is installed explicitly
+# below. Trixie (Debian 13) ships Python 3.13 by default, satisfying this
+# project's requires-python = ">=3.12".
+#
+# PIP_BREAK_SYSTEM_PACKAGES: Debian's system pip refuses "externally managed
+# environment" installs (PEP 668) by default. This container is single
+# purpose and never shares its Python environment with the host OS package
+# manager, so that protection is unnecessary here — set globally rather than
+# passing --break-system-packages on every pip3 invocation below.
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
+
+# python3-dev + build-essential: compile any C-extension wheel without a
+# prebuilt manylinux wheel for this Python version.
+# libjpeg-dev + zlib1g-dev: required by Pillow.
+# libgl1 + libglib2.0-0: required by opencv (cv2) at import time, even with
+# the "headless" wheel — several of its dynamic library dependencies are
+# still linked against these at runtime.
+# cmake: only used by moondream on amd64 but small enough to install
+# unconditionally, matching the previous Alpine image's behavior.
+RUN apt-get update && apt-get install --no-install-recommends -y \
+        python3 python3-pip python3-dev build-essential \
+        libffi-dev libssl-dev ffmpeg libjpeg-dev zlib1g-dev cmake \
+        libgl1 libglib2.0-0 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies first (Docker layer cache)
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
+# Optional: computer-vision enhancement pipeline (object detection/tracking,
+# depth estimation, contact segmentation, face recognition — see vision.py
+# and the ai_object_detection_enabled/ai_depth_estimation_enabled/
+# ai_segmentation_enabled/ai_face_recognition_enabled config options, all
+# off by default). These packages are large (order of 1-2 GB combined,
+# mostly torch itself) and are installed unconditionally on both
+# architectures so the config toggles work out of the box, but nothing in
+# this block is imported or loaded into memory unless a feature is actually
+# enabled — see vision.py's lazy-import pattern.
+#
+# torch is installed from PyTorch's dedicated CPU-only wheel index first, as
+# a separate step, per PyTorch's own install guidance — the default PyPI
+# index resolves torch's GPU/CUDA build, which pulls several additional
+# gigabytes of NVIDIA runtime libraries that are useless here (this add-on
+# never has GPU access) and would roughly double the final image size.
+# Installing the CPU wheel first means the packages below (which merely
+# require *some* compatible torch) reuse it instead of pulling the CUDA
+# build in as a transitive dependency.
+#
+# Entirely non-fatal, matching the moondream block above: if this fails for
+# any reason (network hiccup, a wheel temporarily missing for one
+# architecture, disk pressure on an emulated aarch64 CI runner, etc.) the
+# add-on still builds and runs — the affected config toggles simply report
+# themselves unavailable at runtime (see vision.py's is_*_available() checks).
+RUN ( \
+        pip3 install --no-cache-dir "torch>=2.4,<3" --index-url https://download.pytorch.org/whl/cpu \
+        && pip3 install --no-cache-dir \
+            "ultralytics>=8.3,<9" \
+            "opencv-python-headless>=4.10,<5" \
+            "transformers>=4.56,<5" \
+            "facenet-pytorch>=2.6,<3" \
+        2>&1 | tail -20 \
+    ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled and related toggles will report unavailable"
+
 # Optional: moondream local model support (moondream_local provider).
-# Only attempted on amd64 — the moondream package has no pre-built wheels for
-# aarch64 musllinux and its TVM compilation hangs indefinitely on that platform.
+# Attempted on both architectures as of the 4.1.0 Debian base image switch —
+# the historical blocker was musllinux (Alpine) having no wheels for
+# moondream's torch/kestrel dependencies, not the architecture itself; torch
+# has published manylinux aarch64 wheels for a long time. Deliberately placed
+# *after* the computer-vision block above so moondream's own (unpinned)
+# torch requirement is satisfied by the CPU-only build already installed
+# there instead of pulling in a second, much larger CUDA-enabled torch as a
+# fresh transitive dependency.
+# Local ("Photon") inference itself still requires an NVIDIA GPU (relevant
+# for Jetson-class aarch64 boards, not typical Pi-class ones) or Apple
+# Silicon regardless of architecture — see analyzer.py's
+# MoondreamLocalAnalyzer._load_model_sync — so most hosts on either
+# architecture without a GPU will still see this provider report itself
+# unavailable at runtime, exactly as before this change.
 # Pinned to the >=1.3,<2 range: the moondream package rewrote its local-
 # inference architecture between the 0.x and 1.x lines (0.x: CPU-only ONNX;
 # 1.x: GPU-only "Photon" engine via kestrel/torch, requires an API key even
 # for local mode) without a matching major-version bump at the time, and an
 # unpinned install here previously let that rewrite silently break this
-# provider — see analyzer.py's MoondreamLocalAnalyzer._load_model_sync.
+# provider.
 # Non-fatal: if the install fails the moondream_local provider reports "not
 # installed" at runtime and the image still starts normally.
-RUN if [ "${BUILD_ARCH}" = "amd64" ]; then \
-        pip3 install --no-cache-dir "moondream>=1.3,<2" 2>&1 | tail -5 || \
-        echo "INFO: moondream install failed; moondream_local provider will be unavailable"; \
-    else \
-        echo "INFO: moondream is not supported on ${BUILD_ARCH}; moondream_local provider will be unavailable"; \
-    fi
+RUN pip3 install --no-cache-dir "moondream>=1.3,<2" 2>&1 | tail -5 || \
+    echo "INFO: moondream install failed; moondream_local provider will be unavailable"
 
 # Install the app package so `python3 -m blink_downloader` works anywhere
 COPY pyproject.toml /app/pyproject.toml
@@ -63,4 +132,3 @@ LABEL \
     io.hass.arch="${BUILD_ARCH}" \
     io.hass.type="addon" \
     io.hass.version="${BUILD_VERSION}"
-

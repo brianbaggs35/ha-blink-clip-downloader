@@ -118,6 +118,19 @@ CREATE TABLE IF NOT EXISTS analysis_feedback (
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_camera ON analysis_feedback (camera);
 CREATE INDEX IF NOT EXISTS idx_feedback_clip   ON analysis_feedback (clip_id);
+
+-- Local-only face enrollment for the optional face-recognition pipeline
+-- (see vision.py, ai_face_recognition_enabled). embedding is a JSON-encoded
+-- list of floats (a 512-dim facenet-pytorch InceptionResnetV1 embedding) —
+-- stored as TEXT rather than a packed BLOB for the same reason `tags`
+-- above is TEXT, simplicity over compactness for a table that will only
+-- ever hold a handful of rows. Never leaves this database.
+CREATE TABLE IF NOT EXISTS face_enrollments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL,
+    embedding  TEXT    NOT NULL,
+    created_at TEXT    NOT NULL
+);
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -1388,3 +1401,42 @@ class ClipDatabase:
         for r in rows:
             counts[r["status"]] = r["cnt"]
         return counts
+
+    # ------------------------------------------------------------------
+    # Local-only face enrollment (see vision.py, ai_face_recognition_enabled)
+    # ------------------------------------------------------------------
+
+    async def add_face_enrollment(self, name: str, embedding: list[float]) -> int:
+        """Store a new enrolled household member's face embedding. Returns its id."""
+        if self._db is None:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO face_enrollments (name, embedding, created_at) VALUES (?, ?, ?)",
+            (name, json.dumps(embedding), datetime.now(timezone.utc).isoformat()),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def list_face_enrollments(self) -> list[dict[str, Any]]:
+        """Return all enrolled household members, with embeddings decoded to lists."""
+        if self._db is None:
+            return []
+        async with self._db.execute(
+            "SELECT id, name, embedding, created_at FROM face_enrollments ORDER BY name"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            d["embedding"] = json.loads(d["embedding"])
+            results.append(d)
+        return results
+
+    async def delete_face_enrollment(self, enrollment_id: int) -> None:
+        """Remove an enrolled household member by id."""
+        if self._db is None:
+            return
+        await self._db.execute(
+            "DELETE FROM face_enrollments WHERE id=?", (enrollment_id,)
+        )
+        await self._db.commit()

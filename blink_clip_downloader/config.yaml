@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v4.0.2"
+version: "v4.1.0"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -321,6 +321,42 @@ options:
   # default since prompts are long and this is an opt-in debugging aid.
   ai_prompt_debug_enabled: false
 
+  # --- Computer-vision enhancement pipeline (heavy, optional) ---
+  # ⚠ RESOURCE WARNING: everything in this section requires substantially
+  # more CPU and RAM than the rest of this add-on, and downloads large ML
+  # models (100MB-800MB+ each, cached under /data after first use). Only
+  # enable these on hardware with real spare capacity — a modern NUC,
+  # mini-PC, or similar. NOT recommended on a Raspberry Pi or other
+  # constrained device. Every option below is off by default, and clip
+  # analysis works exactly as it did before this section existed with all
+  # of them left disabled. See DOCS.md for details.
+  #
+  # Enhance frames (contrast/denoise) before sending them to the AI model.
+  # The lightest option here — no object-detection model download — but
+  # still pulls in the opencv dependency.
+  ai_cv_preprocessing_enabled: false
+  # Detect and track people/vehicles/animals/packages (YOLO + ByteTrack) and
+  # feed the AI a precise, code-computed OBJECT DETECTION hint instead of
+  # relying on motion-diff heuristics alone.
+  ai_object_detection_enabled: false
+  # Ultralytics model to use for detection. "n" (nano) models are the
+  # fastest/lightest and the recommended starting point on CPU-only
+  # hardware; larger models (s/m/l/x) are more accurate but much slower.
+  ai_object_detection_model: "yolo11n.pt"
+  # Monocular depth estimation (Depth Anything V2) to tell "overlapping in
+  # the 2D frame" apart from "actually at the same distance from the
+  # camera". Requires ai_object_detection_enabled.
+  ai_depth_estimation_enabled: false
+  # Precise pixel-level contact segmentation (SAM2) — the heaviest option
+  # here — to refine a detected person/vehicle box overlap into an actual
+  # touching-or-not judgment. Requires ai_object_detection_enabled.
+  ai_segmentation_enabled: false
+  # Local-only face recognition to suppress alerts for enrolled household
+  # members. Enrollment happens entirely on-device via the web UI's AI tab
+  # — reference photos and computed face embeddings never leave this add-on
+  # or get sent to any cloud AI provider.
+  ai_face_recognition_enabled: false
+
   # --- Extended Notifications (AI alerts) ---
   # HA mobile app entity to push AI suspicious-activity alerts to.
   mobile_app_target: ""
@@ -423,6 +459,12 @@ schema:
   ai_car_cameras:
     - "str?"
   ai_prompt_debug_enabled: "bool"
+  ai_cv_preprocessing_enabled: "bool"
+  ai_object_detection_enabled: "bool"
+  ai_object_detection_model: "str?"
+  ai_depth_estimation_enabled: "bool"
+  ai_segmentation_enabled: "bool"
+  ai_face_recognition_enabled: "bool"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"
   smtp_host: "str?"

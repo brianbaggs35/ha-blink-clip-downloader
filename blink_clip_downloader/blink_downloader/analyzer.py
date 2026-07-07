@@ -28,6 +28,7 @@ import aiohttp
 
 if TYPE_CHECKING:
     from .database import ClipDatabase
+    from .vision import VisionHints, VisionPipeline
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -505,6 +506,12 @@ class BaseAnalyzer(abc.ABC):
         # feature. Unset (None) disables it entirely — set via
         # attach_scene_baseline_db() once the app has a database ready.
         self._scene_baseline_db: ClipDatabase | None = None
+        # Optional VisionPipeline (see vision.py) providing the heavy,
+        # off-by-default computer-vision enhancement stages (object
+        # detection/tracking, depth estimation, contact segmentation, face
+        # recognition). Unset (None) disables all of them — set via
+        # attach_vision_pipeline() once the app has built one from config.
+        self._vision_pipeline: VisionPipeline | None = None
         # analyze_clip() stashes per-call state (_current_camera,
         # _last_prompt_tokens/_last_completion_tokens) on self across many
         # awaited I/O calls, so two calls interleaving on the same analyzer
@@ -666,6 +673,18 @@ class BaseAnalyzer(abc.ABC):
         """
         self._scene_baseline_db = db
 
+    def attach_vision_pipeline(self, pipeline: VisionPipeline) -> None:
+        """Enable the optional computer-vision enhancement pipeline (see vision.py).
+
+        Unset (None, the default) means every stage — frame preprocessing,
+        object detection/tracking, depth estimation, contact segmentation,
+        face recognition — is skipped entirely and analysis proceeds
+        exactly as it does today. Each stage within the attached pipeline
+        is independently toggled via its own config option; attaching a
+        pipeline does not by itself enable anything.
+        """
+        self._vision_pipeline = pipeline
+
     # ------------------------------------------------------------------
     # Abstract interface
     # ------------------------------------------------------------------
@@ -804,6 +823,20 @@ class BaseAnalyzer(abc.ABC):
             else:
                 frames = self._select_best_frames(frames, target_frame_count)
 
+        # Optional computer-vision enhancement pipeline (see vision.py) — off
+        # entirely unless attach_vision_pipeline() was called and at least
+        # one of its stages is enabled in config. Runs before the
+        # trajectory/zone-motion heuristics below so that, when frame
+        # preprocessing is enabled, those heuristics see the same enhanced
+        # frames that get sent to the AI model.
+        vision_hints = None
+        if self._vision_pipeline is not None:
+            vision_hints = await self._vision_pipeline.process_clip(
+                frames, car_description=self._car_description
+            )
+            if vision_hints.enhanced_frames is not None:
+                frames = vision_hints.enhanced_frames
+
         trajectory_hint = self._compute_motion_trajectory_hint(frames)
 
         zone_motion_fraction: float | None = None
@@ -820,6 +853,7 @@ class BaseAnalyzer(abc.ABC):
             recent_corrections=recent_corrections,
             zone_motion_fraction=zone_motion_fraction,
             clip_duration=clip_duration,
+            vision_hints=vision_hints,
         )
 
         if self._frame_strategy == "sequential":
@@ -1426,11 +1460,12 @@ class BaseAnalyzer(abc.ABC):
         recent_corrections: list[dict[str, Any]] | None = None,
         zone_motion_fraction: float | None = None,
         clip_duration: float = 0.0,
+        vision_hints: VisionHints | None = None,
     ) -> str:
         """Build a rich analysis prompt with camera context, temporal context,
         anomaly alert, scene-baseline signal, movement hint, recent human
-        corrections, zone-motion evidence, short-event hint, and asset-protection
-        distance rules."""
+        corrections, zone-motion evidence, short-event hint, optional
+        computer-vision pipeline hints, and asset-protection distance rules."""
         base = self._camera_prompts.get(camera, self._base_prompt)
         parts = [base]
 
@@ -1614,6 +1649,22 @@ class BaseAnalyzer(abc.ABC):
                     "Do not assume the vehicle is involved just because something moved "
                     "somewhere in frame."
                 )
+
+        # Optional computer-vision pipeline hints (see vision.py) — each is
+        # independently toggled in config and already fully formatted with
+        # its own section header and hedging language; simply append
+        # whichever ones a given clip actually produced. None of these
+        # exist unless attach_vision_pipeline() was called and the
+        # corresponding stage is enabled.
+        if vision_hints is not None:
+            for hint in (
+                vision_hints.detection_hint,
+                vision_hints.depth_hint,
+                vision_hints.contact_hint,
+                vision_hints.recognized_resident_hint,
+            ):
+                if hint:
+                    parts.append(hint)
 
         # Protected vehicle with precise distance rules — only for cameras that
         # can see the car (all cameras when car_cameras is empty, otherwise only

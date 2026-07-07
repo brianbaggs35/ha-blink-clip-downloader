@@ -1,5 +1,80 @@
 # Changelog
 
+## 4.1.0
+
+Major release: an optional, off-by-default computer-vision enhancement
+pipeline layered on top of the existing AI-provider prompt pipeline —
+object detection/tracking, monocular depth estimation, pixel-level contact
+segmentation, OpenCV frame preprocessing, and local-only face-recognition
+enrollment. None of it changes default behavior; every stage is disabled
+out of the box and the add-on analyzes clips exactly as it did in 4.0.2
+until a toggle is turned on.
+
+### New feature — computer-vision enhancement pipeline
+
+- Added `vision.py`: five independently-toggleable stages, each lazily
+  importing its own heavy dependency and reporting itself unavailable
+  rather than raising if that dependency isn't installed:
+  - **Frame preprocessing** (`ai_cv_preprocessing_enabled`) — CLAHE contrast
+    enhancement + light denoising (OpenCV) applied to frames before they're
+    sent to the AI model.
+  - **Object detection + tracking** (`ai_object_detection_enabled`,
+    `ai_object_detection_model`) — YOLO (Ultralytics) + ByteTrack, feeding a
+    code-computed OBJECT DETECTION hint (detected classes, and pixel-based
+    person-to-vehicle distance) into the prompt, more precise than
+    motion-diff heuristics alone.
+  - **Depth estimation** (`ai_depth_estimation_enabled`) — Depth Anything V2
+    (via transformers), distinguishing "overlapping in the 2D frame" from
+    "actually at the same distance from the camera" for a detected
+    person/vehicle pair. Requires object detection.
+  - **Contact segmentation** (`ai_segmentation_enabled`) — SAM2 (via
+    transformers), refining a bounding-box overlap into an actual
+    touching-or-not judgment using each object's real segmented outline.
+    The heaviest stage; requires object detection.
+  - **Local-only face recognition** (`ai_face_recognition_enabled`) —
+    facenet-pytorch (MTCNN + InceptionResnetV1). Household members are
+    enrolled from a single reference photo via the AI tab's new **Face
+    Recognition Enrollment** panel; photos and embeddings are stored only
+    in this add-on's own database and never uploaded to any cloud AI
+    provider, regardless of `ai_provider`. A match adds a RECOGNIZED
+    RESIDENT hint to the prompt.
+  - Every hint is appended to the same prompt the SCENE BASELINE/ZONE
+    MOTION hints already use — the configured AI provider still makes
+    every suspicious/not-suspicious call; these stages only improve the
+    evidence it reasons over.
+- All five options are off by default and require substantial additional
+  CPU/RAM plus first-use model downloads (100MB-800MB+ each, cached under
+  `/data`) when enabled — see the new "Computer-Vision Enhancement
+  Pipeline" section in DOCS.md for hardware guidance. Not recommended on a
+  Raspberry Pi or similarly constrained device.
+
+### Breaking change — Docker base image
+
+- Switched the add-on's base image from
+  `ghcr.io/home-assistant/{arch}-base-python:3.12-alpine3.20` (Alpine/musl)
+  to `ghcr.io/home-assistant/{arch}-base-debian:trixie` (Debian/glibc).
+  PyTorch — a dependency of the object-detection, depth-estimation,
+  contact-segmentation, and face-recognition stages above — has no
+  official wheels for musl/Alpine on any architecture (the same class of
+  problem already documented for moondream's TVM build on aarch64
+  musllinux), so there was no way to support this pipeline on the previous
+  base image. Trixie ships Python 3.13 by default, satisfying this
+  project's `requires-python = ">=3.12"`. This grows the baseline image
+  size for every install by tens of MB even with the entire CV pipeline
+  left disabled, since it's a different base OS, not an optional layer.
+
+### Internal
+
+- Added the `face_enrollments` table (`database.py`) and
+  `add_face_enrollment`/`list_face_enrollments`/`delete_face_enrollment`.
+- Added `/api/ai/faces` (GET/POST) and `/api/ai/faces/{id}` (DELETE) to
+  `media_server.py`, plus the AI tab's enrollment panel.
+- Added the `vision` optional dependency group to `pyproject.toml`
+  (`ultralytics`, `opencv-python-headless`, `transformers`,
+  `facenet-pytorch`) for local development/testing; the Docker image
+  installs these directly (see Dockerfile) since HA add-on users can't run
+  `pip install` themselves.
+
 ## 4.0.2
 
 ### Bug fixes

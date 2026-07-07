@@ -2854,6 +2854,143 @@ async def test_ai_feedback_submit_keeps_typed_note(
     assert data["correction_note"] == "Just the mail carrier."
 
 
+# ---------------------------------------------------------------------------
+# /api/ai/faces — local-only face-recognition enrollment
+# ---------------------------------------------------------------------------
+
+
+async def _real_jpeg_base64() -> str:
+    import base64
+    import io as _io
+
+    from PIL import Image
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (10, 10), color=(100, 100, 100)).save(buf, format="JPEG")
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+async def test_faces_list_empty(client: TestClient) -> None:
+    resp = await client.get("/api/ai/faces")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["faces"] == []
+
+
+async def test_faces_enroll_requires_name(client: TestClient) -> None:
+    resp = await client.post(
+        "/api/ai/faces",
+        json={"name": "", "image_base64": await _real_jpeg_base64()},
+    )
+    assert resp.status == 400
+
+
+async def test_faces_enroll_requires_image(client: TestClient) -> None:
+    resp = await client.post("/api/ai/faces", json={"name": "Brian"})
+    assert resp.status == 400
+
+
+async def test_faces_enroll_rejects_invalid_base64(client: TestClient) -> None:
+    resp = await client.post(
+        "/api/ai/faces", json={"name": "Brian", "image_base64": "not-base64!!"}
+    )
+    assert resp.status == 400
+
+
+async def test_faces_enroll_bad_json(client: TestClient) -> None:
+    resp = await client.post(
+        "/api/ai/faces", data="not json", headers={"Content-Type": "application/json"}
+    )
+    assert resp.status == 400
+
+
+async def test_faces_enroll_unavailable_when_dependency_missing(
+    client: TestClient,
+) -> None:
+    with patch(
+        "blink_downloader.media_server.is_face_recognition_available",
+        return_value=False,
+    ):
+        resp = await client.post(
+            "/api/ai/faces",
+            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
+        )
+    assert resp.status == 400
+
+
+async def test_faces_enroll_no_face_detected(client: TestClient) -> None:
+    with (
+        patch(
+            "blink_downloader.media_server.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.FaceEmbedder.embed",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        resp = await client.post(
+            "/api/ai/faces",
+            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
+        )
+    assert resp.status == 400
+
+
+async def test_faces_enroll_multiple_faces_rejected(client: TestClient) -> None:
+    with (
+        patch(
+            "blink_downloader.media_server.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.FaceEmbedder.embed",
+            new=AsyncMock(return_value=[[0.1, 0.2], [0.3, 0.4]]),
+        ),
+    ):
+        resp = await client.post(
+            "/api/ai/faces",
+            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
+        )
+    assert resp.status == 400
+
+
+async def test_faces_enroll_success_then_list_then_delete(client: TestClient) -> None:
+    with (
+        patch(
+            "blink_downloader.media_server.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.FaceEmbedder.embed",
+            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
+        ),
+    ):
+        resp = await client.post(
+            "/api/ai/faces",
+            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
+        )
+        assert resp.status == 200
+        enrolled = await resp.json()
+        assert enrolled["name"] == "Brian"
+
+    resp = await client.get("/api/ai/faces")
+    data = await resp.json()
+    assert len(data["faces"]) == 1
+    face_id = data["faces"][0]["id"]
+
+    resp = await client.delete(f"/api/ai/faces/{face_id}")
+    assert resp.status == 200
+
+    resp = await client.get("/api/ai/faces")
+    data = await resp.json()
+    assert data["faces"] == []
+
+
+async def test_faces_delete_invalid_id(client: TestClient) -> None:
+    resp = await client.delete("/api/ai/faces/not-a-number")
+    assert resp.status == 400
+
+
 async def test_ai_feedback_stats_empty(client: TestClient) -> None:
     resp = await client.get("/api/ai/feedback/stats")
     assert resp.status == 200

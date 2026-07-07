@@ -281,6 +281,9 @@ jobs:
           echo "GET /api/auth/status"
           curl -fsS http://localhost:8099/api/auth/status | jq -e 'has("state")' >/dev/null
 
+          echo "GET /api/ai/faces (local-only face-recognition enrollment)"
+          curl -fsS http://localhost:8099/api/ai/faces | jq -e 'has("faces")' >/dev/null
+
           echo "All media server endpoints responded as expected"
 
       - name: Playwright e2e smoke check

@@ -264,6 +264,39 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # not something every install needs kept in the database.
     ai_prompt_debug_enabled: bool = False
 
+    # --- Computer-vision enhancement pipeline (heavy, optional) ---
+    # WARNING: these features require substantially more CPU/RAM than the
+    # rest of this add-on and download large ML models (100MB-800MB+ each,
+    # cached under /data after first use) on first use. Only enable on
+    # hardware with real spare capacity (a modern NUC/mini-PC or better) —
+    # not recommended on a Raspberry Pi or similarly constrained device.
+    # All are off by default; clip analysis behaves exactly as it did before
+    # 4.1.0 with every one of these left disabled. See vision.py and DOCS.md.
+    ai_cv_preprocessing_enabled: bool = False
+    # Object detection + tracking (Ultralytics YOLO + ByteTrack). Feeds a
+    # code-computed OBJECT DETECTION hint into the analysis prompt with
+    # detected person/vehicle/animal/package boxes and their pixel distance,
+    # a more precise signal than the motion-diff-based zone/trajectory hints
+    # alone. "n" (nano) models are the fastest/lightest; "yolo11n.pt" is the
+    # recommended starting point on CPU-only hardware.
+    ai_object_detection_enabled: bool = False
+    ai_object_detection_model: str = "yolo11n.pt"
+    # Monocular depth estimation (Depth Anything V2). Requires object
+    # detection to also be enabled — depth is only computed at detected
+    # person/vehicle locations, to tell "overlapping in the 2D frame" apart
+    # from "actually at the same distance from the camera".
+    ai_depth_estimation_enabled: bool = False
+    # Precise pixel-level contact segmentation (SAM2), refining a detected
+    # person/vehicle box overlap into an actual touching-or-not judgment.
+    # The heaviest of these features; requires object detection enabled.
+    ai_segmentation_enabled: bool = False
+    # Local-only face recognition to suppress alerts for enrolled household
+    # members. Enrollment (reference photos, computed embeddings) is stored
+    # entirely on-device in the add-on's own database — never uploaded to
+    # any cloud AI provider, regardless of which ai_provider is configured.
+    # Off by default; enroll household members via the web UI's AI tab.
+    ai_face_recognition_enabled: bool = False
+
     # --- Extended Notifications (AI alerts) ---
     mobile_app_target: str = ""
     mobile_app_enabled: bool = False
@@ -475,6 +508,23 @@ def _parse_config(data: dict) -> AppConfig:
             if isinstance(c, str) and c.strip()
         ],
         ai_prompt_debug_enabled=bool(data.get("ai_prompt_debug_enabled", False)),
+        ai_cv_preprocessing_enabled=bool(
+            data.get("ai_cv_preprocessing_enabled", False)
+        ),
+        ai_object_detection_enabled=bool(
+            data.get("ai_object_detection_enabled", False)
+        ),
+        ai_object_detection_model=str(
+            data.get("ai_object_detection_model", "") or ""
+        ).strip()
+        or "yolo11n.pt",
+        ai_depth_estimation_enabled=bool(
+            data.get("ai_depth_estimation_enabled", False)
+        ),
+        ai_segmentation_enabled=bool(data.get("ai_segmentation_enabled", False)),
+        ai_face_recognition_enabled=bool(
+            data.get("ai_face_recognition_enabled", False)
+        ),
         # Extended notifications
         mobile_app_target=str(data.get("mobile_app_target", "") or "").strip(),
         mobile_app_enabled=bool(data.get("mobile_app_enabled", False)),

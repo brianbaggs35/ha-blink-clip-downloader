@@ -1916,3 +1916,39 @@ async def test_feedback_cascades_on_clip_delete(db: ClipDatabase) -> None:
     )
     await db.delete_clip("c1")
     assert await db.get_feedback_for_clip("c1") is None
+
+
+# ------------------------------------------------------------------
+# Local-only face enrollment (see vision.py, ai_face_recognition_enabled)
+# ------------------------------------------------------------------
+
+
+async def test_add_and_list_face_enrollment(db: ClipDatabase) -> None:
+    enrollment_id = await db.add_face_enrollment("Brian", [0.1, 0.2, 0.3])
+    assert enrollment_id > 0
+
+    enrollments = await db.list_face_enrollments()
+    assert len(enrollments) == 1
+    assert enrollments[0]["name"] == "Brian"
+    assert enrollments[0]["embedding"] == [0.1, 0.2, 0.3]
+    assert enrollments[0]["id"] == enrollment_id
+
+
+async def test_list_face_enrollments_ordered_by_name(db: ClipDatabase) -> None:
+    await db.add_face_enrollment("Zoe", [0.1])
+    await db.add_face_enrollment("Amy", [0.2])
+    names = [e["name"] for e in await db.list_face_enrollments()]
+    assert names == ["Amy", "Zoe"]
+
+
+async def test_delete_face_enrollment(db: ClipDatabase) -> None:
+    enrollment_id = await db.add_face_enrollment("Brian", [0.1, 0.2])
+    await db.delete_face_enrollment(enrollment_id)
+    assert await db.list_face_enrollments() == []
+
+
+async def test_face_enrollment_without_init_is_noop() -> None:
+    d = ClipDatabase(Path("/nonexistent/no.db"))
+    assert await d.add_face_enrollment("Brian", [0.1]) == 0
+    assert await d.list_face_enrollments() == []
+    await d.delete_face_enrollment(1)  # must not raise

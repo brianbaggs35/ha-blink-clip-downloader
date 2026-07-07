@@ -19,7 +19,10 @@ it must run from the repo root, see below).
 
 Target platform is Home Assistant OS (`arch: aarch64, amd64`); it may work on
 other HA install types but that's not the primary support target
-(see `CONTRIBUTING.md`).
+(see `CONTRIBUTING.md`). The add-on's base image is Debian (`*-base-debian:trixie`,
+glibc) as of 4.1.0, not Alpine — PyTorch (a dependency of the optional
+computer-vision pipeline, see below) has no wheels for musl/Alpine on any
+architecture.
 
 ## Directory layout (`blink_clip_downloader/`)
 
@@ -32,6 +35,16 @@ other HA install types but that's not the primary support target
   - `database.py` — SQLite clip library (`ClipDatabase`).
   - `analyzer.py` — AI vision analysis. See **AI provider architecture** below.
   - `analysis_queue.py` — async queue that feeds clips to the analyzer.
+  - `vision.py` — optional, off-by-default computer-vision enhancement
+    pipeline (object detection/tracking, depth estimation, contact
+    segmentation, OpenCV frame preprocessing, local-only face recognition).
+    Layered on top of `analyzer.py`'s prompt pipeline via
+    `BaseAnalyzer.attach_vision_pipeline()` — each stage produces a hint
+    string appended to the same prompt, never replacing the configured AI
+    provider's judgment. Every stage lazily imports its own heavy
+    dependency (torch/ultralytics/opencv/transformers/facenet-pytorch) and
+    reports itself unavailable rather than raising if missing — none of
+    them are required for the add-on's core features to work.
   - `media_server.py` — aiohttp HTTP server: REST API + a **single embedded
     HTML/CSS/JS string** (`_HTML`) that is the whole web UI/SPA. There is no
     separate frontend build step — the UI is a Python string literal in this
@@ -68,7 +81,7 @@ selected via the `create_analyzer()` factory keyed on `ai_provider`:
 | `ollama`          | `ClipAnalyzer`           | Local/LAN Ollama server                   |
 | `ollama_cloud`    | `OllamaCloudAnalyzer`    | Hosted Ollama Cloud API                   |
 | `moondream_cloud` | `MoondreamCloudAnalyzer` | Moondream Cloud API, no model selection   |
-| `moondream_local` | `MoondreamLocalAnalyzer` | Local moondream package, **x86_64 only**  |
+| `moondream_local` | `MoondreamLocalAnalyzer` | Local moondream package, requires an **NVIDIA/Apple Silicon GPU** (any arch since the 4.1.0 Debian base image switch) |
 | `anthropic`       | `AnthropicAnalyzer`      | Claude vision models                      |
 | `openai`          | `OpenAIAnalyzer`         | GPT vision models                         |
 

@@ -35,11 +35,11 @@ jobs:
         include:
           - arch: aarch64
             base_image: >
-              ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.20
+              ghcr.io/home-assistant/aarch64-base-debian:trixie
             platform: linux/arm64
           - arch: amd64
             base_image: >
-              ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.20
+              ghcr.io/home-assistant/amd64-base-debian:trixie
             platform: linux/amd64
 
     steps:

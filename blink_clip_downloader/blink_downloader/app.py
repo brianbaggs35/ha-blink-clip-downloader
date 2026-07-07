@@ -16,6 +16,7 @@ from .analyzer import BaseAnalyzer, create_analyzer
 from .archiver import ClipArchiver
 from .config import AppConfig
 from .database import ClipDatabase
+from .vision import VisionConfig, VisionPipeline
 from .digest import DailyDigest
 from .downloader import AuthenticationError, BlinkDownloader, TwoFARequired
 from .event_watcher import HAEventWatcher
@@ -174,6 +175,19 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             )
             if self._analyzer is not None:
                 self._analyzer.attach_scene_baseline_db(self._db)
+                self._analyzer.attach_vision_pipeline(
+                    VisionPipeline(
+                        VisionConfig(
+                            cv_preprocessing_enabled=config.ai_cv_preprocessing_enabled,
+                            object_detection_enabled=config.ai_object_detection_enabled,
+                            object_detection_model=config.ai_object_detection_model,
+                            depth_estimation_enabled=config.ai_depth_estimation_enabled,
+                            segmentation_enabled=config.ai_segmentation_enabled,
+                            face_recognition_enabled=config.ai_face_recognition_enabled,
+                        ),
+                        db=self._db,
+                    )
+                )
                 self._analysis_queue = AnalysisQueue(
                     analyzer=self._analyzer,
                     db=self._db,

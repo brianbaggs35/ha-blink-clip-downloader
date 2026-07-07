@@ -294,9 +294,10 @@ Runs Moondream directly on the host device via the **Install** button in the AI 
 > requires an NVIDIA CUDA or Apple Silicon GPU — pure-CPU inference is no longer
 > offered by the package. Most Home Assistant OS hosts do not have a GPU passed
 > through to the add-on container, so this provider will report itself as
-> unavailable on them; use `moondream_cloud` or `ollama` instead. On aarch64
-> (Raspberry Pi) the AI tab additionally shows an unsupported-architecture notice,
-> since the package has no pre-built wheels for that platform.
+> unavailable on them, on **both** amd64 and aarch64; use `moondream_cloud` or
+> `ollama` instead. (Before 4.1.0 this provider was amd64-only — the add-on's
+> Alpine base image had no wheels for moondream's dependencies on aarch64; the
+> 4.1.0 switch to a Debian base image removed that constraint.)
 
 #### Anthropic (Claude) — `anthropic`
 
@@ -503,6 +504,47 @@ fine-tuning API directly from the web UI: create a fine-tune from your own label
 examples, list checkpoints, and **Activate** one to use for live inference instead of
 the base model — this sets `moondream_finetune_model` live without a restart (save it
 in `config.yaml` too if you want it to persist across restarts).
+
+### Computer-Vision Enhancement Pipeline (optional, heavy)
+
+⚠️ **Resource warning:** everything in this section requires substantially more CPU
+and RAM than the rest of this add-on, and downloads large ML models (100MB-800MB+
+each, cached under `/data` after first use). Only enable these on hardware with real
+spare capacity — a modern NUC, mini-PC, or similar. **Not recommended on a Raspberry
+Pi** or other constrained device. Every option below is off by default, and clip
+analysis works exactly as it did before this section existed with all of them left
+disabled — the AI provider (Ollama/Anthropic/OpenAI/Moondream) still makes every
+suspicious/not-suspicious call; these stages only feed it better evidence.
+
+| Option | Default | What it adds |
+|---|---|---|
+| `ai_cv_preprocessing_enabled` | `false` | CLAHE contrast enhancement + light denoising (OpenCV) on frames before they're sent to the AI model. The lightest option here. |
+| `ai_object_detection_enabled` | `false` | Object detection + tracking (YOLO + ByteTrack, via Ultralytics) — adds a precise, code-computed **OBJECT DETECTION** hint (what was detected, and how close a detected person is to a detected vehicle) instead of relying on pixel-diff motion heuristics alone. |
+| `ai_object_detection_model` | `yolo11n.pt` | Which Ultralytics model to run. "n" (nano) models are fastest/lightest and the recommended starting point on CPU-only hardware; larger models (s/m/l/x) are more accurate but much slower. |
+| `ai_depth_estimation_enabled` | `false` | Monocular depth estimation (Depth Anything V2, via transformers). Requires object detection. Adds a **DEPTH ESTIMATE** hint distinguishing "overlapping in the 2D frame" from "actually at the same distance from the camera" — catches the case where a person only *looks* close to a vehicle because of the camera angle. |
+| `ai_segmentation_enabled` | `false` | Pixel-level contact segmentation (SAM2, via transformers) — the heaviest option here. Requires object detection. Adds a **CONTACT ANALYSIS** hint refining a bounding-box overlap into an actual touching-or-not judgment using each object's real visible outline. |
+| `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. |
+
+None of these packages are required to install or run the add-on normally; if a
+package fails to install in the Docker image (see the Dockerfile) or isn't present
+for any other reason, the corresponding option simply reports itself unavailable at
+runtime and analysis proceeds exactly as if it were disabled.
+
+**Why this exists:** these stages sit on top of the existing prompt pipeline, not in
+place of it — each one produces a bounded, hedged hint appended to the same prompt
+the "SCENE BASELINE" and "ZONE MOTION" hints already use, so the model still judges
+each clip on what it can actually see, with better evidence to work with.
+
+#### Face Recognition Enrollment
+
+Once `ai_face_recognition_enabled` is on, enroll household members from the AI tab's
+**Face Recognition Enrollment** panel: give a name and a single clear reference
+photo. The photo is converted to a numeric face embedding (not stored itself) and
+kept only in this add-on's own database — it is never uploaded to any cloud AI
+provider, regardless of which `ai_provider` is configured. A recognized face adds a
+**RECOGNIZED RESIDENT** hint telling the model this is likely a known household
+member, not a stranger — concerning behavior (tampering, forced entry) is still
+judged on its own merits regardless of who is present.
 
 ---
 
@@ -733,15 +775,14 @@ Downloaded clips are saved under the `share` folder, accessible via:
 - Update to v3.0.1 or later. Prior versions did not suppress internal spatial data
   from user-visible descriptions.
 
-**Moondream Local fails to install on Raspberry Pi**
-- Moondream Local (`moondream_local`) only supports x86_64 (amd64) hosts. Use
-  `moondream_cloud` or `ollama` instead on aarch64 devices.
-
 **Moondream Local installs successfully but health-checks as unavailable / analysis
 never returns results**
 - On-device Moondream inference requires an NVIDIA CUDA or Apple Silicon GPU (the
-  `moondream` package no longer supports pure-CPU inference). Check the add-on log
-  for "Failed to load Moondream local model" — if the host has no such GPU passed
+  `moondream` package no longer supports pure-CPU inference). This applies on both
+  amd64 and aarch64 — a Jetson-class aarch64 board with an NVIDIA GPU can work, but a
+  typical Raspberry Pi or other GPU-less aarch64 host cannot, the same as a GPU-less
+  amd64 host. Check the add-on log for "Failed to load Moondream local model" — if
+  the host has no such GPU passed
   through to the container, this is expected; use `moondream_cloud` or `ollama`
   instead.
 

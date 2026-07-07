@@ -18,6 +18,7 @@ blink_downloader/notification_channels.py
 blink_downloader/notifier.py
 blink_downloader/storage.py
 blink_downloader/tracker.py
+blink_downloader/vision.py
 blink_downloader.egg-info/PKG-INFO
 blink_downloader.egg-info/SOURCES.txt
 blink_downloader.egg-info/dependency_links.txt
@@ -40,3 +41,4 @@ tests/test_notification_channels.py
 tests/test_notifier.py
 tests/test_storage.py
 tests/test_tracker.py
+tests/test_vision.py

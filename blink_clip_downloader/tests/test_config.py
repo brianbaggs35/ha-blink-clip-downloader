@@ -447,6 +447,44 @@ def test_ai_prompt_debug_enabled_can_be_turned_on():
     assert cfg.ai_prompt_debug_enabled is True
 
 
+def test_cv_pipeline_options_default_disabled():
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.ai_cv_preprocessing_enabled is False
+    assert cfg.ai_object_detection_enabled is False
+    assert cfg.ai_object_detection_model == "yolo11n.pt"
+    assert cfg.ai_depth_estimation_enabled is False
+    assert cfg.ai_segmentation_enabled is False
+    assert cfg.ai_face_recognition_enabled is False
+
+
+def test_cv_pipeline_options_can_all_be_enabled():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_cv_preprocessing_enabled": True,
+            "ai_object_detection_enabled": True,
+            "ai_object_detection_model": "yolo11s.pt",
+            "ai_depth_estimation_enabled": True,
+            "ai_segmentation_enabled": True,
+            "ai_face_recognition_enabled": True,
+        }
+    )
+    assert cfg.ai_cv_preprocessing_enabled is True
+    assert cfg.ai_object_detection_enabled is True
+    assert cfg.ai_object_detection_model == "yolo11s.pt"
+    assert cfg.ai_depth_estimation_enabled is True
+    assert cfg.ai_segmentation_enabled is True
+    assert cfg.ai_face_recognition_enabled is True
+
+
+def test_ai_object_detection_model_blank_falls_back_to_default():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "ai_object_detection_model": ""}
+    )
+    assert cfg.ai_object_detection_model == "yolo11n.pt"
+
+
 def test_ai_max_frames_clamped():
     cfg = _parse_config({"username": "u", "password": "p", "ai_max_frames": 150})
     assert cfg.ai_max_frames == 100

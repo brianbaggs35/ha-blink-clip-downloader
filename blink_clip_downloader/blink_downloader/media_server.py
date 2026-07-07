@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import json
 import logging
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from aiohttp import web
 
 from .database import ClipDatabase
+from .vision import FaceEmbedder, is_face_recognition_available
 
 if TYPE_CHECKING:
     from .analysis_queue import AnalysisQueue
@@ -41,8 +43,20 @@ _moondream_install_state: dict = {"status": "idle", "log": ""}
 
 
 def _moondream_arch_supported() -> bool:
-    """Return True only on x86_64 — moondream has no musllinux aarch64 wheels."""
-    return platform.machine() == "x86_64"
+    """Return True on every architecture the add-on ships for.
+
+    Before 4.1.0 this returned True only on x86_64, since moondream's
+    torch/kestrel dependencies had no musllinux (Alpine) wheels for
+    aarch64. The add-on's base image switched to Debian (glibc) in 4.1.0
+    specifically to support the computer-vision pipeline's own torch
+    dependency (see vision.py) — that switch also removed the musllinux
+    constraint here, so this is no longer architecture-gated. Local
+    ("Photon") inference still requires an NVIDIA CUDA or Apple Silicon
+    GPU regardless of architecture; that check happens separately at
+    model-load time (see analyzer.py's MoondreamLocalAnalyzer._load_model_sync)
+    and reports the provider unavailable there rather than here.
+    """
+    return True
 
 
 def _is_moondream_installed() -> bool:
@@ -899,6 +913,32 @@ action:
         <div style="margin-top:.75rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
           <button class="btn sm" id="ai-cam-save-btn">💾 Save Camera Configs</button>
           <span style="font-size:.75rem;color:var(--muted)">Changes apply immediately — no restart needed</span>
+        </div>
+      </div>
+
+      <!-- Face Recognition Enrollment -->
+      <div style="margin-bottom:1.5rem">
+        <h3 style="margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem">
+          🙂 Face Recognition Enrollment
+          <span style="font-size:.73rem;color:var(--muted);font-weight:400">
+            — Local only, never uploaded to any AI provider
+          </span>
+        </h3>
+        <p style="font-size:.78rem;color:var(--muted);margin-bottom:.65rem">
+          Requires <strong>Enable Local Face Recognition</strong> in the add-on's
+          Configuration tab. Enroll household members here so their clips can be
+          recognized and treated as routine — enrollment photos are converted to a
+          numeric embedding and stored in this add-on's own database; the photo
+          itself is not kept.
+        </p>
+        <div id="ai-faces-unavailable" style="display:none;background:rgba(245,158,11,.12);border:1px solid var(--warn,#f59e0b);border-radius:.4rem;padding:.6rem .8rem;font-size:.78rem;margin-bottom:.65rem">
+          ⚠️ Face-recognition dependencies are not installed in this image.
+        </div>
+        <div id="ai-faces-list" style="display:flex;flex-direction:column;gap:.4rem;margin-bottom:.65rem"></div>
+        <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+          <input class="tag-input" id="ai-face-name-input" placeholder="Name" style="max-width:12rem">
+          <input type="file" id="ai-face-photo-input" accept="image/*">
+          <button class="btn sm" id="ai-face-enroll-btn">+ Enroll</button>
         </div>
       </div>
 
@@ -2660,10 +2700,70 @@ $('ai-test-btn').addEventListener('click', () => runAITest());
 $('ai-test-email-btn').addEventListener('click', () => runTestEmail());
 $('ai-finetune-create-btn').addEventListener('click', () => _createFinetune());
 
+// ── Face Recognition Enrollment ─────────────────────────────
+async function loadFaces() {
+  const listEl = $('ai-faces-list');
+  const warnEl = $('ai-faces-unavailable');
+  if (!listEl) return;
+  try {
+    const data = await api('/api/ai/faces');
+    if (warnEl) warnEl.style.display = data.available ? 'none' : 'block';
+    if (!data.faces.length) {
+      listEl.innerHTML = '<div style="color:var(--muted);font-size:.84rem">No one enrolled yet.</div>';
+      return;
+    }
+    listEl.innerHTML = data.faces.map(f =>
+      `<div style="display:flex;align-items:center;gap:.6rem;padding:.4rem .6rem;background:var(--card-bg,rgba(255,255,255,.03));border-radius:.35rem">
+        <span style="flex:1;font-size:.85rem">${_esc(f.name)}</span>
+        <button class="btn sm ghost" data-face-id="${f.id}" onclick="_deleteFace(${f.id})">Delete</button>
+      </div>`
+    ).join('');
+  } catch(e) { console.error('load faces error', e); }
+}
+
+async function _deleteFace(id) {
+  try {
+    await api('/api/ai/faces/' + id, { method: 'DELETE' });
+    await loadFaces();
+  } catch(e) { toast('Failed to delete enrollment', true); }
+}
+
+function _fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function _enrollFace() {
+  const nameInput = $('ai-face-name-input');
+  const photoInput = $('ai-face-photo-input');
+  const name = (nameInput?.value || '').trim();
+  const file = photoInput?.files?.[0];
+  if (!name) { toast('Enter a name', true); return; }
+  if (!file) { toast('Choose a photo', true); return; }
+  try {
+    const image_base64 = await _fileToBase64(file);
+    await api('/api/ai/faces', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, image_base64 }),
+    });
+    nameInput.value = '';
+    photoInput.value = '';
+    toast('Enrolled ' + name);
+    await loadFaces();
+  } catch(e) { toast('Enrollment failed: ' + (e?.message || 'unknown error'), true); }
+}
+
+$('ai-face-enroll-btn')?.addEventListener('click', _enrollFace);
+
 // Load AI tab when selected
 document.querySelectorAll('.nav-tab').forEach(t => {
   t.addEventListener('click', () => {
-    if (t.dataset.tab === 'ai') { loadAIStatus(); loadSuspiciousFeed(); loadCameraConfigs(); }
+    if (t.dataset.tab === 'ai') { loadAIStatus(); loadSuspiciousFeed(); loadCameraConfigs(); loadFaces(); }
     if (t.dataset.tab === 'usage') { loadAIUsage(); }
   });
 });
@@ -2870,6 +2970,11 @@ class MediaServer:
         # unpopulated, even if a prompt happens to be stored from when the
         # feature was previously on.
         self._prompt_debug_enabled = prompt_debug_enabled
+        # Independent from any FaceEmbedder the analyzer's VisionPipeline may
+        # hold (see vision.py) — enrollment is a rare, occasional action, so
+        # a second lazily-loaded model instance here is simpler than piping
+        # a reference to the analyzer's private pipeline through for it.
+        self._face_embedder = FaceEmbedder()
         self._runner: web.AppRunner | None = None
         self.extra_status: dict = {}
         # Holds a strong reference to the background moondream-install task —
@@ -2939,6 +3044,12 @@ class MediaServer:
         app.router.add_post(
             "/api/ai/feedback/{clip_id}", self._handle_ai_feedback_submit
         )
+
+        # Local-only face-recognition enrollment (see vision.py)
+        app.router.add_get("/api/ai/faces", self._handle_faces_list)
+        app.router.add_post("/api/ai/faces", self._handle_faces_enroll)
+        app.router.add_delete("/api/ai/faces/{id}", self._handle_faces_delete)
+
         # Moondream Cloud fine-tuning endpoints
         app.router.add_get("/api/ai/finetune", self._handle_finetune_list)
         app.router.add_post("/api/ai/finetune", self._handle_finetune_create)
@@ -3695,6 +3806,88 @@ class MediaServer:
             # generic HTML 500 page.
             _LOGGER.warning("Feedback submit failed for clip %s: %s", clip_id, exc)
             return web.json_response({"error": str(exc)}, status=500)
+
+    # ------------------------------------------------------------------
+    # Local-only face-recognition enrollment (see vision.py,
+    # ai_face_recognition_enabled). Enrollment photos and the embeddings
+    # computed from them are stored only in this add-on's own database —
+    # never uploaded anywhere, regardless of which ai_provider is
+    # configured.
+    # ------------------------------------------------------------------
+
+    async def _handle_faces_list(self, _request: web.Request) -> web.Response:
+        enrollments = await self._db.list_face_enrollments()
+        return web.json_response(
+            {
+                "available": is_face_recognition_available(),
+                "faces": [
+                    {"id": e["id"], "name": e["name"], "created_at": e["created_at"]}
+                    for e in enrollments
+                ],
+            }
+        )
+
+    async def _handle_faces_enroll(self, request: web.Request) -> web.Response:
+        """Enroll a household member from a single reference photo.
+
+        Body: ``{"name": str, "image_base64": str}`` — a data-URL prefix
+        (e.g. ``data:image/jpeg;base64,``) on ``image_base64`` is stripped
+        automatically if present. Requires exactly one face to be detected
+        in the photo, to avoid an ambiguous enrollment.
+        """
+        try:
+            body = await request.json()
+            name = str(body.get("name", "") or "").strip()
+            image_b64 = str(body.get("image_base64", "") or "")
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+
+        if not name:
+            return web.json_response({"error": "name is required"}, status=400)
+        if not image_b64:
+            return web.json_response({"error": "image_base64 is required"}, status=400)
+        if "," in image_b64 and image_b64.strip().startswith("data:"):
+            image_b64 = image_b64.split(",", 1)[1]
+
+        try:
+            image_bytes = base64.b64decode(image_b64)
+        except Exception:  # noqa: BLE001
+            return web.json_response(
+                {"error": "image_base64 is not valid base64"}, status=400
+            )
+
+        if not is_face_recognition_available():
+            return web.json_response(
+                {"error": "Face recognition dependencies are not installed"},
+                status=400,
+            )
+
+        embeddings = await self._face_embedder.embed(image_bytes)
+        if not embeddings:
+            return web.json_response(
+                {"error": "No face detected in the provided photo"}, status=400
+            )
+        if len(embeddings) > 1:
+            return web.json_response(
+                {
+                    "error": (
+                        f"Detected {len(embeddings)} faces in the provided photo — "
+                        "use a photo with only the person being enrolled visible"
+                    )
+                },
+                status=400,
+            )
+
+        enrollment_id = await self._db.add_face_enrollment(name, embeddings[0])
+        return web.json_response({"id": enrollment_id, "name": name})
+
+    async def _handle_faces_delete(self, request: web.Request) -> web.Response:
+        try:
+            enrollment_id = int(request.match_info["id"])
+        except ValueError:
+            raise web.HTTPBadRequest(text="Invalid enrollment id")
+        await self._db.delete_face_enrollment(enrollment_id)
+        return web.json_response({"deleted": True})
 
     # ------------------------------------------------------------------
     # Moondream Cloud fine-tuning

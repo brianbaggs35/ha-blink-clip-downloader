@@ -1096,6 +1096,37 @@ def _build_app_with_camera_configs(
     return app, mock_create_analyzer
 
 
+def test_init_wires_vision_pipeline_from_config(base_config, tmp_path) -> None:
+    """The optional CV pipeline config fields must reach the analyzer via
+    attach_vision_pipeline(), so enabling a toggle in options.json actually
+    turns the corresponding vision.py stage on."""
+    from blink_downloader.vision import VisionPipeline
+
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        None,
+        ai_object_detection_enabled=True,
+        ai_object_detection_model="yolo11s.pt",
+        ai_depth_estimation_enabled=True,
+        ai_segmentation_enabled=True,
+        ai_face_recognition_enabled=True,
+        ai_cv_preprocessing_enabled=True,
+    )
+
+    mock_analyzer = mock_create_analyzer.return_value
+    mock_analyzer.attach_vision_pipeline.assert_called_once()
+    pipeline = mock_analyzer.attach_vision_pipeline.call_args.args[0]
+    assert isinstance(pipeline, VisionPipeline)
+    config = pipeline._config  # noqa: SLF001
+    assert config.object_detection_enabled is True
+    assert config.object_detection_model == "yolo11s.pt"
+    assert config.depth_estimation_enabled is True
+    assert config.segmentation_enabled is True
+    assert config.face_recognition_enabled is True
+    assert config.cv_preprocessing_enabled is True
+
+
 def test_init_camera_configs_ui_file_populates_descriptions_and_car_cameras(
     base_config, tmp_path
 ):

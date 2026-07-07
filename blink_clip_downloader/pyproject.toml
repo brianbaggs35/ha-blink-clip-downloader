@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blink-downloader"
-version = "4.0.2"
+version = "4.1.0"
 description = "Home Assistant add-on: Blink Clip Downloader"
 authors = [{name = "Brian Baggs", email = "brianbaggs@hotmail.com"}]
 requires-python = ">=3.12"
@@ -28,6 +28,21 @@ test = [
     "pytest-cov>=7.1.0",
     "aioresponses>=0.7.9",
     "PyYAML>=6.0.1",
+]
+# Optional computer-vision enhancement pipeline (see vision.py and the
+# ai_object_detection_enabled/ai_depth_estimation_enabled/
+# ai_segmentation_enabled/ai_face_recognition_enabled config options — all
+# off by default). Not needed to run or test the add-on's core features;
+# only install this extra if you want to exercise the CV pipeline locally.
+# torch should be installed first from https://download.pytorch.org/whl/cpu
+# per PyTorch's own guidance (see Dockerfile) to avoid pulling its much
+# larger default CUDA build — this extra intentionally leaves torch itself
+# unpinned to whatever is already installed rather than re-resolving it.
+vision = [
+    "ultralytics>=8.3,<9",
+    "opencv-python-headless>=4.10,<5",
+    "transformers>=4.56,<5",
+    "facenet-pytorch>=2.6,<3",
 ]
 
 [tool.setuptools.packages.find]
