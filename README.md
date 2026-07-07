@@ -10,6 +10,22 @@ Add app repo to home assistant with one click (Note: You must have your home ass
 
 [![Open your Home Assistant instance and show the add app repository dialog with a specific repository URL pre-filled.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fbrianbaggs35%2Fha-blink-clip-downloader)
 
+<div align="center">
+
+## ❤️ Support This Project
+
+If this project helps you, consider supporting its development.
+
+<a href="https://github.com/sponsors/brianbaggs35">
+<img src="https://img.shields.io/badge/GitHub%20Sponsors-Support%20Me-ea4aaa?logo=github" />
+</a>
+
+<a href="https://buymeacoffee.com/brianbaggs">
+<img src="https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support%20Me-ffdd00?logo=buymeacoffee" />
+</a>
+
+</div>
+
 # Home Assistant Blink Clip Downloader
 
 A Home Assistant OS add-on that continuously downloads Blink camera clips to your
