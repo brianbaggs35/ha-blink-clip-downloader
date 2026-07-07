@@ -3337,6 +3337,125 @@ async def test_escalation_via_sequential_strategy_escalates_once_on_winning_fram
     assert "Confirmed intruder" in final
 
 
+# ------------------------------------------------------------------
+# High-recall escalation for protected-vehicle ("car") cameras — a clear
+# tier-1 verdict on one of these cameras must still be double-checked by
+# tier 2, unlike ordinary cameras where a clear verdict is trusted outright.
+# See BaseAnalyzer._car_protection_applies / _maybe_escalate.
+# ------------------------------------------------------------------
+
+
+async def test_car_camera_clear_verdict_still_escalates() -> None:
+    """A car-protected camera's "clear" tier-1 result must still be sent to
+    tier 2 — this is the fix for a real miss: tier 1 said 'clear' on a
+    person leaning against the protected vehicle, and the old asymmetric
+    escalation (suspicious-only) never gave tier 2 a chance to catch it."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="test",
+        car_description="Silver Honda Civic",
+        car_cameras=["Driveway"],
+    )
+    a._current_camera = "Driveway"
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.89, "description": "Person pauses near car"}'
+    )
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.85, "description": "Person leaning against car"}'
+    )
+    a.set_escalation_analyzer(tier2)
+
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
+    tier2._call_model.assert_awaited_once()
+    assert "leaning against car" in result
+    assert a._last_escalation_provider == "anthropic"
+
+
+async def test_car_camera_clear_verdict_stays_clear_when_tier2_agrees() -> None:
+    """If tier 2 also says clear, tier 1's own "clear" response is kept
+    rather than swapped for an equivalent one — avoids losing tier-1's
+    already-recorded description/confidence pairing for no benefit."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="test",
+        car_description="Silver Honda Civic",
+        car_cameras=["Driveway"],
+    )
+    a._current_camera = "Driveway"
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.9, "description": "Empty driveway"}'
+    )
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.8, "description": "Still empty"}'
+    )
+    a.set_escalation_analyzer(tier2)
+
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
+    tier2._call_model.assert_awaited_once()
+    assert "Empty driveway" in result
+    # Tokens/model attribution are still recorded even though the tier-1
+    # text is kept, since a real tier-2 API call was made.
+    assert a._last_escalation_provider == "anthropic"
+
+
+async def test_non_car_camera_clear_verdict_never_escalates() -> None:
+    """A camera not in car_cameras keeps the cost-optimized behavior even
+    when a protected vehicle exists elsewhere on the property."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="test",
+        car_description="Silver Honda Civic",
+        car_cameras=["Driveway"],
+    )
+    a._current_camera = "Front Door"
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.85, "description": "Person leaves via front door"}'
+    )
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock()  # type: ignore[method-assign]
+    a.set_escalation_analyzer(tier2)
+
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
+    tier2._call_model.assert_not_awaited()
+    assert "Person leaves via front door" in result
+
+
+async def test_car_camera_without_zone_restriction_high_recall_applies_everywhere() -> (
+    None
+):
+    """car_cameras=[] (documented default: applies to every camera) also
+    gets high-recall escalation on any camera, not just an explicitly
+    listed one."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="test",
+        car_description="Silver Honda Civic",
+    )
+    a._current_camera = "Backyard"
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.9, "description": "Person pauses near car"}'
+    )
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.8, "description": "Contact with car"}'
+    )
+    a.set_escalation_analyzer(tier2)
+
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
+    tier2._call_model.assert_awaited_once()
+    assert "Contact with car" in result
+
+
 def test_is_well_formed_json_object_true_for_complete_json() -> None:
     assert BaseAnalyzer._is_well_formed_json_object(
         '{"suspicious": false, "confidence": 0.1, "description": "Empty"}'
@@ -3803,6 +3922,33 @@ def test_build_prompt_no_zone_motion_hint_when_not_provided() -> None:
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
     prompt = a._build_prompt("Driveway")
     assert "ZONE MOTION" not in prompt
+
+
+# ------------------------------------------------------------------
+# short-event hint — see _SHORT_EVENT_DURATION_SECONDS / _build_prompt
+# ------------------------------------------------------------------
+
+
+def test_build_prompt_short_event_hint_for_brief_clip() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Front Door", clip_duration=6.0)
+    assert "SHORT EVENT" in prompt
+    assert "6 seconds" in prompt
+    assert "not brevity alone" in prompt
+
+
+def test_build_prompt_no_short_event_hint_for_long_clip() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Front Door", clip_duration=45.0)
+    assert "SHORT EVENT" not in prompt
+
+
+def test_build_prompt_no_short_event_hint_when_duration_unknown() -> None:
+    """clip_duration=0.0 (the default, meaning duration wasn't available)
+    must not be treated as an ultra-short clip."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt("Front Door")
+    assert "SHORT EVENT" not in prompt
 
 
 # ------------------------------------------------------------------

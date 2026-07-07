@@ -2620,6 +2620,105 @@ async def test_ai_feedback_submit_and_get(client: TestClient, db: ClipDatabase) 
     assert data["corrected_suspicious"] is False
 
 
+async def test_ai_feedback_submit_autofills_note_for_false_positive(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """A bare thumbs-down with no typed note must still get a usable
+    correction_note — get_prompt_corrections() only folds in rows with a
+    non-empty note, so a silent thumbs-down would otherwise teach the
+    prompt nothing."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.85,
+            "summary": "Person handles the door before leaving",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.post(
+        "/api/ai/feedback/c1",
+        json={"correct": False, "correction_note": "", "corrected_suspicious": False},
+    )
+    assert resp.status == 200
+
+    resp = await client.get("/api/ai/feedback/c1")
+    data = await resp.json()
+    assert data["correction_note"]
+    assert "incorrectly flagged suspicious" in data["correction_note"]
+
+
+async def test_ai_feedback_submit_autofills_note_for_false_negative(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """The reverse direction — a clip cleared by the AI but marked incorrect
+    with no note — also gets an auto-generated note, so a missed detection
+    (e.g. the protected-vehicle proximity miss) still feeds back into future
+    prompts even without free text."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Driveway",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.89,
+            "summary": "Person pauses near the car",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.post(
+        "/api/ai/feedback/c1",
+        json={"correct": False, "correction_note": "", "corrected_suspicious": True},
+    )
+    assert resp.status == 200
+
+    resp = await client.get("/api/ai/feedback/c1")
+    data = await resp.json()
+    assert data["correction_note"]
+    assert "incorrectly cleared" in data["correction_note"]
+
+
+async def test_ai_feedback_submit_keeps_typed_note(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """A note the user actually typed is never overwritten by the
+    auto-generated fallback."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.85,
+            "summary": "Person at door",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.post(
+        "/api/ai/feedback/c1",
+        json={"correct": False, "correction_note": "Just the mail carrier."},
+    )
+    assert resp.status == 200
+
+    resp = await client.get("/api/ai/feedback/c1")
+    data = await resp.json()
+    assert data["correction_note"] == "Just the mail carrier."
+
+
 async def test_ai_feedback_stats_empty(client: TestClient) -> None:
     resp = await client.get("/api/ai/feedback/stats")
     assert resp.status == 200
