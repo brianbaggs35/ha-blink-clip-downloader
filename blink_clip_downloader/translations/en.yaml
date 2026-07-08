@@ -95,7 +95,7 @@ configuration:
   enable_library_db:
     name: Enable Clip Library Database
     description: >-
-      Store clip metadata in a SQLite database to power the web library UI,
+      Store clip metadata in a PostgreSQL database to power the web library UI,
       daily digest, and archiving features.
   enable_media_server:
     name: Enable Web Library UI

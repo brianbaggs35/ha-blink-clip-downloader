@@ -54,6 +54,27 @@ explicitly turned on.
   (`-apple-system`/`Segoe UI`/`Roboto`/etc.) instead, which already renders
   well on every real target platform and requires no CSP change.
 
+### Breaking change — SQLite replaced with a bundled PostgreSQL 16 server
+
+- The clip library (`database.py`) now runs against a real PostgreSQL 16
+  server, bundled and supervised inside this same add-on container (see the
+  `postgresql-16` package install in `Dockerfile`, the one-shot data
+  directory bootstrap in `rootfs/etc/cont-init.d/01-postgres-init.sh`, and
+  the supervised server process in `rootfs/etc/services.d/postgresql`),
+  replacing the previous single-file `aiosqlite` database. The Postgres data
+  directory lives under `/data/postgresql/16/main` so it survives add-on
+  updates/restarts the same way the old SQLite file did; the `blink-downloader`
+  service now waits on `pg_isready` before starting so the first query of a
+  fresh container start never races the server finishing recovery. Connects
+  over a local Unix domain socket with no password — trust auth is scoped to
+  that socket only, never exposed outside the container, matching the same
+  trust boundary the previous SQLite file relied on (filesystem permissions
+  alone), not a weaker one. No user-facing config or data-migration step:
+  this is entirely an internal storage-engine swap behind the same
+  `enable_library_db` option, and gains real concurrent access, native
+  boolean/float/identity types, and richer query support (window functions,
+  `RETURNING`, etc.) over what SQLite offered.
+
 ### New feature — local standalone testing without Home Assistant OS
 
 - Added `local-test/run.sh` and `local-test/options.json.example`: running

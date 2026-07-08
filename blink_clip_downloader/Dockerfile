@@ -31,11 +31,26 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 # still linked against these at runtime.
 # cmake: only used by moondream on amd64 but small enough to install
 # unconditionally, matching the previous Alpine image's behavior.
+# postgresql-16: the add-on's clip library database (see database.py) — a
+# real Postgres 16 server bundled and supervised in this same container (see
+# rootfs/etc/services.d/postgresql), not a user-configured external
+# database. Directly available in Debian trixie's own archive (verified at
+# https://packages.debian.org/trixie/postgresql-16), so no extra apt
+# repository is needed to pin this exact major version.
 RUN apt-get update && apt-get install --no-install-recommends -y \
         python3 python3-pip python3-dev build-essential \
         libffi-dev libssl-dev ffmpeg libjpeg-dev zlib1g-dev cmake \
-        libgl1 libglib2.0-0 ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+        libgl1 libglib2.0-0 ca-certificates postgresql-16 \
+    && rm -rf /var/lib/apt/lists/* \
+    # postgresql-16's postinst auto-creates a default "16 main" cluster under
+    # /var/lib/postgresql via Debian's own pg_createcluster/postgresql-common
+    # machinery. This add-on manages its own data directory under /data
+    # instead (see rootfs/etc/cont-init.d/01-postgres-init.sh), started
+    # directly rather than through that wrapper, so the auto-created default
+    # cluster is dead weight — drop it to keep the image smaller. Non-fatal
+    # if it wasn't created in the first place (e.g. a base image that
+    # already suppresses service auto-start on package install).
+    && (pg_dropcluster --stop 16 main || echo "INFO: no default postgresql cluster to drop")
 
 # Install Python dependencies first (Docker layer cache)
 COPY requirements.txt /tmp/requirements.txt
@@ -44,9 +59,8 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 
 # Optional: computer-vision enhancement pipeline (object detection/tracking,
 # depth estimation, contact segmentation, face recognition — see vision.py
-# and the ai_object_detection_enabled/ai_depth_estimation_enabled/
-# ai_segmentation_enabled/ai_face_recognition_enabled config options, all
-# off by default). These packages are large (order of 1-2 GB combined,
+# and the ai_enhanced_detection_enabled/ai_face_recognition_enabled config
+# options, both off by default). These packages are large (order of 1-2 GB combined,
 # mostly torch itself) and are installed unconditionally on both
 # architectures so the config toggles work out of the box, but nothing in
 # this block is imported or loaded into memory unless a feature is actually
@@ -139,12 +153,14 @@ COPY blink_downloader/ /app/blink_downloader/
 RUN pip3 install --no-cache-dir /app \
     && rm -rf /app
 
-# Copy rootfs overlay (services.d service definition)
+# Copy rootfs overlay (services.d service definitions + cont-init.d)
 COPY rootfs /
 # Belt-and-suspenders chmod — git already tracks 100755, but some CI/CD
 # pipelines don't preserve git file modes through COPY.
 RUN chmod a+x /etc/services.d/blink-downloader/run \
-    && chmod a+x /etc/services.d/blink-downloader/finish
+    && chmod a+x /etc/services.d/blink-downloader/finish \
+    && chmod a+x /etc/services.d/postgresql/run \
+    && chmod a+x /etc/cont-init.d/01-postgres-init.sh
 
 # No ENTRYPOINT override — the base image's ENTRYPOINT ["/init"] starts
 # s6-overlay exactly once.  Any override here (including a wrapper that

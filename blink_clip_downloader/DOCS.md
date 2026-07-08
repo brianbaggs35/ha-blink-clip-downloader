@@ -4,7 +4,7 @@
 
 This add-on continuously polls the Blink API for new camera clips and saves them to
 your local storage (under `/share/blink-clips` by default). It includes a built-in
-web library UI, SQLite clip database, event-driven instant download, daily digest
+web library UI, PostgreSQL clip database, event-driven instant download, daily digest
 notifications, ZIP archiving, full Home Assistant integration, and an AI video
 analysis engine that automatically flags suspicious activity.
 
@@ -173,7 +173,7 @@ refresh token expires (typically after 30+ days with the add-on stopped).
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enable_library_db` | `true` | Store clip metadata in a SQLite database. Required for the web UI and AI analysis. |
+| `enable_library_db` | `true` | Store clip metadata in a PostgreSQL database. Required for the web UI and AI analysis. |
 
 ### Web Library UI
 
@@ -430,7 +430,8 @@ disambiguation) works the same with or without a zone configured.
 ### Smart Security Brain (Anomaly Detection)
 
 The add-on builds a behavioural baseline for each camera over time, recording per-camera
-hourly event frequency and average clip duration in SQLite with every download. This
+hourly event frequency and average clip duration in the clip library database with every
+download. This
 data powers an **anomaly score** (0.0–1.0) computed for every clip that goes through AI
 analysis.
 
@@ -725,7 +726,7 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/blink_hardware_id.txt` | Stable device ID presented to Blink during login (do not edit) |
 | `/data/downloaded_clips.json` | Tracker of downloaded clip IDs |
 | `/data/clip_manifest.json` | Newline-delimited JSON log of all downloads |
-| `/data/clip_library.db` | SQLite database powering the web UI and AI analysis |
+| `/data/postgresql/16/main/` | Bundled PostgreSQL data directory powering the web UI and AI analysis |
 | `/data/stats.json` | Latest statistics snapshot |
 | `/data/last_digest.json` | Timestamp of the last daily digest |
 | `/data/two_fa_code.txt` | Write your 2FA code here when prompted |

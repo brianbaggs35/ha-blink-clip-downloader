@@ -1539,6 +1539,11 @@ async def test_get_feedback_for_clip_missing_returns_none(db: ClipDatabase) -> N
     assert await db.get_feedback_for_clip("ghost") is None
 
 
+async def test_get_feedback_for_clip_without_init_returns_none() -> None:
+    d = ClipDatabase()
+    assert await d.get_feedback_for_clip("clip1") is None
+
+
 async def test_add_feedback_without_init_is_noop() -> None:
     d = ClipDatabase()
     await d.add_feedback(

@@ -57,14 +57,14 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     model             TEXT    NOT NULL,
     response_text     TEXT    DEFAULT '',
     is_suspicious     BOOLEAN DEFAULT FALSE,
-    confidence        REAL    DEFAULT 0.0,
+    confidence        DOUBLE PRECISION DEFAULT 0.0,
     summary           TEXT    DEFAULT '',
     frame_count       INTEGER DEFAULT 0,
-    analysis_duration REAL    DEFAULT 0.0,
+    analysis_duration DOUBLE PRECISION DEFAULT 0.0,
     analyzed_at       TEXT    NOT NULL,
     tokens_prompt     INTEGER DEFAULT 0,
     tokens_completion INTEGER DEFAULT 0,
-    anomaly_score     REAL    DEFAULT 0.0,
+    anomaly_score     DOUBLE PRECISION DEFAULT 0.0,
     escalation_model             TEXT    DEFAULT '',
     escalation_tokens_prompt     INTEGER DEFAULT 0,
     escalation_tokens_completion INTEGER DEFAULT 0,
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS camera_baselines (
 );
 CREATE TABLE IF NOT EXISTS camera_duration_stats (
     camera       TEXT PRIMARY KEY,
-    avg_duration REAL    DEFAULT 0.0,
+    avg_duration DOUBLE PRECISION DEFAULT 0.0,
     sample_count INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS camera_scene_baselines (
@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS analysis_feedback (
     camera               TEXT    NOT NULL,
     analysis_result_id   INTEGER,
     original_suspicious  BOOLEAN NOT NULL,
-    original_confidence  REAL    NOT NULL,
+    original_confidence  DOUBLE PRECISION NOT NULL,
     correct              BOOLEAN NOT NULL,
     correction_note      TEXT    DEFAULT '',
     corrected_suspicious BOOLEAN,
@@ -365,9 +365,7 @@ class ClipDatabase:
         """Return a single clip record or None."""
         if self._pool is None:
             return None
-        row = await self._pool.fetchrow(
-            _qm("SELECT * FROM clips WHERE id=?"), clip_id
-        )
+        row = await self._pool.fetchrow(_qm("SELECT * FROM clips WHERE id=?"), clip_id)
         return _row_to_dict(row) if row else None
 
     async def get_clips(
@@ -851,7 +849,11 @@ class ClipDatabase:
             (datetime.now(timezone.utc) - timedelta(days=days - 1)).date().isoformat()
         )
 
-        conditions = ["analyzed_at::timestamptz::date >= ?"]
+        # Compared as text (to_char output), not cast to ::date — casting the
+        # column to a typed date makes PostgreSQL's parameter-type inference
+        # expect a native `date` object for `?` too, rejecting the plain ISO
+        # date *string* `cutoff` actually passed in.
+        conditions = ["to_char(analyzed_at::timestamptz, 'YYYY-MM-DD') >= ?"]
         params: list[str] = [cutoff]
         if reset_at:
             conditions.append("analyzed_at > ?")
@@ -1003,7 +1005,9 @@ class ClipDatabase:
             return
         placeholders = ",".join("?" for _ in feedback_ids)
         await self._pool.execute(
-            _qm(f"UPDATE analysis_feedback SET trained_at=? WHERE id IN ({placeholders})"),
+            _qm(
+                f"UPDATE analysis_feedback SET trained_at=? WHERE id IN ({placeholders})"
+            ),
             datetime.now(timezone.utc).isoformat(),
             *feedback_ids,
         )
@@ -1163,7 +1167,9 @@ class ClipDatabase:
         # Total event count for this camera
         total: int = (
             await self._pool.fetchval(
-                _qm("SELECT COALESCE(SUM(count), 0) FROM camera_baselines WHERE camera=?"),
+                _qm(
+                    "SELECT COALESCE(SUM(count), 0) FROM camera_baselines WHERE camera=?"
+                ),
                 camera,
             )
             or 0

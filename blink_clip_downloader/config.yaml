@@ -94,7 +94,7 @@ options:
   create_clip_manifest: true
 
   # --- Clip library database ---
-  # Enable the SQLite clip library. Required for the web UI and AI analysis.
+  # Enable the PostgreSQL clip library. Required for the web UI and AI analysis.
   enable_library_db: true
 
   # --- Media server / web UI ---

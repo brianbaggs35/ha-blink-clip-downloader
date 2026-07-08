@@ -952,9 +952,16 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
+    from tests.conftest import _ALL_TABLES, TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)
-    app._db = ClipDatabase(tmp_path / "lib.db")
+    app._db = ClipDatabase(TEST_DB_DSN)
+    # "Fresh ClipDatabase" (simulating a reinstall) means empty tables, not a
+    # new connection — unlike SQLite's per-file isolation, this suite's
+    # Postgres database is shared, so start this test from a clean slate.
+    await app._db.init()
+    assert app._db._pool is not None  # noqa: SLF001
+    await app._db._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")  # noqa: SLF001
     app._storage.ensure_directory = MagicMock()
     app._tracker = ClipTracker(tmp_path / "tracker.json")
 
@@ -982,7 +989,7 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
 
     await app.run()
 
-    check_db = ClipDatabase(tmp_path / "lib.db")
+    check_db = ClipDatabase(TEST_DB_DSN)
     await check_db.init()
     try:
         paths = await check_db.get_all_file_paths()
@@ -1015,7 +1022,7 @@ async def test_run_skips_import_when_library_db_disabled(app, tmp_path):
 
     await app.run()
 
-    assert app._db._db is None  # never initialised
+    assert app._db._pool is None  # never initialised  # noqa: SLF001
 
 
 async def test_poll_cycle_local_storage_clips_trigger_notification(app):

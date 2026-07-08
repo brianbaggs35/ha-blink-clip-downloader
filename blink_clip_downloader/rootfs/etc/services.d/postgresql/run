@@ -1,0 +1,8 @@
+#!/usr/bin/with-contenv bashio
+# shellcheck shell=bash
+set -e
+# Runs the actual `postgres` server binary directly (not pg_ctl, which
+# daemonizes/forks) so s6 supervises the real server process: it stays in
+# the foreground, gets restarted automatically if it crashes, and receives
+# signals directly from s6 on shutdown.
+exec s6-setuidgid postgres /usr/lib/postgresql/16/bin/postgres -D /data/postgresql/16/main

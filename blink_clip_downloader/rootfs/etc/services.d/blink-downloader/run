@@ -1,4 +1,16 @@
 #!/usr/bin/with-contenv bashio
 # shellcheck shell=bash
 set -e
+
+# dependencies.d/postgresql already tells s6 this service depends on the
+# postgresql service, but that only orders *service startup*, not readiness
+# — postgres accepting the dependency edge and postgres actually accepting
+# connections are two different moments. This loop covers the gap so the
+# very first database query of a fresh container start doesn't race a
+# server that's still replaying WAL/finishing recovery.
+until pg_isready -q -h /var/run/postgresql; do
+  bashio::log.info "Waiting for PostgreSQL to be ready..."
+  sleep 1
+done
+
 exec python3 -m blink_downloader
