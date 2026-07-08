@@ -3198,6 +3198,9 @@ class MediaServer:
         app.router.add_post(
             "/api/ai/feedback/{clip_id}", self._handle_ai_feedback_submit
         )
+        app.router.add_delete(
+            "/api/ai/feedback/{clip_id}", self._handle_ai_feedback_delete
+        )
 
         # Local-only face-recognition enrollment (see vision.py)
         app.router.add_get("/api/ai/faces", self._handle_faces_list)
@@ -3938,6 +3941,18 @@ class MediaServer:
                 {"error": "Clip has not been analyzed yet"}, status=400
             )
 
+        # correct=False always means the single is_suspicious boolean was
+        # wrong — there is no third option, so the corrected value is fully
+        # determined by the original one. Derive it whenever the caller
+        # doesn't explicitly override it, rather than leaving it null: the
+        # Moondream fine-tuning training-example builder
+        # (_handle_finetune_train) falls back to original_suspicious for a
+        # null corrected_suspicious, which silently trained toward the
+        # *wrong* label for exactly the case this is meant to fix (e.g. a
+        # false positive marked incorrect with no explicit correction).
+        if not correct and corrected_suspicious is None:
+            corrected_suspicious = not result["is_suspicious"]
+
         # A bare thumbs-down with no typed note carries no reusable signal
         # for get_prompt_corrections (see database.py), which only folds in
         # rows with a non-empty correction_note. Synthesize one from the
@@ -3970,6 +3985,18 @@ class MediaServer:
             # generic HTML 500 page.
             _LOGGER.warning("Feedback submit failed for clip %s: %s", clip_id, exc)
             return web.json_response({"error": str(exc)}, status=500)
+
+    async def _handle_ai_feedback_delete(self, request: web.Request) -> web.Response:
+        """Fully retract stored feedback for a clip (see ClipDatabase.delete_feedback).
+
+        Distinct from resubmitting corrected feedback: this removes the row
+        entirely, taking it out of confidence-threshold auto-tuning, prompt
+        corrections, and fine-tuning training examples rather than replacing
+        it with a different verdict.
+        """
+        clip_id = request.match_info["clip_id"]
+        deleted = await self._db.delete_feedback(clip_id)
+        return web.json_response({"deleted": deleted})
 
     # ------------------------------------------------------------------
     # Local-only face-recognition enrollment (see vision.py,

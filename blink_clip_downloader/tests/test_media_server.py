@@ -2747,6 +2747,152 @@ async def test_ai_feedback_submit_and_get(client: TestClient, db: ClipDatabase) 
     assert data["corrected_suspicious"] is False
 
 
+async def test_ai_feedback_submit_derives_corrected_suspicious_for_false_positive(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """correct=False always means the single is_suspicious boolean was wrong
+    — there's no third option, so when the caller omits corrected_suspicious
+    entirely it must be derived as the opposite of the original verdict, not
+    left null. A clip flagged suspicious (True) and marked incorrect must
+    derive corrected_suspicious=False (it should NOT have been flagged) —
+    the correction direction that was previously impossible to express and
+    silently fell back to the *original* (wrong) label at fine-tune time."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.8,
+            "summary": "Person at door",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.post(
+        "/api/ai/feedback/c1",
+        json={"correct": False, "correction_note": "Just the mail carrier."},
+    )
+    assert resp.status == 200
+
+    data = await (await client.get("/api/ai/feedback/c1")).json()
+    assert data["corrected_suspicious"] is False
+
+
+async def test_ai_feedback_submit_derives_corrected_suspicious_for_false_negative(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """The reverse direction: a clip cleared by the AI (is_suspicious=False)
+    and marked incorrect must derive corrected_suspicious=True when omitted."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Driveway",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.89,
+            "summary": "Person pauses near the car",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.post(
+        "/api/ai/feedback/c1",
+        json={"correct": False, "correction_note": "Actually suspicious."},
+    )
+    assert resp.status == 200
+
+    data = await (await client.get("/api/ai/feedback/c1")).json()
+    assert data["corrected_suspicious"] is True
+
+
+async def test_ai_feedback_submit_correct_true_leaves_corrected_suspicious_null(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """When the reviewer confirms the verdict was correct, there is nothing
+    to correct — corrected_suspicious must stay null, not be derived."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.8,
+            "summary": "Person at door",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.post("/api/ai/feedback/c1", json={"correct": True})
+    assert resp.status == 200
+
+    data = await (await client.get("/api/ai/feedback/c1")).json()
+    assert data["corrected_suspicious"] is None
+
+
+async def test_ai_feedback_submit_explicit_corrected_suspicious_is_respected(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """An explicit corrected_suspicious from the caller is still honored
+    rather than always overridden by the derivation."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.8,
+            "summary": "Person at door",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.post(
+        "/api/ai/feedback/c1",
+        json={"correct": False, "corrected_suspicious": False},
+    )
+    assert resp.status == 200
+    data = await (await client.get("/api/ai/feedback/c1")).json()
+    assert data["corrected_suspicious"] is False
+
+
+async def test_ai_feedback_delete_removes_row(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        corrected_suspicious=False,
+    )
+    resp = await client.delete("/api/ai/feedback/c1")
+    assert resp.status == 200
+    assert (await resp.json())["deleted"] is True
+    assert await db.get_feedback_for_clip("c1") is None
+
+
+async def test_ai_feedback_delete_missing_returns_false(client: TestClient) -> None:
+    resp = await client.delete("/api/ai/feedback/ghost")
+    assert resp.status == 200
+    assert (await resp.json())["deleted"] is False
+
+
 async def test_ai_feedback_submit_autofills_note_for_false_positive(
     client: TestClient, db: ClipDatabase
 ) -> None:

@@ -1539,6 +1539,30 @@ async def test_get_feedback_for_clip_missing_returns_none(db: ClipDatabase) -> N
     assert await db.get_feedback_for_clip("ghost") is None
 
 
+async def test_delete_feedback_removes_row_and_returns_true(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        corrected_suspicious=False,
+    )
+    assert await db.delete_feedback("c1") is True
+    assert await db.get_feedback_for_clip("c1") is None
+
+
+async def test_delete_feedback_missing_returns_false(db: ClipDatabase) -> None:
+    assert await db.delete_feedback("ghost") is False
+
+
+async def test_delete_feedback_without_init_returns_false() -> None:
+    d = ClipDatabase()
+    assert await d.delete_feedback("c1") is False
+
+
 async def test_get_feedback_for_clip_without_init_returns_none() -> None:
     d = ClipDatabase()
     assert await d.get_feedback_for_clip("clip1") is None

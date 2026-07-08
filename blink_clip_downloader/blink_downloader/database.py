@@ -954,6 +954,22 @@ class ClipDatabase:
                 datetime.now(timezone.utc).isoformat(),
             )
 
+    async def delete_feedback(self, clip_id: str) -> bool:
+        """Remove stored feedback for a clip entirely. Returns True if a row existed.
+
+        Distinct from resubmitting feedback (which replaces the row via
+        :meth:`add_feedback`) — this fully retracts it, e.g. when a reviewer
+        gave mistaken feedback and wants it out of the adaptive-learning
+        signal (confidence-threshold tuning, prompt corrections, fine-tuning
+        examples) rather than merely changed.
+        """
+        if self._pool is None:
+            return False
+        status = await self._pool.execute(
+            _qm("DELETE FROM analysis_feedback WHERE clip_id=?"), clip_id
+        )
+        return _affected(status) > 0
+
     async def get_feedback_for_clip(self, clip_id: str) -> dict[str, Any] | None:
         if self._pool is None:
             return None

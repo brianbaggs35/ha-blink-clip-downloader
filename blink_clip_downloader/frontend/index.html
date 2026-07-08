@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Blink Clip Downloader</title>
+    <script>
+      // media_server.py's index handler string-replaces this placeholder
+      // per-request with the current Home Assistant ingress path prefix
+      // (see _handle_index) — Vite leaves it untouched since it isn't Vite
+      // syntax. In `npm run dev` (no HAROOT-aware server in front of it),
+      // this literal placeholder is never substituted, so main.ts falls back
+      // to "" — see src/env.ts.
+      window.__HA_INGRESS_ROOT__ = '__HAROOT__'
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
