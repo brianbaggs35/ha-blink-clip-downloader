@@ -6,6 +6,7 @@ import asyncio
 import json
 import sys
 from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1047,6 +1048,140 @@ async def test_ai_usage_escalation_row_priced_separately(
     assert tier1["cost"] == pytest.approx(0.15 + 0.60)
     assert escalated["cost"] == pytest.approx(2.50 + 10.00)
     assert data["total_estimated_cost"] == pytest.approx(0.15 + 0.60 + 2.50 + 10.00)
+
+
+async def test_ai_usage_escalation_dedupes_across_provider_values(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Regression test for the AI Usage tab showing the same escalation
+    model twice: rows from before ``escalation_provider`` existed backfill
+    to ``''``, which used to produce a second duplicate-looking ``by_model``
+    row alongside newer rows carrying the real provider value."""
+    await db.add_clip(_make_clip("u1"))
+    await db.add_clip(_make_clip("u2"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "u1",
+            "camera": "Front Door",
+            "model": "gpt-4o-mini",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.9,
+            "summary": "Escalated",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "tokens_prompt": 100,
+            "tokens_completion": 20,
+            "escalation_model": "gpt-4o",
+            "escalation_tokens_prompt": 300,
+            "escalation_tokens_completion": 60,
+            "escalation_provider": "",
+        }
+    )
+    await db.add_analysis_result(
+        {
+            "clip_id": "u2",
+            "camera": "Front Door",
+            "model": "gpt-4o-mini",
+            "response_text": "",
+            "is_suspicious": True,
+            "confidence": 0.9,
+            "summary": "Escalated",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-02T09:00:00+00:00",
+            "tokens_prompt": 100,
+            "tokens_completion": 20,
+            "escalation_model": "gpt-4o",
+            "escalation_tokens_prompt": 300,
+            "escalation_tokens_completion": 60,
+            "escalation_provider": "openai",
+        }
+    )
+
+    resp = await client.get("/api/ai/usage")
+    data = await resp.json()
+
+    escalated_rows = [m for m in data["by_model"] if m["model"] == "gpt-4o"]
+    assert len(escalated_rows) == 1
+    assert escalated_rows[0]["analyses"] == 2
+    assert escalated_rows[0]["tokens_prompt"] == 600
+    assert escalated_rows[0]["tokens_completion"] == 120
+
+
+async def test_ai_usage_daily_empty(client: TestClient) -> None:
+    resp = await client.get("/api/ai/usage")
+    data = await resp.json()
+    assert data["daily"] == []
+
+
+async def test_ai_usage_daily_totals_for_today(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("u1"))
+    now = datetime.now(timezone.utc).isoformat()
+    await db.add_analysis_result(
+        {
+            "clip_id": "u1",
+            "camera": "Front Door",
+            "model": "gpt-4o-mini",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": now,
+            "tokens_prompt": 1_000_000,
+            "tokens_completion": 1_000_000,
+        }
+    )
+
+    resp = await client.get("/api/ai/usage")
+    data = await resp.json()
+
+    assert len(data["daily"]) == 1
+    row = data["daily"][0]
+    assert row["day"] == datetime.now(timezone.utc).date().isoformat()
+    assert row["analyses"] == 1
+    assert row["tokens_total"] == 2_000_000
+    assert row["cost"] == pytest.approx(0.15 + 0.60)
+
+
+async def test_ai_usage_daily_sums_multiple_models_same_day(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("u1"))
+    await db.add_clip(_make_clip("u2"))
+    now = datetime.now(timezone.utc).isoformat()
+    for clip_id, model in (("u1", "gpt-4o-mini"), ("u2", "llava:7b")):
+        await db.add_analysis_result(
+            {
+                "clip_id": clip_id,
+                "camera": "Front Door",
+                "model": model,
+                "response_text": "",
+                "is_suspicious": False,
+                "confidence": 0.1,
+                "summary": "ok",
+                "frame_count": 1,
+                "analysis_duration": 1.0,
+                "analyzed_at": now,
+                "tokens_prompt": 100,
+                "tokens_completion": 20,
+            }
+        )
+
+    resp = await client.get("/api/ai/usage")
+    data = await resp.json()
+
+    assert len(data["daily"]) == 1
+    row = data["daily"][0]
+    assert row["analyses"] == 2
+    assert row["tokens_total"] == 240  # (100+20) * 2 clips
+    # llava:7b is unpriced (Ollama) — only gpt-4o-mini contributes cost.
+    assert row["cost"] == pytest.approx((100 * 0.15 + 20 * 0.60) / 1_000_000)
 
 
 async def test_ai_usage_clear_endpoint(client: TestClient, db: ClipDatabase) -> None:

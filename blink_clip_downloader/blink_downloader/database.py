@@ -753,6 +753,17 @@ class ClipDatabase:
         tier-1 model's row, so a configured ``ai_escalation_provider``/
         ``ai_escalation_model`` (any provider, not just OpenAI) gets its own
         accurately-priced line instead of silently inflating tier-1's totals.
+
+        Escalation rows are grouped by ``escalation_model`` alone (not also
+        ``escalation_provider``), matching how the tier-1 query groups by
+        ``model`` alone. Grouping by both columns used to split one model
+        into two duplicate-looking rows in the UI whenever
+        ``escalation_provider`` differed across rows for the same model —
+        notably pre-v4.0.0 rows, written before the ``escalation_provider``
+        column existed, which backfill to ``''`` via the migration in
+        :meth:`_migrate` rather than matching newer rows' real provider
+        value. ``MAX(escalation_provider)`` picks a representative non-empty
+        provider for the row's label when one is available.
         """
         empty: dict[str, Any] = {
             "total_analyses": 0,
@@ -795,13 +806,13 @@ class ClipDatabase:
             f"""
             SELECT
                 escalation_model                              AS model,
-                escalation_provider                            AS provider,
+                MAX(escalation_provider)                       AS provider,
                 COUNT(*)                                      AS analyses,
                 COALESCE(SUM(escalation_tokens_prompt), 0)     AS tokens_prompt,
                 COALESCE(SUM(escalation_tokens_completion), 0) AS tokens_completion
             FROM analysis_results
             {escalation_since_clause}
-            GROUP BY escalation_model, escalation_provider
+            GROUP BY escalation_model
             ORDER BY analyses DESC
             """,
             since_params,
@@ -836,6 +847,75 @@ class ClipDatabase:
             "total_escalation_tokens": total_escalation_tokens,
             "by_model": by_model,
         }
+
+    async def get_daily_usage_stats(self, days: int = 14) -> list[dict[str, Any]]:
+        """Return per-day, per-model token totals for the AI Usage tab's daily history.
+
+        Buckets ``analysis_results`` by calendar day (UTC, from ``analyzed_at``)
+        over the trailing *days* days, respecting the same "Clear Stats" cutoff
+        as :meth:`get_token_usage_stats`. One row per ``(day, model)`` pair —
+        tier-1 and escalation usage are kept as separate rows (tagged via
+        ``"escalated"``) rather than merged, so callers can price each
+        model's tokens at that model's own rate before summing to a per-day
+        total (mirrors how :meth:`get_token_usage_stats` prices ``by_model``
+        rows). Days with no analysis activity are simply absent — this method
+        does not zero-fill the range, keeping the result small.
+        """
+        if self._db is None:
+            return []
+
+        reset_at = await self._get_ai_usage_reset_at()
+        cutoff = (
+            (datetime.now(timezone.utc) - timedelta(days=days - 1)).date().isoformat()
+        )
+
+        conditions = ["date(analyzed_at) >= ?"]
+        params: list[str] = [cutoff]
+        if reset_at:
+            conditions.append("analyzed_at > ?")
+            params.append(reset_at)
+        where = "WHERE " + " AND ".join(conditions)
+
+        async with self._db.execute(
+            f"""
+            SELECT date(analyzed_at) AS day, model,
+                   COUNT(*)                            AS analyses,
+                   COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
+                   COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
+            FROM analysis_results
+            {where}
+            GROUP BY day, model
+            """,
+            params,
+        ) as cursor:
+            primary_rows = await cursor.fetchall()
+
+        async with self._db.execute(
+            f"""
+            SELECT date(analyzed_at) AS day, escalation_model AS model,
+                   COUNT(*)                                       AS analyses,
+                   COALESCE(SUM(escalation_tokens_prompt), 0)     AS tokens_prompt,
+                   COALESCE(SUM(escalation_tokens_completion), 0) AS tokens_completion
+            FROM analysis_results
+            {where} AND escalation_model != ''
+            GROUP BY day, escalation_model
+            """,
+            params,
+        ) as cursor:
+            escalation_rows = await cursor.fetchall()
+
+        daily: list[dict[str, Any]] = []
+        for r in primary_rows:
+            d = dict(r)
+            d["escalated"] = False
+            daily.append(d)
+        for r in escalation_rows:
+            d = dict(r)
+            d["escalated"] = True
+            daily.append(d)
+
+        daily.sort(key=lambda d: str(d["day"]), reverse=True)
+        return daily
 
     # ------------------------------------------------------------------
     # Adaptive Learning (human feedback on AI verdicts — "smart brain")
