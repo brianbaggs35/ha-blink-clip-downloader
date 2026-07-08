@@ -688,6 +688,23 @@ action:
         </table>
         <p id="usage-no-data" style="display:none;color:var(--muted);padding:1rem;text-align:center">No analysis data yet. Run the AI analysis to see usage statistics.</p>
       </div>
+
+      <!-- Daily usage history -->
+      <h3 style="margin-bottom:.6rem">Daily Usage (Last 14 Days)</h3>
+      <div id="usage-daily-table-wrap" class="table-scroll">
+        <table class="usage-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th style="text-align:right">Analyses</th>
+              <th style="text-align:right">Total Tokens</th>
+              <th style="text-align:right">Est. Cost</th>
+            </tr>
+          </thead>
+          <tbody id="usage-daily-tbody"></tbody>
+        </table>
+        <p id="usage-daily-no-data" style="display:none;color:var(--muted);padding:1rem;text-align:center">No analysis activity in the last 14 days.</p>
+      </div>
     </div>
   </div>
 </div>
@@ -2770,6 +2787,23 @@ async function loadAIUsage() {
       }).join('');
     }
 
+    // Populate daily usage history
+    const dailyTbody = $('usage-daily-tbody');
+    const dailyNoData = $('usage-daily-no-data');
+    const daily = d.daily || [];
+    if (daily.length === 0) {
+      dailyTbody.innerHTML = '';
+      dailyNoData.style.display = '';
+    } else {
+      dailyNoData.style.display = 'none';
+      dailyTbody.innerHTML = daily.map(row => {
+        return `<tr><td>${_esc(row.day || '—')}</td>` +
+          `<td style="text-align:right">${_fmtNum(row.analyses||0)}</td>` +
+          `<td style="text-align:right">${_fmtNum(row.tokens_total||0)}</td>` +
+          `<td style="text-align:right">${_esc(_fmtCost(row.cost))}</td></tr>`;
+      }).join('');
+    }
+
     $('usage-disabled-msg').style.display = (!d.enabled && totalAnalyses === 0) ? 'block' : 'none';
     $('usage-content').style.display = '';
   } catch(e) {
@@ -3234,6 +3268,48 @@ class MediaServer:
             total_cost += row_cost
             any_priced = True
         usage["total_estimated_cost"] = total_cost if any_priced else None
+
+        # Daily history (last 14 days): each (day, model) row from the DB is
+        # priced individually — same reasoning as by_model above — then
+        # collapsed into one total per day so the UI renders a small,
+        # fixed-size table instead of a per-model breakdown per day.
+        daily_totals: dict[str, dict[str, Any]] = {}
+        for row in await self._db.get_daily_usage_stats(days=14):
+            day = str(row["day"])
+            entry = daily_totals.setdefault(
+                day,
+                {
+                    "day": day,
+                    "analyses": 0,
+                    "tokens_prompt": 0,
+                    "tokens_completion": 0,
+                    "cost": 0.0,
+                    "any_priced": False,
+                },
+            )
+            tp = int(row.get("tokens_prompt") or 0)
+            tc = int(row.get("tokens_completion") or 0)
+            if not row.get("escalated"):
+                entry["analyses"] += int(row.get("analyses") or 0)
+            entry["tokens_prompt"] += tp
+            entry["tokens_completion"] += tc
+            pricing = lookup_model_pricing(row.get("model", ""))
+            if pricing is not None:
+                inp, out = pricing
+                entry["cost"] += (tp * inp + tc * out) / 1_000_000
+                entry["any_priced"] = True
+
+        data["daily"] = [
+            {
+                "day": e["day"],
+                "analyses": e["analyses"],
+                "tokens_prompt": e["tokens_prompt"],
+                "tokens_completion": e["tokens_completion"],
+                "tokens_total": e["tokens_prompt"] + e["tokens_completion"],
+                "cost": e["cost"] if e["any_priced"] else None,
+            }
+            for e in sorted(daily_totals.values(), key=lambda e: e["day"], reverse=True)
+        ]
 
         data.update(usage)
         return web.json_response(data)

@@ -1,5 +1,28 @@
 # Changelog
 
+## 4.0.2
+
+### Bug fixes
+
+- **Fix: the AI Usage tab's Per-Model Breakdown could show the same
+  escalation model twice.** `get_token_usage_stats` grouped escalation rows
+  by `(escalation_model, escalation_provider)`; rows written before the
+  `escalation_provider` column existed backfill to `''` via the schema
+  migration, so once newer rows carried the real provider value, the same
+  model split into two duplicate-looking rows. Escalation rows are now
+  grouped by `escalation_model` alone (matching how tier-1 rows were always
+  grouped), with a representative non-empty provider surfaced for the
+  label.
+
+### New features
+
+- **Added a "Daily Usage (Last 14 Days)" table to the AI Usage tab**,
+  showing per-day analyses, total tokens, and estimated cost so usage
+  trends are visible without leaving the tab. Each day's tokens are priced
+  per-model server-side (same approach as the Per-Model Breakdown) before
+  being summed into a single daily total; days with no analysis activity
+  are simply omitted rather than zero-filled, keeping the table small.
+
 ## 4.0.1
 
 Bug-fix release addressing two real-world accuracy reports: a second

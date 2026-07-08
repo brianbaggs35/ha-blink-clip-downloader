@@ -945,6 +945,36 @@ async def test_add_analysis_result_stores_escalation_provider(
     assert escalated["provider"] == "moondream_cloud"
 
 
+async def test_get_token_usage_stats_escalation_dedupes_across_provider_values(
+    db: ClipDatabase,
+) -> None:
+    """Regression test: rows written before the ``escalation_provider``
+    column existed backfill to ``''`` (see :meth:`_migrate`), which used to
+    split one escalation model into two duplicate-looking ``by_model`` rows
+    whenever older ('') and newer (real provider) rows coexisted. Grouping
+    by ``escalation_model`` alone merges them into a single row."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+
+    old_row = _make_analysis_escalation("c1")
+    old_row["escalation_provider"] = ""  # pre-v4.0.0 backfilled default
+    await db.add_analysis_result(old_row)
+
+    new_row = _make_analysis_escalation("c2")
+    new_row["escalation_provider"] = "openai"
+    await db.add_analysis_result(new_row)
+
+    stats = await db.get_token_usage_stats()
+    escalated_rows = [m for m in stats["by_model"] if m["model"] == "gpt-4o"]
+    assert len(escalated_rows) == 1
+
+    escalated = escalated_rows[0]
+    assert escalated["analyses"] == 2
+    assert escalated["tokens_prompt"] == 600  # 300 + 300
+    assert escalated["tokens_completion"] == 120  # 60 + 60
+    assert escalated["provider"] == "openai"  # non-empty value wins over ''
+
+
 async def test_get_token_usage_stats_no_escalation_by_default(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_analysis_result(
@@ -1007,6 +1037,116 @@ async def test_clear_ai_usage_stats_only_hides_rows_before_reset(
 async def test_clear_ai_usage_stats_without_init() -> None:
     d = ClipDatabase(Path("/tmp/neveropened_clear.db"))
     await d.clear_ai_usage_stats()  # must not raise
+
+
+# ------------------------------------------------------------------
+# Daily usage history (AI Usage tab's "last 14 days" table)
+# ------------------------------------------------------------------
+
+
+async def test_get_daily_usage_stats_empty(db: ClipDatabase) -> None:
+    assert await db.get_daily_usage_stats() == []
+
+
+async def test_get_daily_usage_stats_without_init() -> None:
+    d = ClipDatabase(Path("/tmp/neveropened_daily.db"))
+    assert await d.get_daily_usage_stats() == []
+
+
+async def test_get_daily_usage_stats_buckets_same_day_same_model(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_analysis_result(
+        _make_analysis_tokens("c1", "llava:7b", tokens_prompt=100, tokens_completion=20)
+    )
+    await db.add_analysis_result(
+        _make_analysis_tokens("c2", "llava:7b", tokens_prompt=50, tokens_completion=10)
+    )
+
+    daily = await db.get_daily_usage_stats()
+    assert len(daily) == 1
+    row = daily[0]
+    assert row["model"] == "llava:7b"
+    assert row["escalated"] is False
+    assert row["analyses"] == 2
+    assert row["tokens_prompt"] == 150
+    assert row["tokens_completion"] == 30
+
+
+async def test_get_daily_usage_stats_separates_different_days(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    today = datetime.now(timezone.utc)
+    row_today = _make_analysis_tokens("c1", "llava:7b", 100, 20)
+    row_today["analyzed_at"] = today.isoformat()
+    row_yesterday = _make_analysis_tokens("c2", "llava:7b", 50, 10)
+    row_yesterday["analyzed_at"] = (today - timedelta(days=1)).isoformat()
+    await db.add_analysis_result(row_today)
+    await db.add_analysis_result(row_yesterday)
+
+    daily = await db.get_daily_usage_stats()
+    assert len(daily) == 2
+    days = {row["day"] for row in daily}
+    assert today.date().isoformat() in days
+    assert (today - timedelta(days=1)).date().isoformat() in days
+    # Most recent day first.
+    assert daily[0]["day"] == today.date().isoformat()
+
+
+async def test_get_daily_usage_stats_excludes_data_outside_window(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    old_row = _make_analysis_tokens("c1", "llava:7b", 100, 20)
+    old_row["analyzed_at"] = (
+        datetime.now(timezone.utc) - timedelta(days=30)
+    ).isoformat()
+    await db.add_analysis_result(old_row)
+
+    assert await db.get_daily_usage_stats(days=14) == []
+
+
+async def test_get_daily_usage_stats_includes_escalation_as_separate_row(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(_make_analysis_escalation("c1"))
+
+    daily = await db.get_daily_usage_stats()
+    assert len(daily) == 2
+
+    tier1 = next(r for r in daily if r["model"] == "gpt-4o-mini")
+    escalated = next(r for r in daily if r["model"] == "gpt-4o")
+    assert tier1["escalated"] is False
+    assert escalated["escalated"] is True
+    assert escalated["tokens_prompt"] == 300
+    assert escalated["tokens_completion"] == 60
+
+
+async def test_get_daily_usage_stats_respects_reset_cutoff(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis_tokens("c1", "llava:7b", tokens_prompt=100, tokens_completion=20)
+    )
+    await db.clear_ai_usage_stats()
+
+    reset_at = await db._get_ai_usage_reset_at()
+    later = datetime.fromisoformat(reset_at) + timedelta(seconds=1)
+
+    await db.add_clip(_make_clip("c2"))
+    row = _make_analysis_tokens(
+        "c2", "llava:7b", tokens_prompt=50, tokens_completion=10
+    )
+    row["analyzed_at"] = later.isoformat()
+    await db.add_analysis_result(row)
+
+    daily = await db.get_daily_usage_stats()
+    assert len(daily) == 1
+    assert daily[0]["tokens_prompt"] == 50
 
 
 async def test_analysis_result_stores_tokens(db: ClipDatabase) -> None:
