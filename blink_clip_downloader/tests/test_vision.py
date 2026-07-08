@@ -1144,32 +1144,26 @@ async def test_vision_pipeline_all_disabled_returns_empty_hints() -> None:
 
 
 async def test_vision_pipeline_empty_frames_short_circuits() -> None:
-    pipeline = VisionPipeline(VisionConfig(cv_preprocessing_enabled=True))
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
     hints = await pipeline.process_clip([])
     assert hints.enhanced_frames is None
 
 
-async def test_vision_pipeline_preprocessing_only(
+async def test_vision_pipeline_enhanced_detection_all_deps_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Enhanced detection covers preprocessing + detection + depth +
+    segmentation under one toggle — with every dependency unavailable, each
+    stage degrades gracefully rather than raising, leaving only the
+    unchanged frames behind."""
     monkeypatch.delitem(sys.modules, "cv2", raising=False)
+    monkeypatch.delitem(sys.modules, "ultralytics", raising=False)
     with patch("builtins.__import__", side_effect=ImportError):
-        pipeline = VisionPipeline(VisionConfig(cv_preprocessing_enabled=True))
-        hints = await pipeline.process_clip([b"frame"])
+        pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+        hints = await pipeline.process_clip([b"frame"], car_description="Silver Kia")
         # opencv unavailable -> enhance() returns frames unchanged, but the
         # pipeline still records that preprocessing ran.
         assert hints.enhanced_frames == [b"frame"]
-
-
-async def test_vision_pipeline_object_detection_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delitem(sys.modules, "ultralytics", raising=False)
-    with patch("builtins.__import__", side_effect=ImportError):
-        pipeline = VisionPipeline(
-            VisionConfig(object_detection_enabled=True, depth_estimation_enabled=True)
-        )
-        hints = await pipeline.process_clip([b"frame"], car_description="Silver Kia")
         assert hints.detection_hint is None
         assert hints.depth_hint is None
 
@@ -1214,11 +1208,7 @@ async def test_vision_pipeline_full_stack(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setitem(sys.modules, "torch", MagicMock())
     mock_cv2.dilate.side_effect = lambda mask, kernel, iterations: vehicle_mask
 
-    config = VisionConfig(
-        object_detection_enabled=True,
-        depth_estimation_enabled=True,
-        segmentation_enabled=True,
-    )
+    config = VisionConfig(enhanced_detection_enabled=True)
     pipeline = VisionPipeline(config)
     hints = await pipeline.process_clip(
         [_real_jpeg_bytes()],
@@ -1256,11 +1246,7 @@ async def test_vision_pipeline_skips_vehicle_analysis_on_non_car_camera(
     mock_ultra.YOLO.return_value = fake_model
     monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
 
-    config = VisionConfig(
-        object_detection_enabled=True,
-        depth_estimation_enabled=True,
-        segmentation_enabled=True,
-    )
+    config = VisionConfig(enhanced_detection_enabled=True)
     pipeline = VisionPipeline(config)
     hints = await pipeline.process_clip(
         [_real_jpeg_bytes()],
@@ -1298,7 +1284,7 @@ async def test_vision_pipeline_dog_vehicle_contact_detected(
     mock_ultra.YOLO.return_value = fake_model
     monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
 
-    pipeline = VisionPipeline(VisionConfig(object_detection_enabled=True))
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
     hints = await pipeline.process_clip(
         [_real_jpeg_bytes()],
         car_description="Silver Kia",
@@ -1329,7 +1315,7 @@ async def test_vision_pipeline_tracking_hint_across_multiple_frames(
     mock_ultra.YOLO.return_value = fake_model
     monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
 
-    pipeline = VisionPipeline(VisionConfig(object_detection_enabled=True))
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
     frames = [_real_jpeg_bytes()] * 5
     hints = await pipeline.process_clip(frames)
     assert hints.tracking_hint is not None

@@ -147,8 +147,8 @@ class FrameEnhancer:
 
     The lightest stage in this pipeline — no model to load or download,
     just per-frame image processing — but still requires the opencv
-    dependency, so it's gated by ``ai_cv_preprocessing_enabled`` like every
-    other stage here rather than always running.
+    dependency, so it's gated by ``ai_enhanced_detection_enabled`` like
+    every other stage here rather than always running.
     """
 
     @staticmethod
@@ -925,13 +925,18 @@ def _build_recognition_hint(match: RecognizedFace) -> str:
 
 @dataclass
 class VisionConfig:
-    """Which optional computer-vision stages are enabled (see config.py)."""
+    """Which optional computer-vision stages are enabled (see config.py).
 
-    cv_preprocessing_enabled: bool = False
-    object_detection_enabled: bool = False
+    ``enhanced_detection_enabled`` gates frame preprocessing, object
+    detection/tracking, depth estimation, and contact segmentation together
+    — depth/segmentation have always required detection to run at all, so
+    these four stages are one on/off setting rather than four independently
+    toggleable ones. Face recognition remains separate since it's a
+    privacy-sensitive, not just heavier-compute, feature.
+    """
+
+    enhanced_detection_enabled: bool = False
     object_detection_model: str = "yolo11n.pt"
-    depth_estimation_enabled: bool = False
-    segmentation_enabled: bool = False
     face_recognition_enabled: bool = False
 
 
@@ -992,12 +997,10 @@ class VisionPipeline:
         if not frames:
             return hints
 
-        if self._config.cv_preprocessing_enabled:
+        if self._config.enhanced_detection_enabled:
             frames = FrameEnhancer.enhance(frames)
             hints.enhanced_frames = frames
 
-        detections: list[DetectedObject] | None = None
-        if self._config.object_detection_enabled:
             detections = await self._detector.detect(frames)
             if detections:
                 # Vehicle-distance language (and the depth/contact stages
@@ -1011,27 +1014,25 @@ class VisionPipeline:
                 )
                 hints.tracking_hint = _build_tracking_hint(detections, len(frames))
 
-        pair = (
-            _best_subject_vehicle_pair(detections)
-            if detections and car_protection_applies
-            else None
-        )
-
-        if pair and self._config.depth_estimation_enabled:
-            subject, vehicle, frame_idx = pair
-            depth_result = await self._depth.compare(
-                frames[frame_idx], subject.box, vehicle.box
+            pair = (
+                _best_subject_vehicle_pair(detections)
+                if detections and car_protection_applies
+                else None
             )
-            if depth_result is not None:
-                hints.depth_hint = _build_depth_hint(depth_result)
 
-        if pair and self._config.segmentation_enabled:
-            subject, vehicle, frame_idx = pair
-            contact_result = await self._segmenter.check_contact(
-                frames[frame_idx], subject.box, vehicle.box
-            )
-            if contact_result is not None:
-                hints.contact_hint = _build_contact_hint(contact_result)
+            if pair:
+                subject, vehicle, frame_idx = pair
+                depth_result = await self._depth.compare(
+                    frames[frame_idx], subject.box, vehicle.box
+                )
+                if depth_result is not None:
+                    hints.depth_hint = _build_depth_hint(depth_result)
+
+                contact_result = await self._segmenter.check_contact(
+                    frames[frame_idx], subject.box, vehicle.box
+                )
+                if contact_result is not None:
+                    hints.contact_hint = _build_contact_hint(contact_result)
 
         if self._config.face_recognition_enabled and self._db is not None:
             recognizer = FaceRecognizer(self._face_embedder, self._db)

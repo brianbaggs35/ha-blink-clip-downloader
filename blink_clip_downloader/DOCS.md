@@ -519,23 +519,19 @@ activate.
 
 ### Computer-Vision Enhancement Pipeline (optional, heavy)
 
-⚠️ **Resource warning:** everything in this section requires substantially more CPU
-and RAM than the rest of this add-on, and downloads large ML models (100MB-800MB+
-each, cached under `/data` after first use). Only enable these on hardware with real
-spare capacity — a modern NUC, mini-PC, or similar. **Not recommended on a Raspberry
-Pi** or other constrained device. Every option below is off by default, and clip
-analysis works exactly as it did before this section existed with all of them left
+⚠️ **Resource warning:** both options below require substantially more CPU and RAM
+than the rest of this add-on, and download large ML models (100MB-800MB+ each,
+cached under `/data` after first use). Comfortable on a Raspberry Pi 5 (8GB) or
+better; more constrained on an older or lower-RAM Pi. Both are off by default, and
+clip analysis works exactly as it did before this section existed with both left
 disabled — the AI provider (Ollama/Anthropic/OpenAI/Moondream) still makes every
 suspicious/not-suspicious call; these stages only feed it better evidence.
 
 | Option | Default | What it adds |
 |---|---|---|
-| `ai_cv_preprocessing_enabled` | `false` | CLAHE contrast enhancement + light denoising (OpenCV) on frames before they're sent to the AI model. The lightest option here. |
-| `ai_object_detection_enabled` | `false` | Object detection + tracking (YOLO + ByteTrack, via Ultralytics) — adds a precise, code-computed **OBJECT DETECTION** hint (what was detected — people, vehicles, and animals — and how close a detected person or animal is to a detected vehicle) instead of relying on pixel-diff motion heuristics alone. Also adds a **TRACKING** hint using ByteTrack's frame-to-frame continuity to distinguish lingering/casing from briefly passing through. Vehicle-distance language and the two stages below only ever apply on a camera actually designated to view the protected vehicle (`ai_car_cameras`) — other cameras stay isolated even if they happen to detect an unrelated car. |
-| `ai_object_detection_model` | `yolo11n.pt` | Which Ultralytics model to run. "n" (nano) models are fastest/lightest and the recommended starting point on CPU-only hardware; larger models (s/m/l/x) are more accurate but much slower. |
-| `ai_depth_estimation_enabled` | `false` | Monocular depth estimation (Depth Anything V2, via transformers). Requires object detection. Adds a **DEPTH ESTIMATE** hint distinguishing "overlapping in the 2D frame" from "actually at the same distance from the camera" — catches the case where a person or animal only *looks* close to the protected vehicle because of the camera angle. |
-| `ai_segmentation_enabled` | `false` | Pixel-level contact segmentation (SAM2, via transformers) — the heaviest option here. Requires object detection. Adds a **CONTACT ANALYSIS** hint refining a bounding-box overlap into an actual touching-or-not judgment (e.g. a dog jumping on the car vs. merely standing nearby) using each object's real visible outline. |
-| `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. |
+| `ai_enhanced_detection_enabled` | `false` | Frame preprocessing (CLAHE contrast enhancement + light denoising, OpenCV), object detection + tracking (YOLO + ByteTrack, via Ultralytics), monocular depth estimation (Depth Anything V2, via transformers), and pixel-level contact segmentation (SAM2, via transformers) — one switch for all four. Depth estimation and contact segmentation have always required object detection to run at all, and there was no real value in toggling preprocessing/detection independently, so earlier versions' four separate settings just multiplied untested on/off combinations without a matching benefit. Adds a code-computed **OBJECT DETECTION** hint (what was detected — people, vehicles, and animals — and how close a detected person or animal is to a detected vehicle), a **TRACKING** hint (lingering/casing vs. briefly passing through, via ByteTrack's frame-to-frame continuity), a **DEPTH ESTIMATE** hint ("overlapping in the 2D frame" vs. "actually at the same distance from the camera" — catches the case where a person or animal only *looks* close to the protected vehicle because of the camera angle), and a **CONTACT ANALYSIS** hint (refining a bounding-box overlap into an actual touching-or-not judgment, e.g. a dog jumping on the car vs. merely standing nearby, using each object's real visible outline). Vehicle-distance/depth/contact language only ever applies on a camera actually designated to view the protected vehicle (`ai_car_cameras`) — other cameras stay isolated even if they happen to detect an unrelated car. |
+| `ai_object_detection_model` | `yolo11n.pt` | Which Ultralytics model the detection stage above runs. "n" (nano) models are fastest/lightest and the recommended starting point on CPU-only hardware; larger models (s/m/l/x) are more accurate but much slower. |
+| `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
 
 None of these packages are required to install or run the add-on normally; if a
 package fails to install in the Docker image (see the Dockerfile) or isn't present

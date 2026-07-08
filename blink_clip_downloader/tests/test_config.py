@@ -449,11 +449,8 @@ def test_ai_prompt_debug_enabled_can_be_turned_on():
 
 def test_cv_pipeline_options_default_disabled():
     cfg = _parse_config({"username": "u", "password": "p"})
-    assert cfg.ai_cv_preprocessing_enabled is False
-    assert cfg.ai_object_detection_enabled is False
+    assert cfg.ai_enhanced_detection_enabled is False
     assert cfg.ai_object_detection_model == "yolo11n.pt"
-    assert cfg.ai_depth_estimation_enabled is False
-    assert cfg.ai_segmentation_enabled is False
     assert cfg.ai_face_recognition_enabled is False
 
 
@@ -462,19 +459,13 @@ def test_cv_pipeline_options_can_all_be_enabled():
         {
             "username": "u",
             "password": "p",
-            "ai_cv_preprocessing_enabled": True,
-            "ai_object_detection_enabled": True,
+            "ai_enhanced_detection_enabled": True,
             "ai_object_detection_model": "yolo11s.pt",
-            "ai_depth_estimation_enabled": True,
-            "ai_segmentation_enabled": True,
             "ai_face_recognition_enabled": True,
         }
     )
-    assert cfg.ai_cv_preprocessing_enabled is True
-    assert cfg.ai_object_detection_enabled is True
+    assert cfg.ai_enhanced_detection_enabled is True
     assert cfg.ai_object_detection_model == "yolo11s.pt"
-    assert cfg.ai_depth_estimation_enabled is True
-    assert cfg.ai_segmentation_enabled is True
     assert cfg.ai_face_recognition_enabled is True
 
 

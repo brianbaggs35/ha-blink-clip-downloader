@@ -304,48 +304,33 @@ configuration:
       "Protected vehicle visible from this camera" checkbox in the web UI AI
       tab under Camera Configurations instead — it lists your actual camera
       names so there is nothing to type or get wrong.
-  ai_cv_preprocessing_enabled:
-    name: "⚠️ Enable Frame Preprocessing (heavy)"
+  ai_enhanced_detection_enabled:
+    name: "⚠️ Enable Enhanced Detection & Tracking (heavy)"
     description: >-
-      Enhance frames (contrast/denoise via OpenCV) before sending them to the
-      AI model. Requires more CPU/RAM than the rest of this add-on and pulls
-      in the opencv dependency. Off by default; analysis works exactly the
-      same without it.
-  ai_object_detection_enabled:
-    name: "⚠️ Enable Object Detection (heavy)"
-    description: >-
-      Detect and track people/vehicles/animals/packages (YOLO + ByteTrack)
-      and feed the AI a precise, code-computed detection hint instead of
-      relying on motion-diff heuristics alone. Downloads a model (tens of MB)
-      on first use and requires substantially more CPU/RAM. Not recommended
-      on a Raspberry Pi or similarly constrained device. Off by default.
+      Frame preprocessing (contrast/denoise), object detection + tracking
+      (YOLO + ByteTrack), monocular depth estimation (Depth Anything V2), and
+      pixel-level contact segmentation (SAM2) — one switch for all four,
+      feeding the AI precise, code-computed detection/tracking/depth/contact
+      hints instead of relying on motion-diff heuristics alone. Downloads
+      several models (100MB-800MB+ combined) on first use and requires
+      substantially more CPU/RAM than the rest of this add-on. Comfortable on
+      a Raspberry Pi 5 (8GB) or better. Off by default; analysis works
+      exactly the same without it.
   ai_object_detection_model:
     name: Object Detection Model
     description: >-
-      Ultralytics model file to use for detection. "n" (nano) models are the
-      fastest/lightest and the recommended starting point on CPU-only
-      hardware; larger models (s/m/l/x) are more accurate but much slower.
-  ai_depth_estimation_enabled:
-    name: "⚠️ Enable Depth Estimation (heavy)"
-    description: >-
-      Monocular depth estimation (Depth Anything V2) to tell "overlapping in
-      the 2D frame" apart from "actually at the same distance from the
-      camera". Requires ai_object_detection_enabled and downloads its own
-      model on first use. Off by default.
-  ai_segmentation_enabled:
-    name: "⚠️ Enable Contact Segmentation (heaviest)"
-    description: >-
-      Precise pixel-level segmentation (SAM2) to refine a detected
-      person/vehicle box overlap into an actual touching-or-not judgment.
-      The heaviest option in this section. Requires ai_object_detection_enabled
-      and downloads its own model on first use. Off by default.
+      Ultralytics model file the detection stage above runs. "n" (nano)
+      models are the fastest/lightest and the recommended starting point on
+      CPU-only hardware; larger models (s/m/l/x) are more accurate but much
+      slower.
   ai_face_recognition_enabled:
     name: Enable Local Face Recognition
     description: >-
       Suppress alerts for enrolled household members. Enrollment (reference
       photos, computed face embeddings) happens entirely on-device via the
-      web UI's AI tab and never leaves this add-on or gets sent to any cloud
-      AI provider. Off by default.
+      web UI's AI tab and never leaves this add-on or your network — it is
+      never sent to any cloud AI provider, regardless of which one is
+      configured above. Off by default.
   mobile_app_target:
     name: Mobile App Target Entity
     description: >-

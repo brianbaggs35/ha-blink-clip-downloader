@@ -178,11 +178,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 self._analyzer.attach_vision_pipeline(
                     VisionPipeline(
                         VisionConfig(
-                            cv_preprocessing_enabled=config.ai_cv_preprocessing_enabled,
-                            object_detection_enabled=config.ai_object_detection_enabled,
+                            enhanced_detection_enabled=config.ai_enhanced_detection_enabled,
                             object_detection_model=config.ai_object_detection_model,
-                            depth_estimation_enabled=config.ai_depth_estimation_enabled,
-                            segmentation_enabled=config.ai_segmentation_enabled,
                             face_recognition_enabled=config.ai_face_recognition_enabled,
                         ),
                         db=self._db,
