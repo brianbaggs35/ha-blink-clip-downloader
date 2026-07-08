@@ -22,14 +22,6 @@ from blink_downloader.media_server import MediaServer
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-async def db(tmp_path: Path) -> AsyncGenerator[ClipDatabase, None]:
-    d = ClipDatabase(tmp_path / "test.db")
-    await d.init()
-    yield d
-    await d.close()
-
-
 def _make_clip(clip_id: str = "c1", camera: str = "Front Door", **kw) -> dict:
     return {
         "id": clip_id,

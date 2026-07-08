@@ -3,11 +3,44 @@
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
 
 from blink_downloader.config import AppConfig
+from blink_downloader.database import ClipDatabase
+
+# A local PostgreSQL 16 instance is expected to already be running (the
+# Dockerfile bundles one for the real add-on; for local dev/CI, point this
+# at any throwaway Postgres — see CONTRIBUTING.md). Overridable so CI can
+# use a service-container DSN instead of localhost.
+TEST_DB_DSN = os.environ.get(
+    "TEST_DATABASE_DSN",
+    "postgresql://postgres:postgres@localhost:5432/blink_clips_test",
+)
+
+# Every table in the schema — truncated before each test since, unlike
+# SQLite's fresh-file-per-test, a single Postgres database is reused across
+# the whole run. RESTART IDENTITY resets GENERATED ALWAYS AS IDENTITY
+# sequences too, so tests asserting on specific autoincrement ids stay
+# deterministic; CASCADE follows FK references (e.g. clips -> analysis_results).
+_ALL_TABLES = (
+    "clips, analysis_results, ai_usage_reset, analysis_queue, "
+    "camera_baselines, camera_duration_stats, camera_scene_baselines, "
+    "analysis_feedback, face_enrollments"
+)
+
+
+@pytest.fixture
+async def db() -> AsyncGenerator[ClipDatabase, None]:
+    d = ClipDatabase(TEST_DB_DSN)
+    await d.init()
+    assert d._pool is not None  # noqa: SLF001
+    await d._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")  # noqa: SLF001
+    yield d
+    await d.close()
 
 
 @pytest.fixture

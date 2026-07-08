@@ -15,7 +15,6 @@ import asyncio
 import io
 import sys
 import time
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -58,14 +57,6 @@ def _real_jpeg_bytes(size: tuple[int, int] = (10, 10)) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", size, color=(128, 128, 128)).save(buf, format="JPEG")
     return buf.getvalue()
-
-
-@pytest.fixture
-async def db(tmp_path: Path):
-    d = ClipDatabase(tmp_path / "test.db")
-    await d.init()
-    yield d
-    await d.close()
 
 
 # ------------------------------------------------------------------

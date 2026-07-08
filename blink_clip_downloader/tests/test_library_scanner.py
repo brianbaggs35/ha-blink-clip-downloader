@@ -2,25 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-import pytest
 
 from blink_downloader.database import ClipDatabase
 from blink_downloader.library_scanner import (
     _timestamp_from_filename,
     import_existing_clips,
 )
-
-
-@pytest.fixture
-async def db(tmp_path: Path) -> AsyncGenerator[ClipDatabase, None]:
-    d = ClipDatabase(tmp_path / "test.db")
-    await d.init()
-    yield d
-    await d.close()
 
 
 def _touch(path: Path, content: bytes = b"fake-mp4") -> None:

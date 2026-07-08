@@ -3,25 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
 from datetime import time
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 from blink_downloader.analysis_queue import AnalysisQueue
 from blink_downloader.analyzer import AnalysisResult, ClipAnalyzer
 from blink_downloader.database import ClipDatabase
-
-
-@pytest.fixture
-async def db(tmp_path: Path) -> AsyncGenerator[ClipDatabase, None]:
-    d = ClipDatabase(tmp_path / "test.db")
-    await d.init()
-    yield d
-    await d.close()
 
 
 def _make_analyzer_mock(**kwargs: Any) -> MagicMock:

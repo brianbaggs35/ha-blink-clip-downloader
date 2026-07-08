@@ -2,21 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
 from blink_downloader.database import ClipDatabase, _row_to_dict
-
-
-@pytest.fixture
-async def db(tmp_path: Path) -> AsyncGenerator[ClipDatabase, None]:
-    d = ClipDatabase(tmp_path / "test.db")
-    await d.init()
-    yield d
-    await d.close()
+from tests.conftest import TEST_DB_DSN
 
 
 def _make_clip(clip_id: str = "clip1", camera: str = "Front Door", **kwargs) -> dict:
@@ -37,11 +28,12 @@ def _make_clip(clip_id: str = "clip1", camera: str = "Front Door", **kwargs) -> 
 # ------------------------------------------------------------------
 
 
-async def test_init_creates_tables(tmp_path: Path) -> None:
-    d = ClipDatabase(tmp_path / "new.db")
-    await d.init()
-    assert (tmp_path / "new.db").exists()
-    await d.close()
+async def test_init_creates_tables(db: ClipDatabase) -> None:
+    assert db._pool is not None  # noqa: SLF001
+    # A functional check, not just an attribute check: querying a freshly
+    # created (and truncated, via the `db` fixture) table succeeds and is
+    # empty, proving init() actually created the schema.
+    assert await db.count_clips() == 0
 
 
 async def test_double_close_is_safe(db: ClipDatabase) -> None:
@@ -49,21 +41,21 @@ async def test_double_close_is_safe(db: ClipDatabase) -> None:
     await db.close()  # should not raise
 
 
-async def test_init_resets_stale_processing_items(tmp_path: Path) -> None:
+async def test_init_resets_stale_processing_items(db: ClipDatabase) -> None:
     """A crash/restart while a clip is mid-analysis must not strand it forever.
 
     Items stuck in 'processing' are never retried by the queue (it only
     fetches status='pending'), so init() must reset them back to pending.
     """
-    db_path = tmp_path / "stale.db"
-    d = ClipDatabase(db_path)
-    await d.init()
-    await d.add_clip(_make_clip("c1"))
-    await d.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
-    await d.update_queue_status("c1", "processing")
-    await d.close()
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await db.update_queue_status("c1", "processing")
+    await db.close()
 
-    d2 = ClipDatabase(db_path)
+    # Reconnect to the same database — simulates an add-on restart, where
+    # a fresh ClipDatabase instance opens against data a previous process
+    # left behind.
+    d2 = ClipDatabase(TEST_DB_DSN)
     await d2.init()
     try:
         counts = await d2.get_queue_counts()
@@ -107,7 +99,7 @@ async def test_get_clip_missing_returns_none(db: ClipDatabase) -> None:
 
 
 async def test_add_clip_when_db_not_init() -> None:
-    d = ClipDatabase(Path("/tmp/never_opened.db"))
+    d = ClipDatabase()
     await d.add_clip(_make_clip())  # should silently no-op
 
 
@@ -211,19 +203,15 @@ async def test_delete_clip_cascades_to_analysis_tables(db: ClipDatabase) -> None
 
     assert await db.delete_clip("clip1") is True
 
-    assert db._db is not None
-    async with db._db.execute(
+    assert db._pool is not None  # noqa: SLF001
+    remaining_results = await db._pool.fetchval(  # noqa: SLF001
         "SELECT COUNT(*) FROM analysis_results WHERE clip_id='clip1'"
-    ) as cur:
-        row = await cur.fetchone()
-        assert row is not None
-        assert row[0] == 0
-    async with db._db.execute(
+    )
+    assert remaining_results == 0
+    remaining_queue = await db._pool.fetchval(  # noqa: SLF001
         "SELECT COUNT(*) FROM analysis_queue WHERE clip_id='clip1'"
-    ) as cur:
-        row = await cur.fetchone()
-        assert row is not None
-        assert row[0] == 0
+    )
+    assert remaining_queue == 0
 
 
 # ------------------------------------------------------------------
@@ -441,7 +429,7 @@ async def test_get_clips_sort_by_size(db: ClipDatabase) -> None:
 
 
 async def test_operations_without_init_are_safe() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened2.db"))
+    d = ClipDatabase()
     assert await d.get_clip("x") is None
     assert await d.get_clips() == []
     assert await d.count_clips() == 0
@@ -502,7 +490,7 @@ async def test_get_activity_data_counts_correctly(db: ClipDatabase) -> None:
 
 
 async def test_get_activity_data_without_init() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened3.db"))
+    d = ClipDatabase()
     assert await d.get_activity_data() == []
 
 
@@ -672,7 +660,7 @@ async def test_get_queue_counts(db: ClipDatabase) -> None:
 
 
 async def test_analysis_operations_without_init() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened4.db"))
+    d = ClipDatabase()
     assert await d.get_analysis_for_clip("x") is None
     assert await d.get_suspicious_clips() == []
     assert await d.get_analysis_stats() == {}
@@ -709,7 +697,7 @@ def test_row_to_dict_invalid_json_tags() -> None:
 
 async def test_mark_archived_without_init() -> None:
     """mark_archived() silently returns when db is not initialised (line 161)."""
-    d = ClipDatabase(Path("/tmp/neveropened_arch.db"))
+    d = ClipDatabase()
     await d.mark_archived("c1", "/archive/2024-06.zip")  # must not raise
 
 
@@ -770,14 +758,14 @@ async def test_count_clips_starred_filter(db: ClipDatabase) -> None:
 
 async def test_get_distinct_cameras_without_init() -> None:
     """get_distinct_cameras() returns [] when db is not initialised (line 358)."""
-    d = ClipDatabase(Path("/tmp/neveropened_cams.db"))
+    d = ClipDatabase()
     result = await d.get_distinct_cameras()
     assert result == []
 
 
 async def test_get_distinct_tags_without_init() -> None:
     """get_distinct_tags() returns [] when db is not initialised (line 368)."""
-    d = ClipDatabase(Path("/tmp/neveropened_tags.db"))
+    d = ClipDatabase()
     result = await d.get_distinct_tags()
     assert result == []
 
@@ -787,9 +775,8 @@ async def test_get_distinct_tags_bad_json_skipped(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.set_tags("c1", ["good"])
     # Inject bad JSON directly via raw SQL
-    assert db._db is not None
-    await db._db.execute("UPDATE clips SET tags='bad-json!!!' WHERE id='c1'")
-    await db._db.commit()
+    assert db._pool is not None  # noqa: SLF001
+    await db._pool.execute("UPDATE clips SET tags='bad-json!!!' WHERE id='c1'")  # noqa: SLF001
     tags = await db.get_distinct_tags()
     assert isinstance(tags, list)
     assert "good" not in tags  # bad JSON skipped entirely
@@ -797,19 +784,19 @@ async def test_get_distinct_tags_bad_json_skipped(db: ClipDatabase) -> None:
 
 async def test_add_analysis_result_without_init() -> None:
     """add_analysis_result() silently returns when db is not initialised (line 412)."""
-    d = ClipDatabase(Path("/tmp/neveropened_ar.db"))
+    d = ClipDatabase()
     await d.add_analysis_result({"clip_id": "c1", "camera": "A"})  # must not raise
 
 
 async def test_enqueue_for_analysis_without_init() -> None:
     """enqueue_for_analysis() silently returns when db is not initialised (line 504)."""
-    d = ClipDatabase(Path("/tmp/neveropened_eq.db"))
+    d = ClipDatabase()
     await d.enqueue_for_analysis("c1", "Cam", "/c1.mp4")  # must not raise
 
 
 async def test_update_queue_status_without_init() -> None:
     """update_queue_status() silently returns when db is not initialised (line 529)."""
-    d = ClipDatabase(Path("/tmp/neveropened_uq.db"))
+    d = ClipDatabase()
     await d.update_queue_status("c1", "completed")  # must not raise
 
 
@@ -877,7 +864,7 @@ async def test_get_token_usage_stats_with_data(db: ClipDatabase) -> None:
 
 
 async def test_get_token_usage_stats_without_init() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened_tu.db"))
+    d = ClipDatabase()
     stats = await d.get_token_usage_stats()
     assert stats["total_analyses"] == 0
     assert stats["total_escalations"] == 0
@@ -1035,7 +1022,7 @@ async def test_clear_ai_usage_stats_only_hides_rows_before_reset(
 
 
 async def test_clear_ai_usage_stats_without_init() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened_clear.db"))
+    d = ClipDatabase()
     await d.clear_ai_usage_stats()  # must not raise
 
 
@@ -1049,7 +1036,7 @@ async def test_get_daily_usage_stats_empty(db: ClipDatabase) -> None:
 
 
 async def test_get_daily_usage_stats_without_init() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened_daily.db"))
+    d = ClipDatabase()
     assert await d.get_daily_usage_stats() == []
 
 
@@ -1160,54 +1147,21 @@ async def test_analysis_result_stores_tokens(db: ClipDatabase) -> None:
     assert result["tokens_completion"] == 75
 
 
-async def test_migrate_adds_columns_idempotent(tmp_path: Path) -> None:
-    """Running init() twice does not raise errors (migration is idempotent)."""
-    d = ClipDatabase(tmp_path / "migrate_test.db")
-    await d.init()
-    await d.close()
-    d2 = ClipDatabase(tmp_path / "migrate_test.db")
-    await d2.init()  # should not raise
-    await d2.close()
+async def test_reinit_against_existing_data_is_idempotent(db: ClipDatabase) -> None:
+    """Running init() against an already-initialized database does not raise.
 
-
-async def test_migrate_normalizes_legacy_moondream_cloud_model_name(
-    db: ClipDatabase,
-) -> None:
-    """Pre-3.0 rows stored the provider name, not the model ID, in `model`.
-
-    This split them out from `moondream3-preview` in the Per-Model Breakdown
-    as a separate, permanently-0-tokens "model". Migration should fold them
-    into the current identifier so usage stats reflect one real model.
+    CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS make this safe —
+    unlike the old SQLite-per-install schema, PostgreSQL's schema is fully
+    declared up front with no incremental ALTER TABLE migration step needed,
+    since every install of this add-on starts from the same fresh database.
     """
     await db.add_clip(_make_clip("c1"))
-    await db.add_clip(_make_clip("c2"))
-    await db.add_analysis_result(_make_analysis("c1", model="moondream-cloud"))
-    await db.add_analysis_result(_make_analysis("c2", model="moondream_cloud"))
-
-    await db._normalize_legacy_model_names()
-
-    stats = await db.get_token_usage_stats()
-    assert len(stats["by_model"]) == 1
-    assert stats["by_model"][0]["model"] == "moondream3-preview"
-    assert stats["by_model"][0]["analyses"] == 2
-
-
-async def test_migrate_normalizes_legacy_model_name_runs_on_init(
-    tmp_path: Path,
-) -> None:
-    """The normalization also runs automatically as part of init()/_migrate()."""
-    d = ClipDatabase(tmp_path / "legacy_model.db")
-    await d.init()
-    await d.add_clip(_make_clip("c1"))
-    await d.add_analysis_result(_make_analysis("c1", model="moondream-cloud"))
-    await d.close()
-
-    d2 = ClipDatabase(tmp_path / "legacy_model.db")
-    await d2.init()
-    result = await d2.get_analysis_for_clip("c1")
-    assert result is not None
-    assert result["model"] == "moondream3-preview"
-    await d2.close()
+    d2 = ClipDatabase(TEST_DB_DSN)
+    await d2.init()  # should not raise, and must see the same data
+    try:
+        assert await d2.get_clip("c1") is not None
+    finally:
+        await d2.close()
 
 
 # ------------------------------------------------------------------
@@ -1269,13 +1223,13 @@ async def test_record_clip_baseline_zero_duration_skips_duration_stats(
 
 
 async def test_get_anomaly_score_uninitialised_db() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened_baseline.db"))
+    d = ClipDatabase()
     score = await d.get_anomaly_score("Camera", 8, 5.0)
     assert score == 0.0
 
 
 async def test_record_clip_baseline_uninitialised_db() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened_baseline2.db"))
+    d = ClipDatabase()
     # Should not raise even when db is not open
     await d.record_clip_baseline("Camera", 8, 5.0)
 
@@ -1414,13 +1368,15 @@ async def test_get_scene_deviation_corrupt_thumbnail_returns_none(
     """A row whose stored ``thumbnail`` isn't valid JSON (e.g. from a prior
     schema/format change) should be treated as no usable baseline rather than
     raising."""
-    assert db._db is not None
-    await db._db.execute(
+    assert db._pool is not None  # noqa: SLF001
+    await db._pool.execute(  # noqa: SLF001
         "INSERT INTO camera_scene_baselines (camera, thumbnail, sample_count, "
-        "updated_at) VALUES (?, ?, ?, ?)",
-        ("Corrupt", "not valid json", 25, "2024-01-01T00:00:00"),
+        "updated_at) VALUES ($1, $2, $3, $4)",
+        "Corrupt",
+        "not valid json",
+        25,
+        "2024-01-01T00:00:00",
     )
-    await db._db.commit()
     assert await db.get_scene_deviation("Corrupt", [0.5] * 4) is None
 
 
@@ -1429,13 +1385,15 @@ async def test_record_scene_baseline_recovers_from_corrupt_existing_data(
 ) -> None:
     """If the stored thumbnail is corrupt JSON, recording a new sample should
     restart the baseline from scratch instead of raising."""
-    assert db._db is not None
-    await db._db.execute(
+    assert db._pool is not None  # noqa: SLF001
+    await db._pool.execute(  # noqa: SLF001
         "INSERT INTO camera_scene_baselines (camera, thumbnail, sample_count, "
-        "updated_at) VALUES (?, ?, ?, ?)",
-        ("Corrupt2", "not valid json", 5, "2024-01-01T00:00:00"),
+        "updated_at) VALUES ($1, $2, $3, $4)",
+        "Corrupt2",
+        "not valid json",
+        5,
+        "2024-01-01T00:00:00",
     )
-    await db._db.commit()
     await db.record_scene_baseline("Corrupt2", [0.5, 0.5])
     # Restarted at sample_count=1 (0 + 1) since the prior data was unusable.
     for _ in range(19):
@@ -1446,24 +1404,23 @@ async def test_record_scene_baseline_recovers_from_corrupt_existing_data(
 
 
 async def test_get_scene_deviation_uninitialised_db() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened_scene.db"))
+    d = ClipDatabase()
     assert await d.get_scene_deviation("Camera", [0.5] * 4) is None
 
 
 async def test_record_scene_baseline_uninitialised_db() -> None:
-    d = ClipDatabase(Path("/tmp/neveropened_scene2.db"))
+    d = ClipDatabase()
     # Should not raise even when the db is not open
     await d.record_scene_baseline("Camera", [0.5] * 4)
 
 
 async def _scene_streak(db: ClipDatabase, camera: str) -> int:
-    assert db._db is not None
-    async with db._db.execute(
-        "SELECT consecutive_deviation_count FROM camera_scene_baselines WHERE camera=?",
-        (camera,),
-    ) as cur:
-        row = await cur.fetchone()
-    return int(row[0]) if row and row[0] is not None else 0
+    assert db._pool is not None  # noqa: SLF001
+    value = await db._pool.fetchval(  # noqa: SLF001
+        "SELECT consecutive_deviation_count FROM camera_scene_baselines WHERE camera=$1",
+        camera,
+    )
+    return int(value) if value is not None else 0
 
 
 async def test_record_scene_baseline_fast_refresh_on_persistent_change(
@@ -1583,7 +1540,7 @@ async def test_get_feedback_for_clip_missing_returns_none(db: ClipDatabase) -> N
 
 
 async def test_add_feedback_without_init_is_noop() -> None:
-    d = ClipDatabase(Path("/nonexistent/no.db"))
+    d = ClipDatabase()
     await d.add_feedback(
         clip_id="c1",
         camera="Cam",
@@ -1688,12 +1645,12 @@ async def test_mark_feedback_trained_empty_list_is_noop(db: ClipDatabase) -> Non
 
 
 async def test_get_untrained_feedback_without_init_returns_empty() -> None:
-    d = ClipDatabase(Path("/nonexistent/no.db"))
+    d = ClipDatabase()
     assert await d.get_untrained_feedback() == []
 
 
 async def test_mark_feedback_trained_without_init_is_noop() -> None:
-    d = ClipDatabase(Path("/nonexistent/no.db"))
+    d = ClipDatabase()
     await d.mark_feedback_trained([1, 2])  # should not raise
 
 
@@ -1726,7 +1683,7 @@ async def test_get_recent_feedback_filters_by_camera(db: ClipDatabase) -> None:
 
 
 async def test_get_recent_feedback_without_init_returns_empty() -> None:
-    d = ClipDatabase(Path("/nonexistent/no.db"))
+    d = ClipDatabase()
     assert await d.get_recent_feedback("Cam") == []
 
 
@@ -1773,7 +1730,7 @@ async def test_get_feedback_stats_counts_correct_and_incorrect(
 
 
 async def test_get_feedback_stats_without_init_returns_empty() -> None:
-    d = ClipDatabase(Path("/nonexistent/no.db"))
+    d = ClipDatabase()
     stats = await d.get_feedback_stats()
     assert stats["total"] == 0
 
@@ -1871,8 +1828,8 @@ async def test_effective_threshold_never_exceeds_ceiling(db: ClipDatabase) -> No
     assert threshold <= 0.95
 
 
-async def test_effective_threshold_without_init_returns_base(tmp_path: Path) -> None:
-    d = ClipDatabase(tmp_path / "unopened.db")
+async def test_effective_threshold_without_init_returns_base() -> None:
+    d = ClipDatabase()
     threshold = await d.get_effective_confidence_threshold("Cam", 0.5)
     assert threshold == 0.5
 
@@ -1974,7 +1931,7 @@ async def test_prompt_corrections_excludes_other_cameras(db: ClipDatabase) -> No
 
 
 async def test_prompt_corrections_without_init_returns_empty() -> None:
-    d = ClipDatabase(Path("/nonexistent/no.db"))
+    d = ClipDatabase()
     assert await d.get_prompt_corrections("Cam") == []
 
 
@@ -2022,7 +1979,7 @@ async def test_delete_face_enrollment(db: ClipDatabase) -> None:
 
 
 async def test_face_enrollment_without_init_is_noop() -> None:
-    d = ClipDatabase(Path("/nonexistent/no.db"))
+    d = ClipDatabase()
     assert await d.add_face_enrollment("Brian", [0.1]) == 0
     assert await d.list_face_enrollments() == []
     await d.delete_face_enrollment(1)  # must not raise

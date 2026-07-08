@@ -1,18 +1,33 @@
-"""SQLite-backed clip library with metadata, starring, tagging, and stats."""
+"""PostgreSQL-backed clip library with metadata, starring, tagging, and stats.
+
+Runs against a PostgreSQL 16 server bundled in this add-on's own container
+(see the Dockerfile and rootfs/etc/services.d/postgresql) — not a
+user-configured external database. Connects over a local Unix domain socket
+with no password (trust auth is scoped to that socket only, never exposed
+outside the container), matching the zero-configuration experience SQLite
+used to provide while gaining real concurrent access, native types, and
+richer query support.
+"""
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
+import os
+import re
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
-import aiosqlite
+import asyncpg
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_DB_FILE = Path("/data/clip_library.db")
+# Overridable via BLINK_DB_DSN for local dev/testing against a different
+# PostgreSQL instance; the container always uses the bundled server.
+DEFAULT_DSN = os.environ.get(
+    "BLINK_DB_DSN", "postgresql://blink@/blink_clips?host=/var/run/postgresql"
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS clips (
@@ -24,10 +39,10 @@ CREATE TABLE IF NOT EXISTS clips (
     duration      INTEGER DEFAULT 0,
     source        TEXT    DEFAULT '',
     network_id    INTEGER DEFAULT 0,
-    starred       INTEGER DEFAULT 0,
+    starred       BOOLEAN DEFAULT FALSE,
     tags          TEXT    DEFAULT '[]',
     downloaded_at TEXT    NOT NULL,
-    archived      INTEGER DEFAULT 0,
+    archived      BOOLEAN DEFAULT FALSE,
     archive_path  TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_clips_camera    ON clips (camera);
@@ -36,12 +51,12 @@ CREATE INDEX IF NOT EXISTS idx_clips_starred   ON clips (starred);
 CREATE INDEX IF NOT EXISTS idx_clips_archived  ON clips (archived);
 
 CREATE TABLE IF NOT EXISTS analysis_results (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    clip_id           TEXT    NOT NULL,
+    id                INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    clip_id           TEXT    NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
     camera            TEXT    NOT NULL,
     model             TEXT    NOT NULL,
     response_text     TEXT    DEFAULT '',
-    is_suspicious     INTEGER DEFAULT 0,
+    is_suspicious     BOOLEAN DEFAULT FALSE,
     confidence        REAL    DEFAULT 0.0,
     summary           TEXT    DEFAULT '',
     frame_count       INTEGER DEFAULT 0,
@@ -49,10 +64,12 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     analyzed_at       TEXT    NOT NULL,
     tokens_prompt     INTEGER DEFAULT 0,
     tokens_completion INTEGER DEFAULT 0,
+    anomaly_score     REAL    DEFAULT 0.0,
     escalation_model             TEXT    DEFAULT '',
     escalation_tokens_prompt     INTEGER DEFAULT 0,
     escalation_tokens_completion INTEGER DEFAULT 0,
-    FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE
+    escalation_provider          TEXT    DEFAULT '',
+    prompt_text                  TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
@@ -68,15 +85,14 @@ CREATE TABLE IF NOT EXISTS ai_usage_reset (
 );
 
 CREATE TABLE IF NOT EXISTS analysis_queue (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    clip_id       TEXT    NOT NULL UNIQUE,
+    id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    clip_id       TEXT    NOT NULL UNIQUE REFERENCES clips(id) ON DELETE CASCADE,
     camera        TEXT    NOT NULL,
     clip_path     TEXT    NOT NULL,
     status        TEXT    DEFAULT 'pending',
     queued_at     TEXT    NOT NULL,
     completed_at  TEXT    DEFAULT '',
-    error_message TEXT    DEFAULT '',
-    FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE
+    error_message TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_queue_status ON analysis_queue (status);
 
@@ -95,26 +111,28 @@ CREATE TABLE IF NOT EXISTS camera_scene_baselines (
     camera       TEXT PRIMARY KEY,
     thumbnail    TEXT    NOT NULL,
     sample_count INTEGER DEFAULT 0,
-    updated_at   TEXT
+    updated_at   TEXT,
+    consecutive_deviation_count INTEGER DEFAULT 0
 );
 
 -- Human feedback on stored AI verdicts (adaptive learning — "smart brain").
 -- One row per clip (resubmitting feedback for the same clip replaces it, see
 -- add_feedback()). Powers per-camera notification-threshold auto-tuning
--- (get_effective_confidence_threshold) and bounded few-shot prompt guidance
--- (get_prompt_corrections).
+-- (get_effective_confidence_threshold), bounded few-shot prompt guidance
+-- (get_prompt_corrections), and Moondream fine-tuning training examples
+-- (get_untrained_feedback).
 CREATE TABLE IF NOT EXISTS analysis_feedback (
-    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-    clip_id              TEXT    NOT NULL,
+    id                   INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    clip_id              TEXT    NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
     camera               TEXT    NOT NULL,
     analysis_result_id   INTEGER,
-    original_suspicious  INTEGER NOT NULL,
+    original_suspicious  BOOLEAN NOT NULL,
     original_confidence  REAL    NOT NULL,
-    correct              INTEGER NOT NULL,
+    correct              BOOLEAN NOT NULL,
     correction_note      TEXT    DEFAULT '',
-    corrected_suspicious INTEGER,
+    corrected_suspicious BOOLEAN,
     created_at           TEXT    NOT NULL,
-    FOREIGN KEY (clip_id) REFERENCES clips(id) ON DELETE CASCADE
+    trained_at           TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_camera ON analysis_feedback (camera);
 CREATE INDEX IF NOT EXISTS idx_feedback_clip   ON analysis_feedback (clip_id);
@@ -122,11 +140,11 @@ CREATE INDEX IF NOT EXISTS idx_feedback_clip   ON analysis_feedback (clip_id);
 -- Local-only face enrollment for the optional face-recognition pipeline
 -- (see vision.py, ai_face_recognition_enabled). embedding is a JSON-encoded
 -- list of floats (a 512-dim facenet-pytorch InceptionResnetV1 embedding) —
--- stored as TEXT rather than a packed BLOB for the same reason `tags`
--- above is TEXT, simplicity over compactness for a table that will only
--- ever hold a handful of rows. Never leaves this database.
+-- stored as TEXT rather than a native array/vector type for the same reason
+-- `tags` above is TEXT: simplicity over compactness for a table that will
+-- only ever hold a handful of rows. Never leaves this database.
 CREATE TABLE IF NOT EXISTS face_enrollments (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name       TEXT    NOT NULL,
     embedding  TEXT    NOT NULL,
     created_at TEXT    NOT NULL
@@ -173,12 +191,30 @@ _FEEDBACK_THRESHOLD_CEILING = 0.95
 _FEEDBACK_PROMPT_CORRECTIONS_LIMIT = 3
 
 
-def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
+def _qm(sql: str) -> str:
+    """Convert ``?``-style positional placeholders to asyncpg's ``$1, $2, ...``.
+
+    Every query in this module is written with SQLite-style ``?``
+    placeholders (readable, and lets WHERE-clause-building code append
+    ``"col=?"`` fragments without tracking a running placeholder index) and
+    passed through this helper immediately before execution — it only
+    renumbers ``?`` occurrences in final positional order, so dynamically
+    assembled queries need no other change to run against PostgreSQL.
+    """
+    counter = itertools.count(1)
+    return re.sub(r"\?", lambda _m: f"${next(counter)}", sql)
+
+
+def _affected(status: str) -> int:
+    """Extract the row count from an asyncpg command-tag string (e.g. ``"UPDATE 1"``)."""
+    try:
+        return int(status.rsplit(" ", 1)[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     d = dict(row)
-    d["starred"] = bool(d["starred"])
-    d["archived"] = bool(d["archived"])
-    if "notified" in d:
-        d["notified"] = bool(d["notified"])
     try:
         d["tags"] = json.loads(d.get("tags", "[]") or "[]")
     except (json.JSONDecodeError, TypeError):
@@ -187,30 +223,35 @@ def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
 
 
 class ClipDatabase:
-    """Async wrapper around the SQLite clip library."""
+    """Async wrapper around the PostgreSQL clip library."""
 
-    def __init__(self, db_path: Path = DEFAULT_DB_FILE) -> None:
-        self._path = db_path
-        self._db: aiosqlite.Connection | None = None
+    def __init__(self, dsn: str = DEFAULT_DSN) -> None:
+        self._dsn = dsn
+        self._pool: asyncpg.Pool | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def init(self) -> None:
-        """Open the database and create tables if needed."""
-        self._db = await aiosqlite.connect(self._path)
-        self._db.row_factory = aiosqlite.Row
-        # SQLite ignores declared FOREIGN KEY ... ON DELETE CASCADE constraints
-        # unless this pragma is enabled per-connection — without it,
-        # delete_clip() leaves orphaned analysis_results/analysis_queue rows
-        # behind instead of cascading the delete.
-        await self._db.execute("PRAGMA foreign_keys=ON")
-        await self._db.executescript(_SCHEMA)
-        await self._db.commit()
-        await self._migrate()
+        """Connect to PostgreSQL and create tables if needed."""
+        self._pool = await asyncpg.create_pool(
+            self._dsn,
+            min_size=1,
+            max_size=10,
+            # Every timestamp column in this schema is a UTC ISO-8601 TEXT
+            # string (see datetime.now(timezone.utc).isoformat() throughout
+            # this module) compared/bucketed with plain string ops
+            # (LIKE 'YYYY-MM-DD%') or cast to timestamptz for date/hour
+            # extraction — EXTRACT()/::date on a timestamptz apply the
+            # *session* time zone, so without pinning it here those casts
+            # would silently bucket by the server's local zone instead of
+            # UTC, shifting every "today"/hourly-activity figure.
+            server_settings={"timezone": "UTC"},
+        )
+        await self._pool.execute(_SCHEMA)
         await self._reset_stale_processing()
-        _LOGGER.debug("Clip database opened at %s", self._path)
+        _LOGGER.debug("Clip database connected (dsn=%s)", self._dsn)
 
     async def _reset_stale_processing(self) -> None:
         """Reset any items stuck in 'processing' back to 'pending'.
@@ -219,75 +260,21 @@ class ClipDatabase:
         mid-analysis. They are never retried otherwise because the queue
         only fetches status='pending'.
         """
-        assert self._db is not None
-        async with self._db.execute(
+        assert self._pool is not None
+        count = await self._pool.fetchval(
             "SELECT COUNT(*) FROM analysis_queue WHERE status='processing'"
-        ) as cur:
-            row = await cur.fetchone()
-            count = row[0] if row else 0
+        )
         if count:
-            await self._db.execute(
+            await self._pool.execute(
                 "UPDATE analysis_queue SET status='pending', completed_at='', "
                 "error_message='' WHERE status='processing'"
             )
-            await self._db.commit()
             _LOGGER.info("Reset %d stale processing item(s) to pending", count)
 
-    async def _migrate(self) -> None:
-        """Apply incremental schema migrations for existing databases."""
-        assert self._db is not None
-        new_columns = [
-            ("analysis_results", "tokens_prompt", "INTEGER DEFAULT 0"),
-            ("analysis_results", "tokens_completion", "INTEGER DEFAULT 0"),
-            ("analysis_results", "anomaly_score", "REAL DEFAULT 0.0"),
-            ("analysis_results", "escalation_model", "TEXT DEFAULT ''"),
-            ("analysis_results", "escalation_tokens_prompt", "INTEGER DEFAULT 0"),
-            ("analysis_results", "escalation_tokens_completion", "INTEGER DEFAULT 0"),
-            (
-                "camera_scene_baselines",
-                "consecutive_deviation_count",
-                "INTEGER DEFAULT 0",
-            ),
-            ("analysis_results", "escalation_provider", "TEXT DEFAULT ''"),
-            ("analysis_results", "prompt_text", "TEXT DEFAULT ''"),
-            ("analysis_feedback", "trained_at", "TEXT DEFAULT ''"),
-        ]
-        for table, col, definition in new_columns:
-            try:
-                await self._db.execute(
-                    f"ALTER TABLE {table} ADD COLUMN {col} {definition}"
-                )
-                await self._db.commit()
-                _LOGGER.debug("Migrated: added %s.%s", table, col)
-            except Exception:  # noqa: BLE001
-                pass  # Column already exists — safe to ignore
-
-        await self._normalize_legacy_model_names()
-
-    async def _normalize_legacy_model_names(self) -> None:
-        """Fold pre-3.0 Moondream Cloud rows into the current model identifier.
-
-        Early versions stored the provider name (``moondream-cloud`` /
-        ``moondream_cloud``) in ``analysis_results.model`` instead of the
-        actual model ID, and predate per-request token tracking. This left
-        those rows permanently split out from ``moondream3-preview`` in the
-        Per-Model Breakdown with 0 tokens, looking like a second, broken
-        model. They're the same model, just analyzed before token tracking
-        existed, so merge them into the current identifier.
-        """
-        assert self._db is not None
-        await self._db.execute(
-            """
-            UPDATE analysis_results SET model = 'moondream3-preview'
-            WHERE model IN ('moondream-cloud', 'moondream_cloud')
-            """
-        )
-        await self._db.commit()
-
     async def close(self) -> None:
-        if self._db:
-            await self._db.close()
-            self._db = None
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
 
     # ------------------------------------------------------------------
     # Writing
@@ -295,70 +282,65 @@ class ClipDatabase:
 
     async def add_clip(self, clip: dict[str, Any]) -> None:
         """Insert or ignore a clip record."""
-        if self._db is None:
+        if self._pool is None:
             return
-        await self._db.execute(
-            """
-            INSERT OR IGNORE INTO clips
-              (id, camera, file_path, timestamp, size_bytes, duration,
-               source, network_id, downloaded_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(clip.get("id") or ""),
-                str(clip.get("camera") or "unknown"),
-                str(clip.get("path") or ""),
-                str(clip.get("timestamp") or ""),
-                int(clip.get("size_bytes") or 0),
-                # duration / network_id can be None (null) in the Blink API
-                # response for live-view and some camera types — use `or 0`
-                # so int() never receives NoneType.
-                int(clip.get("duration") or 0),
-                str(clip.get("source") or ""),
-                int(clip.get("network_id") or 0),
-                datetime.now(timezone.utc).isoformat(),
+        await self._pool.execute(
+            _qm(
+                """
+                INSERT INTO clips
+                  (id, camera, file_path, timestamp, size_bytes, duration,
+                   source, network_id, downloaded_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO NOTHING
+                """
             ),
+            str(clip.get("id") or ""),
+            str(clip.get("camera") or "unknown"),
+            str(clip.get("path") or ""),
+            str(clip.get("timestamp") or ""),
+            int(clip.get("size_bytes") or 0),
+            # duration / network_id can be None (null) in the Blink API
+            # response for live-view and some camera types — use `or 0`
+            # so int() never receives NoneType.
+            int(clip.get("duration") or 0),
+            str(clip.get("source") or ""),
+            int(clip.get("network_id") or 0),
+            datetime.now(timezone.utc).isoformat(),
         )
-        await self._db.commit()
 
     async def star_clip(self, clip_id: str, starred: bool) -> bool:
         """Star or unstar a clip. Returns True if the record was found."""
-        if self._db is None:
+        if self._pool is None:
             return False
-        cursor = await self._db.execute(
-            "UPDATE clips SET starred=? WHERE id=?",
-            (1 if starred else 0, clip_id),
+        status = await self._pool.execute(
+            _qm("UPDATE clips SET starred=? WHERE id=?"), starred, clip_id
         )
-        await self._db.commit()
-        return cursor.rowcount > 0
+        return _affected(status) > 0
 
     async def set_tags(self, clip_id: str, tags: list[str]) -> bool:
         """Replace the tag list for a clip."""
-        if self._db is None:
+        if self._pool is None:
             return False
-        cursor = await self._db.execute(
-            "UPDATE clips SET tags=? WHERE id=?",
-            (json.dumps(tags), clip_id),
+        status = await self._pool.execute(
+            _qm("UPDATE clips SET tags=? WHERE id=?"), json.dumps(tags), clip_id
         )
-        await self._db.commit()
-        return cursor.rowcount > 0
+        return _affected(status) > 0
 
     async def mark_archived(self, clip_id: str, archive_path: str) -> None:
-        if self._db is None:
+        if self._pool is None:
             return
-        await self._db.execute(
-            "UPDATE clips SET archived=1, archive_path=? WHERE id=?",
-            (archive_path, clip_id),
+        await self._pool.execute(
+            _qm("UPDATE clips SET archived=TRUE, archive_path=? WHERE id=?"),
+            archive_path,
+            clip_id,
         )
-        await self._db.commit()
 
     async def delete_clip(self, clip_id: str) -> bool:
         """Remove a clip record from the database."""
-        if self._db is None:
+        if self._pool is None:
             return False
-        cursor = await self._db.execute("DELETE FROM clips WHERE id=?", (clip_id,))
-        await self._db.commit()
-        return cursor.rowcount > 0
+        status = await self._pool.execute(_qm("DELETE FROM clips WHERE id=?"), clip_id)
+        return _affected(status) > 0
 
     async def delete_clip_by_path(self, file_path: str) -> bool:
         """Remove a clip record by its file_path.
@@ -368,13 +350,12 @@ class ClipDatabase:
         leave an orphaned DB row (and orphaned analysis_results/
         analysis_queue rows) behind for a file that no longer exists.
         """
-        if self._db is None:
+        if self._pool is None:
             return False
-        cursor = await self._db.execute(
-            "DELETE FROM clips WHERE file_path=?", (file_path,)
+        status = await self._pool.execute(
+            _qm("DELETE FROM clips WHERE file_path=?"), file_path
         )
-        await self._db.commit()
-        return cursor.rowcount > 0
+        return _affected(status) > 0
 
     # ------------------------------------------------------------------
     # Reading
@@ -382,12 +363,11 @@ class ClipDatabase:
 
     async def get_clip(self, clip_id: str) -> dict[str, Any] | None:
         """Return a single clip record or None."""
-        if self._db is None:
+        if self._pool is None:
             return None
-        async with self._db.execute(
-            "SELECT * FROM clips WHERE id=?", (clip_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
+        row = await self._pool.fetchrow(
+            _qm("SELECT * FROM clips WHERE id=?"), clip_id
+        )
         return _row_to_dict(row) if row else None
 
     async def get_clips(
@@ -416,16 +396,16 @@ class ClipDatabase:
         decide whether to dispatch a notification). Set *notified_only* to
         restrict results to just those clips.
         """
-        if self._db is None:
+        if self._pool is None:
             return []
 
         notified_exists = (
             "EXISTS (SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
-            "AND ar.is_suspicious = 1 AND ar.confidence >= ?)"
+            "AND ar.is_suspicious AND ar.confidence >= ?)"
         )
 
-        where: list[str] = [f"archived = {1 if archived else 0}"]
-        params: list[Any] = []
+        where: list[str] = ["archived = ?"]
+        params: list[Any] = [archived]
 
         if camera and camera != "all":
             where.append("LOWER(camera) = LOWER(?)")
@@ -438,7 +418,7 @@ class ClipDatabase:
             params.append(until)
         if starred is not None:
             where.append("starred = ?")
-            params.append(1 if starred else 0)
+            params.append(starred)
         if source:
             where.append("source = ?")
             params.append(source)
@@ -467,48 +447,47 @@ class ClipDatabase:
         )
         params = [min_confidence, *params, limit, offset]
 
-        async with self._db.execute(sql, params) as cursor:
-            rows = await cursor.fetchall()
+        rows = await self._pool.fetch(_qm(sql), *params)
         return [_row_to_dict(r) for r in rows]
 
     async def count_clips(
         self, camera: str | None = None, starred: bool | None = None
     ) -> int:
-        if self._db is None:
+        if self._pool is None:
             return 0
-        where = ["archived=0"]
+        where = ["archived=FALSE"]
         params: list[Any] = []
         if camera and camera != "all":
             where.append("LOWER(camera)=LOWER(?)")
             params.append(camera)
         if starred is not None:
             where.append("starred=?")
-            params.append(1 if starred else 0)
-        async with self._db.execute(
-            f"SELECT COUNT(*) FROM clips WHERE {' AND '.join(where)}", params
-        ) as cur:
-            row = await cur.fetchone()
-        return row[0] if row else 0
+            params.append(starred)
+        count = await self._pool.fetchval(
+            _qm(f"SELECT COUNT(*) FROM clips WHERE {' AND '.join(where)}"), *params
+        )
+        return count or 0
 
     async def get_all_file_paths(self) -> set[str]:
         """Return the set of all ``file_path`` values currently indexed."""
-        if self._db is None:
+        if self._pool is None:
             return set()
-        async with self._db.execute("SELECT file_path FROM clips") as cursor:
-            rows = await cursor.fetchall()
-        return {r[0] for r in rows}
+        rows = await self._pool.fetch("SELECT file_path FROM clips")
+        return {r["file_path"] for r in rows}
 
     async def get_clips_to_archive(self, older_than_days: int) -> list[dict[str, Any]]:
-        if self._db is None:
+        if self._pool is None:
             return []
         cutoff = (
             datetime.now(timezone.utc) - timedelta(days=older_than_days)
         ).isoformat()
-        async with self._db.execute(
-            "SELECT * FROM clips WHERE archived=0 AND timestamp < ? ORDER BY timestamp",
-            (cutoff,),
-        ) as cursor:
-            rows = await cursor.fetchall()
+        rows = await self._pool.fetch(
+            _qm(
+                "SELECT * FROM clips WHERE archived=FALSE AND timestamp < ? "
+                "ORDER BY timestamp"
+            ),
+            cutoff,
+        )
         return [_row_to_dict(r) for r in rows]
 
     # ------------------------------------------------------------------
@@ -517,7 +496,7 @@ class ClipDatabase:
 
     async def get_stats(self) -> dict[str, Any]:
         """Return aggregate statistics for the library."""
-        if self._db is None:
+        if self._pool is None:
             return {}
 
         _now_utc = datetime.now(timezone.utc)
@@ -526,73 +505,72 @@ class ClipDatabase:
         week_ago = (_now_utc - timedelta(days=7)).date().isoformat()
 
         queries = {
-            "total_count": "SELECT COUNT(*) FROM clips WHERE archived=0",
-            "starred_count": "SELECT COUNT(*) FROM clips WHERE starred=1",
-            "archived_count": "SELECT COUNT(*) FROM clips WHERE archived=1",
+            "total_count": "SELECT COUNT(*) FROM clips WHERE archived=FALSE",
+            "starred_count": "SELECT COUNT(*) FROM clips WHERE starred=TRUE",
+            "archived_count": "SELECT COUNT(*) FROM clips WHERE archived=TRUE",
             "total_size_bytes": "SELECT COALESCE(SUM(size_bytes),0) FROM clips",
             "today_count": f"SELECT COUNT(*) FROM clips WHERE timestamp LIKE '{today}%'",
-            "yesterday_count": f"SELECT COUNT(*) FROM clips WHERE timestamp LIKE '{yesterday}%'",
+            "yesterday_count": (
+                f"SELECT COUNT(*) FROM clips WHERE timestamp LIKE '{yesterday}%'"
+            ),
             "week_count": f"SELECT COUNT(*) FROM clips WHERE timestamp >= '{week_ago}'",
         }
 
         results: dict[str, Any] = {}
         for key, sql in queries.items():
-            async with self._db.execute(sql) as cur:
-                row = await cur.fetchone()
-            results[key] = row[0] if row else 0
+            results[key] = await self._pool.fetchval(sql) or 0
 
         return results
 
     async def get_camera_stats(self) -> list[dict[str, Any]]:
         """Return per-camera clip counts, sizes, and activity."""
-        if self._db is None:
+        if self._pool is None:
             return []
 
         _now_utc = datetime.now(timezone.utc)
         today = _now_utc.date().isoformat()
         week_ago = (_now_utc - timedelta(days=7)).date().isoformat()
 
-        async with self._db.execute(
-            """
-            SELECT
-                camera,
-                COUNT(*) AS total,
-                COALESCE(SUM(size_bytes), 0) AS size_bytes,
-                SUM(CASE WHEN timestamp LIKE ? THEN 1 ELSE 0 END) AS today,
-                SUM(CASE WHEN timestamp >= ? THEN 1 ELSE 0 END) AS this_week,
-                MAX(timestamp) AS last_seen
-            FROM clips
-            WHERE archived=0
-            GROUP BY LOWER(camera)
-            ORDER BY total DESC
-            """,
-            (f"{today}%", week_ago),
-        ) as cursor:
-            rows = await cursor.fetchall()
-
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT
+                    camera,
+                    COUNT(*) AS total,
+                    COALESCE(SUM(size_bytes), 0) AS size_bytes,
+                    SUM(CASE WHEN timestamp LIKE ? THEN 1 ELSE 0 END) AS today,
+                    SUM(CASE WHEN timestamp >= ? THEN 1 ELSE 0 END) AS this_week,
+                    MAX(timestamp) AS last_seen
+                FROM clips
+                WHERE archived=FALSE
+                GROUP BY LOWER(camera), camera
+                ORDER BY total DESC
+                """
+            ),
+            f"{today}%",
+            week_ago,
+        )
         return [dict(r) for r in rows]
 
     async def get_distinct_cameras(self) -> list[str]:
-        if self._db is None:
+        if self._pool is None:
             return []
-        async with self._db.execute(
-            "SELECT DISTINCT camera FROM clips WHERE archived=0 ORDER BY camera"
-        ) as cur:
-            rows = await cur.fetchall()
-        return [r[0] for r in rows]
+        rows = await self._pool.fetch(
+            "SELECT DISTINCT camera FROM clips WHERE archived=FALSE ORDER BY camera"
+        )
+        return [r["camera"] for r in rows]
 
     async def get_distinct_tags(self) -> list[str]:
         """Return all unique tags used across clips (best-effort)."""
-        if self._db is None:
+        if self._pool is None:
             return []
-        async with self._db.execute(
+        rows = await self._pool.fetch(
             "SELECT DISTINCT tags FROM clips WHERE tags != '[]' AND tags != ''"
-        ) as cur:
-            rows = await cur.fetchall()
+        )
         all_tags: set[str] = set()
-        for (raw,) in rows:
+        for r in rows:
             try:
-                all_tags.update(json.loads(raw or "[]"))
+                all_tags.update(json.loads(r["tags"] or "[]"))
             except json.JSONDecodeError:
                 pass
         return sorted(all_tags)
@@ -603,23 +581,24 @@ class ClipDatabase:
         Each row: ``{"date": "YYYY-MM-DD", "hour": 0-23, "count": n}``.
         Useful for rendering an activity heat-map in the UI.
         """
-        if self._db is None:
+        if self._pool is None:
             return []
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        async with self._db.execute(
-            """
-            SELECT
-                date(timestamp)                        AS date,
-                CAST(strftime('%H', timestamp) AS INTEGER) AS hour,
-                COUNT(*)                               AS count
-            FROM clips
-            WHERE timestamp >= ?
-            GROUP BY date, hour
-            ORDER BY date, hour
-            """,
-            (cutoff,),
-        ) as cursor:
-            rows = await cursor.fetchall()
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT
+                    to_char(timestamp::timestamptz, 'YYYY-MM-DD') AS date,
+                    EXTRACT(HOUR FROM timestamp::timestamptz)::int AS hour,
+                    COUNT(*) AS count
+                FROM clips
+                WHERE timestamp >= ?
+                GROUP BY date, hour
+                ORDER BY date, hour
+                """
+            ),
+            cutoff,
+        )
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
@@ -627,88 +606,82 @@ class ClipDatabase:
     # ------------------------------------------------------------------
 
     async def add_analysis_result(self, result: dict[str, Any]) -> None:
-        if self._db is None:
+        if self._pool is None:
             return
-        await self._db.execute(
-            """
-            INSERT INTO analysis_results
-              (clip_id, camera, model, response_text, is_suspicious,
-               confidence, summary, frame_count, analysis_duration, analyzed_at,
-               tokens_prompt, tokens_completion, anomaly_score,
-               escalation_model, escalation_tokens_prompt, escalation_tokens_completion,
-               escalation_provider, prompt_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(result.get("clip_id") or ""),
-                str(result.get("camera") or ""),
-                str(result.get("model") or ""),
-                str(result.get("response_text") or ""),
-                1 if result.get("is_suspicious") else 0,
-                float(result.get("confidence") or 0.0),
-                str(result.get("summary") or ""),
-                int(result.get("frame_count") or 0),
-                float(result.get("analysis_duration") or 0.0),
-                str(result.get("analyzed_at") or ""),
-                int(result.get("tokens_prompt") or 0),
-                int(result.get("tokens_completion") or 0),
-                float(result.get("anomaly_score") or 0.0),
-                str(result.get("escalation_model") or ""),
-                int(result.get("escalation_tokens_prompt") or 0),
-                int(result.get("escalation_tokens_completion") or 0),
-                str(result.get("escalation_provider") or ""),
-                str(result.get("prompt_text") or ""),
+        await self._pool.execute(
+            _qm(
+                """
+                INSERT INTO analysis_results
+                  (clip_id, camera, model, response_text, is_suspicious,
+                   confidence, summary, frame_count, analysis_duration, analyzed_at,
+                   tokens_prompt, tokens_completion, anomaly_score,
+                   escalation_model, escalation_tokens_prompt, escalation_tokens_completion,
+                   escalation_provider, prompt_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """
             ),
+            str(result.get("clip_id") or ""),
+            str(result.get("camera") or ""),
+            str(result.get("model") or ""),
+            str(result.get("response_text") or ""),
+            bool(result.get("is_suspicious")),
+            float(result.get("confidence") or 0.0),
+            str(result.get("summary") or ""),
+            int(result.get("frame_count") or 0),
+            float(result.get("analysis_duration") or 0.0),
+            str(result.get("analyzed_at") or ""),
+            int(result.get("tokens_prompt") or 0),
+            int(result.get("tokens_completion") or 0),
+            float(result.get("anomaly_score") or 0.0),
+            str(result.get("escalation_model") or ""),
+            int(result.get("escalation_tokens_prompt") or 0),
+            int(result.get("escalation_tokens_completion") or 0),
+            str(result.get("escalation_provider") or ""),
+            str(result.get("prompt_text") or ""),
         )
-        await self._db.commit()
 
     async def get_analysis_for_clip(self, clip_id: str) -> dict[str, Any] | None:
-        if self._db is None:
+        if self._pool is None:
             return None
-        async with self._db.execute(
-            "SELECT * FROM analysis_results WHERE clip_id=? ORDER BY analyzed_at DESC LIMIT 1",
-            (clip_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-        if not row:
-            return None
-        d = dict(row)
-        d["is_suspicious"] = bool(d["is_suspicious"])
-        return d
+        row = await self._pool.fetchrow(
+            _qm(
+                "SELECT * FROM analysis_results WHERE clip_id=? "
+                "ORDER BY analyzed_at DESC LIMIT 1"
+            ),
+            clip_id,
+        )
+        return dict(row) if row else None
 
     async def get_suspicious_clips(
         self, limit: int = 50, offset: int = 0
     ) -> list[dict[str, Any]]:
-        if self._db is None:
+        if self._pool is None:
             return []
-        async with self._db.execute(
-            """
-            SELECT ar.*, c.file_path, c.timestamp AS clip_timestamp,
-                   c.duration, c.size_bytes
-            FROM analysis_results ar
-            JOIN clips c ON c.id = ar.clip_id
-            WHERE ar.is_suspicious = 1
-            ORDER BY ar.analyzed_at DESC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        ) as cursor:
-            rows = await cursor.fetchall()
-        results = []
-        for r in rows:
-            d = dict(r)
-            d["is_suspicious"] = bool(d["is_suspicious"])
-            results.append(d)
-        return results
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT ar.*, c.file_path, c.timestamp AS clip_timestamp,
+                       c.duration, c.size_bytes
+                FROM analysis_results ar
+                JOIN clips c ON c.id = ar.clip_id
+                WHERE ar.is_suspicious
+                ORDER BY ar.analyzed_at DESC
+                LIMIT ? OFFSET ?
+                """
+            ),
+            limit,
+            offset,
+        )
+        return [dict(r) for r in rows]
 
     async def get_analysis_stats(self) -> dict[str, Any]:
-        if self._db is None:
+        if self._pool is None:
             return {}
         today = datetime.now(timezone.utc).date().isoformat()
         queries = {
             "total_analyzed": "SELECT COUNT(*) FROM analysis_results",
             "suspicious_count": (
-                "SELECT COUNT(*) FROM analysis_results WHERE is_suspicious=1"
+                "SELECT COUNT(*) FROM analysis_results WHERE is_suspicious"
             ),
             "total_frames_analyzed": (
                 "SELECT COALESCE(SUM(frame_count),0) FROM analysis_results"
@@ -720,25 +693,20 @@ class ClipDatabase:
         }
         results: dict[str, Any] = {}
         for key, sql in queries.items():
-            async with self._db.execute(sql) as cur:
-                row = await cur.fetchone()
-            results[key] = row[0] if row else 0
+            results[key] = await self._pool.fetchval(sql) or 0
 
-        async with self._db.execute(
+        results["last_analysis"] = await self._pool.fetchval(
             "SELECT analyzed_at FROM analysis_results ORDER BY analyzed_at DESC LIMIT 1"
-        ) as cur:
-            row = await cur.fetchone()
-        results["last_analysis"] = row[0] if row else None
+        )
         return results
 
     async def _get_ai_usage_reset_at(self) -> str:
         """Return the AI Usage "Clear Stats" cutoff timestamp, or '' if never reset."""
-        assert self._db is not None
-        async with self._db.execute(
+        assert self._pool is not None
+        value = await self._pool.fetchval(
             "SELECT reset_at FROM ai_usage_reset WHERE id = 1"
-        ) as cursor:
-            row = await cursor.fetchone()
-        return str(row["reset_at"]) if row else ""
+        )
+        return str(value) if value else ""
 
     async def clear_ai_usage_stats(self) -> None:
         """Reset the AI Usage tab's token/cost/escalation counters.
@@ -748,15 +716,16 @@ class ClipDatabase:
         are left intact since the Suspicious Clips list and clip detail view
         still depend on that history.
         """
-        if self._db is None:
+        if self._pool is None:
             return
         reset_at = datetime.now(timezone.utc).isoformat()
-        await self._db.execute(
-            "INSERT INTO ai_usage_reset (id, reset_at) VALUES (1, ?) "
-            "ON CONFLICT(id) DO UPDATE SET reset_at = excluded.reset_at",
-            (reset_at,),
+        await self._pool.execute(
+            _qm(
+                "INSERT INTO ai_usage_reset (id, reset_at) VALUES (1, ?) "
+                "ON CONFLICT(id) DO UPDATE SET reset_at = excluded.reset_at"
+            ),
+            reset_at,
         )
-        await self._db.commit()
 
     async def get_token_usage_stats(self) -> dict[str, Any]:
         """Return per-model token usage totals for the AI Usage tab.
@@ -772,11 +741,8 @@ class ClipDatabase:
         ``escalation_provider``), matching how the tier-1 query groups by
         ``model`` alone. Grouping by both columns used to split one model
         into two duplicate-looking rows in the UI whenever
-        ``escalation_provider`` differed across rows for the same model —
-        notably pre-v4.0.0 rows, written before the ``escalation_provider``
-        column existed, which backfill to ``''`` via the migration in
-        :meth:`_migrate` rather than matching newer rows' real provider
-        value. ``MAX(escalation_provider)`` picks a representative non-empty
+        ``escalation_provider`` differed across rows for the same model.
+        ``MAX(escalation_provider)`` picks a representative non-empty
         provider for the row's label when one is available.
         """
         empty: dict[str, Any] = {
@@ -788,50 +754,52 @@ class ClipDatabase:
             "total_escalation_tokens": 0,
             "by_model": [],
         }
-        if self._db is None:
+        if self._pool is None:
             return empty
 
         reset_at = await self._get_ai_usage_reset_at()
         since_clause = "WHERE analyzed_at > ?" if reset_at else ""
         since_params: tuple[str, ...] = (reset_at,) if reset_at else ()
 
-        async with self._db.execute(
-            f"""
-            SELECT
-                model,
-                COUNT(*)                             AS analyses,
-                COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
-                COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
-            FROM analysis_results
-            {since_clause}
-            GROUP BY model
-            ORDER BY analyses DESC
-            """,
-            since_params,
-        ) as cursor:
-            primary_rows = await cursor.fetchall()
+        primary_rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT
+                    model,
+                    COUNT(*)                             AS analyses,
+                    COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
+                    COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
+                FROM analysis_results
+                {since_clause}
+                GROUP BY model
+                ORDER BY analyses DESC
+                """
+            ),
+            *since_params,
+        )
 
         escalation_since_clause = (
             "WHERE escalation_model != '' AND analyzed_at > ?"
             if reset_at
             else "WHERE escalation_model != ''"
         )
-        async with self._db.execute(
-            f"""
-            SELECT
-                escalation_model                              AS model,
-                MAX(escalation_provider)                       AS provider,
-                COUNT(*)                                      AS analyses,
-                COALESCE(SUM(escalation_tokens_prompt), 0)     AS tokens_prompt,
-                COALESCE(SUM(escalation_tokens_completion), 0) AS tokens_completion
-            FROM analysis_results
-            {escalation_since_clause}
-            GROUP BY escalation_model
-            ORDER BY analyses DESC
-            """,
-            since_params,
-        ) as cursor:
-            escalation_rows = await cursor.fetchall()
+        escalation_rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT
+                    escalation_model                              AS model,
+                    MAX(escalation_provider)                       AS provider,
+                    COUNT(*)                                      AS analyses,
+                    COALESCE(SUM(escalation_tokens_prompt), 0)     AS tokens_prompt,
+                    COALESCE(SUM(escalation_tokens_completion), 0) AS tokens_completion
+                FROM analysis_results
+                {escalation_since_clause}
+                GROUP BY escalation_model
+                ORDER BY analyses DESC
+                """
+            ),
+            *since_params,
+        )
 
         by_model: list[dict[str, Any]] = []
         for r in primary_rows:
@@ -875,7 +843,7 @@ class ClipDatabase:
         rows). Days with no analysis activity are simply absent — this method
         does not zero-fill the range, keeping the result small.
         """
-        if self._db is None:
+        if self._pool is None:
             return []
 
         reset_at = await self._get_ai_usage_reset_at()
@@ -883,40 +851,43 @@ class ClipDatabase:
             (datetime.now(timezone.utc) - timedelta(days=days - 1)).date().isoformat()
         )
 
-        conditions = ["date(analyzed_at) >= ?"]
+        conditions = ["analyzed_at::timestamptz::date >= ?"]
         params: list[str] = [cutoff]
         if reset_at:
             conditions.append("analyzed_at > ?")
             params.append(reset_at)
         where = "WHERE " + " AND ".join(conditions)
 
-        async with self._db.execute(
-            f"""
-            SELECT date(analyzed_at) AS day, model,
-                   COUNT(*)                            AS analyses,
-                   COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
-                   COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
-            FROM analysis_results
-            {where}
-            GROUP BY day, model
-            """,
-            params,
-        ) as cursor:
-            primary_rows = await cursor.fetchall()
+        primary_rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT to_char(analyzed_at::timestamptz, 'YYYY-MM-DD') AS day, model,
+                       COUNT(*)                            AS analyses,
+                       COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
+                       COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
+                FROM analysis_results
+                {where}
+                GROUP BY day, model
+                """
+            ),
+            *params,
+        )
 
-        async with self._db.execute(
-            f"""
-            SELECT date(analyzed_at) AS day, escalation_model AS model,
-                   COUNT(*)                                       AS analyses,
-                   COALESCE(SUM(escalation_tokens_prompt), 0)     AS tokens_prompt,
-                   COALESCE(SUM(escalation_tokens_completion), 0) AS tokens_completion
-            FROM analysis_results
-            {where} AND escalation_model != ''
-            GROUP BY day, escalation_model
-            """,
-            params,
-        ) as cursor:
-            escalation_rows = await cursor.fetchall()
+        escalation_rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT to_char(analyzed_at::timestamptz, 'YYYY-MM-DD') AS day,
+                       escalation_model AS model,
+                       COUNT(*)                                       AS analyses,
+                       COALESCE(SUM(escalation_tokens_prompt), 0)     AS tokens_prompt,
+                       COALESCE(SUM(escalation_tokens_completion), 0) AS tokens_completion
+                FROM analysis_results
+                {where} AND escalation_model != ''
+                GROUP BY day, escalation_model
+                """
+            ),
+            *params,
+        )
 
         daily: list[dict[str, Any]] = []
         for r in primary_rows:
@@ -950,60 +921,50 @@ class ClipDatabase:
 
         One feedback row per clip — resubmitting for the same clip (e.g. the
         user changes their mind) replaces the previous entry rather than
-        accumulating duplicates.
+        accumulating duplicates. The delete-then-insert runs in a single
+        transaction so a concurrent reader never observes a moment with no
+        feedback row for this clip.
         """
-        if self._db is None:
+        if self._pool is None:
             return
-        await self._db.execute(
-            "DELETE FROM analysis_feedback WHERE clip_id=?", (clip_id,)
-        )
-        await self._db.execute(
-            """
-            INSERT INTO analysis_feedback
-              (clip_id, camera, analysis_result_id, original_suspicious,
-               original_confidence, correct, correction_note,
-               corrected_suspicious, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                _qm("DELETE FROM analysis_feedback WHERE clip_id=?"), clip_id
+            )
+            await conn.execute(
+                _qm(
+                    """
+                    INSERT INTO analysis_feedback
+                      (clip_id, camera, analysis_result_id, original_suspicious,
+                       original_confidence, correct, correction_note,
+                       corrected_suspicious, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
                 clip_id,
                 camera,
                 analysis_result_id,
-                1 if original_suspicious else 0,
+                bool(original_suspicious),
                 float(original_confidence),
-                1 if correct else 0,
+                bool(correct),
                 correction_note or "",
-                (
-                    None
-                    if corrected_suspicious is None
-                    else (1 if corrected_suspicious else 0)
-                ),
+                None if corrected_suspicious is None else bool(corrected_suspicious),
                 datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        await self._db.commit()
+            )
 
     async def get_feedback_for_clip(self, clip_id: str) -> dict[str, Any] | None:
-        if self._db is None:
+        if self._pool is None:
             return None
-        async with self._db.execute(
-            "SELECT * FROM analysis_feedback WHERE clip_id=?", (clip_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-        if not row:
-            return None
-        d = dict(row)
-        d["original_suspicious"] = bool(d["original_suspicious"])
-        d["correct"] = bool(d["correct"])
-        if d["corrected_suspicious"] is not None:
-            d["corrected_suspicious"] = bool(d["corrected_suspicious"])
-        return d
+        row = await self._pool.fetchrow(
+            _qm("SELECT * FROM analysis_feedback WHERE clip_id=?"), clip_id
+        )
+        return dict(row) if row else None
 
     async def get_recent_feedback(
         self, camera: str | None = None, limit: int = _FEEDBACK_WINDOW
     ) -> list[dict[str, Any]]:
         """Return the most recent feedback rows, optionally filtered by camera."""
-        if self._db is None:
+        if self._pool is None:
             return []
         if camera:
             query = (
@@ -1014,17 +975,8 @@ class ClipDatabase:
         else:
             query = "SELECT * FROM analysis_feedback ORDER BY created_at DESC LIMIT ?"
             params = (limit,)
-        async with self._db.execute(query, params) as cursor:
-            rows = await cursor.fetchall()
-        results = []
-        for r in rows:
-            d = dict(r)
-            d["original_suspicious"] = bool(d["original_suspicious"])
-            d["correct"] = bool(d["correct"])
-            if d["corrected_suspicious"] is not None:
-                d["corrected_suspicious"] = bool(d["corrected_suspicious"])
-            results.append(d)
-        return results
+        rows = await self._pool.fetch(_qm(query), *params)
+        return [dict(r) for r in rows]
 
     async def get_untrained_feedback(self, limit: int = 10) -> list[dict[str, Any]]:
         """Return feedback rows not yet folded into a Moondream fine-tune.
@@ -1034,34 +986,27 @@ class ClipDatabase:
         :meth:`mark_feedback_trained` and
         ``MoondreamFineTuneManager.train_from_examples`` in ``analyzer.py``.
         """
-        if self._db is None:
+        if self._pool is None:
             return []
-        async with self._db.execute(
-            "SELECT * FROM analysis_feedback WHERE trained_at='' OR trained_at IS NULL "
-            "ORDER BY created_at ASC LIMIT ?",
-            (limit,),
-        ) as cursor:
-            rows = await cursor.fetchall()
-        results = []
-        for r in rows:
-            d = dict(r)
-            d["original_suspicious"] = bool(d["original_suspicious"])
-            d["correct"] = bool(d["correct"])
-            if d["corrected_suspicious"] is not None:
-                d["corrected_suspicious"] = bool(d["corrected_suspicious"])
-            results.append(d)
-        return results
+        rows = await self._pool.fetch(
+            _qm(
+                "SELECT * FROM analysis_feedback WHERE trained_at='' OR trained_at IS NULL "
+                "ORDER BY created_at ASC LIMIT ?"
+            ),
+            limit,
+        )
+        return [dict(r) for r in rows]
 
     async def mark_feedback_trained(self, feedback_ids: list[int]) -> None:
         """Mark feedback rows as consumed by a fine-tuning training run."""
-        if self._db is None or not feedback_ids:
+        if self._pool is None or not feedback_ids:
             return
         placeholders = ",".join("?" for _ in feedback_ids)
-        await self._db.execute(
-            f"UPDATE analysis_feedback SET trained_at=? WHERE id IN ({placeholders})",
-            (datetime.now(timezone.utc).isoformat(), *feedback_ids),
+        await self._pool.execute(
+            _qm(f"UPDATE analysis_feedback SET trained_at=? WHERE id IN ({placeholders})"),
+            datetime.now(timezone.utc).isoformat(),
+            *feedback_ids,
         )
-        await self._db.commit()
 
     async def get_feedback_stats(self, camera: str | None = None) -> dict[str, Any]:
         """Return aggregate feedback accuracy counts, optionally per camera.
@@ -1077,27 +1022,28 @@ class ClipDatabase:
             "false_positive": 0,
             "false_negative": 0,
         }
-        if self._db is None:
+        if self._pool is None:
             return empty
 
         where = "WHERE camera=?" if camera else ""
         params: tuple[Any, ...] = (camera,) if camera else ()
-        async with self._db.execute(
-            f"""
-            SELECT
-                COUNT(*) AS total,
-                COALESCE(SUM(CASE WHEN correct=1 THEN 1 ELSE 0 END), 0) AS correct,
-                COALESCE(SUM(CASE WHEN correct=0 THEN 1 ELSE 0 END), 0) AS incorrect,
-                COALESCE(SUM(CASE WHEN correct=0 AND original_suspicious=1
-                                   THEN 1 ELSE 0 END), 0) AS false_positive,
-                COALESCE(SUM(CASE WHEN correct=0 AND original_suspicious=0
-                                   THEN 1 ELSE 0 END), 0) AS false_negative
-            FROM analysis_feedback
-            {where}
-            """,
-            params,
-        ) as cursor:
-            row = await cursor.fetchone()
+        row = await self._pool.fetchrow(
+            _qm(
+                f"""
+                SELECT
+                    COUNT(*) AS total,
+                    COALESCE(SUM(CASE WHEN correct THEN 1 ELSE 0 END), 0) AS correct,
+                    COALESCE(SUM(CASE WHEN NOT correct THEN 1 ELSE 0 END), 0) AS incorrect,
+                    COALESCE(SUM(CASE WHEN NOT correct AND original_suspicious
+                                       THEN 1 ELSE 0 END), 0) AS false_positive,
+                    COALESCE(SUM(CASE WHEN NOT correct AND NOT original_suspicious
+                                       THEN 1 ELSE 0 END), 0) AS false_negative
+                FROM analysis_feedback
+                {where}
+                """
+            ),
+            *params,
+        )
         if not row:
             return empty
         return dict(row)
@@ -1144,27 +1090,21 @@ class ClipDatabase:
         signal for the prompt (see ``analyzer._build_prompt``'s RECENT HUMAN
         CORRECTIONS block, which applies its own limit/length bounds too).
         """
-        if self._db is None:
+        if self._pool is None:
             return []
-        async with self._db.execute(
-            """
-            SELECT * FROM analysis_feedback
-            WHERE camera=? AND correct=0 AND correction_note != ''
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (camera, limit),
-        ) as cursor:
-            rows = await cursor.fetchall()
-        results = []
-        for r in rows:
-            d = dict(r)
-            d["original_suspicious"] = bool(d["original_suspicious"])
-            d["correct"] = bool(d["correct"])
-            if d["corrected_suspicious"] is not None:
-                d["corrected_suspicious"] = bool(d["corrected_suspicious"])
-            results.append(d)
-        return results
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT * FROM analysis_feedback
+                WHERE camera=? AND NOT correct AND correction_note != ''
+                ORDER BY created_at DESC
+                LIMIT ?
+                """
+            ),
+            camera,
+            limit,
+        )
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Behavior Memory (per-camera baseline learning)
@@ -1179,28 +1119,36 @@ class ClipDatabase:
         analysis is enabled.  The baseline is used later to compute anomaly
         scores for new events.
         """
-        if self._db is None:
+        if self._pool is None:
             return
-        await self._db.execute(
-            """
-            INSERT INTO camera_baselines (camera, hour, count)
-            VALUES (?, ?, 1)
-            ON CONFLICT(camera, hour) DO UPDATE SET count = count + 1
-            """,
-            (camera, hour),
+        await self._pool.execute(
+            _qm(
+                """
+                INSERT INTO camera_baselines (camera, hour, count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(camera, hour) DO UPDATE SET count = camera_baselines.count + 1
+                """
+            ),
+            camera,
+            hour,
         )
         if duration > 0:
-            await self._db.execute(
-                """
-                INSERT INTO camera_duration_stats (camera, avg_duration, sample_count)
-                VALUES (?, ?, 1)
-                ON CONFLICT(camera) DO UPDATE SET
-                    avg_duration = (avg_duration * sample_count + ?) / (sample_count + 1),
-                    sample_count = sample_count + 1
-                """,
-                (camera, duration, duration),
+            await self._pool.execute(
+                _qm(
+                    """
+                    INSERT INTO camera_duration_stats (camera, avg_duration, sample_count)
+                    VALUES (?, ?, 1)
+                    ON CONFLICT(camera) DO UPDATE SET
+                        avg_duration = (camera_duration_stats.avg_duration
+                                        * camera_duration_stats.sample_count + ?)
+                                       / (camera_duration_stats.sample_count + 1),
+                        sample_count = camera_duration_stats.sample_count + 1
+                    """
+                ),
+                camera,
+                duration,
+                duration,
             )
-        await self._db.commit()
 
     async def get_anomaly_score(self, camera: str, hour: int, duration: float) -> float:
         """Return an anomaly score 0.0–1.0 for a clip at *hour* with *duration*.
@@ -1209,16 +1157,17 @@ class ClipDatabase:
         activates; returns 0.0 until enough history exists so that early
         installs don't produce false positives.
         """
-        if self._db is None:
+        if self._pool is None:
             return 0.0
 
         # Total event count for this camera
-        async with self._db.execute(
-            "SELECT COALESCE(SUM(count), 0) FROM camera_baselines WHERE camera=?",
-            (camera,),
-        ) as cur:
-            row = await cur.fetchone()
-        total: int = int(row[0]) if row else 0
+        total: int = (
+            await self._pool.fetchval(
+                _qm("SELECT COALESCE(SUM(count), 0) FROM camera_baselines WHERE camera=?"),
+                camera,
+            )
+            or 0
+        )
 
         if total < 30:
             return 0.0
@@ -1226,12 +1175,16 @@ class ClipDatabase:
         score = 0.0
 
         # Hour rarity: how often does this camera fire at this hour vs. average?
-        async with self._db.execute(
-            "SELECT COALESCE(count, 0) FROM camera_baselines WHERE camera=? AND hour=?",
-            (camera, hour),
-        ) as cur:
-            row = await cur.fetchone()
-        hour_count: int = int(row[0]) if row else 0
+        hour_count: int = (
+            await self._pool.fetchval(
+                _qm(
+                    "SELECT COALESCE(count, 0) FROM camera_baselines WHERE camera=? AND hour=?"
+                ),
+                camera,
+                hour,
+            )
+            or 0
+        )
 
         expected_per_hour = total / 24.0
         if hour_count == 0:
@@ -1243,13 +1196,14 @@ class ClipDatabase:
 
         # Duration anomaly
         if duration > 0:
-            async with self._db.execute(
-                "SELECT avg_duration, sample_count FROM camera_duration_stats WHERE camera=?",
-                (camera,),
-            ) as cur:
-                row = await cur.fetchone()
-            if row and int(row[1]) >= 10:
-                avg = float(row[0])
+            row = await self._pool.fetchrow(
+                _qm(
+                    "SELECT avg_duration, sample_count FROM camera_duration_stats WHERE camera=?"
+                ),
+                camera,
+            )
+            if row and int(row["sample_count"]) >= 10:
+                avg = float(row["avg_duration"])
                 if avg > 0:
                     ratio = duration / avg
                     if ratio > 4.0 or ratio < 0.2:
@@ -1285,34 +1239,42 @@ class ClipDatabase:
         baseline is snapped toward the new normal in one fast blend instead
         of waiting 45+ samples for the slow steady-state average to catch up.
         """
-        if self._db is None:
+        if self._pool is None:
             return
-        async with self._db.execute(
-            "SELECT thumbnail, sample_count, consecutive_deviation_count "
-            "FROM camera_scene_baselines WHERE camera=?",
-            (camera,),
-        ) as cur:
-            row = await cur.fetchone()
+        row = await self._pool.fetchrow(
+            _qm(
+                "SELECT thumbnail, sample_count, consecutive_deviation_count "
+                "FROM camera_scene_baselines WHERE camera=?"
+            ),
+            camera,
+        )
 
         now = datetime.now(timezone.utc).isoformat()
         if row is None:
-            await self._db.execute(
-                """
-                INSERT INTO camera_scene_baselines
-                    (camera, thumbnail, sample_count, updated_at, consecutive_deviation_count)
-                VALUES (?, ?, 1, ?, 0)
-                """,
-                (camera, json.dumps(thumbnail), now),
+            await self._pool.execute(
+                _qm(
+                    """
+                    INSERT INTO camera_scene_baselines
+                        (camera, thumbnail, sample_count, updated_at, consecutive_deviation_count)
+                    VALUES (?, ?, 1, ?, 0)
+                    """
+                ),
+                camera,
+                json.dumps(thumbnail),
+                now,
             )
-            await self._db.commit()
             return
 
         try:
-            existing = json.loads(row[0])
+            existing = json.loads(row["thumbnail"])
         except (json.JSONDecodeError, TypeError):
             existing = []
-        count = int(row[1])
-        streak = int(row[2]) if row[2] is not None else 0
+        count = int(row["sample_count"])
+        streak = (
+            int(row["consecutive_deviation_count"])
+            if row["consecutive_deviation_count"] is not None
+            else 0
+        )
 
         if not existing or len(existing) != len(thumbnail):
             # Thumbnail size changed (or prior data was corrupt) — restart
@@ -1337,15 +1299,20 @@ class ClipDatabase:
                     streak = 0
             blended = [e * (1 - alpha) + t * alpha for e, t in zip(existing, thumbnail)]
 
-        await self._db.execute(
-            """
-            UPDATE camera_scene_baselines
-            SET thumbnail = ?, sample_count = ?, updated_at = ?, consecutive_deviation_count = ?
-            WHERE camera = ?
-            """,
-            (json.dumps(blended), count + 1, now, streak, camera),
+        await self._pool.execute(
+            _qm(
+                """
+                UPDATE camera_scene_baselines
+                SET thumbnail = ?, sample_count = ?, updated_at = ?, consecutive_deviation_count = ?
+                WHERE camera = ?
+                """
+            ),
+            json.dumps(blended),
+            count + 1,
+            now,
+            streak,
+            camera,
         )
-        await self._db.commit()
 
     async def get_scene_deviation(
         self, camera: str, thumbnail: list[float]
@@ -1357,17 +1324,18 @@ class ClipDatabase:
         "baseline" is just whatever the last clip or two happened to show,
         which isn't a reliable signal yet.
         """
-        if self._db is None:
+        if self._pool is None:
             return None
-        async with self._db.execute(
-            "SELECT thumbnail, sample_count FROM camera_scene_baselines WHERE camera=?",
-            (camera,),
-        ) as cur:
-            row = await cur.fetchone()
-        if row is None or int(row[1]) < _SCENE_BASELINE_MIN_SAMPLES:
+        row = await self._pool.fetchrow(
+            _qm(
+                "SELECT thumbnail, sample_count FROM camera_scene_baselines WHERE camera=?"
+            ),
+            camera,
+        )
+        if row is None or int(row["sample_count"]) < _SCENE_BASELINE_MIN_SAMPLES:
             return None
         try:
-            existing = json.loads(row[0])
+            existing = json.loads(row["thumbnail"])
         except (json.JSONDecodeError, TypeError):
             return None
         if not existing or len(existing) != len(thumbnail):
@@ -1382,59 +1350,65 @@ class ClipDatabase:
     async def enqueue_for_analysis(
         self, clip_id: str, camera: str, clip_path: str
     ) -> None:
-        if self._db is None:
+        if self._pool is None:
             return
-        await self._db.execute(
-            """
-            INSERT OR IGNORE INTO analysis_queue
-              (clip_id, camera, clip_path, status, queued_at)
-            VALUES (?, ?, ?, 'pending', ?)
-            """,
-            (clip_id, camera, clip_path, datetime.now(timezone.utc).isoformat()),
+        await self._pool.execute(
+            _qm(
+                """
+                INSERT INTO analysis_queue
+                  (clip_id, camera, clip_path, status, queued_at)
+                VALUES (?, ?, ?, 'pending', ?)
+                ON CONFLICT (clip_id) DO NOTHING
+                """
+            ),
+            clip_id,
+            camera,
+            clip_path,
+            datetime.now(timezone.utc).isoformat(),
         )
-        await self._db.commit()
 
     async def get_pending_analysis(self, limit: int = 10) -> list[dict[str, Any]]:
-        if self._db is None:
+        if self._pool is None:
             return []
-        async with self._db.execute(
-            "SELECT * FROM analysis_queue WHERE status='pending' ORDER BY queued_at LIMIT ?",
-            (limit,),
-        ) as cursor:
-            rows = await cursor.fetchall()
+        rows = await self._pool.fetch(
+            _qm(
+                "SELECT * FROM analysis_queue WHERE status='pending' "
+                "ORDER BY queued_at LIMIT ?"
+            ),
+            limit,
+        )
         return [dict(r) for r in rows]
 
     async def update_queue_status(
         self, clip_id: str, status: str, error: str = ""
     ) -> None:
-        if self._db is None:
+        if self._pool is None:
             return
         completed = (
             datetime.now(timezone.utc).isoformat()
             if status in ("completed", "failed")
             else ""
         )
-        await self._db.execute(
-            """
-            UPDATE analysis_queue
-            SET status=?, completed_at=?, error_message=?
-            WHERE clip_id=?
-            """,
-            (status, completed, error, clip_id),
+        await self._pool.execute(
+            _qm(
+                """
+                UPDATE analysis_queue
+                SET status=?, completed_at=?, error_message=?
+                WHERE clip_id=?
+                """
+            ),
+            status,
+            completed,
+            error,
+            clip_id,
         )
-        await self._db.commit()
 
     async def get_queue_counts(self) -> dict[str, int]:
-        if self._db is None:
+        if self._pool is None:
             return {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
-        async with self._db.execute(
-            """
-            SELECT status, COUNT(*) AS cnt
-            FROM analysis_queue
-            GROUP BY status
-            """
-        ) as cursor:
-            rows = await cursor.fetchall()
+        rows = await self._pool.fetch(
+            "SELECT status, COUNT(*) AS cnt FROM analysis_queue GROUP BY status"
+        )
         counts = {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
         for r in rows:
             counts[r["status"]] = r["cnt"]
@@ -1446,23 +1420,26 @@ class ClipDatabase:
 
     async def add_face_enrollment(self, name: str, embedding: list[float]) -> int:
         """Store a new enrolled household member's face embedding. Returns its id."""
-        if self._db is None:
+        if self._pool is None:
             return 0
-        cursor = await self._db.execute(
-            "INSERT INTO face_enrollments (name, embedding, created_at) VALUES (?, ?, ?)",
-            (name, json.dumps(embedding), datetime.now(timezone.utc).isoformat()),
+        new_id = await self._pool.fetchval(
+            _qm(
+                "INSERT INTO face_enrollments (name, embedding, created_at) "
+                "VALUES (?, ?, ?) RETURNING id"
+            ),
+            name,
+            json.dumps(embedding),
+            datetime.now(timezone.utc).isoformat(),
         )
-        await self._db.commit()
-        return cursor.lastrowid or 0
+        return new_id or 0
 
     async def list_face_enrollments(self) -> list[dict[str, Any]]:
         """Return all enrolled household members, with embeddings decoded to lists."""
-        if self._db is None:
+        if self._pool is None:
             return []
-        async with self._db.execute(
+        rows = await self._pool.fetch(
             "SELECT id, name, embedding, created_at FROM face_enrollments ORDER BY name"
-        ) as cursor:
-            rows = await cursor.fetchall()
+        )
         results = []
         for r in rows:
             d = dict(r)
@@ -1472,9 +1449,8 @@ class ClipDatabase:
 
     async def delete_face_enrollment(self, enrollment_id: int) -> None:
         """Remove an enrolled household member by id."""
-        if self._db is None:
+        if self._pool is None:
             return
-        await self._db.execute(
-            "DELETE FROM face_enrollments WHERE id=?", (enrollment_id,)
+        await self._pool.execute(
+            _qm("DELETE FROM face_enrollments WHERE id=?"), enrollment_id
         )
-        await self._db.commit()
