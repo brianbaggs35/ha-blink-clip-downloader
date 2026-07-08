@@ -513,6 +513,20 @@ h1,h2,h3{letter-spacing:-.01em}
 .toast.show{opacity:1;transform:translateY(0)}
 .toast.err{background:var(--danger);color:#fff}
 
+/* ── Auth error banner (non-blocking, unlike the 2FA overlay) ────────── */
+.auth-error-banner{display:none;position:fixed;top:1rem;left:50%;transform:translateX(-50%);
+       z-index:150;background:var(--card);border:1px solid var(--danger);
+       color:var(--text);padding:.65rem .7rem .65rem 1rem;border-radius:var(--radius-sm);
+       font-size:.83rem;box-shadow:var(--shadow-lg);align-items:center;gap:.6rem;
+       max-width:min(480px,calc(100vw - 2rem))}
+.auth-error-banner.show{display:flex}
+.auth-error-banner .icon{color:var(--danger);flex-shrink:0}
+.auth-error-banner #auth-error-msg{flex:1}
+.auth-error-banner button{background:transparent;border:none;color:var(--muted);
+       cursor:pointer;display:flex;padding:.2rem;border-radius:6px;flex-shrink:0}
+.auth-error-banner button:hover{color:var(--text);background:var(--card2)}
+.auth-error-banner button .icon{color:inherit;width:14px;height:14px}
+
 /* ── Responsive ───────────────────────────────────────── */
 @media(max-width:600px){
   .sidebar{display:none} .nav-tab span{display:none} .search{width:120px}
@@ -1112,6 +1126,18 @@ action:
       </table>
     </div>
   </div>
+</div>
+
+<!-- ── Blink auth error banner (dismissible, non-blocking) ──
+     Distinct from the 2FA overlay below on purpose: a plain auth failure
+     (bad/placeholder credentials, no 2FA involved) is common during setup
+     and testing and must never trap the user behind a full-screen modal —
+     only an actual pending 2FA code (which truly blocks everything else)
+     gets the modal treatment. -->
+<div id="auth-error-banner" class="auth-error-banner">
+  <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16v.1"/></svg>
+  <span id="auth-error-msg"></span>
+  <button id="auth-error-dismiss" title="Dismiss"><svg class="icon" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg></button>
 </div>
 
 <!-- ── 2FA overlay (shown automatically when Blink requires verification) ── -->
@@ -1910,6 +1936,10 @@ document.querySelectorAll('.copy-btn').forEach(btn => {
 let _twofaState = 'disconnected';
 // Seq of the in-flight submission we're waiting on a result for (0 = none).
 let _pendingSeq = 0;
+// Suppresses the auth-error banner once the user dismisses it, until the
+// message actually changes (e.g. a fresh failure) — otherwise every 3s
+// poll while credentials remain bad would keep popping it back open.
+let _authErrorDismissedMsg = null;
 
 async function checkAuthStatus() {
   try {
@@ -1917,45 +1947,46 @@ async function checkAuthStatus() {
     const prev = _twofaState;
     _twofaState = s.state || 'disconnected';
     const overlay = $('twofa-overlay');
-    if (_twofaState === 'needs_2fa' || _twofaState === 'error') {
-      // Keep the overlay open (or open it) so the user always sees the
-      // current auth status, including failures/timeouts — previously a
-      // transition to 'error' closed the overlay before any message could
-      // be shown, making it look like the 2FA prompt had vanished.
+    const banner = $('auth-error-banner');
+
+    if (_twofaState === 'needs_2fa') {
+      // The only state that legitimately blocks everything else — there is
+      // no useful action to take until the code is entered.
+      banner.classList.remove('show');
       overlay.classList.add('open');
-      if (_twofaState === 'needs_2fa') {
-        if (prev !== 'needs_2fa') {
+      if (prev !== 'needs_2fa') {
+        $('twofa-input').value = '';
+        $('twofa-msg').textContent = '';
+        _pendingSeq = 0;
+        setTimeout(() => $('twofa-input').focus(), 80);
+      }
+      // If the submission we're waiting on came back rejected, let the
+      // user try again instead of leaving the form stuck on "Verifying…".
+      if (_pendingSeq && s.two_fa_result_seq === _pendingSeq) {
+        if (s.two_fa_result_ok === false) {
+          $('twofa-msg').textContent =
+            s.message || 'Incorrect verification code. Please try again.';
+          $('twofa-msg').style.color = 'var(--danger)';
+          const btn = $('twofa-submit');
+          btn.disabled = false;
+          btn.textContent = 'Verify';
           $('twofa-input').value = '';
-          $('twofa-msg').textContent = '';
-          _pendingSeq = 0;
           setTimeout(() => $('twofa-input').focus(), 80);
         }
-        // If the submission we're waiting on came back rejected, let the
-        // user try again instead of leaving the form stuck on "Verifying…".
-        if (_pendingSeq && s.two_fa_result_seq === _pendingSeq) {
-          if (s.two_fa_result_ok === false) {
-            $('twofa-msg').textContent =
-              s.message || 'Incorrect verification code. Please try again.';
-            $('twofa-msg').style.color = 'var(--danger)';
-            const btn = $('twofa-submit');
-            btn.disabled = false;
-            btn.textContent = 'Verify';
-            $('twofa-input').value = '';
-            setTimeout(() => $('twofa-input').focus(), 80);
-          }
-          _pendingSeq = 0;
-        }
-      } else {
-        // 'error' — e.g. the 2FA code wasn't submitted in time, or the
-        // account setup after a successful 2FA failed. Surface the reason
-        // and re-enable the form so the user can try again once the add-on
-        // reconnects and (if needed) prompts for a fresh code.
-        $('twofa-msg').textContent = s.message || 'Authentication failed.';
-        $('twofa-msg').style.color = 'var(--danger)';
-        const btn = $('twofa-submit');
-        btn.disabled = false;
-        btn.textContent = 'Verify';
         _pendingSeq = 0;
+      }
+    } else if (_twofaState === 'error') {
+      // A plain auth failure — bad/placeholder credentials, an expired 2FA
+      // window, etc. Never blocks the rest of the UI the way the 2FA
+      // overlay does (that would make the app unusable for testing/setup
+      // with no valid credentials configured yet); just a dismissible
+      // banner so the failure reason isn't lost.
+      overlay.classList.remove('open');
+      _pendingSeq = 0;
+      const msg = s.message || 'Blink authentication failed.';
+      if (msg !== _authErrorDismissedMsg) {
+        $('auth-error-msg').textContent = msg;
+        banner.classList.add('show');
       }
     } else {
       if ((prev === 'needs_2fa' || prev === 'error') && _twofaState === 'connected') {
@@ -1963,10 +1994,16 @@ async function checkAuthStatus() {
         loadAll();
       }
       overlay.classList.remove('open');
+      banner.classList.remove('show');
+      _authErrorDismissedMsg = null;
       _pendingSeq = 0;
     }
   } catch {}
 }
+$('auth-error-dismiss').addEventListener('click', () => {
+  _authErrorDismissedMsg = $('auth-error-msg').textContent;
+  $('auth-error-banner').classList.remove('show');
+});
 
 async function submitTwoFA() {
   const raw = $('twofa-input').value.trim().replace(/\s/g, '');
