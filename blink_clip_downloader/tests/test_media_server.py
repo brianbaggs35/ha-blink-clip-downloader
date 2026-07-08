@@ -3418,3 +3418,282 @@ async def test_finetune_activate_bad_json(db: ClipDatabase, tmp_path: Path) -> N
         assert resp.status == 400
     finally:
         await tc.close()
+
+
+# ===========================================================================
+# v5.0.0 — training a Moondream fine-tune from stored human feedback
+# ===========================================================================
+
+
+async def _add_feedback_with_clip(
+    db: ClipDatabase,
+    clip_id: str = "c1",
+    camera: str = "Front Door",
+    corrected_suspicious: bool | None = False,
+) -> None:
+    await db.add_clip(_make_clip(clip_id, camera=camera))
+    await db.add_feedback(
+        clip_id=clip_id,
+        camera=camera,
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        correction_note="It was just the mail carrier.",
+        corrected_suspicious=corrected_suspicious,
+    )
+
+
+def _moondream_train_analyzer(**overrides) -> MagicMock:
+    analyzer = _make_analyzer(provider="moondream_cloud", **overrides)
+    analyzer.extract_frames = AsyncMock(
+        return_value=overrides.get("frames", [b"f1", b"f2", b"f3"])
+    )
+    analyzer.base_prompt_for_camera = MagicMock(
+        return_value="Is anything suspicious happening?"
+    )
+    return analyzer
+
+
+async def test_finetune_train_not_configured(client: TestClient) -> None:
+    resp = await client.post("/api/ai/finetune/ft1/train", json={})
+    assert resp.status == 400
+
+
+async def test_finetune_train_no_feedback(db: ClipDatabase, tmp_path: Path) -> None:
+    analyzer = _moondream_train_analyzer()
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/ai/finetune/ft1/train", json={})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["trained"] == 0
+    finally:
+        await tc.close()
+
+
+async def test_finetune_train_success(db: ClipDatabase, tmp_path: Path) -> None:
+    await _add_feedback_with_clip(db)
+    analyzer = _moondream_train_analyzer()
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                new=AsyncMock(return_value={"steps_completed": 1, "results": [{}]}),
+            ) as mock_train,
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.post("/api/ai/finetune/ft1/train", json={"limit": 5})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["trained"] == 1
+        assert data["finetune_id"] == "ft1"
+
+        # The example passed to train_from_examples used the corrected
+        # verdict and the analyzer's base prompt as the training question.
+        examples = mock_train.call_args.args[1]
+        assert examples[0]["question"] == "Is anything suspicious happening?"
+        ground_truth = json.loads(examples[0]["ground_truth"])
+        assert ground_truth["suspicious"] is False
+
+        # Trained feedback is not returned again.
+        remaining = await db.get_untrained_feedback(limit=10)
+        assert remaining == []
+    finally:
+        await tc.close()
+
+
+async def test_finetune_train_skips_feedback_with_missing_clip(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    # A clip with no stored file path (e.g. archived/purged from disk but
+    # its DB row and feedback survive) — get_clip() succeeds but there's
+    # nothing to extract a training frame from.
+    await db.add_clip(_make_clip("c1", path=""))
+    await db.add_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        corrected_suspicious=False,
+    )
+    analyzer = _moondream_train_analyzer()
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/ai/finetune/ft1/train", json={})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["trained"] == 0
+        # Left untrained so a future run (once the clip exists again) retries it.
+        assert len(await db.get_untrained_feedback(limit=10)) == 1
+    finally:
+        await tc.close()
+
+
+async def test_finetune_train_bad_json_falls_back_to_default_limit(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _add_feedback_with_clip(db)
+    analyzer = _moondream_train_analyzer()
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                new=AsyncMock(return_value={"steps_completed": 1, "results": [{}]}),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.post(
+                "/api/ai/finetune/ft1/train",
+                data="not json",
+                headers={"Content-Type": "text/plain"},
+            )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["trained"] == 1
+    finally:
+        await tc.close()
+
+
+async def test_finetune_train_skips_feedback_with_no_extractable_frames(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _add_feedback_with_clip(db)
+    analyzer = _moondream_train_analyzer(frames=[])
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/ai/finetune/ft1/train", json={})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["trained"] == 0
+        assert data["message"] == "No usable clip frames for pending feedback"
+    finally:
+        await tc.close()
+
+
+async def test_finetune_train_falls_back_to_original_suspicious_when_uncorrected(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _add_feedback_with_clip(db, corrected_suspicious=None)
+    analyzer = _moondream_train_analyzer()
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                new=AsyncMock(return_value={"steps_completed": 1, "results": [{}]}),
+            ) as mock_train,
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.post("/api/ai/finetune/ft1/train", json={})
+        assert resp.status == 200
+        examples = mock_train.call_args.args[1]
+        ground_truth = json.loads(examples[0]["ground_truth"])
+        # No explicit correction, so ground truth falls back to the
+        # original (thumbs-up-confirmed) verdict, which was suspicious=True.
+        assert ground_truth["suspicious"] is True
+    finally:
+        await tc.close()
+
+
+async def test_finetune_train_manager_raises_returns_500(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _add_feedback_with_clip(db)
+    analyzer = _moondream_train_analyzer()
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                new=AsyncMock(side_effect=RuntimeError("api down")),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.post("/api/ai/finetune/ft1/train", json={})
+        assert resp.status == 500
+    finally:
+        await tc.close()
+
+
+async def test_finetune_save_checkpoint_success(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = _make_finetune_server(db, tmp_path)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.save_checkpoint",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.post("/api/ai/finetune/ft1/save-checkpoint")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["saved"] is True
+    finally:
+        await tc.close()
+
+
+async def test_finetune_save_checkpoint_not_configured(client: TestClient) -> None:
+    resp = await client.post("/api/ai/finetune/ft1/save-checkpoint")
+    assert resp.status == 400
+
+
+async def test_feedback_untrained_count_zero(client: TestClient) -> None:
+    resp = await client.get("/api/ai/feedback/untrained-count")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["count"] == 0
+
+
+async def test_feedback_untrained_count_reflects_pending_rows(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _add_feedback_with_clip(db, clip_id="c1")
+    await _add_feedback_with_clip(db, clip_id="c2")
+    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/feedback/untrained-count")
+        data = await resp.json()
+        assert data["count"] == 2
+    finally:
+        await tc.close()

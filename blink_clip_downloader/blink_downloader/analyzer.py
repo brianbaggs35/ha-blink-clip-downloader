@@ -1448,6 +1448,18 @@ class BaseAnalyzer(abc.ABC):
             pos = end + 2
         return frames
 
+    def base_prompt_for_camera(self, camera: str) -> str:
+        """Return the camera-scoped analysis prompt with no per-clip context.
+
+        A thin public wrapper around :meth:`_build_prompt` with every
+        optional per-clip signal (anomaly score, scene deviation, vision
+        hints, recent corrections, ...) left at its default — used where a
+        representative "what would we normally ask this camera" question is
+        needed without a specific clip to analyze, e.g. building Moondream
+        fine-tuning training examples from stored human feedback.
+        """
+        return self._build_prompt(camera)
+
     # ------------------------------------------------------------------
     # Response parsing (shared by all providers)
     # ------------------------------------------------------------------
@@ -3617,6 +3629,62 @@ class MoondreamFineTuneManager:
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             _LOGGER.warning("Moondream train_step failed: %s", exc)
             return {}
+
+    async def train_from_examples(
+        self,
+        finetune_id: str,
+        examples: list[dict[str, Any]],
+        mode: str = "sft",
+        num_rollouts: int = 4,
+    ) -> dict[str, Any]:
+        """Run one rollout-then-train_step cycle per example.
+
+        Each item in *examples* is ``{"image": bytes, "question": str,
+        "ground_truth": str}`` — typically built from a corrected human
+        feedback row (see ``ClipDatabase.get_untrained_feedback``) paired
+        with a representative clip frame. In ``mode="sft"`` (the default),
+        each rollout batch is generated with ``ground_truth`` set so
+        Moondream can score them, then trained with the human-provided
+        ``ground_truth`` as the supervised target — the rollouts themselves
+        are only used to establish the batch, matching the ``skill="query"``
+        request/response shape :meth:`generate_rollouts` and
+        :meth:`train_step` already expect. ``mode="rl"`` instead trains on
+        Moondream's own reward-scored rollouts, no explicit target.
+
+        Continues past a single example's failure (network error, empty
+        rollout) so one bad frame doesn't abandon the rest of the batch.
+        Returns ``{"steps_completed": int, "results": [...]}`` — the caller
+        (see ``MediaServer._handle_finetune_train``) is expected to mark
+        only the feedback rows behind successfully-trained examples as
+        consumed.
+        """
+        results = []
+        for example in examples:
+            rollout_resp = await self.generate_rollouts(
+                finetune_id,
+                example["image"],
+                example["question"],
+                num_rollouts=num_rollouts,
+                ground_truth=example.get("ground_truth"),
+                skill="query",
+            )
+            rollouts = rollout_resp.get("rollouts") or []
+            if not rollouts:
+                continue
+            request: dict[str, Any] = {
+                "skill": "query",
+                "question": example["question"],
+            }
+            step_result = await self.train_step(
+                finetune_id,
+                request,
+                rollouts if mode == "rl" else [example["ground_truth"]],
+                rewards=rollout_resp.get("rewards"),
+                mode=mode,
+            )
+            if step_result:
+                results.append(step_result)
+        return {"steps_completed": len(results), "results": results}
 
     # ------------------------------------------------------------------
     # Checkpoints

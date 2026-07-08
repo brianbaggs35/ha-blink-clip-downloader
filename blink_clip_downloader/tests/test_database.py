@@ -1623,6 +1623,80 @@ async def test_add_feedback_resubmission_replaces_previous(db: ClipDatabase) -> 
     assert len(recent) == 1
 
 
+async def test_get_untrained_feedback_returns_new_rows_oldest_first(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=False,
+        corrected_suspicious=False,
+    )
+    await db.add_feedback(
+        clip_id="c2",
+        camera="Driveway",
+        analysis_result_id=None,
+        original_suspicious=False,
+        original_confidence=0.3,
+        correct=True,
+    )
+    untrained = await db.get_untrained_feedback(limit=10)
+    assert [row["clip_id"] for row in untrained] == ["c1", "c2"]
+
+
+async def test_get_untrained_feedback_respects_limit(db: ClipDatabase) -> None:
+    for i in range(3):
+        clip_id = f"c{i}"
+        await db.add_clip(_make_clip(clip_id))
+        await db.add_feedback(
+            clip_id=clip_id,
+            camera="Front Door",
+            analysis_result_id=None,
+            original_suspicious=True,
+            original_confidence=0.8,
+            correct=True,
+        )
+    assert len(await db.get_untrained_feedback(limit=2)) == 2
+
+
+async def test_mark_feedback_trained_excludes_from_future_queries(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        analysis_result_id=None,
+        original_suspicious=True,
+        original_confidence=0.8,
+        correct=True,
+    )
+    untrained = await db.get_untrained_feedback(limit=10)
+    assert len(untrained) == 1
+
+    await db.mark_feedback_trained([untrained[0]["id"]])
+    assert await db.get_untrained_feedback(limit=10) == []
+
+
+async def test_mark_feedback_trained_empty_list_is_noop(db: ClipDatabase) -> None:
+    await db.mark_feedback_trained([])  # should not raise
+
+
+async def test_get_untrained_feedback_without_init_returns_empty() -> None:
+    d = ClipDatabase(Path("/nonexistent/no.db"))
+    assert await d.get_untrained_feedback() == []
+
+
+async def test_mark_feedback_trained_without_init_is_noop() -> None:
+    d = ClipDatabase(Path("/nonexistent/no.db"))
+    await d.mark_feedback_trained([1, 2])  # should not raise
+
+
 async def test_get_recent_feedback_filters_by_camera(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1", camera="Front Door"))
     await db.add_clip(_make_clip("c2", camera="Driveway"))

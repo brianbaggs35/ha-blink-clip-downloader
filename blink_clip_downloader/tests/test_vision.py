@@ -1103,6 +1103,18 @@ async def test_face_recognizer_picks_best_match_across_frames(db: ClipDatabase) 
     assert match.name == "Brian"
 
 
+async def test_face_recognizer_db_error_returns_none(db: ClipDatabase) -> None:
+    embedder = MagicMock(spec=FaceEmbedder)
+    broken_db = MagicMock(spec=ClipDatabase)
+    broken_db.list_face_enrollments = MagicMock(
+        side_effect=RuntimeError("db unavailable")
+    )
+
+    recognizer = FaceRecognizer(embedder, broken_db)
+    assert await recognizer.recognize([b"frame"]) is None
+    embedder.embed.assert_not_called()
+
+
 def _async_result(value: Any):
     async def _inner(*_args, **_kwargs):
         return value

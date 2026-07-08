@@ -350,6 +350,15 @@ def test_build_prompt_output_rules_favor_brief_security_focused_descriptions(
     assert "power lines" in prompt
 
 
+def test_base_prompt_for_camera_matches_build_prompt_default(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """Public wrapper used for fine-tuning training questions (no clip context)."""
+    assert analyzer.base_prompt_for_camera("Front Door") == analyzer._build_prompt(
+        "Front Door"
+    )
+
+
 def test_build_prompt_with_car() -> None:
     a = ClipAnalyzer(
         ollama_url="http://localhost:11434",
@@ -6764,6 +6773,88 @@ async def test_train_step_network_error() -> None:
     )
     result = await m.train_step("ft-1", {}, [], [])
     assert result == {}
+
+
+# ------------------------------------------------------------------
+# MoondreamFineTuneManager — train_from_examples
+# ------------------------------------------------------------------
+
+
+async def test_train_from_examples_sft_uses_ground_truth_as_target() -> None:
+    rollout_resp = _make_ft_resp(200, {"rollouts": ["a person is walking"]})
+    train_resp = _make_ft_resp(200, {"kl_divergence": 0.02})
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(side_effect=[rollout_resp, train_resp]))
+
+    result = await m.train_from_examples(
+        "ft-1",
+        [
+            {
+                "image": _FAKE_JPEG,
+                "question": "Is anything suspicious happening?",
+                "ground_truth": json.dumps({"suspicious": False}),
+            }
+        ],
+    )
+    assert result["steps_completed"] == 1
+    train_call = m._session.post.call_args_list[1]
+    payload = train_call.kwargs.get("json") or train_call[1].get("json", {})
+    group = payload["groups"][0]
+    assert group["mode"] == "sft"
+    assert group["target"] == json.dumps({"suspicious": False})
+
+
+async def test_train_from_examples_skips_example_with_no_rollouts() -> None:
+    empty_rollout_resp = _make_ft_resp(200, {"rollouts": []})
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(return_value=empty_rollout_resp))
+
+    result = await m.train_from_examples(
+        "ft-1",
+        [{"image": _FAKE_JPEG, "question": "q", "ground_truth": "{}"}],
+    )
+    assert result == {"steps_completed": 0, "results": []}
+    # generate_rollouts was called, but train_step never should have been
+    # (only one POST call total).
+    assert m._session.post.call_count == 1
+
+
+async def test_train_from_examples_continues_after_one_failure() -> None:
+    rollout_ok = _make_ft_resp(200, {"rollouts": ["r"]})
+    train_ok = _make_ft_resp(200, {"ok": True})
+    rollout_empty = _make_ft_resp(200, {"rollouts": []})
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(side_effect=[rollout_empty, rollout_ok, train_ok])
+    )
+
+    result = await m.train_from_examples(
+        "ft-1",
+        [
+            {"image": _FAKE_JPEG, "question": "q1", "ground_truth": "{}"},
+            {"image": _FAKE_JPEG, "question": "q2", "ground_truth": "{}"},
+        ],
+    )
+    assert result["steps_completed"] == 1
+
+
+async def test_train_from_examples_rl_mode_trains_on_rollouts() -> None:
+    rollout_resp = _make_ft_resp(200, {"rollouts": ["a", "b"], "rewards": [1.0, 0.0]})
+    train_resp = _make_ft_resp(200, {"ok": True})
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(post=MagicMock(side_effect=[rollout_resp, train_resp]))
+
+    result = await m.train_from_examples(
+        "ft-1",
+        [{"image": _FAKE_JPEG, "question": "q", "ground_truth": "{}"}],
+        mode="rl",
+    )
+    assert result["steps_completed"] == 1
+    train_call = m._session.post.call_args_list[1]
+    payload = train_call.kwargs.get("json") or train_call[1].get("json", {})
+    group = payload["groups"][0]
+    assert group["mode"] == "rl"
+    assert group["rewards"] == [1.0, 0.0]
 
 
 # ------------------------------------------------------------------

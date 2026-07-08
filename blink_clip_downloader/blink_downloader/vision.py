@@ -876,24 +876,35 @@ class FaceRecognizer:
         self._db = db
 
     async def recognize(self, frames: list[bytes]) -> RecognizedFace | None:
-        """Return the best enrolled-member match across *frames*, if any."""
-        enrollments = await self._db.list_face_enrollments()
-        if not enrollments:
-            return None
+        """Return the best enrolled-member match across *frames*, if any.
 
-        best: RecognizedFace | None = None
-        for frame in frames:
-            embeddings = await self._embedder.embed(frame)
-            for embedding in embeddings:
-                for enrollment in enrollments:
-                    similarity = cosine_similarity(embedding, enrollment["embedding"])
-                    if similarity >= _FACE_MATCH_THRESHOLD and (
-                        best is None or similarity > best.similarity
-                    ):
-                        best = RecognizedFace(
-                            name=str(enrollment["name"]), similarity=similarity
+        Guards the whole lookup like every other vision stage — a DB error
+        or corrupted embedding row degrades to "no match" rather than
+        propagating out of process_clip() and failing the entire clip.
+        """
+        try:
+            enrollments = await self._db.list_face_enrollments()
+            if not enrollments:
+                return None
+
+            best: RecognizedFace | None = None
+            for frame in frames:
+                embeddings = await self._embedder.embed(frame)
+                for embedding in embeddings:
+                    for enrollment in enrollments:
+                        similarity = cosine_similarity(
+                            embedding, enrollment["embedding"]
                         )
-        return best
+                        if similarity >= _FACE_MATCH_THRESHOLD and (
+                            best is None or similarity > best.similarity
+                        ):
+                            best = RecognizedFace(
+                                name=str(enrollment["name"]), similarity=similarity
+                            )
+            return best
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Face recognition failed: %s", exc)
+            return None
 
 
 def _build_recognition_hint(match: RecognizedFace) -> str:

@@ -14,3 +14,6 @@ __pycache__
 .secrets
 smoke-test/
 */node_modules
+blink_clip_downloader/local-test/data/
+blink_clip_downloader/local-test/share/
+**/local-test/**

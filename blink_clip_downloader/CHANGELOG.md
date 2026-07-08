@@ -1,14 +1,106 @@
 # Changelog
 
-## 4.1.0
+## 5.0.0
 
-Major release: an optional, off-by-default computer-vision enhancement
-pipeline layered on top of the existing AI-provider prompt pipeline —
-object detection/tracking, monocular depth estimation, pixel-level contact
-segmentation, OpenCV frame preprocessing, and local-only face-recognition
-enrollment. None of it changes default behavior; every stage is disabled
-out of the box and the add-on analyzes clips exactly as it did in 4.0.2
-until a toggle is turned on.
+Major release, bumped from 4.1.0 (never tagged/shipped) given the scope of
+what landed together: a complete visual redesign of the web UI, an optional
+off-by-default computer-vision enhancement pipeline layered on top of the
+existing AI-provider prompt pipeline, and the Moondream Cloud fine-tuning
+panel wired end-to-end to human feedback. None of the AI/CV work changes
+default behavior — every new stage and feature is disabled or empty out of
+the box and the add-on analyzes clips exactly as it did in 4.0.2 until
+explicitly turned on.
+
+### Redesigned — web UI visual overhaul
+
+- Replaced the web UI's entire visual design system (`media_server.py`'s
+  embedded `<style>` block): a refined "modern SaaS dashboard" look
+  (near-black dark theme with an indigo accent, a matching crisp light
+  theme) replaces the earlier GitHub-dark-clone palette, with a tiered
+  radius/shadow/spacing scale applied consistently across every card,
+  button, input, badge, modal, and table instead of the previous ad-hoc
+  per-rule values. Added refined hover/focus states (including
+  `:focus-visible` rings for keyboard accessibility), subtle custom
+  scrollbars, and softer motion (spring-like easing on hovers, card lifts,
+  modal transitions).
+- Replaced emoji icons in the app's primary chrome — the sidebar brand
+  mark, all five nav tabs, the theme/notifications toggle buttons, and the
+  clip grid's empty-state/no-thumbnail placeholders — with a small
+  hand-authored inline SVG icon set (`.icon`, stroke-based, sized off
+  `currentColor` so it themes automatically with dark/light and hover
+  states). This was the most dated-feeling part of the previous UI:
+  full-color platform emoji rendered inconsistently across operating
+  systems and looked out of place against the new monochrome design
+  language. Contextual/decorative emoji deeper in dynamically-generated
+  content (feedback thumbs-up/down, toast confirmations, table icons) were
+  intentionally left as-is — low risk, low visual impact, and in several
+  cases (👍/👎 feedback) already the clearest possible affordance.
+- No functionality changed: every `id` attribute and JS-referenced class
+  name the script depends on (`$('...')` lookups, `classList` toggles) was
+  preserved exactly, since the SPA has no data-binding framework and is
+  tightly coupled to those hooks. Verified with the existing Playwright e2e
+  smoke check (`e2e/smoke.mjs`) plus manual screenshots across both themes
+  and every tab (library, status, AI usage, automations, AI) — video
+  playback, downloads, starring/tagging/deleting clips, bulk selection,
+  the AI analysis panel and its feedback controls, camera configuration,
+  and face-recognition enrollment all still work unchanged.
+- Considered and rejected loading a webfont (Inter) for the "premium SaaS"
+  feel — it would have required loosening the media server's
+  Content-Security-Policy (`style-src`/`font-src` currently only allow
+  same-origin, inline, and `cdn.jsdelivr.net` for Video.js) to also permit
+  Google Fonts, and would add an external network dependency for text
+  rendering that fails ungracefully on a Home Assistant instance without
+  outbound internet. Stuck with a refined system-font stack
+  (`-apple-system`/`Segoe UI`/`Roboto`/etc.) instead, which already renders
+  well on every real target platform and requires no CSP change.
+
+### New feature — local standalone testing without Home Assistant OS
+
+- Added `local-test/run.sh` and `local-test/options.json.example`: running
+  the built image directly with `docker run` previously failed immediately
+  with `FileNotFoundError: Options file not found: /data/options.json`,
+  since the HA Supervisor (not present outside of real HA OS) is what
+  normally writes that file and bind-mounts `/data`/`/share` before
+  starting the container. The new script builds the image and runs it with
+  local `data`/`share` directories mounted the same way, prompting on first
+  run to fill in real Blink credentials. Documented in `CONTRIBUTING.md`.
+  Ingress and Supervisor/Core-API-dependent features (HA notifications,
+  `watch_ha_events`) aren't available this way, but everything else
+  (polling, downloads, the web UI, AI analysis) works identically — this is
+  a fast inner-dev-loop check, not a substitute for a real HA OS VM before
+  opening a PR.
+
+### New feature — Moondream fine-tuning, wired to feedback end-to-end
+
+- The AI tab's Fine-Tuning panel could already create a fine-tune, list
+  checkpoints, and activate one for live inference — but the underlying
+  rollout/training API (`MoondreamFineTuneManager.generate_rollouts()` /
+  `.train_step()` / `.save_checkpoint()`) was fully implemented and tested
+  yet unreachable from any HTTP route or UI control, and `DOCS.md` claimed
+  the panel let you "create a fine-tune from your own labeled examples,"
+  which wasn't actually true. Added a **Train from Feedback** button: for
+  each 👍/👎 clip-analysis correction not yet used for training, it
+  re-extracts a representative frame from that clip, pairs it with the
+  camera's analysis prompt and the corrected (or, for confirming 👍
+  feedback, original) suspicious/not-suspicious verdict, and runs one
+  supervised fine-tuning step per example. A new **Save Checkpoint** button
+  persists the trained result so it shows up under Checkpoints to activate.
+  Feedback rows are marked consumed once trained so repeated runs only pick
+  up what's new. `ClipDatabase` gained `get_untrained_feedback()` /
+  `mark_feedback_trained()` and an `analysis_feedback.trained_at` column to
+  track this.
+
+### Bug fix — face recognition could fail an entire clip's analysis
+
+- Every other computer-vision stage (frame preprocessing, object detection,
+  depth estimation, contact segmentation) degrades to "no hint" on internal
+  failure, per `vision.py`'s documented graceful-degradation contract — but
+  `FaceRecognizer.recognize()` had no guard around its database lookup or
+  embedding parsing. A DB error or corrupted embedding row there would have
+  propagated uncaught out of `VisionPipeline.process_clip()` and failed the
+  *entire clip's* analysis (marked `failed` in the queue) instead of just
+  skipping the RECOGNIZED RESIDENT hint like every other stage would. Now
+  wrapped in the same try/except-and-log pattern as its siblings.
 
 ### New feature — computer-vision enhancement pipeline
 

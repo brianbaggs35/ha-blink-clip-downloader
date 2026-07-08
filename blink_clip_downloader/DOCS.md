@@ -500,10 +500,22 @@ proximity/zone/anomaly hints described above.
 ### Moondream Fine-Tuning
 
 For `moondream_cloud`, the AI tab's **Fine-Tuning** panel manages Moondream's cloud
-fine-tuning API directly from the web UI: create a fine-tune from your own labeled
-examples, list checkpoints, and **Activate** one to use for live inference instead of
-the base model — this sets `moondream_finetune_model` live without a restart (save it
-in `config.yaml` too if you want it to persist across restarts).
+fine-tuning API directly from the web UI: create a fine-tune, list checkpoints, and
+**Activate** one to use for live inference instead of the base model — this sets
+`moondream_finetune_model` live without a restart (save it in `config.yaml` too if you
+want it to persist across restarts).
+
+**Training from your feedback.** Every 👍/👎 you give a clip's AI verdict (see
+"Feedback on AI analysis" above) is stored, and the panel's **Train from Feedback**
+button turns unused feedback into real training steps: for each pending correction, it
+re-extracts a representative frame from that clip, pairs it with the camera's analysis
+prompt and the corrected suspicious/not-suspicious verdict (falling back to the
+original verdict for 👍 feedback with no explicit correction), and runs one supervised
+fine-tuning step per example against the fine-tune you select. Feedback rows are marked
+consumed once trained, so repeated runs only pick up what's new since the last one —
+the panel shows how many corrections are currently queued. After a training run,
+**Save Checkpoint** persists the result so it shows up under **Checkpoints** to
+activate.
 
 ### Computer-Vision Enhancement Pipeline (optional, heavy)
 

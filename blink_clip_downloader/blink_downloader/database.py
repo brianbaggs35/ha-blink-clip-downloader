@@ -250,6 +250,7 @@ class ClipDatabase:
             ),
             ("analysis_results", "escalation_provider", "TEXT DEFAULT ''"),
             ("analysis_results", "prompt_text", "TEXT DEFAULT ''"),
+            ("analysis_feedback", "trained_at", "TEXT DEFAULT ''"),
         ]
         for table, col, definition in new_columns:
             try:
@@ -1024,6 +1025,43 @@ class ClipDatabase:
                 d["corrected_suspicious"] = bool(d["corrected_suspicious"])
             results.append(d)
         return results
+
+    async def get_untrained_feedback(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Return feedback rows not yet folded into a Moondream fine-tune.
+
+        Oldest first, so a training run works through the backlog in order
+        rather than repeatedly picking up the same most-recent rows. See
+        :meth:`mark_feedback_trained` and
+        ``MoondreamFineTuneManager.train_from_examples`` in ``analyzer.py``.
+        """
+        if self._db is None:
+            return []
+        async with self._db.execute(
+            "SELECT * FROM analysis_feedback WHERE trained_at='' OR trained_at IS NULL "
+            "ORDER BY created_at ASC LIMIT ?",
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            d["original_suspicious"] = bool(d["original_suspicious"])
+            d["correct"] = bool(d["correct"])
+            if d["corrected_suspicious"] is not None:
+                d["corrected_suspicious"] = bool(d["corrected_suspicious"])
+            results.append(d)
+        return results
+
+    async def mark_feedback_trained(self, feedback_ids: list[int]) -> None:
+        """Mark feedback rows as consumed by a fine-tuning training run."""
+        if self._db is None or not feedback_ids:
+            return
+        placeholders = ",".join("?" for _ in feedback_ids)
+        await self._db.execute(
+            f"UPDATE analysis_feedback SET trained_at=? WHERE id IN ({placeholders})",
+            (datetime.now(timezone.utc).isoformat(), *feedback_ids),
+        )
+        await self._db.commit()
 
     async def get_feedback_stats(self, camera: str | None = None) -> dict[str, Any]:
         """Return aggregate feedback accuracy counts, optionally per camera.
