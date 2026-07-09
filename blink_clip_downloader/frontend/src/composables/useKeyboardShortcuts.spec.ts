@@ -4,6 +4,7 @@ import { defineComponent, ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import { useConfirmStore } from '../stores/confirm'
+import { usePromptOverlayStore } from '../stores/promptOverlay'
 
 function mountHost(helpOpen = ref(false)) {
   const Host = defineComponent({
@@ -38,6 +39,17 @@ describe('useKeyboardShortcuts', () => {
     const { helpOpen } = mountHost(ref(true))
     dispatchKey('Escape')
     expect(helpOpen.value).toBe(false)
+  })
+
+  it('Escape closes the prompt overlay before the confirm dialog', () => {
+    mountHost(ref(false))
+    const promptOverlay = usePromptOverlayStore()
+    const confirm = useConfirmStore()
+    promptOverlay.show('x')
+    void confirm.ask('Sure?')
+    dispatchKey('Escape')
+    expect(promptOverlay.open).toBe(false)
+    expect(confirm.open).toBe(true)
   })
 
   it('Escape closes the confirm dialog when help is not open', () => {

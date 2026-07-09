@@ -1,0 +1,308 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+
+const fakePlayer = {
+  src: vi.fn(),
+  load: vi.fn(),
+  play: vi.fn().mockResolvedValue(undefined),
+  pause: vi.fn(),
+  dispose: vi.fn(),
+  on: vi.fn(),
+  fluid: vi.fn(),
+  loop: vi.fn(),
+  muted: vi.fn().mockReturnValue(false),
+  paused: vi.fn().mockReturnValue(true),
+  currentTime: vi.fn().mockReturnValue(0),
+  duration: vi.fn().mockReturnValue(100),
+  requestFullscreen: vi.fn(),
+}
+vi.mock('video.js', () => ({ default: vi.fn(() => fakePlayer) }))
+vi.mock('video.js/dist/video-js.css', () => ({}))
+
+import LibraryPage from './LibraryPage.vue'
+import { useConfirmStore } from '../../stores/confirm'
+import { useConnectionStore } from '../../stores/connection'
+import { useDateFilterStore } from '../../stores/dateFilter'
+import { useRefreshStore } from '../../stores/refresh'
+
+function clip(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 'c1',
+    camera: 'front',
+    file_path: '/data/clips/c1.mp4',
+    timestamp: '2026-01-05T10:00:00Z',
+    size_bytes: 1_000_000,
+    duration: 30,
+    source: 'pir',
+    network_id: 1,
+    starred: false,
+    tags: [],
+    downloaded_at: '2026-01-05T10:01:00Z',
+    archived: false,
+    archive_path: '',
+    notified: false,
+    ...overrides,
+  }
+}
+
+const CAMERAS = [{ camera: 'front', total: 10, size_bytes: 0, today: 2, this_week: 5, last_seen: '' }]
+const STATS = {
+  connected: true,
+  total_count: 10,
+  today_count: 2,
+  week_count: 5,
+  starred_count: 1,
+  archived_count: 0,
+  total_size_bytes: 1_073_741_824,
+}
+const AI_STATUS = { enabled: false, prompt_debug_enabled: false, smtp_configured: false, analysis_stats: { total_analyzed: 0, suspicious_count: 0, total_frames_analyzed: 0, frames_analyzed_today: 0, last_analysis: null } }
+
+function jsonResponse(body: unknown, ok = true) {
+  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+}
+
+function mockFetch(overrides: Record<string, unknown> = {}, clips = [clip()]) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: string, opts?: RequestInit) => {
+      for (const [pattern, body] of Object.entries(overrides)) {
+        if (url.startsWith(pattern)) {
+          if (typeof body === 'function') return Promise.resolve(jsonResponse((body as (u: string, o?: RequestInit) => unknown)(url, opts)))
+          return Promise.resolve(jsonResponse(body))
+        }
+      }
+      if (url.startsWith('/api/clips/') && url.includes('/star')) return Promise.resolve(jsonResponse({ id: 'c1', starred: true }))
+      if (url.startsWith('/api/clips/')) return Promise.resolve(jsonResponse(clips[0]))
+      if (url.startsWith('/api/clips')) return Promise.resolve(jsonResponse(clips))
+      if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
+      if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
+      if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
+      if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+      return Promise.reject(new Error(`unexpected fetch ${url} ${opts?.method}`))
+    }),
+  )
+}
+
+describe('LibraryPage', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
+
+  it('loads stats, cameras, and clips on mount', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    expect(wrapper.text()).toContain('front')
+    expect(wrapper.find('.stat-chip').exists()).toBe(true)
+    expect(useConnectionStore().connected).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows the empty state when no clips are returned', async () => {
+    mockFetch({}, [])
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    expect(wrapper.text()).toContain('No clips found')
+    wrapper.unmount()
+  })
+
+  it('debounces filter changes before reloading clips', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    await wrapper.find('#search').setValue('front door')
+    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsBefore)
+    const lastCall = vi.mocked(fetch).mock.calls.at(-1)?.[0] as string
+    expect(lastCall).toContain('search=front')
+    wrapper.unmount()
+  })
+
+  it('switches camera immediately without debounce', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    await wrapper.find('[data-camera="front"]').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsBefore)
+    const lastCall = vi.mocked(fetch).mock.calls.at(-1)?.[0] as string
+    expect(lastCall).toContain('camera=front')
+    wrapper.unmount()
+  })
+
+  it('select mode: selecting a card shows the bulk bar with a count', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    expect(wrapper.text()).toContain('1 selected')
+    wrapper.unmount()
+  })
+
+  it('bulk star stars every selected clip', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    const starBtn = wrapper.findAll('button').find((b) => b.text().includes('Star all'))!
+    await starBtn.trigger('click')
+    await flushPromises()
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c1/star', expect.objectContaining({ method: 'PUT' }))
+    wrapper.unmount()
+  })
+
+  it('bulk delete requires confirmation before deleting', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    const confirm = useConfirmStore()
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete all'))!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    expect(confirm.open).toBe(true)
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c1', expect.objectContaining({ method: 'DELETE' }))
+    wrapper.unmount()
+  })
+
+  it('opening a card (outside select mode) opens the clip modal', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.modal-bg').classes()).toContain('open')
+    wrapper.unmount()
+  })
+
+  it('deleting from the modal removes the card and closes the modal', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text() === '🗑 Delete')!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(wrapper.find('.clip-card').exists()).toBe(false)
+    expect(wrapper.find('.modal-bg').classes()).not.toContain('open')
+    wrapper.unmount()
+  })
+
+  it('starring from the modal patches the grid card in place', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    const starBtn = wrapper.findAll('button').find((b) => b.text().includes('Star'))!
+    await starBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.clip-card .star-badge').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows a Load more button when a full page is returned and loads the next page on click', async () => {
+    const fullPage = Array.from({ length: 48 }, (_, i) => clip({ id: `c${i}` }))
+    mockFetch({}, fullPage)
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    const loadMore = wrapper.findAll('button').find((b) => b.text().includes('Load more'))
+    expect(loadMore).toBeTruthy()
+    await loadMore!.trigger('click')
+    await flushPromises()
+    const lastCall = vi.mocked(fetch).mock.calls.at(-1)?.[0] as string
+    expect(lastCall).toContain('offset=48')
+    wrapper.unmount()
+  })
+
+  it('reloads everything when the refresh store ticks', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsBefore)
+    wrapper.unmount()
+  })
+
+  it('responds to a cross-tab date filter request from the Status tab', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    useDateFilterStore().requestDate('2026-01-05')
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsBefore)
+    const lastCall = vi.mocked(fetch).mock.calls.at(-1)?.[0] as string
+    expect(lastCall).toContain('since=2026-01-05T00%3A00%3A00Z')
+    wrapper.unmount()
+  })
+
+  it('polls stats/cameras every 60s while the modal is closed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    await vi.advanceTimersByTimeAsync(60_000)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsBefore)
+    wrapper.unmount()
+  })
+
+  it('does not poll while the modal is open', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    const statsCallsBefore = vi.mocked(fetch).mock.calls.filter((c) => (c[0] as string).startsWith('/api/stats')).length
+    await vi.advanceTimersByTimeAsync(60_000)
+    await flushPromises()
+    const statsCallsAfter = vi.mocked(fetch).mock.calls.filter((c) => (c[0] as string).startsWith('/api/stats')).length
+    expect(statsCallsAfter).toBe(statsCallsBefore)
+    wrapper.unmount()
+  })
+
+  it('fires a browser notification when the clip count increases and notifications are enabled', async () => {
+    localStorage.setItem('blink_notif', '1')
+    const NotificationMock = vi.fn()
+    // @ts-expect-error test stub
+    NotificationMock.permission = 'granted'
+    vi.stubGlobal('Notification', NotificationMock)
+    let total = 10
+    mockFetch({ '/api/stats': () => ({ ...STATS, total_count: total }) })
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    total = 12
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(NotificationMock).toHaveBeenCalledWith('🎥 2 new Blink clips', expect.any(Object))
+    wrapper.unmount()
+  })
+})
