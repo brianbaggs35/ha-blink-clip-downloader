@@ -1,15 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  ESCALATION_NOTE,
-  PROVIDER_NOTES,
-  fmtCost,
-  fmtDur,
-  fmtNum,
-  fmtRelative,
-  fmtSize,
-  fmtTs,
-  providerLabel,
-} from './constants'
+import { fmtCost, fmtDur, fmtNum, fmtRelative, fmtSize, fmtTs, providerLabel } from './constants'
 
 describe('providerLabel', () => {
   it('maps known providers to their display label', () => {
@@ -24,17 +14,6 @@ describe('providerLabel', () => {
   it('falls back to an em dash when empty/undefined', () => {
     expect(providerLabel(undefined)).toBe('—')
     expect(providerLabel('')).toBe('—')
-  })
-})
-
-describe('PROVIDER_NOTES / ESCALATION_NOTE', () => {
-  it('has copy for every known provider', () => {
-    expect(PROVIDER_NOTES.ollama).toContain('Ollama (Local/LAN)')
-    expect(PROVIDER_NOTES.moondream_cloud).toContain('moondream.ai')
-  })
-
-  it('escalation note mentions ai_escalation_provider', () => {
-    expect(ESCALATION_NOTE).toContain('ai_escalation_provider')
   })
 })
 
