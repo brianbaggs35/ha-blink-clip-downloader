@@ -12,7 +12,7 @@ import pytest
 from blink_downloader.config import AppConfig
 from blink_downloader.database import ClipDatabase
 
-# A local PostgreSQL 16 instance is expected to already be running (the
+# A local PostgreSQL 17 instance is expected to already be running (the
 # Dockerfile bundles one for the real add-on; for local dev/CI, point this
 # at any throwaway Postgres — see CONTRIBUTING.md). Overridable so CI can
 # use a service-container DSN instead of localhost.

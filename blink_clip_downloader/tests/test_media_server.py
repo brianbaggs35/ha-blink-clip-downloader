@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from blink_downloader import media_server
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.database import ClipDatabase
 from blink_downloader.media_server import MediaServer
@@ -74,7 +75,28 @@ def _make_analyzer(provider: str = "ollama", **overrides) -> MagicMock:
 
 
 @pytest.fixture
-async def client(db: ClipDatabase, tmp_path: Path) -> AsyncGenerator[TestClient, None]:
+async def client(
+    db: ClipDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> AsyncGenerator[TestClient, None]:
+    # Stand in for the Vue build's output (see vite.config.ts's outDir and
+    # the Dockerfile's frontend-builder stage, neither of which run as part
+    # of the Python test suite) so _handle_index/_handle_favicon and the
+    # /assets static route have something real to serve, without requiring
+    # `npm run build` to have been run first. Mirrors frontend/index.html's
+    # actual __HAROOT__ placeholder convention exactly, since the ingress-path
+    # substitution tests below depend on it.
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text(
+        "<!doctype html><html><head><script>window.__HA_INGRESS_ROOT__ = "
+        "'__HAROOT__'</script></head><body><div id=\"app\"></div></body></html>"
+    )
+    (static_dir / "favicon.svg").write_text("<svg></svg>")
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir()
+    (assets_dir / "index.js").write_text("// built JS bundle stand-in")
+    monkeypatch.setattr(media_server, "_STATIC_DIR", static_dir)
+
     server = MediaServer(db=db, download_path=tmp_path, port=0)
     app = server._build_app()
     # Inject the server instance so handlers can reference self._db etc.
@@ -98,7 +120,18 @@ async def test_health(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# / (index)
+# / (index) — serves the Vue build's static/index.html (see _STATIC_DIR).
+#
+# Content-level regression tests against the page markup (mobile-layout CSS,
+# stored-XSS escaping of camera/tag names in innerHTML templates, etc.) were
+# removed as part of the Vue migration: that content now lives in
+# frontend/src and is covered by frontend/src/**/*.spec.ts instead, and the
+# stored-XSS bug class this used to guard against is now structurally
+# impossible rather than something to keep re-verifying — Vue's default
+# template interpolation always escapes, and frontend/eslint.config.js sets
+# `vue/no-v-html: error` so nothing can opt back into raw HTML injection.
+# What's left here is what's still actually Python-side behavior: serving
+# the right file/headers and safely escaping the ingress-path header.
 # ---------------------------------------------------------------------------
 
 
@@ -107,35 +140,34 @@ async def test_index_returns_html(client: TestClient) -> None:
     assert resp.status == 200
     assert "text/html" in resp.content_type
     body = await resp.text()
-    assert "Blink Clip Library" in body
-    assert "video.js" in body
+    assert '<div id="app">' in body
 
 
-async def test_index_mobile_pages_constrain_width(client: TestClient) -> None:
-    """Status/Automations/AI/Usage pages must not force horizontal page overflow.
-
-    Regression test: `.page.active{display:flex}` makes `.status-grid` and
-    `.auto-content` flex items. Flex items default to `min-width:auto`, so
-    content with a large intrinsic width (the activity chart, or a table
-    with long unbreakable `<code>` identifiers) forced the whole page far
-    wider than the viewport on mobile, with no way to scroll back since
-    `body{overflow:hidden}` silently clipped the excess. `min-width:0` lets
-    these containers actually shrink to the available width; the tables
-    that still can't shrink below their content (event-table, usage-table)
-    get their own `.table-scroll{overflow-x:auto}` wrapper instead of
-    blowing out the page.
-    """
+async def test_index_missing_build_returns_clear_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(media_server, "_STATIC_DIR", tmp_path / "no-such-dir")
     resp = await client.get("/")
-    body = await resp.text()
-    assert ".status-grid{display:grid" in body
-    assert (
-        "min-width:0" in body.split(".status-grid{display:grid", 1)[1].split("}", 1)[0]
-    )
-    assert ".auto-content{" in body
-    assert "min-width:0" in body.split(".auto-content{", 1)[1].split("}", 1)[0]
-    assert ".table-scroll{overflow-x:auto" in body
-    assert '<div class="table-scroll">' in body
-    assert 'id="usage-model-table-wrap" class="table-scroll"' in body
+    assert resp.status == 500
+    assert "npm run build" in await resp.text()
+
+
+async def test_favicon_served(client: TestClient) -> None:
+    resp = await client.get("/favicon.svg")
+    assert resp.status == 200
+
+
+async def test_favicon_missing_returns_404(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(media_server, "_STATIC_DIR", tmp_path / "no-such-dir")
+    resp = await client.get("/favicon.svg")
+    assert resp.status == 404
+
+
+async def test_assets_are_statically_served(client: TestClient) -> None:
+    resp = await client.get("/assets/index.js")
+    assert resp.status == 200
 
 
 async def test_index_has_security_headers(client: TestClient) -> None:
@@ -143,6 +175,10 @@ async def test_index_has_security_headers(client: TestClient) -> None:
     assert resp.headers.get("X-Content-Type-Options") == "nosniff"
     assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN"
     assert "Content-Security-Policy" in resp.headers
+    # Video.js is bundled into the Vue build's own JS now (see
+    # frontend/src/components/library/ClipModal.vue), not loaded from a CDN,
+    # so no third-party origin should be allow-listed anymore.
+    assert "cdn.jsdelivr.net" not in resp.headers["Content-Security-Policy"]
 
 
 async def test_index_ingress_path_header_is_used_when_present(
@@ -150,7 +186,7 @@ async def test_index_ingress_path_header_is_used_when_present(
 ) -> None:
     resp = await client.get("/", headers={"X-Ingress-Path": "/api/hassio_ingress/abc"})
     body = await resp.text()
-    assert 'const _R = "/api/hassio_ingress/abc";' in body
+    assert 'window.__HA_INGRESS_ROOT__ = "/api/hassio_ingress/abc"' in body
 
 
 async def test_index_ingress_path_header_escapes_script_breakout(
@@ -174,61 +210,9 @@ async def test_index_ingress_path_header_escapes_quote_breakout(
     malicious = "'; alert(1); x"
     resp = await client.get("/", headers={"X-Ingress-Path": malicious})
     body = await resp.text()
-    assert "const _R = '';" not in body
+    assert "window.__HA_INGRESS_ROOT__ = '';" not in body
     assert "alert(1); x" in body  # present, but safely inside a JSON string
-    assert 'const _R = "\'; alert(1); x";' in body
-
-
-# ---------------------------------------------------------------------------
-# Stored XSS regressions: server-rendered camera/tag values must go through
-# the client-side _esc() helper wherever they're interpolated into innerHTML,
-# and _esc() itself must also neutralize quote characters since several call
-# sites embed its output inside an HTML attribute (data-cam="...", not just
-# text content).
-# ---------------------------------------------------------------------------
-
-
-async def test_esc_helper_escapes_quotes_for_attribute_contexts(
-    client: TestClient,
-) -> None:
-    resp = await client.get("/")
-    body = await resp.text()
-    assert "d.innerHTML.replace(/\"/g, '&quot;').replace(/'/g, '&#39;')" in body
-
-
-async def test_load_cameras_escapes_camera_name(client: TestClient) -> None:
-    resp = await client.get("/")
-    body = await resp.text()
-    assert "${_esc(c.camera)}</span>`" in body
-    assert "${c.camera}</span>`" not in body
-
-
-async def test_build_card_escapes_camera_source_and_tags(client: TestClient) -> None:
-    resp = await client.get("/")
-    body = await resp.text()
-    assert '<div class="clip-camera">${_esc(c.camera)}</div>' in body
-    assert '<span class="src-pill">${_esc(c.source)}</span>' in body
-    assert '<span class="tag-pill">${_esc(t)}</span>' in body
-
-
-async def test_open_modal_escapes_camera_and_source(client: TestClient) -> None:
-    resp = await client.get("/")
-    body = await resp.text()
-    assert "<div>Camera</div><span>${_esc(c.camera)}</span>" in body
-    assert "<div>Source</div><span>${_esc(c.source || '—')}</span>" in body
-
-
-async def test_render_tags_escapes_tag_text_and_attribute(client: TestClient) -> None:
-    resp = await client.get("/")
-    body = await resp.text()
-    assert '<span class="tag-item">${_esc(t)}' in body
-    assert 'data-tag="${_esc(t)}"' in body
-
-
-async def test_load_status_escapes_camera_name(client: TestClient) -> None:
-    resp = await client.get("/")
-    body = await resp.text()
-    assert '<span class="lbl">${_esc(c.camera)}</span>' in body
+    assert 'window.__HA_INGRESS_ROOT__ = "\'; alert(1); x"' in body
 
 
 # ---------------------------------------------------------------------------
@@ -800,15 +784,6 @@ async def test_two_fa_no_callback_returns_503(client: TestClient) -> None:
     """Without a two_fa_callback the endpoint returns 503."""
     resp = await client.post("/api/auth/2fa", json={"code": "000000"})
     assert resp.status == 503
-
-
-async def test_index_contains_twofa_overlay(client: TestClient) -> None:
-    """2FA overlay div is present in the served HTML."""
-    resp = await client.get("/")
-    body = await resp.text()
-    assert "twofa-overlay" in body
-    assert "twofa-input" in body
-    assert "twofa-submit" in body
 
 
 # ---------------------------------------------------------------------------

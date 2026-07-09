@@ -1,7 +1,7 @@
 #!/usr/bin/with-contenv bashio
 # shellcheck shell=bash
 # ==============================================================================
-# One-shot PostgreSQL 16 data directory bootstrap.
+# One-shot PostgreSQL 17 data directory bootstrap.
 #
 # cont-init.d scripts run once, sequentially, before any services.d service
 # starts (see just-containers/s6-overlay's legacy compat layer) — this is
@@ -16,15 +16,15 @@
 # ==============================================================================
 set -e
 
-PGDATA=/data/postgresql/16/main
-PG_BIN=/usr/lib/postgresql/16/bin
+PGDATA=/data/postgresql/17/main
+PG_BIN=/usr/lib/postgresql/17/bin
 SOCKET_DIR=/var/run/postgresql
 
 mkdir -p /data/postgresql "${SOCKET_DIR}"
 chown postgres:postgres /data/postgresql "${SOCKET_DIR}"
 
 if [ ! -s "${PGDATA}/PG_VERSION" ]; then
-  bashio::log.info "Initializing PostgreSQL 16 data directory at ${PGDATA}..."
+  bashio::log.info "Initializing PostgreSQL 17 data directory at ${PGDATA}..."
   mkdir -p "${PGDATA}"
   chown postgres:postgres "${PGDATA}"
 

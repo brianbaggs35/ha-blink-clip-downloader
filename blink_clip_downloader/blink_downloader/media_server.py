@@ -27,6 +27,14 @@ _LOGGER = logging.getLogger(__name__)
 
 _CLIP_NOT_FOUND = "Clip not found"
 
+# Built by `npm run build` in frontend/ (vite.config.ts writes straight into
+# this directory) — the Dockerfile's frontend-builder stage runs that build
+# before the image is packaged, so this always exists in a shipped add-on.
+# In a bare checkout without a build (e.g. running the Python test suite
+# alone) it won't exist; _handle_index reports that clearly instead of
+# serving nothing or a confusing 404.
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
 # ---------------------------------------------------------------------------
 # Moondream local install state (persists for the lifetime of the process)
 # ---------------------------------------------------------------------------
@@ -75,15 +83,21 @@ def _is_moondream_installed() -> bool:
 # Security
 # ---------------------------------------------------------------------------
 
-# Content-Security-Policy that allows Video.js (jsDelivr CDN) while
-# restricting everything else to same-origin.
+# Content-Security-Policy restricting everything to same-origin. Video.js
+# is bundled into the Vue build's own JS/CSS (see frontend/src/components/
+# library/ClipModal.vue) rather than loaded from a CDN as the pre-Vue
+# `_HTML` string did, so no third-party script/style/font origin needs to be
+# allow-listed here anymore. 'unsafe-inline' on script-src covers the
+# `__HAROOT__` ingress-path bootstrap snippet in index.html; on style-src it
+# covers Vue's runtime `:style` bindings, which render as inline `style="..."`
+# attributes rather than a `<style>` element.
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
-    "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net data:; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' data:; "
     "img-src 'self' data: blob:; "
     "media-src 'self' blob:; "
-    "font-src 'self' cdn.jsdelivr.net data:; "
+    "font-src 'self' data:; "
     "connect-src 'self'"
 )
 
@@ -3160,6 +3174,10 @@ class MediaServer:
             middlewares=[_security_middleware], client_max_size=10 * 1024 * 1024
         )
         app.router.add_get("/", self._handle_index)
+        app.router.add_get("/favicon.svg", self._handle_favicon)
+        assets_dir = _STATIC_DIR / "assets"
+        if assets_dir.is_dir():
+            app.router.add_static("/assets", assets_dir)
         app.router.add_get("/health", self._handle_health)
         app.router.add_get("/api/clips", self._handle_list_clips)
         app.router.add_get("/api/clips/{id}", self._handle_get_clip)
@@ -3248,10 +3266,28 @@ class MediaServer:
         # "</" -> "<\/" swap additionally prevents a value like
         # "</script><script>..." from closing out the surrounding <script>
         # tag early.
+        index_file = _STATIC_DIR / "index.html"
+        if not index_file.exists():
+            raise web.HTTPInternalServerError(
+                text=(
+                    "Frontend build not found at "
+                    f"{index_file}. Run `npm run build` in frontend/ (see "
+                    "CONTRIBUTING.md) — the Docker image builds this "
+                    "automatically, so this only happens in a bare checkout."
+                )
+            )
         ingress_path = request.headers.get("X-Ingress-Path", "").rstrip("/")
         safe_literal = json.dumps(ingress_path).replace("</", "<\\/")
-        html = _HTML.replace("'__HAROOT__'", safe_literal)
+        html = index_file.read_text().replace("'__HAROOT__'", safe_literal)
         return web.Response(text=html, content_type="text/html")
+
+    async def _handle_favicon(self, _request: web.Request) -> web.StreamResponse:
+        favicon = _STATIC_DIR / "favicon.svg"
+        if not favicon.exists():
+            raise web.HTTPNotFound()
+        return web.FileResponse(
+            favicon, headers={"Cache-Control": "public, max-age=86400"}
+        )
 
     async def _handle_health(self, _request: web.Request) -> web.Response:
         return web.json_response({"status": "ok"})

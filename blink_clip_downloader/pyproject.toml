@@ -55,6 +55,14 @@ vision = [
 [tool.setuptools.packages.find]
 include = ["blink_downloader*"]
 
+[tool.setuptools.package-data]
+# The built Vue app (see frontend/, vite.config.ts's outDir, and the
+# Dockerfile's frontend-builder stage, which populates this directory before
+# `pip3 install /app` runs) — setuptools only includes .py files by default,
+# so without this the wheel silently drops index.html/assets/favicon.svg and
+# _handle_index (media_server.py) 500s at runtime with no build-time signal.
+blink_downloader = ["static/**/*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

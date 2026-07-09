@@ -5,4 +5,4 @@ set -e
 # daemonizes/forks) so s6 supervises the real server process: it stays in
 # the foreground, gets restarted automatically if it crashes, and receives
 # signals directly from s6 on shutdown.
-exec s6-setuidgid postgres /usr/lib/postgresql/16/bin/postgres -D /data/postgresql/16/main
+exec s6-setuidgid postgres /usr/lib/postgresql/17/bin/postgres -D /data/postgresql/17/main

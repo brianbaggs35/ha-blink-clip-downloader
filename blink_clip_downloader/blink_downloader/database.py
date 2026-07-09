@@ -1,6 +1,6 @@
 """PostgreSQL-backed clip library with metadata, starring, tagging, and stats.
 
-Runs against a PostgreSQL 16 server bundled in this add-on's own container
+Runs against a PostgreSQL 17 server bundled in this add-on's own container
 (see the Dockerfile and rootfs/etc/services.d/postgresql) — not a
 user-configured external database. Connects over a local Unix domain socket
 with no password (trust auth is scoped to that socket only, never exposed

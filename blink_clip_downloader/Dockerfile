@@ -1,4 +1,21 @@
+# Declared before any FROM (required so its value reaches the *second*
+# stage's FROM below — an ARG declared between stages instead of at the top
+# of the file isn't visible to a later FROM under the legacy (non-BuildKit)
+# builder, which some CI/local Docker setups still default to).
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:trixie
+
+# Separate build stage so the Node toolchain (and its node_modules) never
+# lands in the final image — only the static build output (frontend/dist,
+# written to blink_downloader/static/ per vite.config.ts) is copied over
+# below. Pinned to the Node LTS matching this repo's engines; bumping this
+# needs no coordination with the Python base image argument above.
+FROM node:22-bookworm-slim AS frontend-builder
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM ${BUILD_FROM}
 
 # BUILD_ARCH is injected by the HA build system for multi-arch images.
@@ -31,18 +48,24 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 # still linked against these at runtime.
 # cmake: only used by moondream on amd64 but small enough to install
 # unconditionally, matching the previous Alpine image's behavior.
-# postgresql-16: the add-on's clip library database (see database.py) — a
-# real Postgres 16 server bundled and supervised in this same container (see
+# postgresql-17: the add-on's clip library database (see database.py) — a
+# real Postgres server bundled and supervised in this same container (see
 # rootfs/etc/services.d/postgresql), not a user-configured external
 # database. Directly available in Debian trixie's own archive (verified at
-# https://packages.debian.org/trixie/postgresql-16), so no extra apt
-# repository is needed to pin this exact major version.
+# https://packages.debian.org/trixie/postgresql-17), so no extra apt
+# repository is needed to pin this exact major version. Was postgresql-16
+# through 5.0.0; bumped because Debian trixie's archive stopped carrying
+# postgresql-16 (this stage started failing with "Unable to locate package
+# postgresql-16" — trixie now only ships -17). No data-migration step needed
+# since the data directory path itself is versioned
+# (/data/postgresql/<major>/main, see 01-postgres-init.sh) and this had not
+# shipped in a tagged release yet.
 RUN apt-get update && apt-get install --no-install-recommends -y \
         python3 python3-pip python3-dev build-essential \
         libffi-dev libssl-dev ffmpeg libjpeg-dev zlib1g-dev cmake \
-        libgl1 libglib2.0-0 ca-certificates postgresql-16 \
+        libgl1 libglib2.0-0 ca-certificates postgresql-17 \
     && rm -rf /var/lib/apt/lists/* \
-    # postgresql-16's postinst auto-creates a default "16 main" cluster under
+    # postgresql-17's postinst auto-creates a default "17 main" cluster under
     # /var/lib/postgresql via Debian's own pg_createcluster/postgresql-common
     # machinery. This add-on manages its own data directory under /data
     # instead (see rootfs/etc/cont-init.d/01-postgres-init.sh), started
@@ -50,7 +73,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     # cluster is dead weight — drop it to keep the image smaller. Non-fatal
     # if it wasn't created in the first place (e.g. a base image that
     # already suppresses service auto-start on package install).
-    && (pg_dropcluster --stop 16 main || echo "INFO: no default postgresql cluster to drop")
+    && (pg_dropcluster --stop 17 main || echo "INFO: no default postgresql cluster to drop")
 
 # Install Python dependencies first (Docker layer cache)
 COPY requirements.txt /tmp/requirements.txt
@@ -150,6 +173,9 @@ RUN pip3 install --no-cache-dir "moondream>=1.3,<2" 2>&1 | tail -5 || \
 # block, re-verify Pillow's final installed version doesn't regress.
 COPY pyproject.toml /app/pyproject.toml
 COPY blink_downloader/ /app/blink_downloader/
+# Built Vue app (see frontend-builder stage above) — media_server.py's
+# _handle_index/_STATIC_DIR serve this instead of an embedded HTML string.
+COPY --from=frontend-builder /blink_downloader/static /app/blink_downloader/static
 RUN pip3 install --no-cache-dir /app \
     && rm -rf /app
 

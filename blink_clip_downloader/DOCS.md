@@ -726,7 +726,7 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/blink_hardware_id.txt` | Stable device ID presented to Blink during login (do not edit) |
 | `/data/downloaded_clips.json` | Tracker of downloaded clip IDs |
 | `/data/clip_manifest.json` | Newline-delimited JSON log of all downloads |
-| `/data/postgresql/16/main/` | Bundled PostgreSQL data directory powering the web UI and AI analysis |
+| `/data/postgresql/17/main/` | Bundled PostgreSQL data directory powering the web UI and AI analysis |
 | `/data/stats.json` | Latest statistics snapshot |
 | `/data/last_digest.json` | Timestamp of the last daily digest |
 | `/data/two_fa_code.txt` | Write your 2FA code here when prompted |
