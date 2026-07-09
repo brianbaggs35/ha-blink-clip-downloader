@@ -67,6 +67,14 @@ describe('App', () => {
     wrapper.unmount()
   })
 
+  it('switches to the Models tab', async () => {
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    await wrapper.find('[data-tab="models"]').trigger('click')
+    expect(wrapper.find('#page-models').classes()).toContain('active')
+    expect(wrapper.text()).toContain('AI Providers')
+    wrapper.unmount()
+  })
+
   it('toggling the help overlay from the sidebar opens HelpOverlay', async () => {
     const wrapper = mount(App, { global: { plugins: [createPinia()] } })
     const helpOverlay = wrapper

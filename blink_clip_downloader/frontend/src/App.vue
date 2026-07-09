@@ -11,6 +11,7 @@ import StatusPage from './components/status/StatusPage.vue'
 import LibraryPage from './components/library/LibraryPage.vue'
 import AiPage from './components/ai/AiPage.vue'
 import UsagePage from './components/usage/UsagePage.vue'
+import ModelsPage from './components/models/ModelsPage.vue'
 import PromptOverlay from './components/layout/PromptOverlay.vue'
 import { useThemeStore } from './stores/theme'
 import { useAuthStore } from './stores/auth'
@@ -66,7 +67,7 @@ onUnmounted(() => auth.stopPolling())
     <UsagePage v-if="activeTab === 'usage'" />
   </div>
   <div id="page-models" class="page" :class="{ active: activeTab === 'models' }">
-    <!-- New tab (task #12): provider/model reference, pricing, docs links. -->
+    <ModelsPage />
   </div>
 
   <HelpOverlay v-model="helpOpen" />
