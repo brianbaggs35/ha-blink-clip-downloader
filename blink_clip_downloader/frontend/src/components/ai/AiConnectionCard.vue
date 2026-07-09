@@ -1,0 +1,280 @@
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import { fetchAiModels, getMoondreamInstallStatus, startMoondreamInstall, analyzeClipNow } from '../../api/ai'
+import { listClips } from '../../api/clips'
+import { PROVIDER_LABELS, providerLabel } from '../../api/constants'
+import type { AiModelEntry, AiStatus, AnalysisResultDict, MoondreamInstallStatus } from '../../api/types'
+import { useToastStore } from '../../stores/toast'
+
+const props = defineProps<{ status: AiStatus }>()
+
+const toast = useToastStore()
+
+const MODEL_PICKER_PROVIDERS = ['ollama', 'ollama_cloud', 'anthropic', 'openai']
+const showModelPicker = () => MODEL_PICKER_PROVIDERS.includes(props.status.provider || '')
+
+// ── Model picker ──────────────────────────────────────────
+const models = ref<AiModelEntry[]>([])
+const selectedModel = ref('')
+const fetchingModels = ref(false)
+
+async function fetchModels() {
+  fetchingModels.value = true
+  try {
+    const d = await fetchAiModels()
+    models.value = d.models || []
+    if (models.value.length && !selectedModel.value) selectedModel.value = models.value[0].name
+    toast.show(
+      models.value.length
+        ? `Found ${models.value.length} vision model(s) — best shown first`
+        : 'No vision models found on this Ollama server',
+    )
+  } catch {
+    toast.show('Failed to fetch models', true)
+  } finally {
+    fetchingModels.value = false
+  }
+}
+
+async function copyModelId() {
+  if (!selectedModel.value) {
+    toast.show('Fetch models and pick one first', true)
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(selectedModel.value)
+    toast.show(`Copied "${selectedModel.value}" — paste into the add-on Configuration tab`)
+  } catch {
+    toast.show(selectedModel.value, true)
+  }
+}
+
+function modelLabel(m: AiModelEntry, index: number): string {
+  const gb = m.size ? ` · ${(m.size / 1e9).toFixed(1)} GB` : ''
+  const star = index === 0 ? ' ⭐ Best' : ''
+  return `${m.name}${gb}${star}`
+}
+
+// ── Moondream local install ───────────────────────────────
+const archSupported = ref(true)
+const installState = ref<{ status: MoondreamInstallStatus; log?: string }>({ status: 'idle' })
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+
+async function pollMoondreamStatus() {
+  try {
+    const s = await getMoondreamInstallStatus()
+    archSupported.value = s.arch_supported !== false
+    installState.value = s.install_state || { status: 'idle' }
+    if (s.installed) installState.value = { ...installState.value, status: 'installed' }
+    if (installState.value.status === 'installing') {
+      pollTimer = setTimeout(pollMoondreamStatus, 2500)
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
+
+async function startInstall() {
+  try {
+    installState.value = { status: 'installing', log: 'Starting pip install moondream…\n' }
+    await startMoondreamInstall()
+    await pollMoondreamStatus()
+  } catch {
+    toast.show('Failed to start installation', true)
+  }
+}
+
+watch(
+  () => props.status.provider,
+  (provider) => {
+    if (provider === 'moondream_local') {
+      archSupported.value = props.status.moondream_arch_supported !== false
+      installState.value = props.status.moondream_installed
+        ? { status: 'installed' }
+        : { status: 'idle' }
+      void pollMoondreamStatus()
+    } else if (pollTimer) {
+      clearTimeout(pollTimer)
+    }
+  },
+  { immediate: true },
+)
+
+// ── Test analysis ──────────────────────────────────────────
+const testing = ref(false)
+const testResult = ref<{ ok: boolean; message: string; detail?: AnalysisResultDict & { camera?: string } } | null>(null)
+
+async function runTest() {
+  testing.value = true
+  testResult.value = null
+  try {
+    const clips = await listClips({ limit: 1, sort: 'newest' })
+    if (!clips.length) {
+      testResult.value = { ok: false, message: 'No clips in the library yet. Download a clip first, then run the test.' }
+      return
+    }
+    const clip = clips[0]
+    const r = await analyzeClipNow(clip.id)
+    testResult.value = { ok: true, message: '', detail: { ...r, camera: r.camera || clip.camera } }
+    toast.show('Test complete — AI is working ✓')
+  } catch {
+    testResult.value = { ok: false, message: 'Test failed — check AI provider settings and connection' }
+    toast.show('AI test failed', true)
+  } finally {
+    testing.value = false
+  }
+}
+
+function confPct(r: AnalysisResultDict): number {
+  return Math.round((r.confidence || 0) * 100)
+}
+</script>
+
+<template>
+  <div class="card" style="padding: 1.2rem">
+    <h3 style="margin-bottom: 0.8rem">AI Connection</h3>
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem">
+      <span class="badge" style="font-size: 0.85rem" :style="{ color: status.ai_online ? 'var(--success)' : 'var(--danger)' }">●</span>
+      <span style="font-size: 0.85rem">{{ status.ai_online ? 'Connected' : 'Offline' }}</span>
+    </div>
+    <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.4rem">
+      Provider: <strong>{{ providerLabel(status.provider) }}</strong>
+    </div>
+    <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.6rem">
+      Model: <strong>{{ status.model || '—' }}</strong>
+    </div>
+    <div
+      v-if="status.escalation_provider"
+      style="
+        font-size: 0.78rem;
+        color: var(--muted);
+        margin-bottom: 0.6rem;
+        padding: 0.4rem 0.6rem;
+        background: var(--card2);
+        border-radius: var(--radius);
+      "
+    >
+      🪜 Escalation tier 2: <strong>{{ PROVIDER_LABELS[status.escalation_provider] || status.escalation_provider }} — {{ status.escalation_model || '—' }}</strong>
+      <span :style="{ color: status.escalation_online ? 'var(--success)' : 'var(--danger)' }">
+        {{ status.escalation_online ? ' 🟢 online' : ' 🔴 unreachable — falling back to tier 1' }}
+      </span>
+    </div>
+
+    <div v-if="showModelPicker()" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">
+      <button class="btn sm" :disabled="fetchingModels" @click="fetchModels">
+        {{ fetchingModels ? '⏳ Loading…' : '⟳ Fetch Models' }}
+      </button>
+      <select v-model="selectedModel" class="sel" style="min-width: 175px">
+        <option value="">Select a model…</option>
+        <option v-for="(m, i) in models" :key="m.name" :value="m.name">{{ modelLabel(m, i) }}</option>
+      </select>
+      <button
+        class="btn sm ghost"
+        title="Copy the selected model id, then paste it into this add-on's configuration (openai_model / anthropic_model / ollama_model)"
+        @click="copyModelId"
+      >
+        📋 Copy
+      </button>
+    </div>
+    <p v-if="showModelPicker()" style="font-size: 0.72rem; color: var(--muted); margin-top: 0.35rem">
+      Selecting a model here does not change the running configuration — copy the id and paste it into the
+      add-on's <strong>Configuration</strong> tab, then restart the add-on.
+    </p>
+
+    <div v-if="status.provider === 'moondream_local'" style="margin-top: 0.75rem">
+      <div v-if="!archSupported">
+        <p style="font-size: 0.8rem; color: var(--muted)">
+          moondream_local is not available on this architecture.<br />Use <strong>moondream_cloud</strong> or
+          <strong>ollama</strong> instead.
+        </p>
+      </div>
+      <div v-else-if="installState.status === 'installed'">
+        <p style="font-size: 0.8rem; color: var(--success)">✓ moondream installed</p>
+        <p style="font-size: 0.73rem; color: var(--muted)">Model (~430 MB) downloads automatically on first health check</p>
+      </div>
+      <div v-else-if="installState.status === 'installing'">
+        <p style="font-size: 0.8rem; color: var(--warn); margin-bottom: 0.35rem">⏳ Installing… please wait</p>
+        <div
+          style="
+            font-size: 0.7rem;
+            font-family: monospace;
+            color: var(--muted);
+            background: var(--card2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.3rem 0.5rem;
+            max-height: 70px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+          "
+        >
+          {{ installState.log || '' }}
+        </div>
+      </div>
+      <div v-else-if="installState.status === 'failed'">
+        <p style="font-size: 0.8rem; color: var(--danger); margin-bottom: 0.3rem">✗ Installation failed</p>
+        <div
+          style="
+            font-size: 0.7rem;
+            font-family: monospace;
+            color: var(--muted);
+            background: var(--card2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.3rem 0.5rem;
+            max-height: 70px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            margin-bottom: 0.4rem;
+          "
+        >
+          {{ installState.log || '' }}
+        </div>
+        <button class="btn sm ghost" @click="startInstall">↺ Retry Install</button>
+      </div>
+      <div v-else>
+        <p style="font-size: 0.8rem; color: var(--warn); margin-bottom: 0.45rem">⚠ moondream package not installed</p>
+        <button class="btn sm" @click="startInstall">⬇ Install Moondream 0.5B</button>
+        <p style="font-size: 0.73rem; color: var(--muted); margin-top: 0.35rem">Package + model ~430 MB, may take several minutes</p>
+      </div>
+    </div>
+
+    <div style="margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.6rem">
+      <button class="btn sm ghost" :disabled="testing" @click="runTest">
+        {{ testing ? '⏳ Testing…' : '🔬 Test Analysis' }}
+      </button>
+      <p style="font-size: 0.73rem; color: var(--muted); margin: 0.3rem 0 0">Analyzes a recent clip to verify AI is working</p>
+      <div v-if="testResult" style="margin-top: 0.45rem">
+        <span v-if="!testResult.ok" style="color: var(--warn); font-size: 0.8rem">{{ testResult.message }}</span>
+        <div
+          v-else-if="testResult.detail"
+          style="
+            background: var(--card2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 0.6rem 0.8rem;
+            font-size: 0.82rem;
+            margin-top: 0.3rem;
+          "
+        >
+          <div style="color: var(--success); font-weight: 700; margin-bottom: 0.35rem">✓ AI is working!</div>
+          <div>Camera: <strong>{{ testResult.detail.camera }}</strong></div>
+          <div>
+            Result:
+            <span :style="{ color: testResult.detail.is_suspicious ? 'var(--danger)' : 'var(--success)', fontWeight: 600 }">
+              {{ testResult.detail.is_suspicious ? '⚠ Suspicious' : '✓ Clear' }}
+            </span>
+            ({{ confPct(testResult.detail) }}% confidence)
+          </div>
+          <div v-if="testResult.detail.summary" style="color: var(--muted); margin-top: 0.3rem">
+            {{ testResult.detail.summary }}
+          </div>
+          <div style="color: var(--muted); font-size: 0.74rem; margin-top: 0.3rem">
+            Model: {{ testResult.detail.model || '—' }} &nbsp;·&nbsp; {{ testResult.detail.frame_count || 0 }} frame(s) &nbsp;·&nbsp;
+            {{ (testResult.detail.analysis_duration || 0).toFixed(1) }}s
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

@@ -9,6 +9,7 @@ import AuthErrorBanner from './components/layout/AuthErrorBanner.vue'
 import AutomationsPage from './components/automations/AutomationsPage.vue'
 import StatusPage from './components/status/StatusPage.vue'
 import LibraryPage from './components/library/LibraryPage.vue'
+import AiPage from './components/ai/AiPage.vue'
 import PromptOverlay from './components/layout/PromptOverlay.vue'
 import { useThemeStore } from './stores/theme'
 import { useAuthStore } from './stores/auth'
@@ -58,7 +59,7 @@ onUnmounted(() => auth.stopPolling())
     <StatusPage v-if="activeTab === 'status'" />
   </div>
   <div id="page-ai" class="page" :class="{ active: activeTab === 'ai' }">
-    <!-- Ported in a follow-up phase (AI config tab). -->
+    <AiPage v-if="activeTab === 'ai'" />
   </div>
   <div id="page-usage" class="page" :class="{ active: activeTab === 'usage' }">
     <!-- Ported in a follow-up phase (AI Usage tab). -->

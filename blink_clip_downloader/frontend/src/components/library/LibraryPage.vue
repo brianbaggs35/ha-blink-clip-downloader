@@ -13,6 +13,7 @@ import {
 import { getAiStatus } from '../../api/ai'
 import type { CameraStat, ClipListItem, LibraryStats } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
+import { useClipViewerStore } from '../../stores/clipViewer'
 import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
 import { useRefreshStore } from '../../stores/refresh'
@@ -30,6 +31,7 @@ const confirm = useConfirm()
 const connection = useConnectionStore()
 const refresh = useRefreshStore()
 const dateFilter = useDateFilterStore()
+const clipViewer = useClipViewerStore()
 
 // Filters
 const search = ref('')
@@ -203,6 +205,12 @@ watch(
   () => dateFilter.seq,
   () => {
     if (dateFilter.date) void loadClipsForDate(dateFilter.date)
+  },
+)
+watch(
+  () => clipViewer.seq,
+  () => {
+    if (clipViewer.clipId) openModal(clipViewer.clipId)
   },
 )
 
@@ -402,13 +410,19 @@ onUnmounted(() => {
     </main>
   </div>
 
-  <ClipModal
-    :clip-id="activeClipId"
-    :ai-enabled="aiEnabled"
-    :prompt-debug-enabled="promptDebugEnabled"
-    @close="closeModal"
-    @nav="onNav"
-    @deleted="onDeleted"
-    @starred="onStarred"
-  />
+  <!-- Teleported to <body>: this component renders inside #page-library,
+       which is display:none while another tab is active (see .page/.page.active
+       in base.css) — the modal must stay visible when opened from elsewhere,
+       e.g. the AI tab's suspicious-activity feed via clipViewer.requestOpen(). -->
+  <Teleport to="body">
+    <ClipModal
+      :clip-id="activeClipId"
+      :ai-enabled="aiEnabled"
+      :prompt-debug-enabled="promptDebugEnabled"
+      @close="closeModal"
+      @nav="onNav"
+      @deleted="onDeleted"
+      @starred="onStarred"
+    />
+  </Teleport>
 </template>

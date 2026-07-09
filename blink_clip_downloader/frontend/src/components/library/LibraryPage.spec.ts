@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+
+// LibraryPage teleports <ClipModal> to <body> (see LibraryPage.vue) so it
+// stays visible when another tab is active — VTU's wrapper.find() doesn't
+// see teleported nodes, so modal assertions/interactions query body() instead.
+function body() {
+  return new DOMWrapper(document.body)
+}
 
 const fakePlayer = {
   src: vi.fn(),
@@ -189,7 +196,7 @@ describe('LibraryPage', () => {
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.modal-bg').classes()).toContain('open')
+    expect(body().find('.modal-bg').classes()).toContain('open')
     wrapper.unmount()
   })
 
@@ -200,14 +207,14 @@ describe('LibraryPage', () => {
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
     const confirm = useConfirmStore()
-    const deleteBtn = wrapper.findAll('button').find((b) => b.text() === '🗑 Delete')!
+    const deleteBtn = body().findAll('button').find((b) => b.text() === '🗑 Delete')!
     const clickPromise = deleteBtn.trigger('click')
     await flushPromises()
     confirm.settle(true)
     await clickPromise
     await flushPromises()
     expect(wrapper.find('.clip-card').exists()).toBe(false)
-    expect(wrapper.find('.modal-bg').classes()).not.toContain('open')
+    expect(body().find('.modal-bg').classes()).not.toContain('open')
     wrapper.unmount()
   })
 
@@ -217,7 +224,7 @@ describe('LibraryPage', () => {
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
-    const starBtn = wrapper.findAll('button').find((b) => b.text().includes('Star'))!
+    const starBtn = body().findAll('button').find((b) => b.text().includes('Star'))!
     await starBtn.trigger('click')
     await flushPromises()
     expect(wrapper.find('.clip-card .star-badge').exists()).toBe(true)
@@ -337,8 +344,8 @@ describe('LibraryPage', () => {
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
-    await wrapper.find('.vid-nav-btn:nth-of-type(2)').trigger('click')
-    expect(wrapper.find('.modal-bg').classes()).toContain('open')
+    await body().find('.vid-nav-btn:nth-of-type(2)').trigger('click')
+    expect(body().find('.modal-bg').classes()).toContain('open')
     wrapper.unmount()
   })
 
@@ -349,13 +356,13 @@ describe('LibraryPage', () => {
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
     const confirm = useConfirmStore()
-    const deleteBtn = wrapper.findAll('button').find((b) => b.text() === '🗑 Delete')!
+    const deleteBtn = body().findAll('button').find((b) => b.text() === '🗑 Delete')!
     const clickPromise = deleteBtn.trigger('click')
     await flushPromises()
     confirm.settle(true)
     await clickPromise
     await flushPromises()
-    expect(wrapper.find('.modal-bg').classes()).not.toContain('open')
+    expect(body().find('.modal-bg').classes()).not.toContain('open')
     wrapper.unmount()
   })
 
