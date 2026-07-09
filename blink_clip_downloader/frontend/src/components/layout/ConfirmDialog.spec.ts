@@ -1,8 +1,20 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { DOMWrapper, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import PrimeVue from 'primevue/config'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { useConfirmStore } from '../../stores/confirm'
+
+// PrimeVue's Dialog teleports to <body> by default, so assertions/interactions
+// query body() rather than the mounted wrapper (matches the pattern already
+// used for LibraryPage's Teleported ClipModal).
+function body() {
+  return new DOMWrapper(document.body)
+}
+
+function mountDialog() {
+  return mount(ConfirmDialog, { global: { plugins: [PrimeVue] } })
+}
 
 describe('ConfirmDialog', () => {
   beforeEach(() => {
@@ -10,35 +22,40 @@ describe('ConfirmDialog', () => {
   })
 
   it('opens with the store title/message and resolves true on Confirm', async () => {
-    const wrapper = mount(ConfirmDialog)
+    mountDialog()
     const store = useConfirmStore()
     const promise = store.ask('Delete this clip?', 'Delete clip')
-    await wrapper.vm.$nextTick()
+    await new Promise((r) => setTimeout(r))
 
-    expect(wrapper.classes()).toContain('open')
-    expect(wrapper.find('.modal-title').text()).toBe('Delete clip')
-    expect(wrapper.text()).toContain('Delete this clip?')
+    expect(body().text()).toContain('Delete clip')
+    expect(body().text()).toContain('Delete this clip?')
 
-    await wrapper.find('.btn.danger').trigger('click')
+    const confirmBtn = body()
+      .findAll('button')
+      .find((b) => b.text() === 'Confirm')!
+    await confirmBtn.trigger('click')
     await expect(promise).resolves.toBe(true)
     expect(store.open).toBe(false)
   })
 
   it('Cancel resolves false', async () => {
-    const wrapper = mount(ConfirmDialog)
+    mountDialog()
     const store = useConfirmStore()
     const promise = store.ask('Sure?')
-    await wrapper.vm.$nextTick()
-    await wrapper.find('.btn.ghost').trigger('click')
+    await new Promise((r) => setTimeout(r))
+    const cancelBtn = body()
+      .findAll('button')
+      .find((b) => b.text() === 'Cancel')!
+    await cancelBtn.trigger('click')
     await expect(promise).resolves.toBe(false)
   })
 
-  it('clicking the backdrop resolves false', async () => {
-    const wrapper = mount(ConfirmDialog)
+  it('dismissing via the dialog\'s own close button resolves false', async () => {
+    mountDialog()
     const store = useConfirmStore()
     const promise = store.ask('Sure?')
-    await wrapper.vm.$nextTick()
-    await wrapper.trigger('click')
+    await new Promise((r) => setTimeout(r))
+    await body().find('.p-dialog-close-button').trigger('click')
     await expect(promise).resolves.toBe(false)
   })
 })

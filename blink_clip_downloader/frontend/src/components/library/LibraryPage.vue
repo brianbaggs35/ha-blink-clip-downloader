@@ -1,5 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import Button from 'primevue/button'
+import Checkbox from 'primevue/checkbox'
+import IconField from 'primevue/iconfield'
+import InputIcon from 'primevue/inputicon'
+import InputText from 'primevue/inputtext'
+import ProgressBar from 'primevue/progressbar'
+import Select from 'primevue/select'
 import {
   deleteClip,
   exportZip,
@@ -11,18 +18,39 @@ import {
   type ClipFilters,
 } from '../../api/clips'
 import { getAiStatus } from '../../api/ai'
-import type { CameraStat, ClipListItem, LibraryStats } from '../../api/types'
+import type { ClipListItem, LibraryStats } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useClipViewerStore } from '../../stores/clipViewer'
 import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
+import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import AppIcon from '../icons/AppIcon.vue'
 import BulkBar from './BulkBar.vue'
-import CameraNav from './CameraNav.vue'
 import ClipCard from './ClipCard.vue'
 import ClipModal from './ClipModal.vue'
+
+const DATE_RANGE_OPTIONS = [
+  { label: 'All time', value: '' },
+  { label: 'Today', value: 'today' },
+  { label: 'Yesterday', value: 'yesterday' },
+  { label: 'This week', value: 'week' },
+  { label: 'This month', value: 'month' },
+]
+const SOURCE_OPTIONS = [
+  { label: 'All sources', value: '' },
+  { label: 'Motion (PIR)', value: 'pir' },
+  { label: 'Liveview', value: 'liveview' },
+  { label: 'Snapshot', value: 'snapshot' },
+]
+const SORT_OPTIONS = [
+  { label: '⬆ Newest', value: 'newest' },
+  { label: '⬇ Oldest', value: 'oldest' },
+  { label: '📷 Camera', value: 'camera' },
+  { label: '💾 Size', value: 'size' },
+  { label: '⏱ Duration', value: 'duration' },
+]
 
 const PAGE_SIZE = 48
 
@@ -32,6 +60,7 @@ const connection = useConnectionStore()
 const refresh = useRefreshStore()
 const dateFilter = useDateFilterStore()
 const clipViewer = useClipViewerStore()
+const library = useLibraryStore()
 
 // Filters
 const search = ref('')
@@ -41,11 +70,13 @@ const tagFilter = ref('')
 const sortOrder = ref<'newest' | 'oldest' | 'camera' | 'size' | 'duration'>('newest')
 const starredOnly = ref(false)
 const notifiedOnly = ref(false)
-const currentCamera = ref('all')
 
 const tags = ref<string[]>([])
 const tagsLoaded = ref(false)
-const cameras = ref<CameraStat[]>([])
+const tagOptions = computed(() => [
+  { label: 'All tags', value: '' },
+  ...tags.value.map((t) => ({ label: `#${t}`, value: t })),
+])
 const stats = ref<LibraryStats | null>(null)
 const clips = ref<ClipListItem[]>([])
 const currentPage = ref(0)
@@ -88,7 +119,7 @@ function sinceDate(range: string): string | null {
 
 function buildFilters(page: number): ClipFilters {
   const filters: ClipFilters = { limit: PAGE_SIZE, offset: page * PAGE_SIZE, sort: sortOrder.value }
-  if (currentCamera.value !== 'all') filters.camera = currentCamera.value
+  if (library.currentCamera !== 'all') filters.camera = library.currentCamera
   if (search.value.trim()) filters.search = search.value.trim()
   const since = sinceDate(dateRange.value)
   if (since) filters.since = since
@@ -135,7 +166,7 @@ async function loadClipsForDate(date: string) {
 
 async function loadCameras() {
   try {
-    cameras.value = await getCameras()
+    library.setCameras(await getCameras())
   } catch {
     /* non-fatal — mirrors the pre-Vue UI's console.warn-only handling */
   }
@@ -199,7 +230,7 @@ watch([search, dateRange, sourceFilter, tagFilter, sortOrder, starredOnly, notif
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => loadClips(0), 380)
 })
-watch(currentCamera, () => loadClips(0))
+watch(() => library.currentCamera, () => loadClips(0))
 watch(() => refresh.tick, loadAll)
 watch(
   () => dateFilter.seq,
@@ -319,72 +350,71 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="lib-filters">
-    <input id="search" v-model="search" class="search" type="search" placeholder="🔍 Search…" />
-    <select id="date-range" v-model="dateRange" class="sel">
-      <option value="">All time</option>
-      <option value="today">Today</option>
-      <option value="yesterday">Yesterday</option>
-      <option value="week">This week</option>
-      <option value="month">This month</option>
-    </select>
-    <select id="source-filter" v-model="sourceFilter" class="sel">
-      <option value="">All sources</option>
-      <option value="pir">Motion (PIR)</option>
-      <option value="liveview">Liveview</option>
-      <option value="snapshot">Snapshot</option>
-    </select>
-    <select id="tag-filter" v-model="tagFilter" class="sel">
-      <option value="">All tags</option>
-      <option v-for="t in tags" :key="t" :value="t">#{{ t }}</option>
-    </select>
-    <select id="sort-order" v-model="sortOrder" class="sel">
-      <option value="newest">⬆ Newest</option>
-      <option value="oldest">⬇ Oldest</option>
-      <option value="camera">📷 Camera</option>
-      <option value="size">💾 Size</option>
-      <option value="duration">⏱ Duration</option>
-    </select>
-    <label class="chk"><input v-model="starredOnly" type="checkbox" /> ★ Starred</label>
-    <label class="chk"><input v-model="notifiedOnly" type="checkbox" /> 🔔 Notified</label>
-    <button class="btn ghost sm" @click="toggleSelectMode(!selectMode)">
-      {{ selectMode ? '☒ Selecting' : '☐ Select' }}
-    </button>
-  </div>
-
-  <BulkBar
-    v-if="selectMode"
-    :count="selectedIds.size"
-    :zipping="zipping"
-    @star="bulkStar"
-    @delete="bulkDelete"
-    @zip="bulkZip"
-    @cancel="toggleSelectMode(false)"
-  />
-
-  <div class="lib-body">
-    <aside class="sidebar">
-      <div class="sb-head">Cameras</div>
-      <CameraNav v-model="currentCamera" :cameras="cameras" />
-      <div class="sb-head" style="margin-top: 0.8rem">Storage</div>
-      <div id="storage-info" style="padding: 0.4rem 1rem; font-size: 0.77rem; color: var(--muted)">
-        <template v-if="stats?.disk">
-          <div>Used: {{ stats.disk.used_mb }} MB</div>
-          <div style="color: var(--text)">Free: {{ stats.disk.free_gb }} GB</div>
-          <div v-if="stats.disk.quota_bytes" class="prog-bar" style="margin-top: 0.35rem">
-            <div class="prog-fill" :class="diskClass" :style="{ width: `${(diskPct || 0).toFixed(1)}%` }"></div>
-          </div>
-        </template>
+  <div class="lib-page">
+    <div class="lib-stats-row">
+      <div class="lib-stat">
+        <span class="lib-stat-label">Today</span>
+        <span class="lib-stat-value">{{ stats?.today_count ?? 0 }}</span>
       </div>
-    </aside>
+      <div class="lib-stat">
+        <span class="lib-stat-label">This week</span>
+        <span class="lib-stat-value">{{ stats?.week_count ?? 0 }}</span>
+      </div>
+      <div class="lib-stat">
+        <span class="lib-stat-label">Total</span>
+        <span class="lib-stat-value">{{ stats?.total_count ?? 0 }}</span>
+      </div>
+      <div class="lib-stat">
+        <span class="lib-stat-label">★ Starred</span>
+        <span class="lib-stat-value">{{ stats?.starred_count ?? 0 }}</span>
+      </div>
+      <div class="lib-stat">
+        <span class="lib-stat-label">Library size</span>
+        <span class="lib-stat-value">{{ libSizeGb }} GB</span>
+      </div>
+      <div v-if="stats?.disk" class="lib-stat lib-stat-storage">
+        <span class="lib-stat-label">Storage — {{ stats.disk.used_mb }} MB used · Free: {{ stats.disk.free_gb }} GB</span>
+        <ProgressBar
+          v-if="stats.disk.quota_bytes"
+          :value="diskPct || 0"
+          :show-value="false"
+          :pt="{ value: { style: diskClass === 'danger' ? 'background:var(--danger)' : diskClass === 'warn' ? 'background:var(--warn)' : undefined } }"
+        />
+      </div>
+    </div>
+
+    <div class="lib-filters">
+      <IconField class="lib-search">
+        <InputIcon><AppIcon name="tab-library" style="width: 15px; height: 15px" /></InputIcon>
+        <InputText id="search" v-model="search" placeholder="Search clips…" fluid />
+      </IconField>
+      <Select id="date-range" v-model="dateRange" :options="DATE_RANGE_OPTIONS" option-label="label" option-value="value" />
+      <Select id="source-filter" v-model="sourceFilter" :options="SOURCE_OPTIONS" option-label="label" option-value="value" />
+      <Select id="tag-filter" v-model="tagFilter" :options="tagOptions" option-label="label" option-value="value" />
+      <Select id="sort-order" v-model="sortOrder" :options="SORT_OPTIONS" option-label="label" option-value="value" />
+      <label class="lib-check"><Checkbox v-model="starredOnly" binary /> ★ Starred</label>
+      <label class="lib-check"><Checkbox v-model="notifiedOnly" binary /> 🔔 Notified</label>
+      <Button
+        size="small"
+        :severity="selectMode ? 'primary' : 'secondary'"
+        :outlined="!selectMode"
+        @click="toggleSelectMode(!selectMode)"
+      >
+        {{ selectMode ? 'Selecting…' : 'Select' }}
+      </Button>
+    </div>
+
+    <BulkBar
+      v-if="selectMode"
+      :count="selectedIds.size"
+      :zipping="zipping"
+      @star="bulkStar"
+      @delete="bulkDelete"
+      @zip="bulkZip"
+      @cancel="toggleSelectMode(false)"
+    />
+
     <main class="lib-main">
-      <div id="stats-bar" class="stats-row">
-        <div class="stat-chip">Today <strong>{{ stats?.today_count ?? 0 }}</strong></div>
-        <div class="stat-chip">Week <strong>{{ stats?.week_count ?? 0 }}</strong></div>
-        <div class="stat-chip">Total <strong>{{ stats?.total_count ?? 0 }}</strong></div>
-        <div class="stat-chip">★ Starred <strong>{{ stats?.starred_count ?? 0 }}</strong></div>
-        <div class="stat-chip">Library <strong>{{ libSizeGb }} GB</strong></div>
-      </div>
       <div id="clip-grid" class="clip-grid">
         <div v-if="loadingInitial" style="grid-column: 1 / -1; padding: 2rem; text-align: center; color: var(--muted)">
           Loading…
@@ -405,7 +435,7 @@ onUnmounted(() => {
         </template>
       </div>
       <div class="load-more-row">
-        <button v-if="hasMore" class="btn outline" @click="loadClips(currentPage + 1)">Load more…</button>
+        <Button v-if="hasMore" outlined size="small" @click="loadClips(currentPage + 1)">Load more…</Button>
       </div>
     </main>
   </div>

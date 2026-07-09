@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import PrimeVue from 'primevue/config'
 
 // LibraryPage teleports <ClipModal> to <body> (see LibraryPage.vue) so it
 // stays visible when another tab is active — VTU's wrapper.find() doesn't
@@ -31,7 +32,16 @@ import LibraryPage from './LibraryPage.vue'
 import { useConfirmStore } from '../../stores/confirm'
 import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
+import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
+
+function mountLibrary() {
+  return mount(LibraryPage, { global: { plugins: [PrimeVue] } })
+}
+
+function findByText(wrapper: ReturnType<typeof mountLibrary>, text: string) {
+  return wrapper.findAll('button').find((b) => b.text().includes(text))!
+}
 
 function clip(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -104,17 +114,17 @@ describe('LibraryPage', () => {
 
   it('loads stats, cameras, and clips on mount', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     expect(wrapper.text()).toContain('front')
-    expect(wrapper.find('.stat-chip').exists()).toBe(true)
+    expect(wrapper.find('.lib-stat').exists()).toBe(true)
     expect(useConnectionStore().connected).toBe(true)
     wrapper.unmount()
   })
 
   it('shows the empty state when no clips are returned', async () => {
     mockFetch({}, [])
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     expect(wrapper.text()).toContain('No clips found')
     wrapper.unmount()
@@ -123,7 +133,7 @@ describe('LibraryPage', () => {
   it('debounces filter changes before reloading clips', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.length
     await wrapper.find('#search').setValue('front door')
@@ -138,10 +148,10 @@ describe('LibraryPage', () => {
 
   it('switches camera immediately without debounce', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.length
-    await wrapper.find('[data-camera="front"]').trigger('click')
+    useLibraryStore().selectCamera('front')
     await flushPromises()
     expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsBefore)
     const lastCall = vi.mocked(fetch).mock.calls.at(-1)?.[0] as string
@@ -151,9 +161,9 @@ describe('LibraryPage', () => {
 
   it('select mode: selecting a card shows the bulk bar with a count', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await findByText(wrapper, 'Select').trigger('click')
     await wrapper.find('.clip-card').trigger('click')
     expect(wrapper.text()).toContain('1 selected')
     wrapper.unmount()
@@ -161,9 +171,9 @@ describe('LibraryPage', () => {
 
   it('bulk star stars every selected clip', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await findByText(wrapper, 'Select').trigger('click')
     await wrapper.find('.clip-card').trigger('click')
     const starBtn = wrapper.findAll('button').find((b) => b.text().includes('Star all'))!
     await starBtn.trigger('click')
@@ -174,9 +184,9 @@ describe('LibraryPage', () => {
 
   it('bulk delete requires confirmation before deleting', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await findByText(wrapper, 'Select').trigger('click')
     await wrapper.find('.clip-card').trigger('click')
     const confirm = useConfirmStore()
     const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete all'))!
@@ -192,7 +202,7 @@ describe('LibraryPage', () => {
 
   it('opening a card (outside select mode) opens the clip modal', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
@@ -202,7 +212,7 @@ describe('LibraryPage', () => {
 
   it('deleting from the modal removes the card and closes the modal', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
@@ -220,7 +230,7 @@ describe('LibraryPage', () => {
 
   it('starring from the modal patches the grid card in place', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
@@ -234,7 +244,7 @@ describe('LibraryPage', () => {
   it('shows a Load more button when a full page is returned and loads the next page on click', async () => {
     const fullPage = Array.from({ length: 48 }, (_, i) => clip({ id: `c${i}` }))
     mockFetch({}, fullPage)
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     const loadMore = wrapper.findAll('button').find((b) => b.text().includes('Load more'))
     expect(loadMore).toBeTruthy()
@@ -247,7 +257,7 @@ describe('LibraryPage', () => {
 
   it('reloads everything when the refresh store ticks', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.length
     useRefreshStore().bump()
@@ -258,7 +268,7 @@ describe('LibraryPage', () => {
 
   it('responds to a cross-tab date filter request from the Status tab', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.length
     useDateFilterStore().requestDate('2026-01-05')
@@ -272,7 +282,7 @@ describe('LibraryPage', () => {
   it('polls stats/cameras every 60s while the modal is closed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.length
     await vi.advanceTimersByTimeAsync(60_000)
@@ -284,7 +294,7 @@ describe('LibraryPage', () => {
   it('does not poll while the modal is open', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
@@ -298,9 +308,9 @@ describe('LibraryPage', () => {
 
   it('exports selected clips as a ZIP and triggers a download', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await findByText(wrapper, 'Select').trigger('click')
     await wrapper.find('.clip-card').trigger('click')
     const blob = new Blob(['zip'])
     vi.stubGlobal(
@@ -326,9 +336,9 @@ describe('LibraryPage', () => {
 
   it('shows a toast when ZIP export fails', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await findByText(wrapper, 'Select').trigger('click')
     await wrapper.find('.clip-card').trigger('click')
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: false, status: 500 } as Response)))
     const zipBtn = wrapper.findAll('button').find((b) => b.text().includes('ZIP'))!
@@ -340,7 +350,7 @@ describe('LibraryPage', () => {
 
   it('onNav does nothing past the last clip', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
@@ -351,7 +361,7 @@ describe('LibraryPage', () => {
 
   it('closes the modal when deleting the only remaining clip', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
@@ -370,18 +380,18 @@ describe('LibraryPage', () => {
     mockFetch({
       '/api/stats': { ...STATS, disk: { used_bytes: 100, used_mb: 1, free_bytes: 200, free_gb: 1, total_bytes: 300, total_gb: 1, quota_bytes: 0, quota_gb: 0 } },
     })
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     expect(wrapper.text()).toContain('Free: 1 GB')
-    expect(wrapper.find('.prog-bar').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'ProgressBar' }).exists()).toBe(false)
     wrapper.unmount()
   })
 
   it('deselecting a card removes it from the selection', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await findByText(wrapper, 'Select').trigger('click')
     await wrapper.find('.clip-card').trigger('click')
     expect(wrapper.text()).toContain('1 selected')
     await wrapper.find('.clip-card').trigger('click')
@@ -391,9 +401,9 @@ describe('LibraryPage', () => {
 
   it('bulk star / delete / zip do nothing with an empty selection', async () => {
     mockFetch()
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await findByText(wrapper, 'Select').trigger('click')
     const callsBefore = vi.mocked(fetch).mock.calls.length
     await wrapper.findAll('button').find((b) => b.text().includes('Star all'))!.trigger('click')
     await wrapper.findAll('button').find((b) => b.text().includes('Delete all'))!.trigger('click')
@@ -411,7 +421,7 @@ describe('LibraryPage', () => {
     vi.stubGlobal('Notification', NotificationMock)
     let total = 10
     mockFetch({ '/api/stats': () => ({ ...STATS, total_count: total }) })
-    const wrapper = mount(LibraryPage)
+    const wrapper = mountLibrary()
     await flushPromises()
     total = 12
     useRefreshStore().bump()

@@ -16,98 +16,99 @@
    spacing scale used consistently across every component below instead of
    ad-hoc per-rule values. */
 :root {
-  --bg: #0a0a0f;
-  --surface: #111117;
-  --card: #16161d;
-  --card2: #1c1c26;
-  --card-hover: #1f1f2a;
-  --border: #25252f;
+  --bg: #08080d;
+  --surface: #101016;
+  --card: #14141b;
+  --card2: #1a1a24;
+  --card-hover: #20202b;
+  --border: #212129;
   --border-strong: #33333f;
-  --accent: #7c7cf5;
-  --accent2: #6363e8;
-  --accent-glow: rgba(124, 124, 245, 0.35);
-  --success: #3ecf7e;
-  --danger: #f0555a;
-  --warn: #f0a742;
-  --text: #eeeef2;
-  --text-dim: #c4c4cf;
-  --muted: #8a8a99;
-  --starred: #f0b429;
+  --accent: #7c5cff;
+  --accent2: #6d47f5;
+  --accent-glow: rgba(124, 92, 255, 0.35);
+  --success: #22c55e;
+  --danger: #f43f5e;
+  --warn: #f5a524;
+  --text: #f2f2f7;
+  --text-dim: #c6c6d3;
+  --muted: #83838f;
+  --starred: #fbbf24;
   --nav-h: 60px;
-  --nav-w: 232px;
-  --btn-text: #0a0a0f;
-  --badge-ok-bg: rgba(62, 207, 126, 0.14);
-  --badge-err-bg: rgba(240, 85, 90, 0.14);
-  --tag-bg: rgba(124, 124, 245, 0.16);
-  --tag-text: #a5a5f8;
-  --code-color: #9db4f5;
+  --nav-w: 264px;
+  --btn-text: #ffffff;
+  --badge-ok-bg: rgba(34, 197, 94, 0.14);
+  --badge-err-bg: rgba(244, 63, 94, 0.14);
+  --tag-bg: rgba(124, 92, 255, 0.16);
+  --tag-text: #b3a0ff;
+  --code-color: #b3a0ff;
   --font-sans:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, Helvetica, Arial, sans-serif;
-  --radius-sm: 8px;
-  --radius: 12px;
-  --radius-lg: 18px;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
-  --shadow: 0 4px 16px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.28);
-  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, Helvetica, Arial,
+    sans-serif;
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-lg: 20px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
   --ease: cubic-bezier(0.25, 0.8, 0.35, 1);
 }
 
 /* Manual override classes (toggled by the theme store, persisted to localStorage) */
 body.dark {
-  --bg: #0a0a0f;
-  --surface: #111117;
-  --card: #16161d;
-  --card2: #1c1c26;
-  --card-hover: #1f1f2a;
-  --border: #25252f;
+  --bg: #08080d;
+  --surface: #101016;
+  --card: #14141b;
+  --card2: #1a1a24;
+  --card-hover: #20202b;
+  --border: #212129;
   --border-strong: #33333f;
-  --accent: #7c7cf5;
-  --accent2: #6363e8;
-  --accent-glow: rgba(124, 124, 245, 0.35);
-  --success: #3ecf7e;
-  --danger: #f0555a;
-  --warn: #f0a742;
-  --text: #eeeef2;
-  --text-dim: #c4c4cf;
-  --muted: #8a8a99;
-  --starred: #f0b429;
-  --btn-text: #0a0a0f;
-  --badge-ok-bg: rgba(62, 207, 126, 0.14);
-  --badge-err-bg: rgba(240, 85, 90, 0.14);
-  --tag-bg: rgba(124, 124, 245, 0.16);
-  --tag-text: #a5a5f8;
-  --code-color: #9db4f5;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
-  --shadow: 0 4px 16px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.28);
-  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --accent: #7c5cff;
+  --accent2: #6d47f5;
+  --accent-glow: rgba(124, 92, 255, 0.35);
+  --success: #22c55e;
+  --danger: #f43f5e;
+  --warn: #f5a524;
+  --text: #f2f2f7;
+  --text-dim: #c6c6d3;
+  --muted: #83838f;
+  --starred: #fbbf24;
+  --btn-text: #ffffff;
+  --badge-ok-bg: rgba(34, 197, 94, 0.14);
+  --badge-err-bg: rgba(244, 63, 94, 0.14);
+  --tag-bg: rgba(124, 92, 255, 0.16);
+  --tag-text: #b3a0ff;
+  --code-color: #b3a0ff;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 body.light {
-  --bg: #f7f7f9;
+  --bg: #f5f5fa;
   --surface: #ffffff;
   --card: #ffffff;
-  --card2: #f2f2f6;
-  --card-hover: #ebebf1;
-  --border: #e4e4ea;
-  --border-strong: #d3d3dc;
-  --accent: #5b5bf0;
-  --accent2: #4747d8;
-  --accent-glow: rgba(91, 91, 240, 0.22);
-  --success: #18a058;
-  --danger: #dc3d43;
-  --warn: #c9790f;
-  --text: #16161d;
-  --text-dim: #3f3f4a;
-  --muted: #6c6c7a;
-  --starred: #c9790f;
+  --card2: #f1f1f7;
+  --card-hover: #e9e9f3;
+  --border: #e6e6ee;
+  --border-strong: #d3d3e0;
+  --accent: #6d47f5;
+  --accent2: #5b39d1;
+  --accent-glow: rgba(109, 71, 245, 0.2);
+  --success: #16a34a;
+  --danger: #e11d48;
+  --warn: #d97706;
+  --text: #16161f;
+  --text-dim: #3f3f4d;
+  --muted: #6b6b78;
+  --starred: #d97706;
   --btn-text: #ffffff;
-  --badge-ok-bg: #e3f9ee;
-  --badge-err-bg: #fbe8e8;
-  --tag-bg: #e9e9fd;
-  --tag-text: #4747d8;
-  --code-color: #3f3fc7;
-  --shadow-sm: 0 1px 2px rgba(20, 20, 40, 0.05);
-  --shadow: 0 2px 10px rgba(20, 20, 40, 0.07), 0 1px 2px rgba(20, 20, 40, 0.06);
-  --shadow-lg: 0 24px 56px rgba(20, 20, 40, 0.16), 0 2px 8px rgba(20, 20, 40, 0.08);
+  --badge-ok-bg: #dcfce7;
+  --badge-err-bg: #ffe4e8;
+  --tag-bg: #ece7ff;
+  --tag-text: #5b39d1;
+  --code-color: #5b39d1;
+  --shadow-sm: 0 1px 2px rgba(20, 20, 43, 0.05);
+  --shadow: 0 2px 10px rgba(20, 20, 43, 0.07), 0 1px 2px rgba(20, 20, 43, 0.06);
+  --shadow-lg: 0 24px 56px rgba(20, 20, 43, 0.16), 0 2px 8px rgba(20, 20, 43, 0.08);
 }
 * {
   box-sizing: border-box;
@@ -216,7 +217,7 @@ h3 {
 }
 
 /* ── Navigation (sidebar) ──────────────────────────────── */
-.nav {
+.app-nav {
   background: var(--surface);
   border-right: 1px solid var(--border);
   width: var(--nav-w);
@@ -224,50 +225,50 @@ h3 {
   flex-direction: column;
   align-items: stretch;
   gap: 0.3rem;
-  padding: 1.25rem 1rem;
+  padding: 1.5rem 1.1rem;
   flex-shrink: 0;
   z-index: 10;
   overflow-y: auto;
 }
-.nav-brand {
-  font-size: 1.14rem;
-  font-weight: 800;
-  color: var(--text);
+.app-nav-brand {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.65rem;
   white-space: nowrap;
-  margin-bottom: 1.15rem;
-  padding: 0 0.3rem;
-  letter-spacing: -0.02em;
+  margin-bottom: 1.5rem;
+  padding: 0 0.2rem;
 }
-.nav-brand .brand-mark {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
+.app-nav-brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
   flex-shrink: 0;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  box-shadow: 0 2px 10px var(--accent-glow);
+  box-shadow: 0 4px 14px var(--accent-glow);
 }
-.nav-brand .brand-mark .icon {
-  width: 17px;
-  height: 17px;
+.app-nav-brand-mark .icon {
+  width: 19px;
+  height: 19px;
 }
-.nav-brand span {
-  opacity: 0.45;
-  font-weight: 500;
+.app-nav-brand-text {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
 }
-.nav-tabs {
+.app-nav-brand-text strong {
+  font-weight: 800;
+}
+.app-nav-tabs {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
-  flex: 1;
+  gap: 0.15rem;
 }
-.nav-tab {
+.app-nav-tab {
   background: transparent;
   border: none;
   color: var(--muted);
@@ -275,43 +276,126 @@ h3 {
   text-align: left;
   display: flex;
   align-items: center;
-  gap: 0.7rem;
-  padding: 0.56rem 0.7rem;
+  gap: 0.75rem;
+  padding: 0.62rem 0.75rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 0.87rem;
   font-weight: 500;
   transition:
     background 0.15s var(--ease),
-    color 0.15s var(--ease);
+    color 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
   white-space: nowrap;
 }
-.nav-tab .icon {
+.app-nav-tab .icon {
   width: 17px;
   height: 17px;
-  opacity: 0.85;
+  opacity: 0.8;
+  transition: opacity 0.15s var(--ease);
 }
-.nav-tab:hover {
+.app-nav-tab:hover {
   color: var(--text);
   background: var(--card);
 }
-.nav-tab.active {
-  color: var(--text);
-  background: var(--card2);
+.app-nav-tab.active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
   font-weight: 600;
+  box-shadow: 0 4px 14px var(--accent-glow);
 }
-.nav-tab.active .icon {
-  color: var(--accent);
+.app-nav-tab.active .icon {
   opacity: 1;
 }
-.nav-actions {
+.app-nav-section-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 1.15rem 0 0.5rem 0.75rem;
+}
+.app-nav-cameras {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.app-nav-cam {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-  margin-top: 0.6rem;
-  padding-top: 0.75rem;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.42rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s var(--ease);
+}
+.app-nav-cam span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-nav-cam:hover {
+  background: var(--card);
+  color: var(--text);
+}
+.app-nav-cam.active {
+  background: var(--card2);
+  color: var(--accent);
+  font-weight: 600;
+}
+.app-nav-cam-count {
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: var(--card2);
+  border-radius: 20px;
+  padding: 0.05rem 0.5rem;
+  flex-shrink: 0;
+}
+.app-nav-cam.active .app-nav-cam-count {
+  color: var(--accent);
+  background: var(--card-hover);
+}
+.app-nav-spacer {
+  flex: 1;
+}
+.app-nav-utility {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding-top: 0.9rem;
   border-top: 1px solid var(--border);
+}
+.app-nav-conn-tag {
+  align-self: flex-start;
+}
+.app-nav-icon-row {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.app-nav-icon-row .icon {
+  width: 17px;
+  height: 17px;
+}
+.app-nav-action-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.app-nav-action-row .icon {
+  width: 15px;
+  height: 15px;
+}
+.app-nav-action-row .p-button {
+  width: 100%;
+  justify-content: center;
 }
 
 .btn {
@@ -424,37 +508,9 @@ h3 {
   display: flex;
 }
 
-/* ── Library layout ───────────────────────────────────── */
-#page-library {
-  flex-direction: column;
-}
-.lib-filters {
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 0.65rem 1.1rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  flex-shrink: 0;
-}
-.search {
-  background: var(--card2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.4rem 0.8rem;
-  color: var(--text);
-  font-size: 0.87rem;
-  width: 200px;
-  transition:
-    border-color 0.15s var(--ease),
-    box-shadow 0.15s var(--ease);
-}
-.search:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
-}
+/* Still used by tabs not yet redesigned onto PrimeVue form components (AI
+   tab's model picker, fine-tune rank picker) — Library's own selects moved
+   to PrimeVue's Select above. Remove once every tab is redesigned. */
 .sel {
   background: var(--card2);
   border: 1px solid var(--border);
@@ -470,97 +526,77 @@ h3 {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
-.chk {
+
+/* ── Library layout ───────────────────────────────────── */
+#page-library {
+  flex-direction: column;
+}
+.lib-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+.lib-stats-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: stretch;
+  padding: 1.1rem 1.5rem 0;
+  flex-shrink: 0;
+}
+.lib-stat {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.65rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  box-shadow: var(--shadow-sm);
+  min-width: 100px;
+}
+.lib-stat-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.lib-stat-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.lib-stat-storage {
+  flex: 1;
+  min-width: 220px;
+  justify-content: center;
+}
+.lib-filters {
+  padding: 1rem 1.5rem;
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  font-size: 0.81rem;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.lib-search {
+  min-width: 220px;
+  flex: 1 1 220px;
+}
+.lib-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.83rem;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
   color: var(--muted);
 }
-.chk input {
-  accent-color: var(--accent);
-}
-.lib-body {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
-.sidebar {
-  width: 204px;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
-  flex-shrink: 0;
-  padding: 0.9rem 0;
-}
-.sb-head {
-  padding: 0.3rem 1.1rem 0.35rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-}
-.cam-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.4rem;
-  margin: 0 0.55rem;
-  padding: 0.42rem 0.55rem;
-  cursor: pointer;
-  font-size: 0.84rem;
-  border-radius: var(--radius-sm);
-  transition:
-    background 0.12s var(--ease),
-    color 0.12s var(--ease);
-}
-.cam-item:hover {
-  background: var(--card);
-}
-.cam-item.active {
-  color: var(--accent);
-  background: var(--card2);
-  font-weight: 600;
-}
-.cam-badge {
-  background: var(--card2);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 0.05rem 0.45rem;
-  font-size: 0.71rem;
-  color: var(--muted);
-}
 .lib-main {
   flex: 1;
   overflow-y: auto;
-  padding: 1.25rem;
-}
-
-/* ── Stats bar ────────────────────────────────────────── */
-.stats-row {
-  display: flex;
-  gap: 0.6rem;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.stat-chip {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.36rem 0.75rem;
-  font-size: 0.79rem;
-  white-space: nowrap;
-  color: var(--muted);
-  box-shadow: var(--shadow-sm);
-}
-.stat-chip strong {
-  color: var(--text);
-  font-weight: 700;
+  padding: 0.5rem 1.5rem 1.5rem;
 }
 
 /* ── Clip grid ────────────────────────────────────────── */
@@ -1422,7 +1458,10 @@ h3 {
   display: none;
   position: fixed;
   top: 1rem;
-  left: 50%;
+  /* Centered over the content area (viewport minus the sidebar), not the
+     whole viewport — a plain left:50% would sit the banner half-behind the
+     sidebar and overlap the first row of page content next to it. */
+  left: calc(var(--nav-w) + (100vw - var(--nav-w)) / 2);
   transform: translateX(-50%);
   z-index: 150;
   background: var(--card);
@@ -1468,14 +1507,12 @@ h3 {
 
 /* ── Responsive ───────────────────────────────────────── */
 @media (max-width: 600px) {
-  .sidebar {
+  .app-nav-tab span {
     display: none;
   }
-  .nav-tab span {
+  .app-nav-section-label,
+  .app-nav-cameras {
     display: none;
-  }
-  .search {
-    width: 120px;
   }
   .meta-grid {
     grid-template-columns: auto 1fr;
@@ -1483,12 +1520,12 @@ h3 {
 
   /* The sidebar dashboard shell is a desktop affordance — a vertical nav
      would eat too much width from the content on a phone, so narrow
-     viewports revert to the original horizontal top bar. */
+     viewports revert to a horizontal top bar. */
   body {
     flex-direction: column;
   }
   /* Unwrapped nav overflowed narrow viewports, clipping trailing buttons via body's overflow:hidden */
-  .nav {
+  .app-nav {
     flex-direction: row;
     flex-wrap: wrap;
     width: 100%;
@@ -1500,14 +1537,14 @@ h3 {
     padding: 0.5rem 0.7rem;
     row-gap: 0.35rem;
   }
-  .nav-brand {
+  .app-nav-brand {
     font-size: 0.92rem;
     margin-bottom: 0;
   }
-  .nav-brand span {
-    display: none;
+  .app-nav-brand-text {
+    font-size: 0.95rem;
   }
-  .nav-tabs {
+  .app-nav-tabs {
     order: 3;
     flex: 1 1 100%;
     flex-direction: row;
@@ -1515,21 +1552,22 @@ h3 {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
-  .nav-tabs::-webkit-scrollbar {
+  .app-nav-tabs::-webkit-scrollbar {
     display: none;
   }
-  .nav-tab {
+  .app-nav-tab {
     width: auto;
     padding: 0.42rem 0.85rem;
   }
-  .nav-actions {
-    gap: 0.3rem;
+  .app-nav-spacer {
+    flex: 0;
+  }
+  .app-nav-utility {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
     margin-top: 0;
     padding-top: 0;
     border-top: none;
-  }
-  .nav-actions .btn.sm {
-    padding: 0.32rem 0.6rem;
-    font-size: 0.75rem;
   }
 }

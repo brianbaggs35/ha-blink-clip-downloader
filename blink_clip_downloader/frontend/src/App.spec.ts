@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
+import PrimeVue from 'primevue/config'
+import ToastService from 'primevue/toastservice'
 import App from './App.vue'
 import { useDateFilterStore } from './stores/dateFilter'
+
+function mountApp() {
+  return mount(App, { global: { plugins: [createPinia(), PrimeVue, ToastService] } })
+}
 
 describe('App', () => {
   beforeEach(() => {
@@ -20,7 +26,7 @@ describe('App', () => {
   })
 
   it('applies the theme class to <body> and switches tabs via the sidebar', async () => {
-    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    const wrapper = mountApp()
     await wrapper.vm.$nextTick()
     expect(document.body.classList.contains('dark')).toBe(true)
 
@@ -48,7 +54,7 @@ describe('App', () => {
 
   it('switches to the Status tab and mounts StatusPage', async () => {
     mockArrayAwareFetch()
-    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    const wrapper = mountApp()
     await wrapper.find('[data-tab="status"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('#page-status').classes()).toContain('active')
@@ -58,7 +64,7 @@ describe('App', () => {
 
   it('switches to Library when the Status tab requests a date filter', async () => {
     mockArrayAwareFetch()
-    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    const wrapper = mountApp()
     await wrapper.find('[data-tab="automations"]').trigger('click')
     expect(wrapper.find('#page-automations').classes()).toContain('active')
     useDateFilterStore().requestDate('2026-01-05')
@@ -68,7 +74,7 @@ describe('App', () => {
   })
 
   it('switches to the Models tab', async () => {
-    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    const wrapper = mountApp()
     await wrapper.find('[data-tab="models"]').trigger('click')
     expect(wrapper.find('#page-models').classes()).toContain('active')
     expect(wrapper.text()).toContain('AI Providers')
@@ -76,7 +82,7 @@ describe('App', () => {
   })
 
   it('toggling the help overlay from the sidebar opens HelpOverlay', async () => {
-    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    const wrapper = mountApp()
     const helpOverlay = wrapper
       .findAll('.modal-bg')
       .find((el) => el.text().includes('Keyboard Shortcuts'))

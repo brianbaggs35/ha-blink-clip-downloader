@@ -16,7 +16,11 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@primeuix/themes": "^2.0.3",
     "pinia": "^3.0.4",
+    "primeicons": "^7.0.0",
+    "primevue": "^4.5.5",
     "video.js": "^8.23.9",
     "vue": "^3.5.39"
   },

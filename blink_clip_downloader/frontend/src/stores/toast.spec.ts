@@ -41,4 +41,12 @@ describe('useToastStore', () => {
     expect(toast.visible).toBe(true)
     expect(toast.message).toBe('Second')
   })
+
+  it('bumps seq on every show() so repeated identical toasts are distinguishable', () => {
+    const toast = useToastStore()
+    toast.show('Same message')
+    expect(toast.seq).toBe(1)
+    toast.show('Same message')
+    expect(toast.seq).toBe(2)
+  })
 })
