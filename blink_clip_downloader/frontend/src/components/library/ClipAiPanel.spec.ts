@@ -141,6 +141,128 @@ describe('ClipAiPanel', () => {
     expect(wrapper.find('.ai-panel-body').classes()).not.toContain('open')
   })
 
+  it('shows a load error when fetching the result fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))))
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Failed to load analysis')
+  })
+
+  it('shows a toast and stays in error state when re-analyze fails', async () => {
+    mockFetch({
+      '/api/ai/results/c1': null,
+      '/api/ai/analyze/c1': () => {
+        throw new Error('boom')
+      },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/ai/analyze/c1') return Promise.reject(new Error('boom'))
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(null))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text().includes('Analyze Now'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Failed to load analysis')
+  })
+
+  it('renders a clean (non-suspicious) result without summary/analyzed_at/frame_count', async () => {
+    const clean = { ...RESULT, is_suspicious: false, summary: '', analyzed_at: '', frame_count: 0 }
+    mockFetch({ '/api/ai/results/c1': clean, '/api/ai/feedback/c1': null })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.ai-badge-clean').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('frame(s) analyzed')
+  })
+
+  it('shows the "Marked correct" verdict when feedback.correct is true', async () => {
+    mockFetch({
+      '/api/ai/results/c1': RESULT,
+      '/api/ai/feedback/c1': { id: 1, clip_id: 'c1', camera: 'front', analysis_result_id: 1, original_suspicious: true, original_confidence: 0.87, correct: true, correction_note: '', corrected_suspicious: null, created_at: '', trained_at: '' },
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Marked correct')
+  })
+
+  it('"Change" clears feedback and shows the quick-feedback prompt again', async () => {
+    mockFetch({
+      '/api/ai/results/c1': RESULT,
+      '/api/ai/feedback/c1': { id: 1, clip_id: 'c1', camera: 'front', analysis_result_id: 1, original_suspicious: true, original_confidence: 0.87, correct: true, correction_note: '', corrected_suspicious: null, created_at: '', trained_at: '' },
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text() === 'Change')!.trigger('click')
+    expect(wrapper.text()).toContain('Was this verdict correct?')
+  })
+
+  it('opens the note form on "Incorrect", submits it with the corrected-suspicious checkbox, and reloads', async () => {
+    let submittedBody: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST') {
+          submittedBody = JSON.parse(opts.body as string)
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+        if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text().includes('👎 Incorrect'))!.trigger('click')
+    expect(wrapper.find('input.tag-input').exists()).toBe(true)
+    await wrapper.find('input.tag-input').setValue('it was just the mail carrier')
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await wrapper.findAll('button').find((b) => b.text() === 'Submit')!.trigger('click')
+    await flushPromises()
+    expect(submittedBody).toEqual({
+      correct: false,
+      correction_note: 'it was just the mail carrier',
+      corrected_suspicious: true,
+    })
+  })
+
+  it('cancels the feedback note form', async () => {
+    mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text().includes('👎 Incorrect'))!.trigger('click')
+    await wrapper.findAll('button').find((b) => b.text() === 'Cancel')!.trigger('click')
+    expect(wrapper.find('input.tag-input').exists()).toBe(false)
+  })
+
+  it('shows a toast and keeps the prompt when feedback submission fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST') return Promise.reject(new Error('down'))
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+        if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text().includes('👍 Correct'))!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Was this verdict correct?')
+  })
+
   it('submits quick "correct" feedback and reloads', async () => {
     mockFetch({
       '/api/ai/results/c1': RESULT,

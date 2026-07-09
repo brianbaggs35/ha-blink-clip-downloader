@@ -113,4 +113,100 @@ describe('StatusPage', () => {
     expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(calls)
     wrapper.unmount()
   })
+
+  it('omits optional cards/rows when their data is minimal or absent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/stats'))
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({ connected: false, total_count: 0, today_count: 0, week_count: 0, starred_count: 0, archived_count: 0 }),
+          })
+        if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+        if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+        if (url.startsWith('/api/ai/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: false }) })
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Disconnected')
+    expect(wrapper.text()).not.toContain('Account ID')
+    expect(wrapper.text()).not.toContain('Storage')
+    expect(wrapper.text()).not.toContain('Frames Analyzed')
+    expect(wrapper.text()).not.toContain('Cameras (')
+    expect(wrapper.text()).not.toContain('AI Analysis')
+    wrapper.unmount()
+  })
+
+  it('shows a disk usage card without a quota bar when no quota is configured', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/stats'))
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                connected: true,
+                total_count: 1,
+                today_count: 0,
+                week_count: 0,
+                starred_count: 0,
+                archived_count: 0,
+                disk: { used_bytes: 100, used_mb: 1, free_bytes: 200, free_gb: 1, total_bytes: 300, total_gb: 1, quota_bytes: 0, quota_gb: 0 },
+              }),
+          })
+        if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+        if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+        if (url.startsWith('/api/ai/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve(null) })
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Storage')
+    expect(wrapper.text()).not.toContain('Quota')
+    wrapper.unmount()
+  })
+
+  it('shows an AI Analysis card without queue/analyzed/suspicious rows when absent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/stats'))
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({ connected: true, total_count: 0, today_count: 0, week_count: 0, starred_count: 0, archived_count: 0 }),
+          })
+        if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+        if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+        if (url.startsWith('/api/ai/status'))
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                enabled: true,
+                ai_online: false,
+                provider: 'unknown_provider',
+                smtp_configured: false,
+                analysis_stats: { total_analyzed: 0, suspicious_count: 0, total_frames_analyzed: 0, frames_analyzed_today: 0, last_analysis: null },
+              }),
+          })
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    expect(wrapper.text()).toContain('AI Analysis')
+    expect(wrapper.text()).toContain('Offline')
+    expect(wrapper.text()).toContain('unknown_provider')
+    expect(wrapper.text()).not.toContain('Pending')
+    expect(wrapper.text()).not.toContain('Analyzed')
+    expect(wrapper.text()).not.toContain('Suspicious')
+    wrapper.unmount()
+  })
 })

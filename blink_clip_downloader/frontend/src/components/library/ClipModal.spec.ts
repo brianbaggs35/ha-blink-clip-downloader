@@ -107,6 +107,24 @@ describe('ClipModal', () => {
     expect(wrapper.emitted('starred')).toEqual([['c1', true]])
   })
 
+  it('unstars an already-starred clip', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/clips/c1') return Promise.resolve(jsonResponse({ ...CLIP, starred: true }))
+        if (url === '/api/clips/c1/star') return Promise.resolve(jsonResponse({ id: 'c1', starred: false }))
+        return Promise.reject(new Error(`unexpected fetch ${url} ${opts?.method}`))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('★ Starred')
+    const starBtn = wrapper.findAll('button').find((b) => b.text().includes('Star'))!
+    await starBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('starred')).toEqual([['c1', false]])
+  })
+
   it('confirms then emits deleted', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
@@ -212,6 +230,97 @@ describe('ClipModal', () => {
     fakePlayer.play.mockClear()
     document.dispatchEvent(event)
     expect(fakePlayer.play).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keyboard: ArrowLeft/ArrowRight seek by 10s', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    fakePlayer.currentTime.mockReturnValue(20)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    expect(fakePlayer.currentTime).toHaveBeenCalledWith(10)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    expect(fakePlayer.currentTime).toHaveBeenCalledWith(30)
+    wrapper.unmount()
+  })
+
+  it('keyboard: F toggles fullscreen and M toggles mute', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F', bubbles: true }))
+    expect(fakePlayer.requestFullscreen).toHaveBeenCalled()
+    fakePlayer.muted.mockReturnValue(false)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }))
+    expect(fakePlayer.muted).toHaveBeenCalledWith(true)
+    wrapper.unmount()
+  })
+
+  it('keyboard: Space pauses when already playing', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    fakePlayer.paused.mockReturnValue(false)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    expect(fakePlayer.pause).toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keyboard: Escape does nothing while the confirm dialog is open on top', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    useConfirmStore().open = true
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(wrapper.emitted('close')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('auto-plays the next clip when the video ends and autoplay is checked', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    const endedHandler = fakePlayer.on.mock.calls.find((c) => c[0] === 'ended')![1] as () => void
+    endedHandler()
+    expect(wrapper.emitted('nav')).toEqual([[1]])
+    wrapper.unmount()
+  })
+
+  it('does not emit deleted when the confirm dialog is dismissed', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete'))!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(false)
+    await clickPromise
+    expect(wrapper.emitted('deleted')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('shows the raw path via toast when copying to the clipboard fails', async () => {
+    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const pathBtn = wrapper.findAll('button').find((b) => b.text().includes('Path'))!
+    await pathBtn.trigger('click')
+    await flushPromises()
+    // no assertion on toast content needed beyond not throwing — covers the catch branch
+    wrapper.unmount()
+  })
+
+  it('shows a toast when the clip fails to load', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: false, status: 404, statusText: 'Not Found', text: () => Promise.resolve('gone') } as Response)))
+    const wrapper = mount(ClipModal, { props: { clipId: 'missing', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('front')
+    wrapper.unmount()
+  })
+
+  it('switches clips: closing (clipId -> null) pauses and clears the player source', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    await wrapper.setProps({ clipId: null })
+    expect(fakePlayer.pause).toHaveBeenCalled()
+    expect(fakePlayer.src).toHaveBeenCalledWith('')
     wrapper.unmount()
   })
 

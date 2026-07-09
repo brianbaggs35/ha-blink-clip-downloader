@@ -289,6 +289,113 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('exports selected clips as a ZIP and triggers a download', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    const blob = new Blob(['zip'])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/export-zip') return Promise.resolve({ ok: true, status: 200, blob: () => Promise.resolve(blob) } as unknown as Response)
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const createObjectURL = vi.fn().mockReturnValue('blob:fake')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const zipBtn = wrapper.findAll('button').find((b) => b.text().includes('ZIP'))!
+    await zipBtn.trigger('click')
+    await flushPromises()
+    expect(createObjectURL).toHaveBeenCalledWith(blob)
+    expect(clickSpy).toHaveBeenCalled()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:fake')
+    clickSpy.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('shows a toast when ZIP export fails', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: false, status: 500 } as Response)))
+    const zipBtn = wrapper.findAll('button').find((b) => b.text().includes('ZIP'))!
+    await zipBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Zipping')
+    wrapper.unmount()
+  })
+
+  it('onNav does nothing past the last clip', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    await wrapper.find('.vid-nav-btn:nth-of-type(2)').trigger('click')
+    expect(wrapper.find('.modal-bg').classes()).toContain('open')
+    wrapper.unmount()
+  })
+
+  it('closes the modal when deleting the only remaining clip', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text() === '🗑 Delete')!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(wrapper.find('.modal-bg').classes()).not.toContain('open')
+    wrapper.unmount()
+  })
+
+  it('renders storage info without a quota bar when disk has no quota configured', async () => {
+    mockFetch({
+      '/api/stats': { ...STATS, disk: { used_bytes: 100, used_mb: 1, free_bytes: 200, free_gb: 1, total_bytes: 300, total_gb: 1, quota_bytes: 0, quota_gb: 0 } },
+    })
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Free: 1 GB')
+    expect(wrapper.find('.prog-bar').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('deselecting a card removes it from the selection', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.btn.ghost.sm').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    expect(wrapper.text()).toContain('1 selected')
+    await wrapper.find('.clip-card').trigger('click')
+    expect(wrapper.text()).toContain('0 selected')
+    wrapper.unmount()
+  })
+
+  it('bulk star / delete / zip do nothing with an empty selection', async () => {
+    mockFetch()
+    const wrapper = mount(LibraryPage)
+    await flushPromises()
+    await wrapper.find('.btn.ghost.sm').trigger('click')
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    await wrapper.findAll('button').find((b) => b.text().includes('Star all'))!.trigger('click')
+    await wrapper.findAll('button').find((b) => b.text().includes('Delete all'))!.trigger('click')
+    await wrapper.findAll('button').find((b) => b.text().includes('ZIP'))!.trigger('click')
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    wrapper.unmount()
+  })
+
   it('fires a browser notification when the clip count increases and notifications are enabled', async () => {
     localStorage.setItem('blink_notif', '1')
     const NotificationMock = vi.fn()

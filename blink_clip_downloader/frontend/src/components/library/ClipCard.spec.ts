@@ -45,6 +45,15 @@ describe('ClipCard', () => {
     expect(wrapper.find('.no-thumb').exists()).toBe(true)
   })
 
+  it('omits the duration badge, source pill, and star/notified badges when absent', () => {
+    const minimal: ClipListItem = { ...CLIP, duration: 0, source: '', starred: false, notified: false, tags: [] }
+    const wrapper = mount(ClipCard, { props: { clip: minimal, selected: false } })
+    expect(wrapper.find('.dur-badge').exists()).toBe(false)
+    expect(wrapper.find('.src-pill').exists()).toBe(false)
+    expect(wrapper.find('.star-badge').exists()).toBe(false)
+    expect(wrapper.find('.notified-badge').exists()).toBe(false)
+  })
+
   it('emits click', async () => {
     const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false } })
     await wrapper.find('.clip-card').trigger('click')

@@ -32,4 +32,17 @@ describe('CameraNav', () => {
     await wrapper.find('[data-camera="back"]').trigger('click')
     expect(wrapper.emitted('update:modelValue')).toEqual([['back']])
   })
+
+  it('handles a camera with a falsy total', () => {
+    const wrapper = mount(CameraNav, {
+      props: { cameras: [{ camera: 'empty', total: 0, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }], modelValue: 'all' },
+    })
+    expect(wrapper.find('[data-camera="empty"]').text()).toContain('0')
+    expect(wrapper.find('[data-camera="all"]').text()).toContain('0')
+  })
+
+  it('renders with no cameras at all', () => {
+    const wrapper = mount(CameraNav, { props: { cameras: [], modelValue: 'all' } })
+    expect(wrapper.find('[data-camera="all"]').text()).toContain('0')
+  })
 })

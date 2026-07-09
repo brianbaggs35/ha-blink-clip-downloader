@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import App from './App.vue'
+import { useDateFilterStore } from './stores/dateFilter'
 
 describe('App', () => {
   beforeEach(() => {
@@ -31,6 +32,38 @@ describe('App', () => {
     expect(wrapper.find('#page-library').classes()).not.toContain('active')
     expect(wrapper.text()).toContain('HA Automation Examples')
 
+    wrapper.unmount()
+  })
+
+  function mockArrayAwareFetch() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        const arrayEndpoints = ['/api/cameras', '/api/activity', '/api/clips', '/api/tags']
+        const body = arrayEndpoints.some((p) => url.startsWith(p)) ? [] : { state: 'connected', enabled: false }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(body), text: () => Promise.resolve('') })
+      }),
+    )
+  }
+
+  it('switches to the Status tab and mounts StatusPage', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    await wrapper.find('[data-tab="status"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-status').classes()).toContain('active')
+    expect(wrapper.find('#status-grid').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('switches to Library when the Status tab requests a date filter', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mount(App, { global: { plugins: [createPinia()] } })
+    await wrapper.find('[data-tab="automations"]').trigger('click')
+    expect(wrapper.find('#page-automations').classes()).toContain('active')
+    useDateFilterStore().requestDate('2026-01-05')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('#page-library').classes()).toContain('active')
     wrapper.unmount()
   })
 
