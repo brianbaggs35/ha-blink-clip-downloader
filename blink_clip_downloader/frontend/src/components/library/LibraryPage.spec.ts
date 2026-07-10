@@ -73,10 +73,27 @@ const STATS = {
   archived_count: 0,
   total_size_bytes: 1_073_741_824,
 }
-const AI_STATUS = { enabled: false, prompt_debug_enabled: false, smtp_configured: false, analysis_stats: { total_analyzed: 0, suspicious_count: 0, total_frames_analyzed: 0, frames_analyzed_today: 0, last_analysis: null } }
+const AI_STATUS = {
+  enabled: false,
+  prompt_debug_enabled: false,
+  smtp_configured: false,
+  analysis_stats: {
+    total_analyzed: 0,
+    suspicious_count: 0,
+    total_frames_analyzed: 0,
+    frames_analyzed_today: 0,
+    last_analysis: null,
+  },
+}
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 function mockFetch(overrides: Record<string, unknown> = {}, clips = [clip()]) {
@@ -85,11 +102,13 @@ function mockFetch(overrides: Record<string, unknown> = {}, clips = [clip()]) {
     vi.fn((url: string, opts?: RequestInit) => {
       for (const [pattern, body] of Object.entries(overrides)) {
         if (url.startsWith(pattern)) {
-          if (typeof body === 'function') return Promise.resolve(jsonResponse((body as (u: string, o?: RequestInit) => unknown)(url, opts)))
+          if (typeof body === 'function')
+            return Promise.resolve(jsonResponse((body as (u: string, o?: RequestInit) => unknown)(url, opts)))
           return Promise.resolve(jsonResponse(body))
         }
       }
-      if (url.startsWith('/api/clips/') && url.includes('/star')) return Promise.resolve(jsonResponse({ id: 'c1', starred: true }))
+      if (url.startsWith('/api/clips/') && url.includes('/star'))
+        return Promise.resolve(jsonResponse({ id: 'c1', starred: true }))
       if (url.startsWith('/api/clips/')) return Promise.resolve(jsonResponse(clips[0]))
       if (url.startsWith('/api/clips')) return Promise.resolve(jsonResponse(clips))
       if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
@@ -217,7 +236,9 @@ describe('LibraryPage', () => {
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
     const confirm = useConfirmStore()
-    const deleteBtn = body().findAll('button').find((b) => b.text() === '🗑 Delete')!
+    const deleteBtn = body()
+      .findAll('button')
+      .find((b) => b.text() === '🗑 Delete')!
     const clickPromise = deleteBtn.trigger('click')
     await flushPromises()
     confirm.settle(true)
@@ -234,7 +255,9 @@ describe('LibraryPage', () => {
     await flushPromises()
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
-    const starBtn = body().findAll('button').find((b) => b.text().includes('Star'))!
+    const starBtn = body()
+      .findAll('button')
+      .find((b) => b.text().includes('Star'))!
     await starBtn.trigger('click')
     await flushPromises()
     expect(wrapper.find('.clip-card .star-badge').exists()).toBe(true)
@@ -316,7 +339,8 @@ describe('LibraryPage', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
-        if (url === '/api/clips/export-zip') return Promise.resolve({ ok: true, status: 200, blob: () => Promise.resolve(blob) } as unknown as Response)
+        if (url === '/api/clips/export-zip')
+          return Promise.resolve({ ok: true, status: 200, blob: () => Promise.resolve(blob) } as unknown as Response)
         return Promise.reject(new Error(`unexpected ${url}`))
       }),
     )
@@ -340,7 +364,10 @@ describe('LibraryPage', () => {
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
     await wrapper.find('.clip-card').trigger('click')
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: false, status: 500 } as Response)))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve({ ok: false, status: 500 } as Response)),
+    )
     const zipBtn = wrapper.findAll('button').find((b) => b.text().includes('ZIP'))!
     await zipBtn.trigger('click')
     await flushPromises()
@@ -366,7 +393,9 @@ describe('LibraryPage', () => {
     await wrapper.find('.clip-card').trigger('click')
     await flushPromises()
     const confirm = useConfirmStore()
-    const deleteBtn = body().findAll('button').find((b) => b.text() === '🗑 Delete')!
+    const deleteBtn = body()
+      .findAll('button')
+      .find((b) => b.text() === '🗑 Delete')!
     const clickPromise = deleteBtn.trigger('click')
     await flushPromises()
     confirm.settle(true)
@@ -378,7 +407,19 @@ describe('LibraryPage', () => {
 
   it('renders storage info without a quota bar when disk has no quota configured', async () => {
     mockFetch({
-      '/api/stats': { ...STATS, disk: { used_bytes: 100, used_mb: 1, free_bytes: 200, free_gb: 1, total_bytes: 300, total_gb: 1, quota_bytes: 0, quota_gb: 0 } },
+      '/api/stats': {
+        ...STATS,
+        disk: {
+          used_bytes: 100,
+          used_mb: 1,
+          free_bytes: 200,
+          free_gb: 1,
+          total_bytes: 300,
+          total_gb: 1,
+          quota_bytes: 0,
+          quota_gb: 0,
+        },
+      },
     })
     const wrapper = mountLibrary()
     await flushPromises()
@@ -405,9 +446,18 @@ describe('LibraryPage', () => {
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
     const callsBefore = vi.mocked(fetch).mock.calls.length
-    await wrapper.findAll('button').find((b) => b.text().includes('Star all'))!.trigger('click')
-    await wrapper.findAll('button').find((b) => b.text().includes('Delete all'))!.trigger('click')
-    await wrapper.findAll('button').find((b) => b.text().includes('ZIP'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Star all'))!
+      .trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Delete all'))!
+      .trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('ZIP'))!
+      .trigger('click')
     await flushPromises()
     expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
     wrapper.unmount()

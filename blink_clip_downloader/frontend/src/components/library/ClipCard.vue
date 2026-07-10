@@ -14,13 +14,7 @@ const thumbFailed = ref(false)
 <template>
   <div class="clip-card" :class="{ selected }" :data-id="clip.id" @click="$emit('click')">
     <div class="thumb-wrap">
-      <img
-        v-if="!thumbFailed"
-        :src="clipThumbUrl(clip.id)"
-        loading="lazy"
-        alt=""
-        @error="thumbFailed = true"
-      />
+      <img v-if="!thumbFailed" :src="clipThumbUrl(clip.id)" loading="lazy" alt="" @error="thumbFailed = true" />
       <div v-else class="no-thumb">
         <AppIcon name="no-thumb" />
       </div>

@@ -4,7 +4,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import CameraConfigsSection from './CameraConfigsSection.vue'
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 describe('CameraConfigsSection', () => {
@@ -16,14 +22,20 @@ describe('CameraConfigsSection', () => {
   })
 
   it('shows an empty state when no cameras exist', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse([]))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse([]))),
+    )
     const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
     await flushPromises()
     expect(wrapper.text()).toContain('No cameras found')
   })
 
   it('shows a load error', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('down'))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('down'))),
+    )
     const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
     await flushPromises()
     expect(wrapper.text()).toContain('Failed to load camera configs.')
@@ -56,7 +68,11 @@ describe('CameraConfigsSection', () => {
   it('shows the car-protection warning when a car camera has no active protection', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]))),
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]),
+        ),
+      ),
     )
     const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: false } })
     await flushPromises()
@@ -67,7 +83,11 @@ describe('CameraConfigsSection', () => {
   it('does not show the warning when carProtectionActive is true', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]))),
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]),
+        ),
+      ),
     )
     const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: true } })
     await flushPromises()
@@ -83,7 +103,9 @@ describe('CameraConfigsSection', () => {
           saved = JSON.parse(opts.body as string)
           return Promise.resolve(jsonResponse({ saved: true, count: 1 }))
         }
-        return Promise.resolve(jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]))
+        return Promise.resolve(
+          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]),
+        )
       }),
     )
     const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
@@ -93,10 +115,19 @@ describe('CameraConfigsSection', () => {
     await zoneInputs[1].setValue('20')
     await zoneInputs[2].setValue('50')
     await zoneInputs[3].setValue('90')
-    await wrapper.findAll('button').find((b) => b.text().includes('Save Camera Configs'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Configs'))!
+      .trigger('click')
     await flushPromises()
     expect(saved).toEqual([
-      { camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: { x_min: 0.1, y_min: 0.2, x_max: 0.5, y_max: 0.9 } },
+      {
+        camera: 'front',
+        description: '',
+        custom_prompt: '',
+        is_car_camera: true,
+        car_zone: { x_min: 0.1, y_min: 0.2, x_max: 0.5, y_max: 0.9 },
+      },
     ])
   })
 
@@ -109,12 +140,17 @@ describe('CameraConfigsSection', () => {
           saved = JSON.parse(opts.body as string)
           return Promise.resolve(jsonResponse({ saved: true, count: 1 }))
         }
-        return Promise.resolve(jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]))
+        return Promise.resolve(
+          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]),
+        )
       }),
     )
     const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('Save Camera Configs'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Configs'))!
+      .trigger('click')
     await flushPromises()
     expect((saved as Array<{ car_zone: unknown }>)[0].car_zone).toBeNull()
   })
@@ -129,7 +165,10 @@ describe('CameraConfigsSection', () => {
     )
     const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('Save Camera Configs'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Configs'))!
+      .trigger('click')
     await flushPromises()
     // no throw — error path handled via toast
   })

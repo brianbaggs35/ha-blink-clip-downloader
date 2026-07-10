@@ -11,10 +11,7 @@ export interface IconDef {
 
 export const ICONS: Record<string, IconDef> = {
   brand: {
-    paths: [
-      'M3 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z',
-      'M15 10.5 21 7v10l-6-3.5z',
-    ],
+    paths: ['M3 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z', 'M15 10.5 21 7v10l-6-3.5z'],
   },
   'tab-library': {
     paths: ['M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z'],
@@ -22,11 +19,7 @@ export const ICONS: Record<string, IconDef> = {
   'tab-status': { paths: ['M3 12h4l2 7 4-14 2 7h6'] },
   'tab-usage': { paths: ['M5 20V11M12 20V4M19 20v-7'] },
   'tab-models': {
-    paths: [
-      'M12 2 2 7l10 5 10-5-10-5z',
-      'M2 12l10 5 10-5',
-      'M2 17l10 5 10-5',
-    ],
+    paths: ['M12 2 2 7l10 5 10-5-10-5z', 'M2 12l10 5 10-5', 'M2 17l10 5 10-5'],
   },
   'tab-automations': { filled: true, paths: ['M13 2 4 14h6l-1 8 9-12h-6l1-8z'] },
   'tab-ai': {
@@ -38,9 +31,7 @@ export const ICONS: Record<string, IconDef> = {
   },
   'theme-light': { paths: ['M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z'] },
   'theme-dark': {
-    paths: [
-      'M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
-    ],
+    paths: ['M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'],
     circles: [{ cx: 12, cy: 12, r: 4 }],
   },
   help: {

@@ -83,9 +83,7 @@ describe('App', () => {
 
   it('toggling the help overlay from the sidebar opens HelpOverlay', async () => {
     const wrapper = mountApp()
-    const helpOverlay = wrapper
-      .findAll('.modal-bg')
-      .find((el) => el.text().includes('Keyboard Shortcuts'))
+    const helpOverlay = wrapper.findAll('.modal-bg').find((el) => el.text().includes('Keyboard Shortcuts'))
     expect(helpOverlay?.classes()).not.toContain('open')
 
     await wrapper.find('[title="Keyboard shortcuts (?)"]').trigger('click')

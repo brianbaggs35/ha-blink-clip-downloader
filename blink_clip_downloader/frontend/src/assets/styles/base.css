@@ -41,9 +41,7 @@
   --tag-bg: rgba(124, 92, 255, 0.16);
   --tag-text: #b3a0ff;
   --code-color: #b3a0ff;
-  --font-sans:
-    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, Helvetica, Arial,
-    sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Roboto, Helvetica, Arial, sans-serif;
   --radius-sm: 10px;
   --radius: 14px;
   --radius-lg: 20px;

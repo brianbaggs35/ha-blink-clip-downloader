@@ -4,7 +4,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import FaceRecognitionSection from './FaceRecognitionSection.vue'
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 class FakeFileReader {
@@ -27,14 +33,20 @@ describe('FaceRecognitionSection', () => {
   })
 
   it('shows "No one enrolled yet" when the list is empty', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ available: true, faces: [] }))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ available: true, faces: [] }))),
+    )
     const wrapper = mount(FaceRecognitionSection)
     await flushPromises()
     expect(wrapper.text()).toContain('No one enrolled yet.')
   })
 
   it('shows the unavailable warning when dependencies are missing', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ available: false, faces: [] }))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ available: false, faces: [] }))),
+    )
     const wrapper = mount(FaceRecognitionSection)
     await flushPromises()
     expect(wrapper.text()).toContain('dependencies are not installed')
@@ -57,11 +69,17 @@ describe('FaceRecognitionSection', () => {
   })
 
   it('warns when enrolling without a name or photo', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ available: true, faces: [] }))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ available: true, faces: [] }))),
+    )
     const wrapper = mount(FaceRecognitionSection)
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.length
-    await wrapper.findAll('button').find((b) => b.text().includes('Enroll'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Enroll'))!
+      .trigger('click')
     expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
   })
 
@@ -84,7 +102,10 @@ describe('FaceRecognitionSection', () => {
     const file = new File(['x'], 'bob.jpg', { type: 'image/jpeg' })
     Object.defineProperty(fileInput.element, 'files', { value: [file] })
     await fileInput.trigger('change')
-    await wrapper.findAll('button').find((b) => b.text().includes('Enroll'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Enroll'))!
+      .trigger('click')
     await flushPromises()
     expect(enrolled).toEqual({ name: 'Bob', image_base64: 'data:image/jpeg;base64,AAAA' })
   })
@@ -103,7 +124,10 @@ describe('FaceRecognitionSection', () => {
     const fileInput = wrapper.find('input[type="file"]')
     const file = new File(['x'], 'bob.jpg', { type: 'image/jpeg' })
     Object.defineProperty(fileInput.element, 'files', { value: [file] })
-    await wrapper.findAll('button').find((b) => b.text().includes('Enroll'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Enroll'))!
+      .trigger('click')
     await flushPromises()
     // covers the catch branch — no throw
   })

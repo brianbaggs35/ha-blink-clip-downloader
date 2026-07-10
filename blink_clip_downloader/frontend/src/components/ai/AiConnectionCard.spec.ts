@@ -5,7 +5,13 @@ import AiConnectionCard from './AiConnectionCard.vue'
 import type { AiStatus } from '../../api/types'
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 function baseStatus(overrides: Partial<AiStatus> = {}): AiStatus {
@@ -16,7 +22,13 @@ function baseStatus(overrides: Partial<AiStatus> = {}): AiStatus {
     provider: 'anthropic',
     model: 'claude-haiku-4-5',
     smtp_configured: false,
-    analysis_stats: { total_analyzed: 0, suspicious_count: 0, total_frames_analyzed: 0, frames_analyzed_today: 0, last_analysis: null },
+    analysis_stats: {
+      total_analyzed: 0,
+      suspicious_count: 0,
+      total_frames_analyzed: 0,
+      frames_analyzed_today: 0,
+      last_analysis: null,
+    },
     ...overrides,
   }
 }
@@ -24,7 +36,10 @@ function baseStatus(overrides: Partial<AiStatus> = {}): AiStatus {
 describe('AiConnectionCard', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('unexpected fetch'))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('unexpected fetch'))),
+    )
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
   })
   afterEach(() => {
@@ -45,7 +60,9 @@ describe('AiConnectionCard', () => {
 
   it('shows escalation info when configured', () => {
     const wrapper = mount(AiConnectionCard, {
-      props: { status: baseStatus({ escalation_provider: 'openai', escalation_model: 'gpt-4o-mini', escalation_online: true }) },
+      props: {
+        status: baseStatus({ escalation_provider: 'openai', escalation_model: 'gpt-4o-mini', escalation_online: true }),
+      },
     })
     expect(wrapper.text()).toContain('Escalation tier 2')
     expect(wrapper.text()).toContain('OpenAI (GPT)')
@@ -55,18 +72,27 @@ describe('AiConnectionCard', () => {
   it('shows the model picker for ollama/openai/anthropic providers and fetches models', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [{ name: 'model-a', size: 4_000_000_000 }, { name: 'model-b' }] }))),
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({ enabled: true, models: [{ name: 'model-a', size: 4_000_000_000 }, { name: 'model-b' }] }),
+        ),
+      ),
     )
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'openai' }) } })
     expect(wrapper.find('select.sel').exists()).toBe(true)
     await wrapper.find('button').trigger('click')
     await flushPromises()
     const options = wrapper.findAll('option')
-    expect(options.some((o) => o.text().includes('model-a') && o.text().includes('4.0 GB') && o.text().includes('Best'))).toBe(true)
+    expect(
+      options.some((o) => o.text().includes('model-a') && o.text().includes('4.0 GB') && o.text().includes('Best')),
+    ).toBe(true)
   })
 
   it('copies the selected model id to the clipboard', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [{ name: 'model-a' }] }))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [{ name: 'model-a' }] }))),
+    )
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
     await wrapper.find('button').trigger('click')
     await flushPromises()
@@ -83,7 +109,10 @@ describe('AiConnectionCard', () => {
   })
 
   it('shows a toast-worthy error state when fetching models fails', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('down'))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('down'))),
+    )
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
     await wrapper.find('button').trigger('click')
     await flushPromises()
@@ -96,9 +125,16 @@ describe('AiConnectionCard', () => {
   })
 
   it('moondream_local: shows the install prompt when not installed', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ installed: false, arch_supported: true, install_state: { status: 'idle' } }))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(jsonResponse({ installed: false, arch_supported: true, install_state: { status: 'idle' } })),
+      ),
+    )
     const wrapper = mount(AiConnectionCard, {
-      props: { status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }) },
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
+      },
     })
     await flushPromises()
     expect(wrapper.text()).toContain('moondream package not installed')
@@ -114,7 +150,9 @@ describe('AiConnectionCard', () => {
 
   it('moondream_local: shows installed state', async () => {
     const wrapper = mount(AiConnectionCard, {
-      props: { status: baseStatus({ provider: 'moondream_local', moondream_installed: true, moondream_arch_supported: true }) },
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: true, moondream_arch_supported: true }),
+      },
     })
     await flushPromises()
     expect(wrapper.text()).toContain('✓ moondream installed')
@@ -134,7 +172,13 @@ describe('AiConnectionCard', () => {
         if (url === '/api/ai/moondream/install-status') {
           if (installing && !installed) {
             installed = true // next poll reports installed
-            return Promise.resolve(jsonResponse({ installed: false, arch_supported: true, install_state: { status: 'installing', log: 'working…' } }))
+            return Promise.resolve(
+              jsonResponse({
+                installed: false,
+                arch_supported: true,
+                install_state: { status: 'installing', log: 'working…' },
+              }),
+            )
           }
           return Promise.resolve(
             jsonResponse({
@@ -148,7 +192,9 @@ describe('AiConnectionCard', () => {
       }),
     )
     const wrapper = mount(AiConnectionCard, {
-      props: { status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }) },
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
+      },
     })
     await flushPromises()
     const installBtn = wrapper.findAll('button').find((b) => b.text().includes('Install Moondream'))!
@@ -170,7 +216,9 @@ describe('AiConnectionCard', () => {
       }),
     )
     const wrapper = mount(AiConnectionCard, {
-      props: { status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }) },
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
+      },
     })
     await flushPromises()
     const installBtn = wrapper.findAll('button').find((b) => b.text().includes('Install Moondream'))!
@@ -219,7 +267,10 @@ describe('AiConnectionCard', () => {
   })
 
   it('test analysis: shows a warning when there are no clips yet', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse([]))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse([]))),
+    )
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus() } })
     const testBtn = wrapper.findAll('button').find((b) => b.text().includes('Test Analysis'))!
     await testBtn.trigger('click')

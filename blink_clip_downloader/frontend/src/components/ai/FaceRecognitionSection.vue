@@ -72,16 +72,25 @@ async function enroll() {
   <div style="margin-bottom: 1.5rem">
     <h3 style="margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem">
       🙂 Face Recognition Enrollment
-      <span style="font-size: 0.73rem; color: var(--muted); font-weight: 400"> — Local only, never uploaded to any AI provider </span>
+      <span style="font-size: 0.73rem; color: var(--muted); font-weight: 400">
+        — Local only, never uploaded to any AI provider
+      </span>
     </h3>
     <p style="font-size: 0.78rem; color: var(--muted); margin-bottom: 0.65rem">
-      Requires <strong>Enable Local Face Recognition</strong> in the add-on's Configuration tab. Enroll household members
-      here so their clips can be recognized and treated as routine — enrollment photos are converted to a numeric
-      embedding and stored in this add-on's own database; the photo itself is not kept.
+      Requires <strong>Enable Local Face Recognition</strong> in the add-on's Configuration tab. Enroll household
+      members here so their clips can be recognized and treated as routine — enrollment photos are converted to a
+      numeric embedding and stored in this add-on's own database; the photo itself is not kept.
     </p>
     <div
       v-if="!available"
-      style="background: rgba(245, 158, 11, 0.12); border: 1px solid var(--warn, #f59e0b); border-radius: 0.4rem; padding: 0.6rem 0.8rem; font-size: 0.78rem; margin-bottom: 0.65rem"
+      style="
+        background: rgba(245, 158, 11, 0.12);
+        border: 1px solid var(--warn, #f59e0b);
+        border-radius: 0.4rem;
+        padding: 0.6rem 0.8rem;
+        font-size: 0.78rem;
+        margin-bottom: 0.65rem;
+      "
     >
       ⚠️ Face-recognition dependencies are not installed in this image.
     </div>
@@ -90,7 +99,14 @@ async function enroll() {
       <div
         v-for="face in faces"
         :key="face.id"
-        style="display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.6rem; background: var(--card-bg, rgba(255, 255, 255, 0.03)); border-radius: 0.35rem"
+        style="
+          display: flex;
+          align-items: center;
+          gap: 0.6rem;
+          padding: 0.4rem 0.6rem;
+          background: var(--card-bg, rgba(255, 255, 255, 0.03));
+          border-radius: 0.35rem;
+        "
       >
         <span style="flex: 1; font-size: 0.85rem">{{ face.name }}</span>
         <button class="btn sm ghost" @click="remove(face.id)">Delete</button>
@@ -99,7 +115,9 @@ async function enroll() {
     <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">
       <input v-model="name" class="tag-input" placeholder="Name" style="max-width: 12rem" />
       <input ref="fileInput" type="file" accept="image/*" />
-      <button class="btn sm" :disabled="enrolling" @click="enroll">{{ enrolling ? '⏳ Enrolling…' : '+ Enroll' }}</button>
+      <button class="btn sm" :disabled="enrolling" @click="enroll">
+        {{ enrolling ? '⏳ Enrolling…' : '+ Enroll' }}
+      </button>
     </div>
   </div>
 </template>

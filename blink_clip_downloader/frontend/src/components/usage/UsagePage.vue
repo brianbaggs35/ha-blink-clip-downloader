@@ -39,7 +39,12 @@ onMounted(() => {
 onUnmounted(() => clearInterval(pollTimer))
 
 async function clearUsage() {
-  if (!(await confirm('Clear all AI usage stats (tokens, cost, escalations)? Per-clip analysis results are not affected.', 'Clear AI usage stats?')))
+  if (
+    !(await confirm(
+      'Clear all AI usage stats (tokens, cost, escalations)? Per-clip analysis results are not affected.',
+      'Clear AI usage stats?',
+    ))
+  )
     return
   try {
     await clearAiUsage()
@@ -66,11 +71,23 @@ async function clearUsage() {
       </div>
       <div v-else>
         <div class="usage-grid">
-          <div class="usage-stat"><div class="num">{{ fmtNum(usage.total_analyses) }}</div><div class="lbl">Clips Analyzed</div></div>
+          <div class="usage-stat">
+            <div class="num">{{ fmtNum(usage.total_analyses) }}</div>
+            <div class="lbl">Clips Analyzed</div>
+          </div>
           <template v-if="showTokens">
-            <div class="usage-stat"><div class="num">{{ fmtNum(usage.total_tokens) }}</div><div class="lbl">Total Tokens</div></div>
-            <div class="usage-stat"><div class="num">{{ fmtNum(usage.total_tokens_prompt) }}</div><div class="lbl">Prompt Tokens</div></div>
-            <div class="usage-stat"><div class="num">{{ fmtNum(usage.total_tokens_completion) }}</div><div class="lbl">Completion Tokens</div></div>
+            <div class="usage-stat">
+              <div class="num">{{ fmtNum(usage.total_tokens) }}</div>
+              <div class="lbl">Total Tokens</div>
+            </div>
+            <div class="usage-stat">
+              <div class="num">{{ fmtNum(usage.total_tokens_prompt) }}</div>
+              <div class="lbl">Prompt Tokens</div>
+            </div>
+            <div class="usage-stat">
+              <div class="num">{{ fmtNum(usage.total_tokens_completion) }}</div>
+              <div class="lbl">Completion Tokens</div>
+            </div>
           </template>
           <div v-if="usage.total_escalations > 0" class="usage-stat">
             <div class="num">{{ fmtNum(usage.total_escalations) }}</div>
@@ -88,8 +105,12 @@ async function clearUsage() {
 
         <div class="status-card" style="margin-bottom: 1.2rem">
           <h3 style="margin-bottom: 0.75rem">Current Provider</h3>
-          <div class="status-row"><span class="lbl">Provider</span><span class="val">{{ providerLabel(usage.provider) }}</span></div>
-          <div class="status-row"><span class="lbl">Model</span><span class="val">{{ usage.model || '—' }}</span></div>
+          <div class="status-row">
+            <span class="lbl">Provider</span><span class="val">{{ providerLabel(usage.provider) }}</span>
+          </div>
+          <div class="status-row">
+            <span class="lbl">Model</span><span class="val">{{ usage.model || '—' }}</span>
+          </div>
           <ProviderNote :provider="usage.provider" :show-escalation-note="showEscalationNote" />
         </div>
 
@@ -108,7 +129,10 @@ async function clearUsage() {
             </thead>
             <tbody>
               <tr v-for="(m, i) in usage.by_model" :key="i">
-                <td>{{ m.model || '—' }}<span v-if="m.escalated" style="color: var(--muted); font-size: 0.75em"> (escalated)</span></td>
+                <td>
+                  {{ m.model || '—'
+                  }}<span v-if="m.escalated" style="color: var(--muted); font-size: 0.75em"> (escalated)</span>
+                </td>
                 <td style="text-align: right">{{ fmtNum(m.analyses || 0) }}</td>
                 <template v-if="showTokens">
                   <td style="text-align: right">{{ fmtNum(m.tokens_prompt || 0) }}</td>
@@ -149,7 +173,9 @@ async function clearUsage() {
               </tr>
             </tbody>
           </table>
-          <p v-if="!usage.daily.length" style="color: var(--muted); padding: 1rem; text-align: center">No analysis activity in the last 14 days.</p>
+          <p v-if="!usage.daily.length" style="color: var(--muted); padding: 1rem; text-align: center">
+            No analysis activity in the last 14 days.
+          </p>
         </div>
       </div>
     </template>

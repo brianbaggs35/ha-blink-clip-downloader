@@ -5,7 +5,13 @@ import FineTuneCard from './FineTuneCard.vue'
 import { useConfirmStore } from '../../stores/confirm'
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 function mockFetch(routes: Record<string, unknown> = {}) {
@@ -14,7 +20,8 @@ function mockFetch(routes: Record<string, unknown> = {}) {
     vi.fn((url: string, opts?: RequestInit) => {
       for (const [pattern, body] of Object.entries(routes)) {
         if (url === pattern) {
-          if (typeof body === 'function') return Promise.resolve(jsonResponse((body as (o?: RequestInit) => unknown)(opts)))
+          if (typeof body === 'function')
+            return Promise.resolve(jsonResponse((body as (o?: RequestInit) => unknown)(opts)))
           return Promise.resolve(jsonResponse(body))
         }
       }
@@ -32,7 +39,10 @@ describe('FineTuneCard', () => {
   })
 
   it('shows an empty state when there are no fine-tunes', async () => {
-    mockFetch({ '/api/ai/finetune': { enabled: true, finetunes: [] }, '/api/ai/feedback/untrained-count': { count: 0 } })
+    mockFetch({
+      '/api/ai/finetune': { enabled: true, finetunes: [] },
+      '/api/ai/feedback/untrained-count': { count: 0 },
+    })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
     expect(wrapper.text()).toContain('No fine-tunes yet')
@@ -71,17 +81,26 @@ describe('FineTuneCard', () => {
     const wrapper = mount(FineTuneCard)
     await flushPromises()
     await wrapper.find('input.tag-input').setValue('Fresh')
-    await wrapper.findAll('button').find((b) => b.text().includes('New Fine-tune'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New Fine-tune'))!
+      .trigger('click')
     await flushPromises()
     expect(created).toEqual({ name: 'Fresh', rank: 16 })
   })
 
   it('warns when creating without a name', async () => {
-    mockFetch({ '/api/ai/finetune': { enabled: true, finetunes: [] }, '/api/ai/feedback/untrained-count': { count: 0 } })
+    mockFetch({
+      '/api/ai/finetune': { enabled: true, finetunes: [] },
+      '/api/ai/feedback/untrained-count': { count: 0 },
+    })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.length
-    await wrapper.findAll('button').find((b) => b.text().includes('New Fine-tune'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New Fine-tune'))!
+      .trigger('click')
     await flushPromises()
     expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
   })
@@ -94,9 +113,15 @@ describe('FineTuneCard', () => {
     })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('Train from Feedback'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Train from Feedback'))!
+      .trigger('click')
     await flushPromises()
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/ai/finetune/ft1/train', expect.objectContaining({ method: 'POST' }))
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      '/api/ai/finetune/ft1/train',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 
   it('saves a checkpoint', async () => {
@@ -107,9 +132,15 @@ describe('FineTuneCard', () => {
     })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('Save Checkpoint'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Checkpoint'))!
+      .trigger('click')
     await flushPromises()
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/ai/finetune/ft1/save-checkpoint', expect.objectContaining({ method: 'POST' }))
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      '/api/ai/finetune/ft1/save-checkpoint',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 
   it('deletes a fine-tune after confirmation', async () => {
@@ -139,18 +170,27 @@ describe('FineTuneCard', () => {
     })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text() === 'Checkpoints')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Checkpoints')!
+      .trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Step 5')
     expect(wrapper.text()).toContain('Step 10')
-    await wrapper.findAll('button').find((b) => b.text() === 'Activate')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Activate')!
+      .trigger('click')
     await flushPromises()
     expect(wrapper.emitted('activated')).toHaveLength(1)
     await wrapper.find('button.btn.sm.ghost').trigger('click')
   })
 
   it('shows a toast when create fails', async () => {
-    mockFetch({ '/api/ai/finetune': { enabled: true, finetunes: [] }, '/api/ai/feedback/untrained-count': { count: 0 } })
+    mockFetch({
+      '/api/ai/finetune': { enabled: true, finetunes: [] },
+      '/api/ai/feedback/untrained-count': { count: 0 },
+    })
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string, opts?: RequestInit) => {
@@ -163,7 +203,10 @@ describe('FineTuneCard', () => {
     const wrapper = mount(FineTuneCard)
     await flushPromises()
     await wrapper.find('input.tag-input').setValue('Fresh')
-    await wrapper.findAll('button').find((b) => b.text().includes('New Fine-tune'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New Fine-tune'))!
+      .trigger('click')
     await flushPromises()
     // covers the create-failure catch branch — no throw
   })
@@ -182,7 +225,10 @@ describe('FineTuneCard', () => {
     confirm.settle(false)
     await clickPromise
     await flushPromises()
-    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith('/api/ai/finetune/ft1', expect.objectContaining({ method: 'DELETE' }))
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith(
+      '/api/ai/finetune/ft1',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
   })
 
   it('shows a toast when delete fails', async () => {
@@ -194,7 +240,8 @@ describe('FineTuneCard', () => {
       'fetch',
       vi.fn((url: string, opts?: RequestInit) => {
         if (url === '/api/ai/finetune/ft1' && opts?.method === 'DELETE') return Promise.reject(new Error('boom'))
-        if (url === '/api/ai/finetune') return Promise.resolve(jsonResponse({ enabled: true, finetunes: [{ finetune_id: 'ft1', name: 'Tune' }] }))
+        if (url === '/api/ai/finetune')
+          return Promise.resolve(jsonResponse({ enabled: true, finetunes: [{ finetune_id: 'ft1', name: 'Tune' }] }))
         if (url === '/api/ai/feedback/untrained-count') return Promise.resolve(jsonResponse({ count: 0 }))
         return Promise.reject(new Error(`unexpected ${url}`))
       }),
@@ -218,7 +265,10 @@ describe('FineTuneCard', () => {
     })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text() === 'Checkpoints')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Checkpoints')!
+      .trigger('click')
     await flushPromises()
     // '/api/ai/finetune/ft1/checkpoints' has no matching route -> rejects, covers the catch branch
     expect(wrapper.text()).not.toContain('Step')
@@ -234,17 +284,25 @@ describe('FineTuneCard', () => {
       'fetch',
       vi.fn((url: string, opts?: RequestInit) => {
         if (url === '/api/ai/finetune/ft1/activate') return Promise.reject(new Error('boom'))
-        if (url === '/api/ai/finetune/ft1/checkpoints') return Promise.resolve(jsonResponse({ enabled: true, checkpoints: [{ step: 5 }] }))
-        if (url === '/api/ai/finetune') return Promise.resolve(jsonResponse({ enabled: true, finetunes: [{ finetune_id: 'ft1', name: 'Tune' }] }))
+        if (url === '/api/ai/finetune/ft1/checkpoints')
+          return Promise.resolve(jsonResponse({ enabled: true, checkpoints: [{ step: 5 }] }))
+        if (url === '/api/ai/finetune')
+          return Promise.resolve(jsonResponse({ enabled: true, finetunes: [{ finetune_id: 'ft1', name: 'Tune' }] }))
         if (url === '/api/ai/feedback/untrained-count') return Promise.resolve(jsonResponse({ count: 0 }))
         return Promise.reject(new Error(`unexpected ${url} ${opts?.method}`))
       }),
     )
     const wrapper = mount(FineTuneCard)
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text() === 'Checkpoints')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Checkpoints')!
+      .trigger('click')
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text() === 'Activate')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Activate')!
+      .trigger('click')
     await flushPromises()
     expect(wrapper.emitted('activated')).toBeUndefined()
   })
@@ -256,7 +314,10 @@ describe('FineTuneCard', () => {
     })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('Train from Feedback'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Train from Feedback'))!
+      .trigger('click')
     await flushPromises()
     // '/api/ai/finetune/ft1/train' has no matching route -> rejects, covers the catch branch
   })
@@ -268,7 +329,10 @@ describe('FineTuneCard', () => {
     })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('Save Checkpoint'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Checkpoint'))!
+      .trigger('click')
     await flushPromises()
     // '/api/ai/finetune/ft1/save-checkpoint' has no matching route -> rejects, covers the catch branch
   })
@@ -281,7 +345,10 @@ describe('FineTuneCard', () => {
     })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('Train from Feedback'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Train from Feedback'))!
+      .trigger('click')
     await flushPromises()
     // covers the trained===0 branch — no throw, message path exercised
   })
@@ -294,7 +361,10 @@ describe('FineTuneCard', () => {
     })
     const wrapper = mount(FineTuneCard)
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text() === 'Checkpoints')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Checkpoints')!
+      .trigger('click')
     await flushPromises()
     expect(wrapper.text()).not.toContain('Back to fine-tunes')
   })

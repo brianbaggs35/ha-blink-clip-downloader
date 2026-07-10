@@ -102,24 +102,13 @@ action:
 
     <h3>💡 Tips</h3>
     <ul>
+      <li>Enable <strong>Watch HA Events</strong> in add-on settings for instant download after motion.</li>
+      <li>Tune <strong>Post-Motion Download Delay</strong> (default 30 s) to your Blink upload speed.</li>
+      <li>Use <strong>⬇ Sync</strong> in the Library tab to trigger an immediate download cycle.</li>
+      <li>Clips default to <code>/share/blink-clips/</code> — separate from HA's <code>/config/snapshots/</code>.</li>
       <li>
-        Enable <strong>Watch HA Events</strong> in add-on settings for instant download after
-        motion.
-      </li>
-      <li>
-        Tune <strong>Post-Motion Download Delay</strong> (default 30 s) to your Blink upload speed.
-      </li>
-      <li>
-        Use <strong>⬇ Sync</strong> in the Library tab to trigger an immediate download cycle.
-      </li>
-      <li>
-        Clips default to <code>/share/blink-clips/</code> — separate from HA's
-        <code>/config/snapshots/</code>.
-      </li>
-      <li>
-        The Video.js player supports keyboard shortcuts: <code>Space</code> play/pause,
-        <code>← →</code> skip 10 s, <code>F</code> fullscreen, <code>M</code> mute,
-        <code>↑ ↓</code> prev/next clip.
+        The Video.js player supports keyboard shortcuts: <code>Space</code> play/pause, <code>← →</code> skip 10 s,
+        <code>F</code> fullscreen, <code>M</code> mute, <code>↑ ↓</code> prev/next clip.
       </li>
     </ul>
   </div>

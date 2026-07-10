@@ -230,7 +230,10 @@ watch([search, dateRange, sourceFilter, tagFilter, sortOrder, starredOnly, notif
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => loadClips(0), 380)
 })
-watch(() => library.currentCamera, () => loadClips(0))
+watch(
+  () => library.currentCamera,
+  () => loadClips(0),
+)
 watch(() => refresh.tick, loadAll)
 watch(
   () => dateFilter.seq,
@@ -373,12 +376,23 @@ onUnmounted(() => {
         <span class="lib-stat-value">{{ libSizeGb }} GB</span>
       </div>
       <div v-if="stats?.disk" class="lib-stat lib-stat-storage">
-        <span class="lib-stat-label">Storage — {{ stats.disk.used_mb }} MB used · Free: {{ stats.disk.free_gb }} GB</span>
+        <span class="lib-stat-label"
+          >Storage — {{ stats.disk.used_mb }} MB used · Free: {{ stats.disk.free_gb }} GB</span
+        >
         <ProgressBar
           v-if="stats.disk.quota_bytes"
           :value="diskPct || 0"
           :show-value="false"
-          :pt="{ value: { style: diskClass === 'danger' ? 'background:var(--danger)' : diskClass === 'warn' ? 'background:var(--warn)' : undefined } }"
+          :pt="{
+            value: {
+              style:
+                diskClass === 'danger'
+                  ? 'background:var(--danger)'
+                  : diskClass === 'warn'
+                    ? 'background:var(--warn)'
+                    : undefined,
+            },
+          }"
         />
       </div>
     </div>
@@ -388,8 +402,20 @@ onUnmounted(() => {
         <InputIcon><AppIcon name="tab-library" style="width: 15px; height: 15px" /></InputIcon>
         <InputText id="search" v-model="search" placeholder="Search clips…" fluid />
       </IconField>
-      <Select id="date-range" v-model="dateRange" :options="DATE_RANGE_OPTIONS" option-label="label" option-value="value" />
-      <Select id="source-filter" v-model="sourceFilter" :options="SOURCE_OPTIONS" option-label="label" option-value="value" />
+      <Select
+        id="date-range"
+        v-model="dateRange"
+        :options="DATE_RANGE_OPTIONS"
+        option-label="label"
+        option-value="value"
+      />
+      <Select
+        id="source-filter"
+        v-model="sourceFilter"
+        :options="SOURCE_OPTIONS"
+        option-label="label"
+        option-value="value"
+      />
       <Select id="tag-filter" v-model="tagFilter" :options="tagOptions" option-label="label" option-value="value" />
       <Select id="sort-order" v-model="sortOrder" :options="SORT_OPTIONS" option-label="label" option-value="value" />
       <label class="lib-check"><Checkbox v-model="starredOnly" binary /> ★ Starred</label>

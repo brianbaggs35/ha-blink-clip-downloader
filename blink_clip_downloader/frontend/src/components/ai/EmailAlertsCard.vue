@@ -39,7 +39,11 @@ async function sendTestEmail() {
       <p style="font-size: 0.73rem; color: var(--muted); margin: 0.3rem 0 0">
         Sends a one-off test email to verify SMTP settings, even if <code>smtp_enabled</code> is currently off.
       </p>
-      <div v-if="result" style="margin-top: 0.45rem; font-size: 0.8rem" :style="{ color: result.success ? 'var(--success)' : 'var(--danger)' }">
+      <div
+        v-if="result"
+        style="margin-top: 0.45rem; font-size: 0.8rem"
+        :style="{ color: result.success ? 'var(--success)' : 'var(--danger)' }"
+      >
         {{ result.success ? '✓ ' : '✗ ' }}{{ result.message }}
       </div>
     </div>

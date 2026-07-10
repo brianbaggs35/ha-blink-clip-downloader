@@ -50,7 +50,7 @@ describe('ConfirmDialog', () => {
     await expect(promise).resolves.toBe(false)
   })
 
-  it('dismissing via the dialog\'s own close button resolves false', async () => {
+  it("dismissing via the dialog's own close button resolves false", async () => {
     mountDialog()
     const store = useConfirmStore()
     const promise = store.ask('Sure?')

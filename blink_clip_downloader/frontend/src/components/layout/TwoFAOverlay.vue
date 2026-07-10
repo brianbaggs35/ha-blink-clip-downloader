@@ -42,14 +42,10 @@ function submit() {
   <div class="modal-bg" :class="{ open: auth.needsTwoFA }" style="z-index: 200">
     <div class="modal" style="max-width: 480px">
       <div class="modal-body" style="padding: 1.8rem 1.6rem">
-        <div class="modal-title" style="font-size: 1.08rem; margin-bottom: 0.5rem">
-          🔐 Two-Factor Authentication
-        </div>
-        <p
-          style="color: var(--muted); font-size: 0.86rem; line-height: 1.55; margin-bottom: 1.2rem"
-        >
-          Blink has sent a verification code to your registered email address or phone. Enter it
-          below to complete sign-in.
+        <div class="modal-title" style="font-size: 1.08rem; margin-bottom: 0.5rem">🔐 Two-Factor Authentication</div>
+        <p style="color: var(--muted); font-size: 0.86rem; line-height: 1.55; margin-bottom: 1.2rem">
+          Blink has sent a verification code to your registered email address or phone. Enter it below to complete
+          sign-in.
         </p>
         <div style="display: flex; gap: 0.5rem; align-items: stretch">
           <input
@@ -95,8 +91,7 @@ function submit() {
           {{ auth.twoFAMessage }}
         </div>
         <p style="color: var(--muted); font-size: 0.76rem; margin-top: 1rem; line-height: 1.45">
-          Code not arriving? Check your spam folder or restart the add-on to request a new code.
-          Codes expire quickly.
+          Code not arriving? Check your spam folder or restart the add-on to request a new code. Codes expire quickly.
         </p>
       </div>
     </div>

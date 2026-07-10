@@ -4,7 +4,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import EmailAlertsCard from './EmailAlertsCard.vue'
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 describe('EmailAlertsCard', () => {
@@ -22,7 +28,10 @@ describe('EmailAlertsCard', () => {
   })
 
   it('sends a test email and shows a success result', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ success: true, message: 'Sent to you@example.com' }))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ success: true, message: 'Sent to you@example.com' }))),
+    )
     const wrapper = mount(EmailAlertsCard, { props: { smtpConfigured: true } })
     await wrapper.find('button').trigger('click')
     await flushPromises()
@@ -30,7 +39,10 @@ describe('EmailAlertsCard', () => {
   })
 
   it('shows a failure result when the send reports failure', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse({ success: false, message: 'SMTP auth failed' }))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ success: false, message: 'SMTP auth failed' }))),
+    )
     const wrapper = mount(EmailAlertsCard, { props: { smtpConfigured: true } })
     await wrapper.find('button').trigger('click')
     await flushPromises()
@@ -38,7 +50,10 @@ describe('EmailAlertsCard', () => {
   })
 
   it('shows a generic failure message when the request throws', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('network down'))),
+    )
     const wrapper = mount(EmailAlertsCard, { props: { smtpConfigured: true } })
     await wrapper.find('button').trigger('click')
     await flushPromises()

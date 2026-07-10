@@ -5,7 +5,13 @@ import ClipAiPanel from './ClipAiPanel.vue'
 import { usePromptOverlayStore } from '../../stores/promptOverlay'
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 const RESULT = {
@@ -35,7 +41,8 @@ function mockFetch(routes: Record<string, unknown>) {
     vi.fn((url: string, opts?: RequestInit) => {
       for (const [pattern, body] of Object.entries(routes)) {
         if (url.startsWith(pattern)) {
-          if (typeof body === 'function') return Promise.resolve(jsonResponse((body as (o?: RequestInit) => unknown)(opts)))
+          if (typeof body === 'function')
+            return Promise.resolve(jsonResponse((body as (o?: RequestInit) => unknown)(opts)))
           return Promise.resolve(jsonResponse(body))
         }
       }
@@ -82,7 +89,19 @@ describe('ClipAiPanel', () => {
   it('shows existing feedback verdict instead of the prompt buttons', async () => {
     mockFetch({
       '/api/ai/results/c1': RESULT,
-      '/api/ai/feedback/c1': { id: 1, clip_id: 'c1', camera: 'front', analysis_result_id: 1, original_suspicious: true, original_confidence: 0.87, correct: false, correction_note: 'false alarm', corrected_suspicious: false, created_at: '', trained_at: '' },
+      '/api/ai/feedback/c1': {
+        id: 1,
+        clip_id: 'c1',
+        camera: 'front',
+        analysis_result_id: 1,
+        original_suspicious: true,
+        original_confidence: 0.87,
+        correct: false,
+        correction_note: 'false alarm',
+        corrected_suspicious: false,
+        created_at: '',
+        trained_at: '',
+      },
     })
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
@@ -97,7 +116,10 @@ describe('ClipAiPanel', () => {
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
     expect(wrapper.text()).not.toContain('raw text')
-    await wrapper.findAll('button').find((b) => b.text().includes('Full response'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Full response'))!
+      .trigger('click')
     expect(wrapper.text()).toContain('raw text')
   })
 
@@ -126,7 +148,10 @@ describe('ClipAiPanel', () => {
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Not analyzed yet')
-    await wrapper.findAll('button').find((b) => b.text().includes('Analyze Now'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Analyze Now'))!
+      .trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('87% confidence')
   })
@@ -142,7 +167,10 @@ describe('ClipAiPanel', () => {
   })
 
   it('shows a load error when fetching the result fails', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('network down'))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('network down'))),
+    )
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
@@ -167,7 +195,10 @@ describe('ClipAiPanel', () => {
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('Analyze Now'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Analyze Now'))!
+      .trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Failed to load analysis')
   })
@@ -185,7 +216,19 @@ describe('ClipAiPanel', () => {
   it('shows the "Marked correct" verdict when feedback.correct is true', async () => {
     mockFetch({
       '/api/ai/results/c1': RESULT,
-      '/api/ai/feedback/c1': { id: 1, clip_id: 'c1', camera: 'front', analysis_result_id: 1, original_suspicious: true, original_confidence: 0.87, correct: true, correction_note: '', corrected_suspicious: null, created_at: '', trained_at: '' },
+      '/api/ai/feedback/c1': {
+        id: 1,
+        clip_id: 'c1',
+        camera: 'front',
+        analysis_result_id: 1,
+        original_suspicious: true,
+        original_confidence: 0.87,
+        correct: true,
+        correction_note: '',
+        corrected_suspicious: null,
+        created_at: '',
+        trained_at: '',
+      },
     })
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
@@ -196,12 +239,27 @@ describe('ClipAiPanel', () => {
   it('"Change" clears feedback and shows the quick-feedback prompt again', async () => {
     mockFetch({
       '/api/ai/results/c1': RESULT,
-      '/api/ai/feedback/c1': { id: 1, clip_id: 'c1', camera: 'front', analysis_result_id: 1, original_suspicious: true, original_confidence: 0.87, correct: true, correction_note: '', corrected_suspicious: null, created_at: '', trained_at: '' },
+      '/api/ai/feedback/c1': {
+        id: 1,
+        clip_id: 'c1',
+        camera: 'front',
+        analysis_result_id: 1,
+        original_suspicious: true,
+        original_confidence: 0.87,
+        correct: true,
+        correction_note: '',
+        corrected_suspicious: null,
+        created_at: '',
+        trained_at: '',
+      },
     })
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text() === 'Change')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Change')!
+      .trigger('click')
     expect(wrapper.text()).toContain('Was this verdict correct?')
   })
 
@@ -222,11 +280,17 @@ describe('ClipAiPanel', () => {
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('👎 Incorrect'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('👎 Incorrect'))!
+      .trigger('click')
     expect(wrapper.find('input.tag-input').exists()).toBe(true)
     await wrapper.find('input.tag-input').setValue('it was just the mail carrier')
     await wrapper.find('input[type="checkbox"]').setValue(true)
-    await wrapper.findAll('button').find((b) => b.text() === 'Submit')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Submit')!
+      .trigger('click')
     await flushPromises()
     expect(submittedBody).toEqual({
       correct: false,
@@ -240,8 +304,14 @@ describe('ClipAiPanel', () => {
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('👎 Incorrect'))!.trigger('click')
-    await wrapper.findAll('button').find((b) => b.text() === 'Cancel')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('👎 Incorrect'))!
+      .trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Cancel')!
+      .trigger('click')
     expect(wrapper.find('input.tag-input').exists()).toBe(false)
   })
 
@@ -258,7 +328,10 @@ describe('ClipAiPanel', () => {
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('👍 Correct'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('👍 Correct'))!
+      .trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Was this verdict correct?')
   })
@@ -272,7 +345,8 @@ describe('ClipAiPanel', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string, opts?: RequestInit) => {
-        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST') return Promise.resolve(jsonResponse({ saved: true }))
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST')
+          return Promise.resolve(jsonResponse({ saved: true }))
         if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
         if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
         return Promise.reject(new Error(`unexpected ${url}`))
@@ -281,11 +355,11 @@ describe('ClipAiPanel', () => {
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
-    await wrapper.findAll('button').find((b) => b.text().includes('👍 Correct'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('👍 Correct'))!
+      .trigger('click')
     await flushPromises()
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      '/api/ai/feedback/c1',
-      expect.objectContaining({ method: 'POST' }),
-    )
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/ai/feedback/c1', expect.objectContaining({ method: 'POST' }))
   })
 })

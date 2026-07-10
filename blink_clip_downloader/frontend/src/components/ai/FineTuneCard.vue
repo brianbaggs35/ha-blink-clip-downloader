@@ -51,7 +51,11 @@ onMounted(load)
 async function train(id: string) {
   try {
     const r = await trainFromFeedback(id)
-    toast.show(r.trained > 0 ? `Trained ${r.trained} step(s) — Save Checkpoint to make it activatable` : r.message || 'No new feedback to train on')
+    toast.show(
+      r.trained > 0
+        ? `Trained ${r.trained} step(s) — Save Checkpoint to make it activatable`
+        : r.message || 'No new feedback to train on',
+    )
     await load()
   } catch {
     toast.show('Training failed', true)
@@ -84,7 +88,8 @@ async function create() {
 }
 
 async function remove(id: string) {
-  if (!(await confirm('Delete this fine-tune and all its checkpoints? This cannot be undone.', 'Delete fine-tune?'))) return
+  if (!(await confirm('Delete this fine-tune and all its checkpoints? This cannot be undone.', 'Delete fine-tune?')))
+    return
   try {
     await deleteFinetune(id)
     toast.show('Fine-tune deleted')
@@ -128,11 +133,22 @@ function backToList() {
   <div class="card" style="padding: 1.2rem">
     <h3 style="margin-bottom: 0.8rem">🎯 Fine-Tuning</h3>
 
-    <div v-if="view === 'checkpoints'" style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem">
+    <div
+      v-if="view === 'checkpoints'"
+      style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem"
+    >
       <div
         v-for="cp in checkpoints"
         :key="cp.step"
-        style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.55rem; background: var(--card2); border-radius: var(--radius)"
+        style="
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.5rem;
+          padding: 0.4rem 0.55rem;
+          background: var(--card2);
+          border-radius: var(--radius);
+        "
       >
         <span style="font-size: 0.82rem">Step {{ cp.step }}</span>
         <button class="btn sm" @click="activate(cp.step)">Activate</button>
@@ -144,19 +160,40 @@ function backToList() {
       <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem">
         <div v-if="loading" style="color: var(--muted); font-size: 0.8rem">Loading…</div>
         <div v-else-if="loadError" style="color: var(--danger); font-size: 0.8rem">Failed to load fine-tunes</div>
-        <div v-else-if="!finetunes.length" style="color: var(--muted); font-size: 0.8rem">No fine-tunes yet — create one below.</div>
+        <div v-else-if="!finetunes.length" style="color: var(--muted); font-size: 0.8rem">
+          No fine-tunes yet — create one below.
+        </div>
         <template v-else>
           <div
             v-for="ft in finetunes"
             :key="finetuneId(ft)"
-            style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem 0.55rem; background: var(--card2); border-radius: var(--radius); flex-wrap: wrap"
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 0.5rem;
+              padding: 0.4rem 0.55rem;
+              background: var(--card2);
+              border-radius: var(--radius);
+              flex-wrap: wrap;
+            "
           >
-            <span style="font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ ft.name || finetuneId(ft) || '—' }}</span>
+            <span style="font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{
+              ft.name || finetuneId(ft) || '—'
+            }}</span>
             <div style="display: flex; gap: 0.3rem; flex-shrink: 0; flex-wrap: wrap">
-              <button class="btn sm ghost" title="Train on corrections from clip feedback" @click="train(finetuneId(ft))">
+              <button
+                class="btn sm ghost"
+                title="Train on corrections from clip feedback"
+                @click="train(finetuneId(ft))"
+              >
                 🧠 Train from Feedback ({{ pendingCount }})
               </button>
-              <button class="btn sm ghost" title="Save current trained state as an activatable checkpoint" @click="saveCkpt(finetuneId(ft))">
+              <button
+                class="btn sm ghost"
+                title="Save current trained state as an activatable checkpoint"
+                @click="saveCkpt(finetuneId(ft))"
+              >
                 💾 Save Checkpoint
               </button>
               <button class="btn sm ghost" @click="viewCheckpoints(finetuneId(ft))">Checkpoints</button>
@@ -176,9 +213,9 @@ function backToList() {
         <button class="btn sm" @click="create">+ New Fine-tune</button>
       </div>
       <p style="font-size: 0.72rem; color: var(--muted); margin-top: 0.4rem">
-        🧠 Train from Feedback turns your 👍/👎 clip corrections into real training steps against Moondream Cloud. 💾 Save
-        Checkpoint persists the result so it appears under Checkpoints — Activate one to switch live inference immediately,
-        no restart needed.
+        🧠 Train from Feedback turns your 👍/👎 clip corrections into real training steps against Moondream Cloud. 💾
+        Save Checkpoint persists the result so it appears under Checkpoints — Activate one to switch live inference
+        immediately, no restart needed.
       </p>
     </template>
   </div>

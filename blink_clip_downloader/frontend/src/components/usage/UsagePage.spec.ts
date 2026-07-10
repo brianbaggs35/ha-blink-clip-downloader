@@ -5,7 +5,13 @@ import UsagePage from './UsagePage.vue'
 import { useConfirmStore } from '../../stores/confirm'
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 function baseUsage(overrides: Record<string, unknown> = {}) {
@@ -19,9 +25,20 @@ function baseUsage(overrides: Record<string, unknown> = {}) {
     total_tokens: 1500,
     total_escalations: 0,
     total_escalation_tokens: 0,
-    by_model: [{ model: 'claude-haiku-4-5', analyses: 10, tokens_prompt: 1000, tokens_completion: 500, escalated: false, cost: 0.01 }],
+    by_model: [
+      {
+        model: 'claude-haiku-4-5',
+        analyses: 10,
+        tokens_prompt: 1000,
+        tokens_completion: 500,
+        escalated: false,
+        cost: 0.01,
+      },
+    ],
     total_estimated_cost: 0.01,
-    daily: [{ day: '2026-01-05', analyses: 3, tokens_prompt: 300, tokens_completion: 150, tokens_total: 450, cost: 0.003 }],
+    daily: [
+      { day: '2026-01-05', analyses: 3, tokens_prompt: 300, tokens_completion: 150, tokens_total: 450, cost: 0.003 },
+    ],
     ...overrides,
   }
 }
@@ -36,7 +53,10 @@ describe('UsagePage', () => {
   })
 
   it('shows a loading state, then the summary stats, provider, and tables', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(baseUsage()))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage()))),
+    )
     const wrapper = mount(UsagePage)
     expect(wrapper.text()).toContain('Loading')
     await flushPromises()
@@ -50,7 +70,12 @@ describe('UsagePage', () => {
   })
 
   it('shows the disabled message when AI is off and there is no history', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ enabled: false, total_analyses: 0, by_model: [], daily: [] })))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(jsonResponse(baseUsage({ enabled: false, total_analyses: 0, by_model: [], daily: [] }))),
+      ),
+    )
     const wrapper = mount(UsagePage)
     await flushPromises()
     expect(wrapper.text()).toContain('No AI Usage Data')
@@ -58,7 +83,10 @@ describe('UsagePage', () => {
   })
 
   it('still shows historical data when AI is disabled but has past usage', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ enabled: false })))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ enabled: false })))),
+    )
     const wrapper = mount(UsagePage)
     await flushPromises()
     expect(wrapper.text()).not.toContain('No AI Usage Data')
@@ -72,7 +100,19 @@ describe('UsagePage', () => {
       vi.fn(() =>
         Promise.resolve(
           jsonResponse(
-            baseUsage({ provider: 'moondream_local', by_model: [{ model: 'moondream-0.5b', analyses: 5, tokens_prompt: 0, tokens_completion: 0, escalated: false, cost: null }] }),
+            baseUsage({
+              provider: 'moondream_local',
+              by_model: [
+                {
+                  model: 'moondream-0.5b',
+                  analyses: 5,
+                  tokens_prompt: 0,
+                  tokens_completion: 0,
+                  escalated: false,
+                  cost: null,
+                },
+              ],
+            }),
           ),
         ),
       ),
@@ -105,7 +145,17 @@ describe('UsagePage', () => {
           jsonResponse(
             baseUsage({
               total_escalations: 1,
-              by_model: [{ model: 'gpt-4o-mini', provider: 'openai', analyses: 1, tokens_prompt: 10, tokens_completion: 5, escalated: true, cost: 0.001 }],
+              by_model: [
+                {
+                  model: 'gpt-4o-mini',
+                  provider: 'openai',
+                  analyses: 1,
+                  tokens_prompt: 10,
+                  tokens_completion: 5,
+                  escalated: true,
+                  cost: 0.001,
+                },
+              ],
             }),
           ),
         ),
@@ -118,7 +168,10 @@ describe('UsagePage', () => {
   })
 
   it('hides the cost stat when there is no priced data', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ total_estimated_cost: null })))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ total_estimated_cost: null })))),
+    )
     const wrapper = mount(UsagePage)
     await flushPromises()
     expect(wrapper.text()).not.toContain('Estimated Cost')
@@ -126,7 +179,10 @@ describe('UsagePage', () => {
   })
 
   it('shows empty-state messages for the tables', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ by_model: [], daily: [] })))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ by_model: [], daily: [] })))),
+    )
     const wrapper = mount(UsagePage)
     await flushPromises()
     expect(wrapper.text()).toContain('No analysis data yet')
@@ -156,7 +212,10 @@ describe('UsagePage', () => {
   })
 
   it('does not clear when declined', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(baseUsage()))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage()))),
+    )
     const wrapper = mount(UsagePage)
     await flushPromises()
     const confirm = useConfirmStore()
@@ -191,7 +250,10 @@ describe('UsagePage', () => {
 
   it('auto-refreshes every 10s while mounted, and stops after unmount', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse(baseUsage()))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage()))),
+    )
     const wrapper = mount(UsagePage)
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.length
@@ -205,7 +267,10 @@ describe('UsagePage', () => {
   })
 
   it('leaves usage null (nothing rendered) when the fetch fails', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('down'))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('down'))),
+    )
     const wrapper = mount(UsagePage)
     await flushPromises()
     expect(wrapper.text()).not.toContain('Loading')

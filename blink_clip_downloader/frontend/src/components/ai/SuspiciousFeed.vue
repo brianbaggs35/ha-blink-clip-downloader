@@ -48,8 +48,12 @@ async function quickFeedback(clipId: string, correct: boolean) {
     <h3 style="margin-bottom: 0.8rem">Suspicious Activity Feed</h3>
     <div style="display: flex; flex-direction: column; gap: 0.5rem">
       <div v-if="loading" style="color: var(--muted); padding: 1rem; text-align: center">Loading…</div>
-      <div v-else-if="loadError" style="color: var(--danger); padding: 1rem; text-align: center">Failed to load suspicious activity.</div>
-      <div v-else-if="!items.length" style="color: var(--muted); padding: 1rem; text-align: center">No suspicious activity detected yet.</div>
+      <div v-else-if="loadError" style="color: var(--danger); padding: 1rem; text-align: center">
+        Failed to load suspicious activity.
+      </div>
+      <div v-else-if="!items.length" style="color: var(--muted); padding: 1rem; text-align: center">
+        No suspicious activity detected yet.
+      </div>
       <template v-else>
         <div
           v-for="item in items"
@@ -65,7 +69,10 @@ async function quickFeedback(clipId: string, correct: boolean) {
             <div style="font-size: 0.82rem; margin-top: 0.3rem">{{ item.summary || '' }}</div>
           </div>
           <div style="text-align: center; min-width: 50px">
-            <div style="font-size: 1.1rem; font-weight: 700" :style="{ color: confPct(item) > 70 ? 'var(--danger)' : 'var(--warn)' }">
+            <div
+              style="font-size: 1.1rem; font-weight: 700"
+              :style="{ color: confPct(item) > 70 ? 'var(--danger)' : 'var(--warn)' }"
+            >
               {{ confPct(item) }}%
             </div>
             <div style="font-size: 0.65rem; color: var(--muted)">confidence</div>

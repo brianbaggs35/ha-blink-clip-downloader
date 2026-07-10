@@ -5,7 +5,13 @@ import SuspiciousFeed from './SuspiciousFeed.vue'
 import { useClipViewerStore } from '../../stores/clipViewer'
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 500, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 const ITEM = {
@@ -42,21 +48,30 @@ describe('SuspiciousFeed', () => {
   })
 
   it('shows an empty state', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse([]))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse([]))),
+    )
     const wrapper = mount(SuspiciousFeed)
     await flushPromises()
     expect(wrapper.text()).toContain('No suspicious activity detected yet.')
   })
 
   it('shows a load error', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('down'))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('down'))),
+    )
     const wrapper = mount(SuspiciousFeed)
     await flushPromises()
     expect(wrapper.text()).toContain('Failed to load suspicious activity.')
   })
 
   it('renders items with camera, confidence, and summary', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse([ITEM]))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse([ITEM]))),
+    )
     const wrapper = mount(SuspiciousFeed)
     await flushPromises()
     expect(wrapper.text()).toContain('front')
@@ -65,7 +80,10 @@ describe('SuspiciousFeed', () => {
   })
 
   it('requests opening the clip modal when a row is clicked', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse([ITEM]))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse([ITEM]))),
+    )
     const wrapper = mount(SuspiciousFeed)
     await flushPromises()
     await wrapper.find('.card').trigger('click')
@@ -76,7 +94,8 @@ describe('SuspiciousFeed', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string, opts?: RequestInit) => {
-        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST') return Promise.resolve(jsonResponse({ saved: true }))
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST')
+          return Promise.resolve(jsonResponse({ saved: true }))
         return Promise.resolve(jsonResponse([ITEM]))
       }),
     )
@@ -104,7 +123,10 @@ describe('SuspiciousFeed', () => {
   })
 
   it('exposes reload() for the parent to call after events elsewhere', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(jsonResponse([]))))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse([]))),
+    )
     const wrapper = mount(SuspiciousFeed)
     await flushPromises()
     await (wrapper.vm as unknown as { reload: () => Promise<void> }).reload()

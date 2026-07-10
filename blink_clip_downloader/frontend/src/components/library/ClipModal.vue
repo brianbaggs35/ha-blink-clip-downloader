@@ -138,7 +138,10 @@ async function saveTags() {
 
 async function onTagInputKeydown(e: KeyboardEvent) {
   if (e.key !== 'Enter') return
-  const v = tagInput.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')
+  const v = tagInput.value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '')
   tagInput.value = ''
   if (v && !currentTags.value.includes(v)) {
     currentTags.value.push(v)
@@ -249,13 +252,7 @@ onUnmounted(() => {
           <button class="btn sm outline" :style="starred ? 'color: var(--starred)' : ''" @click="toggleStar">
             {{ starred ? '★ Starred' : '☆ Star' }}
           </button>
-          <a
-            v-if="clipId"
-            class="btn sm ghost"
-            :href="clipStreamUrl(clipId)"
-            :download="downloadName()"
-            >⬇ Download</a
-          >
+          <a v-if="clipId" class="btn sm ghost" :href="clipStreamUrl(clipId)" :download="downloadName()">⬇ Download</a>
           <button class="btn sm ghost" @click="copyPath">📋 Path</button>
           <button class="btn sm ghost" title="Theater mode" @click="toggleTheater">
             {{ theater ? '⊡ Normal' : '⊞ Theater' }}
@@ -264,17 +261,10 @@ onUnmounted(() => {
         </div>
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem">
-            <input
-              v-model="tagInput"
-              class="tag-input"
-              placeholder="Add tag + Enter"
-              @keydown="onTagInputKeydown"
-            />
+            <input v-model="tagInput" class="tag-input" placeholder="Add tag + Enter" @keydown="onTagInputKeydown" />
             <span style="font-size: 0.72rem; color: var(--muted)">
-              <span class="kbd">Space</span> play &nbsp;
-              <span class="kbd">←→</span> ±10s &nbsp;
-              <span class="kbd">F</span> full &nbsp;
-              <span class="kbd">M</span> mute &nbsp;
+              <span class="kbd">Space</span> play &nbsp; <span class="kbd">←→</span> ±10s &nbsp;
+              <span class="kbd">F</span> full &nbsp; <span class="kbd">M</span> mute &nbsp;
               <span class="kbd">↑↓</span> prev/next
             </span>
           </div>

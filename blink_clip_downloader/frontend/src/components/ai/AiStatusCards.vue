@@ -56,9 +56,15 @@ const lastAnalysis = computed(() => {
   <div class="card" style="padding: 1.2rem">
     <h3 style="margin-bottom: 0.8rem">Analysis Stats</h3>
     <div style="font-size: 0.85rem">
-      <div>Total Analyzed: <strong>{{ status.analysis_stats.total_analyzed || 0 }}</strong></div>
-      <div>Suspicious: <strong style="color: var(--danger)">{{ status.analysis_stats.suspicious_count || 0 }}</strong></div>
-      <div style="color: var(--muted); font-size: 0.78rem; margin-top: 0.4rem">Last: <span>{{ lastAnalysis }}</span></div>
+      <div>
+        Total Analyzed: <strong>{{ status.analysis_stats.total_analyzed || 0 }}</strong>
+      </div>
+      <div>
+        Suspicious: <strong style="color: var(--danger)">{{ status.analysis_stats.suspicious_count || 0 }}</strong>
+      </div>
+      <div style="color: var(--muted); font-size: 0.78rem; margin-top: 0.4rem">
+        Last: <span>{{ lastAnalysis }}</span>
+      </div>
     </div>
   </div>
 </template>

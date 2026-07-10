@@ -89,9 +89,7 @@ describe('ai api', () => {
   it('camera configs get/save', async () => {
     await getCameraConfigs()
     expect(fetch).toHaveBeenCalledWith('/api/ai/camera-configs', {})
-    const configs = [
-      { camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
-    ]
+    const configs = [{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]
     await saveCameraConfigs(configs)
     expect(fetch).toHaveBeenCalledWith('/api/ai/camera-configs', {
       method: 'PUT',

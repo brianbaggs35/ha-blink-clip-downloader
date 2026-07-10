@@ -49,8 +49,8 @@ defineExpose({ reload: load })
         <template v-else>No feedback recorded yet.</template>
       </div>
       <p style="font-size: 0.72rem; color: var(--muted); margin-top: 0.5rem">
-        Mark verdicts 👍/👎 on the Suspicious Activity Feed below, or in a clip's AI panel, to auto-tune per-camera alert
-        thresholds and teach future analyses from your corrections.
+        Mark verdicts 👍/👎 on the Suspicious Activity Feed below, or in a clip's AI panel, to auto-tune per-camera
+        alert thresholds and teach future analyses from your corrections.
       </p>
     </div>
   </div>

@@ -41,7 +41,13 @@ const CLIP = {
 }
 
 function jsonResponse(body: unknown, ok = true) {
-  return { ok, status: ok ? 200 : 404, statusText: 'x', json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
+  return {
+    ok,
+    status: ok ? 200 : 404,
+    statusText: 'x',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(''),
+  } as Response
 }
 
 function mockFetch() {
@@ -50,7 +56,8 @@ function mockFetch() {
     vi.fn((url: string, opts?: RequestInit) => {
       if (url === '/api/clips/c1') return Promise.resolve(jsonResponse(CLIP))
       if (url === '/api/clips/c1/star') return Promise.resolve(jsonResponse({ id: 'c1', starred: true }))
-      if (url === '/api/clips/c1/tags') return Promise.resolve(jsonResponse({ id: 'c1', tags: JSON.parse((opts?.body as string) || '{}').tags }))
+      if (url === '/api/clips/c1/tags')
+        return Promise.resolve(jsonResponse({ id: 'c1', tags: JSON.parse((opts?.body as string) || '{}').tags }))
       return Promise.reject(new Error(`unexpected fetch ${url} ${opts?.method}`))
     }),
   )
@@ -308,7 +315,17 @@ describe('ClipModal', () => {
   })
 
   it('shows a toast when the clip fails to load', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: false, status: 404, statusText: 'Not Found', text: () => Promise.resolve('gone') } as Response)))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          text: () => Promise.resolve('gone'),
+        } as Response),
+      ),
+    )
     const wrapper = mount(ClipModal, { props: { clipId: 'missing', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
     expect(wrapper.text()).not.toContain('front')

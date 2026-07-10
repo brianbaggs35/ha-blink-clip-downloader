@@ -89,9 +89,7 @@ watch(
   (provider) => {
     if (provider === 'moondream_local') {
       archSupported.value = props.status.moondream_arch_supported !== false
-      installState.value = props.status.moondream_installed
-        ? { status: 'installed' }
-        : { status: 'idle' }
+      installState.value = props.status.moondream_installed ? { status: 'installed' } : { status: 'idle' }
       void pollMoondreamStatus()
     } else if (pollTimer) {
       clearTimeout(pollTimer)
@@ -110,7 +108,10 @@ async function runTest() {
   try {
     const clips = await listClips({ limit: 1, sort: 'newest' })
     if (!clips.length) {
-      testResult.value = { ok: false, message: 'No clips in the library yet. Download a clip first, then run the test.' }
+      testResult.value = {
+        ok: false,
+        message: 'No clips in the library yet. Download a clip first, then run the test.',
+      }
       return
     }
     const clip = clips[0]
@@ -134,7 +135,12 @@ function confPct(r: AnalysisResultDict): number {
   <div class="card" style="padding: 1.2rem">
     <h3 style="margin-bottom: 0.8rem">AI Connection</h3>
     <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem">
-      <span class="badge" style="font-size: 0.85rem" :style="{ color: status.ai_online ? 'var(--success)' : 'var(--danger)' }">●</span>
+      <span
+        class="badge"
+        style="font-size: 0.85rem"
+        :style="{ color: status.ai_online ? 'var(--success)' : 'var(--danger)' }"
+        >●</span
+      >
       <span style="font-size: 0.85rem">{{ status.ai_online ? 'Connected' : 'Offline' }}</span>
     </div>
     <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.4rem">
@@ -154,7 +160,11 @@ function confPct(r: AnalysisResultDict): number {
         border-radius: var(--radius);
       "
     >
-      🪜 Escalation tier 2: <strong>{{ PROVIDER_LABELS[status.escalation_provider] || status.escalation_provider }} — {{ status.escalation_model || '—' }}</strong>
+      🪜 Escalation tier 2:
+      <strong
+        >{{ PROVIDER_LABELS[status.escalation_provider] || status.escalation_provider }} —
+        {{ status.escalation_model || '—' }}</strong
+      >
       <span :style="{ color: status.escalation_online ? 'var(--success)' : 'var(--danger)' }">
         {{ status.escalation_online ? ' 🟢 online' : ' 🔴 unreachable — falling back to tier 1' }}
       </span>
@@ -177,8 +187,8 @@ function confPct(r: AnalysisResultDict): number {
       </button>
     </div>
     <p v-if="showModelPicker()" style="font-size: 0.72rem; color: var(--muted); margin-top: 0.35rem">
-      Selecting a model here does not change the running configuration — copy the id and paste it into the
-      add-on's <strong>Configuration</strong> tab, then restart the add-on.
+      Selecting a model here does not change the running configuration — copy the id and paste it into the add-on's
+      <strong>Configuration</strong> tab, then restart the add-on.
     </p>
 
     <div v-if="status.provider === 'moondream_local'" style="margin-top: 0.75rem">
@@ -190,7 +200,9 @@ function confPct(r: AnalysisResultDict): number {
       </div>
       <div v-else-if="installState.status === 'installed'">
         <p style="font-size: 0.8rem; color: var(--success)">✓ moondream installed</p>
-        <p style="font-size: 0.73rem; color: var(--muted)">Model (~430 MB) downloads automatically on first health check</p>
+        <p style="font-size: 0.73rem; color: var(--muted)">
+          Model (~430 MB) downloads automatically on first health check
+        </p>
       </div>
       <div v-else-if="installState.status === 'installing'">
         <p style="font-size: 0.8rem; color: var(--warn); margin-bottom: 0.35rem">⏳ Installing… please wait</p>
@@ -235,7 +247,9 @@ function confPct(r: AnalysisResultDict): number {
       <div v-else>
         <p style="font-size: 0.8rem; color: var(--warn); margin-bottom: 0.45rem">⚠ moondream package not installed</p>
         <button class="btn sm" @click="startInstall">⬇ Install Moondream 0.5B</button>
-        <p style="font-size: 0.73rem; color: var(--muted); margin-top: 0.35rem">Package + model ~430 MB, may take several minutes</p>
+        <p style="font-size: 0.73rem; color: var(--muted); margin-top: 0.35rem">
+          Package + model ~430 MB, may take several minutes
+        </p>
       </div>
     </div>
 
@@ -243,7 +257,9 @@ function confPct(r: AnalysisResultDict): number {
       <button class="btn sm ghost" :disabled="testing" @click="runTest">
         {{ testing ? '⏳ Testing…' : '🔬 Test Analysis' }}
       </button>
-      <p style="font-size: 0.73rem; color: var(--muted); margin: 0.3rem 0 0">Analyzes a recent clip to verify AI is working</p>
+      <p style="font-size: 0.73rem; color: var(--muted); margin: 0.3rem 0 0">
+        Analyzes a recent clip to verify AI is working
+      </p>
       <div v-if="testResult" style="margin-top: 0.45rem">
         <span v-if="!testResult.ok" style="color: var(--warn); font-size: 0.8rem">{{ testResult.message }}</span>
         <div
@@ -258,10 +274,14 @@ function confPct(r: AnalysisResultDict): number {
           "
         >
           <div style="color: var(--success); font-weight: 700; margin-bottom: 0.35rem">✓ AI is working!</div>
-          <div>Camera: <strong>{{ testResult.detail.camera }}</strong></div>
+          <div>
+            Camera: <strong>{{ testResult.detail.camera }}</strong>
+          </div>
           <div>
             Result:
-            <span :style="{ color: testResult.detail.is_suspicious ? 'var(--danger)' : 'var(--success)', fontWeight: 600 }">
+            <span
+              :style="{ color: testResult.detail.is_suspicious ? 'var(--danger)' : 'var(--success)', fontWeight: 600 }"
+            >
               {{ testResult.detail.is_suspicious ? '⚠ Suspicious' : '✓ Clear' }}
             </span>
             ({{ confPct(testResult.detail) }}% confidence)
@@ -270,8 +290,8 @@ function confPct(r: AnalysisResultDict): number {
             {{ testResult.detail.summary }}
           </div>
           <div style="color: var(--muted); font-size: 0.74rem; margin-top: 0.3rem">
-            Model: {{ testResult.detail.model || '—' }} &nbsp;·&nbsp; {{ testResult.detail.frame_count || 0 }} frame(s) &nbsp;·&nbsp;
-            {{ (testResult.detail.analysis_duration || 0).toFixed(1) }}s
+            Model: {{ testResult.detail.model || '—' }} &nbsp;·&nbsp; {{ testResult.detail.frame_count || 0 }} frame(s)
+            &nbsp;·&nbsp; {{ (testResult.detail.analysis_duration || 0).toFixed(1) }}s
           </div>
         </div>
       </div>

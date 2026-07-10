@@ -8,7 +8,13 @@ function baseStatus(overrides: Partial<AiStatus> = {}): AiStatus {
     enabled: true,
     prompt_debug_enabled: false,
     smtp_configured: false,
-    analysis_stats: { total_analyzed: 12, suspicious_count: 2, total_frames_analyzed: 0, frames_analyzed_today: 0, last_analysis: '2026-01-05T10:00:00Z' },
+    analysis_stats: {
+      total_analyzed: 12,
+      suspicious_count: 2,
+      total_frames_analyzed: 0,
+      frames_analyzed_today: 0,
+      last_analysis: '2026-01-05T10:00:00Z',
+    },
     ...overrides,
   }
 }
@@ -18,7 +24,16 @@ describe('AiStatusCards', () => {
     const wrapper = mount(AiStatusCards, {
       props: {
         status: baseStatus({
-          queue: { pending: 0, processing: 0, completed: 0, failed: 0, in_schedule: true, min_confidence: 0.5, schedule_start: null, schedule_end: null },
+          queue: {
+            pending: 0,
+            processing: 0,
+            completed: 0,
+            failed: 0,
+            in_schedule: true,
+            min_confidence: 0.5,
+            schedule_start: null,
+            schedule_end: null,
+          },
         }),
       },
     })
@@ -34,7 +49,16 @@ describe('AiStatusCards', () => {
     const wrapper = mount(AiStatusCards, {
       props: {
         status: baseStatus({
-          queue: { pending: 3, processing: 1, completed: 5, failed: 0, in_schedule: true, min_confidence: 0.5, schedule_start: '08:00', schedule_end: '20:00' },
+          queue: {
+            pending: 3,
+            processing: 1,
+            completed: 5,
+            failed: 0,
+            in_schedule: true,
+            min_confidence: 0.5,
+            schedule_start: '08:00',
+            schedule_end: '20:00',
+          },
         }),
       },
     })
@@ -46,7 +70,16 @@ describe('AiStatusCards', () => {
     const wrapper = mount(AiStatusCards, {
       props: {
         status: baseStatus({
-          queue: { pending: 0, processing: 0, completed: 0, failed: 0, in_schedule: false, min_confidence: 0.5, schedule_start: '08:00', schedule_end: '20:00' },
+          queue: {
+            pending: 0,
+            processing: 0,
+            completed: 0,
+            failed: 0,
+            in_schedule: false,
+            min_confidence: 0.5,
+            schedule_start: '08:00',
+            schedule_end: '20:00',
+          },
         }),
       },
     })
@@ -57,7 +90,16 @@ describe('AiStatusCards', () => {
     const wrapper = mount(AiStatusCards, {
       props: {
         status: baseStatus({
-          queue: { pending: 3, processing: 1, completed: 5, failed: 2, in_schedule: true, min_confidence: 0.5, schedule_start: null, schedule_end: null },
+          queue: {
+            pending: 3,
+            processing: 1,
+            completed: 5,
+            failed: 2,
+            in_schedule: true,
+            min_confidence: 0.5,
+            schedule_start: null,
+            schedule_end: null,
+          },
         }),
       },
     })
@@ -76,7 +118,17 @@ describe('AiStatusCards', () => {
 
   it('shows an em dash when nothing has been analyzed yet', () => {
     const wrapper = mount(AiStatusCards, {
-      props: { status: baseStatus({ analysis_stats: { total_analyzed: 0, suspicious_count: 0, total_frames_analyzed: 0, frames_analyzed_today: 0, last_analysis: null } }) },
+      props: {
+        status: baseStatus({
+          analysis_stats: {
+            total_analyzed: 0,
+            suspicious_count: 0,
+            total_frames_analyzed: 0,
+            frames_analyzed_today: 0,
+            last_analysis: null,
+          },
+        }),
+      },
     })
     expect(wrapper.text()).toContain('—')
   })

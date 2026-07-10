@@ -30,8 +30,7 @@ const store = usePromptOverlayStore()
             overflow-y: auto;
             color: var(--text);
           "
-          >{{ store.promptText }}</pre
-        >
+          >{{ store.promptText }}</pre>
       </div>
     </div>
   </div>

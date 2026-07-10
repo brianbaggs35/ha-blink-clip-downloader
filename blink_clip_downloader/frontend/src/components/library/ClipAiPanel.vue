@@ -122,7 +122,11 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
   <div class="ai-panel">
     <button class="ai-panel-hdr" :class="{ open: expanded }" @click="toggle">
       🤖 <strong style="font-weight: 600">AI Analysis</strong>
-      <span v-if="result" style="font-size: 0.8rem" :style="{ color: result.is_suspicious ? 'var(--danger)' : 'var(--success)' }">
+      <span
+        v-if="result"
+        style="font-size: 0.8rem"
+        :style="{ color: result.is_suspicious ? 'var(--danger)' : 'var(--success)' }"
+      >
         {{ result.is_suspicious ? ' ⚠' : ' ✓' }}
       </span>
       <span class="chevron">▶</span>
@@ -141,9 +145,7 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
           <div style="display: flex; align-items: center; gap: 0.55rem; margin-bottom: 0.4rem">
             <span v-if="result.is_suspicious" class="ai-badge-suspicious">⚠ Suspicious</span>
             <span v-else class="ai-badge-clean">✓ Clear</span>
-            <span
-              style="font-weight: 600"
-              :style="{ color: result.is_suspicious ? 'var(--danger)' : 'var(--success)' }"
+            <span style="font-weight: 600" :style="{ color: result.is_suspicious ? 'var(--danger)' : 'var(--success)' }"
               >{{ confPct(result) }}% confidence</span
             >
           </div>
@@ -152,7 +154,9 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
           </div>
           <div style="color: var(--muted); font-size: 0.74rem; margin-bottom: 0.4rem">
             Model: {{ result.model || '—' }}
-            <template v-if="result.analyzed_at"> &nbsp;·&nbsp; {{ new Date(result.analyzed_at).toLocaleString() }}</template>
+            <template v-if="result.analyzed_at">
+              &nbsp;·&nbsp; {{ new Date(result.analyzed_at).toLocaleString() }}</template
+            >
             <template v-if="result.frame_count"> &nbsp;·&nbsp; {{ result.frame_count }} frame(s) analyzed</template>
           </div>
           <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap">
@@ -180,10 +184,15 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
             {{ result.response_text || '' }}
           </div>
           <div style="margin-top: 0.55rem; padding-top: 0.5rem; border-top: 1px solid var(--border)">
-            <div v-if="feedback" style="font-size: 0.78rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap">
+            <div
+              v-if="feedback"
+              style="font-size: 0.78rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap"
+            >
               <span v-if="feedback.correct" style="color: var(--success)">👍 Marked correct</span>
               <span v-else style="color: var(--warn)"
-                >👎 Marked incorrect<template v-if="feedback.correction_note"> — "{{ feedback.correction_note }}"</template></span
+                >👎 Marked incorrect<template v-if="feedback.correction_note">
+                  — "{{ feedback.correction_note }}"</template
+                ></span
               >
               <button class="btn sm ghost" @click="changeFeedback">Change</button>
             </div>
@@ -192,7 +201,10 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
               <button class="btn sm ghost" @click="quickFeedback(true)">👍 Correct</button>
               <button class="btn sm ghost" @click="openFeedbackNoteForm">👎 Incorrect</button>
             </div>
-            <div v-if="showFeedbackForm" style="margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.35rem">
+            <div
+              v-if="showFeedbackForm"
+              style="margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.35rem"
+            >
               <input
                 v-model="feedbackNote"
                 class="tag-input"
@@ -200,7 +212,8 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
                 placeholder="What actually happened? (optional)"
               />
               <label style="font-size: 0.75rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem">
-                <input v-model="feedbackCorrectedSuspicious" type="checkbox" /> Should have been flagged suspicious instead
+                <input v-model="feedbackCorrectedSuspicious" type="checkbox" /> Should have been flagged suspicious
+                instead
               </label>
               <div style="display: flex; gap: 0.4rem">
                 <button class="btn sm" @click="submitFeedbackFormClick">Submit</button>

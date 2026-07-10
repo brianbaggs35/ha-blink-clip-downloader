@@ -82,13 +82,7 @@ export interface ActivityRow {
 // AI status / queue / analysis
 // ---------------------------------------------------------------------
 
-export type AiProvider =
-  | 'ollama'
-  | 'ollama_cloud'
-  | 'moondream_cloud'
-  | 'moondream_local'
-  | 'anthropic'
-  | 'openai'
+export type AiProvider = 'ollama' | 'ollama_cloud' | 'moondream_cloud' | 'moondream_local' | 'anthropic' | 'openai'
 
 export interface QueueStatus {
   schedule_start: string | null

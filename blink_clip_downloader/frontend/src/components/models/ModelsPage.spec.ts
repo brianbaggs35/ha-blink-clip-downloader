@@ -13,7 +13,7 @@ describe('ModelsPage', () => {
     expect(wrapper.text()).toContain('OpenAI (GPT)')
   })
 
-  it('links out to each provider\'s docs/console instead of hardcoding pricing', () => {
+  it("links out to each provider's docs/console instead of hardcoding pricing", () => {
     const wrapper = mount(ModelsPage)
     const hrefs = wrapper.findAll('a').map((a) => a.attributes('href'))
     expect(hrefs).toContain('https://console.anthropic.com')

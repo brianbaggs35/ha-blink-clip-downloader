@@ -35,7 +35,16 @@ const AI_STATUS = {
   provider: 'anthropic',
   model: 'claude-haiku-4-5',
   smtp_configured: false,
-  queue: { pending: 2, processing: 0, completed: 5, failed: 0, in_schedule: true, min_confidence: 0.5, schedule_start: null, schedule_end: null },
+  queue: {
+    pending: 2,
+    processing: 0,
+    completed: 5,
+    failed: 0,
+    in_schedule: true,
+    min_confidence: 0.5,
+    schedule_start: null,
+    schedule_end: null,
+  },
   analysis_stats: {
     total_analyzed: 20,
     suspicious_count: 3,
@@ -122,11 +131,19 @@ describe('StatusPage', () => {
           return Promise.resolve({
             ok: true,
             json: () =>
-              Promise.resolve({ connected: false, total_count: 0, today_count: 0, week_count: 0, starred_count: 0, archived_count: 0 }),
+              Promise.resolve({
+                connected: false,
+                total_count: 0,
+                today_count: 0,
+                week_count: 0,
+                starred_count: 0,
+                archived_count: 0,
+              }),
           })
         if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
-        if (url.startsWith('/api/ai/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: false }) })
+        if (url.startsWith('/api/ai/status'))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: false }) })
         return Promise.reject(new Error(`unexpected fetch ${url}`))
       }),
     )
@@ -156,7 +173,16 @@ describe('StatusPage', () => {
                 week_count: 0,
                 starred_count: 0,
                 archived_count: 0,
-                disk: { used_bytes: 100, used_mb: 1, free_bytes: 200, free_gb: 1, total_bytes: 300, total_gb: 1, quota_bytes: 0, quota_gb: 0 },
+                disk: {
+                  used_bytes: 100,
+                  used_mb: 1,
+                  free_bytes: 200,
+                  free_gb: 1,
+                  total_bytes: 300,
+                  total_gb: 1,
+                  quota_bytes: 0,
+                  quota_gb: 0,
+                },
               }),
           })
         if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
@@ -180,7 +206,14 @@ describe('StatusPage', () => {
           return Promise.resolve({
             ok: true,
             json: () =>
-              Promise.resolve({ connected: true, total_count: 0, today_count: 0, week_count: 0, starred_count: 0, archived_count: 0 }),
+              Promise.resolve({
+                connected: true,
+                total_count: 0,
+                today_count: 0,
+                week_count: 0,
+                starred_count: 0,
+                archived_count: 0,
+              }),
           })
         if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
@@ -193,7 +226,13 @@ describe('StatusPage', () => {
                 ai_online: false,
                 provider: 'unknown_provider',
                 smtp_configured: false,
-                analysis_stats: { total_analyzed: 0, suspicious_count: 0, total_frames_analyzed: 0, frames_analyzed_today: 0, last_analysis: null },
+                analysis_stats: {
+                  total_analyzed: 0,
+                  suspicious_count: 0,
+                  total_frames_analyzed: 0,
+                  frames_analyzed_today: 0,
+                  last_analysis: null,
+                },
               }),
           })
         return Promise.reject(new Error(`unexpected fetch ${url}`))
