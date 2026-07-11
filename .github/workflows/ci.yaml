@@ -17,7 +17,11 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
-  ADDON_IMAGE: ghcr.io/${{ github.repository_owner }}/test-blink-clip-downloader
+  # Built and loaded locally within this same workflow run only (never
+  # pushed to a registry) — a fixed lowercase name avoids "repository name
+  # must be lowercase" failures when github.repository_owner has uppercase
+  # characters (Docker/OCI image names must be all-lowercase).
+  ADDON_IMAGE: test-blink-clip-downloader
   TAG: ${{ github.sha }}
 
 jobs:
@@ -76,6 +80,26 @@ jobs:
 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
+
+    # Matches the Postgres major version bundled in the add-on's own image
+    # (see Dockerfile) — tests/conftest.py's `db` fixture connects to this
+    # via TEST_DATABASE_DSN, defaulting to
+    # postgresql://postgres:postgres@localhost:5432/blink_clips_test, which
+    # is exactly what this service exposes, so no DSN override is needed.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: blink_clips_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout repository

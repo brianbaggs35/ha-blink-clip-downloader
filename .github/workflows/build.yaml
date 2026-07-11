@@ -69,7 +69,10 @@ jobs:
           VERSION=$(grep '^version:' \
             blink_clip_downloader/config.yaml | \
             awk '{print $2}' | tr -d '"')
-          OWNER=${{ github.repository_owner }}
+          # Docker/OCI image names must be all-lowercase; github.repository_owner
+          # preserves the account's actual casing (e.g. "BrianBaggs"), which
+          # docker/build-push-action's tag validation rejects outright.
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           TAG_VER="ghcr.io/${OWNER}/blink_clip_downloader"
           TAG_VER="${TAG_VER}:${VERSION}-${{ matrix.arch }}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
@@ -111,7 +114,10 @@ jobs:
         run: |
           VERSION=${{ needs.build.outputs.version }}
           REGISTRY=${{ env.REGISTRY }}
-          OWNER=${{ github.repository_owner }}
+          # Must match the lowercasing done in the build job's "Set image
+          # tags" step above — this job references the same tags that job
+          # pushed, so both need the identical lowercased owner.
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           IMAGE=${{ env.IMAGE_NAME }}
           IMAGE_BASE="${REGISTRY}/${OWNER}/${IMAGE}"
 
