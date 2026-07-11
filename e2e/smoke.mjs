@@ -17,8 +17,8 @@ if (!baseUrl) {
   process.exit(1);
 }
 
-// Order matches the nav-tab buttons in media_server.py's _HTML.
-const TABS = ["library", "status", "usage", "automations", "ai"];
+// Order matches the TABS array in frontend/src/components/layout/AppSidebar.vue.
+const TABS = ["library", "automations", "status", "ai", "usage", "models"];
 
 // Playwright's own machinery (and page.goto's navigation) can trigger a
 // benign ERR_ABORTED when a request is superseded; only report failures
@@ -49,24 +49,28 @@ try {
   console.log(`Loading ${baseUrl} ...`);
   await page.goto(baseUrl, { waitUntil: "load", timeout: 15000 });
 
-  await page.waitForSelector('.nav-tab.active[data-tab="library"]', {
+  await page.waitForSelector('.app-nav-tab.active[data-tab="library"]', {
     timeout: 10000,
   });
   console.log("SPA shell loaded, library tab active by default");
 
   // The smoke-test container boots with placeholder Blink credentials, so
   // real Blink auth always fails and the app shows its 2FA/error modal
-  // (checkAuthStatus() in the app's own JS, polled every 3s) - which
-  // intercepts clicks on the rest of the page. That modal is real, correct
-  // behavior, not a bug; a CSS override (rather than a one-off class removal)
-  // keeps it hidden even as the poll keeps re-adding the "open" class, so the
-  // nav-tab click loop below can still exercise the SPA.
-  await page.addStyleTag({ content: "#twofa-overlay{display:none!important}" });
+  // (the auth store's polling in stores/auth.ts) - which intercepts clicks
+  // on the rest of the page. That modal is real, correct behavior, not a
+  // bug; a CSS override (rather than a one-off class removal) keeps it
+  // hidden even as the poll keeps re-adding the "open" class, so the
+  // nav-tab click loop below can still exercise the SPA. TwoFAOverlay,
+  // HelpOverlay, PromptOverlay, and ConfirmDialog all share the same
+  // ".modal-bg" root class with no per-component id, but only the
+  // auth-triggered 2FA modal can be open unprompted here, so hiding all of
+  // them is equivalent and avoids depending on an id that doesn't exist.
+  await page.addStyleTag({ content: ".modal-bg{display:none!important}" });
 
   for (const tab of TABS) {
     console.log(`Clicking tab: ${tab}`);
-    await page.click(`.nav-tab[data-tab="${tab}"]`);
-    await page.waitForSelector(`.nav-tab.active[data-tab="${tab}"]`, {
+    await page.click(`.app-nav-tab[data-tab="${tab}"]`);
+    await page.waitForSelector(`.app-nav-tab.active[data-tab="${tab}"]`, {
       timeout: 5000,
     });
     // Let the tab's own data fetch (loadStatus/loadAIStatus/etc.) settle so

@@ -113,7 +113,7 @@ fi
 
 echo "GET / (web UI shell)"
 index_body=$(curl -fsS "http://localhost:${PORT}/")
-grep -q "<title>Blink Clip Library</title>" <<<"$index_body"
+grep -q "<title>Blink Clip Downloader</title>" <<<"$index_body"
 
 echo "GET /api/clips"
 curl -fsS "http://localhost:${PORT}/api/clips" | jq -e 'type == "array"' >/dev/null

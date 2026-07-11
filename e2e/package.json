@@ -2,7 +2,7 @@
   "name": "blink-clip-downloader-e2e",
   "private": true,
   "version": "1.0.0",
-  "description": "Playwright smoke check for the Blink Clip Downloader media server web UI. Not part of the add-on itself (see CLAUDE.md: the app has no frontend toolchain) - this is test-only tooling invoked by scripts/smoke-test.sh.",
+  "description": "Playwright checks for the Blink Clip Downloader Vue web UI (frontend/). smoke.mjs is invoked by scripts/smoke-test.sh and CI's smoke-test job; verify.mjs is ad-hoc dev/AI tooling for taking UI screenshots, not run in CI.",
   "type": "module",
   "scripts": {
     "smoke": "node smoke.mjs"
