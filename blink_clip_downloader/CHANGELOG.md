@@ -286,6 +286,31 @@ Docker build + container run, not just review)
 - CI's smoke-test job now also checks `/api/ai/faces` responds correctly
   inside the real built container.
 
+### Bug fixes — CI (numpy dependency, config schema drift)
+
+- **Fix: `numpy` was used unconditionally in `tests/test_vision.py` (and
+  lazily but unguarded-for-pyright in `vision.py`) without ever being
+  declared as a dependency**, so any CI environment that only installs the
+  `test` extra (as `.github/workflows/ci.yaml` does) failed to collect
+  `test_vision.py` (`ModuleNotFoundError: No module named 'numpy'`) and
+  pyright failed with `reportMissingImports` on every `numpy`/`torch`
+  import in `vision.py`. `numpy` is now a core dependency (`pyproject.toml`,
+  `requirements.txt`) — it's lightweight and needed for real (not mocked)
+  array/image plumbing in tests, unlike the heavy `vision` extra
+  (torch/ultralytics/opencv/transformers/facenet-pytorch), which stays
+  optional. The remaining bare `torch` imports in `vision.py` got the same
+  `# type: ignore[import-not-found]` suppression already used on its
+  `cv2`/`ultralytics`/`transformers` imports, since torch is still not
+  installed in CI.
+- **Fix: `config.yaml`'s `schema` section still listed the four pre-5.0.0
+  CV toggles** (`ai_cv_preprocessing_enabled`, `ai_object_detection_enabled`,
+  `ai_depth_estimation_enabled`, `ai_segmentation_enabled`) that were
+  consolidated into `ai_enhanced_detection_enabled` for this release —
+  `options` and `schema` had drifted out of sync (an option with no schema
+  entry, and four schema entries with no matching option), which the HA
+  add-on config validator rejects. `schema` now matches `options`/`config.py`
+  exactly.
+
 ## 4.0.2
 
 ### Bug fixes

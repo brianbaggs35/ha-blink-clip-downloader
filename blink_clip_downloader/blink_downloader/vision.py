@@ -698,7 +698,7 @@ class ContactSegmenter:
     ) -> ContactResult | None:
         import cv2  # noqa: PLC0415  # type: ignore[import-not-found]
         import numpy as np  # noqa: PLC0415
-        import torch  # noqa: PLC0415
+        import torch  # noqa: PLC0415  # type: ignore[import-not-found]
         from PIL import Image  # noqa: PLC0415
 
         image = Image.open(io.BytesIO(frame)).convert("RGB")
@@ -843,7 +843,7 @@ class FaceEmbedder:
                 return False
 
     def _embed_sync(self, frame: bytes) -> list[list[float]]:
-        import torch  # noqa: PLC0415
+        import torch  # noqa: PLC0415  # type: ignore[import-not-found]
         from PIL import Image  # noqa: PLC0415
 
         image = Image.open(io.BytesIO(frame)).convert("RGB")

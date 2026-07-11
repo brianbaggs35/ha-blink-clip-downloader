@@ -452,11 +452,8 @@ schema:
   ai_car_cameras:
     - "str?"
   ai_prompt_debug_enabled: "bool"
-  ai_cv_preprocessing_enabled: "bool"
-  ai_object_detection_enabled: "bool"
+  ai_enhanced_detection_enabled: "bool"
   ai_object_detection_model: "str?"
-  ai_depth_estimation_enabled: "bool"
-  ai_segmentation_enabled: "bool"
   ai_face_recognition_enabled: "bool"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"

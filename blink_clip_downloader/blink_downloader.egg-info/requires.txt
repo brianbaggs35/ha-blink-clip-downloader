@@ -8,6 +8,7 @@ aiosmtplib>=5.1.2
 Pillow>=12.3.0
 anthropic>=0.116.0
 openai>=2.44.0
+numpy>=2.1.0
 
 [test]
 pytest>=9.1.1

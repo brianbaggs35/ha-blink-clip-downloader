@@ -19,6 +19,7 @@ dependencies = [
     "Pillow>=12.3.0",
     "anthropic>=0.116.0",
     "openai>=2.44.0",
+    "numpy>=2.1.0",
 ]
 
 [project.optional-dependencies]
@@ -30,10 +31,13 @@ test = [
     "PyYAML>=6.0.1",
 ]
 # Optional computer-vision enhancement pipeline (see vision.py and the
-# ai_object_detection_enabled/ai_depth_estimation_enabled/
-# ai_segmentation_enabled/ai_face_recognition_enabled config options — all
-# off by default). Not needed to run or test the add-on's core features;
+# ai_enhanced_detection_enabled/ai_face_recognition_enabled config options —
+# both off by default). Not needed to run or test the add-on's core features;
 # only install this extra if you want to exercise the CV pipeline locally.
+# numpy is NOT part of this extra — it's a core dependency above, since
+# tests/test_vision.py exercises real array/image plumbing unconditionally
+# (only torch/ultralytics/opencv/transformers/facenet-pytorch are mocked
+# there) and it's lightweight compared to the packages below.
 # See the Dockerfile for the exact install order/flags this mirrors and why
 # each is needed:
 #   1. torch + torchvision from https://download.pytorch.org/whl/cpu (both —
