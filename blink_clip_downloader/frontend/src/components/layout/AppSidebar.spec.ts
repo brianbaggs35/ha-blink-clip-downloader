@@ -92,6 +92,14 @@ describe('AppSidebar', () => {
     expect(wrapper.find('[data-camera="front"]').exists()).toBe(false)
   })
 
+  it('shows 0 (not blank) for a camera with no clips yet', async () => {
+    const library = useLibraryStore()
+    library.setCameras([{ camera: 'front', total: 0, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }])
+    const wrapper = mountSidebar('library')
+    expect(wrapper.find('[data-camera="front"]').text()).toContain('0')
+    expect(wrapper.find('[data-camera="all"]').text()).toContain('0')
+  })
+
   it('selecting a camera updates the shared library store', async () => {
     const library = useLibraryStore()
     library.setCameras([{ camera: 'front', total: 3, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }])

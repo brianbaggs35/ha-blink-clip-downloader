@@ -613,7 +613,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._fast_poll_until = time.monotonic() + self._config.fast_poll_duration
         _LOGGER.debug("Post-motion delay elapsed — fast-poll mode activated")
 
-    async def _trigger_immediate_download(self) -> None:
+    def _trigger_immediate_download(self) -> None:
         """Called by the media server's Sync Now button."""
         self._fast_poll_until = time.monotonic() + 30
         _LOGGER.info("Immediate download triggered via web UI")
@@ -701,9 +701,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         await self._shutdown_step("media_server.stop", self._media_server.stop())
         await self._shutdown_step("event_watcher.stop", self._event_watcher.stop())
         if self._analysis_queue:
-            await self._shutdown_step(
-                "analysis_queue.stop", self._analysis_queue.stop()
-            )
+            self._analysis_queue.stop()
         if self._analyzer:
             await self._shutdown_step("analyzer.close", self._analyzer.close())
             if self._analyzer.escalation_analyzer is not None:

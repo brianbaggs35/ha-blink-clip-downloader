@@ -1995,7 +1995,7 @@ class ClipAnalyzer(BaseAnalyzer):
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
@@ -2011,7 +2011,7 @@ class ClipAnalyzer(BaseAnalyzer):
     async def health_check(self) -> bool:
         """Check if Ollama is reachable."""
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.get(
                 f"{self._ollama_url}/api/tags", timeout=_HEALTH_TIMEOUT
             ) as resp:
@@ -2022,7 +2022,7 @@ class ClipAnalyzer(BaseAnalyzer):
     async def fetch_models(self) -> list[dict[str, Any]]:
         """Fetch vision-capable models from Ollama, sorted best-first."""
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.get(
                 f"{self._ollama_url}/api/tags", timeout=_HEALTH_TIMEOUT
             ) as resp:
@@ -2059,7 +2059,7 @@ class ClipAnalyzer(BaseAnalyzer):
         }
 
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{self._ollama_url}/api/generate",
                 json=payload,
@@ -2130,7 +2130,7 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
     def provider_name(self) -> str:
         return "ollama_cloud"
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             headers: dict[str, str] = {}
             if self._api_key:
@@ -2178,7 +2178,7 @@ class _MoondreamDetectionMixin:
     # case-insensitive, tolerant of an optional "license" prefix and a
     # colon/dash/# separator before the plate value itself.
     _PLATE_MENTION_RE = re.compile(
-        r"(?:license\s+)?plate\s*[:#-]?\s*[A-Za-z0-9][A-Za-z0-9 -]{0,10}[A-Za-z0-9]",
+        r"(?:license\s+)?plate\s*[:#-]?\s*[A-Za-z0-9](?:[ -]?[A-Za-z0-9]){1,10}",
         re.IGNORECASE,
     )
 
@@ -2199,7 +2199,7 @@ class _MoondreamDetectionMixin:
         """
         stripped = cls._PLATE_MENTION_RE.sub("", car_description)
         stripped = re.sub(r"\s{2,}", " ", stripped)
-        stripped = re.sub(r"\s*,\s*,\s*", ", ", stripped).strip(" ,.-")
+        stripped = re.sub(r"\s*(?:,\s*){2}", ", ", stripped).strip(" ,.-")
         return stripped or car_description
 
     @staticmethod
@@ -2582,7 +2582,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         """
         self._finetune_model = model_id
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
@@ -2605,7 +2605,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             _LOGGER.warning("Moondream Cloud: no API key configured")
             return self._store_health_check_result(False)
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.get(
                 "https://api.moondream.ai/",
                 timeout=_HEALTH_TIMEOUT,
@@ -2666,7 +2666,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             "Content-Type": "application/json",
         }
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{self._BASE_URL}/detect",
                 json=payload,
@@ -2718,7 +2718,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             "Content-Type": "application/json",
         }
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{self._BASE_URL}/caption",
                 json=payload,
@@ -2798,7 +2798,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             "Content-Type": "application/json",
         }
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{self._BASE_URL}/query",
                 json=payload,
@@ -3403,7 +3403,7 @@ class MoondreamFineTuneManager:
             "Content-Type": "application/json",
         }
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
@@ -3432,7 +3432,7 @@ class MoondreamFineTuneManager:
             return None
         payload: dict[str, Any] = {"name": name, "rank": rank}
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{self._TUNING_BASE_URL}/finetunes",
                 json=payload,
@@ -3459,7 +3459,7 @@ class MoondreamFineTuneManager:
         if cursor:
             params["cursor"] = cursor
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.get(
                 f"{self._TUNING_BASE_URL}/finetunes",
                 params=params,
@@ -3477,7 +3477,7 @@ class MoondreamFineTuneManager:
     async def get_finetune(self, finetune_id: str) -> dict[str, Any] | None:
         """Return details for a specific fine-tune, or ``None`` if not found."""
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.get(
                 f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}",
                 headers=self._headers(),
@@ -3495,7 +3495,7 @@ class MoondreamFineTuneManager:
     async def delete_finetune(self, finetune_id: str) -> bool:
         """Soft-delete a fine-tune and all its checkpoints."""
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.delete(
                 f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}",
                 headers=self._headers(),
@@ -3554,7 +3554,7 @@ class MoondreamFineTuneManager:
             payload["ground_truth"] = ground_truth
 
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{self._TUNING_BASE_URL}/rollouts",
                 json=payload,
@@ -3613,7 +3613,7 @@ class MoondreamFineTuneManager:
             "learning_rate": learning_rate,
         }
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{self._TUNING_BASE_URL}/train_step",
                 json=payload,
@@ -3693,7 +3693,7 @@ class MoondreamFineTuneManager:
     async def save_checkpoint(self, finetune_id: str) -> bool:
         """Persist the current model state as a named checkpoint."""
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/checkpoints/save",
                 headers=self._headers(),
@@ -3712,7 +3712,7 @@ class MoondreamFineTuneManager:
         if cursor:
             params["cursor"] = cursor
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.get(
                 f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/checkpoints",
                 params=params,
@@ -3730,7 +3730,7 @@ class MoondreamFineTuneManager:
     async def delete_checkpoint(self, finetune_id: str, step: int) -> bool:
         """Delete a specific checkpoint by training step number."""
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.delete(
                 f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/checkpoints/{step}",
                 headers=self._headers(),
@@ -3747,7 +3747,7 @@ class MoondreamFineTuneManager:
         """Record custom evaluation metrics for a given training step."""
         payload: dict[str, Any] = {"step": step, "metrics": metrics}
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{self._TUNING_BASE_URL}/finetunes/{finetune_id}/metrics",
                 json=payload,

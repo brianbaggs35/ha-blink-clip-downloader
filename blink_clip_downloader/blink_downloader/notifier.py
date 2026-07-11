@@ -9,7 +9,9 @@ import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
 
-_HA_API = "http://supervisor/core/api"
+# Internal HA Supervisor API on the isolated `hassio` Docker network — not
+# exposed externally and does not terminate TLS, so http:// is correct here.
+_HA_API = "http://supervisor/core/api"  # NOSONAR
 _TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
@@ -75,7 +77,7 @@ class HANotifier:
         if not self._webhook_url:
             return False
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 self._webhook_url,
                 json=payload,
@@ -95,7 +97,7 @@ class HANotifier:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    def _get_session(self) -> aiohttp.ClientSession:
         # No default headers here: this session is shared with call_webhook(),
         # which posts to an arbitrary user-configured URL. The Supervisor
         # token is attached per-request in _post() instead, so it's only ever
@@ -106,7 +108,7 @@ class HANotifier:
 
     async def _post(self, url: str, payload: dict[str, Any]) -> bool:
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 url,
                 json=payload,

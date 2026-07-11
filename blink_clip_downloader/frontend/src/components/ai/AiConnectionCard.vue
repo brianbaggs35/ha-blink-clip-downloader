@@ -10,8 +10,8 @@ const props = defineProps<{ status: AiStatus }>()
 
 const toast = useToastStore()
 
-const MODEL_PICKER_PROVIDERS = ['ollama', 'ollama_cloud', 'anthropic', 'openai']
-const showModelPicker = () => MODEL_PICKER_PROVIDERS.includes(props.status.provider || '')
+const MODEL_PICKER_PROVIDERS = new Set(['ollama', 'ollama_cloud', 'anthropic', 'openai'])
+const showModelPicker = () => MODEL_PICKER_PROVIDERS.has(props.status.provider || '')
 
 // ── Model picker ──────────────────────────────────────────
 const models = ref<AiModelEntry[]>([])
@@ -174,7 +174,8 @@ function confPct(r: AnalysisResultDict): number {
       <button class="btn sm" :disabled="fetchingModels" @click="fetchModels">
         {{ fetchingModels ? '⏳ Loading…' : '⟳ Fetch Models' }}
       </button>
-      <select v-model="selectedModel" class="sel" style="min-width: 175px">
+      <label for="ai-model-picker" class="sr-only">Vision model</label>
+      <select id="ai-model-picker" v-model="selectedModel" class="sel" style="min-width: 175px">
         <option value="">Select a model…</option>
         <option v-for="(m, i) in models" :key="m.name" :value="m.name">{{ modelLabel(m, i) }}</option>
       </select>

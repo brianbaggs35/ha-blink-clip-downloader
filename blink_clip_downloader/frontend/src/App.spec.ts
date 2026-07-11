@@ -73,6 +73,24 @@ describe('App', () => {
     wrapper.unmount()
   })
 
+  it('switches to the AI tab', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="ai"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-ai').classes()).toContain('active')
+    wrapper.unmount()
+  })
+
+  it('switches to the Usage tab', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="usage"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-usage').classes()).toContain('active')
+    wrapper.unmount()
+  })
+
   it('switches to the Models tab', async () => {
     const wrapper = mountApp()
     await wrapper.find('[data-tab="models"]').trigger('click')
@@ -88,6 +106,17 @@ describe('App', () => {
 
     await wrapper.find('[title="Keyboard shortcuts (?)"]').trigger('click')
     expect(helpOverlay?.classes()).toContain('open')
+    wrapper.unmount()
+  })
+
+  it('closes the help overlay via its own close button', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await flushPromises()
+    await wrapper.find('[title="Keyboard shortcuts (?)"]').trigger('click')
+    const helpOverlay = wrapper.findAll('.modal-bg').find((el) => el.text().includes('Keyboard Shortcuts'))!
+    await helpOverlay.find('.modal-close').trigger('click')
+    expect(helpOverlay.classes()).not.toContain('open')
     wrapper.unmount()
   })
 })

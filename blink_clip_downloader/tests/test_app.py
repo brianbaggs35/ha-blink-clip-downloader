@@ -437,14 +437,14 @@ async def test_shutdown_closes_analysis_queue_analyzer_and_dispatcher_when_prese
     otherwise never exercised."""
     app._tracker.save = MagicMock()
     app._analysis_queue = MagicMock()
-    app._analysis_queue.stop = AsyncMock()
+    app._analysis_queue.stop = MagicMock()
     app._analyzer = MagicMock()
     app._analyzer.close = AsyncMock()
     app._analyzer.escalation_analyzer = None
 
     await app._shutdown()
 
-    app._analysis_queue.stop.assert_awaited_once()
+    app._analysis_queue.stop.assert_called_once()
     app._analyzer.close.assert_awaited_once()
 
 
@@ -775,7 +775,7 @@ async def test_run_starts_media_server_event_watcher_and_analysis_queue(app, tmp
     app._event_watcher.stop = AsyncMock()
     app._analysis_queue = MagicMock()
     app._analysis_queue.start = AsyncMock()
-    app._analysis_queue.stop = AsyncMock()
+    app._analysis_queue.stop = MagicMock()
 
     async def _fake_poll():
         # Let the just-launched background tasks get a turn before we stop
@@ -791,7 +791,7 @@ async def test_run_starts_media_server_event_watcher_and_analysis_queue(app, tmp
     app._media_server.start.assert_awaited_once()
     app._event_watcher.start.assert_awaited_once()
     app._analysis_queue.start.assert_awaited_once()
-    app._analysis_queue.stop.assert_awaited_once()
+    app._analysis_queue.stop.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -821,7 +821,7 @@ async def test_trigger_immediate_download_activates_fast_poll(app):
     """The media server's Sync Now button calls this to force a near-term
     poll rather than waiting out the full poll_interval."""
     before = _time.monotonic()
-    await app._trigger_immediate_download()
+    app._trigger_immediate_download()
     assert app._fast_poll_until >= before + 29
 
 

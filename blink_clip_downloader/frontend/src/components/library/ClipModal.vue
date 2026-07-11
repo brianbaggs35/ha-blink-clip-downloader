@@ -261,7 +261,14 @@ onUnmounted(() => {
         </div>
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem">
-            <input v-model="tagInput" class="tag-input" placeholder="Add tag + Enter" @keydown="onTagInputKeydown" />
+            <label for="clip-tag-input" class="sr-only">Add tag</label>
+            <input
+              id="clip-tag-input"
+              v-model="tagInput"
+              class="tag-input"
+              placeholder="Add tag + Enter"
+              @keydown="onTagInputKeydown"
+            />
             <span style="font-size: 0.72rem; color: var(--muted)">
               <span class="kbd">Space</span> play &nbsp; <span class="kbd">←→</span> ±10s &nbsp;
               <span class="kbd">F</span> full &nbsp; <span class="kbd">M</span> mute &nbsp;

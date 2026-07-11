@@ -12,7 +12,9 @@ const accuracyPct = computed(() => {
 const accuracyColor = computed(() => {
   const pct = accuracyPct.value
   if (pct == null) return 'var(--muted)'
-  return pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warn)' : 'var(--danger)'
+  if (pct >= 80) return 'var(--success)'
+  if (pct >= 50) return 'var(--warn)'
+  return 'var(--danger)'
 })
 
 async function load() {

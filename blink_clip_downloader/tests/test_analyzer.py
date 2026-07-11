@@ -583,7 +583,7 @@ def test_ollama_cloud_provider_name() -> None:
 async def test_ollama_cloud_session_has_auth_header() -> None:
     """The aiohttp session is created with the Authorization header."""
     a = OllamaCloudAnalyzer(api_key="my-secret-key", model="llava:7b", prompt="test")
-    session = await a._get_session()
+    session = a._get_session()
     assert "Authorization" in dict(session.headers)
     assert "my-secret-key" in dict(session.headers)["Authorization"]
     await a.close()
@@ -591,7 +591,7 @@ async def test_ollama_cloud_session_has_auth_header() -> None:
 
 async def test_ollama_cloud_session_no_auth_header_when_no_key() -> None:
     a = OllamaCloudAnalyzer(api_key="", model="llava:7b", prompt="test")
-    session = await a._get_session()
+    session = a._get_session()
     assert "Authorization" not in dict(session.headers)
     await a.close()
 
@@ -2040,7 +2040,7 @@ async def test_clip_analyzer_get_session_creates_session(
 ) -> None:
     """_get_session creates a real ClientSession when _session is None."""
     analyzer._session = None
-    session = await analyzer._get_session()
+    session = analyzer._get_session()
     assert session is not None
     await session.close()
 
@@ -2063,7 +2063,7 @@ async def test_fetch_models_returns_empty_on_http_error(analyzer: ClipAnalyzer) 
 async def test_moondream_cloud_get_session_creates_session() -> None:
     a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
     a._session = None
-    session = await a._get_session()
+    session = a._get_session()
     assert session is not None
     await session.close()
 
@@ -6432,7 +6432,7 @@ def test_get_model_id_zero_step() -> None:
 
 async def test_ft_manager_get_session_creates_session() -> None:
     m = MoondreamFineTuneManager(api_key="key")
-    session = await m._get_session()
+    session = m._get_session()
     assert session is not None
     await m.close()
 

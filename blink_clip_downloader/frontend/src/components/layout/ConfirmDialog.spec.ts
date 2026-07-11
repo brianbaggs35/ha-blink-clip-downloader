@@ -58,4 +58,12 @@ describe('ConfirmDialog', () => {
     await body().find('.p-dialog-close-button').trigger('click')
     await expect(promise).resolves.toBe(false)
   })
+
+  it('a stray dismiss while already closed is a no-op', async () => {
+    const wrapper = mountDialog()
+    const store = useConfirmStore()
+    expect(store.open).toBe(false)
+    await wrapper.findComponent({ name: 'Dialog' }).vm.$emit('update:visible', false)
+    expect(store.open).toBe(false)
+  })
 })

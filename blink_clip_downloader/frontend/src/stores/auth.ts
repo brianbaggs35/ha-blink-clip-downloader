@@ -40,6 +40,42 @@ export const useAuthStore = defineStore('auth', {
     stopPolling() {
       clearInterval(this.pollHandle)
     },
+    // Handles the post-fetch state sync for the `needs_2fa` branch of
+    // check() — split out purely to keep check() under the cognitive
+    // complexity limit; behavior is unchanged.
+    _syncNeedsTwoFA(prev: TwoFAState, status: AuthStatus) {
+      this.bannerVisible = false
+      if (prev !== 'needs_2fa') {
+        this.twoFAMessage = ''
+        this.pendingSeq = 0
+      }
+      // If the submission we were waiting on came back rejected, let the
+      // user try again instead of leaving the form stuck on "Verifying…".
+      if (this.pendingSeq && status.two_fa_result_seq === this.pendingSeq) {
+        if (status.two_fa_result_ok === false) {
+          this.twoFAMessage = status.message || 'Incorrect verification code. Please try again.'
+          this.twoFAMessageIsError = true
+          this.twoFAPhase = 'idle'
+        }
+        this.pendingSeq = 0
+      }
+    },
+    _syncError(status: AuthStatus) {
+      this.pendingSeq = 0
+      const msg = status.message || 'Blink authentication failed.'
+      if (msg !== this.dismissedMessage) {
+        this.bannerMessage = msg
+        this.bannerVisible = true
+      }
+    },
+    _syncConnectedOrDisconnected(prev: TwoFAState) {
+      if ((prev === 'needs_2fa' || prev === 'error') && this.state === 'connected') {
+        useToastStore().show('Signed in to Blink ✓')
+      }
+      this.bannerVisible = false
+      this.dismissedMessage = null
+      this.pendingSeq = 0
+    },
     async check() {
       let status: AuthStatus
       try {
@@ -52,35 +88,11 @@ export const useAuthStore = defineStore('auth', {
       this.state = status.state || 'disconnected'
 
       if (this.state === 'needs_2fa') {
-        this.bannerVisible = false
-        if (prev !== 'needs_2fa') {
-          this.twoFAMessage = ''
-          this.pendingSeq = 0
-        }
-        // If the submission we were waiting on came back rejected, let the
-        // user try again instead of leaving the form stuck on "Verifying…".
-        if (this.pendingSeq && status.two_fa_result_seq === this.pendingSeq) {
-          if (status.two_fa_result_ok === false) {
-            this.twoFAMessage = status.message || 'Incorrect verification code. Please try again.'
-            this.twoFAMessageIsError = true
-            this.twoFAPhase = 'idle'
-          }
-          this.pendingSeq = 0
-        }
+        this._syncNeedsTwoFA(prev, status)
       } else if (this.state === 'error') {
-        this.pendingSeq = 0
-        const msg = status.message || 'Blink authentication failed.'
-        if (msg !== this.dismissedMessage) {
-          this.bannerMessage = msg
-          this.bannerVisible = true
-        }
+        this._syncError(status)
       } else {
-        if ((prev === 'needs_2fa' || prev === 'error') && this.state === 'connected') {
-          useToastStore().show('Signed in to Blink ✓')
-        }
-        this.bannerVisible = false
-        this.dismissedMessage = null
-        this.pendingSeq = 0
+        this._syncConnectedOrDisconnected(prev)
       }
     },
     dismissBanner() {

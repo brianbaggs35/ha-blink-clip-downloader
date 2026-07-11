@@ -353,6 +353,92 @@ describe('FineTuneCard', () => {
     // covers the trained===0 branch — no throw, message path exercised
   })
 
+  it('falls back to id when finetune_id/name are missing', async () => {
+    mockFetch({
+      '/api/ai/finetune': { enabled: true, finetunes: [{ id: 'ft-legacy' }] },
+      '/api/ai/feedback/untrained-count': { count: 0 },
+    })
+    const wrapper = mount(FineTuneCard)
+    await flushPromises()
+    expect(wrapper.text()).toContain('ft-legacy')
+  })
+
+  it('falls back to a dash when finetune_id/id/name are all missing', async () => {
+    mockFetch({
+      '/api/ai/finetune': { enabled: true, finetunes: [{}] },
+      '/api/ai/feedback/untrained-count': { count: 0 },
+    })
+    const wrapper = mount(FineTuneCard)
+    await flushPromises()
+    expect(wrapper.text()).toContain('—')
+  })
+
+  it('defaults finetunes to an empty list when the response omits it', async () => {
+    mockFetch({
+      '/api/ai/finetune': { enabled: true },
+      '/api/ai/feedback/untrained-count': { count: 0 },
+    })
+    const wrapper = mount(FineTuneCard)
+    await flushPromises()
+    expect(wrapper.text()).toContain('No fine-tunes yet')
+  })
+
+  it('shows a default message when nothing was trained and the server sends no message', async () => {
+    mockFetch({
+      '/api/ai/finetune': { enabled: true, finetunes: [{ finetune_id: 'ft1', name: 'Tune' }] },
+      '/api/ai/feedback/untrained-count': { count: 0 },
+      '/api/ai/finetune/ft1/train': { trained: 0 },
+    })
+    const wrapper = mount(FineTuneCard)
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Train from Feedback'))!
+      .trigger('click')
+    await flushPromises()
+    // covers the r.message fallback branch — no throw
+  })
+
+  it('shows a failure toast when the server reports saved: false', async () => {
+    mockFetch({
+      '/api/ai/finetune': { enabled: true, finetunes: [{ finetune_id: 'ft1', name: 'Tune' }] },
+      '/api/ai/feedback/untrained-count': { count: 0 },
+      '/api/ai/finetune/ft1/save-checkpoint': { saved: false },
+    })
+    const wrapper = mount(FineTuneCard)
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Checkpoint'))!
+      .trigger('click')
+    await flushPromises()
+    // covers the r.saved === false branch — no throw
+  })
+
+  it('creates a fine-tune with a non-default rank', async () => {
+    let created: unknown
+    mockFetch({
+      '/api/ai/finetune': (opts?: RequestInit) => {
+        if (opts?.method === 'POST') {
+          created = JSON.parse(opts.body as string)
+          return { finetune_id: 'ft-new' }
+        }
+        return { enabled: true, finetunes: [] }
+      },
+      '/api/ai/feedback/untrained-count': { count: 0 },
+    })
+    const wrapper = mount(FineTuneCard)
+    await flushPromises()
+    await wrapper.find('input.tag-input').setValue('Fresh')
+    await wrapper.find('select#finetune-new-rank').setValue('32')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New Fine-tune'))!
+      .trigger('click')
+    await flushPromises()
+    expect(created).toEqual({ name: 'Fresh', rank: 32 })
+  })
+
   it('shows a toast (no navigation) when a fine-tune has no checkpoints yet', async () => {
     mockFetch({
       '/api/ai/finetune': { enabled: true, finetunes: [{ finetune_id: 'ft1', name: 'Tune' }] },

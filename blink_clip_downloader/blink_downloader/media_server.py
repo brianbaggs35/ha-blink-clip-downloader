@@ -11,7 +11,7 @@ import platform
 import sys
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
@@ -3102,7 +3102,7 @@ class MediaServer:
         db: ClipDatabase,
         download_path: Path,
         port: int,
-        trigger_download: Callable[[], Awaitable[None]] | None = None,
+        trigger_download: Callable[[], None] | None = None,
         two_fa_callback: Callable[[str], int] | None = None,
         auth_state_getter: Callable[[], dict] | None = None,
         analyzer: BaseAnalyzer | None = None,
@@ -3254,9 +3254,16 @@ class MediaServer:
 
     # ------------------------------------------------------------------
     # Handlers
+    #
+    # aiohttp always invokes route handlers as `await handler(request)`, so
+    # every handler registered with `app.router.add_*` must stay `async def`
+    # even when its body happens not to await anything — making one `def`
+    # breaks dispatch for that route. A few handlers below (flagged by
+    # SonarQube as "async without await") fall in that category; each is
+    # marked NOSONAR rather than de-asynced.
     # ------------------------------------------------------------------
 
-    async def _handle_index(self, request: web.Request) -> web.Response:
+    async def _handle_index(self, request: web.Request) -> web.Response:  # NOSONAR
         # HA ingress sends X-Ingress-Path so the JS can prefix all API calls.
         # For direct port access the header is absent and the prefix is empty.
         # The header value is attacker-controlled on any deployment where a
@@ -3281,7 +3288,9 @@ class MediaServer:
         html = index_file.read_text().replace("'__HAROOT__'", safe_literal)
         return web.Response(text=html, content_type="text/html")
 
-    async def _handle_favicon(self, _request: web.Request) -> web.StreamResponse:
+    async def _handle_favicon(
+        self, _request: web.Request
+    ) -> web.StreamResponse:  # NOSONAR
         favicon = _STATIC_DIR / "favicon.svg"
         if not favicon.exists():
             raise web.HTTPNotFound()
@@ -3289,7 +3298,7 @@ class MediaServer:
             favicon, headers={"Cache-Control": "public, max-age=86400"}
         )
 
-    async def _handle_health(self, _request: web.Request) -> web.Response:
+    async def _handle_health(self, _request: web.Request) -> web.Response:  # NOSONAR
         return web.json_response({"status": "ok"})
 
     async def _handle_list_clips(self, request: web.Request) -> web.Response:
@@ -3480,7 +3489,9 @@ class MediaServer:
             headers={"Content-Disposition": 'attachment; filename="blink-clips.zip"'},
         )
 
-    async def _handle_auth_status(self, _request: web.Request) -> web.Response:
+    async def _handle_auth_status(
+        self, _request: web.Request
+    ) -> web.Response:  # NOSONAR
         if self._auth_state_getter:
             status = self._auth_state_getter()
         else:
@@ -3502,7 +3513,7 @@ class MediaServer:
 
     async def _handle_download_now(self, _request: web.Request) -> web.Response:
         if self._trigger_download:
-            await self._trigger_download()
+            self._trigger_download()
             return web.json_response({"triggered": True})
         try:
             Path("/data/trigger_download").touch()
@@ -3733,7 +3744,7 @@ class MediaServer:
             {"success": ok, "message": message}, status=200 if ok else 400
         )
 
-    async def _handle_moondream_install_status(
+    async def _handle_moondream_install_status(  # NOSONAR
         self, _request: web.Request
     ) -> web.Response:
         return web.json_response(
@@ -3744,7 +3755,9 @@ class MediaServer:
             }
         )
 
-    async def _handle_moondream_install(self, _request: web.Request) -> web.Response:
+    async def _handle_moondream_install(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
         global _moondream_install_state  # noqa: PLW0603
 
         if not _moondream_arch_supported():

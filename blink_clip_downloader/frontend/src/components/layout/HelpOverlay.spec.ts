@@ -8,7 +8,7 @@ describe('HelpOverlay', () => {
     expect(wrapper.classes()).toContain('open')
     expect(wrapper.text()).toContain('Play / pause')
     expect(wrapper.text()).toContain('Show / hide this overlay')
-    expect(wrapper.findAll('tr')).toHaveLength(8)
+    expect(wrapper.findAll('tbody tr')).toHaveLength(8)
   })
 
   it('closes via the close button, emitting update:modelValue(false)', async () => {

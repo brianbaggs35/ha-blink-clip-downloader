@@ -34,7 +34,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 function submit() {
-  void auth.submitTwoFA(code.value)
+  auth.submitTwoFA(code.value)
 }
 </script>
 
@@ -48,7 +48,9 @@ function submit() {
           sign-in.
         </p>
         <div style="display: flex; gap: 0.5rem; align-items: stretch">
+          <label for="two-fa-code" class="sr-only">Verification code</label>
           <input
+            id="two-fa-code"
             ref="inputEl"
             v-model="code"
             type="text"

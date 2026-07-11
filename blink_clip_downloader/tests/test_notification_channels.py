@@ -411,7 +411,7 @@ async def test_get_session_creates_when_none() -> None:
         "blink_downloader.notification_channels.aiohttp.ClientSession",
         return_value=mock_session,
     ):
-        session = await dispatcher._get_session()
+        session = dispatcher._get_session()
 
     assert session is mock_session
 

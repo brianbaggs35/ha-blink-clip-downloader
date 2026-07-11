@@ -69,6 +69,20 @@ describe('AiConnectionCard', () => {
     expect(wrapper.text()).toContain('online')
   })
 
+  it('shows escalation info with an unreachable tier-2 and an unlabeled provider', () => {
+    const wrapper = mount(AiConnectionCard, {
+      props: {
+        status: baseStatus({
+          escalation_provider: 'some_future_provider' as never,
+          escalation_model: '',
+          escalation_online: false,
+        }),
+      },
+    })
+    expect(wrapper.text()).toContain('some_future_provider')
+    expect(wrapper.text()).toContain('unreachable — falling back to tier 1')
+  })
+
   it('shows the model picker for ollama/openai/anthropic providers and fetches models', async () => {
     vi.stubGlobal(
       'fetch',
@@ -86,6 +100,32 @@ describe('AiConnectionCard', () => {
     expect(
       options.some((o) => o.text().includes('model-a') && o.text().includes('4.0 GB') && o.text().includes('Best')),
     ).toBe(true)
+  })
+
+  it('shows a toast when the server has no vision models', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [] }))),
+    )
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('select.sel').exists()).toBe(true)
+  })
+
+  it('re-fetching models does not clobber an already-selected model', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [{ name: 'model-a' }, { name: 'model-b' }] }))),
+    )
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
+    const fetchBtn = wrapper.find('button')
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    await wrapper.find('select.sel').setValue('model-b')
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    expect((wrapper.find('select.sel').element as HTMLSelectElement).value).toBe('model-b')
   })
 
   it('copies the selected model id to the clipboard', async () => {
@@ -207,7 +247,7 @@ describe('AiConnectionCard', () => {
     vi.useRealTimers()
   })
 
-  it('moondream_local: shows a failed state with a retry button', async () => {
+  it('moondream_local: shows a toast when the install request itself fails', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string, opts?: RequestInit) => {
@@ -225,6 +265,32 @@ describe('AiConnectionCard', () => {
     await installBtn.trigger('click')
     await flushPromises()
     // the failed-toast path is covered; UI stays in installing/failed depending on timing
+  })
+
+  it('moondream_local: shows a failed state with a retry button and log output', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            installed: false,
+            arch_supported: true,
+            install_state: { status: 'failed', log: 'pip install exited 1' },
+          }),
+        ),
+      ),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
+      },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Installation failed')
+    expect(wrapper.text()).toContain('pip install exited 1')
+    const retryBtn = wrapper.findAll('button').find((b) => b.text().includes('Retry Install'))!
+    await retryBtn.trigger('click')
+    expect(wrapper.text()).toContain('Installing')
   })
 
   it('runs a test analysis and shows the result', async () => {
@@ -266,6 +332,44 @@ describe('AiConnectionCard', () => {
     expect(wrapper.text()).toContain('All clear')
   })
 
+  it('runs a test analysis and shows a suspicious result with placeholders for missing fields', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url.startsWith('/api/clips')) return Promise.resolve(jsonResponse([{ id: 'c1', camera: 'front' }]))
+        if (url === '/api/ai/analyze/c1' && opts?.method === 'POST')
+          return Promise.resolve(
+            jsonResponse({
+              clip_id: 'c1',
+              camera: '',
+              model: '',
+              response_text: '',
+              is_suspicious: true,
+              confidence: 0.4,
+              summary: '',
+              frame_count: 0,
+              analysis_duration: 0,
+              analyzed_at: '',
+              tokens_prompt: 0,
+              tokens_completion: 0,
+              anomaly_score: 0,
+              escalation_model: '',
+              escalation_tokens_prompt: 0,
+              escalation_tokens_completion: 0,
+              escalation_provider: '',
+            }),
+          )
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus() } })
+    const testBtn = wrapper.findAll('button').find((b) => b.text().includes('Test Analysis'))!
+    await testBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Suspicious')
+    expect(wrapper.text()).toContain('Model: —')
+  })
+
   it('test analysis: shows a warning when there are no clips yet', async () => {
     vi.stubGlobal(
       'fetch',
@@ -276,6 +380,56 @@ describe('AiConnectionCard', () => {
     await testBtn.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Download a clip first')
+  })
+
+  it('shows the raw model id as a toast when the clipboard write fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [{ name: 'model-a' }] }))),
+    )
+    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    const copyBtn = wrapper.findAll('button').find((b) => b.text().includes('Copy'))!
+    await copyBtn.trigger('click')
+    await flushPromises()
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('model-a')
+  })
+
+  it('lets the user pick a model directly from the dropdown', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [{ name: 'model-a' }, { name: 'model-b' }] }))),
+    )
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    await wrapper.find('select.sel').setValue('model-b')
+    const copyBtn = wrapper.findAll('button').find((b) => b.text().includes('Copy'))!
+    await copyBtn.trigger('click')
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('model-b')
+  })
+
+  it('clears the moondream poll timer when the provider changes away from moondream_local', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({ installed: false, arch_supported: true, install_state: { status: 'installing' } }),
+        ),
+      ),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
+      },
+    })
+    await flushPromises()
+    await wrapper.setProps({ status: baseStatus({ provider: 'anthropic' }) })
+    await flushPromises()
+    vi.useRealTimers()
   })
 
   it('test analysis: shows a failure message when analysis errors', async () => {

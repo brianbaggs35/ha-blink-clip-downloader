@@ -14,7 +14,9 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-_HA_API = "http://supervisor/core/api"
+# Internal HA Supervisor API on the isolated `hassio` Docker network — not
+# exposed externally and does not terminate TLS, so http:// is correct here.
+_HA_API = "http://supervisor/core/api"  # NOSONAR
 _TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
@@ -63,7 +65,7 @@ class NotificationDispatcher:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    def _get_session(self) -> aiohttp.ClientSession:
         # No default headers here: this session is shared with
         # send_discord(), which posts to an arbitrary user-configured Discord
         # webhook URL. The Supervisor token is attached per-request in
@@ -107,7 +109,7 @@ class NotificationDispatcher:
         if not self._mobile_enabled or not self._mobile_target or not self._token:
             return False
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 f"{_HA_API}/services/notify/{self._mobile_target}",
                 json={"title": title, "message": message},
@@ -222,7 +224,7 @@ class NotificationDispatcher:
             ]
         }
         try:
-            session = await self._get_session()
+            session = self._get_session()
             async with session.post(
                 self._discord_url,
                 json=payload,

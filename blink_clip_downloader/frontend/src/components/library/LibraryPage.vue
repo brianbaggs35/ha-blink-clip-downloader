@@ -101,7 +101,9 @@ const diskPct = computed(() => {
 const diskClass = computed(() => {
   const pct = diskPct.value
   if (pct == null) return ''
-  return pct > 90 ? 'danger' : pct > 70 ? 'warn' : ''
+  if (pct > 90) return 'danger'
+  if (pct > 70) return 'warn'
+  return ''
 })
 const libSizeGb = computed(() => ((stats.value?.total_size_bytes ?? 0) / 1_073_741_824).toFixed(2))
 
@@ -214,8 +216,8 @@ async function loadTags() {
 async function loadAiStatus() {
   try {
     const s = await getAiStatus()
-    aiEnabled.value = s.enabled
-    promptDebugEnabled.value = s.prompt_debug_enabled
+    aiEnabled.value = s.enabled ?? false
+    promptDebugEnabled.value = s.prompt_debug_enabled ?? false
   } catch {
     /* non-fatal */
   }
@@ -400,8 +402,10 @@ onUnmounted(() => {
     <div class="lib-filters">
       <IconField class="lib-search">
         <InputIcon><AppIcon name="tab-library" style="width: 15px; height: 15px" /></InputIcon>
+        <label for="search" class="sr-only">Search clips</label>
         <InputText id="search" v-model="search" placeholder="Search clips…" fluid />
       </IconField>
+      <label for="date-range" class="sr-only">Date range</label>
       <Select
         id="date-range"
         v-model="dateRange"
@@ -409,6 +413,7 @@ onUnmounted(() => {
         option-label="label"
         option-value="value"
       />
+      <label for="source-filter" class="sr-only">Source</label>
       <Select
         id="source-filter"
         v-model="sourceFilter"
@@ -416,7 +421,9 @@ onUnmounted(() => {
         option-label="label"
         option-value="value"
       />
+      <label for="tag-filter" class="sr-only">Tag</label>
       <Select id="tag-filter" v-model="tagFilter" :options="tagOptions" option-label="label" option-value="value" />
+      <label for="sort-order" class="sr-only">Sort order</label>
       <Select id="sort-order" v-model="sortOrder" :options="SORT_OPTIONS" option-label="label" option-value="value" />
       <label class="lib-check"><Checkbox v-model="starredOnly" binary /> ★ Starred</label>
       <label class="lib-check"><Checkbox v-model="notifiedOnly" binary /> 🔔 Notified</label>

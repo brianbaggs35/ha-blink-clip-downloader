@@ -58,7 +58,8 @@ class AnalysisQueue:
                 if self._is_in_schedule() and await self._analyzer.health_check():
                     await self._process_pending()
             except asyncio.CancelledError:
-                break
+                _LOGGER.info("Analysis queue stopped")
+                raise
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Analysis queue error: %s", exc)
 
@@ -69,7 +70,7 @@ class AnalysisQueue:
 
         _LOGGER.info("Analysis queue stopped")
 
-    async def stop(self) -> None:
+    def stop(self) -> None:
         self._running = False
 
     @property

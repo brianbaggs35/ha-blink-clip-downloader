@@ -69,6 +69,14 @@ describe('useKeyboardShortcuts', () => {
     expect(confirm.open).toBe(false)
   })
 
+  it('ignores keys that are neither "?" nor Escape', () => {
+    const { helpOpen } = mountHost()
+    const confirm = useConfirmStore()
+    expect(() => dispatchKey('a')).not.toThrow()
+    expect(helpOpen.value).toBe(false)
+    expect(confirm.open).toBe(false)
+  })
+
   it('ignores keydowns originating from an <input>', () => {
     const { helpOpen } = mountHost()
     const input = document.createElement('input')

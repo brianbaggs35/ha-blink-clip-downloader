@@ -62,7 +62,8 @@ export function saveCameraConfigs(configs: CameraConfig[]): Promise<{ saved: boo
 }
 
 export function getFeedbackStats(camera?: string): Promise<FeedbackStats> {
-  return apiGet(`/api/ai/feedback/stats${camera ? `?camera=${encodeURIComponent(camera)}` : ''}`)
+  const query = camera ? `?camera=${encodeURIComponent(camera)}` : ''
+  return apiGet(`/api/ai/feedback/stats${query}`)
 }
 
 export function getFeedbackForClip(clipId: string): Promise<Feedback | null> {

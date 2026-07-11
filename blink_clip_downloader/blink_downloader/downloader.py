@@ -101,7 +101,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         """Authenticate with Blink, reusing cached tokens when possible."""
         self.auth_state = "authenticating"
         self.auth_message = "Connecting to Blink…"
-        session = await self._get_session()
+        session = self._get_session()
 
         login_data: dict[str, Any] = {
             "username": self._config.username,
@@ -636,7 +636,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         Returns the number of bytes written, or None on failure.
         """
         headers = getattr(getattr(self._blink, "auth", None), "header", {}) or {}
-        session = await self._get_session()
+        session = self._get_session()
 
         for attempt in range(1, self._config.retry_attempts + 1):
             try:
@@ -900,7 +900,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
 
         return hardware_id
 
-    async def _get_session(self) -> aiohttp.ClientSession:
+    def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             # blinkpy's OAuth v2 / PKCE login flow makes several chained
             # requests to api.oauth.blink.com (authorize -> signin page ->

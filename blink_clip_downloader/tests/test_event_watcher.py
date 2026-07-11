@@ -203,7 +203,8 @@ async def test_start_exits_cleanly_on_cancel() -> None:
         raise asyncio.CancelledError()
 
     w._connect_and_watch = fake_connect_and_watch
-    await w.start()
+    with pytest.raises(asyncio.CancelledError):
+        await w.start()
     assert w._running is True
 
 

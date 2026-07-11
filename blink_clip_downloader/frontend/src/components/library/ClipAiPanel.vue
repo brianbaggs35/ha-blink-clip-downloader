@@ -205,7 +205,9 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
               v-if="showFeedbackForm"
               style="margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.35rem"
             >
+              <label for="clip-ai-feedback-note" class="sr-only">Feedback note</label>
               <input
+                id="clip-ai-feedback-note"
                 v-model="feedbackNote"
                 class="tag-input"
                 style="width: 100%"

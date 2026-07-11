@@ -61,6 +61,22 @@ describe('useAuthStore', () => {
     expect(auth.pendingSeq).toBe(0)
   })
 
+  it('check(): an accepted submission just clears pendingSeq, leaving phase alone', async () => {
+    const auth = useAuthStore()
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ state: 'needs_2fa' }))
+    await auth.check()
+    auth.pendingSeq = 5
+    auth.twoFAPhase = 'submitted'
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({ state: 'needs_2fa', two_fa_result_seq: 5, two_fa_result_ok: true }),
+    )
+    await auth.check()
+    expect(auth.twoFAPhase).toBe('submitted')
+    expect(auth.twoFAMessageIsError).toBe(false)
+    expect(auth.pendingSeq).toBe(0)
+  })
+
   it('check(): error state shows a dismissible banner, not the overlay', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ state: 'error', message: 'Bad credentials' }))
     const auth = useAuthStore()

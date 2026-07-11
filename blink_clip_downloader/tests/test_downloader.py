@@ -1723,7 +1723,7 @@ async def test_get_session_uses_unsafe_cookie_jar(dl):
     ("safe") CookieJar can drop those cookies, making blinkpy log "Login
     failed" even with correct credentials (fronzbot/blinkpy#1229).
     """
-    session = await dl._get_session()
+    session = dl._get_session()
     try:
         assert session.cookie_jar._unsafe is True
     finally:

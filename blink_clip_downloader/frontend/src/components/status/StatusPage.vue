@@ -28,7 +28,9 @@ const diskPct = computed(() => {
 const diskClass = computed(() => {
   const pct = diskPct.value
   if (pct == null) return 'ok'
-  return pct > 90 ? 'danger' : pct > 70 ? 'warn' : 'ok'
+  if (pct > 90) return 'danger'
+  if (pct > 70) return 'warn'
+  return 'ok'
 })
 const frameStats = computed(() => aiStatus.value?.analysis_stats)
 

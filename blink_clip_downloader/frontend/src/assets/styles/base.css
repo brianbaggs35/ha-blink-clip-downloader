@@ -112,6 +112,22 @@ body.light {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+/* Visually hides an element (typically a <label>) while keeping it in the
+   accessibility tree, for form controls whose compact layout has no room
+   for a visible label. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 *:focus-visible {
   outline: 2px solid var(--accent);
@@ -174,11 +190,9 @@ h3 {
   color: var(--text);
 }
 
-/* Custom scrollbars — thin, unobtrusive, theme-aware */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
+/* Custom scrollbars — thin, unobtrusive, theme-aware (scrollbar-width/color
+   are set on the universal selector above; only the WebKit-specific
+   pseudo-elements are declared here). */
 ::-webkit-scrollbar {
   width: 9px;
   height: 9px;
@@ -760,13 +774,16 @@ h3 {
   display: none;
 }
 .bulk-bar .btn {
-  background: rgba(255, 255, 255, 0.16);
+  /* A dark (not light) translucent overlay on the accent gradient — a
+     white overlay here pushed the effective background too light for
+     #fff text to meet WCAG AA contrast against the gradient. */
+  background: rgba(0, 0, 0, 0.18);
   color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.28);
   box-shadow: none;
 }
 .bulk-bar .btn:hover {
-  background: rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.28);
   filter: none;
   box-shadow: none;
 }

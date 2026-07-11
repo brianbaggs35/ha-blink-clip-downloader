@@ -158,6 +158,44 @@ describe('StatusPage', () => {
     wrapper.unmount()
   })
 
+  it('shows zero values (not blank) for frames/camera/queue/disk-pct fallbacks', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/stats'))
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                ...STATS,
+                disk: { ...STATS.disk, used_bytes: 0, used_mb: 0 },
+              }),
+          })
+        if (url.startsWith('/api/cameras'))
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([{ camera: 'front', total: 0, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }]),
+          })
+        if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve(ACTIVITY) })
+        if (url.startsWith('/api/ai/status'))
+          return Promise.resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                ...AI_STATUS,
+                queue: { ...AI_STATUS.queue, pending: 0 },
+                analysis_stats: { ...AI_STATUS.analysis_stats, frames_analyzed_today: 0 },
+              }),
+          })
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    expect(wrapper.text()).toContain('0 clips — 0 today')
+    expect(wrapper.text()).toContain('Pending')
+  })
+
   it('shows a disk usage card without a quota bar when no quota is configured', async () => {
     vi.stubGlobal(
       'fetch',

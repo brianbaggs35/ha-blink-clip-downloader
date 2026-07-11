@@ -79,6 +79,49 @@ describe('ClipModal', () => {
     expect(wrapper.find('.modal-bg').classes()).not.toContain('open')
   })
 
+  it('star/delete/copy-path/tag-save are no-ops when clipId is null', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: null, aiEnabled: false, promptDebugEnabled: false } })
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    await wrapper.find('.modal-actions').findAll('button')[0].trigger('click') // Star
+    await wrapper.find('.modal-actions').findAll('button')[3].trigger('click') // Delete
+    await wrapper.find('#clip-tag-input').setValue('x')
+    await wrapper.find('#clip-tag-input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    expect(wrapper.emitted('deleted')).toBeUndefined()
+  })
+
+  it('copyPath is a no-op when the loaded clip has no file_path', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1') return Promise.resolve(jsonResponse({ ...CLIP, file_path: '' }))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const copyBtn = wrapper.findAll('button').find((b) => b.text().includes('Path'))!
+    await copyBtn.trigger('click')
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
+  })
+
+  it('shows placeholder dashes when duration/size/source are missing, and downloadName falls back with no timestamp', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1')
+          return Promise.resolve(jsonResponse({ ...CLIP, duration: 0, size_bytes: 0, source: '', timestamp: '' }))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    expect(wrapper.find('.meta-grid').text()).toContain('—')
+    const downloadLink = wrapper.find('a[download]')
+    expect(downloadLink.attributes('download')).toBe('front_.mp4')
+  })
+
   it('opens and loads clip details when clipId is set', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
@@ -217,6 +260,9 @@ describe('ClipModal', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', bubbles: true }))
     await flushPromises()
     expect(fakePlayer.loop).toHaveBeenCalledWith(true)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'L', bubbles: true }))
+    await flushPromises()
+    expect(fakePlayer.loop).toHaveBeenCalledWith(false)
     wrapper.unmount()
   })
 
@@ -248,6 +294,20 @@ describe('ClipModal', () => {
     expect(fakePlayer.currentTime).toHaveBeenCalledWith(10)
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
     expect(fakePlayer.currentTime).toHaveBeenCalledWith(30)
+    wrapper.unmount()
+  })
+
+  it('keyboard: ArrowLeft/ArrowRight fall back to 0 when currentTime/duration are unavailable', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    fakePlayer.currentTime.mockReturnValue(undefined)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    expect(fakePlayer.currentTime).toHaveBeenCalledWith(0)
+    fakePlayer.duration.mockReturnValue(undefined)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    expect(fakePlayer.currentTime).toHaveBeenCalledWith(0)
+    fakePlayer.currentTime.mockReturnValue(0)
+    fakePlayer.duration.mockReturnValue(100)
     wrapper.unmount()
   })
 

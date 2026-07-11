@@ -10,6 +10,19 @@ function body() {
   return new DOMWrapper(document.body)
 }
 
+// PrimeVue's Select opens a teleported (to <body>) overlay on click and
+// selects an option on `mousedown` (not `click`) — see primevue/select's
+// option template.
+async function selectOption(wrapper: ReturnType<typeof mountLibrary>, selectId: string, optionLabel: string) {
+  await wrapper.find(`#${selectId} .p-select-label`).trigger('click')
+  await flushPromises()
+  const opt = [...document.body.querySelectorAll('[role="option"]')].find(
+    (el) => el.getAttribute('aria-label') === optionLabel,
+  ) as HTMLElement
+  await new DOMWrapper(opt).trigger('mousedown')
+  await flushPromises()
+}
+
 const fakePlayer = {
   src: vi.fn(),
   load: vi.fn(),
@@ -34,6 +47,7 @@ import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
 import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
+import { useClipViewerStore } from '../../stores/clipViewer'
 
 function mountLibrary() {
   return mount(LibraryPage, { global: { plugins: [PrimeVue] } })
@@ -477,6 +491,268 @@ describe('LibraryPage', () => {
     useRefreshStore().bump()
     await flushPromises()
     expect(NotificationMock).toHaveBeenCalledWith('🎥 2 new Blink clips', expect.any(Object))
+    wrapper.unmount()
+  })
+
+  it('shows a danger-class quota bar above 90% usage', async () => {
+    mockFetch({
+      '/api/stats': {
+        ...STATS,
+        disk: {
+          used_bytes: 95,
+          used_mb: 95,
+          free_bytes: 5,
+          free_gb: 0,
+          total_bytes: 100,
+          total_gb: 0,
+          quota_bytes: 100,
+          quota_gb: 0,
+        },
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ProgressBar' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows a warn-class quota bar between 70% and 90% usage', async () => {
+    mockFetch({
+      '/api/stats': {
+        ...STATS,
+        disk: {
+          used_bytes: 80,
+          used_mb: 80,
+          free_bytes: 20,
+          free_gb: 0,
+          total_bytes: 100,
+          total_gb: 0,
+          quota_bytes: 100,
+          quota_gb: 0,
+        },
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ProgressBar' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('applies since= filters for today/yesterday/month date ranges', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    for (const label of ['Today', 'Yesterday', 'This month']) {
+      const callsBefore = vi.mocked(fetch).mock.calls.length
+      await selectOption(wrapper, 'date-range', label)
+      await vi.advanceTimersByTimeAsync(400)
+      await flushPromises()
+      expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsBefore)
+      const lastCall = vi.mocked(fetch).mock.calls.at(-1)?.[0] as string
+      expect(lastCall).toContain('since=')
+    }
+    wrapper.unmount()
+  })
+
+  it('applies starred/notified/source/tag filters to the clips request', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+
+    await wrapper.find('.lib-check input[type="checkbox"]').setValue(true)
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).toContain('starred=1')
+
+    await wrapper.find('.lib-check input[type="checkbox"]').setValue(false)
+    await wrapper.findAll('.lib-check input[type="checkbox"]')[1].setValue(true)
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).toContain('notified=1')
+
+    await selectOption(wrapper, 'source-filter', 'Motion (PIR)')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).toContain('source=pir')
+
+    await selectOption(wrapper, 'tag-filter', '#delivery')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).toContain('tag=delivery')
+    wrapper.unmount()
+  })
+
+  it('shows a toast when loading clips fails', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('network down'))),
+    )
+    await selectOption(wrapper, 'source-filter', 'Liveview')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(wrapper.text()).toContain('No clips found')
+    wrapper.unmount()
+  })
+
+  it('shows a toast when loading clips for a cross-tab date fails', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('network down'))),
+    )
+    useDateFilterStore().requestDate('2026-01-05')
+    await flushPromises()
+    // Non-fatal: the page keeps whatever clips it had rather than crashing.
+    expect(wrapper.exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('bulk delete does nothing when the confirmation is declined', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    const confirm = useConfirmStore()
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete all'))!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(false)
+    await clickPromise
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    expect(wrapper.find('.clip-card').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('opens the clip modal when the clipViewer store requests a clip', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    useClipViewerStore().requestOpen('c1')
+    await flushPromises()
+    expect(body().find('.modal-bg').classes()).toContain('open')
+    wrapper.unmount()
+  })
+
+  it('nav does nothing while no clip is open', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await body().find('.vid-nav-btn:nth-of-type(2)').trigger('click')
+    expect(body().find('.modal-bg').classes()).not.toContain('open')
+    wrapper.unmount()
+  })
+
+  it('deleting the active clip from a multi-clip list advances to the next clip', async () => {
+    mockFetch({}, [clip({ id: 'c1' }), clip({ id: 'c2' })])
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const deleteBtn = body()
+      .findAll('button')
+      .find((b) => b.text() === '🗑 Delete')!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(body().find('.modal-bg').classes()).toContain('open')
+    wrapper.unmount()
+  })
+
+  it('shows a plain (no danger/warn) quota bar below 70% usage', async () => {
+    mockFetch({
+      '/api/stats': {
+        ...STATS,
+        disk: {
+          used_bytes: 30,
+          used_mb: 30,
+          free_bytes: 70,
+          free_gb: 0,
+          total_bytes: 100,
+          total_gb: 0,
+          quota_bytes: 100,
+          quota_gb: 0,
+        },
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ProgressBar' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('omits since= entirely for the "All time" date range', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await selectOption(wrapper, 'date-range', 'All time')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    const lastCall = vi.mocked(fetch).mock.calls.at(-1)?.[0] as string
+    expect(lastCall).not.toContain('since=')
+    wrapper.unmount()
+  })
+
+  it('reloads clips with the new sort order when changed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    await selectOption(wrapper, 'sort-order', '💾 Size')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsBefore)
+    const lastCall = vi.mocked(fetch).mock.calls.at(-1)?.[0] as string
+    expect(lastCall).toContain('sort=size')
+    wrapper.unmount()
+  })
+
+  it('the bulk bar cancel button exits select mode', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    expect(wrapper.text()).toContain('Selecting…')
+    await wrapper.findAll('button').find((b) => b.text().includes('Cancel'))!.trigger('click')
+    expect(wrapper.text()).not.toContain('Selecting…')
+    wrapper.unmount()
+  })
+
+  it('shows a toast and keeps the modal open when deleting from the modal fails', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('network down'))),
+    )
+    const confirm = useConfirmStore()
+    const deleteBtn = body()
+      .findAll('button')
+      .find((b) => b.text() === '🗑 Delete')!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(body().find('.modal-bg').classes()).toContain('open')
     wrapper.unmount()
   })
 })

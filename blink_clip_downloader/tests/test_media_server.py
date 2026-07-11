@@ -548,7 +548,7 @@ async def test_export_zip_bad_json(client: TestClient) -> None:
 async def test_download_now_triggers_callback(db: ClipDatabase, tmp_path: Path) -> None:
     triggered = []
 
-    async def fake_trigger():
+    def fake_trigger():
         triggered.append(True)
 
     server = MediaServer(

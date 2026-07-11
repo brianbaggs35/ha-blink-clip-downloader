@@ -261,6 +261,36 @@ class ObjectDetector:
                 _LOGGER.exception("Failed to load YOLO model: %s", exc)
                 return False
 
+    def _detect_in_frame(self, img: Any, idx: int) -> list[DetectedObject]:
+        results = self._model.track(
+            img, persist=True, tracker="bytetrack.yaml", verbose=False
+        )
+        if not results:
+            return []
+        result = results[0]
+        boxes = result.boxes
+        if boxes is None or len(boxes) == 0:
+            return []
+        names = result.names
+        ids = boxes.id
+        detections: list[DetectedObject] = []
+        for i in range(len(boxes)):
+            label = names.get(int(boxes.cls[i]), "")
+            if label not in _RELEVANT_CLASSES:
+                continue
+            x1, y1, x2, y2 = (float(v) for v in boxes.xyxy[i])
+            track_id = int(ids[i]) if ids is not None else None
+            detections.append(
+                DetectedObject(
+                    label=label,
+                    confidence=float(boxes.conf[i]),
+                    box=(x1, y1, x2, y2),
+                    track_id=track_id,
+                    frame_index=idx,
+                )
+            )
+        return detections
+
     def _detect_sync(self, frames: list[bytes]) -> list[DetectedObject]:
         import cv2  # noqa: PLC0415  # type: ignore[import-not-found]
         import numpy as np  # noqa: PLC0415
@@ -271,32 +301,7 @@ class ObjectDetector:
             img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             if img is None:
                 continue
-            results = self._model.track(
-                img, persist=True, tracker="bytetrack.yaml", verbose=False
-            )
-            if not results:
-                continue
-            result = results[0]
-            boxes = result.boxes
-            if boxes is None or len(boxes) == 0:
-                continue
-            names = result.names
-            ids = boxes.id
-            for i in range(len(boxes)):
-                label = names.get(int(boxes.cls[i]), "")
-                if label not in _RELEVANT_CLASSES:
-                    continue
-                x1, y1, x2, y2 = (float(v) for v in boxes.xyxy[i])
-                track_id = int(ids[i]) if ids is not None else None
-                detections.append(
-                    DetectedObject(
-                        label=label,
-                        confidence=float(boxes.conf[i]),
-                        box=(x1, y1, x2, y2),
-                        track_id=track_id,
-                        frame_index=idx,
-                    )
-                )
+            detections.extend(self._detect_in_frame(img, idx))
         return detections
 
     async def detect(self, frames: list[bytes]) -> list[DetectedObject] | None:
@@ -325,7 +330,7 @@ def _box_gap(
     bx1, by1, bx2, by2 = b
     dx = max(bx1 - ax2, ax1 - bx2, 0.0)
     dy = max(by1 - ay2, ay1 - by2, 0.0)
-    if dx == 0.0 and dy == 0.0:
+    if not dx and not dy:
         overlap_x = min(ax2, bx2) - max(ax1, bx1)
         overlap_y = min(ay2, by2) - max(ay1, by1)
         return -min(overlap_x, overlap_y)
@@ -784,7 +789,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
-    if norm_a == 0.0 or norm_b == 0.0:
+    if not norm_a or not norm_b:
         return 0.0
     return dot / (norm_a * norm_b)
 

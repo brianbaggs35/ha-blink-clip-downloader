@@ -203,8 +203,10 @@ function backToList() {
         </template>
       </div>
       <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap">
-        <input v-model="newName" class="tag-input" placeholder="New fine-tune name" />
-        <select v-model.number="newRank" class="sel">
+        <label for="finetune-new-name" class="sr-only">New fine-tune name</label>
+        <input id="finetune-new-name" v-model="newName" class="tag-input" placeholder="New fine-tune name" />
+        <label for="finetune-new-rank" class="sr-only">Fine-tune rank</label>
+        <select id="finetune-new-rank" v-model.number="newRank" class="sel">
           <option :value="8">Rank 8</option>
           <option :value="16">Rank 16</option>
           <option :value="24">Rank 24</option>

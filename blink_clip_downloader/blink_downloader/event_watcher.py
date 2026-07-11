@@ -11,7 +11,9 @@ import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
 
-_WS_URL = "ws://supervisor/core/websocket"
+# Internal HA Supervisor API on the isolated `hassio` Docker network — not
+# exposed externally and does not terminate TLS, so ws:// is correct here.
+_WS_URL = "ws://supervisor/core/websocket"  # NOSONAR
 _RECONNECT_DELAY = 30  # seconds before reconnecting after a drop
 
 
@@ -57,7 +59,8 @@ class HAEventWatcher:
             try:
                 await self._connect_and_watch()
             except asyncio.CancelledError:
-                break
+                _LOGGER.info("HA event watcher stopped")
+                raise
             except Exception as exc:  # noqa: BLE001
                 if self._running:
                     _LOGGER.warning(

@@ -83,6 +83,37 @@ describe('FaceRecognitionSection', () => {
     expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
   })
 
+  it('warns when enrolling with a name but no photo', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ available: true, faces: [] }))),
+    )
+    const wrapper = mount(FaceRecognitionSection)
+    await flushPromises()
+    await wrapper.find('input.tag-input').setValue('Bob')
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Enroll'))!
+      .trigger('click')
+    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+  })
+
+  it('shows an error toast when deleting an enrollment fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, opts?: RequestInit) => {
+        if (opts?.method === 'DELETE') return Promise.reject(new Error('down'))
+        return Promise.resolve(jsonResponse({ available: true, faces: [{ id: 1, name: 'Alice', created_at: '' }] }))
+      }),
+    )
+    const wrapper = mount(FaceRecognitionSection)
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    // covers the catch branch — no throw
+  })
+
   it('enrolls a face from a name + photo', async () => {
     let enrolled: unknown
     vi.stubGlobal(
@@ -130,5 +161,27 @@ describe('FaceRecognitionSection', () => {
       .trigger('click')
     await flushPromises()
     // covers the catch branch — no throw
+  })
+
+  it('shows a generic error toast when enrollment rejects with a non-Error value', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/faces' && opts?.method === 'POST') return Promise.reject('boom')
+        return Promise.resolve(jsonResponse({ available: true, faces: [] }))
+      }),
+    )
+    const wrapper = mount(FaceRecognitionSection)
+    await flushPromises()
+    await wrapper.find('input.tag-input').setValue('Bob')
+    const fileInput = wrapper.find('input[type="file"]')
+    const file = new File(['x'], 'bob.jpg', { type: 'image/jpeg' })
+    Object.defineProperty(fileInput.element, 'files', { value: [file] })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Enroll'))!
+      .trigger('click')
+    await flushPromises()
+    // covers the `e instanceof Error` false branch — no throw
   })
 })

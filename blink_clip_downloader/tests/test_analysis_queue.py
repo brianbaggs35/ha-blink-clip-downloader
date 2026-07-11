@@ -7,6 +7,8 @@ from datetime import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from blink_downloader.analysis_queue import AnalysisQueue
 from blink_downloader.analyzer import AnalysisResult, ClipAnalyzer
 from blink_downloader.database import ClipDatabase
@@ -253,7 +255,7 @@ async def test_stop_sets_running_false(db: ClipDatabase) -> None:
     analyzer = _make_analyzer_mock()
     queue = _make_queue(analyzer, db)
     queue._running = True
-    await queue.stop()
+    queue.stop()
     assert not queue._running
 
 
@@ -272,12 +274,13 @@ async def test_start_runs_loop_and_exits_on_stop(db: ClipDatabase) -> None:
 
 
 async def test_start_exits_on_cancelled_error(db: ClipDatabase) -> None:
-    """CancelledError from health_check breaks the loop without re-raising (lines 58-59, 68)."""
+    """CancelledError from health_check is re-raised after cleanup, not swallowed."""
     analyzer = _make_analyzer_mock()
     analyzer.health_check = AsyncMock(side_effect=asyncio.CancelledError)
     queue = _make_queue(analyzer, db, check_interval=1)
 
-    await queue.start()  # must complete without raising
+    with pytest.raises(asyncio.CancelledError):
+        await queue.start()
 
 
 async def test_start_logs_exception_and_continues(db: ClipDatabase) -> None:

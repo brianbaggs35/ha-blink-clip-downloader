@@ -155,6 +155,26 @@ describe('CameraConfigsSection', () => {
     expect((saved as Array<{ car_zone: unknown }>)[0].car_zone).toBeNull()
   })
 
+  it('edits the description, custom prompt, and is_car_camera checkbox', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]),
+        ),
+      ),
+    )
+    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
+    await flushPromises()
+    const inputs = wrapper.findAll('input.tag-input')
+    await inputs[0].setValue('Front porch')
+    await inputs[1].setValue('Watch for packages')
+    expect((inputs[0].element as HTMLInputElement).value).toBe('Front porch')
+    expect((inputs[1].element as HTMLInputElement).value).toBe('Watch for packages')
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    expect(wrapper.find('.status-card').text()).toContain('Car zone')
+  })
+
   it('shows a toast on save failure', async () => {
     vi.stubGlobal(
       'fetch',

@@ -68,10 +68,10 @@ async function save() {
         is_car_camera: c.is_car_camera,
         car_zone: complete
           ? {
-              x_min: parseFloat(zoneVals[0]) / 100,
-              y_min: parseFloat(zoneVals[1]) / 100,
-              x_max: parseFloat(zoneVals[2]) / 100,
-              y_max: parseFloat(zoneVals[3]) / 100,
+              x_min: Number.parseFloat(zoneVals[0]) / 100,
+              y_min: Number.parseFloat(zoneVals[1]) / 100,
+              x_max: Number.parseFloat(zoneVals[2]) / 100,
+              y_max: Number.parseFloat(zoneVals[3]) / 100,
             }
           : null,
       }
@@ -120,10 +120,13 @@ async function save() {
           <span style="font-weight: 600; font-size: 0.88rem; color: var(--accent)">📷 {{ cfg.camera }}</span>
         </div>
         <div style="margin-bottom: 0.45rem">
-          <label style="font-size: 0.76rem; color: var(--muted); display: block; margin-bottom: 0.2rem"
+          <label
+            :for="`cam-desc-${cfg.camera}`"
+            style="font-size: 0.76rem; color: var(--muted); display: block; margin-bottom: 0.2rem"
             >Camera purpose / description</label
           >
           <input
+            :id="`cam-desc-${cfg.camera}`"
             v-model="cfg.description"
             type="text"
             class="tag-input"
@@ -132,10 +135,14 @@ async function save() {
           />
         </div>
         <div style="margin-bottom: 0.45rem">
-          <label style="font-size: 0.76rem; color: var(--muted); display: block; margin-bottom: 0.2rem">
+          <label
+            :for="`cam-prompt-${cfg.camera}`"
+            style="font-size: 0.76rem; color: var(--muted); display: block; margin-bottom: 0.2rem"
+          >
             Custom AI prompt (overrides global prompt for this camera — optional)
           </label>
           <input
+            :id="`cam-prompt-${cfg.camera}`"
             v-model="cfg.custom_prompt"
             type="text"
             class="tag-input"
@@ -177,12 +184,14 @@ async function save() {
             border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
           "
         >
-          <label style="font-size: 0.76rem; color: var(--muted); display: block; margin-bottom: 0.35rem">
+          <p style="font-size: 0.76rem; color: var(--muted); margin-bottom: 0.35rem">
             Car zone (optional) — roughly where the vehicle normally sits, as % of the frame (0 = left/top edge, 100 =
             right/bottom edge). Sharpens accuracy when detection is ambiguous. Leave blank to skip.
-          </label>
+          </p>
           <div style="display: grid; grid-template-columns: repeat(4, minmax(min(70px, 100%), 1fr)); gap: 0.4rem">
+            <label :for="`cam-zone-xmin-${cfg.camera}`" class="sr-only">Car zone left %</label>
             <input
+              :id="`cam-zone-xmin-${cfg.camera}`"
               v-model="cfg.zone.x_min"
               type="number"
               class="tag-input"
@@ -191,7 +200,9 @@ async function save() {
               max="100"
               step="1"
             />
+            <label :for="`cam-zone-ymin-${cfg.camera}`" class="sr-only">Car zone top %</label>
             <input
+              :id="`cam-zone-ymin-${cfg.camera}`"
               v-model="cfg.zone.y_min"
               type="number"
               class="tag-input"
@@ -200,7 +211,9 @@ async function save() {
               max="100"
               step="1"
             />
+            <label :for="`cam-zone-xmax-${cfg.camera}`" class="sr-only">Car zone right %</label>
             <input
+              :id="`cam-zone-xmax-${cfg.camera}`"
               v-model="cfg.zone.x_max"
               type="number"
               class="tag-input"
@@ -209,7 +222,9 @@ async function save() {
               max="100"
               step="1"
             />
+            <label :for="`cam-zone-ymax-${cfg.camera}`" class="sr-only">Car zone bottom %</label>
             <input
+              :id="`cam-zone-ymax-${cfg.camera}`"
               v-model="cfg.zone.y_max"
               type="number"
               class="tag-input"

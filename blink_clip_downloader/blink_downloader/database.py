@@ -11,11 +11,9 @@ richer query support.
 
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import os
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -201,8 +199,10 @@ def _qm(sql: str) -> str:
     renumbers ``?`` occurrences in final positional order, so dynamically
     assembled queries need no other change to run against PostgreSQL.
     """
-    counter = itertools.count(1)
-    return re.sub(r"\?", lambda _m: f"${next(counter)}", sql)
+    parts = sql.split("?")
+    return parts[0] + "".join(
+        f"${i}{part}" for i, part in enumerate(parts[1:], start=1)
+    )
 
 
 def _affected(status: str) -> int:

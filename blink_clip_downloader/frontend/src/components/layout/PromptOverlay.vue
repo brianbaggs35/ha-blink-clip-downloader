@@ -25,7 +25,7 @@ const store = usePromptOverlayStore()
             border-radius: var(--radius);
             padding: 0.75rem 0.9rem;
             white-space: pre-wrap;
-            word-break: break-word;
+            overflow-wrap: break-word;
             max-height: 60vh;
             overflow-y: auto;
             color: var(--text);

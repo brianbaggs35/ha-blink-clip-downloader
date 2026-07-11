@@ -132,7 +132,8 @@ RUN ( \
             "transformers>=4.56,<5" \
         && pip3 install --no-cache-dir --no-deps "facenet-pytorch>=2.6,<3" \
         2>&1 | tail -20 \
-    ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled and related toggles will report unavailable"
+    ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled \
+and related toggles will report unavailable"
 
 # Optional: moondream local model support (moondream_local provider).
 # Attempted on both architectures as of the 4.1.0 Debian base image switch —

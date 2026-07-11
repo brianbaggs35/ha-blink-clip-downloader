@@ -122,6 +122,20 @@ describe('SuspiciousFeed', () => {
     expect(wrapper.text()).not.toContain('Thanks!')
   })
 
+  it('handles a low-confidence item with no summary/confidence', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([{ ...ITEM, clip_id: 'c2', confidence: undefined, summary: undefined }]),
+        ),
+      ),
+    )
+    const wrapper = mount(SuspiciousFeed)
+    await flushPromises()
+    expect(wrapper.text()).toContain('0%')
+  })
+
   it('exposes reload() for the parent to call after events elsewhere', async () => {
     vi.stubGlobal(
       'fetch',

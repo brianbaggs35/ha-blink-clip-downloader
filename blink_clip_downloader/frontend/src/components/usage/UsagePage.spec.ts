@@ -266,6 +266,42 @@ describe('UsagePage', () => {
     expect(vi.mocked(fetch).mock.calls.length).toBe(callsAfterUnmount)
   })
 
+  it('falls back to placeholders for missing model/day/numeric fields', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse(
+            baseUsage({
+              model: null,
+              by_model: [{ model: null, escalated: false }],
+              daily: [{ day: null }],
+            }),
+          ),
+        ),
+      ),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    const cells = wrapper.findAll('td').map((td) => td.text())
+    expect(cells.filter((t) => t === '—').length).toBeGreaterThanOrEqual(2)
+    expect(cells).toContain('0')
+    wrapper.unmount()
+  })
+
+  it('hides the cost stat when there is priced data but zero tokens', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(jsonResponse(baseUsage({ total_estimated_cost: 0.01, total_tokens: 0 }))),
+      ),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Estimated Cost')
+    wrapper.unmount()
+  })
+
   it('leaves usage null (nothing rendered) when the fetch fails', async () => {
     vi.stubGlobal(
       'fetch',

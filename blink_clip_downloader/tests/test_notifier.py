@@ -280,6 +280,6 @@ async def test_get_session_creates_session_when_none():
     with patch(
         "blink_downloader.notifier.aiohttp.ClientSession", return_value=mock_session
     ) as MockCS:
-        session = await notifier._get_session()
+        session = notifier._get_session()
     MockCS.assert_called_once_with()
     assert session is mock_session

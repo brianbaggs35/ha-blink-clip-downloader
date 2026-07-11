@@ -1,16 +1,16 @@
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import pluginVue from 'eslint-plugin-vue'
-import vueTsConfigs from '@vue/eslint-config-typescript'
+import { defineConfigWithVueTs, vueTsConfigs } from '@vue/eslint-config-typescript'
 import eslintConfigPrettier from 'eslint-config-prettier'
 import globals from 'globals'
 
-export default tseslint.config(
+export default defineConfigWithVueTs(
   { ignores: ['dist/**', '../blink_downloader/static/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...pluginVue.configs['flat/recommended'],
-  vueTsConfigs(),
+  vueTsConfigs.recommended,
   // Disables stylistic rules that would otherwise fight Prettier (line
   // breaks, attribute-per-line, etc.) — Prettier owns formatting, ESLint
   // owns correctness.

@@ -113,8 +113,10 @@ async function enroll() {
       </div>
     </div>
     <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">
-      <input v-model="name" class="tag-input" placeholder="Name" style="max-width: 12rem" />
-      <input ref="fileInput" type="file" accept="image/*" />
+      <label for="face-enroll-name" class="sr-only">Name</label>
+      <input id="face-enroll-name" v-model="name" class="tag-input" placeholder="Name" style="max-width: 12rem" />
+      <label for="face-enroll-photo" class="sr-only">Enrollment photo</label>
+      <input id="face-enroll-photo" ref="fileInput" type="file" accept="image/*" />
       <button class="btn sm" :disabled="enrolling" @click="enroll">
         {{ enrolling ? '⏳ Enrolling…' : '+ Enroll' }}
       </button>

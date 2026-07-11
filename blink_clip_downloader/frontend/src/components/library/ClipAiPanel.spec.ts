@@ -299,6 +299,48 @@ describe('ClipAiPanel', () => {
     })
   })
 
+  it('submits the feedback note without checking corrected-suspicious', async () => {
+    let submittedBody: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST') {
+          submittedBody = JSON.parse(opts.body as string)
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+        if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('👎 Incorrect'))!
+      .trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Submit')!
+      .trigger('click')
+    await flushPromises()
+    expect(submittedBody).toEqual({ correct: false, correction_note: '', corrected_suspicious: undefined })
+  })
+
+  it('falls back to placeholders when model and response text are missing', async () => {
+    mockFetch({ '/api/ai/results/c1': { ...RESULT, model: '', response_text: '' }, '/api/ai/feedback/c1': null })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Model: —')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Full response'))!
+      .trigger('click')
+    expect(wrapper.text()).toContain('📄 Hide response')
+  })
+
   it('cancels the feedback note form', async () => {
     mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })

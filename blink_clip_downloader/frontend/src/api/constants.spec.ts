@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { fmtCost, fmtDur, fmtNum, fmtRelative, fmtSize, fmtTs, providerLabel } from './constants'
 
 describe('providerLabel', () => {
@@ -64,8 +64,16 @@ describe('fmtTs', () => {
     expect(fmtTs(iso)).toBe(new Date(iso).toLocaleString())
   })
 
-  it('falls back to the raw string if Date parsing throws', () => {
+  it('formats an unparseable string as "Invalid Date" (Date itself never throws)', () => {
     expect(fmtTs('not-a-real-date')).toBe(new Date('not-a-real-date').toLocaleString())
+  })
+
+  it('falls back to the raw string if toLocaleString throws', () => {
+    const spy = vi.spyOn(Date.prototype, 'toLocaleString').mockImplementation(() => {
+      throw new Error('boom')
+    })
+    expect(fmtTs('2026-01-05T12:00:00Z')).toBe('2026-01-05T12:00:00Z')
+    spy.mockRestore()
   })
 })
 
