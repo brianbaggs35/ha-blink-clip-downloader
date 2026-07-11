@@ -318,125 +318,152 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         results: list[dict[str, Any]] = []
 
         for sync_name, sync in self._blink.sync.items():
-            # BlinkOwl / BlinkLotus (standalone mini cameras) don't have USB.
-            if not getattr(sync, "local_storage", False):
-                _LOGGER.debug(
-                    "Sync module %r: local storage not active — skipping",
-                    sync_name,
-                )
-                continue
-
-            try:
-                await sync.update_local_storage_manifest()
-            except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
-                _LOGGER.warning(
-                    "Could not refresh local-storage manifest for %r: %s",
-                    sync_name,
-                    exc,
-                )
-                continue
-
-            manifest = getattr(sync, "_local_storage", {}).get("manifest") or set()
+            manifest = await self._refresh_local_storage_manifest(sync_name, sync)
             if not manifest:
-                _LOGGER.debug(
-                    "Sync module %r: local-storage manifest is empty", sync_name
-                )
                 continue
 
-            _LOGGER.debug(
-                "Sync module %r: %d clip(s) in local-storage manifest",
-                sync_name,
-                len(manifest),
-            )
-
-            for item in manifest:
-                # Prefix "local_" keeps these IDs disjoint from cloud IDs.
-                clip_id = f"local_{item.id}"
-
-                if self._tracker.is_downloaded(clip_id):
-                    continue
-
-                if self._storage.is_over_quota():
-                    _LOGGER.warning(
-                        "Storage quota reached — stopping local-storage download"
-                    )
-                    self._tracker.save()
-                    return results
-
-                camera_name: str = item.name or "Unknown"
-
-                # blinkpy stores created_at as a datetime.datetime object.
-                ts = item.created_at
-                if isinstance(ts, str):
-                    try:
-                        ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    except (ValueError, AttributeError):
-                        ts = datetime.now(timezone.utc)
-
-                dest = self._storage.resolve_path(camera_name, ts, clip_id)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-
-                if dest.exists():
-                    size = dest.stat().st_size
-                    self._tracker.mark_downloaded(clip_id, size)
-                    continue
-
-                try:
-                    _LOGGER.info(
-                        "Preparing local-storage clip %s from %r (~%.1f KB)",
-                        item.id,
-                        camera_name,
-                        int(item.size or 0) / 1024,
-                    )
-                    await item.prepare_download(self._blink)
-                    success = await item.download_video(
-                        self._blink,
-                        str(dest),
-                        max_retries=self._config.retry_attempts,
-                    )
-                except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
-                    _LOGGER.exception(
-                        "Error downloading local-storage clip %s: %s", item.id, exc
-                    )
-                    if dest.exists():
-                        dest.unlink(missing_ok=True)
-                    continue
-
-                if not success:
-                    _LOGGER.warning(
-                        "Local-storage clip %s download failed (retries exhausted)",
-                        item.id,
-                    )
-                    if dest.exists():
-                        dest.unlink(missing_ok=True)
-                    continue
-
-                size = dest.stat().st_size if dest.exists() else 0
-                self._tracker.mark_downloaded(clip_id, size)
-                _LOGGER.info(
-                    "Downloaded local-storage clip %s from %r → %s (%d KB)",
-                    item.id,
-                    camera_name,
-                    dest,
-                    size // 1024,
-                )
-
-                result: dict[str, Any] = {
-                    "id": clip_id,
-                    "camera": camera_name,
-                    "path": str(dest),
-                    "timestamp": ts.isoformat(),
-                    "size_bytes": size,
-                    "network_id": 0,
-                    "duration": 0,
-                    "source": "local_storage",
-                }
-                if self._db:
-                    await self._db.add_clip(result)
-                results.append(result)
+            quota_hit = await self._download_local_storage_manifest(manifest, results)
+            if quota_hit:
+                return results
 
         self._tracker.save()
         return results
+
+    async def _refresh_local_storage_manifest(
+        self, sync_name: str, sync: Any
+    ) -> set | None:
+        """Refresh and return a sync module's local-storage manifest.
+
+        Returns None if this sync module has no USB storage, the refresh
+        failed, or the manifest came back empty — the caller should skip it.
+        """
+        # BlinkOwl / BlinkLotus (standalone mini cameras) don't have USB.
+        if not getattr(sync, "local_storage", False):
+            _LOGGER.debug(
+                "Sync module %r: local storage not active — skipping", sync_name
+            )
+            return None
+
+        try:
+            await sync.update_local_storage_manifest()
+        except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
+            _LOGGER.warning(
+                "Could not refresh local-storage manifest for %r: %s", sync_name, exc
+            )
+            return None
+
+        manifest = getattr(sync, "_local_storage", {}).get("manifest") or set()
+        if not manifest:
+            _LOGGER.debug("Sync module %r: local-storage manifest is empty", sync_name)
+            return None
+
+        _LOGGER.debug(
+            "Sync module %r: %d clip(s) in local-storage manifest",
+            sync_name,
+            len(manifest),
+        )
+        return manifest
+
+    async def _download_local_storage_manifest(
+        self, manifest: set, results: list[dict[str, Any]]
+    ) -> bool:
+        """Download each not-yet-tracked clip in *manifest*, appending to *results*.
+
+        Returns True if the storage quota was hit and downloading should stop.
+        """
+        for item in manifest:
+            # Prefix "local_" keeps these IDs disjoint from cloud IDs.
+            clip_id = f"local_{item.id}"
+
+            if self._tracker.is_downloaded(clip_id):
+                continue
+
+            if self._storage.is_over_quota():
+                _LOGGER.warning(
+                    "Storage quota reached — stopping local-storage download"
+                )
+                self._tracker.save()
+                return True
+
+            result = await self._download_local_storage_item(clip_id, item)
+            if result is not None:
+                results.append(result)
+
+        return False
+
+    async def _download_local_storage_item(
+        self, clip_id: str, item: Any
+    ) -> dict[str, Any] | None:
+        camera_name: str = item.name or "Unknown"
+
+        # blinkpy stores created_at as a datetime.datetime object.
+        ts = item.created_at
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                ts = datetime.now(timezone.utc)
+
+        dest = self._storage.resolve_path(camera_name, ts, clip_id)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        if dest.exists():
+            size = dest.stat().st_size
+            self._tracker.mark_downloaded(clip_id, size)
+            return None
+
+        try:
+            _LOGGER.info(
+                "Preparing local-storage clip %s from %r (~%.1f KB)",
+                item.id,
+                camera_name,
+                int(item.size or 0) / 1024,
+            )
+            await item.prepare_download(self._blink)
+            success = await item.download_video(
+                self._blink,
+                str(dest),
+                max_retries=self._config.retry_attempts,
+            )
+        except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
+            _LOGGER.exception(
+                "Error downloading local-storage clip %s: %s", item.id, exc
+            )
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            return None
+
+        if not success:
+            _LOGGER.warning(
+                "Local-storage clip %s download failed (retries exhausted)", item.id
+            )
+            if dest.exists():
+                dest.unlink(missing_ok=True)
+            return None
+
+        size = dest.stat().st_size if dest.exists() else 0
+        self._tracker.mark_downloaded(clip_id, size)
+        _LOGGER.info(
+            "Downloaded local-storage clip %s from %r → %s (%d KB)",
+            item.id,
+            camera_name,
+            dest,
+            size // 1024,
+        )
+
+        result: dict[str, Any] = {
+            "id": clip_id,
+            "camera": camera_name,
+            "path": str(dest),
+            "timestamp": ts.isoformat(),
+            "size_bytes": size,
+            "network_id": 0,
+            "duration": 0,
+            "source": "local_storage",
+        }
+        if self._db:
+            await self._db.add_clip(result)
+        return result
 
     # ------------------------------------------------------------------
     # Internal: clip list
@@ -640,33 +667,8 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
 
         for attempt in range(1, self._config.retry_attempts + 1):
             try:
-                async with session.get(
-                    url,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as resp:
-                    if resp.status != 200:
-                        _LOGGER.warning(
-                            "HTTP %d for %s (attempt %d/%d)",
-                            resp.status,
-                            url,
-                            attempt,
-                            self._config.retry_attempts,
-                        )
-                        # Non-200 gets the same retry treatment as a
-                        # ClientError instead of giving up immediately - a
-                        # transient 5xx/429 from Blink's API is exactly the
-                        # kind of failure retry_attempts exists to ride out.
-                        if attempt < self._config.retry_attempts:
-                            await asyncio.sleep(self._config.retry_delay * attempt)
-                            continue
-                        return None
-
-                    size = 0
-                    async with aiofiles.open(dest, "wb") as fh:
-                        async for chunk in resp.content.iter_chunked(_CHUNK_SIZE):
-                            await fh.write(chunk)
-                            size += len(chunk)
+                size = await self._stream_attempt(session, url, dest, headers, attempt)
+                if size is not None:
                     return size
 
             except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
@@ -689,13 +691,49 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 )
                 if dest.exists():
                     dest.unlink()
-                if attempt < self._config.retry_attempts:
-                    await asyncio.sleep(self._config.retry_delay * attempt)
+
+            if attempt < self._config.retry_attempts:
+                await asyncio.sleep(self._config.retry_delay * attempt)
 
         # All attempts exhausted — clean up partial file.
         if dest.exists():
             dest.unlink()
         return None
+
+    async def _stream_attempt(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        dest: Path,
+        headers: dict[str, str],
+        attempt: int,
+    ) -> int | None:
+        """Try a single download attempt; returns bytes written, or None on non-200."""
+        async with session.get(
+            url,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=120),
+        ) as resp:
+            if resp.status != 200:
+                _LOGGER.warning(
+                    "HTTP %d for %s (attempt %d/%d)",
+                    resp.status,
+                    url,
+                    attempt,
+                    self._config.retry_attempts,
+                )
+                # Non-200 gets the same retry treatment as a ClientError
+                # instead of giving up immediately - a transient 5xx/429 from
+                # Blink's API is exactly the kind of failure retry_attempts
+                # exists to ride out.
+                return None
+
+            size = 0
+            async with aiofiles.open(dest, "wb") as fh:
+                async for chunk in resp.content.iter_chunked(_CHUNK_SIZE):
+                    await fh.write(chunk)
+                    size += len(chunk)
+            return size
 
     async def _generate_thumbnail(self, video_path: Path, thumb_path: Path) -> bool:
         """Extract the first frame of *video_path* as a JPEG thumbnail.

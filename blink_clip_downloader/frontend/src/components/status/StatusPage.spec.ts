@@ -174,7 +174,8 @@ describe('StatusPage', () => {
         if (url.startsWith('/api/cameras'))
           return Promise.resolve({
             ok: true,
-            json: () => Promise.resolve([{ camera: 'front', total: 0, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }]),
+            json: () =>
+              Promise.resolve([{ camera: 'front', total: 0, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }]),
           })
         if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve(ACTIVITY) })
         if (url.startsWith('/api/ai/status'))

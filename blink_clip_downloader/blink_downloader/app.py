@@ -100,101 +100,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         )
 
         if config.ai_analysis_enabled:
-            # Load per-camera settings from the web UI config file
-            # (camera_configs.json is the primary source of truth for
-            # descriptions, custom prompts, and car-camera flags).
-            _cam_desc_file = Path("/data/camera_configs.json")
-            camera_descriptions: dict[str, str] = {}
-            camera_prompts: dict[str, str] = {}
-            car_cameras_from_ui: list[str] = []
-            car_zones: dict[str, dict[str, float]] = {}
-            if _cam_desc_file.exists():
-                try:
-                    import json as _json
-
-                    _cam_cfgs = _json.loads(_cam_desc_file.read_text())
-                    for _c in _cam_cfgs:
-                        if not isinstance(_c, dict) or not _c.get("camera"):
-                            continue
-                        _cam = str(_c["camera"])
-                        if _c.get("description"):
-                            camera_descriptions[_cam] = str(_c["description"])
-                        if _c.get("custom_prompt"):
-                            camera_prompts[_cam] = str(_c["custom_prompt"])
-                        if _c.get("is_car_camera"):
-                            car_cameras_from_ui.append(_cam)
-                        _zone = MediaServer._normalize_car_zone(_c.get("car_zone"))
-                        if _zone is not None:
-                            car_zones[_cam] = _zone
-                except Exception:  # noqa: BLE001
-                    pass
-
-            # Fall back to options.json values for cameras not yet configured
-            # in the web UI (preserves backward compatibility).
-            for item in config.ai_camera_descriptions:
-                cam = str(item.get("camera", ""))
-                desc = str(item.get("description", ""))
-                if cam and desc and cam not in camera_descriptions:
-                    camera_descriptions[cam] = desc
-            for item in config.ai_camera_prompts:
-                cam = str(item.get("camera", ""))
-                pmt = str(item.get("prompt", ""))
-                if cam and pmt and cam not in camera_prompts:
-                    camera_prompts[cam] = pmt
-
-            # Derive car_cameras: web UI checkboxes take priority; fall back
-            # to ai_car_cameras from options.json for backward compatibility.
-            car_cameras: list[str] | None = (
-                car_cameras_from_ui or config.ai_car_cameras or None
-            )
-
-            self._analyzer = create_analyzer(
-                ai_provider=config.ai_provider,
-                prompt=config.ai_prompt,
-                car_description=config.ai_car_description,
-                max_frames=config.ai_max_frames,
-                frame_interval=config.ai_frame_interval,
-                suspicious_keywords=config.ai_suspicious_keywords,
-                camera_prompts=camera_prompts or None,
-                camera_descriptions=camera_descriptions,
-                frame_strategy=config.ai_frame_strategy,
-                car_cameras=car_cameras,
-                car_zones=car_zones or None,
-                ollama_url=config.ollama_url,
-                ollama_model=config.ollama_model,
-                ollama_cloud_api_key=config.ollama_cloud_api_key,
-                moondream_api_key=config.moondream_api_key,
-                moondream_finetune_model=config.moondream_finetune_model,
-                anthropic_api_key=config.anthropic_api_key,
-                anthropic_model=config.anthropic_model,
-                openai_api_key=config.openai_api_key,
-                openai_model=config.openai_model,
-                escalation_provider=config.ai_escalation_provider,
-                escalation_model=config.ai_escalation_model,
-                store_prompt_debug=config.ai_prompt_debug_enabled,
-            )
-            if self._analyzer is not None:
-                self._analyzer.attach_scene_baseline_db(self._db)
-                self._analyzer.attach_vision_pipeline(
-                    VisionPipeline(
-                        VisionConfig(
-                            enhanced_detection_enabled=config.ai_enhanced_detection_enabled,
-                            object_detection_model=config.ai_object_detection_model,
-                            face_recognition_enabled=config.ai_face_recognition_enabled,
-                        ),
-                        db=self._db,
-                    )
-                )
-                self._analysis_queue = AnalysisQueue(
-                    analyzer=self._analyzer,
-                    db=self._db,
-                    dispatcher=self._alert_dispatcher,
-                    schedule_start=config.ai_schedule_start,
-                    schedule_end=config.ai_schedule_end,
-                    batch_size=config.ai_batch_size,
-                    check_interval=config.ai_check_interval,
-                    min_confidence=config.ai_min_confidence,
-                )
+            self._setup_ai_analysis(config)
 
         self._media_server = MediaServer(
             db=self._db,
@@ -231,6 +137,134 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._reconnect_interval: int = 60
         # Seconds between checks in startup-error waiting loop (override in tests).
         self._startup_poll_interval: float = 1.0
+
+    # ------------------------------------------------------------------
+    # AI analysis setup
+    # ------------------------------------------------------------------
+
+    def _load_camera_configs_from_ui(
+        self,
+    ) -> tuple[dict[str, str], dict[str, str], list[str], dict[str, dict[str, float]]]:
+        """Load per-camera settings from the web UI config file.
+
+        camera_configs.json is the primary source of truth for descriptions,
+        custom prompts, and car-camera flags.
+        """
+        camera_descriptions: dict[str, str] = {}
+        camera_prompts: dict[str, str] = {}
+        car_cameras_from_ui: list[str] = []
+        car_zones: dict[str, dict[str, float]] = {}
+
+        cam_desc_file = Path("/data/camera_configs.json")
+        if not cam_desc_file.exists():
+            return camera_descriptions, camera_prompts, car_cameras_from_ui, car_zones
+
+        try:
+            cam_cfgs = json.loads(cam_desc_file.read_text())
+            for cam_cfg in cam_cfgs:
+                if not isinstance(cam_cfg, dict) or not cam_cfg.get("camera"):
+                    continue
+                cam = str(cam_cfg["camera"])
+                if cam_cfg.get("description"):
+                    camera_descriptions[cam] = str(cam_cfg["description"])
+                if cam_cfg.get("custom_prompt"):
+                    camera_prompts[cam] = str(cam_cfg["custom_prompt"])
+                if cam_cfg.get("is_car_camera"):
+                    car_cameras_from_ui.append(cam)
+                zone = MediaServer._normalize_car_zone(cam_cfg.get("car_zone"))
+                if zone is not None:
+                    car_zones[cam] = zone
+        except Exception:  # noqa: BLE001
+            pass
+
+        return camera_descriptions, camera_prompts, car_cameras_from_ui, car_zones
+
+    @staticmethod
+    def _merge_camera_config_fallbacks(
+        config: AppConfig,
+        camera_descriptions: dict[str, str],
+        camera_prompts: dict[str, str],
+    ) -> None:
+        """Fall back to options.json values for cameras not yet configured.
+
+        Preserves backward compatibility for cameras not configured in the
+        web UI. Mutates the dicts in place.
+        """
+        for item in config.ai_camera_descriptions:
+            cam = str(item.get("camera", ""))
+            desc = str(item.get("description", ""))
+            if cam and desc and cam not in camera_descriptions:
+                camera_descriptions[cam] = desc
+        for item in config.ai_camera_prompts:
+            cam = str(item.get("camera", ""))
+            pmt = str(item.get("prompt", ""))
+            if cam and pmt and cam not in camera_prompts:
+                camera_prompts[cam] = pmt
+
+    def _setup_ai_analysis(self, config: AppConfig) -> None:
+        (
+            camera_descriptions,
+            camera_prompts,
+            car_cameras_from_ui,
+            car_zones,
+        ) = self._load_camera_configs_from_ui()
+        self._merge_camera_config_fallbacks(config, camera_descriptions, camera_prompts)
+
+        # Derive car_cameras: web UI checkboxes take priority; fall back
+        # to ai_car_cameras from options.json for backward compatibility.
+        car_cameras: list[str] | None = (
+            car_cameras_from_ui or config.ai_car_cameras or None
+        )
+
+        self._analyzer = create_analyzer(
+            ai_provider=config.ai_provider,
+            prompt=config.ai_prompt,
+            car_description=config.ai_car_description,
+            max_frames=config.ai_max_frames,
+            frame_interval=config.ai_frame_interval,
+            suspicious_keywords=config.ai_suspicious_keywords,
+            camera_prompts=camera_prompts or None,
+            camera_descriptions=camera_descriptions,
+            frame_strategy=config.ai_frame_strategy,
+            car_cameras=car_cameras,
+            car_zones=car_zones or None,
+            ollama_url=config.ollama_url,
+            ollama_model=config.ollama_model,
+            ollama_cloud_api_key=config.ollama_cloud_api_key,
+            moondream_api_key=config.moondream_api_key,
+            moondream_finetune_model=config.moondream_finetune_model,
+            anthropic_api_key=config.anthropic_api_key,
+            anthropic_model=config.anthropic_model,
+            openai_api_key=config.openai_api_key,
+            openai_model=config.openai_model,
+            escalation_provider=config.ai_escalation_provider,
+            escalation_model=config.ai_escalation_model,
+            store_prompt_debug=config.ai_prompt_debug_enabled,
+        )
+        if self._analyzer is None:
+            return
+
+        self._analyzer.attach_scene_baseline_db(self._db)
+        self._analyzer.attach_vision_pipeline(
+            VisionPipeline(
+                VisionConfig(
+                    enhanced_detection_enabled=config.ai_enhanced_detection_enabled,
+                    object_detection_model=config.ai_object_detection_model,
+                    face_recognition_enabled=config.ai_face_recognition_enabled,
+                ),
+                db=self._db,
+            )
+        )
+        self._analysis_queue = AnalysisQueue(
+            analyzer=self._analyzer,
+            db=self._db,
+            dispatcher=self._alert_dispatcher,
+            schedule_start=config.ai_schedule_start,
+            schedule_end=config.ai_schedule_end,
+            batch_size=config.ai_batch_size,
+            check_interval=config.ai_check_interval,
+            min_confidence=config.ai_min_confidence,
+        )
 
     # ------------------------------------------------------------------
     # Entry point
@@ -284,20 +318,49 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # options.json was missing or invalid.  Show the error on the Status
         # tab and keep the web server alive so the user can read it without SSH.
         if self._config.startup_error:
-            _LOGGER.error(
-                "Running in web-only mode — fix the add-on configuration and "
-                "restart.  Error: %s",
-                self._config.startup_error,
-            )
-            self._downloader.auth_state = "error"
-            self._downloader.auth_message = (
-                f"Configuration error: {self._config.startup_error}"
-            )
-            while self._running:
-                await asyncio.sleep(self._startup_poll_interval)
+            await self._run_config_error_mode()
+            return
+
+        self._log_startup_config()
+
+        # ── Blink authentication with auto-retry ─────────────────────────────
+        # Never exits on auth failure — retries every _reconnect_interval seconds
+        # so a transient network blip or expired token heals itself.
+        if not await self._connect_with_retry():
+            # _running was cleared by SIGTERM while we were between retries.
             await self._shutdown()
             return
 
+        await self._finish_startup()
+
+        # Main poll loop.
+        while self._running:
+            try:
+                await self._poll_cycle()
+            except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
+                _LOGGER.exception("Unhandled error in poll cycle: %s", exc)
+
+            if self._running:
+                await self._wait_with_trigger_check()
+
+        await self._shutdown()
+
+    async def _run_config_error_mode(self) -> None:
+        """Keep the web server alive so the config error is visible in the UI."""
+        _LOGGER.error(
+            "Running in web-only mode — fix the add-on configuration and "
+            "restart.  Error: %s",
+            self._config.startup_error,
+        )
+        self._downloader.auth_state = "error"
+        self._downloader.auth_message = (
+            f"Configuration error: {self._config.startup_error}"
+        )
+        while self._running:
+            await asyncio.sleep(self._startup_poll_interval)
+        await self._shutdown()
+
+    def _log_startup_config(self) -> None:
         _LOGGER.info("  Download path   : %s", self._config.download_path)
         _LOGGER.info("  Poll interval   : %d s", self._config.poll_interval)
         _LOGGER.info("  Retention       : %d days", self._config.retention_days)
@@ -311,14 +374,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             "  HA event watch  : %s", "on" if self._config.watch_ha_events else "off"
         )
 
-        # ── Blink authentication with auto-retry ─────────────────────────────
-        # Never exits on auth failure — retries every _reconnect_interval seconds
-        # so a transient network blip or expired token heals itself.
-        if not await self._connect_with_retry():
-            # _running was cleared by SIGTERM while we were between retries.
-            await self._shutdown()
-            return
-
+    async def _finish_startup(self) -> None:
+        """Mark connected, publish status, and start event/analysis background tasks."""
         self._tracker.increment_session_count()
         await self._notifier.update_sensor(
             "sensor.blink_downloader_status",
@@ -348,18 +405,6 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             self._bg_tasks.append(
                 asyncio.create_task(self._analysis_queue.start(), name="analysis_queue")
             )
-
-        # Main poll loop.
-        while self._running:
-            try:
-                await self._poll_cycle()
-            except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
-                _LOGGER.exception("Unhandled error in poll cycle: %s", exc)
-
-            if self._running:
-                await self._wait_with_trigger_check()
-
-        await self._shutdown()
 
     # ------------------------------------------------------------------
     # Blink connection with auto-retry
@@ -393,21 +438,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 )
                 await self._notifier.notify(str(exc), title="Blink 2FA Required")
             except AuthenticationError as exc:
-                # Invalid credentials — retrying with the same credentials
-                # would trigger Blink's lockout protection. Stop immediately
-                # and wait for the add-on to be restarted with fixed credentials.
-                _LOGGER.error(
-                    "Blink authentication failed — invalid credentials. "
-                    "Fix the username/password in the add-on configuration "
-                    "and restart. Not retrying to prevent account lockout."
-                )
-                await self._notifier.notify(
-                    str(exc), title="Blink Authentication Failed"
-                )
-                self._downloader.auth_state = "error"
-                self._downloader.auth_message = "Invalid credentials — fix username/password and restart the add-on."
-                while self._running:
-                    await asyncio.sleep(self._startup_poll_interval)
+                await self._handle_invalid_credentials(exc)
                 return False
             except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
                 _LOGGER.exception(
@@ -419,12 +450,38 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
             # Interruptible wait: check _running every second so SIGTERM is
             # responded to promptly even during a long retry interval.
-            for _ in range(self._reconnect_interval):
-                if not self._running:
-                    return False
-                await asyncio.sleep(1)
+            if not await self._interruptible_wait(self._reconnect_interval):
+                return False
 
         return False
+
+    async def _handle_invalid_credentials(self, exc: AuthenticationError) -> None:
+        # Invalid credentials — retrying with the same credentials
+        # would trigger Blink's lockout protection. Stop immediately
+        # and wait for the add-on to be restarted with fixed credentials.
+        _LOGGER.error(
+            "Blink authentication failed — invalid credentials. "
+            "Fix the username/password in the add-on configuration "
+            "and restart. Not retrying to prevent account lockout."
+        )
+        await self._notifier.notify(str(exc), title="Blink Authentication Failed")
+        self._downloader.auth_state = "error"
+        self._downloader.auth_message = (
+            "Invalid credentials — fix username/password and restart the add-on."
+        )
+        while self._running:
+            await asyncio.sleep(self._startup_poll_interval)
+
+    async def _interruptible_wait(self, seconds: int) -> bool:
+        """Sleep up to *seconds*, checking _running every second.
+
+        Returns False if _running was cleared before the wait completed.
+        """
+        for _ in range(seconds):
+            if not self._running:
+                return False
+            await asyncio.sleep(1)
+        return True
 
     # ------------------------------------------------------------------
     # Poll cycle
@@ -515,43 +572,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         await self._notifier.notify(message)
 
         for clip in clips:
-            if self._config.create_clip_manifest:
-                self._manifest.append(clip)
-
-            await self._notifier.fire_event(
-                "blink_clip_downloaded",
-                {
-                    "clip_id": clip.get("id"),
-                    "camera": clip.get("camera"),
-                    "path": clip.get("path"),
-                    "timestamp": clip.get("timestamp"),
-                    "size_bytes": clip.get("size_bytes", 0),
-                    "duration": clip.get("duration"),
-                    "source": clip.get("source"),
-                },
-            )
-            await self._notifier.call_webhook(clip)
-
-            if self._analysis_queue:
-                await self._analysis_queue.enqueue(clip)
-
-            # Record clip in behavior baseline so anomaly scoring improves over time.
-            # This runs regardless of whether AI analysis is enabled.
-            if self._config.enable_library_db:
-                try:
-                    ts = str(clip.get("timestamp") or "")
-                    hour = (
-                        datetime.fromisoformat(ts.replace("Z", "+00:00")).hour
-                        if ts
-                        else datetime.now(timezone.utc).hour
-                    )
-                    await self._db.record_clip_baseline(
-                        camera=str(clip.get("camera") or ""),
-                        hour=hour,
-                        duration=float(clip.get("duration") or 0),
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+            await self._handle_downloaded_clip(clip)
 
         tracker_stats = self._tracker.stats
         disk = self._storage.disk_stats()
@@ -572,6 +593,45 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 "last_download": datetime.now(timezone.utc).isoformat(),
             },
         )
+
+    async def _handle_downloaded_clip(self, clip: dict[str, Any]) -> None:
+        if self._config.create_clip_manifest:
+            self._manifest.append(clip)
+
+        await self._notifier.fire_event(
+            "blink_clip_downloaded",
+            {
+                "clip_id": clip.get("id"),
+                "camera": clip.get("camera"),
+                "path": clip.get("path"),
+                "timestamp": clip.get("timestamp"),
+                "size_bytes": clip.get("size_bytes", 0),
+                "duration": clip.get("duration"),
+                "source": clip.get("source"),
+            },
+        )
+        await self._notifier.call_webhook(clip)
+
+        if self._analysis_queue:
+            await self._analysis_queue.enqueue(clip)
+
+        # Record clip in behavior baseline so anomaly scoring improves over time.
+        # This runs regardless of whether AI analysis is enabled.
+        if self._config.enable_library_db:
+            try:
+                ts = str(clip.get("timestamp") or "")
+                hour = (
+                    datetime.fromisoformat(ts.replace("Z", "+00:00")).hour
+                    if ts
+                    else datetime.now(timezone.utc).hour
+                )
+                await self._db.record_clip_baseline(
+                    camera=str(clip.get("camera") or ""),
+                    hour=hour,
+                    duration=float(clip.get("duration") or 0),
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
     # ------------------------------------------------------------------
     # Fast-poll mode (triggered by HA motion events)

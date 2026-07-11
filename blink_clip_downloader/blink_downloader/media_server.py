@@ -3571,12 +3571,22 @@ class MediaServer:
                 data["cost_per_1m_input"] = inp
                 data["cost_per_1m_output"] = out
         usage = await self._db.get_token_usage_stats()
+        self._price_usage_by_model(usage, lookup_model_pricing)
+        data["daily"] = await self._build_daily_usage(lookup_model_pricing)
 
-        # Price each model row against its *own* pricing table entry (rather
-        # than the blanket "current model" rate above) so a per-model
-        # breakdown that spans an escalation model, or leftover rows from a
-        # provider the user has since switched away from, isn't priced as if
-        # every token cost what the active model costs.
+        data.update(usage)
+        return web.json_response(data)
+
+    @staticmethod
+    def _price_usage_by_model(usage: dict[str, Any], lookup_model_pricing: Any) -> None:
+        """Price each ``by_model`` row against its own pricing table entry.
+
+        This is done per-row (rather than the blanket "current model" rate)
+        so a breakdown that spans an escalation model, or leftover rows from
+        a provider the user has since switched away from, isn't priced as if
+        every token cost what the active model costs. Mutates *usage*
+        in place.
+        """
         total_cost = 0.0
         any_priced = False
         for row in usage.get("by_model", []):
@@ -3594,10 +3604,16 @@ class MediaServer:
             any_priced = True
         usage["total_estimated_cost"] = total_cost if any_priced else None
 
-        # Daily history (last 14 days): each (day, model) row from the DB is
-        # priced individually — same reasoning as by_model above — then
-        # collapsed into one total per day so the UI renders a small,
-        # fixed-size table instead of a per-model breakdown per day.
+    async def _build_daily_usage(
+        self, lookup_model_pricing: Any
+    ) -> list[dict[str, Any]]:
+        """Build the last-14-days usage table, priced per (day, model) row.
+
+        Each (day, model) row from the DB is priced individually — same
+        reasoning as `_price_usage_by_model` — then collapsed into one total
+        per day so the UI renders a small, fixed-size table instead of a
+        per-model breakdown per day.
+        """
         daily_totals: dict[str, dict[str, Any]] = {}
         for row in await self._db.get_daily_usage_stats(days=14):
             day = str(row["day"])
@@ -3624,7 +3640,7 @@ class MediaServer:
                 entry["cost"] += (tp * inp + tc * out) / 1_000_000
                 entry["any_priced"] = True
 
-        data["daily"] = [
+        return [
             {
                 "day": e["day"],
                 "analyses": e["analyses"],
@@ -3635,9 +3651,6 @@ class MediaServer:
             }
             for e in sorted(daily_totals.values(), key=lambda e: e["day"], reverse=True)
         ]
-
-        data.update(usage)
-        return web.json_response(data)
 
     async def _handle_ai_usage_clear(self, _request: web.Request) -> web.Response:
         await self._db.clear_ai_usage_stats()
@@ -3926,30 +3939,33 @@ class MediaServer:
         except OSError as exc:
             _LOGGER.warning("Could not save camera configs: %s", exc)
 
-        # Update the live analyzer without restart. Every field is a full
-        # replace, not a merge — camera_configs.json is the single source of
-        # truth for these settings (see CLAUDE.md), so clearing a value in
-        # the AI tab must stop it from applying immediately rather than
-        # leaving the last non-empty value in place until a restart.
-        if self._analyzer is not None:
-            descriptions = {
-                c["camera"]: c["description"] for c in configs if c.get("description")
-            }
-            self._analyzer.update_camera_descriptions(descriptions)
-            prompts = {
-                c["camera"]: c["custom_prompt"]
-                for c in configs
-                if c.get("custom_prompt")
-            }
-            self._analyzer.update_camera_prompts(prompts)
-            car_cameras = {c["camera"] for c in configs if c.get("is_car_camera")}
-            self._analyzer.update_car_cameras(car_cameras)
-            car_zones = {
-                c["camera"]: c["car_zone"] for c in configs if c.get("car_zone")
-            }
-            self._analyzer.update_car_zones(car_zones)
+        self._apply_camera_configs_to_analyzer(configs)
 
         return web.json_response({"saved": True, "count": len(configs)})
+
+    def _apply_camera_configs_to_analyzer(self, configs: list[dict[str, Any]]) -> None:
+        """Update the live analyzer without restart.
+
+        Every field is a full replace, not a merge — camera_configs.json is
+        the single source of truth for these settings (see CLAUDE.md), so
+        clearing a value in the AI tab must stop it from applying
+        immediately rather than leaving the last non-empty value in place
+        until a restart.
+        """
+        if self._analyzer is None:
+            return
+        descriptions = {
+            c["camera"]: c["description"] for c in configs if c.get("description")
+        }
+        self._analyzer.update_camera_descriptions(descriptions)
+        prompts = {
+            c["camera"]: c["custom_prompt"] for c in configs if c.get("custom_prompt")
+        }
+        self._analyzer.update_camera_prompts(prompts)
+        car_cameras = {c["camera"] for c in configs if c.get("is_car_camera")}
+        self._analyzer.update_car_cameras(car_cameras)
+        car_zones = {c["camera"]: c["car_zone"] for c in configs if c.get("car_zone")}
+        self._analyzer.update_car_zones(car_zones)
 
     # ------------------------------------------------------------------
     # Adaptive learning (human feedback on AI verdicts)
@@ -4267,6 +4283,51 @@ class MediaServer:
         rows = await self._db.get_untrained_feedback(limit=1000)
         return web.json_response({"count": len(rows)})
 
+    async def _build_finetune_examples(
+        self, feedback_rows: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[int]]:
+        """Pair each feedback row with a representative frame and ground truth.
+
+        Rows whose clip or frame is no longer available are skipped (and
+        left untrained, per _handle_finetune_train's docstring).
+        """
+        assert self._analyzer is not None
+        examples: list[dict[str, Any]] = []
+        trained_ids: list[int] = []
+        for row in feedback_rows:
+            clip = await self._db.get_clip(row["clip_id"])
+            if not clip or not clip.get("file_path"):
+                continue
+            frames = await self._analyzer.extract_frames(clip["file_path"])
+            if not frames:
+                continue
+
+            if row.get("corrected_suspicious") is not None:
+                suspicious = bool(row["corrected_suspicious"])
+            else:
+                suspicious = bool(row["original_suspicious"])
+            description = row.get("correction_note") or (
+                "Suspicious activity is happening in this clip."
+                if suspicious
+                else "Nothing suspicious is happening in this clip."
+            )
+            ground_truth = json.dumps(
+                {
+                    "suspicious": suspicious,
+                    "confidence": row["original_confidence"],
+                    "description": description,
+                }
+            )
+            examples.append(
+                {
+                    "image": frames[len(frames) // 2],
+                    "question": self._analyzer.base_prompt_for_camera(row["camera"]),
+                    "ground_truth": ground_truth,
+                }
+            )
+            trained_ids.append(int(row["id"]))
+        return examples, trained_ids
+
     async def _handle_finetune_train(self, request: web.Request) -> web.Response:
         """Turn queued human feedback into Moondream SFT training steps.
 
@@ -4288,7 +4349,6 @@ class MediaServer:
                 {"error": "Fine-tuning requires ai_provider=moondream_cloud"},
                 status=400,
             )
-        assert self._analyzer is not None
         finetune_id = request.match_info["finetune_id"]
         try:
             body = await request.json()
@@ -4303,42 +4363,7 @@ class MediaServer:
                     {"trained": 0, "message": "No new feedback to train on"}
                 )
 
-            examples: list[dict[str, Any]] = []
-            trained_ids: list[int] = []
-            for row in feedback_rows:
-                clip = await self._db.get_clip(row["clip_id"])
-                if not clip or not clip.get("file_path"):
-                    continue
-                frames = await self._analyzer.extract_frames(clip["file_path"])
-                if not frames:
-                    continue
-
-                if row.get("corrected_suspicious") is not None:
-                    suspicious = bool(row["corrected_suspicious"])
-                else:
-                    suspicious = bool(row["original_suspicious"])
-                description = row.get("correction_note") or (
-                    "Suspicious activity is happening in this clip."
-                    if suspicious
-                    else "Nothing suspicious is happening in this clip."
-                )
-                ground_truth = json.dumps(
-                    {
-                        "suspicious": suspicious,
-                        "confidence": row["original_confidence"],
-                        "description": description,
-                    }
-                )
-                examples.append(
-                    {
-                        "image": frames[len(frames) // 2],
-                        "question": self._analyzer.base_prompt_for_camera(
-                            row["camera"]
-                        ),
-                        "ground_truth": ground_truth,
-                    }
-                )
-                trained_ids.append(int(row["id"]))
+            examples, trained_ids = await self._build_finetune_examples(feedback_rows)
 
             if not examples:
                 return web.json_response(

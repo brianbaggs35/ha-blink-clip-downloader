@@ -603,6 +603,18 @@ class ClipDatabase:
     # AI Analysis
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _res_str(result: dict[str, Any], key: str) -> str:
+        return str(result.get(key) or "")
+
+    @staticmethod
+    def _res_int(result: dict[str, Any], key: str) -> int:
+        return int(result.get(key) or 0)
+
+    @staticmethod
+    def _res_float(result: dict[str, Any], key: str) -> float:
+        return float(result.get(key) or 0.0)
+
     async def add_analysis_result(self, result: dict[str, Any]) -> None:
         if self._pool is None:
             return
@@ -618,24 +630,24 @@ class ClipDatabase:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             ),
-            str(result.get("clip_id") or ""),
-            str(result.get("camera") or ""),
-            str(result.get("model") or ""),
-            str(result.get("response_text") or ""),
+            self._res_str(result, "clip_id"),
+            self._res_str(result, "camera"),
+            self._res_str(result, "model"),
+            self._res_str(result, "response_text"),
             bool(result.get("is_suspicious")),
-            float(result.get("confidence") or 0.0),
-            str(result.get("summary") or ""),
-            int(result.get("frame_count") or 0),
-            float(result.get("analysis_duration") or 0.0),
-            str(result.get("analyzed_at") or ""),
-            int(result.get("tokens_prompt") or 0),
-            int(result.get("tokens_completion") or 0),
-            float(result.get("anomaly_score") or 0.0),
-            str(result.get("escalation_model") or ""),
-            int(result.get("escalation_tokens_prompt") or 0),
-            int(result.get("escalation_tokens_completion") or 0),
-            str(result.get("escalation_provider") or ""),
-            str(result.get("prompt_text") or ""),
+            self._res_float(result, "confidence"),
+            self._res_str(result, "summary"),
+            self._res_int(result, "frame_count"),
+            self._res_float(result, "analysis_duration"),
+            self._res_str(result, "analyzed_at"),
+            self._res_int(result, "tokens_prompt"),
+            self._res_int(result, "tokens_completion"),
+            self._res_float(result, "anomaly_score"),
+            self._res_str(result, "escalation_model"),
+            self._res_int(result, "escalation_tokens_prompt"),
+            self._res_int(result, "escalation_tokens_completion"),
+            self._res_str(result, "escalation_provider"),
+            self._res_str(result, "prompt_text"),
         )
 
     async def get_analysis_for_clip(self, clip_id: str) -> dict[str, Any] | None:
@@ -1180,64 +1192,117 @@ class ClipDatabase:
         if self._pool is None:
             return 0.0
 
-        # Total event count for this camera
-        total: int = (
-            await self._pool.fetchval(
-                _qm(
-                    "SELECT COALESCE(SUM(count), 0) FROM camera_baselines WHERE camera=?"
-                ),
-                camera,
-            )
-            or 0
-        )
-
+        total = await self._total_camera_events(camera)
         if total < 30:
             return 0.0
 
         score = 0.0
-
-        # Hour rarity: how often does this camera fire at this hour vs. average?
-        hour_count: int = (
-            await self._pool.fetchval(
-                _qm(
-                    "SELECT COALESCE(count, 0) FROM camera_baselines WHERE camera=? AND hour=?"
-                ),
-                camera,
-                hour,
-            )
-            or 0
-        )
-
-        expected_per_hour = total / 24.0
-        if hour_count == 0:
-            score += 0.5  # Never seen activity at this hour
-        elif hour_count < expected_per_hour * 0.15:
-            score += 0.35  # Very rare hour
-        elif hour_count < expected_per_hour * 0.35:
-            score += 0.15  # Uncommon hour
-
-        # Duration anomaly
+        hour_count = await self._hour_event_count(camera, hour)
+        score += self._score_hour_rarity(hour_count, total / 24.0)
         if duration > 0:
-            row = await self._pool.fetchrow(
-                _qm(
-                    "SELECT avg_duration, sample_count FROM camera_duration_stats WHERE camera=?"
-                ),
-                camera,
-            )
-            if row and int(row["sample_count"]) >= 10:
-                avg = float(row["avg_duration"])
-                if avg > 0:
-                    ratio = duration / avg
-                    if ratio > 4.0 or ratio < 0.2:
-                        score += 0.25  # Very long or very short clip
-                    elif ratio > 2.5 or ratio < 0.4:
-                        score += 0.1
+            score += await self._score_duration_anomaly(camera, duration)
 
         return min(1.0, score)
+
+    async def _total_camera_events(self, camera: str) -> int:
+        """Total historical event count for *camera* across all hours."""
+        if self._pool is None:
+            return 0
+        total = await self._pool.fetchval(
+            _qm("SELECT COALESCE(SUM(count), 0) FROM camera_baselines WHERE camera=?"),
+            camera,
+        )
+        return total or 0
+
+    async def _hour_event_count(self, camera: str, hour: int) -> int:
+        """Historical event count for *camera* at a specific *hour*."""
+        if self._pool is None:
+            return 0
+        count = await self._pool.fetchval(
+            _qm(
+                "SELECT COALESCE(count, 0) FROM camera_baselines WHERE camera=? AND hour=?"
+            ),
+            camera,
+            hour,
+        )
+        return count or 0
+
+    @staticmethod
+    def _score_hour_rarity(hour_count: int, expected_per_hour: float) -> float:
+        """Score how unusual it is for *camera* to see activity at this hour."""
+        if hour_count == 0:
+            return 0.5  # Never seen activity at this hour
+        if hour_count < expected_per_hour * 0.15:
+            return 0.35  # Very rare hour
+        if hour_count < expected_per_hour * 0.35:
+            return 0.15  # Uncommon hour
+        return 0.0
+
+    async def _score_duration_anomaly(self, camera: str, duration: float) -> float:
+        """Score how unusual *duration* is relative to this camera's history."""
+        if self._pool is None:
+            return 0.0
+        row = await self._pool.fetchrow(
+            _qm(
+                "SELECT avg_duration, sample_count FROM camera_duration_stats WHERE camera=?"
+            ),
+            camera,
+        )
+        if not row or int(row["sample_count"]) < 10:
+            return 0.0
+        avg = float(row["avg_duration"])
+        if avg <= 0:
+            return 0.0
+        ratio = duration / avg
+        if ratio > 4.0 or ratio < 0.2:
+            return 0.25  # Very long or very short clip
+        if ratio > 2.5 or ratio < 0.4:
+            return 0.1
+        return 0.0
 
     # ------------------------------------------------------------------
     # Scene Baseline (per-camera visual "smart brain" learning)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _blend_scene_baseline(
+        row: asyncpg.Record, thumbnail: list[float]
+    ) -> tuple[list[float], int, int]:
+        """Blend a new thumbnail into an existing scene baseline row.
+
+        Returns ``(blended_thumbnail, sample_count_before_this_sample,
+        deviation_streak)``.
+        """
+        try:
+            existing = json.loads(row["thumbnail"])
+        except (json.JSONDecodeError, TypeError):
+            existing = []
+        count = int(row["sample_count"])
+        streak = (
+            int(row["consecutive_deviation_count"])
+            if row["consecutive_deviation_count"] is not None
+            else 0
+        )
+
+        if not existing or len(existing) != len(thumbnail):
+            # Thumbnail size changed (or prior data was corrupt) — restart
+            # the baseline from this sample rather than blending mismatched data.
+            return thumbnail, 0, 0
+
+        alpha = max(0.05, 1.0 / (count + 1))
+        if count < _SCENE_BASELINE_MIN_SAMPLES:
+            # Still ramping up — the fast early-sample alpha above already
+            # converges quickly, so don't also track a deviation streak
+            # against a baseline that isn't considered trustworthy yet.
+            streak = 0
+        else:
+            diff = sum(abs(e - t) for e, t in zip(existing, thumbnail)) / len(existing)
+            streak = streak + 1 if diff >= _SCENE_REFRESH_DEVIATION_THRESHOLD else 0
+            if streak >= _SCENE_REFRESH_STREAK:
+                alpha = _SCENE_REFRESH_ALPHA
+                streak = 0
+        blended = [e * (1 - alpha) + t * alpha for e, t in zip(existing, thumbnail)]
+        return blended, count, streak
 
     async def record_scene_baseline(self, camera: str, thumbnail: list[float]) -> None:
         """Fold a clip's opening-frame thumbnail into this camera's learned scene.
@@ -1287,39 +1352,7 @@ class ClipDatabase:
             )
             return
 
-        try:
-            existing = json.loads(row["thumbnail"])
-        except (json.JSONDecodeError, TypeError):
-            existing = []
-        count = int(row["sample_count"])
-        streak = (
-            int(row["consecutive_deviation_count"])
-            if row["consecutive_deviation_count"] is not None
-            else 0
-        )
-
-        if not existing or len(existing) != len(thumbnail):
-            # Thumbnail size changed (or prior data was corrupt) — restart
-            # the baseline from this sample rather than blending mismatched data.
-            blended = thumbnail
-            count = 0
-            streak = 0
-        else:
-            alpha = max(0.05, 1.0 / (count + 1))
-            if count < _SCENE_BASELINE_MIN_SAMPLES:
-                # Still ramping up — the fast early-sample alpha above already
-                # converges quickly, so don't also track a deviation streak
-                # against a baseline that isn't considered trustworthy yet.
-                streak = 0
-            else:
-                diff = sum(abs(e - t) for e, t in zip(existing, thumbnail)) / len(
-                    existing
-                )
-                streak = streak + 1 if diff >= _SCENE_REFRESH_DEVIATION_THRESHOLD else 0
-                if streak >= _SCENE_REFRESH_STREAK:
-                    alpha = _SCENE_REFRESH_ALPHA
-                    streak = 0
-            blended = [e * (1 - alpha) + t * alpha for e, t in zip(existing, thumbnail)]
+        blended, count, streak = self._blend_scene_baseline(row, thumbnail)
 
         await self._pool.execute(
             _qm(

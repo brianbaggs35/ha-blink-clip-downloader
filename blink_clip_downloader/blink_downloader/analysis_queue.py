@@ -111,85 +111,92 @@ class AnalysisQueue:
         for item in pending:
             if not self._running:
                 break
+            await self._process_one(item)
 
-            clip_id = item["clip_id"]
-            await self._db.update_queue_status(clip_id, "processing")
+    async def _process_one(self, item: dict[str, Any]) -> None:
+        clip_id = item["clip_id"]
+        await self._db.update_queue_status(clip_id, "processing")
 
-            try:
-                # Look up clip metadata to enrich analysis with temporal context
-                clip = await self._db.get_clip(clip_id)
-                clip_timestamp = str(clip.get("timestamp", "")) if clip else ""
-                clip_duration = float((clip or {}).get("duration") or 0)
+        try:
+            # Look up clip metadata to enrich analysis with temporal context
+            clip = await self._db.get_clip(clip_id)
+            clip_timestamp = str(clip.get("timestamp", "")) if clip else ""
+            clip_duration = float((clip or {}).get("duration") or 0)
+            anomaly_score = await self._compute_anomaly_score(
+                item["camera"], clip_timestamp, clip_duration
+            )
+            recent_corrections = await self._db.get_prompt_corrections(item["camera"])
 
-                # Compute anomaly score before analysis so the prompt can reference it
-                anomaly_score = 0.0
-                try:
-                    from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+            result = await self._analyzer.analyze_clip(
+                clip_path=item["clip_path"],
+                clip_id=clip_id,
+                camera=item["camera"],
+                anomaly_score=anomaly_score,
+                clip_timestamp=clip_timestamp,
+                clip_duration=clip_duration,
+                recent_corrections=recent_corrections,
+            )
+            await self._db.add_analysis_result(result.to_dict())
+            await self._db.update_queue_status(clip_id, "completed")
+            self._log_result(clip_id, result)
+            await self._maybe_dispatch_alert(item, clip_id, result)
 
-                    hour = (
-                        _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00")).hour
-                        if clip_timestamp
-                        else _dt.now(_tz.utc).hour
-                    )
-                    anomaly_score = await self._db.get_anomaly_score(
-                        camera=item["camera"],
-                        hour=hour,
-                        duration=clip_duration,
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Failed to analyze clip %s: %s", clip_id, exc)
+            await self._db.update_queue_status(clip_id, "failed", error=str(exc)[:500])
 
-                recent_corrections = await self._db.get_prompt_corrections(
-                    item["camera"]
-                )
+    async def _compute_anomaly_score(
+        self, camera: str, clip_timestamp: str, clip_duration: float
+    ) -> float:
+        """Compute anomaly score before analysis so the prompt can reference it."""
+        try:
+            from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
 
-                result = await self._analyzer.analyze_clip(
-                    clip_path=item["clip_path"],
-                    clip_id=clip_id,
-                    camera=item["camera"],
-                    anomaly_score=anomaly_score,
-                    clip_timestamp=clip_timestamp,
-                    clip_duration=clip_duration,
-                    recent_corrections=recent_corrections,
-                )
-                await self._db.add_analysis_result(result.to_dict())
-                await self._db.update_queue_status(clip_id, "completed")
+            hour = (
+                _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00")).hour
+                if clip_timestamp
+                else _dt.now(_tz.utc).hour
+            )
+            return await self._db.get_anomaly_score(
+                camera=camera, hour=hour, duration=clip_duration
+            )
+        except Exception:  # noqa: BLE001
+            return 0.0
 
-                if result.is_suspicious:
-                    _LOGGER.info(
-                        "Analyzed clip %s: SUSPICIOUS confidence=%.2f — %s",
-                        clip_id,
-                        result.confidence,
-                        result.summary[:100] if result.summary else "",
-                    )
-                else:
-                    _LOGGER.debug(
-                        "Analyzed clip %s: no suspicious activity (confidence=%.2f)",
-                        clip_id,
-                        result.confidence,
-                    )
+    @staticmethod
+    def _log_result(clip_id: str, result: Any) -> None:
+        if result.is_suspicious:
+            _LOGGER.info(
+                "Analyzed clip %s: SUSPICIOUS confidence=%.2f — %s",
+                clip_id,
+                result.confidence,
+                result.summary[:100] if result.summary else "",
+            )
+        else:
+            _LOGGER.debug(
+                "Analyzed clip %s: no suspicious activity (confidence=%.2f)",
+                clip_id,
+                result.confidence,
+            )
 
-                effective_threshold = await self._db.get_effective_confidence_threshold(
-                    item["camera"], self._min_confidence
-                )
-                should_alert = (
-                    result.is_suspicious
-                    and result.confidence >= effective_threshold
-                    and self._dispatcher is not None
-                )
-                if should_alert and self._dispatcher:
-                    clip_data = {
-                        "id": clip_id,
-                        "camera": item["camera"],
-                        "path": item["clip_path"],
-                    }
-                    await self._dispatcher.dispatch(result, clip_data)
-
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.warning("Failed to analyze clip %s: %s", clip_id, exc)
-                await self._db.update_queue_status(
-                    clip_id, "failed", error=str(exc)[:500]
-                )
+    async def _maybe_dispatch_alert(
+        self, item: dict[str, Any], clip_id: str, result: Any
+    ) -> None:
+        effective_threshold = await self._db.get_effective_confidence_threshold(
+            item["camera"], self._min_confidence
+        )
+        should_alert = (
+            result.is_suspicious
+            and result.confidence >= effective_threshold
+            and self._dispatcher is not None
+        )
+        if should_alert and self._dispatcher:
+            clip_data = {
+                "id": clip_id,
+                "camera": item["camera"],
+                "path": item["clip_path"],
+            }
+            await self._dispatcher.dispatch(result, clip_data)
 
     # ------------------------------------------------------------------
     # Schedule

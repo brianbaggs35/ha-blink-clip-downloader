@@ -292,9 +292,7 @@ describe('UsagePage', () => {
   it('hides the cost stat when there is priced data but zero tokens', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() =>
-        Promise.resolve(jsonResponse(baseUsage({ total_estimated_cost: 0.01, total_tokens: 0 }))),
-      ),
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ total_estimated_cost: 0.01, total_tokens: 0 })))),
     )
     const wrapper = mount(UsagePage)
     await flushPromises()

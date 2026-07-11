@@ -728,7 +728,10 @@ describe('LibraryPage', () => {
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
     expect(wrapper.text()).toContain('Selecting…')
-    await wrapper.findAll('button').find((b) => b.text().includes('Cancel'))!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Cancel'))!
+      .trigger('click')
     expect(wrapper.text()).not.toContain('Selecting…')
     wrapper.unmount()
   })

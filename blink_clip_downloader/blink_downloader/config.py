@@ -7,6 +7,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -338,8 +339,7 @@ def load_config(options_path: Path = OPTIONS_FILE) -> AppConfig:
     return _parse_config(data)
 
 
-def _parse_config(data: dict) -> AppConfig:
-    """Parse a raw options dict into a validated :class:`AppConfig`."""
+def _parse_credentials(data: dict) -> tuple[str, str]:
     username = str(data.get("username", "")).strip()
     if not username:
         raise ValueError("username is required and cannot be empty")
@@ -348,6 +348,10 @@ def _parse_config(data: dict) -> AppConfig:
     if not password:
         raise ValueError("password is required and cannot be empty")
 
+    return username, password
+
+
+def _parse_poll_limits(data: dict) -> tuple[int, int, int]:
     poll_interval = int(data.get("poll_interval", 300))
     if not 30 <= poll_interval <= 3600:
         raise ValueError(
@@ -366,19 +370,24 @@ def _parse_config(data: dict) -> AppConfig:
             f"max_clips_per_poll must be between 1 and 500, got {max_clips}"
         )
 
+    return poll_interval, retention_days, max_clips
+
+
+def _parse_log_level(data: dict) -> str:
     log_level = str(data.get("log_level", "info")).lower()
     if log_level not in _VALID_LOG_LEVELS:
         _LOGGER.warning("Unknown log_level %r, falling back to 'info'", log_level)
         log_level = "info"
+    return log_level
 
-    camera_filter = [
-        c.strip()
-        for c in data.get("camera_filter", [])
-        if isinstance(c, str) and c.strip()
-    ]
 
-    ai_provider = str(data.get("ai_provider", "ollama") or "ollama").strip().lower()
+def _resolve_ai_escalation(data: dict, ai_provider: str) -> tuple[str, str, str]:
+    """Resolve the escalation provider/model, honoring the deprecated
+    ``openai_escalation_model`` option.
 
+    Returns ``(ai_escalation_provider, ai_escalation_model,
+    legacy_openai_escalation_model)``.
+    """
     ai_escalation_provider = (
         str(data.get("ai_escalation_provider", "") or "").strip().lower()
     )
@@ -406,93 +415,142 @@ def _parse_config(data: dict) -> AppConfig:
         )
         ai_escalation_provider = ""
         ai_escalation_model = ""
+    return ai_escalation_provider, ai_escalation_model, legacy_openai_escalation_model
 
-    return AppConfig(
-        username=username,
-        password=password,
-        download_path=Path(str(data.get("download_path", "/share/blink-clips"))),
-        organize_by_camera=bool(data.get("organize_by_camera", True)),
-        organize_by_date=bool(data.get("organize_by_date", True)),
-        filename_format=str(data.get("filename_format", "{camera}_{timestamp}")),
-        poll_interval=poll_interval,
-        max_clips_per_poll=max_clips,
-        retention_days=retention_days,
-        max_storage_gb=float(data.get("max_storage_gb", 10.0)),
-        camera_filter=camera_filter,
-        motion_only=bool(data.get("motion_only", False)),
-        time_window_start=str(data.get("time_window_start", "") or ""),
-        time_window_end=str(data.get("time_window_end", "") or ""),
-        download_thumbnails=bool(data.get("download_thumbnails", False)),
-        concurrent_downloads=max(1, min(10, int(data.get("concurrent_downloads", 3)))),
-        retry_attempts=max(1, min(10, int(data.get("retry_attempts", 3)))),
-        retry_delay=max(0.0, float(data.get("retry_delay", 5.0))),
-        notify_ha=bool(data.get("notify_ha", True)),
-        ha_notification_title=str(
+
+def _parse_storage_kwargs(data: dict) -> dict[str, Any]:
+    camera_filter = [
+        c.strip()
+        for c in data.get("camera_filter", [])
+        if isinstance(c, str) and c.strip()
+    ]
+    return {
+        "download_path": Path(str(data.get("download_path", "/share/blink-clips"))),
+        "organize_by_camera": bool(data.get("organize_by_camera", True)),
+        "organize_by_date": bool(data.get("organize_by_date", True)),
+        "filename_format": str(data.get("filename_format", "{camera}_{timestamp}")),
+        "max_storage_gb": float(data.get("max_storage_gb", 10.0)),
+        "camera_filter": camera_filter,
+        "motion_only": bool(data.get("motion_only", False)),
+        "time_window_start": str(data.get("time_window_start", "") or ""),
+        "time_window_end": str(data.get("time_window_end", "") or ""),
+        "download_thumbnails": bool(data.get("download_thumbnails", False)),
+        "concurrent_downloads": max(
+            1, min(10, int(data.get("concurrent_downloads", 3)))
+        ),
+        "retry_attempts": max(1, min(10, int(data.get("retry_attempts", 3)))),
+        "retry_delay": max(0.0, float(data.get("retry_delay", 5.0))),
+    }
+
+
+def _parse_notification_kwargs(data: dict) -> dict[str, Any]:
+    return {
+        "notify_ha": bool(data.get("notify_ha", True)),
+        "ha_notification_title": str(
             data.get("ha_notification_title", "Blink Clip Downloaded")
         ),
-        webhook_url=str(data.get("webhook_url", "") or ""),
-        create_clip_manifest=bool(data.get("create_clip_manifest", True)),
-        enable_library_db=bool(data.get("enable_library_db", True)),
-        enable_media_server=bool(data.get("enable_media_server", True)),
-        media_server_port=max(
+        "webhook_url": str(data.get("webhook_url", "") or ""),
+        "create_clip_manifest": bool(data.get("create_clip_manifest", True)),
+    }
+
+
+def _parse_media_server_kwargs(data: dict) -> dict[str, Any]:
+    return {
+        "enable_library_db": bool(data.get("enable_library_db", True)),
+        "enable_media_server": bool(data.get("enable_media_server", True)),
+        "media_server_port": max(
             1024, min(65535, int(data.get("media_server_port", 8099)))
         ),
-        watch_ha_events=bool(data.get("watch_ha_events", True)),
-        fast_poll_duration=max(10, int(data.get("fast_poll_duration", 120))),
-        fast_poll_interval=max(5, min(60, int(data.get("fast_poll_interval", 15)))),
-        event_cameras=[
+        "watch_ha_events": bool(data.get("watch_ha_events", True)),
+        "fast_poll_duration": max(10, int(data.get("fast_poll_duration", 120))),
+        "fast_poll_interval": max(5, min(60, int(data.get("fast_poll_interval", 15)))),
+        "event_cameras": [
             c.strip()
             for c in data.get("event_cameras", [])
             if isinstance(c, str) and c.strip()
         ],
-        post_motion_delay=max(5, min(300, int(data.get("post_motion_delay", 30)))),
-        min_clip_duration=max(0, int(data.get("min_clip_duration", 0))),
-        digest_enabled=bool(data.get("digest_enabled", True)),
-        digest_time=str(data.get("digest_time", "08:00")),
-        archive_enabled=bool(data.get("archive_enabled", False)),
-        archive_after_days=max(1, int(data.get("archive_after_days", 60))),
-        download_local_storage=bool(data.get("download_local_storage", False)),
-        # AI Video Analysis
-        ai_analysis_enabled=bool(data.get("ai_analysis_enabled", False)),
-        ai_provider=ai_provider,
-        ollama_url=str(data.get("ollama_url", "") or "").strip().rstrip("/"),
-        ollama_model=str(data.get("ollama_model", "") or "").strip(),
-        ollama_cloud_api_key=str(data.get("ollama_cloud_api_key", "") or "").strip(),
-        moondream_api_key=str(data.get("moondream_api_key", "") or "").strip(),
-        moondream_finetune_model=str(
+        "post_motion_delay": max(5, min(300, int(data.get("post_motion_delay", 30)))),
+        "min_clip_duration": max(0, int(data.get("min_clip_duration", 0))),
+    }
+
+
+def _parse_digest_archive_kwargs(data: dict) -> dict[str, Any]:
+    return {
+        "digest_enabled": bool(data.get("digest_enabled", True)),
+        "digest_time": str(data.get("digest_time", "08:00")),
+        "archive_enabled": bool(data.get("archive_enabled", False)),
+        "archive_after_days": max(1, int(data.get("archive_after_days", 60))),
+        "download_local_storage": bool(data.get("download_local_storage", False)),
+    }
+
+
+def _parse_ai_frame_strategy(data: dict) -> str:
+    strategy = str(data.get("ai_frame_strategy", "smart") or "smart").strip().lower()
+    return strategy if strategy in {"smart", "sequential", "uniform"} else "smart"
+
+
+def _parse_ai_provider_kwargs(
+    data: dict,
+    ai_provider: str,
+    ai_escalation_provider: str,
+    ai_escalation_model: str,
+    legacy_openai_escalation_model: str,
+) -> dict[str, Any]:
+    return {
+        "ai_analysis_enabled": bool(data.get("ai_analysis_enabled", False)),
+        "ai_provider": ai_provider,
+        "ollama_url": str(data.get("ollama_url", "") or "").strip().rstrip("/"),
+        "ollama_model": str(data.get("ollama_model", "") or "").strip(),
+        "ollama_cloud_api_key": str(data.get("ollama_cloud_api_key", "") or "").strip(),
+        "moondream_api_key": str(data.get("moondream_api_key", "") or "").strip(),
+        "moondream_finetune_model": str(
             data.get("moondream_finetune_model", "") or ""
         ).strip(),
-        anthropic_api_key=str(data.get("anthropic_api_key", "") or "").strip(),
-        anthropic_model=str(data.get("anthropic_model", "") or "").strip()
+        "anthropic_api_key": str(data.get("anthropic_api_key", "") or "").strip(),
+        "anthropic_model": str(data.get("anthropic_model", "") or "").strip()
         or "claude-haiku-4-5",
-        openai_api_key=str(data.get("openai_api_key", "") or "").strip(),
-        openai_model=str(data.get("openai_model", "") or "").strip() or "gpt-4o-mini",
-        openai_escalation_model=legacy_openai_escalation_model,
-        ai_escalation_provider=ai_escalation_provider,
-        ai_escalation_model=ai_escalation_model,
-        ai_prompt=str(data.get("ai_prompt", "") or "").strip() or AppConfig.ai_prompt,
-        ai_car_description=str(data.get("ai_car_description", "") or "").strip(),
-        ai_max_frames=max(1, min(100, int(data.get("ai_max_frames", 5)))),
-        ai_frame_interval=max(
+        "openai_api_key": str(data.get("openai_api_key", "") or "").strip(),
+        "openai_model": str(data.get("openai_model", "") or "").strip()
+        or "gpt-4o-mini",
+        "openai_escalation_model": legacy_openai_escalation_model,
+        "ai_escalation_provider": ai_escalation_provider,
+        "ai_escalation_model": ai_escalation_model,
+    }
+
+
+def _parse_ai_prompt_kwargs(data: dict) -> dict[str, Any]:
+    return {
+        "ai_prompt": str(data.get("ai_prompt", "") or "").strip()
+        or AppConfig.ai_prompt,
+        "ai_car_description": str(data.get("ai_car_description", "") or "").strip(),
+        "ai_max_frames": max(1, min(100, int(data.get("ai_max_frames", 5)))),
+        "ai_frame_interval": max(
             0.5, min(30.0, float(data.get("ai_frame_interval", 2.0)))
         ),
-        ai_suspicious_keywords=[
+        "ai_suspicious_keywords": [
             k.strip()
             for k in data.get("ai_suspicious_keywords", [])
             if isinstance(k, str) and k.strip()
         ]
         or list(_DEFAULT_SUSPICIOUS_KEYWORDS),
-        ai_schedule_start=str(data.get("ai_schedule_start", "") or "").strip(),
-        ai_schedule_end=str(data.get("ai_schedule_end", "") or "").strip(),
-        ai_batch_size=max(1, min(50, int(data.get("ai_batch_size", 10)))),
-        ai_check_interval=max(10, min(3600, int(data.get("ai_check_interval", 60)))),
-        ai_min_confidence=max(0.0, min(1.0, float(data.get("ai_min_confidence", 0.5)))),
-        ai_camera_prompts=[
+        "ai_schedule_start": str(data.get("ai_schedule_start", "") or "").strip(),
+        "ai_schedule_end": str(data.get("ai_schedule_end", "") or "").strip(),
+        "ai_batch_size": max(1, min(50, int(data.get("ai_batch_size", 10)))),
+        "ai_check_interval": max(10, min(3600, int(data.get("ai_check_interval", 60)))),
+        "ai_min_confidence": max(
+            0.0, min(1.0, float(data.get("ai_min_confidence", 0.5)))
+        ),
+    }
+
+
+def _parse_ai_camera_kwargs(data: dict) -> dict[str, Any]:
+    return {
+        "ai_camera_prompts": [
             {"camera": str(item["camera"]), "prompt": str(item["prompt"])}
             for item in data.get("ai_camera_prompts", [])
             if isinstance(item, dict) and item.get("camera") and item.get("prompt")
         ],
-        ai_camera_descriptions=[
+        "ai_camera_descriptions": [
             {
                 "camera": str(item["camera"]),
                 "description": str(item.get("description", "")),
@@ -500,43 +558,101 @@ def _parse_config(data: dict) -> AppConfig:
             for item in data.get("ai_camera_descriptions", [])
             if isinstance(item, dict) and item.get("camera")
         ],
-        ai_frame_strategy=str(data.get("ai_frame_strategy", "smart") or "smart")
-        .strip()
-        .lower()
-        if str(data.get("ai_frame_strategy", "smart") or "smart").strip().lower()
-        in {"smart", "sequential", "uniform"}
-        else "smart",
-        ai_car_cameras=[
+        "ai_frame_strategy": _parse_ai_frame_strategy(data),
+        "ai_car_cameras": [
             c.strip()
             for c in data.get("ai_car_cameras", [])
             if isinstance(c, str) and c.strip()
         ],
-        ai_prompt_debug_enabled=bool(data.get("ai_prompt_debug_enabled", False)),
-        ai_enhanced_detection_enabled=bool(
+    }
+
+
+def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
+    return {
+        "ai_prompt_debug_enabled": bool(data.get("ai_prompt_debug_enabled", False)),
+        "ai_enhanced_detection_enabled": bool(
             data.get("ai_enhanced_detection_enabled", False)
         ),
-        ai_object_detection_model=str(
+        "ai_object_detection_model": str(
             data.get("ai_object_detection_model", "") or ""
         ).strip()
         or "yolo11n.pt",
-        ai_face_recognition_enabled=bool(
+        "ai_face_recognition_enabled": bool(
             data.get("ai_face_recognition_enabled", False)
         ),
-        # Extended notifications
-        mobile_app_target=str(data.get("mobile_app_target", "") or "").strip(),
-        mobile_app_enabled=bool(data.get("mobile_app_enabled", False)),
-        smtp_host=str(data.get("smtp_host", "") or "").strip(),
-        smtp_port=max(25, min(65535, int(data.get("smtp_port", 587)))),
-        smtp_user=str(data.get("smtp_user", "") or "").strip(),
-        smtp_password=str(data.get("smtp_password", "") or ""),
-        smtp_recipients=[
+    }
+
+
+def _parse_ai_kwargs(
+    data: dict,
+    ai_provider: str,
+    ai_escalation_provider: str,
+    ai_escalation_model: str,
+    legacy_openai_escalation_model: str,
+) -> dict[str, Any]:
+    kwargs = _parse_ai_provider_kwargs(
+        data,
+        ai_provider,
+        ai_escalation_provider,
+        ai_escalation_model,
+        legacy_openai_escalation_model,
+    )
+    kwargs.update(_parse_ai_prompt_kwargs(data))
+    kwargs.update(_parse_ai_camera_kwargs(data))
+    kwargs.update(_parse_ai_detection_kwargs(data))
+    return kwargs
+
+
+def _parse_extended_notification_kwargs(data: dict) -> dict[str, Any]:
+    return {
+        "mobile_app_target": str(data.get("mobile_app_target", "") or "").strip(),
+        "mobile_app_enabled": bool(data.get("mobile_app_enabled", False)),
+        "smtp_host": str(data.get("smtp_host", "") or "").strip(),
+        "smtp_port": max(25, min(65535, int(data.get("smtp_port", 587)))),
+        "smtp_user": str(data.get("smtp_user", "") or "").strip(),
+        "smtp_password": str(data.get("smtp_password", "") or ""),
+        "smtp_recipients": [
             r.strip()
             for r in data.get("smtp_recipients", [])
             if isinstance(r, str) and r.strip()
         ],
-        smtp_sender=str(data.get("smtp_sender", "") or "").strip(),
-        smtp_enabled=bool(data.get("smtp_enabled", False)),
-        discord_webhook_url=str(data.get("discord_webhook_url", "") or "").strip(),
-        discord_enabled=bool(data.get("discord_enabled", False)),
-        log_level=log_level,
+        "smtp_sender": str(data.get("smtp_sender", "") or "").strip(),
+        "smtp_enabled": bool(data.get("smtp_enabled", False)),
+        "discord_webhook_url": str(data.get("discord_webhook_url", "") or "").strip(),
+        "discord_enabled": bool(data.get("discord_enabled", False)),
+    }
+
+
+def _parse_config(data: dict) -> AppConfig:
+    """Parse a raw options dict into a validated :class:`AppConfig`."""
+    username, password = _parse_credentials(data)
+    poll_interval, retention_days, max_clips = _parse_poll_limits(data)
+    log_level = _parse_log_level(data)
+    ai_provider = str(data.get("ai_provider", "ollama") or "ollama").strip().lower()
+    ai_escalation_provider, ai_escalation_model, legacy_openai_escalation_model = (
+        _resolve_ai_escalation(data, ai_provider)
     )
+
+    kwargs: dict[str, Any] = {
+        "username": username,
+        "password": password,
+        "poll_interval": poll_interval,
+        "max_clips_per_poll": max_clips,
+        "retention_days": retention_days,
+        "log_level": log_level,
+    }
+    kwargs.update(_parse_storage_kwargs(data))
+    kwargs.update(_parse_notification_kwargs(data))
+    kwargs.update(_parse_media_server_kwargs(data))
+    kwargs.update(_parse_digest_archive_kwargs(data))
+    kwargs.update(
+        _parse_ai_kwargs(
+            data,
+            ai_provider,
+            ai_escalation_provider,
+            ai_escalation_model,
+            legacy_openai_escalation_model,
+        )
+    )
+    kwargs.update(_parse_extended_notification_kwargs(data))
+    return AppConfig(**kwargs)

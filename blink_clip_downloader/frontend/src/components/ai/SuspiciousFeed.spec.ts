@@ -126,9 +126,7 @@ describe('SuspiciousFeed', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() =>
-        Promise.resolve(
-          jsonResponse([{ ...ITEM, clip_id: 'c2', confidence: undefined, summary: undefined }]),
-        ),
+        Promise.resolve(jsonResponse([{ ...ITEM, clip_id: 'c2', confidence: undefined, summary: undefined }])),
       ),
     )
     const wrapper = mount(SuspiciousFeed)

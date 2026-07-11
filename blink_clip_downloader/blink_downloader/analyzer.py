@@ -766,15 +766,7 @@ class BaseAnalyzer(abc.ABC):
     ) -> AnalysisResult:
         from datetime import datetime, timezone
 
-        self._last_prompt_tokens = 0
-        self._last_completion_tokens = 0
-        self._last_escalation_model = ""
-        self._last_escalation_provider = ""
-        self._last_escalation_prompt_tokens = 0
-        self._last_escalation_completion_tokens = 0
-        # Store camera name so provider subclasses can access it in _call_model.
-        # Safe because analyze_clip() holds _analyze_lock for its whole body.
-        self._current_camera: str = camera
+        self._reset_analysis_state(camera)
         start = time.monotonic()
         frames = await self.extract_frames(clip_path)
 
@@ -793,58 +785,15 @@ class BaseAnalyzer(abc.ABC):
                 anomaly_score=anomaly_score,
             )
 
-        # Visual scene-baseline ("smart brain") lookup — compares this clip's
-        # opening frame (closest to the pre-motion scene) against the
-        # camera's learned background, using whatever history was recorded
-        # before this clip. Folded back into the baseline further down, once
-        # we know whether this clip was suspicious.
-        scene_thumbnail: list[float] | None = None
-        scene_deviation: float | None = None
-        if self._scene_baseline_db is not None:
-            scene_thumbnail = self._scene_thumbnail(frames[0])
-            if scene_thumbnail is not None:
-                scene_deviation = await self._scene_baseline_db.get_scene_deviation(
-                    camera, scene_thumbnail
-                )
-
-        # Down-select the oversampled pool to the frames actually sent to the
-        # AI. "uniform" keeps frames evenly spread across the whole clip;
-        # "smart" and "sequential" both benefit from motion-weighted picks
-        # (entry/peak/exit) since sequential analyses each frame individually
-        # and gets more value from a few well-chosen frames than an arbitrary
-        # early slice of the clip. Clips longer than _LONG_CLIP_THRESHOLD_SECONDS
-        # get their frame budget doubled — see _target_frame_count().
-        target_frame_count = self._target_frame_count(
-            len(frames), clip_duration=clip_duration
+        scene_thumbnail, scene_deviation = await self._lookup_scene_baseline(
+            camera, frames
         )
-        if len(frames) > target_frame_count:
-            if self._frame_strategy == "uniform":
-                frames = self._select_uniform_frames(frames, target_frame_count)
-            else:
-                frames = self._select_best_frames(frames, target_frame_count)
 
-        # Optional computer-vision enhancement pipeline (see vision.py) — off
-        # entirely unless attach_vision_pipeline() was called and at least
-        # one of its stages is enabled in config. Runs before the
-        # trajectory/zone-motion heuristics below so that, when frame
-        # preprocessing is enabled, those heuristics see the same enhanced
-        # frames that get sent to the AI model.
-        vision_hints = None
-        if self._vision_pipeline is not None:
-            vision_hints = await self._vision_pipeline.process_clip(
-                frames,
-                car_description=self._car_description,
-                car_protection_applies=self._car_protection_applies(camera),
-            )
-            if vision_hints.enhanced_frames is not None:
-                frames = vision_hints.enhanced_frames
+        frames = self._downselect_frames(frames, clip_duration)
+        frames, vision_hints = await self._apply_vision_pipeline(frames, camera)
 
         trajectory_hint = self._compute_motion_trajectory_hint(frames)
-
-        zone_motion_fraction: float | None = None
-        car_zone = self._car_zones.get(camera)
-        if car_zone and (not self._car_cameras or camera in self._car_cameras):
-            zone_motion_fraction = self._zone_motion_fraction(frames, car_zone)
+        zone_motion_fraction = self._maybe_compute_zone_motion(frames, camera)
 
         prompt = self._build_prompt(
             camera,
@@ -858,38 +807,12 @@ class BaseAnalyzer(abc.ABC):
             vision_hints=vision_hints,
         )
 
-        if self._frame_strategy == "sequential":
-            response, escalation_frame = await self._analyze_sequentially(
-                frames, prompt
-            )
-            if escalation_frame is not None:
-                response = await self._maybe_escalate(
-                    [escalation_frame], prompt, response
-                )
-        else:
-            response = await self._call_model_with_escalation(frames, prompt)
-
+        response = await self._generate_response(frames, prompt)
         is_suspicious, confidence, summary = self.parse_response(response)
 
-        # Fold this clip's opening frame into the learned scene baseline
-        # unless it was a *confident* suspicious call — a low-confidence
-        # hedge (often just the scene-deviation hint above making the model
-        # cautious about a persistent but benign change, e.g. a car parked
-        # overnight or trash put out for collection) must not block the
-        # baseline from ever learning that new normal, or the same hint
-        # keeps firing on every future clip. A confidently suspicious clip
-        # is still withheld so a genuine intruder is never absorbed into
-        # "what's normal here".
-        confident_suspicious = (
-            is_suspicious
-            and confidence >= _SCENE_BASELINE_SUSPICION_CONFIDENCE_THRESHOLD
+        await self._maybe_update_scene_baseline(
+            camera, scene_thumbnail, is_suspicious, confidence
         )
-        if (
-            scene_thumbnail is not None
-            and self._scene_baseline_db is not None
-            and not confident_suspicious
-        ):
-            await self._scene_baseline_db.record_scene_baseline(camera, scene_thumbnail)
 
         return AnalysisResult(
             clip_id=clip_id,
@@ -911,6 +834,128 @@ class BaseAnalyzer(abc.ABC):
             escalation_provider=self._last_escalation_provider,
             prompt_text=prompt if self._store_prompt_debug else "",
         )
+
+    def _reset_analysis_state(self, camera: str) -> None:
+        self._last_prompt_tokens = 0
+        self._last_completion_tokens = 0
+        self._last_escalation_model = ""
+        self._last_escalation_provider = ""
+        self._last_escalation_prompt_tokens = 0
+        self._last_escalation_completion_tokens = 0
+        # Store camera name so provider subclasses can access it in _call_model.
+        # Safe because analyze_clip() holds _analyze_lock for its whole body.
+        self._current_camera: str = camera
+
+    async def _lookup_scene_baseline(
+        self, camera: str, frames: list[bytes]
+    ) -> tuple[list[float] | None, float | None]:
+        """Compare this clip's opening frame against the camera's learned background.
+
+        The opening frame is closest to the pre-motion scene. The result is
+        folded back into the baseline by ``_maybe_update_scene_baseline()``
+        once we know whether this clip was suspicious.
+        """
+        if self._scene_baseline_db is None:
+            return None, None
+        scene_thumbnail = self._scene_thumbnail(frames[0])
+        if scene_thumbnail is None:
+            return None, None
+        scene_deviation = await self._scene_baseline_db.get_scene_deviation(
+            camera, scene_thumbnail
+        )
+        return scene_thumbnail, scene_deviation
+
+    def _downselect_frames(
+        self, frames: list[bytes], clip_duration: float
+    ) -> list[bytes]:
+        """Down-select the oversampled pool to the frames actually sent to the AI.
+
+        "uniform" keeps frames evenly spread across the whole clip; "smart"
+        and "sequential" both benefit from motion-weighted picks
+        (entry/peak/exit) since sequential analyses each frame individually
+        and gets more value from a few well-chosen frames than an arbitrary
+        early slice of the clip. Clips longer than
+        _LONG_CLIP_THRESHOLD_SECONDS get their frame budget doubled — see
+        _target_frame_count().
+        """
+        target_frame_count = self._target_frame_count(
+            len(frames), clip_duration=clip_duration
+        )
+        if len(frames) <= target_frame_count:
+            return frames
+        if self._frame_strategy == "uniform":
+            return self._select_uniform_frames(frames, target_frame_count)
+        return self._select_best_frames(frames, target_frame_count)
+
+    async def _apply_vision_pipeline(
+        self, frames: list[bytes], camera: str
+    ) -> tuple[list[bytes], Any]:
+        """Run the optional computer-vision enhancement pipeline (see vision.py).
+
+        Off entirely unless attach_vision_pipeline() was called and at least
+        one of its stages is enabled in config. Runs before the
+        trajectory/zone-motion heuristics so that, when frame preprocessing
+        is enabled, those heuristics see the same enhanced frames that get
+        sent to the AI model.
+        """
+        if self._vision_pipeline is None:
+            return frames, None
+        vision_hints = await self._vision_pipeline.process_clip(
+            frames,
+            car_description=self._car_description,
+            car_protection_applies=self._car_protection_applies(camera),
+        )
+        if vision_hints.enhanced_frames is not None:
+            frames = vision_hints.enhanced_frames
+        return frames, vision_hints
+
+    def _maybe_compute_zone_motion(
+        self, frames: list[bytes], camera: str
+    ) -> float | None:
+        car_zone = self._car_zones.get(camera)
+        if car_zone and (not self._car_cameras or camera in self._car_cameras):
+            return self._zone_motion_fraction(frames, car_zone)
+        return None
+
+    async def _generate_response(self, frames: list[bytes], prompt: str) -> str:
+        if self._frame_strategy == "sequential":
+            response, escalation_frame = await self._analyze_sequentially(
+                frames, prompt
+            )
+            if escalation_frame is not None:
+                response = await self._maybe_escalate(
+                    [escalation_frame], prompt, response
+                )
+            return response
+        return await self._call_model_with_escalation(frames, prompt)
+
+    async def _maybe_update_scene_baseline(
+        self,
+        camera: str,
+        scene_thumbnail: list[float] | None,
+        is_suspicious: bool,
+        confidence: float,
+    ) -> None:
+        """Fold this clip's opening frame into the learned scene baseline.
+
+        Skipped for a *confident* suspicious call — a low-confidence hedge
+        (often just the scene-deviation hint above making the model cautious
+        about a persistent but benign change, e.g. a car parked overnight or
+        trash put out for collection) must not block the baseline from ever
+        learning that new normal, or the same hint keeps firing on every
+        future clip. A confidently suspicious clip is still withheld so a
+        genuine intruder is never absorbed into "what's normal here".
+        """
+        confident_suspicious = (
+            is_suspicious
+            and confidence >= _SCENE_BASELINE_SUSPICION_CONFIDENCE_THRESHOLD
+        )
+        if (
+            scene_thumbnail is not None
+            and self._scene_baseline_db is not None
+            and not confident_suspicious
+        ):
+            await self._scene_baseline_db.record_scene_baseline(camera, scene_thumbnail)
 
     # ------------------------------------------------------------------
     # Two-tier escalation (any provider may act as tier 2 for any other)
@@ -1149,75 +1194,90 @@ class BaseAnalyzer(abc.ABC):
             return frames
 
         try:
-            import io as _io  # noqa: PLC0415
-
-            from PIL import Image as _Image  # noqa: PLC0415
-
-            _THUMB = (64, 64)
-            # tobytes() returns raw pixel bytes (L mode = 1 byte/pixel)
-            # which avoids the untyped ImagingCore returned by getdata()
-            thumbs: list[bytes] = [
-                _Image.open(_io.BytesIO(f))
-                .convert("L")
-                .resize(_THUMB, _Image.Resampling.LANCZOS)
-                .tobytes()
-                for f in frames
-            ]
-
-            # Inter-frame absolute difference (normalised per pixel)
-            pixels = _THUMB[0] * _THUMB[1]
-            diffs: list[float] = [
-                sum(abs(a - b) for a, b in zip(thumbs[i - 1], thumbs[i])) / pixels
-                for i in range(1, len(thumbs))
-            ]
-
-            selected: set[int] = {0, len(frames) - 1}
-
-            # Peak-motion frame (index into frames, not diffs)
-            if diffs:
-                peak = max(range(len(diffs)), key=lambda i: diffs[i]) + 1
-                selected.add(peak)
-
-            # Fill remaining slots by motion score, spreading picks across the
-            # timeline: require each new pick to be at least min_gap frames
-            # from every frame already selected, then relax that constraint
-            # only if it left slots unfilled (small pools/short clips).
-            ranked = sorted(
-                (
-                    (diffs[i], i + 1)
-                    for i in range(len(diffs))
-                    if (i + 1) not in selected
-                ),
-                reverse=True,
-            )
-            min_gap = max(1, len(frames) // target_count)
-            for _, idx in ranked:
-                if len(selected) >= target_count:
-                    break
-                if all(abs(idx - s) >= min_gap for s in selected):
-                    selected.add(idx)
-            if len(selected) < target_count:
-                for _, idx in ranked:
-                    if len(selected) >= target_count:
-                        break
-                    selected.add(idx)
-
-            return [frames[i] for i in sorted(selected)]
-
+            diffs = BaseAnalyzer._frame_motion_diffs(frames)
+            return BaseAnalyzer._select_frames_by_motion(frames, diffs, target_count)
         except Exception:  # noqa: BLE001
             # PIL unavailable or processing error — fall back to even spacing
             # anchored at first and last to preserve entry/exit coverage
-            if target_count <= 1:
-                return [frames[0]]
-            anchored: set[int] = {0, len(frames) - 1}
-            gap = target_count - len(anchored)
-            if gap > 0:
-                step = max(1, len(frames) // target_count)
-                idx = step
-                while len(anchored) < target_count and idx < len(frames) - 1:
-                    anchored.add(idx)
-                    idx += step
-            return [frames[i] for i in sorted(anchored)[:target_count]]
+            return BaseAnalyzer._select_frames_evenly_spaced(frames, target_count)
+
+    @staticmethod
+    def _frame_motion_diffs(frames: list[bytes]) -> list[float]:
+        """Per-pixel inter-frame absolute difference for each consecutive pair."""
+        import io as _io  # noqa: PLC0415
+
+        from PIL import Image as _Image  # noqa: PLC0415
+
+        _THUMB = (64, 64)
+        # tobytes() returns raw pixel bytes (L mode = 1 byte/pixel)
+        # which avoids the untyped ImagingCore returned by getdata()
+        thumbs: list[bytes] = [
+            _Image.open(_io.BytesIO(f))
+            .convert("L")
+            .resize(_THUMB, _Image.Resampling.LANCZOS)
+            .tobytes()
+            for f in frames
+        ]
+
+        # Inter-frame absolute difference (normalised per pixel)
+        pixels = _THUMB[0] * _THUMB[1]
+        return [
+            sum(abs(a - b) for a, b in zip(thumbs[i - 1], thumbs[i])) / pixels
+            for i in range(1, len(thumbs))
+        ]
+
+    @staticmethod
+    def _select_frames_by_motion(
+        frames: list[bytes], diffs: list[float], target_count: int
+    ) -> list[bytes]:
+        """Select frames by motion score, spreading picks across the timeline.
+
+        Always includes the first frame (scene entry), last frame (exit),
+        and the peak-motion frame. Fills remaining slots with the next
+        highest-motion frames, requiring each new pick be at least min_gap
+        frames from every frame already selected, then relaxing that
+        constraint only if it left slots unfilled (small pools/short clips).
+        """
+        selected: set[int] = {0, len(frames) - 1}
+
+        # Peak-motion frame (index into frames, not diffs)
+        if diffs:
+            peak = max(range(len(diffs)), key=lambda i: diffs[i]) + 1
+            selected.add(peak)
+
+        ranked = sorted(
+            ((diffs[i], i + 1) for i in range(len(diffs)) if (i + 1) not in selected),
+            reverse=True,
+        )
+        min_gap = max(1, len(frames) // target_count)
+        for _, idx in ranked:
+            if len(selected) >= target_count:
+                break
+            if all(abs(idx - s) >= min_gap for s in selected):
+                selected.add(idx)
+        if len(selected) < target_count:
+            for _, idx in ranked:
+                if len(selected) >= target_count:
+                    break
+                selected.add(idx)
+
+        return [frames[i] for i in sorted(selected)]
+
+    @staticmethod
+    def _select_frames_evenly_spaced(
+        frames: list[bytes], target_count: int
+    ) -> list[bytes]:
+        if target_count <= 1:
+            return [frames[0]]
+        anchored: set[int] = {0, len(frames) - 1}
+        gap = target_count - len(anchored)
+        if gap > 0:
+            step = max(1, len(frames) // target_count)
+            idx = step
+            while len(anchored) < target_count and idx < len(frames) - 1:
+                anchored.add(idx)
+                idx += step
+        return [frames[i] for i in sorted(anchored)[:target_count]]
 
     @staticmethod
     def _compute_motion_trajectory_hint(frames: list[bytes]) -> str | None:
@@ -1243,68 +1303,86 @@ class BaseAnalyzer(abc.ABC):
             return None
 
         try:
-            import io as _io  # noqa: PLC0415
-
-            from PIL import Image as _Image  # noqa: PLC0415
-
-            width, height = _MOTION_TRAJECTORY_THUMB_SIZE
-            thumbs: list[bytes] = [
-                _Image.open(_io.BytesIO(f))
-                .convert("L")
-                .resize((width, height), _Image.Resampling.LANCZOS)
-                .tobytes()
-                for f in frames
-            ]
-            pixels = width * height
-
-            diff_magnitudes: list[float] = []
-            centroids_x: list[float] = []
-            for i in range(1, len(thumbs)):
-                total = 0
-                weighted_x = 0
-                for idx, (pa, pb) in enumerate(zip(thumbs[i - 1], thumbs[i])):
-                    d = abs(pa - pb)
-                    if d:
-                        total += d
-                        weighted_x += d * (idx % width)
-                diff_magnitudes.append(total / pixels)
-                centroids_x.append((weighted_x / total) if total else -1.0)
-
+            diff_magnitudes, centroids_x = (
+                BaseAnalyzer._frame_diff_magnitudes_and_centroids(frames)
+            )
             if (
                 not diff_magnitudes
                 or max(diff_magnitudes) < _MOTION_TRAJECTORY_DIFF_FLOOR
             ):
                 return None
 
-            valid_centroids = [cx for cx in centroids_x if cx >= 0]
-            if len(valid_centroids) >= 2:
-                first_x, last_x = valid_centroids[0], valid_centroids[-1]
-                if (
-                    abs(last_x - first_x)
-                    >= width * _MOTION_TRAJECTORY_LATERAL_SHIFT_FRACTION
-                ):
-                    return (
-                        "moving left to right across the frame"
-                        if last_x > first_x
-                        else "moving right to left across the frame"
-                    )
+            width = _MOTION_TRAJECTORY_THUMB_SIZE[0]
+            lateral = BaseAnalyzer._classify_lateral_shift(centroids_x, width)
+            if lateral is not None:
+                return lateral
 
-            if len(diff_magnitudes) >= 2:
-                midpoint = len(diff_magnitudes) // 2
-                first_half = diff_magnitudes[:midpoint] or diff_magnitudes[:1]
-                second_half = diff_magnitudes[midpoint:]
-                avg_first = sum(first_half) / len(first_half)
-                avg_second = sum(second_half) / len(second_half)
-                if avg_second > avg_first * _MOTION_TRAJECTORY_INTENSITY_RATIO:
-                    return (
-                        "movement intensity increasing over time (may be approaching)"
-                    )
-                if avg_first > avg_second * _MOTION_TRAJECTORY_INTENSITY_RATIO:
-                    return "movement intensity decreasing over time (may be retreating)"
-
-            return None
+            return BaseAnalyzer._classify_intensity_trend(diff_magnitudes)
         except Exception:  # noqa: BLE001
             return None
+
+    @staticmethod
+    def _frame_diff_magnitudes_and_centroids(
+        frames: list[bytes],
+    ) -> tuple[list[float], list[float]]:
+        """Per-frame-pair diff magnitude and weighted-x centroid of the diff mask."""
+        import io as _io  # noqa: PLC0415
+
+        from PIL import Image as _Image  # noqa: PLC0415
+
+        width, height = _MOTION_TRAJECTORY_THUMB_SIZE
+        thumbs: list[bytes] = [
+            _Image.open(_io.BytesIO(f))
+            .convert("L")
+            .resize((width, height), _Image.Resampling.LANCZOS)
+            .tobytes()
+            for f in frames
+        ]
+        pixels = width * height
+
+        diff_magnitudes: list[float] = []
+        centroids_x: list[float] = []
+        for i in range(1, len(thumbs)):
+            total = 0
+            weighted_x = 0
+            for idx, (pa, pb) in enumerate(zip(thumbs[i - 1], thumbs[i])):
+                d = abs(pa - pb)
+                if d:
+                    total += d
+                    weighted_x += d * (idx % width)
+            diff_magnitudes.append(total / pixels)
+            centroids_x.append((weighted_x / total) if total else -1.0)
+
+        return diff_magnitudes, centroids_x
+
+    @staticmethod
+    def _classify_lateral_shift(centroids_x: list[float], width: int) -> str | None:
+        valid_centroids = [cx for cx in centroids_x if cx >= 0]
+        if len(valid_centroids) < 2:
+            return None
+        first_x, last_x = valid_centroids[0], valid_centroids[-1]
+        if abs(last_x - first_x) < width * _MOTION_TRAJECTORY_LATERAL_SHIFT_FRACTION:
+            return None
+        return (
+            "moving left to right across the frame"
+            if last_x > first_x
+            else "moving right to left across the frame"
+        )
+
+    @staticmethod
+    def _classify_intensity_trend(diff_magnitudes: list[float]) -> str | None:
+        if len(diff_magnitudes) < 2:
+            return None
+        midpoint = len(diff_magnitudes) // 2
+        first_half = diff_magnitudes[:midpoint] or diff_magnitudes[:1]
+        second_half = diff_magnitudes[midpoint:]
+        avg_first = sum(first_half) / len(first_half)
+        avg_second = sum(second_half) / len(second_half)
+        if avg_second > avg_first * _MOTION_TRAJECTORY_INTENSITY_RATIO:
+            return "movement intensity increasing over time (may be approaching)"
+        if avg_first > avg_second * _MOTION_TRAJECTORY_INTENSITY_RATIO:
+            return "movement intensity decreasing over time (may be retreating)"
+        return None
 
     @staticmethod
     def _zone_motion_fraction(
@@ -1481,212 +1559,288 @@ class BaseAnalyzer(abc.ABC):
         corrections, zone-motion evidence, short-event hint, optional
         computer-vision pipeline hints, and asset-protection distance rules."""
         base = self._camera_prompts.get(camera, self._base_prompt)
-        parts = [base]
+        parts = [base, self._camera_context_segment(camera)]
 
-        # Camera location / purpose. Explicitly ties the description to what
-        # counts as normal here, so e.g. a mailbox camera cares about someone
-        # lingering at the box while a backyard camera treats wildlife as
-        # routine — the same activity can be normal on one camera and worth
-        # flagging on another.
-        camera_desc = self._camera_descriptions.get(camera, "")
-        if camera_desc:
-            parts.append(
-                f"\n\nCamera location and purpose — {camera}: {camera_desc}\n"
-                "Use this specific purpose to calibrate what is normal versus "
-                "suspicious for this camera — what it is meant to watch for is "
-                "what deserves scrutiny; everything else on this camera is routine."
-            )
-        else:
-            parts.append(f"\n\nCamera: {camera}")
+        time_segment = self._time_of_day_segment(clip_timestamp)
+        if time_segment:
+            parts.append(time_segment)
 
-        # Time-of-day context (helps AI calibrate what's "normal")
-        if clip_timestamp:
-            try:
-                from datetime import datetime as _dt  # noqa: PLC0415
+        anomaly_segment = self._anomaly_alert_segment(anomaly_score)
+        if anomaly_segment:
+            parts.append(anomaly_segment)
 
-                dt = _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00"))
-                hour = dt.hour
-                if hour < 5:
-                    tod = "late night"
-                elif hour < 9:
-                    tod = "early morning"
-                elif hour < 12:
-                    tod = "morning"
-                elif hour < 17:
-                    tod = "afternoon"
-                elif hour < 20:
-                    tod = "evening"
-                else:
-                    tod = "night"
-                parts.append(
-                    f"\n\nTime of day: {tod} ({dt.strftime('%H:%M')} UTC). "
-                    "Factor this into your assessment of whether the activity is normal."
-                )
-            except Exception:  # noqa: BLE001
-                pass
-
-        # Behavior anomaly alert (temporal — unusual hour/duration for this camera)
-        if anomaly_score >= 0.6:
-            parts.append(
-                f"\n\nBEHAVIOR ALERT: This event is statistically unusual for "
-                f"this camera at this time (anomaly score {anomaly_score:.2f}/1.00). "
-                "Apply heightened scrutiny to any persons or vehicles in the frame."
-            )
-
-        # Short-event hint — a code-computed signal from the clip's real
-        # duration (see _SHORT_EVENT_DURATION_SECONDS) that a quick, single
-        # interaction is far more consistent with routine coming-and-going
-        # than with lingering, casing, or tampering. Framed as a hint the
-        # model can override, not a rule, since a genuinely short but
-        # visibly suspicious clip (e.g. a quick tamper-and-flee) must still
-        # be flagged on its own visible content.
-        if 0 < clip_duration <= _SHORT_EVENT_DURATION_SECONDS:
-            parts.append(
-                "\n\nSHORT EVENT: This entire clip lasts only "
-                f"{clip_duration:.0f} seconds. A brief, single interaction "
-                "like this — walking up, using a door, grabbing mail or a "
-                "delivery, or heading to a car — is far more consistent "
-                "with ordinary coming and going than with lingering, "
-                "casing, or tampering, which typically take noticeably "
-                "longer to unfold. Treat this as a hint favoring a routine "
-                "read, not a verdict on its own — only set suspicious=true "
-                "if the frames themselves clearly show concrete suspicious "
-                "behavior (forced entry, lock tampering, casing, etc.), "
-                "not brevity alone."
-            )
+        short_event_segment = self._short_event_segment(clip_duration)
+        if short_event_segment:
+            parts.append(short_event_segment)
 
         # Protected vehicle applicability is needed here (as well as below)
         # to gate the scene-baseline "favor calm" framing immediately after —
         # see that block's comment for why.
         car_applies = self._car_protection_applies(camera)
 
-        # Visual scene-baseline ("smart brain") signal. This camera is fixed in
-        # place, so its background should look almost the same clip after clip.
-        # A large deviation suggests something new (object, vehicle, obstruction)
-        # is in frame; a close match is a strong signal this is routine, which
-        # helps suppress false positives on ordinary daily activity.
-        if scene_deviation is not None:
-            if scene_deviation >= _SCENE_DEVIATION_ALERT_THRESHOLD:
-                parts.append(
-                    "\n\nSCENE BASELINE: This camera's view currently differs from its "
-                    f"usual background (deviation {scene_deviation:.2f}/1.00). Something "
-                    "not normally present — an object, vehicle, or obstruction — may be "
-                    "in frame. Treat this as a hint to look closer, not a verdict on its own. "
-                    "This deviation is frequently just lighting, weather, shadows, or the "
-                    "day/night transition — none of which are suspicious by themselves. "
-                    "Only raise suspicion if the frames themselves clearly show a specific "
-                    "new person, animal, or vehicle; if you cannot identify one, describe "
-                    "the scene plainly and set suspicious=false."
-                )
-            elif not car_applies:
-                # Deliberately omitted when car_applies: the protected vehicle
-                # parked in its usual spot IS this camera's learned "usual
-                # background" by definition, so a low deviation score here
-                # means nothing more than "the car is where it always is" —
-                # it says nothing about whether a person is *currently* right
-                # next to it, since the opening frame this score is computed
-                # from is captured at or before the moment motion begins,
-                # often before someone has walked into contact with the car.
-                # A "favor calm read" framing on every single clip from this
-                # camera would actively work against the strict PROTECTED
-                # VEHICLE distance rules below, which must be the sole
-                # authority for this camera's verdict — this was found to
-                # measurably suppress genuine close-proximity notifications
-                # (e.g. a person leaning on or standing within a foot of the
-                # vehicle) that the distance rules alone correctly catch.
-                parts.append(
-                    "\n\nSCENE BASELINE: This camera's view closely matches its usual "
-                    "background — no unexplained new objects. Favor a calm, routine read "
-                    "of the activity unless the frames themselves show something genuinely "
-                    "concerning."
-                )
+        scene_segment = self._scene_baseline_segment(scene_deviation, car_applies)
+        if scene_segment:
+            parts.append(scene_segment)
 
-        # Movement-trajectory hint ("smart brain" motion reasoning) — a rough
-        # automated estimate of direction/intensity trend across the selected
-        # frames, derived from frame-to-frame pixel differences already
-        # computed during frame selection. Explicitly framed as a coarse hint
-        # so the model relies on what it can actually see, not this estimate,
-        # for its final judgment of approaching/retreating/lingering behavior.
-        if trajectory_hint:
-            parts.append(
-                "\n\nMOVEMENT: Across these frames, the main area of motion "
-                f"appears to be {trajectory_hint}. This is a rough automated "
-                "estimate from frame-to-frame pixel differences, not a precise "
-                "tracked path — use it only as a coarse hint about direction "
-                "of travel, and rely on what you can actually see in the "
-                "frames for your judgment of approaching/retreating/lingering "
-                "behavior."
+        trajectory_segment = self._trajectory_segment(trajectory_hint)
+        if trajectory_segment:
+            parts.append(trajectory_segment)
+
+        corrections_segment = self._corrections_segment(recent_corrections)
+        if corrections_segment:
+            parts.append(corrections_segment)
+
+        zone_segment = self._zone_motion_segment(zone_motion_fraction)
+        if zone_segment:
+            parts.append(zone_segment)
+
+        parts.extend(self._vision_hint_segments(vision_hints))
+
+        # Protected vehicle with precise distance rules — only for cameras that
+        # can see the car (all cameras when car_cameras is empty, otherwise only
+        # the cameras explicitly listed in car_cameras). car_applies was
+        # already computed above, before the scene-baseline block.
+        car_segment = self._car_protection_segment(camera, car_applies)
+        if car_segment:
+            parts.append(car_segment)
+
+        parts.append(self._output_rules_segment(camera, car_applies))
+
+        return "".join(parts)
+
+    def _camera_context_segment(self, camera: str) -> str:
+        """Camera location/purpose framing, or a plain camera name fallback.
+
+        Explicitly ties the description to what counts as normal here, so
+        e.g. a mailbox camera cares about someone lingering at the box while
+        a backyard camera treats wildlife as routine — the same activity can
+        be normal on one camera and worth flagging on another.
+        """
+        camera_desc = self._camera_descriptions.get(camera, "")
+        if camera_desc:
+            return (
+                f"\n\nCamera location and purpose — {camera}: {camera_desc}\n"
+                "Use this specific purpose to calibrate what is normal versus "
+                "suspicious for this camera — what it is meant to watch for is "
+                "what deserves scrutiny; everything else on this camera is routine."
             )
+        return f"\n\nCamera: {camera}"
 
-        # Recent human corrections for this camera (adaptive learning — see
-        # ClipDatabase.get_prompt_corrections). Bounded to a handful of the
-        # most recent notes so this can't grow unbounded or drown out the
-        # rest of the prompt, and framed as a hint rather than a rule so the
-        # model still judges this specific clip on its own visible content.
-        if recent_corrections:
-            correction_lines = "\n".join(
-                "- A past clip on this camera was marked "
-                f"{'suspicious' if c.get('original_suspicious') else 'not suspicious'} "
-                "by the AI, but a human reviewer said this was WRONG. "
-                f'Reviewer\'s note: "{str(c.get("correction_note", ""))[:200]}"'
-                for c in recent_corrections[:3]
-                if c.get("correction_note")
-            )
-            if correction_lines:
-                parts.append(
-                    "\n\nRECENT HUMAN CORRECTIONS on this camera (learn from "
-                    "these, but judge THIS clip on its own visible content — "
-                    "do not assume the same pattern repeats):\n" + correction_lines
-                )
+    @staticmethod
+    def _time_of_day_segment(clip_timestamp: str) -> str | None:
+        """Time-of-day context (helps AI calibrate what's "normal")."""
+        if not clip_timestamp:
+            return None
+        try:
+            from datetime import datetime as _dt  # noqa: PLC0415
 
-        # Zone-motion evidence — a code-computed signal (see
-        # BaseAnalyzer._zone_motion_fraction) telling the model what share of
-        # this clip's overall pixel motion actually fell inside the
-        # configured car zone, versus happening elsewhere in the frame. Only
-        # emitted when a zone is configured and there's enough clip motion to
-        # attribute meaningfully.
-        if zone_motion_fraction is not None:
-            if zone_motion_fraction >= 0.5:
-                parts.append(
-                    "\n\nZONE MOTION: "
-                    f"{zone_motion_fraction:.0%} of this clip's overall motion occurred "
-                    "within the configured car zone — the activity is concentrated at or "
-                    "near the protected vehicle's usual spot, not just passing through the "
-                    "wider frame."
-                )
+            dt = _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00"))
+            hour = dt.hour
+            if hour < 5:
+                tod = "late night"
+            elif hour < 9:
+                tod = "early morning"
+            elif hour < 12:
+                tod = "morning"
+            elif hour < 17:
+                tod = "afternoon"
+            elif hour < 20:
+                tod = "evening"
             else:
-                parts.append(
-                    "\n\nZONE MOTION: "
-                    f"Only {zone_motion_fraction:.0%} of this clip's overall motion occurred "
-                    "within the configured car zone — most of the activity is happening "
-                    "elsewhere in the frame, away from the protected vehicle's usual spot. "
-                    "Do not assume the vehicle is involved just because something moved "
-                    "somewhere in frame."
-                )
+                tod = "night"
+            return (
+                f"\n\nTime of day: {tod} ({dt.strftime('%H:%M')} UTC). "
+                "Factor this into your assessment of whether the activity is normal."
+            )
+        except Exception:  # noqa: BLE001
+            return None
 
-        # Optional computer-vision pipeline hints (see vision.py) — each is
-        # independently toggled in config and already fully formatted with
-        # its own section header and hedging language; simply append
-        # whichever ones a given clip actually produced. None of these
-        # exist unless attach_vision_pipeline() was called and the
-        # corresponding stage is enabled.
-        if vision_hints is not None:
+    @staticmethod
+    def _anomaly_alert_segment(anomaly_score: float) -> str | None:
+        """Behavior anomaly alert (temporal — unusual hour/duration for camera)."""
+        if anomaly_score < 0.6:
+            return None
+        return (
+            f"\n\nBEHAVIOR ALERT: This event is statistically unusual for "
+            f"this camera at this time (anomaly score {anomaly_score:.2f}/1.00). "
+            "Apply heightened scrutiny to any persons or vehicles in the frame."
+        )
+
+    @staticmethod
+    def _short_event_segment(clip_duration: float) -> str | None:
+        """Short-event hint — a code-computed signal from the clip's real
+        duration (see _SHORT_EVENT_DURATION_SECONDS) that a quick, single
+        interaction is far more consistent with routine coming-and-going
+        than with lingering, casing, or tampering. Framed as a hint the
+        model can override, not a rule, since a genuinely short but
+        visibly suspicious clip (e.g. a quick tamper-and-flee) must still
+        be flagged on its own visible content."""
+        if not (0 < clip_duration <= _SHORT_EVENT_DURATION_SECONDS):
+            return None
+        return (
+            "\n\nSHORT EVENT: This entire clip lasts only "
+            f"{clip_duration:.0f} seconds. A brief, single interaction "
+            "like this — walking up, using a door, grabbing mail or a "
+            "delivery, or heading to a car — is far more consistent "
+            "with ordinary coming and going than with lingering, "
+            "casing, or tampering, which typically take noticeably "
+            "longer to unfold. Treat this as a hint favoring a routine "
+            "read, not a verdict on its own — only set suspicious=true "
+            "if the frames themselves clearly show concrete suspicious "
+            "behavior (forced entry, lock tampering, casing, etc.), "
+            "not brevity alone."
+        )
+
+    @staticmethod
+    def _scene_baseline_segment(
+        scene_deviation: float | None, car_applies: bool
+    ) -> str | None:
+        """Visual scene-baseline ("smart brain") signal. This camera is fixed
+        in place, so its background should look almost the same clip after
+        clip. A large deviation suggests something new (object, vehicle,
+        obstruction) is in frame; a close match is a strong signal this is
+        routine, which helps suppress false positives on ordinary daily
+        activity."""
+        if scene_deviation is None:
+            return None
+        if scene_deviation >= _SCENE_DEVIATION_ALERT_THRESHOLD:
+            return (
+                "\n\nSCENE BASELINE: This camera's view currently differs from its "
+                f"usual background (deviation {scene_deviation:.2f}/1.00). Something "
+                "not normally present — an object, vehicle, or obstruction — may be "
+                "in frame. Treat this as a hint to look closer, not a verdict on its own. "
+                "This deviation is frequently just lighting, weather, shadows, or the "
+                "day/night transition — none of which are suspicious by themselves. "
+                "Only raise suspicion if the frames themselves clearly show a specific "
+                "new person, animal, or vehicle; if you cannot identify one, describe "
+                "the scene plainly and set suspicious=false."
+            )
+        if car_applies:
+            # Deliberately omitted when car_applies: the protected vehicle
+            # parked in its usual spot IS this camera's learned "usual
+            # background" by definition, so a low deviation score here
+            # means nothing more than "the car is where it always is" —
+            # it says nothing about whether a person is *currently* right
+            # next to it, since the opening frame this score is computed
+            # from is captured at or before the moment motion begins,
+            # often before someone has walked into contact with the car.
+            # A "favor calm read" framing on every single clip from this
+            # camera would actively work against the strict PROTECTED
+            # VEHICLE distance rules below, which must be the sole
+            # authority for this camera's verdict — this was found to
+            # measurably suppress genuine close-proximity notifications
+            # (e.g. a person leaning on or standing within a foot of the
+            # vehicle) that the distance rules alone correctly catch.
+            return None
+        return (
+            "\n\nSCENE BASELINE: This camera's view closely matches its usual "
+            "background — no unexplained new objects. Favor a calm, routine read "
+            "of the activity unless the frames themselves show something genuinely "
+            "concerning."
+        )
+
+    @staticmethod
+    def _trajectory_segment(trajectory_hint: str | None) -> str | None:
+        """Movement-trajectory hint ("smart brain" motion reasoning) — a
+        rough automated estimate of direction/intensity trend across the
+        selected frames, derived from frame-to-frame pixel differences
+        already computed during frame selection. Explicitly framed as a
+        coarse hint so the model relies on what it can actually see, not
+        this estimate, for its final judgment of
+        approaching/retreating/lingering behavior."""
+        if not trajectory_hint:
+            return None
+        return (
+            "\n\nMOVEMENT: Across these frames, the main area of motion "
+            f"appears to be {trajectory_hint}. This is a rough automated "
+            "estimate from frame-to-frame pixel differences, not a precise "
+            "tracked path — use it only as a coarse hint about direction "
+            "of travel, and rely on what you can actually see in the "
+            "frames for your judgment of approaching/retreating/lingering "
+            "behavior."
+        )
+
+    @staticmethod
+    def _corrections_segment(
+        recent_corrections: list[dict[str, Any]] | None,
+    ) -> str | None:
+        """Recent human corrections for this camera (adaptive learning — see
+        ClipDatabase.get_prompt_corrections). Bounded to a handful of the
+        most recent notes so this can't grow unbounded or drown out the
+        rest of the prompt, and framed as a hint rather than a rule so the
+        model still judges this specific clip on its own visible content."""
+        if not recent_corrections:
+            return None
+        correction_lines = "\n".join(
+            "- A past clip on this camera was marked "
+            f"{'suspicious' if c.get('original_suspicious') else 'not suspicious'} "
+            "by the AI, but a human reviewer said this was WRONG. "
+            f'Reviewer\'s note: "{str(c.get("correction_note", ""))[:200]}"'
+            for c in recent_corrections[:3]
+            if c.get("correction_note")
+        )
+        if not correction_lines:
+            return None
+        return (
+            "\n\nRECENT HUMAN CORRECTIONS on this camera (learn from "
+            "these, but judge THIS clip on its own visible content — "
+            "do not assume the same pattern repeats):\n" + correction_lines
+        )
+
+    @staticmethod
+    def _zone_motion_segment(zone_motion_fraction: float | None) -> str | None:
+        """Zone-motion evidence — a code-computed signal (see
+        BaseAnalyzer._zone_motion_fraction) telling the model what share of
+        this clip's overall pixel motion actually fell inside the
+        configured car zone, versus happening elsewhere in the frame. Only
+        emitted when a zone is configured and there's enough clip motion to
+        attribute meaningfully."""
+        if zone_motion_fraction is None:
+            return None
+        if zone_motion_fraction >= 0.5:
+            return (
+                "\n\nZONE MOTION: "
+                f"{zone_motion_fraction:.0%} of this clip's overall motion occurred "
+                "within the configured car zone — the activity is concentrated at or "
+                "near the protected vehicle's usual spot, not just passing through the "
+                "wider frame."
+            )
+        return (
+            "\n\nZONE MOTION: "
+            f"Only {zone_motion_fraction:.0%} of this clip's overall motion occurred "
+            "within the configured car zone — most of the activity is happening "
+            "elsewhere in the frame, away from the protected vehicle's usual spot. "
+            "Do not assume the vehicle is involved just because something moved "
+            "somewhere in frame."
+        )
+
+    @staticmethod
+    def _vision_hint_segments(vision_hints: VisionHints | None) -> list[str]:
+        """Optional computer-vision pipeline hints (see vision.py) — each is
+        independently toggled in config and already fully formatted with its
+        own section header and hedging language; simply collect whichever
+        ones a given clip actually produced. None of these exist unless
+        attach_vision_pipeline() was called and the corresponding stage is
+        enabled."""
+        if vision_hints is None:
+            return []
+        return [
+            hint
             for hint in (
                 vision_hints.detection_hint,
                 vision_hints.tracking_hint,
                 vision_hints.depth_hint,
                 vision_hints.contact_hint,
                 vision_hints.recognized_resident_hint,
-            ):
-                if hint:
-                    parts.append(hint)
+            )
+            if hint
+        ]
 
-        # Protected vehicle with precise distance rules — only for cameras that
-        # can see the car (all cameras when car_cameras is empty, otherwise only
-        # the cameras explicitly listed in car_cameras). car_applies was
-        # already computed above, before the scene-baseline block.
+    def _car_protection_segment(self, camera: str, car_applies: bool) -> str | None:
+        """Protected-vehicle distance rules, or a "this camera can't see it"
+        note, or None when no protected vehicle is configured at all."""
         if car_applies:
-            parts.append(
+            return (
                 f"\n\nPROTECTED VEHICLE: {self._car_description}\n"
                 "This description identifies the SPECIFIC vehicle to protect. If other "
                 "vehicles are also visible (e.g. a neighbor's car, street parking, passing "
@@ -1771,29 +1925,32 @@ class BaseAnalyzer(abc.ABC):
                 "movement — do not call routine passers-by suspicious merely because they "
                 "were near the vehicle at some point."
             )
-        elif self._car_description and self._car_cameras:
+        if self._car_description and self._car_cameras:
             # A protected vehicle exists elsewhere on the property, but this camera
             # is not one of the cameras configured to see it (is_car_camera unchecked
             # for this camera in the AI tab). State this explicitly so the model
             # doesn't borrow car/driveway language meant for a different camera.
-            parts.append(
+            return (
                 f"\n\nThis camera ({camera}) does not view the protected vehicle. "
                 "Do not mention a car, driveway, or vehicle distance in your description "
                 "unless a vehicle is clearly visible in the frames you were given."
             )
+        return None
 
-        # Ensure the description stays human-readable, never exposes internal data,
-        # and never borrows scenery from a different camera. The example phrase is
-        # only about vehicle distance when this specific camera has car-distance
-        # rules in play (car_applies) — otherwise it uses a camera-agnostic example
-        # so smaller models aren't nudged into inventing a car or driveway that this
-        # camera cannot actually see (each camera has its own field of view).
+    def _output_rules_segment(self, camera: str, car_applies: bool) -> str:
+        """Ensure the description stays human-readable, never exposes internal
+        data, and never borrows scenery from a different camera. The example
+        phrase is only about vehicle distance when this specific camera has
+        car-distance rules in play (car_applies) — otherwise it uses a
+        camera-agnostic example so smaller models aren't nudged into
+        inventing a car or driveway that this camera cannot actually see
+        (each camera has its own field of view)."""
         example_phrase = (
             "Use natural phrases like 'standing about 2 feet from the car' or 'walking past the driveway'. "
             if car_applies
             else "Use natural phrases like 'standing near the front steps' or 'walking across the yard'. "
         )
-        parts.append(
+        return (
             "\n\nOUTPUT RULES: The 'description' field must be written in plain English "
             "as if explaining to a homeowner what happened, and must describe ONLY what is "
             f"actually visible in these specific frames from the {camera} camera — never assume "
@@ -1836,8 +1993,6 @@ class BaseAnalyzer(abc.ABC):
             "'INTERNAL', 'CONTEXT', 'proximity analysis', 'overlap', 'gap 0.', or any decimal coordinates. "
             "Any internal proximity hints provided are for your reasoning only — do not quote them."
         )
-
-        return "".join(parts)
 
     def parse_response(self, response: str) -> tuple[bool, float, str]:
         """Parse AI response into (is_suspicious, confidence, summary).
@@ -2477,6 +2632,29 @@ class _MoondreamDetectionMixin:
             "clearly behaving abnormally (e.g. stopping to case the property)."
         )
 
+    def _augment_noncar_prompt(
+        self,
+        prompt: str,
+        persons: list[dict[str, float]],
+        animals: list[dict[str, float]],
+        generic_vehicles: list[dict[str, float]],
+    ) -> str:
+        """Non-car camera: inject subject positions (person, animal,
+        incidental vehicle) to help the model describe the scene accurately
+        without borrowing protected-vehicle rules."""
+        augmented_prompt = prompt
+        labeled_subjects = (
+            [("Person", p) for p in persons]
+            + [("Animal", a) for a in animals]
+            + [("Vehicle", v) for v in generic_vehicles]
+        )
+        position_hint = self._position_hint(labeled_subjects)
+        if position_hint:
+            augmented_prompt += f"\n\n{position_hint}"
+        if generic_vehicles and not persons:
+            augmented_prompt += f"\n\n{self._vehicle_hint()}"
+        return augmented_prompt
+
     @staticmethod
     def _no_subject_response() -> str:
         """Hardcoded JSON result for a frame with no person, animal, or second
@@ -2873,162 +3051,237 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
 
         for i, frame in enumerate(frames):
             is_last = i == len(frames) - 1
+            kind, resp = await self._analyze_one_moondream_frame(
+                frame, prompt, camera, car_applies
+            )
 
-            # ── Phase 1: detect persons ──────────────────────────────────
-            persons = await self._detect_objects(frame, "person")
-            await asyncio.sleep(0.55)
-
-            # ── Phase 1b: with no person, still check for an animal or a
-            # vehicle before writing the frame off — otherwise a dog
-            # sniffing at the car, another car pulling up tight beside it,
-            # or a car simply driving past a non-car camera would be
-            # silently reduced to a generic "no person detected" result
-            # with no caption at all.
-            animals: list[dict[str, float]] = []
-            protected_boxes: list[dict[str, float]] = []
-            other_vehicle_boxes: list[dict[str, float]] = []
-            generic_vehicles: list[dict[str, float]] = []
-            if not persons:
-                animals = await self._detect_objects(frame, "animal")
-                await asyncio.sleep(0.55)
-                if car_applies:
-                    all_car_boxes = await self._detect_objects(frame, "car")
-                    await asyncio.sleep(0.55)
-                    (
-                        protected_boxes,
-                        other_vehicle_boxes,
-                    ) = await self._detect_protected_vehicle(frame, all_car_boxes)
-                else:
-                    generic_vehicles = await self._detect_objects(frame, "vehicle")
-                    await asyncio.sleep(0.55)
-
-            multiple_vehicles = car_applies and bool(other_vehicle_boxes)
-            if (
-                not persons
-                and not animals
-                and not multiple_vehicles
-                and not generic_vehicles
-            ):
-                # Nothing of interest in this frame — motion likely caused by
-                # something else. Record a clear result and move on without
-                # spending query tokens.
+            if kind == "no_subject":
                 if not best_response:
                     best_response = self._no_subject_response()
-                if not is_last:
-                    await asyncio.sleep(0.55)
-                continue
-
-            # ── Phase 2: augment prompt with spatial context ─────────────
-            augmented_prompt = prompt
-            subjects = persons + animals
-
-            if car_applies:
-                if not protected_boxes and not other_vehicle_boxes:
-                    all_car_boxes = await self._detect_objects(frame, "car")
-                    await asyncio.sleep(0.55)
-                    (
-                        protected_boxes,
-                        other_vehicle_boxes,
-                    ) = await self._detect_protected_vehicle(frame, all_car_boxes)
-                    multiple_vehicles = car_applies and bool(other_vehicle_boxes)
-
-                if subjects and (protected_boxes or other_vehicle_boxes):
-                    # Gap is measured against EVERY detected car box, not just
-                    # the one disambiguation labelled "protected" — two
-                    # independent zero-shot detect calls (generic "car" vs.
-                    # the description-specific query) can each draw a
-                    # slightly different box for the SAME physical vehicle,
-                    # and a person leaning on/touching the car shifts that
-                    # box enough to push its IoU with the earlier "protected"
-                    # box below the match threshold. That misclassifies the
-                    # real vehicle as "other" at the exact moment contact is
-                    # happening — the one moment this hint must not miss.
-                    # Identity of which box is "the protected one" only
-                    # matters for the vehicle-vs-vehicle case below.
-                    gap = self._bbox_min_gap(
-                        subjects, protected_boxes + other_vehicle_boxes
-                    )
-                    augmented_prompt += (
-                        f"\n\n{self._proximity_hint(gap, 'person or animal')}"
-                    )
-                elif multiple_vehicles:
-                    gap = (
-                        self._bbox_min_gap(protected_boxes, other_vehicle_boxes)
-                        if protected_boxes
-                        else self._bbox_min_pairwise_gap(other_vehicle_boxes)
-                    )
-                    augmented_prompt += f"\n\n{self._vehicle_proximity_hint(gap)}"
-                elif subjects and self._car_zones.get(camera):
-                    # Car detect found no car box at all this frame (e.g. the
-                    # vehicle is partly out of view or detect simply missed
-                    # it), but a fixed car zone is configured for this
-                    # camera — use it as a fallback proximity reference so a
-                    # person standing where the car normally is still gets
-                    # flagged instead of silently falling through with no
-                    # hint at all. The zone dict uses the same
-                    # x_min/y_min/x_max/y_max keys as a detected box, so it
-                    # can be passed to _bbox_min_gap directly.
-                    gap = self._bbox_min_gap(subjects, [self._car_zones[camera]])
-                    augmented_prompt += (
-                        f"\n\n{self._proximity_hint(gap, 'person or animal')}"
-                    )
-                # else: car detect returned nothing and no zone is configured —
-                # no proximity hint; the base prompt's vehicle-distance rules
-                # still apply if the model can see the car in the frames.
-                # Explicit suppression here caused missed alerts when detect
-                # failed despite the car being visibly in frame.
-
-            else:
-                # Non-car camera: inject subject positions (person, animal,
-                # incidental vehicle) to help the model describe the scene
-                # accurately without borrowing protected-vehicle rules.
-                labeled_subjects = (
-                    [("Person", p) for p in persons]
-                    + [("Animal", a) for a in animals]
-                    + [("Vehicle", v) for v in generic_vehicles]
-                )
-                position_hint = self._position_hint(labeled_subjects)
-                if position_hint:
-                    augmented_prompt += f"\n\n{position_hint}"
-                if generic_vehicles and not persons:
-                    augmented_prompt += f"\n\n{self._vehicle_hint()}"
-
-            # ── Phase 2b: caption grounding ───────────────────────────────
-            caption = await self._caption_frame(frame)
-            await asyncio.sleep(0.55)
-            if caption:
-                augmented_prompt += (
-                    "\n\n[INTERNAL SCENE CAPTION — factual grounding only, do "
-                    f"NOT copy this text verbatim into your description]: {caption}"
-                )
-
-            # ── Phase 3: full query with augmented prompt ────────────────
-            resp = await self._call_api_frame(frame, augmented_prompt)
-            if not resp:
-                if not is_last:
-                    await asyncio.sleep(0.55)
-                continue
-
-            if multiple_vehicles and not subjects:
-                resp = self._force_not_suspicious(resp)
-
-            susp, conf, desc = self._try_parse_json(resp)
-            if not desc:
-                if not best_response:
+            elif kind == "result":
+                susp, conf, desc = self._try_parse_json(resp)
+                if not desc:
+                    if not best_response:
+                        best_response = resp
+                elif (
+                    not best_response
+                    or (susp and not best_is_suspicious)
+                    or (susp == best_is_suspicious and conf > best_confidence)
+                ):
                     best_response = resp
-            elif (
-                not best_response
-                or (susp and not best_is_suspicious)
-                or (susp == best_is_suspicious and conf > best_confidence)
-            ):
-                best_response = resp
-                best_is_suspicious = susp
-                best_confidence = conf
+                    best_is_suspicious = susp
+                    best_confidence = conf
+            # kind == "no_response": nothing to do, this frame is skipped.
 
             if not is_last:
                 await asyncio.sleep(0.55)
 
         return best_response
+
+    async def _analyze_one_moondream_frame(
+        self, frame: bytes, prompt: str, camera: str, car_applies: bool
+    ) -> tuple[str, str]:
+        """Run detect/caption/query for a single frame.
+
+        Returns ``("no_subject", "")`` when nothing of interest was found,
+        ``("no_response", "")`` when the query call itself failed, or
+        ``("result", resp)`` with the raw query response otherwise.
+        """
+        (
+            persons,
+            animals,
+            protected_boxes,
+            other_vehicle_boxes,
+            generic_vehicles,
+        ) = await self._detect_frame_subjects(frame, car_applies)
+        multiple_vehicles = car_applies and bool(other_vehicle_boxes)
+
+        if (
+            not persons
+            and not animals
+            and not multiple_vehicles
+            and not generic_vehicles
+        ):
+            # Nothing of interest in this frame — motion likely caused by
+            # something else. Record a clear result and move on without
+            # spending query tokens.
+            return "no_subject", ""
+
+        augmented_prompt, multiple_vehicles = await self._augment_prompt_for_frame(
+            frame,
+            prompt,
+            camera,
+            car_applies,
+            persons,
+            animals,
+            protected_boxes,
+            other_vehicle_boxes,
+            generic_vehicles,
+            multiple_vehicles,
+        )
+
+        # ── Phase 2b: caption grounding ───────────────────────────────
+        caption = await self._caption_frame(frame)
+        await asyncio.sleep(0.55)
+        if caption:
+            augmented_prompt += (
+                "\n\n[INTERNAL SCENE CAPTION — factual grounding only, do "
+                f"NOT copy this text verbatim into your description]: {caption}"
+            )
+
+        # ── Phase 3: full query with augmented prompt ────────────────
+        resp = await self._call_api_frame(frame, augmented_prompt)
+        if not resp:
+            return "no_response", ""
+
+        subjects = persons + animals
+        if multiple_vehicles and not subjects:
+            resp = self._force_not_suspicious(resp)
+
+        return "result", resp
+
+    async def _detect_frame_subjects(
+        self, frame: bytes, car_applies: bool
+    ) -> tuple[
+        list[dict[str, float]],
+        list[dict[str, float]],
+        list[dict[str, float]],
+        list[dict[str, float]],
+        list[dict[str, float]],
+    ]:
+        """Detect persons and, if none found, animals and vehicles too.
+
+        A frame with no person still gets checked for an animal or a
+        vehicle before being written off — otherwise a dog sniffing at the
+        car, another car pulling up tight beside it, or a car simply
+        driving past a non-car camera would be silently reduced to a
+        generic "no person detected" result with no caption at all.
+
+        Returns ``(persons, animals, protected_boxes, other_vehicle_boxes,
+        generic_vehicles)``.
+        """
+        persons = await self._detect_objects(frame, "person")
+        await asyncio.sleep(0.55)
+
+        animals: list[dict[str, float]] = []
+        protected_boxes: list[dict[str, float]] = []
+        other_vehicle_boxes: list[dict[str, float]] = []
+        generic_vehicles: list[dict[str, float]] = []
+        if not persons:
+            animals = await self._detect_objects(frame, "animal")
+            await asyncio.sleep(0.55)
+            if car_applies:
+                all_car_boxes = await self._detect_objects(frame, "car")
+                await asyncio.sleep(0.55)
+                (
+                    protected_boxes,
+                    other_vehicle_boxes,
+                ) = await self._detect_protected_vehicle(frame, all_car_boxes)
+            else:
+                generic_vehicles = await self._detect_objects(frame, "vehicle")
+                await asyncio.sleep(0.55)
+
+        return persons, animals, protected_boxes, other_vehicle_boxes, generic_vehicles
+
+    async def _augment_prompt_for_frame(
+        self,
+        frame: bytes,
+        prompt: str,
+        camera: str,
+        car_applies: bool,
+        persons: list[dict[str, float]],
+        animals: list[dict[str, float]],
+        protected_boxes: list[dict[str, float]],
+        other_vehicle_boxes: list[dict[str, float]],
+        generic_vehicles: list[dict[str, float]],
+        multiple_vehicles: bool,
+    ) -> tuple[str, bool]:
+        """Augment *prompt* with spatial/proximity context for this frame.
+
+        Returns ``(augmented_prompt, multiple_vehicles)`` — multiple_vehicles
+        is recomputed here because the car_applies branch may re-run car
+        detection when Phase 1 skipped it (a person was present).
+        """
+        subjects = persons + animals
+
+        if car_applies:
+            return await self._augment_car_prompt(
+                frame,
+                prompt,
+                camera,
+                subjects,
+                protected_boxes,
+                other_vehicle_boxes,
+                multiple_vehicles,
+            )
+
+        return (
+            self._augment_noncar_prompt(prompt, persons, animals, generic_vehicles),
+            multiple_vehicles,
+        )
+
+    async def _augment_car_prompt(
+        self,
+        frame: bytes,
+        prompt: str,
+        camera: str,
+        subjects: list[dict[str, float]],
+        protected_boxes: list[dict[str, float]],
+        other_vehicle_boxes: list[dict[str, float]],
+        multiple_vehicles: bool,
+    ) -> tuple[str, bool]:
+        augmented_prompt = prompt
+
+        if not protected_boxes and not other_vehicle_boxes:
+            all_car_boxes = await self._detect_objects(frame, "car")
+            await asyncio.sleep(0.55)
+            (
+                protected_boxes,
+                other_vehicle_boxes,
+            ) = await self._detect_protected_vehicle(frame, all_car_boxes)
+            multiple_vehicles = bool(other_vehicle_boxes)
+
+        if subjects and (protected_boxes or other_vehicle_boxes):
+            # Gap is measured against EVERY detected car box, not just
+            # the one disambiguation labelled "protected" — two
+            # independent zero-shot detect calls (generic "car" vs.
+            # the description-specific query) can each draw a
+            # slightly different box for the SAME physical vehicle,
+            # and a person leaning on/touching the car shifts that
+            # box enough to push its IoU with the earlier "protected"
+            # box below the match threshold. That misclassifies the
+            # real vehicle as "other" at the exact moment contact is
+            # happening — the one moment this hint must not miss.
+            # Identity of which box is "the protected one" only
+            # matters for the vehicle-vs-vehicle case below.
+            gap = self._bbox_min_gap(subjects, protected_boxes + other_vehicle_boxes)
+            augmented_prompt += f"\n\n{self._proximity_hint(gap, 'person or animal')}"
+        elif multiple_vehicles:
+            gap = (
+                self._bbox_min_gap(protected_boxes, other_vehicle_boxes)
+                if protected_boxes
+                else self._bbox_min_pairwise_gap(other_vehicle_boxes)
+            )
+            augmented_prompt += f"\n\n{self._vehicle_proximity_hint(gap)}"
+        elif subjects and self._car_zones.get(camera):
+            # Car detect found no car box at all this frame (e.g. the
+            # vehicle is partly out of view or detect simply missed
+            # it), but a fixed car zone is configured for this
+            # camera — use it as a fallback proximity reference so a
+            # person standing where the car normally is still gets
+            # flagged instead of silently falling through with no
+            # hint at all. The zone dict uses the same
+            # x_min/y_min/x_max/y_max keys as a detected box, so it
+            # can be passed to _bbox_min_gap directly.
+            gap = self._bbox_min_gap(subjects, [self._car_zones[camera]])
+            augmented_prompt += f"\n\n{self._proximity_hint(gap, 'person or animal')}"
+        # else: car detect returned nothing and no zone is configured —
+        # no proximity hint; the base prompt's vehicle-distance rules
+        # still apply if the model can see the car in the frames.
+        # Explicit suppression here caused missed alerts when detect
+        # failed despite the car being visibly in frame.
+
+        return augmented_prompt, multiple_vehicles
 
 
 # ---------------------------------------------------------------------------
@@ -3233,6 +3486,59 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         image = Image.open(io.BytesIO(frame_bytes))
         encoded = self._md_model.encode_image(image)
 
+        persons, animals, protected_boxes, other_vehicle_boxes, generic_vehicles = (
+            self._local_detect_frame_subjects(encoded, car_applies)
+        )
+        multiple_vehicles = car_applies and bool(other_vehicle_boxes)
+
+        if (
+            not persons
+            and not animals
+            and not multiple_vehicles
+            and not generic_vehicles
+        ):
+            return self._no_subject_response()
+
+        augmented_prompt, multiple_vehicles = self._local_augment_prompt_for_frame(
+            encoded,
+            prompt,
+            car_applies,
+            persons,
+            animals,
+            protected_boxes,
+            other_vehicle_boxes,
+            generic_vehicles,
+            multiple_vehicles,
+        )
+
+        caption = self._local_caption(encoded)
+        if caption:
+            augmented_prompt += (
+                "\n\n[INTERNAL SCENE CAPTION — factual grounding only, do NOT "
+                f"copy this text verbatim into your description]: {caption}"
+            )
+
+        # No reasoning=True here (unlike MoondreamCloudAnalyzer._call_api_frame):
+        # the local `moondream` package's query() signature is
+        # query(image, question, stream=False) — it has no reasoning parameter.
+        # Reasoning mode is a Moondream Cloud-only capability, not an oversight.
+        result = self._md_model.query(encoded, augmented_prompt)
+        answer = str(result.get("answer", ""))
+        subjects = persons + animals
+        if multiple_vehicles and not subjects:
+            answer = self._force_not_suspicious(answer)
+        return answer
+
+    def _local_detect_frame_subjects(
+        self, encoded: Any, car_applies: bool
+    ) -> tuple[
+        list[dict[str, float]],
+        list[dict[str, float]],
+        list[dict[str, float]],
+        list[dict[str, float]],
+        list[dict[str, float]],
+    ]:
+        """Sync counterpart of MoondreamCloudAnalyzer._detect_frame_subjects."""
         persons = self._local_detect(encoded, "person")
 
         animals: list[dict[str, float]] = []
@@ -3249,87 +3555,86 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             else:
                 generic_vehicles = self._local_detect(encoded, "vehicle")
 
-        multiple_vehicles = car_applies and bool(other_vehicle_boxes)
-        if (
-            not persons
-            and not animals
-            and not multiple_vehicles
-            and not generic_vehicles
-        ):
-            return self._no_subject_response()
+        return persons, animals, protected_boxes, other_vehicle_boxes, generic_vehicles
 
-        augmented_prompt = prompt
+    def _local_augment_prompt_for_frame(
+        self,
+        encoded: Any,
+        prompt: str,
+        car_applies: bool,
+        persons: list[dict[str, float]],
+        animals: list[dict[str, float]],
+        protected_boxes: list[dict[str, float]],
+        other_vehicle_boxes: list[dict[str, float]],
+        generic_vehicles: list[dict[str, float]],
+        multiple_vehicles: bool,
+    ) -> tuple[str, bool]:
+        """Sync counterpart of MoondreamCloudAnalyzer._augment_prompt_for_frame."""
         subjects = persons + animals
 
         if car_applies:
-            if not protected_boxes and not other_vehicle_boxes:
-                all_car_boxes = self._local_detect(encoded, "car")
-                protected_boxes, other_vehicle_boxes = (
-                    self._detect_protected_vehicle_sync(encoded, all_car_boxes)
-                )
-                multiple_vehicles = car_applies and bool(other_vehicle_boxes)
-
-            if subjects and (protected_boxes or other_vehicle_boxes):
-                # See MoondreamCloudAnalyzer._call_model's matching comment:
-                # gap uses every detected car box, not just the one
-                # disambiguation labelled "protected", so a person touching
-                # the vehicle is never missed just because the two
-                # independent detect calls' boxes disagree at the exact
-                # moment of contact.
-                gap = self._bbox_min_gap(
-                    subjects, protected_boxes + other_vehicle_boxes
-                )
-                augmented_prompt += (
-                    f"\n\n{self._proximity_hint(gap, 'person or animal')}"
-                )
-            elif multiple_vehicles:
-                gap = (
-                    self._bbox_min_gap(protected_boxes, other_vehicle_boxes)
-                    if protected_boxes
-                    else self._bbox_min_pairwise_gap(other_vehicle_boxes)
-                )
-                augmented_prompt += f"\n\n{self._vehicle_proximity_hint(gap)}"
-            elif subjects and self._car_zones.get(getattr(self, "_current_camera", "")):
-                # See MoondreamCloudAnalyzer._call_model's matching comment:
-                # fall back to the fixed car zone when detect found no car
-                # box at all this frame, so a person standing where the car
-                # normally is still gets flagged.
-                zone = self._car_zones[getattr(self, "_current_camera", "")]
-                gap = self._bbox_min_gap(subjects, [zone])
-                augmented_prompt += (
-                    f"\n\n{self._proximity_hint(gap, 'person or animal')}"
-                )
-            # else: car detect returned nothing and no zone is configured — no
-            # proximity hint; the base prompt's vehicle-distance rules still
-            # apply if the model can see the car in the frames.
-        else:
-            labeled_subjects = (
-                [("Person", p) for p in persons]
-                + [("Animal", a) for a in animals]
-                + [("Vehicle", v) for v in generic_vehicles]
-            )
-            position_hint = self._position_hint(labeled_subjects)
-            if position_hint:
-                augmented_prompt += f"\n\n{position_hint}"
-            if generic_vehicles and not persons:
-                augmented_prompt += f"\n\n{self._vehicle_hint()}"
-
-        caption = self._local_caption(encoded)
-        if caption:
-            augmented_prompt += (
-                "\n\n[INTERNAL SCENE CAPTION — factual grounding only, do NOT "
-                f"copy this text verbatim into your description]: {caption}"
+            return self._local_augment_car_prompt(
+                encoded,
+                prompt,
+                subjects,
+                protected_boxes,
+                other_vehicle_boxes,
+                multiple_vehicles,
             )
 
-        # No reasoning=True here (unlike MoondreamCloudAnalyzer._call_api_frame):
-        # the local `moondream` package's query() signature is
-        # query(image, question, stream=False) — it has no reasoning parameter.
-        # Reasoning mode is a Moondream Cloud-only capability, not an oversight.
-        result = self._md_model.query(encoded, augmented_prompt)
-        answer = str(result.get("answer", ""))
-        if multiple_vehicles and not subjects:
-            answer = self._force_not_suspicious(answer)
-        return answer
+        return (
+            self._augment_noncar_prompt(prompt, persons, animals, generic_vehicles),
+            multiple_vehicles,
+        )
+
+    def _local_augment_car_prompt(
+        self,
+        encoded: Any,
+        prompt: str,
+        subjects: list[dict[str, float]],
+        protected_boxes: list[dict[str, float]],
+        other_vehicle_boxes: list[dict[str, float]],
+        multiple_vehicles: bool,
+    ) -> tuple[str, bool]:
+        augmented_prompt = prompt
+        camera = getattr(self, "_current_camera", "")
+
+        if not protected_boxes and not other_vehicle_boxes:
+            all_car_boxes = self._local_detect(encoded, "car")
+            protected_boxes, other_vehicle_boxes = self._detect_protected_vehicle_sync(
+                encoded, all_car_boxes
+            )
+            multiple_vehicles = bool(other_vehicle_boxes)
+
+        if subjects and (protected_boxes or other_vehicle_boxes):
+            # See MoondreamCloudAnalyzer._call_model's matching comment:
+            # gap uses every detected car box, not just the one
+            # disambiguation labelled "protected", so a person touching
+            # the vehicle is never missed just because the two
+            # independent detect calls' boxes disagree at the exact
+            # moment of contact.
+            gap = self._bbox_min_gap(subjects, protected_boxes + other_vehicle_boxes)
+            augmented_prompt += f"\n\n{self._proximity_hint(gap, 'person or animal')}"
+        elif multiple_vehicles:
+            gap = (
+                self._bbox_min_gap(protected_boxes, other_vehicle_boxes)
+                if protected_boxes
+                else self._bbox_min_pairwise_gap(other_vehicle_boxes)
+            )
+            augmented_prompt += f"\n\n{self._vehicle_proximity_hint(gap)}"
+        elif subjects and self._car_zones.get(camera):
+            # See MoondreamCloudAnalyzer._call_model's matching comment:
+            # fall back to the fixed car zone when detect found no car
+            # box at all this frame, so a person standing where the car
+            # normally is still gets flagged.
+            zone = self._car_zones[camera]
+            gap = self._bbox_min_gap(subjects, [zone])
+            augmented_prompt += f"\n\n{self._proximity_hint(gap, 'person or animal')}"
+        # else: car detect returned nothing and no zone is configured — no
+        # proximity hint; the base prompt's vehicle-distance rules still
+        # apply if the model can see the car in the frames.
+
+        return augmented_prompt, multiple_vehicles
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
         """Run the local model on all extracted frames and return the most alarming result."""
@@ -3346,15 +3651,7 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         best_confidence = 0.0
 
         for frame in frames:
-            try:
-                loop = asyncio.get_running_loop()
-                resp = await loop.run_in_executor(
-                    None, self._analyze_frame_sync, frame, prompt, car_applies
-                )
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.exception("Moondream local inference failed: %s", exc)
-                continue
-
+            resp = await self._run_frame_inference(frame, prompt, car_applies)
             if not resp:
                 continue
 
@@ -3362,16 +3659,41 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             if not desc:
                 if not best_response:
                     best_response = resp
-            elif (
-                not best_response
-                or (susp and not best_is_suspicious)
-                or (susp == best_is_suspicious and conf > best_confidence)
+                continue
+            if self._is_better_frame_result(
+                best_response, best_is_suspicious, best_confidence, susp, conf
             ):
                 best_response = resp
                 best_is_suspicious = susp
                 best_confidence = conf
 
         return best_response
+
+    async def _run_frame_inference(
+        self, frame: bytes, prompt: str, car_applies: bool
+    ) -> str:
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None, self._analyze_frame_sync, frame, prompt, car_applies
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.exception("Moondream local inference failed: %s", exc)
+            return ""
+
+    @staticmethod
+    def _is_better_frame_result(
+        best_response: str,
+        best_is_suspicious: bool,
+        best_confidence: float,
+        susp: bool,
+        conf: float,
+    ) -> bool:
+        return (
+            not best_response
+            or (susp and not best_is_suspicious)
+            or (susp == best_is_suspicious and conf > best_confidence)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3968,81 +4290,85 @@ class AnthropicAnalyzer(BaseAnalyzer):
 
         try:
             client = self._get_client()
-
-            resized = [self._resize_frame(f) for f in frames]
-            content: list[dict[str, Any]] = [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/jpeg",
-                        "data": base64.b64encode(frame).decode("ascii"),
-                    },
-                }
-                for frame in resized
-            ]
-            content.append({"type": "text", "text": prompt})
-
-            # System prompt keeps the role and output format instructions
-            # separate from user content, improving JSON compliance and
-            # preventing the model from leaking internal analysis terms.
-            system_prompt = _VISION_SYSTEM_PROMPT
-
             response = await client.messages.create(
-                model=self._model,
-                max_tokens=512,
-                system=system_prompt,
-                messages=[{"role": "user", "content": content}],
+                **self._build_anthropic_create_kwargs(frames, prompt)
             )
+            return self._extract_anthropic_response_text(response)
+        except Exception as exc:  # noqa: BLE001
+            return self._handle_anthropic_error(_anthropic, exc)
 
-            if response.usage:
-                self._last_prompt_tokens = int(response.usage.input_tokens or 0)
-                self._last_completion_tokens = int(response.usage.output_tokens or 0)
+    def _build_anthropic_create_kwargs(
+        self, frames: list[bytes], prompt: str
+    ) -> dict[str, Any]:
+        resized = [self._resize_frame(f) for f in frames]
+        content: list[dict[str, Any]] = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": base64.b64encode(frame).decode("ascii"),
+                },
+            }
+            for frame in resized
+        ]
+        content.append({"type": "text", "text": prompt})
 
-            return "\n".join(
-                block.text for block in response.content if hasattr(block, "text")
-            )
+        # System prompt keeps the role and output format instructions
+        # separate from user content, improving JSON compliance and
+        # preventing the model from leaking internal analysis terms.
+        return {
+            "model": self._model,
+            "max_tokens": 512,
+            "system": _VISION_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": content}],
+        }
 
-        except _anthropic.AuthenticationError:
+    def _extract_anthropic_response_text(self, response: Any) -> str:
+        if response.usage:
+            self._last_prompt_tokens = int(response.usage.input_tokens or 0)
+            self._last_completion_tokens = int(response.usage.output_tokens or 0)
+
+        return "\n".join(
+            block.text for block in response.content if hasattr(block, "text")
+        )
+
+    def _handle_anthropic_error(self, _anthropic: Any, exc: Exception) -> str:
+        if isinstance(exc, _anthropic.AuthenticationError):
             _LOGGER.error(
                 "Anthropic: invalid API key (AuthenticationError) — "
                 "check your anthropic_api_key in the add-on settings"
             )
-            return ""
-        except _anthropic.PermissionDeniedError:
+        elif isinstance(exc, _anthropic.PermissionDeniedError):
             _LOGGER.error(
                 "Anthropic: permission denied — "
                 "check that your API key has access to model '%s'",
                 self._model,
             )
-            return ""
-        except _anthropic.RateLimitError:
+        elif isinstance(exc, _anthropic.RateLimitError):
             _LOGGER.warning(
                 "Anthropic: rate limit hit — API quota exceeded; "
                 "analysis will resume on the next cycle"
             )
-            return ""
-        except _anthropic.BadRequestError as exc:
+        elif isinstance(exc, _anthropic.BadRequestError):
             _LOGGER.exception(
                 "Anthropic: bad request (HTTP 400) — %s; "
                 "check that the selected model supports vision",
-                exc.message,
+                exc.message,  # type: ignore[attr-defined]
             )
-            return ""
-        except _anthropic.APIStatusError as exc:
+        elif isinstance(exc, _anthropic.APIStatusError):
             _LOGGER.exception(
-                "Anthropic API error HTTP %d: %s", exc.status_code, exc.message
+                "Anthropic API error HTTP %d: %s",
+                exc.status_code,  # type: ignore[attr-defined]
+                exc.message,  # type: ignore[attr-defined]
             )
-            return ""
-        except _anthropic.APIConnectionError as exc:
+        elif isinstance(exc, _anthropic.APIConnectionError):
             _LOGGER.warning("Anthropic: connection error — %s", exc)
-            return ""
-        except asyncio.TimeoutError:
+        elif isinstance(exc, asyncio.TimeoutError):
             _LOGGER.warning("Anthropic request timed out")
-            return ""
-        except Exception as exc:  # noqa: BLE001
+        else:
             _LOGGER.warning("Anthropic request failed: %s", exc)
-            return ""
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -4252,118 +4578,121 @@ class OpenAIAnalyzer(BaseAnalyzer):
 
         try:
             client = self._get_client()
-
-            resized = [self._resize_frame(f) for f in frames]
-            content: list[dict[str, Any]] = [
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64.b64encode(frame).decode('ascii')}",
-                        "detail": "high",
-                    },
-                }
-                for frame in resized
-            ]
-            content.append({"type": "text", "text": prompt})
-
-            # System message keeps role and format rules separate from user
-            # content, improving JSON compliance and stopping the model from
-            # leaking internal analysis terms into the description field.
-            system_content = _VISION_SYSTEM_PROMPT
-            messages_to_send: list[dict[str, Any]] = [
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": content},
-            ]
-
-            model_lower = model.lower()
-            is_reasoning_model = model_lower.startswith(("o1", "o3", "o4", "gpt-5"))
-            supports_structured_outputs = any(
-                prefix in model_lower
-                for prefix in ("gpt-4o", "gpt-4.1", "gpt-5", "o4-mini")
-            )
-            create_kwargs: dict[str, Any] = {
-                "model": model,
-                "messages": messages_to_send,
-            }
-            # The o1/o3/o4-mini reasoning models and the gpt-5 family reject the
-            # legacy `max_tokens` param (HTTP 400 "unsupported_parameter") and
-            # require `max_completion_tokens` instead. Their invisible reasoning
-            # tokens are billed from the same budget as the visible completion,
-            # so give them extra headroom over the 512 used for non-reasoning
-            # models to avoid a truncated/empty response on a harder clip.
-            if is_reasoning_model:
-                create_kwargs["max_completion_tokens"] = 1024
-                # This is a short, well-defined classification task (suspicious
-                # yes/no + one-sentence description), not multi-step reasoning,
-                # so the lowest effort setting keeps latency/cost down without
-                # sacrificing verdict quality. "-pro" tier reasoning models
-                # (e.g. gpt-5.2-pro) reject anything but "high", so they're
-                # excluded from this optimization.
-                if not model_lower.endswith("-pro"):
-                    create_kwargs["reasoning_effort"] = "low"
-            else:
-                create_kwargs["max_tokens"] = 512
-            if supports_structured_outputs:
-                create_kwargs["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": _OPENAI_STRUCTURED_OUTPUT_SCHEMA,
-                }
-            elif "gpt-4-turbo" in model_lower:
-                create_kwargs["response_format"] = {"type": "json_object"}
-
+            create_kwargs = self._build_openai_create_kwargs(frames, prompt, model)
             response = await client.chat.completions.create(**create_kwargs)
+            return self._extract_openai_response_text(response)
+        except Exception as exc:  # noqa: BLE001
+            return self._handle_openai_error(_openai, exc, model)
 
-            if response.usage:
-                self._last_prompt_tokens = int(response.usage.prompt_tokens or 0)
-                self._last_completion_tokens = int(
-                    response.usage.completion_tokens or 0
-                )
+    def _build_openai_create_kwargs(
+        self, frames: list[bytes], prompt: str, model: str
+    ) -> dict[str, Any]:
+        resized = [self._resize_frame(f) for f in frames]
+        content: list[dict[str, Any]] = [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{base64.b64encode(frame).decode('ascii')}",
+                    "detail": "high",
+                },
+            }
+            for frame in resized
+        ]
+        content.append({"type": "text", "text": prompt})
 
-            choice = response.choices[0] if response.choices else None
-            if choice and choice.message and choice.message.content:
-                return str(choice.message.content)
-            return ""
+        # System message keeps role and format rules separate from user
+        # content, improving JSON compliance and stopping the model from
+        # leaking internal analysis terms into the description field.
+        messages_to_send: list[dict[str, Any]] = [
+            {"role": "system", "content": _VISION_SYSTEM_PROMPT},
+            {"role": "user", "content": content},
+        ]
 
-        except _openai.AuthenticationError:
+        model_lower = model.lower()
+        is_reasoning_model = model_lower.startswith(("o1", "o3", "o4", "gpt-5"))
+        supports_structured_outputs = any(
+            prefix in model_lower
+            for prefix in ("gpt-4o", "gpt-4.1", "gpt-5", "o4-mini")
+        )
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages_to_send,
+        }
+        # The o1/o3/o4-mini reasoning models and the gpt-5 family reject the
+        # legacy `max_tokens` param (HTTP 400 "unsupported_parameter") and
+        # require `max_completion_tokens` instead. Their invisible reasoning
+        # tokens are billed from the same budget as the visible completion,
+        # so give them extra headroom over the 512 used for non-reasoning
+        # models to avoid a truncated/empty response on a harder clip.
+        if is_reasoning_model:
+            create_kwargs["max_completion_tokens"] = 1024
+            # This is a short, well-defined classification task (suspicious
+            # yes/no + one-sentence description), not multi-step reasoning,
+            # so the lowest effort setting keeps latency/cost down without
+            # sacrificing verdict quality. "-pro" tier reasoning models
+            # (e.g. gpt-5.2-pro) reject anything but "high", so they're
+            # excluded from this optimization.
+            if not model_lower.endswith("-pro"):
+                create_kwargs["reasoning_effort"] = "low"
+        else:
+            create_kwargs["max_tokens"] = 512
+        if supports_structured_outputs:
+            create_kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": _OPENAI_STRUCTURED_OUTPUT_SCHEMA,
+            }
+        elif "gpt-4-turbo" in model_lower:
+            create_kwargs["response_format"] = {"type": "json_object"}
+
+        return create_kwargs
+
+    def _extract_openai_response_text(self, response: Any) -> str:
+        if response.usage:
+            self._last_prompt_tokens = int(response.usage.prompt_tokens or 0)
+            self._last_completion_tokens = int(response.usage.completion_tokens or 0)
+
+        choice = response.choices[0] if response.choices else None
+        if choice and choice.message and choice.message.content:
+            return str(choice.message.content)
+        return ""
+
+    @staticmethod
+    def _handle_openai_error(_openai: Any, exc: Exception, model: str) -> str:
+        if isinstance(exc, _openai.AuthenticationError):
             _LOGGER.error(
                 "OpenAI: invalid API key (AuthenticationError) — "
                 "check your openai_api_key in the add-on settings"
             )
-            return ""
-        except _openai.PermissionDeniedError:
+        elif isinstance(exc, _openai.PermissionDeniedError):
             _LOGGER.error(
                 "OpenAI: permission denied — "
                 "check that your API key has access to model '%s'",
                 model,
             )
-            return ""
-        except _openai.RateLimitError:
+        elif isinstance(exc, _openai.RateLimitError):
             _LOGGER.warning(
                 "OpenAI: rate limit hit — API quota exceeded; "
                 "analysis will resume on the next cycle"
             )
-            return ""
-        except _openai.BadRequestError as exc:
+        elif isinstance(exc, _openai.BadRequestError):
             _LOGGER.exception(
                 "OpenAI: bad request (HTTP 400) — %s; "
                 "check that the selected model supports vision",
-                exc.message,
+                exc.message,  # type: ignore[attr-defined]
             )
-            return ""
-        except _openai.APIStatusError as exc:
+        elif isinstance(exc, _openai.APIStatusError):
             _LOGGER.exception(
-                "OpenAI API error HTTP %d: %s", exc.status_code, exc.message
+                "OpenAI API error HTTP %d: %s",
+                exc.status_code,  # type: ignore[attr-defined]
+                exc.message,  # type: ignore[attr-defined]
             )
-            return ""
-        except _openai.APIConnectionError as exc:
+        elif isinstance(exc, _openai.APIConnectionError):
             _LOGGER.warning("OpenAI: connection error — %s", exc)
-            return ""
-        except asyncio.TimeoutError:
+        elif isinstance(exc, asyncio.TimeoutError):
             _LOGGER.warning("OpenAI request timed out")
-            return ""
-        except Exception as exc:  # noqa: BLE001
+        else:
             _LOGGER.warning("OpenAI request failed: %s", exc)
-            return ""
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -4415,129 +4744,33 @@ def _build_single_analyzer(
     when cross-provider escalation is configured, the tier-2 analyzer — see
     that function's ``escalation_provider``/``escalation_model``.
     """
+    common: dict[str, Any] = {
+        "prompt": prompt,
+        "car_description": car_description,
+        "max_frames": max_frames,
+        "frame_interval": frame_interval,
+        "suspicious_keywords": suspicious_keywords,
+        "camera_prompts": camera_prompts,
+        "camera_descriptions": camera_descriptions,
+        "frame_strategy": frame_strategy,
+        "car_cameras": car_cameras,
+        "car_zones": car_zones,
+    }
+
     if ai_provider == "ollama":
-        if not ollama_url:
-            _LOGGER.warning(
-                "ai_provider='ollama' requires ollama_url to be set; "
-                "AI analysis disabled"
-            )
-            return None
-        return ClipAnalyzer(
-            ollama_url=ollama_url,
-            model=ollama_model,
-            prompt=prompt,
-            car_description=car_description,
-            max_frames=max_frames,
-            frame_interval=frame_interval,
-            suspicious_keywords=suspicious_keywords,
-            camera_prompts=camera_prompts,
-            camera_descriptions=camera_descriptions,
-            frame_strategy=frame_strategy,
-            car_cameras=car_cameras,
-            car_zones=car_zones,
-        )
-
+        return _build_ollama_analyzer(common, ollama_url, ollama_model)
     if ai_provider == "ollama_cloud":
-        if not ollama_cloud_api_key:
-            _LOGGER.warning(
-                "ai_provider='ollama_cloud' requires ollama_cloud_api_key to be set; "
-                "AI analysis disabled"
-            )
-            return None
-        return OllamaCloudAnalyzer(
-            api_key=ollama_cloud_api_key,
-            model=ollama_model,
-            prompt=prompt,
-            car_description=car_description,
-            max_frames=max_frames,
-            frame_interval=frame_interval,
-            suspicious_keywords=suspicious_keywords,
-            camera_prompts=camera_prompts,
-            camera_descriptions=camera_descriptions,
-            frame_strategy=frame_strategy,
-            car_cameras=car_cameras,
-            car_zones=car_zones,
-        )
-
+        return _build_ollama_cloud_analyzer(common, ollama_cloud_api_key, ollama_model)
     if ai_provider == "moondream_cloud":
-        if not moondream_api_key:
-            _LOGGER.warning(
-                "ai_provider='moondream_cloud' requires moondream_api_key to be set; "
-                "AI analysis disabled"
-            )
-            return None
-        return MoondreamCloudAnalyzer(
-            api_key=moondream_api_key,
-            prompt=prompt,
-            car_description=car_description,
-            max_frames=max_frames,
-            frame_interval=frame_interval,
-            suspicious_keywords=suspicious_keywords,
-            camera_prompts=camera_prompts,
-            camera_descriptions=camera_descriptions,
-            frame_strategy=frame_strategy,
-            car_cameras=car_cameras,
-            car_zones=car_zones,
-            finetune_model=moondream_finetune_model,
+        return _build_moondream_cloud_analyzer(
+            common, moondream_api_key, moondream_finetune_model
         )
-
     if ai_provider == "moondream_local":
-        return MoondreamLocalAnalyzer(
-            prompt=prompt,
-            car_description=car_description,
-            max_frames=max_frames,
-            frame_interval=frame_interval,
-            suspicious_keywords=suspicious_keywords,
-            camera_prompts=camera_prompts,
-            camera_descriptions=camera_descriptions,
-            frame_strategy=frame_strategy,
-            car_cameras=car_cameras,
-            car_zones=car_zones,
-        )
-
+        return MoondreamLocalAnalyzer(**common)
     if ai_provider == "anthropic":
-        if not anthropic_api_key:
-            _LOGGER.warning(
-                "ai_provider='anthropic' requires anthropic_api_key to be set; "
-                "AI analysis disabled"
-            )
-            return None
-        return AnthropicAnalyzer(
-            api_key=anthropic_api_key,
-            model=anthropic_model or "claude-haiku-4-5",
-            prompt=prompt,
-            car_description=car_description,
-            max_frames=max_frames,
-            frame_interval=frame_interval,
-            suspicious_keywords=suspicious_keywords,
-            camera_prompts=camera_prompts,
-            camera_descriptions=camera_descriptions,
-            frame_strategy=frame_strategy,
-            car_cameras=car_cameras,
-            car_zones=car_zones,
-        )
-
+        return _build_anthropic_analyzer(common, anthropic_api_key, anthropic_model)
     if ai_provider == "openai":
-        if not openai_api_key:
-            _LOGGER.warning(
-                "ai_provider='openai' requires openai_api_key to be set; "
-                "AI analysis disabled"
-            )
-            return None
-        return OpenAIAnalyzer(
-            api_key=openai_api_key,
-            model=openai_model or "gpt-4o-mini",
-            prompt=prompt,
-            car_description=car_description,
-            max_frames=max_frames,
-            frame_interval=frame_interval,
-            suspicious_keywords=suspicious_keywords,
-            camera_prompts=camera_prompts,
-            camera_descriptions=camera_descriptions,
-            frame_strategy=frame_strategy,
-            car_cameras=car_cameras,
-            car_zones=car_zones,
-        )
+        return _build_openai_analyzer(common, openai_api_key, openai_model)
 
     _LOGGER.warning(
         "Unknown ai_provider %r; expected 'ollama', 'ollama_cloud', "
@@ -4546,6 +4779,75 @@ def _build_single_analyzer(
         ai_provider,
     )
     return None
+
+
+def _build_ollama_analyzer(
+    common: dict[str, Any], ollama_url: str, ollama_model: str
+) -> BaseAnalyzer | None:
+    if not ollama_url:
+        _LOGGER.warning(
+            "ai_provider='ollama' requires ollama_url to be set; AI analysis disabled"
+        )
+        return None
+    return ClipAnalyzer(ollama_url=ollama_url, model=ollama_model, **common)
+
+
+def _build_ollama_cloud_analyzer(
+    common: dict[str, Any], ollama_cloud_api_key: str, ollama_model: str
+) -> BaseAnalyzer | None:
+    if not ollama_cloud_api_key:
+        _LOGGER.warning(
+            "ai_provider='ollama_cloud' requires ollama_cloud_api_key to be set; "
+            "AI analysis disabled"
+        )
+        return None
+    return OllamaCloudAnalyzer(
+        api_key=ollama_cloud_api_key, model=ollama_model, **common
+    )
+
+
+def _build_moondream_cloud_analyzer(
+    common: dict[str, Any], moondream_api_key: str, moondream_finetune_model: str
+) -> BaseAnalyzer | None:
+    if not moondream_api_key:
+        _LOGGER.warning(
+            "ai_provider='moondream_cloud' requires moondream_api_key to be set; "
+            "AI analysis disabled"
+        )
+        return None
+    return MoondreamCloudAnalyzer(
+        api_key=moondream_api_key, finetune_model=moondream_finetune_model, **common
+    )
+
+
+def _build_anthropic_analyzer(
+    common: dict[str, Any], anthropic_api_key: str, anthropic_model: str
+) -> BaseAnalyzer | None:
+    if not anthropic_api_key:
+        _LOGGER.warning(
+            "ai_provider='anthropic' requires anthropic_api_key to be set; "
+            "AI analysis disabled"
+        )
+        return None
+    return AnthropicAnalyzer(
+        api_key=anthropic_api_key,
+        model=anthropic_model or "claude-haiku-4-5",
+        **common,
+    )
+
+
+def _build_openai_analyzer(
+    common: dict[str, Any], openai_api_key: str, openai_model: str
+) -> BaseAnalyzer | None:
+    if not openai_api_key:
+        _LOGGER.warning(
+            "ai_provider='openai' requires openai_api_key to be set; "
+            "AI analysis disabled"
+        )
+        return None
+    return OpenAIAnalyzer(
+        api_key=openai_api_key, model=openai_model or "gpt-4o-mini", **common
+    )
 
 
 def create_analyzer(
