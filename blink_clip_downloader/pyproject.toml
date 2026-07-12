@@ -71,6 +71,12 @@ blink_downloader = ["static/**/*"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--tb=short -q"
+filterwarnings = [
+    # OpenCV's SWIG-generated bindings (cv2) emit this on import under
+    # Python 3.12+ — a known upstream quirk in the compiled extension
+    # module itself, harmless and outside this project's control.
+    "ignore:builtin type (SwigPyPacked|SwigPyObject|swigvarlink) has no __module__ attribute:DeprecationWarning",
+]
 
 [tool.coverage.run]
 source = ["blink_downloader"]

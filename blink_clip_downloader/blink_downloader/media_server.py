@@ -4374,7 +4374,11 @@ class MediaServer:
                 )
 
             result = await manager.train_from_examples(finetune_id, examples)
-            await self._db.mark_feedback_trained(trained_ids)
+            successful_ids = [
+                trained_ids[i] for i in result.get("successful_indices", [])
+            ]
+            if successful_ids:
+                await self._db.mark_feedback_trained(successful_ids)
             return web.json_response(
                 {
                     "trained": result.get("steps_completed", 0),

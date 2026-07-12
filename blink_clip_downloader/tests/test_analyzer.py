@@ -6813,7 +6813,7 @@ async def test_train_from_examples_skips_example_with_no_rollouts() -> None:
         "ft-1",
         [{"image": _FAKE_JPEG, "question": "q", "ground_truth": "{}"}],
     )
-    assert result == {"steps_completed": 0, "results": []}
+    assert result == {"steps_completed": 0, "results": [], "successful_indices": []}
     # generate_rollouts was called, but train_step never should have been
     # (only one POST call total).
     assert m._session.post.call_count == 1
@@ -6836,6 +6836,9 @@ async def test_train_from_examples_continues_after_one_failure() -> None:
         ],
     )
     assert result["steps_completed"] == 1
+    # Only the second example (index 1) actually completed a training step —
+    # the first was skipped for lack of rollouts and must not be marked trained.
+    assert result["successful_indices"] == [1]
 
 
 async def test_train_from_examples_rl_mode_trains_on_rollouts() -> None:
@@ -7790,6 +7793,37 @@ def test_zone_motion_fraction_returns_none_on_pil_error() -> None:
     frames = [_FAKE_JPEG, _FAKE_JPEG_2]
     zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
     assert BaseAnalyzer._zone_motion_fraction(frames, zone) is None
+
+
+def test_maybe_compute_zone_motion_requires_car_description() -> None:
+    """A car_zone configured for a camera must not produce a ZONE MOTION
+    signal (whose wording asserts "the protected vehicle's usual spot")
+    until ai_car_description is actually set — otherwise the prompt would
+    reference a protected vehicle the user never described, matching every
+    other car-zone code path (_car_protection_applies) in this class."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="",
+        car_zones={"Driveway": zone},
+    )
+    assert a._maybe_compute_zone_motion(frames, "Driveway") is None
+
+
+def test_maybe_compute_zone_motion_runs_once_car_description_set() -> None:
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="Silver Kia",
+        car_zones={"Driveway": zone},
+    )
+    assert a._maybe_compute_zone_motion(frames, "Driveway") is not None
 
 
 def test_build_prompt_includes_movement_hint() -> None:

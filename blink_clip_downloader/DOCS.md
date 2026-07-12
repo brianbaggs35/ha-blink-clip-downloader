@@ -446,7 +446,8 @@ Every AI call also includes the clip's local time label ("early morning", "eveni
 constitutes suspicious behaviour for that time of day.
 
 The `anomaly_score` is stored in the `analysis_results` table and returned by the
-`/api/ai/analysis` endpoint so you can query and filter by it.
+`/api/ai/results/{clip_id}` endpoint (and as part of each clip's data from
+`/api/clips`) so you can query and filter by it.
 
 ### Visual Scene Baseline
 

@@ -912,8 +912,15 @@ class BaseAnalyzer(abc.ABC):
     def _maybe_compute_zone_motion(
         self, frames: list[bytes], camera: str
     ) -> float | None:
+        """Only computed when protected-vehicle rules actually apply to
+        *camera* (see :meth:`_car_protection_applies`) — the emitted
+        ZONE MOTION prompt segment talks about "the protected vehicle's
+        usual spot" (see :meth:`_zone_motion_segment`), so it must not fire
+        just because a zone is configured while ``ai_car_description`` is
+        still unset, matching every other car-zone code path in this class.
+        """
         car_zone = self._car_zones.get(camera)
-        if car_zone and (not self._car_cameras or camera in self._car_cameras):
+        if car_zone and self._car_protection_applies(camera):
             return self._zone_motion_fraction(frames, car_zone)
         return None
 
@@ -3975,13 +3982,16 @@ class MoondreamFineTuneManager:
 
         Continues past a single example's failure (network error, empty
         rollout) so one bad frame doesn't abandon the rest of the batch.
-        Returns ``{"steps_completed": int, "results": [...]}`` — the caller
-        (see ``MediaServer._handle_finetune_train``) is expected to mark
-        only the feedback rows behind successfully-trained examples as
-        consumed.
+        Returns ``{"steps_completed": int, "results": [...], "successful_indices":
+        [...]}`` — ``successful_indices`` holds the position (within
+        *examples*) of each example that actually completed a training
+        step, so the caller (see ``MediaServer._handle_finetune_train``) can
+        mark only the feedback rows behind successfully-trained examples as
+        consumed, not every row it attempted.
         """
         results = []
-        for example in examples:
+        successful_indices: list[int] = []
+        for i, example in enumerate(examples):
             rollout_resp = await self.generate_rollouts(
                 finetune_id,
                 example["image"],
@@ -4006,7 +4016,12 @@ class MoondreamFineTuneManager:
             )
             if step_result:
                 results.append(step_result)
-        return {"steps_completed": len(results), "results": results}
+                successful_indices.append(i)
+        return {
+            "steps_completed": len(results),
+            "results": results,
+            "successful_indices": successful_indices,
+        }
 
     # ------------------------------------------------------------------
     # Checkpoints

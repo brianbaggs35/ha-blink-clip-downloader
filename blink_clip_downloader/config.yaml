@@ -146,7 +146,7 @@ options:
   #   "ollama"          – Ollama server running a vision model on your LAN (free, private)
   #   "ollama_cloud"    – Ollama Cloud API (api.ollama.com, needs ollama_cloud_api_key)
   #   "moondream_cloud" – Moondream Cloud API (needs moondream_api_key, billed per request)
-  #   "moondream_local" – Moondream 0.5B INT8 model downloaded and run on this device (free, x86_64 only)
+  #   "moondream_local" – Moondream 0.5B INT8 model, run on this device (free, requires an NVIDIA/Apple Silicon GPU)
   #   "anthropic"       – Anthropic Claude API (needs anthropic_api_key, billed per token)
   #   "openai"          – OpenAI API, e.g. GPT-4o / GPT-5 (needs openai_api_key, billed per token)
   ai_provider: "ollama"

@@ -3597,7 +3597,13 @@ async def test_finetune_train_success(db: ClipDatabase, tmp_path: Path) -> None:
         with (
             patch(
                 "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
-                new=AsyncMock(return_value={"steps_completed": 1, "results": [{}]}),
+                new=AsyncMock(
+                    return_value={
+                        "steps_completed": 1,
+                        "results": [{}],
+                        "successful_indices": [0],
+                    }
+                ),
             ) as mock_train,
             patch(
                 "blink_downloader.analyzer.MoondreamFineTuneManager.close",
@@ -3620,6 +3626,47 @@ async def test_finetune_train_success(db: ClipDatabase, tmp_path: Path) -> None:
         # Trained feedback is not returned again.
         remaining = await db.get_untrained_feedback(limit=10)
         assert remaining == []
+    finally:
+        await tc.close()
+
+
+async def test_finetune_train_failed_step_leaves_feedback_untrained(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A feedback row behind a training step that didn't actually complete
+    (e.g. a transient Moondream API error) must not be marked trained —
+    otherwise that feedback's signal is silently and permanently lost with
+    no way to retry it on a later run."""
+    await _add_feedback_with_clip(db)
+    analyzer = _moondream_train_analyzer()
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                new=AsyncMock(
+                    return_value={
+                        "steps_completed": 0,
+                        "results": [],
+                        "successful_indices": [],
+                    }
+                ),
+            ),
+            patch(
+                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                new=AsyncMock(),
+            ),
+        ):
+            resp = await tc.post("/api/ai/finetune/ft1/train", json={"limit": 5})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["trained"] == 0
+
+        # Left untrained so a future run can retry it.
+        remaining = await db.get_untrained_feedback(limit=10)
+        assert len(remaining) == 1
     finally:
         await tc.close()
 
@@ -3667,7 +3714,13 @@ async def test_finetune_train_bad_json_falls_back_to_default_limit(
         with (
             patch(
                 "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
-                new=AsyncMock(return_value={"steps_completed": 1, "results": [{}]}),
+                new=AsyncMock(
+                    return_value={
+                        "steps_completed": 1,
+                        "results": [{}],
+                        "successful_indices": [0],
+                    }
+                ),
             ),
             patch(
                 "blink_downloader.analyzer.MoondreamFineTuneManager.close",
@@ -3716,7 +3769,13 @@ async def test_finetune_train_falls_back_to_original_suspicious_when_uncorrected
         with (
             patch(
                 "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
-                new=AsyncMock(return_value={"steps_completed": 1, "results": [{}]}),
+                new=AsyncMock(
+                    return_value={
+                        "steps_completed": 1,
+                        "results": [{}],
+                        "successful_indices": [0],
+                    }
+                ),
             ) as mock_train,
             patch(
                 "blink_downloader.analyzer.MoondreamFineTuneManager.close",
