@@ -347,11 +347,18 @@ entirely. Tier-1 and tier-2 token usage are tracked separately — the AI Usage 
 shows the escalation model as its own row (priced at its own rate) plus a running
 count of how many clips were escalated.
 
-> **Deprecated:** `openai_escalation_model` (OpenAI-only, second OpenAI model) is
-> still honored automatically if `ai_escalation_provider` is unset and `ai_provider`
-> is `"openai"`, so existing installs keep working unchanged after upgrading — but
-> new setups should use `ai_escalation_provider`/`ai_escalation_model` above, which
-> work for every provider, not just OpenAI.
+The AI tab's Fetch Models picker works for the escalation model too, once
+`ai_escalation_provider` is configured and connected — fetch, pick from the
+list, and copy the id to paste into `ai_escalation_model`, the same
+copy-to-clipboard flow the tier-1 model picker already uses.
+
+> **Removed in 5.1.0:** `openai_escalation_model` (OpenAI-only, second OpenAI
+> model) is no longer part of this add-on's Configuration options — use
+> `ai_escalation_provider`/`ai_escalation_model` above, which work for every
+> provider, not just OpenAI. If you already had `openai_escalation_model` set,
+> nothing changes for you: it's still read and automatically promoted to
+> `ai_escalation_provider="openai"` + `ai_escalation_model` on startup, so
+> upgrading doesn't silently drop your existing setting.
 
 ### Analysis Prompt & Behaviour
 
@@ -402,30 +409,43 @@ form, and a mismatched name silently fails to apply:
 | `ai_camera_descriptions` | `[]` | Per-camera descriptions. Example: `[{camera: "Driveway", description: "Points at driveway; silver Kia Forte parked left"}]` |
 | `ai_camera_prompts` | `[]` | Per-camera prompt overrides. Example: `[{camera: "Driveway", prompt: "Focus on vehicle proximity."}]` |
 
-The **"Protected vehicle visible from this camera"** checkbox in the Camera Configurations
-panel enables car-proximity rules for individual cameras without editing `ai_car_cameras`
-in the add-on options.
+### Vehicles Tab — protected-vehicle monitoring
 
-> **Prerequisite:** The checkbox alone has no effect until `ai_car_description`
-> (Configuration tab) is also set — the AI needs to know *what vehicle* to protect, not
-> just which camera can see it. If a camera is checked but `ai_car_description` is empty,
-> the AI tab shows a warning banner under Camera Configurations until you set one.
+Everything about protecting a specific vehicle lives in its own **Vehicles**
+nav tab (moved out of the AI tab in 5.1.0, since it's a distinct concern from
+per-camera AI prompt tuning):
 
-Once checked, a **car zone** section appears: four optional percentage fields (left/
-top/right/bottom, 0 = the frame's left/top edge, 100 = right/bottom edge) marking
-roughly where the protected vehicle normally sits. Since a Blink camera doesn't move,
-this is stable ground truth that doesn't depend on any single clip's object detection
-succeeding — it sharpens accuracy in two ways: a code-computed "zone motion" signal
-(what share of the clip's overall motion happened inside the zone vs. elsewhere) is
-added to the AI's evidence, and for Moondream providers it's used as a fallback
-proximity reference when a clip's vehicle detection finds nothing at all. Leave all
-four fields blank to skip — everything else (distance rules, the description-based
-disambiguation) works the same with or without a zone configured.
+- **Protected Vehicle Description** — describe the vehicle (make/model/color)
+  so the AI can identify it. This is now editable directly from the web UI
+  (previously only settable via the add-on's Configuration tab as
+  `ai_car_description`) and takes effect immediately, no restart needed.
+- **"Protected vehicle visible from this camera"** — per camera, enables
+  car-proximity rules for that camera without editing `ai_car_cameras` in the
+  add-on options. Has no effect until the description above is also set — the
+  AI needs to know *what vehicle* to protect, not just which camera can see
+  it; the tab shows a warning banner until both are set.
+- **Visual car-zone picker** — once a camera is checked, pick one of its
+  recent clips and click-drag directly on the frame to draw a rectangle over
+  where the vehicle normally sits (drag the corner handles to resize, drag
+  the body to move, or clear it entirely). This replaced manual
+  left/top/right/bottom percentage fields with an actual visual picker — much
+  easier to get right, and essential for picking out *your* vehicle when
+  several are parked close together (shared/apartment parking). Since a Blink
+  camera doesn't move, this zone is stable ground truth that doesn't depend
+  on any single clip's object detection succeeding: it sharpens accuracy in
+  two ways — a code-computed "zone motion" signal (what share of the clip's
+  overall motion happened inside the zone vs. elsewhere) is added to the AI's
+  evidence, and for Moondream providers it's used as a fallback proximity
+  reference when a clip's vehicle detection finds nothing at all. Clear the
+  zone to skip it — everything else (distance rules, description-based
+  disambiguation) works the same with or without one configured.
 
-> **Priority:** `camera_configs.json` (set via the web UI) is the primary source for
-> descriptions, custom prompts, and car-camera flags. `ai_camera_descriptions` and
-> `ai_camera_prompts` in `options.json` serve as fallbacks for cameras not yet
-> configured in the web UI.
+> **Priority:** `camera_configs.json`/`vehicle_settings.json` (both set via
+> the web UI) are the primary source for descriptions, custom prompts,
+> car-camera flags, zones, and the protected-vehicle description.
+> `ai_camera_descriptions`/`ai_camera_prompts`/`ai_car_description` in
+> `options.json` serve as fallbacks for cameras/settings not yet configured
+> in the web UI.
 
 ### Smart Security Brain (Anomaly Detection)
 
@@ -545,23 +565,55 @@ place of it — each one produces a bounded, hedged hint appended to the same pr
 the "SCENE BASELINE" and "ZONE MOTION" hints already use, so the model still judges
 each clip on what it can actually see, with better evidence to work with.
 
-#### Face Recognition Enrollment
+#### Biometrics Tab — face-recognition enrollment and the suspicious-flag bypass
 
-Once `ai_face_recognition_enabled` is on, enroll household members from the AI tab's
-**Face Recognition Enrollment** panel: give a name and a single clear reference
-photo. The photo is converted to a numeric face embedding (not stored itself) and
-kept only in this add-on's own database — it is never uploaded to any cloud AI
-provider, regardless of which `ai_provider` is configured. A recognized face adds a
-**RECOGNIZED RESIDENT** hint telling the model this is likely a known household
-member, not a stranger — concerning behavior (tampering, forced entry) is still
-judged on its own merits regardless of who is present.
+Once `ai_face_recognition_enabled` is on, enroll household members from the
+**Biometrics** nav tab (moved out of the AI tab in 5.1.0). Two ways to
+enroll:
+
+- **From a clip (recommended)** — pick a camera and one of its recent clips,
+  extract several frames from it, and select as many as you like that show
+  the face clearly. Motion-triggered clips often don't have a good angle on
+  the face in the very first frame (e.g. a front door camera catching the
+  moment the door opens); pulling multiple frames from a real clip and
+  picking the good ones gives recognition several real reference angles to
+  match against instead of one posed photo, which is what actually makes
+  recognition reliable enough to cut down false positives on a camera the
+  same few people pass every day.
+- **From a photo** — the simpler original flow: give a name and a single
+  clear reference photo.
+
+Each selected photo is converted to a numeric face embedding (the photo
+itself is not stored) and kept only in this add-on's own database — **never
+uploaded anywhere**, regardless of which `ai_provider` is configured. Even
+the advisory hint sent to the AI model (any provider, including cloud ones)
+is strictly name-free — it only ever says how many locally-enrolled members
+matched, never who. A recognized person's actual name is only ever used
+afterward, entirely locally, to personalize your own notification text
+(e.g. "Brian walked up the driveway" instead of "A person walked up the
+driveway").
+
+**Approved for bypass.** Each enrolled person has an "approved" toggle
+(on by default). When every face detected in a clip belongs to an approved
+enrollment — and only then — the clip's suspicious flag is automatically
+cleared, on top of whatever the AI model itself concluded. This is
+deliberately all-or-nothing: a single stranger, or someone recognized but
+not (or no longer) approved, standing next to an approved family member
+still gets the clip flagged normally. Turn a person's approval off (without
+deleting them) to keep recognizing/labeling someone — e.g. a regular visitor
+— without granting them bypass trust. Enrolled photos and the approved flag
+can be managed per person (rename, approve/un-approve, or remove every photo
+for that person at once) from the Biometrics tab.
 
 ---
 
 ## AI Alerts (Extended Notifications)
 
 When AI analysis flags a clip as suspicious it can notify you through three channels
-in addition to HA persistent notifications.
+in addition to HA persistent notifications. The **Automations** tab has a
+**Notification Channels** panel with a one-off test button for each channel
+(email, Discord, mobile app push) so you can verify credentials are correct
+before actually enabling a channel for real alerts.
 
 ### HA Mobile App Push
 
@@ -603,16 +655,28 @@ from any browser without leaving Home Assistant.
 
 ### Features
 
-- **Library tab** — scrollable grid with thumbnails, camera/date/source/tag filters,
-  sort by newest/oldest/camera/size/duration, starred filter, and a camera sidebar.
+- **Library tab** — scrollable grid with thumbnails (each showing camera, date,
+  source, size, tags, and clip **duration** — both as a badge on the thumbnail and
+  as text alongside the rest of the clip's details), sort by
+  newest/oldest/camera/size/duration, starred filter, and a camera sidebar.
 - **Status tab** — Blink connection status, library stats, per-camera breakdown, a
   7-day activity chart, and an **AI Analysis** card showing provider name,
   online/offline status, model, pending queue count, and suspicious-clip count.
-- **AI tab** — AI provider configuration, connection health check, Camera
-  Configurations panel, AI Usage statistics, and a **Test Analysis** button that runs
-  a full analysis on the most recently downloaded clip to confirm the AI backend is
-  working end-to-end.
-- **Automations tab** — ready-to-paste HA automation YAML snippets.
+- **AI tab** — AI provider configuration (with a Fetch Models picker for both the
+  tier-1 and, when configured, tier-2 escalation model), connection health check,
+  Camera Configurations panel (descriptions/custom prompts), AI Usage statistics,
+  and a **Test Analysis** button that runs a full analysis on the most recently
+  downloaded clip to confirm the AI backend is working end-to-end.
+- **Models tab** — reference info on each AI provider's capabilities.
+- **Vehicles tab** — protected-vehicle description, per-camera "sees the vehicle"
+  flag, and a visual click-drag zone picker drawn over an actual recent frame from
+  that camera — see **Vehicles Tab** above.
+- **Biometrics tab** — enroll household members' faces (from a clip's frames or a
+  single photo), approve/un-approve/rename/remove them, and the all-or-nothing
+  suspicious-flag bypass this powers — see **Biometrics Tab** above.
+- **Automations tab** — ready-to-paste HA automation YAML snippets, plus a
+  **Notification Channels** panel to test-send an email/Discord message/mobile
+  push before enabling that channel for real.
 - **Video.js player** — in-browser streaming with play/pause, seek, fullscreen, PiP,
   loop, autoplay-next, theater mode, and playback-rate selection.
 - **Per-clip AI Analysis panel** — each clip modal includes a collapsible 🤖 **AI
@@ -623,13 +687,11 @@ from any browser without leaving Home Assistant.
 - **AI Usage tab** — per-provider token usage statistics including prompt tokens,
   completion tokens, per-model breakdown, and estimated API cost (for Anthropic and
   OpenAI, priced per model). Moondream Cloud shows request count with a billing note.
-  When `openai_escalation_model` is configured, escalated analyses appear as their own
-  row and count toward a separate "Escalations" total. A **Clear Stats** button resets
-  these counters — handy after switching providers so old usage doesn't keep piling
-  into the total — without touching per-clip analysis history.
-- **Camera Configurations panel** (AI tab) — set per-camera descriptions, custom
-  prompts, and the "Protected vehicle" checkbox without editing YAML. Changes apply
-  immediately without restarting.
+  When `ai_escalation_provider`/`ai_escalation_model` is configured, escalated
+  analyses appear as their own row and count toward a separate "Escalations" total.
+  A **Clear Stats** button resets these counters — handy after switching providers
+  so old usage doesn't keep piling into the total — without touching per-clip
+  analysis history.
 - **Bulk select** — star, delete, or export multiple clips as a ZIP archive.
 - **Tag management** — add/remove freeform tags per clip; filter the library by tag.
 - **Browser notifications** — opt-in desktop notifications when new clips arrive.

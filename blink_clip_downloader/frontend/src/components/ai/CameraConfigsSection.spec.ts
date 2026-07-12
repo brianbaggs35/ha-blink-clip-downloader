@@ -26,7 +26,7 @@ describe('CameraConfigsSection', () => {
       'fetch',
       vi.fn(() => Promise.resolve(jsonResponse([]))),
     )
-    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
+    const wrapper = mount(CameraConfigsSection)
     await flushPromises()
     expect(wrapper.text()).toContain('No cameras found')
   })
@@ -36,12 +36,12 @@ describe('CameraConfigsSection', () => {
       'fetch',
       vi.fn(() => Promise.reject(new Error('down'))),
     )
-    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
+    const wrapper = mount(CameraConfigsSection)
     await flushPromises()
     expect(wrapper.text()).toContain('Failed to load camera configs.')
   })
 
-  it('renders a camera with description/prompt fields and a car-zone editor when is_car_camera is set', async () => {
+  it('renders a camera with editable description/prompt fields, pointing to the Vehicles tab for car settings', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() =>
@@ -58,104 +58,15 @@ describe('CameraConfigsSection', () => {
         ),
       ),
     )
-    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
+    const wrapper = mount(CameraConfigsSection)
     await flushPromises()
     expect((wrapper.find('input.tag-input').element as HTMLInputElement).value).toBe('Driveway cam')
-    const zoneInputs = wrapper.findAll('input[type="number"]')
-    expect(zoneInputs.map((i) => (i.element as HTMLInputElement).value)).toEqual(['10', '20', '50', '90'])
+    expect(wrapper.find('input[type="number"]').exists()).toBe(false)
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Vehicles')
   })
 
-  it('shows the car-protection warning when a car camera has no active protection', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() =>
-        Promise.resolve(
-          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]),
-        ),
-      ),
-    )
-    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: false } })
-    await flushPromises()
-    expect(wrapper.text()).toContain('no')
-    expect(wrapper.text()).toContain('Protected Vehicle')
-  })
-
-  it('does not show the warning when carProtectionActive is true', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() =>
-        Promise.resolve(
-          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]),
-        ),
-      ),
-    )
-    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: true } })
-    await flushPromises()
-    expect(wrapper.text()).not.toContain('will not activate')
-  })
-
-  it('saves configs with a complete car zone converted to a 0-1 rectangle', async () => {
-    let saved: unknown
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((_url: string, opts?: RequestInit) => {
-        if (opts?.method === 'PUT') {
-          saved = JSON.parse(opts.body as string)
-          return Promise.resolve(jsonResponse({ saved: true, count: 1 }))
-        }
-        return Promise.resolve(
-          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]),
-        )
-      }),
-    )
-    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
-    await flushPromises()
-    const zoneInputs = wrapper.findAll('input[type="number"]')
-    await zoneInputs[0].setValue('10')
-    await zoneInputs[1].setValue('20')
-    await zoneInputs[2].setValue('50')
-    await zoneInputs[3].setValue('90')
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text().includes('Save Camera Configs'))!
-      .trigger('click')
-    await flushPromises()
-    expect(saved).toEqual([
-      {
-        camera: 'front',
-        description: '',
-        custom_prompt: '',
-        is_car_camera: true,
-        car_zone: { x_min: 0.1, y_min: 0.2, x_max: 0.5, y_max: 0.9 },
-      },
-    ])
-  })
-
-  it('saves car_zone as null when the zone fields are incomplete', async () => {
-    let saved: unknown
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((_url: string, opts?: RequestInit) => {
-        if (opts?.method === 'PUT') {
-          saved = JSON.parse(opts.body as string)
-          return Promise.resolve(jsonResponse({ saved: true, count: 1 }))
-        }
-        return Promise.resolve(
-          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: true, car_zone: null }]),
-        )
-      }),
-    )
-    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
-    await flushPromises()
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text().includes('Save Camera Configs'))!
-      .trigger('click')
-    await flushPromises()
-    expect((saved as Array<{ car_zone: unknown }>)[0].car_zone).toBeNull()
-  })
-
-  it('edits the description, custom prompt, and is_car_camera checkbox', async () => {
+  it('edits the description and custom prompt', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() =>
@@ -164,15 +75,54 @@ describe('CameraConfigsSection', () => {
         ),
       ),
     )
-    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
+    const wrapper = mount(CameraConfigsSection)
     await flushPromises()
     const inputs = wrapper.findAll('input.tag-input')
     await inputs[0].setValue('Front porch')
     await inputs[1].setValue('Watch for packages')
     expect((inputs[0].element as HTMLInputElement).value).toBe('Front porch')
     expect((inputs[1].element as HTMLInputElement).value).toBe('Watch for packages')
-    await wrapper.find('input[type="checkbox"]').setValue(true)
-    expect(wrapper.find('.status-card').text()).toContain('Car zone')
+  })
+
+  it('saves description/custom_prompt while preserving is_car_camera and car_zone untouched', async () => {
+    let saved: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, opts?: RequestInit) => {
+        if (opts?.method === 'PUT') {
+          saved = JSON.parse(opts.body as string)
+          return Promise.resolve(jsonResponse({ saved: true, count: 1 }))
+        }
+        return Promise.resolve(
+          jsonResponse([
+            {
+              camera: 'front',
+              description: 'old',
+              custom_prompt: '',
+              is_car_camera: true,
+              car_zone: { x_min: 0.1, y_min: 0.2, x_max: 0.5, y_max: 0.9 },
+            },
+          ]),
+        )
+      }),
+    )
+    const wrapper = mount(CameraConfigsSection)
+    await flushPromises()
+    await wrapper.find('input.tag-input').setValue('new description')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Configs'))!
+      .trigger('click')
+    await flushPromises()
+    expect(saved).toEqual([
+      {
+        camera: 'front',
+        description: 'new description',
+        custom_prompt: '',
+        is_car_camera: true,
+        car_zone: { x_min: 0.1, y_min: 0.2, x_max: 0.5, y_max: 0.9 },
+      },
+    ])
   })
 
   it('shows a toast on save failure', async () => {
@@ -183,7 +133,7 @@ describe('CameraConfigsSection', () => {
         return Promise.resolve(jsonResponse([]))
       }),
     )
-    const wrapper = mount(CameraConfigsSection, { props: { carProtectionActive: null } })
+    const wrapper = mount(CameraConfigsSection)
     await flushPromises()
     await wrapper
       .findAll('button')

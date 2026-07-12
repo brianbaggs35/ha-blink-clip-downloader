@@ -14,3 +14,14 @@ if (!window.matchMedia) {
       dispatchEvent: () => false,
     }) as MediaQueryList
 }
+
+// jsdom doesn't implement ResizeObserver — PrimeVue's Textarea (autoResize)
+// and other size-reactive components use it internally, which throws in
+// every test that mounts one without this polyfill.
+if (!window.ResizeObserver) {
+  window.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+}

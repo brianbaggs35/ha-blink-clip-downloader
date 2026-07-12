@@ -106,6 +106,58 @@ async def test_send_mobile_http_error() -> None:
     assert await dispatcher.send_mobile("Alert", "Test") is False
 
 
+async def test_send_test_mobile_ignores_mobile_app_enabled_false() -> None:
+    """send_test_mobile works even when mobile_app_enabled is off, unlike
+    send_mobile — same rationale as send_test_email."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_target="mobile_app_phone",
+        mobile_app_enabled=False,
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    ok, message = await dispatcher.send_test_mobile()
+    assert ok is True
+    assert "mobile_app_phone" in message
+
+
+async def test_send_test_mobile_no_target() -> None:
+    dispatcher = NotificationDispatcher(supervisor_token="tok", mobile_app_target="")
+    ok, message = await dispatcher.send_test_mobile()
+    assert ok is False
+    assert "not configured" in message
+
+
+async def test_send_test_mobile_no_token() -> None:
+    dispatcher = NotificationDispatcher(
+        supervisor_token="", mobile_app_target="mobile_app_phone"
+    )
+    ok, message = await dispatcher.send_test_mobile()
+    assert ok is False
+    assert "Supervisor token" in message
+
+
+async def test_send_test_mobile_failure_message() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 500
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok", mobile_app_target="mobile_app_phone"
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    ok, message = await dispatcher.send_test_mobile()
+    assert ok is False
+    assert "Failed" in message
+
+
 # ------------------------------------------------------------------
 # Email (SMTP)
 # ------------------------------------------------------------------
@@ -319,6 +371,48 @@ async def test_send_discord_low_confidence_color() -> None:
     call_kwargs = dispatcher._session.post.call_args
     payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
     assert payload["embeds"][0]["color"] == 0xFF8C00  # low confidence = orange
+
+
+async def test_send_test_discord_ignores_discord_enabled_false() -> None:
+    """send_test_discord works even when discord_enabled is off, unlike
+    send_discord — same rationale as send_test_email."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 204
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        discord_enabled=False,
+        discord_webhook_url="https://discord.com/api/webhooks/123/abc",
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    ok, message = await dispatcher.send_test_discord()
+    assert ok is True
+    assert "Discord" in message
+
+
+async def test_send_test_discord_no_url() -> None:
+    dispatcher = NotificationDispatcher(discord_enabled=True, discord_webhook_url="")
+    ok, message = await dispatcher.send_test_discord()
+    assert ok is False
+    assert "not configured" in message
+
+
+async def test_send_test_discord_failure_message() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 500
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        discord_webhook_url="https://discord.com/api/webhooks/123/abc",
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    ok, message = await dispatcher.send_test_discord()
+    assert ok is False
+    assert "Failed" in message
 
 
 # ------------------------------------------------------------------

@@ -28,6 +28,7 @@ const thumbFailed = ref(false)
       <div class="clip-time">{{ fmtTs(clip.timestamp) }}</div>
       <div class="clip-meta">
         <span v-if="clip.source" class="src-pill">{{ clip.source }}</span>
+        <span v-if="clip.duration">⏱ {{ fmtDur(clip.duration) }}</span>
         <span>{{ fmtSize(clip.size_bytes) }}</span>
         <span v-for="tag in clip.tags" :key="tag" class="tag-pill">{{ tag }}</span>
       </div>

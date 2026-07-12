@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, apiDelete, ApiError, apiGet, apiPost, apiPut } from './client'
+import { api, apiDelete, ApiError, apiGet, apiPatch, apiPost, apiPut } from './client'
 
 function jsonResponse(body: unknown, ok = true, status = 200, statusText = 'OK') {
   return {
@@ -82,6 +82,26 @@ describe('api client', () => {
     await apiPut('/api/clips/1/tags')
     expect(fetch).toHaveBeenCalledWith('/api/clips/1/tags', {
       method: 'PUT',
+      headers: undefined,
+      body: undefined,
+    })
+  })
+
+  it('apiPatch(): sends a JSON body via PATCH', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({}))
+    await apiPatch('/api/ai/faces/1', { approved: false })
+    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved: false }),
+    })
+  })
+
+  it('apiPatch(): omits body/headers when no body is given', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({}))
+    await apiPatch('/api/ai/faces/1')
+    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/1', {
+      method: 'PATCH',
       headers: undefined,
       body: undefined,
     })

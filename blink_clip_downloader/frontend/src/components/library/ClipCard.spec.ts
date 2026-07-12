@@ -52,6 +52,14 @@ describe('ClipCard', () => {
     expect(wrapper.find('.src-pill').exists()).toBe(false)
     expect(wrapper.find('.star-badge').exists()).toBe(false)
     expect(wrapper.find('.notified-badge').exists()).toBe(false)
+    expect(wrapper.find('.clip-meta').text()).not.toContain('⏱')
+  })
+
+  it('shows duration as text in the meta row alongside camera/date/size, not just as a thumbnail badge', () => {
+    const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false } })
+    const meta = wrapper.find('.clip-meta').text()
+    expect(meta).toContain('⏱')
+    expect(meta).toContain('1m 5s')
   })
 
   it('emits click', async () => {

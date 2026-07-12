@@ -588,6 +588,28 @@ class BaseAnalyzer(abc.ABC):
         """
         self._car_zones = dict(car_zones)
 
+    def update_car_description(self, description: str) -> None:
+        """Replace the protected-vehicle description at runtime without restart.
+
+        Full replace, not a merge — clearing the description in the Vehicles
+        tab must immediately deactivate every car-protection rule (see
+        :attr:`car_protection_active`), matching :meth:`update_car_cameras`'s
+        behaviour for the same reason.
+        """
+        self._car_description = description
+
+    @property
+    def car_description(self) -> str:
+        """The currently active protected-vehicle description, if any.
+
+        Lets the Vehicles tab's settings endpoint read back the value the
+        live analyzer was started with (from ``ai_car_description``) the
+        first time ``/data/vehicle_settings.json`` doesn't exist yet, the
+        same "web UI file overrides the config.yaml option" precedent
+        already used for camera prompts/descriptions.
+        """
+        return self._car_description
+
     @property
     def car_protection_active(self) -> bool:
         """True if the protected-vehicle distance rules will apply to any camera.
@@ -613,6 +635,60 @@ class BaseAnalyzer(abc.ABC):
             self._car_description
             and (not self._car_cameras or camera in self._car_cameras)
         )
+
+    @staticmethod
+    def _face_bypass_applies(vision_hints: VisionHints | None) -> bool:
+        """True if the clip should have its suspicious flag auto-cleared
+        because every face detected across the clip belongs to an approved,
+        locally-enrolled household member.
+
+        Deliberately all-or-nothing and fail-safe: a positive approved match
+        is required (absence of any face at all does not bypass — no
+        enrollment ever matched means ``approved_names`` stays empty), AND
+        zero unrecognized or recognized-but-not-approved faces may appear
+        anywhere in the clip's sampled frames. A single stranger — or a
+        recognized person who isn't approved — standing next to an approved
+        family member must still allow the clip to be flagged; this is a
+        hard safety requirement, not a convenience default, so do not loosen
+        this condition without equally strong justification.
+        """
+        if vision_hints is None or vision_hints.face_recognition is None:
+            return False
+        fr = vision_hints.face_recognition
+        return (
+            bool(fr.approved_names)
+            and not fr.other_names
+            and not fr.unrecognized_present
+        )
+
+    # Leading generic-subject phrases a vision model commonly opens a
+    # description with — matched case-insensitively, anchored to the start
+    # of the summary, so a confident, natural rewrite ("Brian walked up the
+    # driveway") is possible without risking a mismatched/garbled rewrite
+    # when the model phrased things differently (see the fallback below).
+    _GENERIC_SUBJECT_RE = re.compile(
+        r"^((a|an|the)\s+(person|individual|figure|man|woman|subject|resident)"
+        r"|someone|somebody)\b\.?",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _personalize_summary(cls, summary: str, names: list[str]) -> str:
+        """Rewrite *summary* to name the recognized approved household
+        member(s) instead of a generic "a person" — entirely locally, using
+        only the AI's own already-returned text. Never called with anything
+        but approved, unambiguous names (see :meth:`_face_bypass_applies`);
+        the name itself never leaves this process, let alone the network —
+        it is not sent to any AI provider, only used to rewrite text that
+        has already been generated.
+        """
+        if not names or not summary:
+            return summary
+        names_joined = " and ".join(names) if len(names) <= 2 else ", ".join(names)
+        match = cls._GENERIC_SUBJECT_RE.match(summary)
+        if match:
+            return names_joined + summary[match.end() :]
+        return f"{names_joined}: {summary}"
 
     def set_escalation_analyzer(self, analyzer: BaseAnalyzer | None) -> None:
         """Attach (or clear) the tier-2 analyzer used for two-tier escalation.
@@ -809,6 +885,15 @@ class BaseAnalyzer(abc.ABC):
 
         response = await self._generate_response(frames, prompt)
         is_suspicious, confidence, summary = self.parse_response(response)
+
+        if is_suspicious and self._face_bypass_applies(vision_hints):
+            assert (
+                vision_hints is not None and vision_hints.face_recognition is not None
+            )
+            is_suspicious = False
+            summary = self._personalize_summary(
+                summary, vision_hints.face_recognition.approved_names
+            )
 
         await self._maybe_update_scene_baseline(
             camera, scene_thumbnail, is_suspicious, confidence

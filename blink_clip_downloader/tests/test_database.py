@@ -1992,6 +1992,90 @@ async def test_add_and_list_face_enrollment(db: ClipDatabase) -> None:
     assert enrollments[0]["name"] == "Brian"
     assert enrollments[0]["embedding"] == [0.1, 0.2, 0.3]
     assert enrollments[0]["id"] == enrollment_id
+    # approved defaults to True so the common "add a family member" flow
+    # grants bypass trust immediately (see database.py's migration comment).
+    assert enrollments[0]["approved"] is True
+
+
+async def test_add_face_enrollment_unapproved(db: ClipDatabase) -> None:
+    await db.add_face_enrollment("Nanny", [0.1, 0.2], approved=False)
+    enrollments = await db.list_face_enrollments()
+    assert enrollments[0]["approved"] is False
+
+
+async def test_set_face_enrollment_approved(db: ClipDatabase) -> None:
+    enrollment_id = await db.add_face_enrollment("Brian", [0.1, 0.2])
+    await db.set_face_enrollment_approved(enrollment_id, False)
+    enrollments = await db.list_face_enrollments()
+    assert enrollments[0]["approved"] is False
+
+    await db.set_face_enrollment_approved(enrollment_id, True)
+    enrollments = await db.list_face_enrollments()
+    assert enrollments[0]["approved"] is True
+
+
+async def test_rename_face_enrollment(db: ClipDatabase) -> None:
+    enrollment_id = await db.add_face_enrollment("Brain", [0.1, 0.2])
+    await db.rename_face_enrollment(enrollment_id, "Brian")
+    enrollments = await db.list_face_enrollments()
+    assert enrollments[0]["name"] == "Brian"
+
+
+async def test_set_face_enrollment_approved_without_init_is_noop() -> None:
+    d = ClipDatabase()
+    await d.set_face_enrollment_approved(1, False)  # must not raise
+
+
+async def test_rename_face_enrollment_without_init_is_noop() -> None:
+    d = ClipDatabase()
+    await d.rename_face_enrollment(1, "New Name")  # must not raise
+
+
+async def test_set_face_enrollments_approved_by_name(db: ClipDatabase) -> None:
+    """Multi-frame enrollment stores one row per selected photo under the
+    same name — bulk approve must affect every one of that person's rows."""
+    await db.add_face_enrollment("Brian", [0.1], approved=True)
+    await db.add_face_enrollment("Brian", [0.2], approved=True)
+    await db.add_face_enrollment("Amy", [0.3], approved=True)
+
+    await db.set_face_enrollments_approved_by_name("Brian", False)
+
+    enrollments = {e["id"]: e for e in await db.list_face_enrollments()}
+    approved_by_name = {e["name"]: e["approved"] for e in enrollments.values()}
+    brian_rows = [e for e in enrollments.values() if e["name"] == "Brian"]
+    assert all(r["approved"] is False for r in brian_rows)
+    assert approved_by_name["Amy"] is True
+
+
+async def test_rename_face_enrollments_by_name(db: ClipDatabase) -> None:
+    await db.add_face_enrollment("Brain", [0.1])
+    await db.add_face_enrollment("Brain", [0.2])
+    await db.add_face_enrollment("Amy", [0.3])
+
+    await db.rename_face_enrollments_by_name("Brain", "Brian")
+
+    names = [e["name"] for e in await db.list_face_enrollments()]
+    assert names.count("Brian") == 2
+    assert "Brain" not in names
+    assert "Amy" in names
+
+
+async def test_delete_face_enrollments_by_name(db: ClipDatabase) -> None:
+    await db.add_face_enrollment("Brian", [0.1])
+    await db.add_face_enrollment("Brian", [0.2])
+    await db.add_face_enrollment("Amy", [0.3])
+
+    await db.delete_face_enrollments_by_name("Brian")
+
+    names = [e["name"] for e in await db.list_face_enrollments()]
+    assert names == ["Amy"]
+
+
+async def test_face_enrollments_by_name_without_init_is_noop() -> None:
+    d = ClipDatabase()
+    await d.set_face_enrollments_approved_by_name("Brian", False)  # must not raise
+    await d.rename_face_enrollments_by_name("Brian", "Brain")  # must not raise
+    await d.delete_face_enrollments_by_name("Brian")  # must not raise
 
 
 async def test_list_face_enrollments_ordered_by_name(db: ClipDatabase) -> None:

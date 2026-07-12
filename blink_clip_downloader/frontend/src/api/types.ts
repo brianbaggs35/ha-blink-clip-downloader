@@ -293,11 +293,29 @@ export interface FaceEnrollment {
   id: number
   name: string
   created_at: string
+  // Whether this person counts toward the suspicious-flag bypass (see
+  // analyzer.py's _face_bypass_applies) — a recognized-but-not-approved
+  // enrollment is labeled but never suppresses an alert on its own.
+  approved: boolean
 }
 
 export interface FacesResponse {
   available: boolean
   faces: FaceEnrollment[]
+}
+
+// ---------------------------------------------------------------------
+// Vehicle settings (Vehicles tab)
+// ---------------------------------------------------------------------
+
+export interface VehicleSettings {
+  car_description: string
+}
+
+export interface EscalationModelsResponse {
+  enabled: boolean
+  models: string[]
+  error?: string
 }
 
 // ---------------------------------------------------------------------

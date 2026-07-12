@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v5.0.0"
+version: "v5.1.0"
 slug: blink_clip_downloader
 image: ghcr.io/brianbaggs35/blink_clip_downloader
 description: >-
@@ -176,11 +176,6 @@ options:
   # [OpenAI] GPT model to use. Use "Fetch Models" in the web UI to see available
   # models. gpt-4o-mini is the most cost-effective vision option.
   openai_model: "gpt-4o-mini"
-  # Deprecated — use ai_escalation_provider + ai_escalation_model below, which
-  # support escalating to ANY provider, not just a second OpenAI model. Still
-  # honored automatically if ai_escalation_provider is unset and ai_provider
-  # is "openai", so existing installs keep working unchanged after upgrading.
-  openai_escalation_model: ""
   # Optional second-tier ("tier 2") provider for two-tier escalation. When
   # set, every clip is first analyzed with ai_provider/model above (tier 1);
   # only clips tier 1 flags as suspicious are re-analyzed by this provider
@@ -428,7 +423,6 @@ schema:
   anthropic_model: "str?"
   openai_api_key: "password?"
   openai_model: "str?"
-  openai_escalation_model: "str?"
   ai_escalation_provider: "str?"
   ai_escalation_model: "str?"
   ai_prompt: "str?"

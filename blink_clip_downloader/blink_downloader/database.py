@@ -145,8 +145,22 @@ CREATE TABLE IF NOT EXISTS face_enrollments (
     id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name       TEXT    NOT NULL,
     embedding  TEXT    NOT NULL,
-    created_at TEXT    NOT NULL
+    created_at TEXT    NOT NULL,
+    approved   BOOLEAN NOT NULL DEFAULT TRUE
 );
+"""
+
+# Schema changes applied to *already-existing* tables, run every startup
+# after _SCHEMA above. CREATE TABLE IF NOT EXISTS (in _SCHEMA) only creates
+# missing tables — it is a silent no-op for a table that already exists, so
+# a column added to an existing table's definition there would never
+# actually reach a database created by an earlier version of this add-on.
+# ADD COLUMN IF NOT EXISTS is idempotent on both a brand-new table (created
+# with the column already, per _SCHEMA above) and an older one missing it.
+# This is the first such migration since the SQLite-to-PostgreSQL switch —
+# extend this string for any future column addition to an existing table.
+_MIGRATIONS = """
+ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT TRUE;
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -250,6 +264,7 @@ class ClipDatabase:
             server_settings={"timezone": "UTC"},
         )
         await self._pool.execute(_SCHEMA)
+        await self._pool.execute(_MIGRATIONS)
         await self._reset_stale_processing()
         _LOGGER.debug("Clip database connected (dsn=%s)", self._dsn)
 
@@ -1473,18 +1488,29 @@ class ClipDatabase:
     # Local-only face enrollment (see vision.py, ai_face_recognition_enabled)
     # ------------------------------------------------------------------
 
-    async def add_face_enrollment(self, name: str, embedding: list[float]) -> int:
-        """Store a new enrolled household member's face embedding. Returns its id."""
+    async def add_face_enrollment(
+        self, name: str, embedding: list[float], approved: bool = True
+    ) -> int:
+        """Store a new enrolled household member's face embedding. Returns its id.
+
+        *approved* controls whether this person counts toward the
+        suspicious-flag bypass (see analyzer.py's ``_face_bypass_applies``)
+        — defaults to True so the common "add a family member" flow works
+        immediately, but can be set False (or flipped later via
+        :meth:`set_face_enrollment_approved`) to enroll someone for
+        recognition/labeling without granting them bypass trust.
+        """
         if self._pool is None:
             return 0
         new_id = await self._pool.fetchval(
             _qm(
-                "INSERT INTO face_enrollments (name, embedding, created_at) "
-                "VALUES (?, ?, ?) RETURNING id"
+                "INSERT INTO face_enrollments (name, embedding, created_at, approved) "
+                "VALUES (?, ?, ?, ?) RETURNING id"
             ),
             name,
             json.dumps(embedding),
             datetime.now(timezone.utc).isoformat(),
+            approved,
         )
         return new_id or 0
 
@@ -1493,7 +1519,8 @@ class ClipDatabase:
         if self._pool is None:
             return []
         rows = await self._pool.fetch(
-            "SELECT id, name, embedding, created_at FROM face_enrollments ORDER BY name"
+            "SELECT id, name, embedding, created_at, approved "
+            "FROM face_enrollments ORDER BY name"
         )
         results = []
         for r in rows:
@@ -1509,3 +1536,70 @@ class ClipDatabase:
         await self._pool.execute(
             _qm("DELETE FROM face_enrollments WHERE id=?"), enrollment_id
         )
+
+    async def set_face_enrollment_approved(
+        self, enrollment_id: int, approved: bool
+    ) -> None:
+        """Flip whether an enrolled member counts toward the suspicious-flag
+        bypass, without deleting/re-enrolling them."""
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm("UPDATE face_enrollments SET approved=? WHERE id=?"),
+            approved,
+            enrollment_id,
+        )
+
+    async def rename_face_enrollment(self, enrollment_id: int, name: str) -> None:
+        """Correct an enrolled member's name without delete+re-enroll."""
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm("UPDATE face_enrollments SET name=? WHERE id=?"),
+            name,
+            enrollment_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Bulk-by-name operations (ADVANCED FEATURE — multi-frame enrollment)
+    #
+    # Enrolling several frames of the same person (see media_server.py's
+    # /api/clips/{id}/frames — pulled from a clip they choose, rather than a
+    # single photo) stores one row per selected frame under the same name,
+    # so recognition can match whichever angle/lighting is closest to what a
+    # camera actually saw. These bulk operations let the Biometrics tab
+    # manage all of a person's photos as one unit (rename/approve/delete
+    # everyone at once) instead of the row-by-row id-based methods above,
+    # which would otherwise leave a person's enrollments in a confusing
+    # partially-approved/partially-renamed state.
+    # ------------------------------------------------------------------
+
+    async def set_face_enrollments_approved_by_name(
+        self, name: str, approved: bool
+    ) -> None:
+        """Flip bypass-approval for every enrollment sharing *name*."""
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm("UPDATE face_enrollments SET approved=? WHERE name=?"),
+            approved,
+            name,
+        )
+
+    async def rename_face_enrollments_by_name(
+        self, old_name: str, new_name: str
+    ) -> None:
+        """Rename every enrollment currently sharing *old_name*."""
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm("UPDATE face_enrollments SET name=? WHERE name=?"),
+            new_name,
+            old_name,
+        )
+
+    async def delete_face_enrollments_by_name(self, name: str) -> None:
+        """Remove every enrollment (every enrolled photo) sharing *name*."""
+        if self._pool is None:
+            return
+        await self._pool.execute(_qm("DELETE FROM face_enrollments WHERE name=?"), name)

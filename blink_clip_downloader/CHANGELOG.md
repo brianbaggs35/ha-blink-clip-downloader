@@ -1,5 +1,109 @@
 # Changelog
 
+## 5.1.0
+
+### Added — Vehicles tab
+
+- New **Vehicles** nav tab, the dedicated home for protected-vehicle
+  monitoring settings (previously split between the add-on's Configuration
+  tab and a car-zone editor buried in the AI tab's Camera Configurations
+  section). Lets you set the **Protected Vehicle Description** directly from
+  the web UI for the first time (previously only settable via the HA
+  Supervisor's Configuration tab), and mark which camera(s) can see the
+  vehicle.
+- **Visual car-zone picker**: replaces the old four-number percentage-entry
+  fields with a real click-drag rectangle selector drawn over an actual
+  camera frame — draw, move, and resize (via corner handles) a zone marking
+  exactly where your vehicle sits. Browse the last several recent clips from
+  that camera to pick a frame that actually shows the vehicle clearly. This
+  is what lets you accurately mark *your* car when several vehicles are
+  parked close together (shared/apartment parking). A "Clear zone" action
+  removes it entirely. Stored in the exact same `car_zone` shape the backend
+  already validated, so no data migration was needed.
+- `CameraConfigsSection` (AI tab) now only owns camera description/custom
+  prompt — the car-camera checkbox and zone editor moved to the Vehicles tab.
+
+### Added — Biometrics tab and face-recognition suspicious-flag bypass
+
+- New **Biometrics** nav tab (replacing the AI tab's Face Recognition
+  Enrollment section) for enrolling household members' faces. An approved,
+  recognized person can now automatically clear a clip's suspicious flag —
+  **only when every other face in the same clip also belongs to an approved
+  enrollment**; a single stranger, or a recognized-but-not-approved person,
+  standing next to an approved family member still gets flagged normally.
+  This directly targets false positives on cameras that watch the same few
+  people every day (e.g. a front door), without weakening detection of
+  anyone actually unrecognized.
+- **Multi-frame enrollment from a clip** (recommended enrollment method): pick
+  a camera and a recent clip, extract several frames from it, and select as
+  many as you like that show the face clearly — across whatever angles/
+  lighting a real motion-triggered clip actually produced, rather than a
+  single posed photo. Each selected frame is stored as its own enrollment
+  under the same name, so recognition has multiple reference angles to match
+  against. The simple single-photo upload flow is still available as an
+  alternative.
+- **Per-person approval**: enrolling ≠ automatically trusting forever — each
+  enrolled person has an `approved` flag (defaults on) controlling whether
+  they count toward the bypass; flip it off to keep recognizing/labeling
+  someone (e.g. a regular visitor) without granting them bypass trust. New
+  bulk by-name endpoints (`PATCH`/`DELETE /api/ai/faces/by-name/{name}`) let
+  the UI manage every photo enrolled for one person as a single unit
+  (approve/rename/remove all at once) instead of one row at a time.
+- **Notification personalization**: when the bypass fires, the human-facing
+  summary is rewritten locally to name the recognized person (e.g. "Brian
+  walked up the driveway" instead of "A person walked up the driveway") —
+  computed entirely after the AI's response has already returned, using only
+  locally-known names. Never applied when a stranger/unapproved person is
+  also present.
+- **Privacy guarantee, enforced not just documented**: the prompt text sent
+  to any AI provider (including cloud providers) now only ever contains a
+  name-free count/fact ("N locally-enrolled household member(s) matched") —
+  never a name, photo, or embedding, regardless of provider. Names are only
+  ever used afterward, locally, for the notification personalization above.
+  The Biometrics tab states this guarantee explicitly, and it's covered by a
+  dedicated prompt-leakage test.
+- New DB migration (the first since the SQLite→PostgreSQL switch): adds
+  `face_enrollments.approved` via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`,
+  applied automatically on startup for existing installs.
+
+### Fixed
+
+- **Zone-motion prompt leakage**: `_maybe_compute_zone_motion` was the one
+  car-zone code path that didn't check whether protected-vehicle rules
+  actually apply (i.e. whether a Protected Vehicle Description is set) before
+  computing and injecting a `ZONE MOTION: ... near the protected vehicle's
+  usual spot` prompt segment — every other car-zone-aware code path already
+  gated on this correctly. A camera marked as seeing the vehicle with a zone
+  configured, but no description set yet, could get this misleading text
+  injected into its prompt. Now gated identically to every other car-zone
+  path.
+- **Escalation model picker**: the AI tab's "fetch models" dropdown only ever
+  applied to the tier-1 model. Added the same fetch/select/copy affordance
+  for the tier-2 escalation model (`GET /api/ai/models/escalation`).
+- **Deprecated `openai_escalation_model` removed** from `config.yaml`'s
+  add-on options schema (still fully migrated on startup for existing
+  installs via `ai_escalation_provider`/`ai_escalation_model` — no
+  behavior change for anyone with it already set).
+- **Clip duration** now shown as text in the Library list's clip-meta row
+  (camera/date/size line), not just as a small overlay badge on the
+  thumbnail.
+- Fixed a duplicate-fetch bug in the new clip-frame-selection UI: selecting
+  a camera fetched its recent clips twice due to two watchers both firing on
+  the initial selection.
+
+### Added — Automations tab
+
+- New **Notification Channels** panel: one-off test actions for Discord and
+  mobile-app push notifications (mirroring the existing "Send Test Email"),
+  so all three channels can be verified from the web UI before enabling them
+  for real alerts.
+
+### Housekeeping
+
+- Removed the ~2,900-line dead `_HTML` string in `media_server.py` — a
+  leftover of the pre-Vue embedded single-file UI, fully superseded by the
+  Vue frontend and confirmed unreferenced anywhere.
+
 ## 5.0.0
 
 Major release, bumped from 4.1.0 (never tagged/shipped) given the scope of

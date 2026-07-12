@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { fetchAiModels, getMoondreamInstallStatus, startMoondreamInstall, analyzeClipNow } from '../../api/ai'
+import {
+  fetchAiModels,
+  fetchEscalationModels,
+  getMoondreamInstallStatus,
+  startMoondreamInstall,
+  analyzeClipNow,
+} from '../../api/ai'
 import { listClips } from '../../api/clips'
 import { PROVIDER_LABELS, providerLabel } from '../../api/constants'
 import type { AiModelEntry, AiStatus, AnalysisResultDict, MoondreamInstallStatus } from '../../api/types'
@@ -53,6 +59,50 @@ function modelLabel(m: AiModelEntry, index: number): string {
   const gb = m.size ? ` · ${(m.size / 1e9).toFixed(1)} GB` : ''
   const star = index === 0 ? ' ⭐ Best' : ''
   return `${m.name}${gb}${star}`
+}
+
+// ── Escalation (tier 2) model picker — mirrors the tier-1 picker above,
+// but targets whichever provider is configured as ai_escalation_provider.
+// Same limitation as tier 1: only works once escalation is actually
+// attached/configured, and only copies the id for pasting into the add-on's
+// Configuration tab rather than writing it live (config.yaml options aren't
+// live-writable from this UI).
+const escalationModels = ref<string[]>([])
+const selectedEscalationModel = ref('')
+const fetchingEscalationModels = ref(false)
+
+async function fetchEscalationModelsList() {
+  fetchingEscalationModels.value = true
+  try {
+    const d = await fetchEscalationModels()
+    escalationModels.value = d.models || []
+    if (escalationModels.value.length && !selectedEscalationModel.value) {
+      selectedEscalationModel.value = escalationModels.value[0]
+    }
+    toast.show(
+      escalationModels.value.length
+        ? `Found ${escalationModels.value.length} escalation model(s)`
+        : d.error || 'No models found for the escalation provider',
+      !escalationModels.value.length,
+    )
+  } catch {
+    toast.show('Failed to fetch escalation models', true)
+  } finally {
+    fetchingEscalationModels.value = false
+  }
+}
+
+async function copyEscalationModelId() {
+  if (!selectedEscalationModel.value) {
+    toast.show('Fetch models and pick one first', true)
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(selectedEscalationModel.value)
+    toast.show(`Copied "${selectedEscalationModel.value}" — paste into ai_escalation_model`)
+  } catch {
+    toast.show(selectedEscalationModel.value, true)
+  }
 }
 
 // ── Moondream local install ───────────────────────────────
@@ -168,6 +218,23 @@ function confPct(r: AnalysisResultDict): number {
       <span :style="{ color: status.escalation_online ? 'var(--success)' : 'var(--danger)' }">
         {{ status.escalation_online ? ' 🟢 online' : ' 🔴 unreachable — falling back to tier 1' }}
       </span>
+      <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem">
+        <button class="btn sm" :disabled="fetchingEscalationModels" @click="fetchEscalationModelsList">
+          {{ fetchingEscalationModels ? '⏳ Loading…' : '⟳ Fetch Escalation Models' }}
+        </button>
+        <label for="ai-escalation-model-picker" class="sr-only">Escalation model</label>
+        <select id="ai-escalation-model-picker" v-model="selectedEscalationModel" class="sel" style="min-width: 175px">
+          <option value="">Select a model…</option>
+          <option v-for="m in escalationModels" :key="m" :value="m">{{ m }}</option>
+        </select>
+        <button
+          class="btn sm ghost"
+          title="Copy the selected model id, then paste it into this add-on's configuration (ai_escalation_model)"
+          @click="copyEscalationModelId"
+        >
+          📋 Copy
+        </button>
+      </div>
     </div>
 
     <div v-if="showModelPicker()" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">

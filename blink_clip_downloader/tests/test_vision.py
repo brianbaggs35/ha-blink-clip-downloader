@@ -30,10 +30,10 @@ from blink_downloader.vision import (
     DepthEstimator,
     DetectedObject,
     FaceEmbedder,
+    FaceRecognitionResult,
     FaceRecognizer,
     FrameEnhancer,
     ObjectDetector,
-    RecognizedFace,
     VisionConfig,
     VisionPipeline,
     _best_subject_vehicle_pair,
@@ -1048,32 +1048,76 @@ def test_cosine_similarity_zero_vector_is_zero() -> None:
     assert cosine_similarity([0.0, 0.0], [1.0, 1.0]) == 0.0
 
 
-async def test_face_recognizer_no_enrollments_returns_none(db: ClipDatabase) -> None:
+async def test_face_recognizer_no_enrollments_returns_empty(db: ClipDatabase) -> None:
     embedder = MagicMock(spec=FaceEmbedder)
     recognizer = FaceRecognizer(embedder, db)
-    assert await recognizer.recognize([b"frame"]) is None
+    result = await recognizer.recognize([b"frame"])
+    assert result == FaceRecognitionResult()
     embedder.embed.assert_not_called()
 
 
-async def test_face_recognizer_matches_enrolled_member(db: ClipDatabase) -> None:
-    await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0])
+async def test_face_recognizer_matches_approved_member(db: ClipDatabase) -> None:
+    await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], approved=True)
     embedder = MagicMock(spec=FaceEmbedder)
     embedder.embed = MagicMock(return_value=_async_result([[1.0, 0.0, 0.0]]))
 
     recognizer = FaceRecognizer(embedder, db)
-    match = await recognizer.recognize([b"frame"])
-    assert match is not None
-    assert match.name == "Brian"
-    assert match.similarity == pytest.approx(1.0)
+    result = await recognizer.recognize([b"frame"])
+    assert result.approved_names == ["Brian"]
+    assert result.other_names == []
+    assert result.unrecognized_present is False
 
 
-async def test_face_recognizer_no_match_below_threshold(db: ClipDatabase) -> None:
+async def test_face_recognizer_matches_unapproved_member(db: ClipDatabase) -> None:
+    """A recognized-but-not-approved enrollment must NOT count as an approved
+    match — it lands in other_names, which blocks the bypass exactly like a
+    stranger would (see _face_bypass_applies)."""
+    await db.add_face_enrollment("Nanny", [1.0, 0.0, 0.0], approved=False)
+    embedder = MagicMock(spec=FaceEmbedder)
+    embedder.embed = MagicMock(return_value=_async_result([[1.0, 0.0, 0.0]]))
+
+    recognizer = FaceRecognizer(embedder, db)
+    result = await recognizer.recognize([b"frame"])
+    assert result.approved_names == []
+    assert result.other_names == ["Nanny"]
+    assert result.unrecognized_present is False
+
+
+async def test_face_recognizer_no_match_below_threshold_is_unrecognized(
+    db: ClipDatabase,
+) -> None:
     await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0])
     embedder = MagicMock(spec=FaceEmbedder)
     embedder.embed = MagicMock(return_value=_async_result([[0.0, 1.0, 0.0]]))
 
     recognizer = FaceRecognizer(embedder, db)
-    assert await recognizer.recognize([b"frame"]) is None
+    result = await recognizer.recognize([b"frame"])
+    assert result.approved_names == []
+    assert result.other_names == []
+    assert result.unrecognized_present is True
+
+
+async def test_face_recognizer_approved_plus_stranger_blocks_bypass_signal(
+    db: ClipDatabase,
+) -> None:
+    """The critical multi-person case: an approved household member AND an
+    unrecognized stranger both appear across the clip's sampled frames — the
+    result must report both facts, since this is exactly what must prevent
+    the suspicious-flag bypass from firing."""
+    await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], approved=True)
+
+    async def _embed(frame: bytes) -> list[list[float]]:
+        if frame == b"frame-brian":
+            return [[1.0, 0.0, 0.0]]
+        return [[0.0, 1.0, 0.0]]  # stranger, no enrollment matches
+
+    embedder = MagicMock(spec=FaceEmbedder)
+    embedder.embed = _embed
+
+    recognizer = FaceRecognizer(embedder, db)
+    result = await recognizer.recognize([b"frame-brian", b"frame-stranger"])
+    assert result.approved_names == ["Brian"]
+    assert result.unrecognized_present is True
 
 
 async def test_face_recognizer_picks_best_match_across_frames(db: ClipDatabase) -> None:
@@ -1089,12 +1133,26 @@ async def test_face_recognizer_picks_best_match_across_frames(db: ClipDatabase) 
     embedder.embed = _embed
 
     recognizer = FaceRecognizer(embedder, db)
-    match = await recognizer.recognize([b"frame-amy", b"frame-brian"])
-    assert match is not None
-    assert match.name == "Brian"
+    result = await recognizer.recognize([b"frame-amy", b"frame-brian"])
+    assert result.approved_names == ["Amy", "Brian"]
 
 
-async def test_face_recognizer_db_error_returns_none(db: ClipDatabase) -> None:
+async def test_face_recognizer_multiple_faces_same_frame(db: ClipDatabase) -> None:
+    """MTCNN (keep_all=True) can return multiple faces from a single frame —
+    each must be matched independently, not collapsed to one."""
+    await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], approved=True)
+    embedder = MagicMock(spec=FaceEmbedder)
+    embedder.embed = MagicMock(
+        return_value=_async_result([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    )
+
+    recognizer = FaceRecognizer(embedder, db)
+    result = await recognizer.recognize([b"frame"])
+    assert result.approved_names == ["Brian"]
+    assert result.unrecognized_present is True
+
+
+async def test_face_recognizer_db_error_returns_empty(db: ClipDatabase) -> None:
     embedder = MagicMock(spec=FaceEmbedder)
     broken_db = MagicMock(spec=ClipDatabase)
     broken_db.list_face_enrollments = MagicMock(
@@ -1102,7 +1160,8 @@ async def test_face_recognizer_db_error_returns_none(db: ClipDatabase) -> None:
     )
 
     recognizer = FaceRecognizer(embedder, broken_db)
-    assert await recognizer.recognize([b"frame"]) is None
+    result = await recognizer.recognize([b"frame"])
+    assert result == FaceRecognitionResult()
     embedder.embed.assert_not_called()
 
 
@@ -1113,10 +1172,37 @@ def _async_result(value: Any):
     return _inner()
 
 
-def test_build_recognition_hint() -> None:
-    hint = _build_recognition_hint(RecognizedFace("Brian", 0.9))
-    assert "Brian" in hint
-    assert "90%" in hint
+def test_build_recognition_hint_approved_only() -> None:
+    hint = _build_recognition_hint(FaceRecognitionResult(approved_names=["Brian"]))
+    assert hint is not None
+    assert "Brian" not in hint  # name must never reach the AI prompt
+    assert "1 locally-enrolled household member" in hint
+    assert "NOTE" not in hint
+
+
+def test_build_recognition_hint_multiple_approved() -> None:
+    hint = _build_recognition_hint(
+        FaceRecognitionResult(approved_names=["Brian", "Amy"])
+    )
+    assert hint is not None
+    assert "2 locally-enrolled household members" in hint
+
+
+def test_build_recognition_hint_notes_stranger_present() -> None:
+    hint = _build_recognition_hint(
+        FaceRecognitionResult(approved_names=["Brian"], unrecognized_present=True)
+    )
+    assert hint is not None
+    assert "NOTE" in hint
+
+
+def test_build_recognition_hint_none_when_no_approved_match() -> None:
+    assert _build_recognition_hint(FaceRecognitionResult()) is None
+    assert (
+        _build_recognition_hint(FaceRecognitionResult(unrecognized_present=True))
+        is None
+    )
+    assert _build_recognition_hint(FaceRecognitionResult(other_names=["Nanny"])) is None
 
 
 # ------------------------------------------------------------------
@@ -1319,13 +1405,16 @@ async def test_vision_pipeline_face_recognition(db: ClipDatabase) -> None:
     with patch.object(FaceEmbedder, "embed", return_value=[[1.0, 0.0]]):
         hints = await pipeline.process_clip([b"frame"])
     assert hints.recognized_resident_hint is not None
-    assert "Brian" in hints.recognized_resident_hint
+    assert "Brian" not in hints.recognized_resident_hint  # name never sent to AI
+    assert hints.face_recognition is not None
+    assert hints.face_recognition.approved_names == ["Brian"]
 
 
 async def test_vision_pipeline_face_recognition_without_db_is_noop() -> None:
     pipeline = VisionPipeline(VisionConfig(face_recognition_enabled=True), db=None)
     hints = await pipeline.process_clip([b"frame"])
     assert hints.recognized_resident_hint is None
+    assert hints.face_recognition is None
 
 
 def test_vision_pipeline_update_config_reuses_detector_when_model_unchanged() -> None:

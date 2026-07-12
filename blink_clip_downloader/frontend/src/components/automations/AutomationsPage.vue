@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import CodeBlock from './CodeBlock.vue'
+import NotificationChannelsCard from './NotificationChannelsCard.vue'
 
 const NOTIFY_NEW_CLIP = `alias: "Blink – new clip notification"
 trigger:
@@ -62,6 +63,8 @@ action:
       The add-on fires events and updates a sensor every poll cycle. Copy these snippets into
       <code>automations.yaml</code> or the HA automation editor.
     </p>
+
+    <NotificationChannelsCard />
 
     <h3>📡 Events &amp; Sensors</h3>
     <div class="table-scroll">

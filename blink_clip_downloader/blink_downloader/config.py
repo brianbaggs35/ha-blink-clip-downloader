@@ -122,11 +122,17 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     anthropic_model: str = "claude-haiku-4-5"
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
-    # Deprecated as of 4.0.0 — use ai_escalation_provider="openai" and
-    # ai_escalation_model instead, which support escalating to any provider,
-    # not just a second OpenAI model. Still honored for existing installs
-    # (see the migration in _parse_config) so upgrading doesn't silently drop
-    # a configured escalation model; will be removed in a future major version.
+    # Deprecated as of 4.0.0, removed from config.yaml's options/schema in
+    # 5.0.0 — use ai_escalation_provider="openai" and ai_escalation_model
+    # instead, which support escalating to any provider, not just a second
+    # OpenAI model. This field/dataclass attribute stays for one more major
+    # version purely for the migration below: an existing install's
+    # /data/options.json still has whatever value it was last saved with
+    # regardless of what config.yaml currently declares, and _parse_config's
+    # migration reads it directly from that raw dict — so upgrading to 5.0.0
+    # still auto-promotes it to ai_escalation_provider/ai_escalation_model
+    # rather than silently dropping it. Safe to delete this field entirely
+    # once no realistic upgrade path still has it set.
     openai_escalation_model: str = ""
     # Two-tier escalation: when set, every clip is first analyzed with the
     # normal ai_provider/model (tier 1); only clips tier 1 flags as suspicious

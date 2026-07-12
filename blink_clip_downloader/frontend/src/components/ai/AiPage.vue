@@ -7,7 +7,6 @@ import AiConnectionCard from './AiConnectionCard.vue'
 import AiStatusCards from './AiStatusCards.vue'
 import CameraConfigsSection from './CameraConfigsSection.vue'
 import EmailAlertsCard from './EmailAlertsCard.vue'
-import FaceRecognitionSection from './FaceRecognitionSection.vue'
 import FineTuneCard from './FineTuneCard.vue'
 import SuspiciousFeed from './SuspiciousFeed.vue'
 
@@ -59,8 +58,7 @@ onUnmounted(() => clearInterval(pollTimer))
         <FineTuneCard v-if="status.provider === 'moondream_cloud'" @activated="load" />
       </div>
 
-      <CameraConfigsSection :car-protection-active="status.car_protection_active ?? null" />
-      <FaceRecognitionSection />
+      <CameraConfigsSection />
       <SuspiciousFeed />
     </template>
   </div>

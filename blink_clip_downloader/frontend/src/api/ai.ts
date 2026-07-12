@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost, apiPut } from './client'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
 import type {
   AiModelsResponse,
   AiStatus,
@@ -6,6 +6,7 @@ import type {
   AnalysisResultDict,
   CameraConfig,
   CheckpointsResponse,
+  EscalationModelsResponse,
   FacesResponse,
   Feedback,
   FeedbackStats,
@@ -89,12 +90,45 @@ export function listFaces(): Promise<FacesResponse> {
   return apiGet('/api/ai/faces')
 }
 
-export function enrollFace(name: string, imageBase64: string): Promise<{ id: number; name: string }> {
-  return apiPost('/api/ai/faces', { name, image_base64: imageBase64 })
+export function enrollFace(
+  name: string,
+  imageBase64: string,
+  approved = true,
+): Promise<{ id: number; name: string; approved: boolean }> {
+  return apiPost('/api/ai/faces', { name, image_base64: imageBase64, approved })
 }
 
 export function deleteFace(id: number): Promise<{ deleted: boolean }> {
   return apiDelete(`/api/ai/faces/${id}`)
+}
+
+export function setFaceApproved(id: number, approved: boolean): Promise<{ updated: boolean }> {
+  return apiPatch(`/api/ai/faces/${id}`, { approved })
+}
+
+export function renameFace(id: number, name: string): Promise<{ updated: boolean }> {
+  return apiPatch(`/api/ai/faces/${id}`, { name })
+}
+
+// Bulk-by-name variants — a multi-frame enrollment (ADVANCED FEATURE, see
+// BiometricsPage.vue's "enroll from a clip" flow) stores one row per
+// selected photo under the same name, so approving/renaming/removing a
+// person should affect every one of their enrolled photos at once rather
+// than one row at a time.
+export function setFacesApprovedByName(name: string, approved: boolean): Promise<{ updated: boolean }> {
+  return apiPatch(`/api/ai/faces/by-name/${encodeURIComponent(name)}`, { approved })
+}
+
+export function renameFacesByName(oldName: string, newName: string): Promise<{ updated: boolean }> {
+  return apiPatch(`/api/ai/faces/by-name/${encodeURIComponent(oldName)}`, { name: newName })
+}
+
+export function deleteFacesByName(name: string): Promise<{ deleted: boolean }> {
+  return apiDelete(`/api/ai/faces/by-name/${encodeURIComponent(name)}`)
+}
+
+export function fetchEscalationModels(): Promise<EscalationModelsResponse> {
+  return apiGet('/api/ai/models/escalation')
 }
 
 export function listFinetunes(): Promise<FinetuneListResponse> {
@@ -134,4 +168,12 @@ export function saveCheckpoint(finetuneId: string): Promise<{ saved: boolean }> 
 
 export function testEmail(): Promise<TestEmailResult> {
   return apiPost('/api/notifications/test-email')
+}
+
+export function testDiscord(): Promise<TestEmailResult> {
+  return apiPost('/api/notifications/test-discord')
+}
+
+export function testMobile(): Promise<TestEmailResult> {
+  return apiPost('/api/notifications/test-mobile')
 }

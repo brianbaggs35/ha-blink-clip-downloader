@@ -83,6 +83,83 @@ describe('AiConnectionCard', () => {
     expect(wrapper.text()).toContain('unreachable — falling back to tier 1')
   })
 
+  it('fetches escalation models and lists them in the escalation picker', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: ['claude-haiku-4-5', 'claude-opus-4-8'] }))),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
+    })
+    const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    const select = wrapper.find('#ai-escalation-model-picker')
+    expect(select.exists()).toBe(true)
+    const options = select.findAll('option')
+    expect(options.some((o) => o.text() === 'claude-haiku-4-5')).toBe(true)
+    expect(options.some((o) => o.text() === 'claude-opus-4-8')).toBe(true)
+  })
+
+  it('shows the escalation error message when no models are found', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(jsonResponse({ enabled: false, models: [], error: 'No escalation provider configured' })),
+      ),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
+    })
+    const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#ai-escalation-model-picker option').exists()).toBe(true)
+  })
+
+  it('copies the selected escalation model id to the clipboard', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: ['claude-haiku-4-5'] }))),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
+    })
+    const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    const copyBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('ai_escalation_model'))!
+    await copyBtn.trigger('click')
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('claude-haiku-4-5')
+  })
+
+  it('warns when trying to copy an escalation model with none selected', async () => {
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
+    })
+    const copyBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('ai_escalation_model'))!
+    await copyBtn.trigger('click')
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
+  })
+
+  it('shows a toast-worthy error state when fetching escalation models fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('down'))),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
+    })
+    const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    expect(fetchBtn.exists()).toBe(true)
+  })
+
   it('shows the model picker for ollama/openai/anthropic providers and fetches models', async () => {
     vi.stubGlobal(
       'fetch',

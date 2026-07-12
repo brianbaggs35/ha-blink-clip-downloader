@@ -637,6 +637,149 @@ async def test_thumbnail_returns_jpeg(
 
 
 # ---------------------------------------------------------------------------
+# /api/clips/{id}/frames — multi-frame extraction for Biometrics enrollment
+# ---------------------------------------------------------------------------
+
+
+def _concat_jpegs(*frames: bytes) -> bytes:
+    return b"".join(b"\xff\xd8" + f + b"\xff\xd9" for f in frames)
+
+
+async def test_clip_frames_not_found(client: TestClient) -> None:
+    resp = await client.get("/api/clips/missing/frames")
+    assert resp.status == 404
+
+
+async def test_clip_frames_returns_base64_frames(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("f1", path="/data/f1.mp4", duration=10))
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(
+        return_value=(_concat_jpegs(b"frame-a", b"frame-b"), b"")
+    )
+    mock_proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        resp = await client.get("/api/clips/f1/frames?count=2")
+    assert resp.status == 200
+    data = await resp.json()
+    assert len(data["frames"]) == 2
+    assert data["frames"][0].startswith("data:image/jpeg;base64,")
+    import base64 as _b64
+
+    decoded = _b64.b64decode(data["frames"][0].split(",", 1)[1])
+    assert decoded == b"\xff\xd8frame-a\xff\xd9"
+
+
+async def test_clip_frames_clamps_count(client: TestClient, db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("f2", path="/data/f2.mp4", duration=10))
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        await client.get("/api/clips/f2/frames?count=999")
+    cmd = mock_exec.call_args.args
+    assert "16" in cmd  # clamped to the max
+
+
+async def test_clip_frames_bad_count_falls_back_to_default(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("f3", path="/data/f3.mp4", duration=10))
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        resp = await client.get("/api/clips/f3/frames?count=notanumber")
+    assert resp.status == 200
+    cmd = mock_exec.call_args.args
+    assert "8" in cmd  # default
+
+
+async def test_clip_frames_ffmpeg_not_available(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("f4", path="/data/f4.mp4", duration=10))
+    with patch("asyncio.create_subprocess_exec", side_effect=OSError("no ffmpeg")):
+        resp = await client.get("/api/clips/f4/frames")
+    assert resp.status == 200
+    assert (await resp.json())["frames"] == []
+
+
+async def test_clip_frames_ffmpeg_timeout(client: TestClient, db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("f5", path="/data/f5.mp4", duration=10))
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+    mock_proc.kill = MagicMock()
+    mock_proc.wait = AsyncMock()
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        resp = await client.get("/api/clips/f5/frames")
+    assert resp.status == 200
+    assert (await resp.json())["frames"] == []
+    mock_proc.kill.assert_called_once()
+
+
+async def test_clip_frames_ffmpeg_nonzero_exit(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("f6", path="/data/f6.mp4", duration=10))
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b"bad input"))
+    mock_proc.returncode = 1
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        resp = await client.get("/api/clips/f6/frames")
+    assert resp.status == 200
+    assert (await resp.json())["frames"] == []
+
+
+async def test_clip_frames_ignores_truncated_trailing_data(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """A well-formed frame followed by a truncated/incomplete one (missing
+    EOI) must not raise — the split just stops there."""
+    await db.add_clip(_make_clip("f8", path="/data/f8.mp4", duration=10))
+    truncated = _concat_jpegs(b"frame-a") + b"\xff\xd8no-eoi-here"
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(truncated, b""))
+    mock_proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        resp = await client.get("/api/clips/f8/frames")
+    assert resp.status == 200
+    assert len((await resp.json())["frames"]) == 1
+
+
+async def test_clip_frames_stops_when_no_further_soi_marker(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """A well-formed frame followed by trailing bytes with no JPEG start
+    marker at all must not raise — the split just stops there."""
+    await db.add_clip(_make_clip("f9", path="/data/f9.mp4", duration=10))
+    trailing_garbage = _concat_jpegs(b"frame-a") + b"not-a-jpeg-at-all"
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(trailing_garbage, b""))
+    mock_proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        resp = await client.get("/api/clips/f9/frames")
+    assert resp.status == 200
+    assert len((await resp.json())["frames"]) == 1
+
+
+async def test_clip_frames_zero_duration_uses_fallback_interval(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """A clip with an unknown/zero duration (e.g. local-storage clips) must
+    still produce a sane, non-zero ffmpeg sampling interval rather than
+    dividing by zero."""
+    await db.add_clip(_make_clip("f7", path="/data/f7.mp4", duration=0))
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        resp = await client.get("/api/clips/f7/frames")
+    assert resp.status == 200
+
+
+# ---------------------------------------------------------------------------
 # /api/auth/status
 # ---------------------------------------------------------------------------
 
@@ -3128,6 +3271,453 @@ async def test_faces_enroll_accepts_realistic_photo_size(client: TestClient) -> 
 async def test_faces_delete_invalid_id(client: TestClient) -> None:
     resp = await client.delete("/api/ai/faces/not-a-number")
     assert resp.status == 400
+
+
+async def test_faces_enroll_defaults_to_approved(client: TestClient) -> None:
+    with (
+        patch(
+            "blink_downloader.media_server.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.FaceEmbedder.embed",
+            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
+        ),
+    ):
+        resp = await client.post(
+            "/api/ai/faces",
+            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
+        )
+        assert resp.status == 200
+        assert (await resp.json())["approved"] is True
+
+    resp = await client.get("/api/ai/faces")
+    data = await resp.json()
+    assert data["faces"][0]["approved"] is True
+
+
+async def test_faces_enroll_explicitly_unapproved(client: TestClient) -> None:
+    with (
+        patch(
+            "blink_downloader.media_server.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.FaceEmbedder.embed",
+            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
+        ),
+    ):
+        resp = await client.post(
+            "/api/ai/faces",
+            json={
+                "name": "Nanny",
+                "image_base64": await _real_jpeg_base64(),
+                "approved": False,
+            },
+        )
+        assert resp.status == 200
+        assert (await resp.json())["approved"] is False
+
+    resp = await client.get("/api/ai/faces")
+    data = await resp.json()
+    assert data["faces"][0]["approved"] is False
+
+
+async def test_faces_patch_updates_approved(client: TestClient) -> None:
+    with (
+        patch(
+            "blink_downloader.media_server.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.FaceEmbedder.embed",
+            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
+        ),
+    ):
+        resp = await client.post(
+            "/api/ai/faces",
+            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
+        )
+    face_id = (await resp.json())["id"]
+
+    resp = await client.patch(f"/api/ai/faces/{face_id}", json={"approved": False})
+    assert resp.status == 200
+
+    resp = await client.get("/api/ai/faces")
+    data = await resp.json()
+    assert data["faces"][0]["approved"] is False
+
+
+async def test_faces_patch_updates_name(client: TestClient) -> None:
+    with (
+        patch(
+            "blink_downloader.media_server.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.FaceEmbedder.embed",
+            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
+        ),
+    ):
+        resp = await client.post(
+            "/api/ai/faces",
+            json={"name": "Brain", "image_base64": await _real_jpeg_base64()},
+        )
+    face_id = (await resp.json())["id"]
+
+    resp = await client.patch(f"/api/ai/faces/{face_id}", json={"name": "Brian"})
+    assert resp.status == 200
+
+    resp = await client.get("/api/ai/faces")
+    data = await resp.json()
+    assert data["faces"][0]["name"] == "Brian"
+
+
+async def test_faces_patch_rejects_empty_name(client: TestClient) -> None:
+    resp = await client.patch("/api/ai/faces/1", json={"name": "   "})
+    assert resp.status == 400
+
+
+async def test_faces_patch_requires_at_least_one_field(client: TestClient) -> None:
+    resp = await client.patch("/api/ai/faces/1", json={})
+    assert resp.status == 400
+
+
+async def test_faces_patch_invalid_id(client: TestClient) -> None:
+    resp = await client.patch("/api/ai/faces/not-a-number", json={"approved": True})
+    assert resp.status == 400
+
+
+async def test_faces_patch_bad_json(client: TestClient) -> None:
+    resp = await client.patch(
+        "/api/ai/faces/1", data="not json", headers={"Content-Type": "application/json"}
+    )
+    assert resp.status == 400
+
+
+# ---------------------------------------------------------------------------
+# /api/ai/faces/by-name/{name} — bulk multi-frame-enrollment management
+# ---------------------------------------------------------------------------
+
+
+async def _enroll_two_photos(client: TestClient, name: str = "Brian") -> None:
+    with (
+        patch(
+            "blink_downloader.media_server.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.FaceEmbedder.embed",
+            new=AsyncMock(side_effect=[[[0.1, 0.2]], [[0.3, 0.4]]]),
+        ),
+    ):
+        for _ in range(2):
+            resp = await client.post(
+                "/api/ai/faces",
+                json={"name": name, "image_base64": await _real_jpeg_base64()},
+            )
+            assert resp.status == 200
+
+
+async def test_faces_patch_by_name_updates_approved_for_all_photos(
+    client: TestClient,
+) -> None:
+    await _enroll_two_photos(client)
+    resp = await client.patch("/api/ai/faces/by-name/Brian", json={"approved": False})
+    assert resp.status == 200
+
+    data = await (await client.get("/api/ai/faces")).json()
+    assert len(data["faces"]) == 2
+    assert all(f["approved"] is False for f in data["faces"])
+
+
+async def test_faces_patch_by_name_renames_all_photos(client: TestClient) -> None:
+    await _enroll_two_photos(client, name="Brain")
+    resp = await client.patch("/api/ai/faces/by-name/Brain", json={"name": "Brian"})
+    assert resp.status == 200
+
+    data = await (await client.get("/api/ai/faces")).json()
+    assert all(f["name"] == "Brian" for f in data["faces"])
+
+
+async def test_faces_patch_by_name_rejects_empty_name(client: TestClient) -> None:
+    resp = await client.patch("/api/ai/faces/by-name/Brian", json={"name": "   "})
+    assert resp.status == 400
+
+
+async def test_faces_patch_by_name_requires_at_least_one_field(
+    client: TestClient,
+) -> None:
+    resp = await client.patch("/api/ai/faces/by-name/Brian", json={})
+    assert resp.status == 400
+
+
+async def test_faces_patch_by_name_bad_json(client: TestClient) -> None:
+    resp = await client.patch(
+        "/api/ai/faces/by-name/Brian",
+        data="not json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status == 400
+
+
+async def test_faces_delete_by_name_removes_all_photos(client: TestClient) -> None:
+    await _enroll_two_photos(client)
+    resp = await client.delete("/api/ai/faces/by-name/Brian")
+    assert resp.status == 200
+    assert (await resp.json())["deleted"] is True
+
+    data = await (await client.get("/api/ai/faces")).json()
+    assert data["faces"] == []
+
+
+# ---------------------------------------------------------------------------
+# Vehicle settings (Vehicles tab) — /api/vehicle/settings
+# ---------------------------------------------------------------------------
+
+
+async def test_vehicle_settings_get_falls_back_to_analyzer_when_no_file(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    analyzer = _make_analyzer()
+    analyzer.car_description = "Silver Kia Forte"
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._VEHICLE_SETTINGS_FILE",
+            new=tmp_path / "no-such-file.json",
+        ):
+            resp = await tc.get("/api/vehicle/settings")
+        assert resp.status == 200
+        assert (await resp.json())["car_description"] == "Silver Kia Forte"
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_settings_get_empty_without_analyzer(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._VEHICLE_SETTINGS_FILE",
+            new=tmp_path / "no-such-file.json",
+        ):
+            resp = await tc.get("/api/vehicle/settings")
+        assert resp.status == 200
+        assert (await resp.json())["car_description"] == ""
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_settings_put_then_get_round_trips(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    analyzer = _make_analyzer()
+    analyzer.car_description = ""
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    settings_file = tmp_path / "vehicle_settings.json"
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._VEHICLE_SETTINGS_FILE",
+            new=settings_file,
+        ):
+            resp = await tc.put(
+                "/api/vehicle/settings", json={"car_description": "Silver Kia Forte"}
+            )
+            assert resp.status == 200
+            assert (await resp.json())["saved"] is True
+
+            resp = await tc.get("/api/vehicle/settings")
+            assert (await resp.json())["car_description"] == "Silver Kia Forte"
+        analyzer.update_car_description.assert_called_once_with("Silver Kia Forte")
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_settings_get_falls_back_on_corrupt_file(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    analyzer = _make_analyzer()
+    analyzer.car_description = "Silver Kia Forte"
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    corrupt_file = tmp_path / "vehicle_settings.json"
+    corrupt_file.write_text("not valid json")
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._VEHICLE_SETTINGS_FILE",
+            new=corrupt_file,
+        ):
+            resp = await tc.get("/api/vehicle/settings")
+        assert resp.status == 200
+        assert (await resp.json())["car_description"] == "Silver Kia Forte"
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_settings_put_survives_write_failure(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A filesystem error saving to disk must not crash the request — the
+    live analyzer still gets updated for this run, matching the
+    camera_configs.json precedent (_handle_ai_camera_configs_put)."""
+    analyzer = _make_analyzer()
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    # A directory used as the settings "file" makes write_text() raise OSError.
+    unwritable = tmp_path / "not-a-file"
+    unwritable.mkdir()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._VEHICLE_SETTINGS_FILE",
+            new=unwritable,
+        ):
+            resp = await tc.put(
+                "/api/vehicle/settings", json={"car_description": "Silver Kia"}
+            )
+        assert resp.status == 200
+        assert (await resp.json())["saved"] is True
+        analyzer.update_car_description.assert_called_once_with("Silver Kia")
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_settings_put_bad_json(db: ClipDatabase, tmp_path: Path) -> None:
+    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.put(
+            "/api/vehicle/settings",
+            data="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# Escalation model picker — /api/ai/models/escalation
+# ---------------------------------------------------------------------------
+
+
+async def test_ai_models_escalation_no_analyzer(client: TestClient) -> None:
+    resp = await client.get("/api/ai/models/escalation")
+    assert resp.status == 400
+    assert (await resp.json())["enabled"] is False
+
+
+async def test_ai_models_escalation_no_escalation_configured(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    analyzer = _make_analyzer(escalation_analyzer=None)
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/models/escalation")
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["enabled"] is False
+        assert "error" in data
+    finally:
+        await tc.close()
+
+
+async def test_ai_models_escalation_returns_models(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    escalation = _make_analyzer(models=["claude-haiku-4-5", "claude-opus-4-8"])
+    analyzer = _make_analyzer(escalation_analyzer=escalation)
+    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/ai/models/escalation")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["enabled"] is True
+        assert data["models"] == ["claude-haiku-4-5", "claude-opus-4-8"]
+        escalation.fetch_models.assert_awaited_once()
+    finally:
+        await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# Notification test endpoints — /api/notifications/test-discord, test-mobile
+# ---------------------------------------------------------------------------
+
+
+async def test_test_discord_without_dispatcher(client: TestClient) -> None:
+    resp = await client.post("/api/notifications/test-discord")
+    assert resp.status == 400
+    assert (await resp.json())["success"] is False
+
+
+async def test_test_mobile_without_dispatcher(client: TestClient) -> None:
+    resp = await client.post("/api/notifications/test-mobile")
+    assert resp.status == 400
+    assert (await resp.json())["success"] is False
+
+
+async def test_test_discord_success(db: ClipDatabase, tmp_path: Path) -> None:
+    dispatcher = MagicMock()
+    dispatcher.send_test_discord = AsyncMock(return_value=(True, "Test message sent."))
+    server = MediaServer(
+        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/notifications/test-discord")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is True
+        assert data["message"] == "Test message sent."
+    finally:
+        await tc.close()
+
+
+async def test_test_discord_failure_status(db: ClipDatabase, tmp_path: Path) -> None:
+    dispatcher = MagicMock()
+    dispatcher.send_test_discord = AsyncMock(return_value=(False, "Webhook not set."))
+    server = MediaServer(
+        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/notifications/test-discord")
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_test_mobile_success(db: ClipDatabase, tmp_path: Path) -> None:
+    dispatcher = MagicMock()
+    dispatcher.send_test_mobile = AsyncMock(return_value=(True, "Test sent."))
+    server = MediaServer(
+        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/notifications/test-mobile")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is True
+    finally:
+        await tc.close()
 
 
 async def test_ai_feedback_stats_empty(client: TestClient) -> None:

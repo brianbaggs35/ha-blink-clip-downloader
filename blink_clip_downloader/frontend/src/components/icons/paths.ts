@@ -29,6 +29,27 @@ export const ICONS: Record<string, IconDef> = {
       { x: 10, y: 10, width: 4, height: 4 },
     ],
   },
+  'tab-vehicles': {
+    paths: ['M3 16v-4l2.2-5.5A2 2 0 0 1 7.06 5h9.88a2 2 0 0 1 1.86 1.5L21 12v4', 'M3 16h18', 'M3 12h18'],
+    rects: [
+      { x: 2, y: 16, width: 4, height: 3, rx: 1 },
+      { x: 18, y: 16, width: 4, height: 3, rx: 1 },
+    ],
+    circles: [
+      { cx: 7, cy: 16, r: 1.6 },
+      { cx: 17, cy: 16, r: 1.6 },
+    ],
+  },
+  'tab-biometrics': {
+    paths: [
+      'M4 8V6a2 2 0 0 1 2-2h2',
+      'M20 8V6a2 2 0 0 1-2-2h-2',
+      'M4 16v2a2 2 0 0 0 2 2h2',
+      'M20 16v2a2 2 0 0 1-2 2h-2',
+      'M9 10.5c0-1.7 1.3-3 3-3s3 1.3 3 3v1.5c0 2-1.3 3.5-3 4.5',
+      'M9 15c1-.7 1.5-1.7 1.5-3v-1.5',
+    ],
+  },
   'theme-light': { paths: ['M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z'] },
   'theme-dark': {
     paths: ['M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'],

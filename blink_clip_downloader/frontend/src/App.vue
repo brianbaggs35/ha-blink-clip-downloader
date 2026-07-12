@@ -12,6 +12,8 @@ import LibraryPage from './components/library/LibraryPage.vue'
 import AiPage from './components/ai/AiPage.vue'
 import UsagePage from './components/usage/UsagePage.vue'
 import ModelsPage from './components/models/ModelsPage.vue'
+import VehiclesPage from './components/vehicles/VehiclesPage.vue'
+import BiometricsPage from './components/biometrics/BiometricsPage.vue'
 import PromptOverlay from './components/layout/PromptOverlay.vue'
 import { useThemeStore } from './stores/theme'
 import { useAuthStore } from './stores/auth'
@@ -68,6 +70,12 @@ onUnmounted(() => auth.stopPolling())
   </div>
   <div id="page-models" class="page" :class="{ active: activeTab === 'models' }">
     <ModelsPage />
+  </div>
+  <div id="page-vehicles" class="page" :class="{ active: activeTab === 'vehicles' }">
+    <VehiclesPage v-if="activeTab === 'vehicles'" />
+  </div>
+  <div id="page-biometrics" class="page" :class="{ active: activeTab === 'biometrics' }">
+    <BiometricsPage v-if="activeTab === 'biometrics'" />
   </div>
 
   <HelpOverlay v-model="helpOpen" />

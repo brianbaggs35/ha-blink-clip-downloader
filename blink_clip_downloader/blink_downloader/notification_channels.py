@@ -108,6 +108,32 @@ class NotificationDispatcher:
         """Send a push notification via HA's mobile_app integration."""
         if not self._mobile_enabled or not self._mobile_target or not self._token:
             return False
+        return await self._send_mobile_now(title, message)
+
+    async def send_test_mobile(self) -> tuple[bool, str]:
+        """Send a one-off test push notification, ignoring mobile_app_enabled.
+
+        Same rationale as :meth:`send_test_email` — verify the target/token
+        work from the Automations tab before flipping the channel on.
+        """
+        if not self._mobile_target:
+            return False, "Mobile app target is not configured."
+        if not self._token:
+            return False, "No Supervisor token available."
+        ok = await self._send_mobile_now(
+            "Blink Clip Downloader — Test Notification",
+            "This is a test push notification from the Blink Clip Downloader "
+            "add-on. If you received this, your mobile_app target is working "
+            "correctly.",
+        )
+        if ok:
+            return True, f"Test notification sent to {self._mobile_target}."
+        return (
+            False,
+            "Failed to send test notification — check the add-on logs for details.",
+        )
+
+    async def _send_mobile_now(self, title: str, message: str) -> bool:
         try:
             session = self._get_session()
             async with session.post(
@@ -203,7 +229,30 @@ class NotificationDispatcher:
         """Post an embed to a Discord webhook."""
         if not self._discord_enabled or not self._discord_url:
             return False
+        return await self._send_discord_now(title, description, camera, confidence)
 
+    async def send_test_discord(self) -> tuple[bool, str]:
+        """Post a one-off test embed, ignoring discord_enabled.
+
+        Same rationale as :meth:`send_test_email` — verify the webhook URL
+        works from the Automations tab before flipping the channel on.
+        """
+        if not self._discord_url:
+            return False, "Discord webhook URL is not configured."
+        ok = await self._send_discord_now(
+            "Blink Clip Downloader — Test Notification",
+            "This is a test message from the Blink Clip Downloader add-on. "
+            "If you received this, your Discord webhook is working correctly.",
+            camera="Test",
+            confidence=0.0,
+        )
+        if ok:
+            return True, "Test message sent to Discord."
+        return False, "Failed to send test message — check the add-on logs for details."
+
+    async def _send_discord_now(
+        self, title: str, description: str, camera: str, confidence: float
+    ) -> bool:
         color = 0xFF0000 if confidence > 0.7 else 0xFF8C00
         payload = {
             "embeds": [

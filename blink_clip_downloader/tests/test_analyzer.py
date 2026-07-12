@@ -4100,6 +4100,237 @@ async def test_analyze_clip_passes_car_protection_applies_per_camera() -> None:
 
 
 # ------------------------------------------------------------------
+# Face-recognition suspicious-flag bypass (safety-critical) — see
+# BaseAnalyzer._face_bypass_applies / _personalize_summary
+# ------------------------------------------------------------------
+
+
+def test_face_bypass_applies_approved_only() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Brian"])
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is True
+
+
+def test_face_bypass_applies_multiple_approved() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Brian", "Amy"])
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is True
+
+
+def test_face_bypass_does_not_apply_no_faces() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(face_recognition=FaceRecognitionResult())
+    assert ClipAnalyzer._face_bypass_applies(hints) is False
+
+
+def test_face_bypass_does_not_apply_stranger_present_alongside_approved() -> None:
+    """The critical safety case: an approved family member AND an
+    unrecognized stranger both appear — must NOT bypass."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Brian"], unrecognized_present=True
+        )
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is False
+
+
+def test_face_bypass_does_not_apply_unapproved_enrollment_present() -> None:
+    """A recognized-but-not-approved enrollment (e.g. a nanny who hasn't been
+    granted bypass trust) must block the bypass just like a stranger."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Brian"], other_names=["Nanny"]
+        )
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is False
+
+
+def test_face_bypass_does_not_apply_unrecognized_only() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(unrecognized_present=True)
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is False
+
+
+def test_face_bypass_does_not_apply_no_vision_hints() -> None:
+    assert ClipAnalyzer._face_bypass_applies(None) is False
+
+
+def test_face_bypass_does_not_apply_vision_hints_without_face_recognition() -> None:
+    from blink_downloader.vision import VisionHints
+
+    assert ClipAnalyzer._face_bypass_applies(VisionHints()) is False
+
+
+def test_personalize_summary_rewrites_leading_generic_subject() -> None:
+    summary = ClipAnalyzer._personalize_summary(
+        "A person walked up the driveway toward the front door.", ["Brian"]
+    )
+    assert summary == "Brian walked up the driveway toward the front door."
+
+
+def test_personalize_summary_handles_multiple_names() -> None:
+    summary = ClipAnalyzer._personalize_summary(
+        "Someone approached the vehicle.", ["Brian", "Amy"]
+    )
+    assert summary == "Brian and Amy approached the vehicle."
+
+
+def test_personalize_summary_falls_back_to_prefix_when_no_match() -> None:
+    summary = ClipAnalyzer._personalize_summary(
+        "Motion detected near the garage door.", ["Brian"]
+    )
+    assert summary == "Brian: Motion detected near the garage door."
+
+
+def test_personalize_summary_noop_without_names_or_summary() -> None:
+    assert ClipAnalyzer._personalize_summary("A person walked by.", []) == (
+        "A person walked by."
+    )
+    assert ClipAnalyzer._personalize_summary("", ["Brian"]) == ""
+
+
+async def test_analyze_clip_bypasses_suspicious_flag_for_approved_only() -> None:
+    """End-to-end: when the vision pipeline reports only approved household
+    members present (no strangers, no unapproved matches), a suspicious AI
+    verdict must be overridden to not-suspicious and the summary personalized."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(approved_names=["Brian"])
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.8, '
+            '"description": "A person is lingering near the vehicle."}'
+        )
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.is_suspicious is False
+    assert result.confidence == pytest.approx(0.8)  # confidence itself is untouched
+    assert result.summary == "Brian is lingering near the vehicle."
+
+
+async def test_analyze_clip_stays_suspicious_when_stranger_also_present() -> None:
+    """This is the adversarial case that must never regress: an approved
+    household member AND an unrecognized stranger both appear — the clip
+    must remain flagged suspicious. A false bypass here would be exactly the
+    "complete and total failure" scenario the bypass must never cause."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(
+                approved_names=["Brian"], unrecognized_present=True
+            )
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.9, '
+            '"description": "A person is tampering with the vehicle."}'
+        )
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.is_suspicious is True
+    assert result.summary == "A person is tampering with the vehicle."
+
+
+async def test_analyze_clip_stays_suspicious_when_only_unapproved_match() -> None:
+    """A recognized-but-not-approved enrollment must not bypass either."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(other_names=["Nanny"])
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.7, "description": "Someone is near the door."}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.is_suspicious is True
+
+
+async def test_analyze_clip_face_recognition_never_appears_in_prompt_sent_to_model() -> (
+    None
+):
+    """Prompt-leakage guard: even when an approved household member is
+    recognized, the person's actual name must never appear in the prompt
+    text handed to the AI provider — only a name-free count/fact. This is
+    what actually enforces "biometric data never leaves the network," not
+    just an implementation detail."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(approved_names=["Brian"])
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "Clear"}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    sent_prompt = a._call_model.call_args.args[1]
+    assert "Brian" not in sent_prompt
+
+
+# ------------------------------------------------------------------
 # short-event hint — see _SHORT_EVENT_DURATION_SECONDS / _build_prompt
 # ------------------------------------------------------------------
 
@@ -4204,6 +4435,25 @@ def test_update_car_cameras_replaces_not_merges() -> None:
     a.update_car_cameras(set())
     assert "PROTECTED VEHICLE" in a._build_prompt("Driveway")
     assert "PROTECTED VEHICLE" in a._build_prompt("Garage")
+
+
+def test_update_car_description_replaces_and_can_deactivate() -> None:
+    """update_car_description takes effect immediately (no restart) and,
+    like every other car-protection setting, clearing it deactivates every
+    car-protection rule rather than leaving the previous description active."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434", model="llava", prompt="Analyze."
+    )
+    assert a.car_protection_active is False
+    assert "PROTECTED VEHICLE" not in a._build_prompt("Driveway")
+
+    a.update_car_description("a red sedan")
+    assert a.car_protection_active is True
+    assert "PROTECTED VEHICLE" in a._build_prompt("Driveway")
+
+    a.update_car_description("")
+    assert a.car_protection_active is False
+    assert "PROTECTED VEHICLE" not in a._build_prompt("Driveway")
 
 
 def test_update_car_zones_replaces_not_merges() -> None:

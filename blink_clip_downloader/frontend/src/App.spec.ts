@@ -45,8 +45,11 @@ describe('App', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
-        const arrayEndpoints = ['/api/cameras', '/api/activity', '/api/clips', '/api/tags']
-        const body = arrayEndpoints.some((p) => url.startsWith(p)) ? [] : { state: 'connected', enabled: false }
+        const arrayEndpoints = ['/api/cameras', '/api/activity', '/api/clips', '/api/tags', '/api/ai/camera-configs']
+        let body: unknown = { state: 'connected', enabled: false }
+        if (arrayEndpoints.some((p) => url.startsWith(p))) body = []
+        else if (url.startsWith('/api/vehicle/settings')) body = { car_description: '' }
+        else if (url.startsWith('/api/ai/faces')) body = { available: true, faces: [] }
         return Promise.resolve({ ok: true, json: () => Promise.resolve(body), text: () => Promise.resolve('') })
       }),
     )
@@ -96,6 +99,26 @@ describe('App', () => {
     await wrapper.find('[data-tab="models"]').trigger('click')
     expect(wrapper.find('#page-models').classes()).toContain('active')
     expect(wrapper.text()).toContain('AI Providers')
+    wrapper.unmount()
+  })
+
+  it('switches to the Vehicles tab and mounts VehiclesPage', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="vehicles"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-vehicles').classes()).toContain('active')
+    expect(wrapper.text()).toContain('Protected Vehicle Description')
+    wrapper.unmount()
+  })
+
+  it('switches to the Biometrics tab and mounts BiometricsPage', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="biometrics"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-biometrics').classes()).toContain('active')
+    expect(wrapper.text()).toContain('stays local')
     wrapper.unmount()
   })
 

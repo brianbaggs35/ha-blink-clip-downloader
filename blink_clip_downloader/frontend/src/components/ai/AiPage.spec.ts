@@ -86,7 +86,6 @@ describe('AiPage', () => {
     expect(wrapper.text()).toContain('Email Alerts')
     expect(wrapper.text()).toContain('Adaptive Learning')
     expect(wrapper.text()).toContain('Camera Configurations')
-    expect(wrapper.text()).toContain('Face Recognition Enrollment')
     expect(wrapper.text()).toContain('Suspicious Activity Feed')
     wrapper.unmount()
   })

@@ -10,7 +10,7 @@ import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { apiPost } from '../../api/client'
 
-export type TabName = 'library' | 'automations' | 'status' | 'ai' | 'usage' | 'models'
+export type TabName = 'library' | 'automations' | 'status' | 'ai' | 'usage' | 'models' | 'vehicles' | 'biometrics'
 
 const TABS: { name: TabName; label: string; icon: string }[] = [
   { name: 'library', label: 'Library', icon: 'tab-library' },
@@ -19,6 +19,8 @@ const TABS: { name: TabName; label: string; icon: string }[] = [
   { name: 'ai', label: 'AI', icon: 'tab-ai' },
   { name: 'usage', label: 'AI Usage', icon: 'tab-usage' },
   { name: 'models', label: 'Models', icon: 'tab-models' },
+  { name: 'vehicles', label: 'Vehicles', icon: 'tab-vehicles' },
+  { name: 'biometrics', label: 'Biometrics', icon: 'tab-biometrics' },
 ]
 
 const activeTab = defineModel<TabName>({ required: true })

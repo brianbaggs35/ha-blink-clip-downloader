@@ -37,7 +37,7 @@ import asyncio
 import io
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -777,11 +777,20 @@ def _build_contact_hint(result: ContactResult) -> str:
 
 
 @dataclass
-class RecognizedFace:
-    """A detected face matched against a locally enrolled household member."""
+class FaceRecognitionResult:
+    """Every distinct enrolled-member match found across a clip's sampled
+    frames, plus whether any face present could not be matched to an
+    *approved* enrollment.
 
-    name: str
-    similarity: float
+    The latter is what gates the suspicious-flag bypass (see
+    ``BaseAnalyzer._face_bypass_applies``) — a single unmatched or
+    not-yet-approved face anywhere in the clip must block it, so a stranger
+    standing next to a recognized family member still gets flagged.
+    """
+
+    approved_names: list[str] = field(default_factory=list)
+    other_names: list[str] = field(default_factory=list)
+    unrecognized_present: bool = False
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -880,47 +889,88 @@ class FaceRecognizer:
         self._embedder = embedder
         self._db = db
 
-    async def recognize(self, frames: list[bytes]) -> RecognizedFace | None:
-        """Return the best enrolled-member match across *frames*, if any.
+    async def recognize(self, frames: list[bytes]) -> FaceRecognitionResult:
+        """Match every detected face across *frames* against enrollments.
+
+        Every sampled frame's every detected face (MTCNN detects all faces
+        per frame, not just one) is independently matched against its
+        single best-scoring enrollment above ``_FACE_MATCH_THRESHOLD``, and
+        bucketed by that enrollment's ``approved`` flag — or counted as
+        unrecognized if nothing matched. This full accounting (not just a
+        single best match) is what lets the caller tell "only known people
+        present" apart from "a known person AND a stranger both appear,"
+        which the suspicious-flag bypass depends on for safety.
 
         Guards the whole lookup like every other vision stage — a DB error
-        or corrupted embedding row degrades to "no match" rather than
-        propagating out of process_clip() and failing the entire clip.
+        or corrupted embedding row degrades to an empty ("nothing matched,
+        nothing bypasses") result rather than propagating out of
+        process_clip() and failing the entire clip, and never the reverse.
         """
+        result = FaceRecognitionResult()
         try:
             enrollments = await self._db.list_face_enrollments()
             if not enrollments:
-                return None
+                return result
 
-            best: RecognizedFace | None = None
+            approved: set[str] = set()
+            other: set[str] = set()
             for frame in frames:
                 embeddings = await self._embedder.embed(frame)
                 for embedding in embeddings:
+                    best_name: str | None = None
+                    best_approved = False
+                    best_similarity = _FACE_MATCH_THRESHOLD
                     for enrollment in enrollments:
                         similarity = cosine_similarity(
                             embedding, enrollment["embedding"]
                         )
-                        if similarity >= _FACE_MATCH_THRESHOLD and (
-                            best is None or similarity > best.similarity
-                        ):
-                            best = RecognizedFace(
-                                name=str(enrollment["name"]), similarity=similarity
-                            )
-            return best
+                        if similarity >= best_similarity:
+                            best_similarity = similarity
+                            best_name = str(enrollment["name"])
+                            best_approved = bool(enrollment.get("approved", True))
+                    if best_name is None:
+                        result.unrecognized_present = True
+                    elif best_approved:
+                        approved.add(best_name)
+                    else:
+                        other.add(best_name)
+            result.approved_names = sorted(approved)
+            result.other_names = sorted(other)
+            return result
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Face recognition failed: %s", exc)
-            return None
+            return FaceRecognitionResult()
 
 
-def _build_recognition_hint(match: RecognizedFace) -> str:
-    return (
-        f"\n\nRECOGNIZED RESIDENT: A face in this clip matches the enrolled "
-        f'household member "{match.name}" (local on-device match, '
-        f"similarity {match.similarity:.0%}). This is a strong signal that "
-        "this is routine activity by someone who lives here, not a "
-        "stranger — but still judge any concerning behavior (tampering, "
-        "forced entry) on its own merits regardless of who is present."
+def _build_recognition_hint(result: FaceRecognitionResult) -> str | None:
+    """Build a strictly name-free advisory hint for the AI prompt.
+
+    Deliberately never includes the enrolled person's actual name — this
+    text is sent to whichever AI provider is configured, including cloud
+    providers, and a name is data derived from a local biometric match. Only
+    a count/fact is shared; the name itself is only ever used later, purely
+    locally (see BaseAnalyzer._personalize_summary), never in any prompt or
+    outbound request.
+    """
+    if not result.approved_names:
+        return None
+    count = len(result.approved_names)
+    member_word = "member" if count == 1 else "members"
+    hint = (
+        f"\n\nRECOGNIZED RESIDENT(S): {count} locally-enrolled household "
+        f"{member_word} matched on-device (name withheld from AI analysis, "
+        "never sent to any AI provider). This is a strong signal that this "
+        "is routine activity by someone who lives here, not a stranger — "
+        "but still judge any concerning behavior (tampering, forced entry) "
+        "on its own merits regardless of who is present."
     )
+    if result.other_names or result.unrecognized_present:
+        hint += (
+            " NOTE: at least one additional face in this clip did NOT match "
+            "an approved household member — do not assume everyone present "
+            "is a known resident."
+        )
+    return hint
 
 
 # ----------------------------------------------------------------------
@@ -955,6 +1005,7 @@ class VisionHints:
     depth_hint: str | None = None
     contact_hint: str | None = None
     recognized_resident_hint: str | None = None
+    face_recognition: FaceRecognitionResult | None = None
 
 
 class VisionPipeline:
@@ -1041,8 +1092,8 @@ class VisionPipeline:
 
         if self._config.face_recognition_enabled and self._db is not None:
             recognizer = FaceRecognizer(self._face_embedder, self._db)
-            match = await recognizer.recognize(frames)
-            if match is not None:
-                hints.recognized_resident_hint = _build_recognition_hint(match)
+            face_result = await recognizer.recognize(frames)
+            hints.face_recognition = face_result
+            hints.recognized_resident_hint = _build_recognition_hint(face_result)
 
         return hints
