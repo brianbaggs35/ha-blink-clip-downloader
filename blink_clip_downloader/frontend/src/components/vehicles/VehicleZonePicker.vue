@@ -37,16 +37,25 @@ type DragMode = {
 }
 const drag = ref<DragMode | null>(null)
 
+// Same request-sequencing guard as EnrollFromClipPicker.vue/LibraryPage.vue:
+// only apply a response if it's still the most recently fired call by the
+// time it resolves, so a stale, slower response can't overwrite a newer
+// selection's data.
+let clipsSeq = 0
+
 async function loadRecentClips() {
+  const seq = ++clipsSeq
   loading.value = true
   loadError.value = false
   try {
-    recentClips.value = await listClips({ camera: props.camera, limit: 8, sort: 'newest' })
+    const result = await listClips({ camera: props.camera, limit: 8, sort: 'newest' })
+    if (seq !== clipsSeq) return
+    recentClips.value = result
     if (recentClips.value.length) selectedClipId.value = recentClips.value[0].id
   } catch {
-    loadError.value = true
+    if (seq === clipsSeq) loadError.value = true
   } finally {
-    loading.value = false
+    if (seq === clipsSeq) loading.value = false
   }
 }
 onMounted(loadRecentClips)

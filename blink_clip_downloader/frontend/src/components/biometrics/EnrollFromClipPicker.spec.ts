@@ -115,6 +115,56 @@ describe('EnrollFromClipPicker', () => {
     expect(wrapper.findAll('.thumb-strip-item')).toHaveLength(1)
   })
 
+  it('does not let a stale clips response overwrite a newer camera selection', async () => {
+    // Regression test: rapid camera switching had no request-sequencing
+    // guard, so a slower response for an earlier selection could resolve
+    // after a newer selection's response and silently overwrite it.
+    let resolveFrontDoor: (() => void) | undefined
+    let resolveBackYard: (() => void) | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/cameras'))
+          return Promise.resolve(jsonResponse([makeCamera('Front Door'), makeCamera('Back Yard')]))
+        if (url.includes('/frames')) return Promise.resolve(jsonResponse({ frames: [] }))
+        if (url.includes('/api/clips')) {
+          const camera = new URL(url, 'http://x').searchParams.get('camera')
+          if (camera === 'Back Yard') {
+            return new Promise((resolve) => {
+              resolveBackYard = () => resolve(jsonResponse([makeClip('back1')]))
+            })
+          }
+          return new Promise((resolve) => {
+            resolveFrontDoor = () => resolve(jsonResponse([makeClip('front1')]))
+          })
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`))
+      }),
+    )
+    const wrapper = mountPicker()
+    await flushPromises()
+    resolveFrontDoor?.() // initial mount's auto-selected camera load
+    await flushPromises()
+
+    await wrapper.findComponent(Select).vm.$emit('update:modelValue', 'Back Yard')
+    await flushPromises()
+    await wrapper.findComponent(Select).vm.$emit('update:modelValue', 'Front Door')
+    await flushPromises()
+
+    expect(resolveBackYard).toBeDefined()
+    expect(resolveFrontDoor).toBeDefined()
+
+    // Resolve the latest (Front Door) request first, then the stale
+    // (Back Yard) one — simulating the stale response arriving last.
+    resolveFrontDoor?.()
+    await flushPromises()
+    resolveBackYard?.()
+    await flushPromises()
+
+    expect(wrapper.findAll('.thumb-strip-item')).toHaveLength(1)
+    expect(wrapper.find('.thumb-strip-item img').attributes('src')).toContain('front1')
+  })
+
   it('shows a warning when the selected camera has no clips', async () => {
     stubRoutedFetch({ cameras: [makeCamera('Front Door')], clips: [] })
     const wrapper = mountPicker()

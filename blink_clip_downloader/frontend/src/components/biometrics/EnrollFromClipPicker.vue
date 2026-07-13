@@ -30,18 +30,29 @@ async function loadCameras() {
 }
 loadCameras()
 
+// Rapid camera/clip switching can fire loadClips/loadFrames again before an
+// earlier call's response has resolved, letting a stale, slower response
+// overwrite a newer selection's data — mirrors the request-sequencing guard
+// in LibraryPage.vue. Each call captures its own token and only applies its
+// result if it's still the most recently fired request by the time it
+// resolves.
+let clipsSeq = 0
+
 async function loadClips() {
   if (!selectedCamera.value) return
+  const seq = ++clipsSeq
   loadingClips.value = true
   recentClips.value = []
   selectedClipId.value = ''
   frames.value = []
   selectedFrames.value = []
   try {
-    recentClips.value = await listClips({ camera: selectedCamera.value, limit: 8, sort: 'newest' })
+    const result = await listClips({ camera: selectedCamera.value, limit: 8, sort: 'newest' })
+    if (seq !== clipsSeq) return
+    recentClips.value = result
     if (recentClips.value.length) selectedClipId.value = recentClips.value[0].id
   } finally {
-    loadingClips.value = false
+    if (seq === clipsSeq) loadingClips.value = false
   }
 }
 // Setting selectedCamera.value inside loadCameras() (once cameras resolve)
@@ -50,19 +61,23 @@ async function loadClips() {
 // fetch, so this one watcher is deliberately the only trigger.
 watch(selectedCamera, loadClips)
 
+let framesSeq = 0
+
 async function loadFrames() {
   if (!selectedClipId.value) return
+  const seq = ++framesSeq
   loadingFrames.value = true
   framesError.value = false
   frames.value = []
   selectedFrames.value = []
   try {
     const result = await getClipFrames(selectedClipId.value, 8)
+    if (seq !== framesSeq) return
     frames.value = result.frames
   } catch {
-    framesError.value = true
+    if (seq === framesSeq) framesError.value = true
   } finally {
-    loadingFrames.value = false
+    if (seq === framesSeq) loadingFrames.value = false
   }
 }
 watch(selectedClipId, loadFrames)
