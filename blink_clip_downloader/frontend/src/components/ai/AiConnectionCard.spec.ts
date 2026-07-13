@@ -358,7 +358,12 @@ describe('AiConnectionCard', () => {
     vi.useRealTimers()
   })
 
-  it('moondream_local: shows a toast when the install request itself fails', async () => {
+  it('moondream_local: rolls back to the Install button when the install request itself fails', async () => {
+    // Regression test: startInstall() used to leave installState stuck at
+    // "installing" forever on failure — no poll loop ever started to
+    // self-correct it (the failure happens before pollMoondreamStatus is
+    // ever reached), so the panel was stranded on "Installing… please
+    // wait" with no button and no way to retry short of switching tabs.
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string, opts?: RequestInit) => {
@@ -375,7 +380,66 @@ describe('AiConnectionCard', () => {
     const installBtn = wrapper.findAll('button').find((b) => b.text().includes('Install Moondream'))!
     await installBtn.trigger('click')
     await flushPromises()
-    // the failed-toast path is covered; UI stays in installing/failed depending on timing
+    expect(wrapper.text()).not.toContain('Installing')
+    expect(wrapper.findAll('button').find((b) => b.text().includes('Install Moondream'))).toBeTruthy()
+  })
+
+  it('moondream_local: a dropped poll mid-install does not kill the progress tracker', async () => {
+    // Regression test: pollMoondreamStatus() used to only reschedule itself
+    // inside the try block's success path — a single failed poll request
+    // (plausible over the "several minutes" this install can take) silently
+    // stopped the whole polling loop, freezing the UI on "Installing…"
+    // forever even though the install was likely still proceeding
+    // server-side.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let started = false
+    let pollsSinceStart = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/moondream/install' && opts?.method === 'POST') {
+          started = true
+          return Promise.resolve(jsonResponse({ status: 'installing' }))
+        }
+        if (url === '/api/ai/moondream/install-status') {
+          if (!started) {
+            return Promise.resolve(
+              jsonResponse({ installed: false, arch_supported: true, install_state: { status: 'idle' } }),
+            )
+          }
+          pollsSinceStart++
+          if (pollsSinceStart === 2) return Promise.reject(new Error('transient network blip'))
+          if (pollsSinceStart >= 3) {
+            return Promise.resolve(jsonResponse({ installed: true, arch_supported: true, install_state: {} }))
+          }
+          return Promise.resolve(
+            jsonResponse({ installed: false, arch_supported: true, install_state: { status: 'installing' } }),
+          )
+        }
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
+      },
+    })
+    await flushPromises()
+    const installBtn = wrapper.findAll('button').find((b) => b.text().includes('Install Moondream'))!
+    await installBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Installing')
+
+    // pollsSinceStart becomes 2 here (the dropped one); the loop must keep going anyway.
+    await vi.advanceTimersByTimeAsync(2500)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Installing')
+
+    // pollsSinceStart becomes 3 and reports installed.
+    await vi.advanceTimersByTimeAsync(2500)
+    await flushPromises()
+    expect(wrapper.text()).toContain('✓ moondream installed')
+    vi.useRealTimers()
   })
 
   it('moondream_local: shows a failed state with a retry button and log output', async () => {

@@ -116,20 +116,31 @@ async function pollMoondreamStatus() {
     archSupported.value = s.arch_supported !== false
     installState.value = s.install_state || { status: 'idle' }
     if (s.installed) installState.value = { ...installState.value, status: 'installed' }
-    if (installState.value.status === 'installing') {
-      pollTimer = setTimeout(pollMoondreamStatus, 2500)
-    }
   } catch {
-    /* non-fatal */
+    // Transient — a single dropped poll must not kill the whole progress
+    // tracker for what the UI itself says "may take several minutes".
+    // Re-check below using whatever installState already holds (unchanged
+    // by this failed attempt) so polling keeps going as long as we were
+    // still mid-install.
+  }
+  if (installState.value.status === 'installing') {
+    pollTimer = setTimeout(pollMoondreamStatus, 2500)
   }
 }
 
 async function startInstall() {
+  const previousState = installState.value
   try {
     installState.value = { status: 'installing', log: 'Starting pip install moondream…\n' }
     await startMoondreamInstall()
     await pollMoondreamStatus()
   } catch {
+    // Roll back the optimistic "installing" state so the Install/Retry
+    // button reappears immediately — otherwise the panel is stuck showing
+    // "Installing… please wait" forever, since no poll loop ever started
+    // to self-correct it (the failure happened before pollMoondreamStatus
+    // was ever reached).
+    installState.value = previousState
     toast.show('Failed to start installation', true)
   }
 }
