@@ -109,6 +109,115 @@ until explicitly turned on.
 - Fixed a duplicate-fetch bug in the new clip-frame-selection UI: selecting
   a camera fetched its recent clips twice due to two watchers both firing on
   the initial selection.
+- **Tier-2 escalation lost camera identity on protected-vehicle cameras**:
+  `_maybe_escalate` invokes the tier-2 analyzer directly rather than through
+  its own `_analyze_clip_locked()`, so the escalation analyzer's
+  `_current_camera` was never set — Moondream Cloud/Local's car-protection
+  distance rules and zone lookup silently evaluated for the wrong (empty)
+  camera on every escalated call whenever `ai_car_cameras` was a non-empty,
+  restricted subset. Masked when `ai_car_cameras` is empty (the default),
+  which is why this went unnoticed. `_maybe_escalate` now propagates the
+  camera explicitly before invoking tier 2.
+- **JSON boolean coercion false positive**: a `"suspicious": "false"` JSON
+  *string* response (plausible from smaller/looser vision models) was
+  coerced with `bool(...)`, and `bool("false")` is `True` in Python —
+  flipping a model's clearly-intended "not suspicious" verdict into a
+  spurious suspicious flag. Only the literal string `"true"`
+  (case-insensitive) now counts as suspicious.
+- **Camera-configs save could silently wipe every camera's settings**: the
+  `PUT /api/ai/camera-configs` handler had no `isinstance(body, list)`
+  check, so a syntactically-valid-but-wrong-shaped body (e.g. `{}`) iterated
+  to zero entries with no error and overwrote `camera_configs.json` with an
+  empty array. Now validated and rejected with 400.
+- **Per-camera stats didn't merge case-insensitively**: `get_camera_stats`'s
+  `GROUP BY LOWER(camera), camera` defeated its own case-folding by
+  including the raw column, unlike every other camera-matching query in the
+  file — a renamed/retyped camera with different casing produced two
+  separate stat rows instead of one merged row.
+- **A failed alert dispatch could mark a successful analysis as "failed"
+  and silently drop the alert**: the analysis queue wrapped
+  `analyze_clip()`+`add_analysis_result()`+`update_queue_status("completed")`
+  *and* the alert dispatch in one try/except, so a transient failure in the
+  dispatch step (e.g. the adaptive-threshold DB lookup) overwrote an
+  already-successful, already-persisted analysis's status with `"failed"` —
+  triggering a wasted re-analysis and losing the alert for a genuinely
+  suspicious clip. Dispatch failures are now caught and logged separately
+  without touching the analysis's own status.
+- **Archiver could crash a whole month's batch (and duplicate clips into the
+  zip on retry) on a single DB error**: `mark_archived` failures weren't
+  caught (only zip/OS errors were), so one clip's DB error aborted every
+  remaining clip in the run. Each step is now isolated so one clip's failure
+  doesn't affect the rest of the batch.
+- **Contact-analysis proximity numbers overstated by ~2.3x**: the CONTACT
+  ANALYSIS prompt hint's pixel-gap estimate used the segmentation mask's
+  full dilation-kernel size instead of its radius. Only affected the
+  descriptive number shown to the AI provider, not the touching/not-touching
+  verdict itself.
+- **CLAHE-enhanced frames unintentionally fed face recognition**: with both
+  `enhanced_detection_enabled` and `face_recognition_enabled` on, face
+  embeddings were computed from contrast-enhanced/denoised frames while
+  enrolled reference embeddings come from raw photos — an embedding-space
+  mismatch that could cause an approved household member to go
+  unrecognized. Face recognition now always runs against the original raw
+  frames.
+- **Mismatched-length face embeddings were silently truncated and
+  compared**: `cosine_similarity` used `zip()`, which truncates to the
+  shorter vector instead of rejecting a dimensionality mismatch (e.g. after
+  an embedding-model change or a corrupted DB row) — now returns `0.0`
+  ("can't compare, no match") instead.
+- **A killed process mid-download could permanently corrupt a clip file**:
+  clips were streamed directly to their final destination path; a container
+  restart or OOM-kill mid-write left a truncated file that the
+  already-downloaded check treated as complete forever. Downloads now
+  stream to a temp file and atomically rename over the destination only
+  after a full, successful write, matching the pattern already used for the
+  auth-token file.
+- Several smaller robustness fixes found in the same review: `/data/stats.json`
+  and the digest's last-sent state file are now written atomically (temp
+  file + rename) like the auth-token/tracker files already were;
+  `retry_delay` now has an upper bound like every sibling numeric option;
+  `PUT /api/clips/{id}/star` now rejects malformed JSON with 400 instead of
+  silently defaulting to `starred: true`, matching its `/tags` sibling;
+  Blink API clip-list pagination now has a defensive page cap; a swallowed
+  per-frame exception in the CV preprocessing stage is now logged at debug
+  level; and two stats queries were parameterized instead of interpolating
+  date strings directly into SQL (no injection risk since the values were
+  already server-computed, just an inconsistent pattern).
+- **Library "Yesterday" filter actually meant "yesterday onward"**: the
+  date-range filter only set a lower bound, so selecting "Yesterday"
+  returned everything from yesterday-midnight onward, including today.
+  Now bounds both ends of the day.
+- **Moondream install-progress polling leaked past tab switches**: the AI
+  tab is destroyed on tab switch, but its install-status polling
+  `setTimeout` loop had no unmount cleanup and kept re-fetching in the
+  background forever if a user switched away mid-install.
+- **Stale network responses could overwrite newer ones in the Library
+  grid**: switching camera, editing the search box, and the periodic
+  refresh could all fire overlapping clip-list requests with no ordering
+  guarantee — whichever happened to resolve last won, even if it was no
+  longer the active filter selection. Responses are now discarded unless
+  they're still the most recently fired request. The same fix was applied
+  to the Vehicles zone-picker and the Biometrics enrollment picker's
+  clip/frame loading, which had the same gap.
+- **AI tab's Adaptive Learning stats and Suspicious Activity Feed never
+  refreshed** after submitting feedback from a clip opened via the feed
+  (reachable from the AI tab without switching tabs) — both child
+  components already exposed a `reload()` for exactly this, but nothing
+  ever called it.
+- **Global `?`/Esc shortcuts fired while typing**: the keydown handler only
+  excluded `<input>`, not `<textarea>`/`<select>`/content-editable elements
+  — typing a literal `?` in, e.g., the Vehicles tab's description field
+  toggled the help overlay mid-keystroke.
+- **`IconName` had silently collapsed to plain `string`**: an explicit
+  `Record<string, IconDef>` annotation on the icon lookup table defeated
+  `keyof typeof ICONS`'s literal-union inference, so a typo'd icon name
+  would have compiled cleanly and crashed at render instead of being caught
+  by the type checker. Restored via `satisfies` instead of a type
+  annotation.
+- Minor clip-modal fixes: Escape now blurs a focused tag/note input instead
+  of doing nothing; a denied fullscreen request now shows a toast instead of
+  an unhandled promise rejection; and a dead prop watcher (unreachable since
+  the modal already fully remounts the AI panel on clip change) was removed.
 
 ### Added — Automations tab
 
