@@ -1513,24 +1513,24 @@ class MediaServer:
                 status=400,
             )
         try:
-            body = await request.json()
-            name = str(body.get("name", "") or "").strip()
-            rank = int(body.get("rank", 16))
-        except Exception:  # noqa: BLE001
-            await manager.close()
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            try:
+                body = await request.json()
+                name = str(body.get("name", "") or "").strip()
+                rank = int(body.get("rank", 16))
+            except Exception:  # noqa: BLE001
+                raise web.HTTPBadRequest(text="Invalid JSON body")
 
-        if not name:
-            await manager.close()
-            return web.json_response({"error": "name is required"}, status=400)
+            if not name:
+                return web.json_response({"error": "name is required"}, status=400)
 
-        try:
             finetune_id = await manager.create_finetune(name, rank=rank)
             if finetune_id is None:
                 return web.json_response(
                     {"error": "Failed to create fine-tune"}, status=500
                 )
             return web.json_response({"finetune_id": finetune_id})
+        except web.HTTPBadRequest:
+            raise
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Moondream create_finetune failed: %s", exc)
             return web.json_response({"error": str(exc)}, status=500)
