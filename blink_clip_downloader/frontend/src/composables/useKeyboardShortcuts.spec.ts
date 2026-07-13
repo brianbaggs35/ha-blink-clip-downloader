@@ -84,6 +84,31 @@ describe('useKeyboardShortcuts', () => {
     expect(helpOpen.value).toBe(false)
   })
 
+  it('ignores keydowns originating from a <textarea>', () => {
+    // Regression test: a Textarea (e.g. the Vehicles tab's Protected
+    // Vehicle Description field) used to still toggle the global help
+    // overlay mid-keystroke since only tagName === 'INPUT' was excluded.
+    const { helpOpen } = mountHost()
+    const textarea = document.createElement('textarea')
+    dispatchKey('?', textarea)
+    expect(helpOpen.value).toBe(false)
+  })
+
+  it('ignores keydowns originating from a <select>', () => {
+    const { helpOpen } = mountHost()
+    const select = document.createElement('select')
+    dispatchKey('?', select)
+    expect(helpOpen.value).toBe(false)
+  })
+
+  it('ignores keydowns originating from a contenteditable element', () => {
+    const { helpOpen } = mountHost()
+    const div = document.createElement('div')
+    Object.defineProperty(div, 'isContentEditable', { value: true })
+    dispatchKey('?', div)
+    expect(helpOpen.value).toBe(false)
+  })
+
   it('removes its listener on unmount', () => {
     const helpOpen = ref(false)
     const Host = defineComponent({

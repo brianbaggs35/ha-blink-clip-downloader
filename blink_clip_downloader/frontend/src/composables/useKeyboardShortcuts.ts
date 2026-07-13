@@ -18,7 +18,19 @@ export function useKeyboardShortcuts(helpOpen: Ref<boolean>) {
 
   function onKeydown(e: KeyboardEvent) {
     const target = e.target as HTMLElement
-    if (target.tagName === 'INPUT') return
+    // Any text-entry surface must be excluded, not just <input> — a Textarea
+    // (e.g. the Vehicles tab's Protected Vehicle Description field, or the
+    // AI tab's custom-prompt field) or a <select> receiving a stray '?'/Esc
+    // keystroke would otherwise toggle the global help overlay or close a
+    // dialog mid-keystroke.
+    if (
+      target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT' ||
+      target.isContentEditable
+    ) {
+      return
+    }
 
     if (e.key === '?') {
       helpOpen.value = !helpOpen.value
