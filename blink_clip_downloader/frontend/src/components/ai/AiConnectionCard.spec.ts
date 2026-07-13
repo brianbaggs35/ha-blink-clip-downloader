@@ -324,6 +324,40 @@ describe('AiConnectionCard', () => {
     vi.useRealTimers()
   })
 
+  it('moondream_local: unmounting clears the pending poll timer', async () => {
+    // Regression test: the AI tab is v-if-gated in App.vue (fully destroyed
+    // on tab switch). Without an onUnmounted cleanup, starting an install
+    // and then switching tabs mid-install left the setTimeout loop running
+    // forever in the background, forever re-fetching install-status and
+    // keeping the destroyed component instance alive via the timer's closure.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const statusFetch = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({
+          installed: false,
+          arch_supported: true,
+          install_state: { status: 'installing', log: 'working…' },
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', statusFetch)
+    const wrapper = mount(AiConnectionCard, {
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
+      },
+    })
+    await flushPromises()
+    const callsBeforeUnmount = statusFetch.mock.calls.length
+    expect(callsBeforeUnmount).toBeGreaterThan(0)
+
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(10_000)
+    await flushPromises()
+
+    expect(statusFetch.mock.calls.length).toBe(callsBeforeUnmount)
+    vi.useRealTimers()
+  })
+
   it('moondream_local: shows a toast when the install request itself fails', async () => {
     vi.stubGlobal(
       'fetch',

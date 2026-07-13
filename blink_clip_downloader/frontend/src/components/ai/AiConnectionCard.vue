@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onUnmounted, ref, watch } from 'vue'
 import {
   fetchAiModels,
   fetchEscalationModels,
@@ -147,6 +147,15 @@ watch(
   },
   { immediate: true },
 )
+
+// The AI tab is v-if-gated (see App.vue) — fully destroyed on tab switch —
+// so a poll started mid-install must be cleared here too, not just on the
+// provider watch above (which only fires on a provider *change*, never on
+// unmount). Without this, switching tabs during an install leaks the timer
+// (and everything it closes over) forever.
+onUnmounted(() => {
+  if (pollTimer) clearTimeout(pollTimer)
+})
 
 // ── Test analysis ──────────────────────────────────────────
 const testing = ref(false)
