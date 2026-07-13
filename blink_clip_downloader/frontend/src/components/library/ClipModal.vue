@@ -158,12 +158,20 @@ watch(loopClip, (val) => player?.loop(val))
 
 function onKeydown(e: KeyboardEvent) {
   const target = e.target as HTMLElement
-  if (target.tagName === 'INPUT') return
+  const isTextInput = target.tagName === 'INPUT'
   if (e.key === 'Escape') {
+    // Escape blurs a focused input (the tag/feedback-note fields) rather
+    // than being silently swallowed, matching the typical "Escape blurs the
+    // input" convention instead of doing nothing.
+    if (isTextInput) {
+      target.blur()
+      return
+    }
     if (promptOverlay.open || confirmStore.open) return
     if (props.clipId) emit('close')
     return
   }
+  if (isTextInput) return
   if (!props.clipId || !player) return
   switch (e.key) {
     case ' ':
@@ -181,7 +189,7 @@ function onKeydown(e: KeyboardEvent) {
       break
     case 'f':
     case 'F':
-      player.requestFullscreen()
+      player.requestFullscreen().catch(() => toast.show('Fullscreen not available', true))
       break
     case 'm':
     case 'M':

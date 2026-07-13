@@ -15,7 +15,7 @@ const fakePlayer = {
   paused: vi.fn().mockReturnValue(true),
   currentTime: vi.fn().mockReturnValue(0),
   duration: vi.fn().mockReturnValue(100),
-  requestFullscreen: vi.fn(),
+  requestFullscreen: vi.fn().mockResolvedValue(undefined),
 }
 
 vi.mock('video.js', () => ({ default: vi.fn(() => fakePlayer) }))
@@ -23,6 +23,7 @@ vi.mock('video.js/dist/video-js.css', () => ({}))
 
 import ClipModal from './ClipModal.vue'
 import { useConfirmStore } from '../../stores/confirm'
+import { useToastStore } from '../../stores/toast'
 
 const CLIP = {
   id: 'c1',
@@ -286,6 +287,26 @@ describe('ClipModal', () => {
     wrapper.unmount()
   })
 
+  it('keyboard: Escape blurs a focused input instead of doing nothing', async () => {
+    // Regression test: Escape used to be swallowed entirely while an input
+    // (the tag/feedback-note field) was focused — it now blurs the input,
+    // matching the typical "Escape blurs the input" convention, and must
+    // not also close the modal in the same keypress.
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    document.body.appendChild(document.createElement('input'))
+    const input = document.body.querySelector('input')!
+    input.focus()
+    expect(document.activeElement).toBe(input)
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+    Object.defineProperty(event, 'target', { value: input })
+    document.dispatchEvent(event)
+    expect(document.activeElement).not.toBe(input)
+    expect(wrapper.emitted('close')).toBeUndefined()
+    input.remove()
+    wrapper.unmount()
+  })
+
   it('keyboard: ArrowLeft/ArrowRight seek by 10s', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
@@ -319,6 +340,22 @@ describe('ClipModal', () => {
     fakePlayer.muted.mockReturnValue(false)
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }))
     expect(fakePlayer.muted).toHaveBeenCalledWith(true)
+    wrapper.unmount()
+  })
+
+  it('keyboard: shows a toast when the browser denies fullscreen', async () => {
+    // Regression test: a rejected requestFullscreen() promise (fullscreen
+    // denied by the browser/OS) used to surface as an unhandled promise
+    // rejection rather than a user-facing toast, unlike every other action
+    // in this file.
+    fakePlayer.requestFullscreen.mockRejectedValueOnce(new Error('denied'))
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'F', bubbles: true }))
+    await flushPromises()
+    const toast = useToastStore()
+    expect(toast.visible).toBe(true)
+    expect(toast.isError).toBe(true)
     wrapper.unmount()
   })
 
