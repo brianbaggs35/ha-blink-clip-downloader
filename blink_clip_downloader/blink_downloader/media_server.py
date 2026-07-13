@@ -412,7 +412,7 @@ class MediaServer:
             body = await request.json()
             starred = bool(body.get("starred", True))
         except Exception:  # noqa: BLE001
-            starred = True
+            raise web.HTTPBadRequest(text="Invalid JSON body")
         found = await self._db.star_clip(clip_id, starred)
         if not found:
             raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
@@ -1051,9 +1051,7 @@ class MediaServer:
         configs: list[dict] = []
         if self._CAMERA_CONFIGS_FILE.exists():
             try:
-                import json as _json  # noqa: PLC0415
-
-                configs = _json.loads(self._CAMERA_CONFIGS_FILE.read_text())
+                configs = json.loads(self._CAMERA_CONFIGS_FILE.read_text())
             except Exception:  # noqa: BLE001
                 configs = []
         # Ensure every known camera has an entry
@@ -1114,6 +1112,13 @@ class MediaServer:
         """Save per-camera AI configurations and update the live analyzer."""
         try:
             body = await request.json()
+            if not isinstance(body, list):
+                # A dict (or any other non-list) body is still valid JSON and
+                # silently iterates to zero entries below (e.g. `for c in {}`
+                # yields nothing, no exception) — without this check that
+                # would write an empty array over camera_configs.json,
+                # wiping every camera's settings with no error surfaced.
+                raise web.HTTPBadRequest(text="Invalid JSON body")
             configs = [
                 {
                     "camera": str(c["camera"]),
@@ -1125,13 +1130,13 @@ class MediaServer:
                 for c in body
                 if isinstance(c, dict) and c.get("camera")
             ]
+        except web.HTTPBadRequest:
+            raise
         except Exception:  # noqa: BLE001
             raise web.HTTPBadRequest(text="Invalid JSON body")
 
         try:
-            import json as _json  # noqa: PLC0415
-
-            self._CAMERA_CONFIGS_FILE.write_text(_json.dumps(configs, indent=2))
+            self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
         except OSError as exc:
             _LOGGER.warning("Could not save camera configs: %s", exc)
 
@@ -1178,9 +1183,7 @@ class MediaServer:
     async def _handle_vehicle_settings_get(self, _request: web.Request) -> web.Response:
         if self._VEHICLE_SETTINGS_FILE.exists():
             try:
-                import json as _json  # noqa: PLC0415
-
-                data = _json.loads(self._VEHICLE_SETTINGS_FILE.read_text())
+                data = json.loads(self._VEHICLE_SETTINGS_FILE.read_text())
                 return web.json_response(
                     {"car_description": str(data.get("car_description", ""))}
                 )
@@ -1199,10 +1202,8 @@ class MediaServer:
             raise web.HTTPBadRequest(text="Invalid JSON body")
 
         try:
-            import json as _json  # noqa: PLC0415
-
             self._VEHICLE_SETTINGS_FILE.write_text(
-                _json.dumps({"car_description": car_description}, indent=2)
+                json.dumps({"car_description": car_description}, indent=2)
             )
         except OSError as exc:
             _LOGGER.warning("Could not save vehicle settings: %s", exc)

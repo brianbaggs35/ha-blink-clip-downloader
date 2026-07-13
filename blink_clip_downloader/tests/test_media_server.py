@@ -1724,6 +1724,38 @@ async def test_ai_camera_configs_put_bad_json(client: TestClient) -> None:
     assert resp.status == 400
 
 
+async def test_ai_camera_configs_put_dict_body_rejected(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A syntactically-valid JSON body of the wrong shape (a dict, not a
+    list) must be rejected with 400 rather than silently iterating to zero
+    entries and wiping every camera's saved settings with an empty array."""
+    cfg_file = tmp_path / "camera_configs.json"
+    existing = [
+        {
+            "camera": "Driveway",
+            "description": "existing description",
+            "custom_prompt": "",
+            "is_car_camera": True,
+            "car_zone": None,
+        }
+    ]
+    cfg_file.write_text(json.dumps(existing))
+
+    with patch(
+        "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+        new=cfg_file,
+    ):
+        resp = await client.put(
+            "/api/ai/camera-configs",
+            data=json.dumps({}),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert resp.status == 400
+    assert json.loads(cfg_file.read_text()) == existing
+
+
 async def test_ai_camera_configs_get_malformed_json_file(
     client: TestClient, tmp_path: Path
 ) -> None:
@@ -2049,11 +2081,13 @@ async def test_delete_clip_unlink_oserror_is_logged(
 
 
 # ---------------------------------------------------------------------------
-# /api/clips/{id}/star — malformed body falls back to starred=True
+# /api/clips/{id}/star — malformed body is rejected, matching /tags' sibling
+# behavior (regression test: this used to silently fall back to
+# starred=True instead of surfacing the client bug)
 # ---------------------------------------------------------------------------
 
 
-async def test_star_clip_bad_json_defaults_starred_true(
+async def test_star_clip_bad_json_returns_400(
     client: TestClient, db: ClipDatabase
 ) -> None:
     await db.add_clip(_make_clip("st2"))
@@ -2062,12 +2096,10 @@ async def test_star_clip_bad_json_defaults_starred_true(
         data=b"not json",
         headers={"Content-Type": "application/json"},
     )
-    assert resp.status == 200
-    data = await resp.json()
-    assert data["starred"] is True
+    assert resp.status == 400
     clip = await db.get_clip("st2")
     assert clip is not None
-    assert clip["starred"] is True
+    assert clip["starred"] is False
 
 
 # ---------------------------------------------------------------------------
