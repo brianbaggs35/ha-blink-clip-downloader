@@ -1,6 +1,16 @@
 # Changelog
 
-## 5.1.0
+## 5.0.0
+
+Major release, bumped from 4.1.0 (never tagged/shipped) given the scope of
+what landed together: a complete visual redesign of the web UI, an optional
+off-by-default computer-vision enhancement pipeline layered on top of the
+existing AI-provider prompt pipeline, the Moondream Cloud fine-tuning panel
+wired end-to-end to human feedback, and dedicated Vehicles/Biometrics tabs
+with a face-recognition suspicious-flag bypass. None of the AI/CV work
+changes default behavior — every new stage and feature is disabled or empty
+out of the box and the add-on analyzes clips exactly as it did in 4.0.2
+until explicitly turned on.
 
 ### Added — Vehicles tab
 
@@ -68,6 +78,15 @@
 
 ### Fixed
 
+- **Protected Vehicle Description didn't survive a restart**: setting it
+  purely from the Vehicles tab (`vehicle_settings.json`) took effect
+  immediately in the running process via `update_car_description()`, but
+  startup only ever read `ai_car_description` from `options.json` — an
+  add-on restart or update would silently revert to whatever (usually
+  empty) value was last set in the Supervisor's Configuration tab. Startup
+  now reads `vehicle_settings.json` first, matching the same "web UI file
+  is authoritative once written, falls back to the config.yaml option only
+  until then" precedent `camera_configs.json` already followed.
 - **Zone-motion prompt leakage**: `_maybe_compute_zone_motion` was the one
   car-zone code path that didn't check whether protected-vehicle rules
   actually apply (i.e. whether a Protected Vehicle Description is set) before
@@ -103,17 +122,6 @@
 - Removed the ~2,900-line dead `_HTML` string in `media_server.py` — a
   leftover of the pre-Vue embedded single-file UI, fully superseded by the
   Vue frontend and confirmed unreferenced anywhere.
-
-## 5.0.0
-
-Major release, bumped from 4.1.0 (never tagged/shipped) given the scope of
-what landed together: a complete visual redesign of the web UI, an optional
-off-by-default computer-vision enhancement pipeline layered on top of the
-existing AI-provider prompt pipeline, and the Moondream Cloud fine-tuning
-panel wired end-to-end to human feedback. None of the AI/CV work changes
-default behavior — every new stage and feature is disabled or empty out of
-the box and the add-on analyzes clips exactly as it did in 4.0.2 until
-explicitly turned on.
 
 ### Redesigned — web UI visual overhaul
 

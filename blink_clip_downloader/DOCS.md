@@ -352,7 +352,7 @@ The AI tab's Fetch Models picker works for the escalation model too, once
 list, and copy the id to paste into `ai_escalation_model`, the same
 copy-to-clipboard flow the tier-1 model picker already uses.
 
-> **Removed in 5.1.0:** `openai_escalation_model` (OpenAI-only, second OpenAI
+> **Removed in 5.0.0:** `openai_escalation_model` (OpenAI-only, second OpenAI
 > model) is no longer part of this add-on's Configuration options — use
 > `ai_escalation_provider`/`ai_escalation_model` above, which work for every
 > provider, not just OpenAI. If you already had `openai_escalation_model` set,
@@ -366,7 +366,7 @@ copy-to-clipboard flow the tier-1 model picker already uses.
 |--------|---------|-------------|
 | `ai_prompt` | _(see config.yaml)_ | Global prompt sent to the AI for each clip. Must request a JSON response with `"suspicious"`, `"confidence"`, and `"description"` keys. |
 | `ai_car_description` | `""` | Description of a vehicle to protect (e.g. `"Silver Kia Forte, parked in the driveway"`). When set, the AI applies strict distance rules and flags anyone within ~2 feet of the vehicle as suspicious. |
-| `ai_car_cameras` | `[]` | Camera names for which car-proximity rules apply. Must exactly match your Blink camera name (case-sensitive). Leave empty to apply to all cameras. Cameras not listed focus only on their own description, preventing false positives on cameras that cannot see the car. Easier to set via the **Camera Configurations** panel in the web UI AI tab, which lists your actual cameras instead of requiring you to type the name. |
+| `ai_car_cameras` | `[]` | Camera names for which car-proximity rules apply. Must exactly match your Blink camera name (case-sensitive). Leave empty to apply to all cameras. Cameras not listed focus only on their own description, preventing false positives on cameras that cannot see the car. Easier to set via the **Vehicles** tab in the web UI, which lists your actual cameras instead of requiring you to type the name. |
 | `ai_min_confidence` | `0.5` | Minimum confidence threshold (0.0–1.0) for sending suspicious-activity alerts. Clips are still analysed and stored; only alert dispatch is gated. The default matches the confidence floor the AI prompt itself uses for a genuine suspicious verdict, so low-confidence hedges don't spam notifications. Set to `0.0` to send alerts for every result, or higher (e.g. `0.7`) to only alert when the AI is very certain. |
 | `ai_suspicious_keywords` | _(list)_ | Words that trigger a suspicious flag when found in an AI plain-text response (used as fallback when the AI does not return valid JSON). |
 
@@ -412,7 +412,7 @@ form, and a mismatched name silently fails to apply:
 ### Vehicles Tab — protected-vehicle monitoring
 
 Everything about protecting a specific vehicle lives in its own **Vehicles**
-nav tab (moved out of the AI tab in 5.1.0, since it's a distinct concern from
+nav tab (moved out of the AI tab in 5.0.0, since it's a distinct concern from
 per-camera AI prompt tuning):
 
 - **Protected Vehicle Description** — describe the vehicle (make/model/color)
@@ -568,7 +568,7 @@ each clip on what it can actually see, with better evidence to work with.
 #### Biometrics Tab — face-recognition enrollment and the suspicious-flag bypass
 
 Once `ai_face_recognition_enabled` is on, enroll household members from the
-**Biometrics** nav tab (moved out of the AI tab in 5.1.0). Two ways to
+**Biometrics** nav tab (moved out of the AI tab in 5.0.0). Two ways to
 enroll:
 
 - **From a clip (recommended)** — pick a camera and one of its recent clips,

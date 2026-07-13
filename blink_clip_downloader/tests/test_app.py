@@ -1377,6 +1377,120 @@ def test_init_corrupt_camera_configs_file_falls_back_to_options_json(
     }
 
 
+def _build_app_with_vehicle_settings(
+    base_config, tmp_path, vehicle_settings_content, **config_overrides
+):
+    """Construct a BlinkClipDownloaderApp with AI enabled and a fake
+    vehicle_settings.json, capturing the kwargs passed to create_analyzer().
+    Routes "/data/camera_configs.json" and "/data/vehicle_settings.json" to
+    separate tmp_path files so each can be controlled independently, unlike
+    _build_app_with_camera_configs's single fixed-return-value patch."""
+    import dataclasses
+
+    cam_cfg_file = tmp_path / "camera_configs.json"
+    vehicle_file = tmp_path / "vehicle_settings.json"
+    if vehicle_settings_content is not None:
+        vehicle_file.write_text(json.dumps(vehicle_settings_content))
+
+    def _fake_path(path_str):
+        return (
+            vehicle_file if path_str == "/data/vehicle_settings.json" else cam_cfg_file
+        )
+
+    config = dataclasses.replace(
+        base_config,
+        ai_analysis_enabled=True,
+        ollama_url="http://localhost:11434",
+        **config_overrides,
+    )
+
+    with (
+        patch("blink_downloader.app.Path", side_effect=_fake_path),
+        patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
+    ):
+        mock_create_analyzer.return_value = MagicMock()
+        app = BlinkClipDownloaderApp(config)
+
+    return app, mock_create_analyzer
+
+
+def test_init_vehicle_settings_ui_file_overrides_options_json(
+    base_config, tmp_path
+) -> None:
+    """A protected-vehicle description saved via the Vehicles tab
+    (vehicle_settings.json) must survive a restart and reach the analyzer,
+    taking priority over options.json's ai_car_description — the same "web
+    UI file overrides config.yaml option once written" contract
+    camera_configs.json already has (see CLAUDE.md)."""
+    _app, mock_create_analyzer = _build_app_with_vehicle_settings(
+        base_config,
+        tmp_path,
+        {"car_description": "Silver Kia Forte"},
+        ai_car_description="options.json description (should be ignored)",
+    )
+
+    assert (
+        mock_create_analyzer.call_args.kwargs["car_description"] == "Silver Kia Forte"
+    )
+
+
+def test_init_vehicle_settings_falls_back_to_options_when_file_missing(
+    base_config, tmp_path
+) -> None:
+    """No vehicle_settings.json yet (never saved from the Vehicles tab)
+    falls back to options.json's ai_car_description, matching the "falls
+    back to config.yaml only until first written" contract."""
+    _app, mock_create_analyzer = _build_app_with_vehicle_settings(
+        base_config,
+        tmp_path,
+        None,  # no vehicle_settings.json written
+        ai_car_description="options.json description",
+    )
+
+    assert (
+        mock_create_analyzer.call_args.kwargs["car_description"]
+        == "options.json description"
+    )
+
+
+def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
+    base_config, tmp_path
+) -> None:
+    """A corrupt vehicle_settings.json must not crash startup — options.json
+    should still reach the analyzer, mirroring camera_configs.json's
+    corrupt-file handling."""
+    vehicle_file = tmp_path / "vehicle_settings.json"
+    vehicle_file.write_text("{not valid json")
+
+    def _fake_path(path_str):
+        return (
+            vehicle_file
+            if path_str == "/data/vehicle_settings.json"
+            else tmp_path / "camera_configs.json"
+        )
+
+    import dataclasses
+
+    config = dataclasses.replace(
+        base_config,
+        ai_analysis_enabled=True,
+        ollama_url="http://localhost:11434",
+        ai_car_description="options.json fallback description",
+    )
+
+    with (
+        patch("blink_downloader.app.Path", side_effect=_fake_path),
+        patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
+    ):
+        mock_create_analyzer.return_value = MagicMock()
+        BlinkClipDownloaderApp(config)
+
+    assert (
+        mock_create_analyzer.call_args.kwargs["car_description"]
+        == "options.json fallback description"
+    )
+
+
 def test_init_attaches_scene_baseline_db_and_creates_analysis_queue(
     base_config, tmp_path
 ):

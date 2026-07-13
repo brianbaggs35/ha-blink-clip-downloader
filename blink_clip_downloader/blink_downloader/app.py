@@ -179,6 +179,26 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         return camera_descriptions, camera_prompts, car_cameras_from_ui, car_zones
 
+    def _load_vehicle_settings_from_ui(self) -> str | None:
+        """Load the protected-vehicle description from the web UI config file.
+
+        vehicle_settings.json is the source of truth once written (see
+        MediaServer._handle_vehicle_settings_get/_put) — falling back to the
+        ai_car_description option in options.json only until the file has
+        been written for the first time. Returns None (not "") when the file
+        doesn't exist or is unreadable, so the caller can tell "not written
+        yet" apart from "written as an empty string" and fall back to
+        options.json only for the former.
+        """
+        settings_file = Path("/data/vehicle_settings.json")
+        if not settings_file.exists():
+            return None
+        try:
+            data = json.loads(settings_file.read_text())
+            return str(data.get("car_description", ""))
+        except Exception:  # noqa: BLE001
+            return None
+
     @staticmethod
     def _merge_camera_config_fallbacks(
         config: AppConfig,
@@ -216,10 +236,16 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             car_cameras_from_ui or config.ai_car_cameras or None
         )
 
+        # vehicle_settings.json (Vehicles tab) takes priority once written;
+        # fall back to ai_car_description from options.json until then.
+        car_description = self._load_vehicle_settings_from_ui()
+        if car_description is None:
+            car_description = config.ai_car_description
+
         self._analyzer = create_analyzer(
             ai_provider=config.ai_provider,
             prompt=config.ai_prompt,
-            car_description=config.ai_car_description,
+            car_description=car_description,
             max_frames=config.ai_max_frames,
             frame_interval=config.ai_frame_interval,
             suspicious_keywords=config.ai_suspicious_keywords,

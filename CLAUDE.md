@@ -134,7 +134,7 @@ npm project at `frontend/` (its own `package.json`, `node_modules`,
 `vite.config.ts`, `eslint.config.js`). It is **not** an embedded string in
 `media_server.py` — an earlier version of this add-on worked that way, but
 that was fully replaced; the ~2,900-line dead `_HTML` remnant of it was
-removed in 5.1.0.
+removed in 5.0.0.
 
 - **Build & serving**: `npm run build` (Vite) writes straight into
   `blink_downloader/static/` — the Dockerfile's `frontend-builder` stage
