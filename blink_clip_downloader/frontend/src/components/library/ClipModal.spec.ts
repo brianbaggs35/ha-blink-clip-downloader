@@ -444,4 +444,39 @@ describe('ClipModal', () => {
     wrapper.unmount()
     expect(fakePlayer.dispose).toHaveBeenCalled()
   })
+
+  it('a slow response for a since-abandoned clip must not clobber a faster, more recent one', async () => {
+    // Regression test: rapid prev/next navigation fires load() again before
+    // an earlier getClip() resolves, with no inherent ordering. Without a
+    // sequencing guard, clip c1's late response would overwrite the player
+    // source and metadata back to c1 even though the user has already moved
+    // on to c2 — the same stale-response-race class already fixed in
+    // LibraryPage.vue and VehicleZonePicker/EnrollFromClipPicker.
+    let resolveC1: (v: Response) => void = () => {}
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1') return new Promise((resolve) => (resolveC1 = resolve))
+        if (url === '/api/clips/c2') return Promise.resolve(jsonResponse({ ...CLIP, id: 'c2', camera: 'backyard' }))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+
+    // Navigate to c2 before c1's request resolves.
+    await wrapper.setProps({ clipId: 'c2' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('backyard')
+    expect(fakePlayer.src).toHaveBeenLastCalledWith([{ src: '/api/clips/c2/stream', type: 'video/mp4' }])
+
+    // Now let the stale c1 response arrive.
+    resolveC1(jsonResponse(CLIP))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('backyard')
+    expect(wrapper.text()).not.toContain('front')
+    expect(fakePlayer.src).toHaveBeenLastCalledWith([{ src: '/api/clips/c2/stream', type: 'video/mp4' }])
+    wrapper.unmount()
+  })
 })

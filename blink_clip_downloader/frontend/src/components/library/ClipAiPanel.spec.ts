@@ -168,13 +168,12 @@ describe('ClipAiPanel', () => {
     expect(wrapper.text()).toContain('Failed to load analysis')
   })
 
-  it('shows a toast and stays in error state when re-analyze fails', async () => {
-    mockFetch({
-      '/api/ai/results/c1': null,
-      '/api/ai/analyze/c1': () => {
-        throw new Error('boom')
-      },
-    })
+  it('shows a toast and lets the user retry when analyze fails on a never-analyzed clip', async () => {
+    // Regression test: analyzeNow()'s catch used to set loadError, which
+    // permanently stranded the panel on "Failed to load analysis" — loaded
+    // stays true from the earlier successful (empty) load, so toggle()'s
+    // `!loaded.value` guard never re-fetches, and there was no way back to
+    // the retry button short of remounting the whole component.
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
@@ -191,7 +190,38 @@ describe('ClipAiPanel', () => {
       .find((b) => b.text().includes('Analyze Now'))!
       .trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('Failed to load analysis')
+    expect(wrapper.text()).not.toContain('Failed to load analysis')
+    expect(wrapper.text()).toContain('Not analyzed yet')
+    expect(wrapper.findAll('button').find((b) => b.text().includes('Analyze Now'))).toBeTruthy()
+  })
+
+  it('keeps showing the existing result if a re-analyze attempt fails', async () => {
+    // Regression test: a transient re-analyze failure must not hide the
+    // still-valid previous result behind a blanket "Failed to load
+    // analysis" message — nothing changed server-side, so the old result
+    // is still accurate.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/ai/analyze/c1') return Promise.reject(new Error('boom'))
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+        if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('87% confidence')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Re-analyze'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Failed to load analysis')
+    expect(wrapper.text()).toContain('87% confidence')
   })
 
   it('renders a clean (non-suspicious) result without summary/analyzed_at/frame_count', async () => {

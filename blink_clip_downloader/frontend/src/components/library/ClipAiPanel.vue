@@ -51,7 +51,13 @@ async function analyzeNow() {
     await load()
     toast.show('AI analysis complete')
   } catch {
-    loadError.value = true
+    // Deliberately not setting loadError here: the analyze request itself
+    // never reached the server, so whatever was already on screen (the
+    // previous result, or the "Not analyzed yet" prompt) is still accurate
+    // and still lets the user retry. Setting loadError would replace that
+    // with a dead-end "Failed to load analysis" message — loaded stays
+    // true from the earlier successful load, so toggle() never calls
+    // load() again, and the panel would be stuck until fully remounted.
     toast.show('Analysis failed', true)
   } finally {
     analyzing.value = false

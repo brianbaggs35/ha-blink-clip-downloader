@@ -68,9 +68,18 @@ function ensurePlayer(): Player {
   return player
 }
 
+// Rapid prev/next navigation (clicks or arrow keys) can fire load() again
+// before an earlier call's getClip() resolves, with no inherent ordering —
+// whichever response arrives last would otherwise overwrite the player/
+// metadata regardless of which clip is actually selected by then. Mirrors
+// LibraryPage.vue's requestSeq pattern.
+let requestSeq = 0
+
 async function load(id: string) {
+  const seq = ++requestSeq
   try {
     const c = await getClip(id)
+    if (seq !== requestSeq) return
     clip.value = c
     currentTags.value = [...(c.tags || [])]
     starred.value = c.starred
@@ -79,7 +88,7 @@ async function load(id: string) {
     p.load()
     p.play()?.catch(() => {})
   } catch {
-    toast.show('Failed to load clip', true)
+    if (seq === requestSeq) toast.show('Failed to load clip', true)
   }
 }
 
