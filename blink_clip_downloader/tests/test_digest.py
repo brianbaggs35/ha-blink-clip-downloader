@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 from blink_downloader.digest import DailyDigest
 
@@ -153,6 +155,24 @@ def test_load_last_sent_corrupt_file(tmp_path: Path) -> None:
     state_file.write_text("not json!!!")
     digest, _, _ = _make_digest(tmp_path)
     assert digest._last_sent is None
+
+
+def test_load_last_sent_unreadable_file_logs(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An existing-but-unreadable file must not crash the app at __init__ —
+    DailyDigest() is constructed directly in BlinkClipDownloaderApp.__init__
+    with no surrounding try/except, so an uncaught OSError here would take
+    down the whole add-on at startup."""
+    state_file = tmp_path / "last_digest.json"
+    state_file.write_text(json.dumps({"last_sent": "2024-06-01"}))
+    with (
+        patch("pathlib.Path.read_text", side_effect=OSError("permission denied")),
+        caplog.at_level(logging.WARNING),
+    ):
+        digest, _, _ = _make_digest(tmp_path)
+    assert digest._last_sent is None
+    assert "corrupt or unreadable" in caplog.text
 
 
 def test_load_last_sent_wrong_shape_json(tmp_path: Path) -> None:

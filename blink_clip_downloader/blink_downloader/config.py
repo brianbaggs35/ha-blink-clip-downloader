@@ -468,7 +468,9 @@ def _parse_media_server_kwargs(data: dict) -> dict[str, Any]:
             1024, min(65535, int(data.get("media_server_port", 8099)))
         ),
         "watch_ha_events": bool(data.get("watch_ha_events", True)),
-        "fast_poll_duration": max(10, int(data.get("fast_poll_duration", 120))),
+        "fast_poll_duration": max(
+            10, min(3600, int(data.get("fast_poll_duration", 120)))
+        ),
         "fast_poll_interval": max(5, min(60, int(data.get("fast_poll_interval", 15)))),
         "event_cameras": [
             c.strip()

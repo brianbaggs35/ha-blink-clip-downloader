@@ -184,6 +184,21 @@ def test_retry_delay_floor_still_applies():
     assert cfg.retry_delay == 0.0
 
 
+def test_fast_poll_duration_clamped_to_upper_bound():
+    """Regression test: fast_poll_duration previously had only a floor,
+    unlike its sibling fast_poll_interval/post_motion_delay (and unlike its
+    own config.yaml schema, which already declares int(10,3600)) — a
+    typo'd huge value would leave the add-on polling Blink at the aggressive
+    fast_poll_interval rate indefinitely after a single motion event."""
+    cfg = _parse_config({"username": "u", "password": "p", "fast_poll_duration": 99999})
+    assert cfg.fast_poll_duration == 3600
+
+
+def test_fast_poll_duration_floor_still_applies():
+    cfg = _parse_config({"username": "u", "password": "p", "fast_poll_duration": 1})
+    assert cfg.fast_poll_duration == 10
+
+
 def test_download_path_as_path_object(tmp_path):
     cfg = _parse_config(
         {"username": "u", "password": "p", "download_path": str(tmp_path)}

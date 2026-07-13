@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 
 from blink_downloader.tracker import ClipTracker, _MAX_TRACKED_IDS
 
@@ -113,6 +116,25 @@ def test_empty_file_starts_fresh(tmp_path):
     f.write_text("")
     t = ClipTracker(f)
     assert t.stats["total_downloaded"] == 0
+
+
+def test_unreadable_file_starts_fresh_and_logs(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An existing-but-unreadable file (e.g. permissions/disk I/O error) must
+    not crash the app at __init__ — ClipTracker() is constructed directly in
+    BlinkClipDownloaderApp.__init__ with no surrounding try/except, so an
+    uncaught OSError here would take down the whole add-on at startup."""
+    f = tmp_path / "tracker.json"
+    f.write_text('{"downloaded_ids": []}')
+    with (
+        patch.object(Path, "read_text", side_effect=OSError("permission denied")),
+        caplog.at_level(logging.WARNING),
+    ):
+        t = ClipTracker(f)
+    assert t.stats["total_downloaded"] == 0
+    assert not t.is_downloaded("any_id")
+    assert "corrupt or unreadable" in caplog.text
 
 
 def test_wrong_shape_json_starts_fresh(tmp_path):

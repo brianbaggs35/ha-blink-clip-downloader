@@ -277,19 +277,21 @@ async def test_on_clips_downloaded_records_baseline_when_library_db_enabled(app)
     )
 
 
-async def test_on_clips_downloaded_baseline_failure_is_swallowed(app):
+async def test_on_clips_downloaded_baseline_failure_is_swallowed(app, caplog):
     """A failure recording the anomaly baseline (e.g. DB error) must not
     interrupt the rest of the post-download flow (notifications, sensor
-    update, etc.)."""
+    update, etc.), but must still be logged rather than silently dropped."""
     app._config.enable_library_db = True
     app._db.record_clip_baseline = AsyncMock(side_effect=RuntimeError("db locked"))
     clips = [
         {"id": "1", "camera": "C", "path": "/p", "timestamp": "t", "size_bytes": 5}
     ]
 
-    await app._on_clips_downloaded(clips)  # must not raise
+    with caplog.at_level("DEBUG", logger="blink_downloader.app"):
+        await app._on_clips_downloaded(clips)  # must not raise
 
     app._notifier.update_sensor.assert_awaited_once()
+    assert "Could not record behavior baseline" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -1347,10 +1349,12 @@ def test_init_car_cameras_falls_back_to_options_when_ui_file_has_none_checked(
 
 
 def test_init_corrupt_camera_configs_file_falls_back_to_options_json(
-    base_config, tmp_path
+    base_config, tmp_path, caplog
 ):
     """A corrupt camera_configs.json must not crash startup — options.json
-    values should still reach the analyzer."""
+    values should still reach the analyzer, and the failure must be logged
+    rather than silently swallowed (this is the only place a user would
+    learn why their per-camera settings stopped applying)."""
     import dataclasses
 
     cfg_file = tmp_path / "camera_configs.json"
@@ -1368,6 +1372,7 @@ def test_init_corrupt_camera_configs_file_falls_back_to_options_json(
     with (
         patch("blink_downloader.app.Path", return_value=cfg_file),
         patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
+        caplog.at_level("WARNING"),
     ):
         mock_create_analyzer.return_value = MagicMock()
         BlinkClipDownloaderApp(config)
@@ -1375,6 +1380,7 @@ def test_init_corrupt_camera_configs_file_falls_back_to_options_json(
     assert mock_create_analyzer.call_args.kwargs["camera_descriptions"] == {
         "Driveway": "fallback description"
     }
+    assert "Could not load" in caplog.text
 
 
 def _build_app_with_vehicle_settings(
@@ -1454,11 +1460,12 @@ def test_init_vehicle_settings_falls_back_to_options_when_file_missing(
 
 
 def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
-    base_config, tmp_path
+    base_config, tmp_path, caplog
 ) -> None:
     """A corrupt vehicle_settings.json must not crash startup — options.json
     should still reach the analyzer, mirroring camera_configs.json's
-    corrupt-file handling."""
+    corrupt-file handling — and the failure must be logged, not silently
+    swallowed."""
     vehicle_file = tmp_path / "vehicle_settings.json"
     vehicle_file.write_text("{not valid json")
 
@@ -1481,6 +1488,7 @@ def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
     with (
         patch("blink_downloader.app.Path", side_effect=_fake_path),
         patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
+        caplog.at_level("WARNING"),
     ):
         mock_create_analyzer.return_value = MagicMock()
         BlinkClipDownloaderApp(config)
@@ -1489,6 +1497,7 @@ def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
         mock_create_analyzer.call_args.kwargs["car_description"]
         == "options.json fallback description"
     )
+    assert "Could not load" in caplog.text
 
 
 def test_init_attaches_scene_baseline_db_and_creates_analysis_queue(

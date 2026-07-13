@@ -175,8 +175,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 zone = MediaServer._normalize_car_zone(cam_cfg.get("car_zone"))
                 if zone is not None:
                     car_zones[cam] = zone
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Could not load %s, starting with no per-camera AI "
+                "descriptions/prompts/car-camera settings: %s",
+                cam_desc_file,
+                exc,
+            )
 
         return camera_descriptions, camera_prompts, car_cameras_from_ui, car_zones
 
@@ -197,7 +202,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         try:
             data = json.loads(settings_file.read_text())
             return str(data.get("car_description", ""))
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Could not load %s, falling back to the configured "
+                "ai_car_description option: %s",
+                settings_file,
+                exc,
+            )
             return None
 
     @staticmethod
@@ -657,8 +668,12 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     hour=hour,
                     duration=float(clip.get("duration") or 0),
                 )
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Could not record behavior baseline for clip %s: %s",
+                    clip.get("id"),
+                    exc,
+                )
 
     # ------------------------------------------------------------------
     # Fast-poll mode (triggered by HA motion events)

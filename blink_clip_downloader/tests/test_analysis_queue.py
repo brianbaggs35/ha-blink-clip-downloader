@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -506,6 +507,7 @@ async def test_start_calls_process_pending_when_healthy(db: ClipDatabase) -> Non
 
 async def test_process_pending_exception_in_anomaly_score_is_swallowed(
     db: ClipDatabase,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """If get_anomaly_score raises, the exception is caught and analysis proceeds."""
     analyzer = _make_analyzer_mock()
@@ -515,13 +517,17 @@ async def test_process_pending_exception_in_anomaly_score_is_swallowed(
     await db.add_clip(_add_clip("c1"))
     await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
 
-    with patch.object(db, "get_anomaly_score", side_effect=RuntimeError("db error")):
+    with (
+        patch.object(db, "get_anomaly_score", side_effect=RuntimeError("db error")),
+        caplog.at_level(logging.DEBUG),
+    ):
         await queue._process_pending()
 
     # Analysis should still have been attempted despite the anomaly-score error
     analyzer.analyze_clip.assert_awaited_once()
     counts = await db.get_queue_counts()
     assert counts["pending"] == 0  # item was processed
+    assert "Could not compute anomaly score" in caplog.text
 
 
 # ===========================================================================

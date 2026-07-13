@@ -177,7 +177,10 @@ class AnalysisQueue:
             return await self._db.get_anomaly_score(
                 camera=camera, hour=hour, duration=clip_duration
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug(
+                "Could not compute anomaly score for camera %s: %s", camera, exc
+            )
             return 0.0
 
     @staticmethod

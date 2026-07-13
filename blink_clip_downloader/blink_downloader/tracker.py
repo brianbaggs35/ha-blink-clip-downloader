@@ -106,9 +106,11 @@ class ClipTracker:
             if raw_time:
                 self._last_download_time = datetime.fromisoformat(raw_time)
             self._stats = {**self._stats, **data.get("stats", {})}
-        except (ValueError, KeyError, AttributeError, TypeError) as exc:
+        except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
             _LOGGER.warning(
-                "Tracker file %s is corrupt, starting fresh: %s", self._file, exc
+                "Tracker file %s is corrupt or unreadable, starting fresh: %s",
+                self._file,
+                exc,
             )
 
     def _prune_if_needed(self) -> None:
