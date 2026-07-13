@@ -31,7 +31,6 @@ def app(base_config):
     a._notifier.update_sensor = AsyncMock(return_value=True)
     a._notifier.call_webhook = AsyncMock(return_value=True)
     a._notifier.close = AsyncMock()
-    a._storage.apply_retention_policy = MagicMock(return_value=0)
     a._storage.apply_retention_policy_paths = MagicMock(return_value=[])
     a._storage.is_over_quota = MagicMock(return_value=False)
     a._storage.disk_stats = MagicMock(return_value={"used_mb": 1.0, "free_gb": 99.0})

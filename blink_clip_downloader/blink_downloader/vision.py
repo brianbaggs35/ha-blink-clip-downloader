@@ -92,40 +92,8 @@ _DEPTH_SIMILARITY_FRACTION = 0.15
 
 
 # ----------------------------------------------------------------------
-# Availability checks (mirrors analyzer.is_moondream_installed())
+# Availability checks
 # ----------------------------------------------------------------------
-
-
-def is_opencv_available() -> bool:
-    """Return True if the opencv (cv2) package is importable."""
-    try:
-        __import__("cv2")
-        return True
-    except ImportError:
-        return False
-
-
-def is_object_detection_available() -> bool:
-    """Return True if the ultralytics package is importable."""
-    try:
-        __import__("ultralytics")
-        return True
-    except ImportError:
-        return False
-
-
-def is_depth_estimation_available() -> bool:
-    """Return True if the transformers package is importable."""
-    try:
-        __import__("transformers")
-        return True
-    except ImportError:
-        return False
-
-
-def is_segmentation_available() -> bool:
-    """Return True if the transformers package is importable (SAM2 support)."""
-    return is_depth_estimation_available()
 
 
 def is_face_recognition_available() -> bool:

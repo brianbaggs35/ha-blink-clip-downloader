@@ -97,7 +97,7 @@ async def client(
     (assets_dir / "index.js").write_text("// built JS bundle stand-in")
     monkeypatch.setattr(media_server, "_STATIC_DIR", static_dir)
 
-    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    server = MediaServer(db=db, port=0)
     app = server._build_app()
     # Inject the server instance so handlers can reference self._db etc.
     # We expose the server via the app's router directly.
@@ -271,7 +271,7 @@ async def test_list_clips_notified_filter(db: ClipDatabase, tmp_path: Path) -> N
     )
     queue = MagicMock()
     queue.min_confidence = 0.5
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analysis_queue=queue)
+    server = MediaServer(db=db, port=0, analysis_queue=queue)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -551,9 +551,7 @@ async def test_download_now_triggers_callback(db: ClipDatabase, tmp_path: Path) 
     def fake_trigger():
         triggered.append(True)
 
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, trigger_download=fake_trigger
-    )
+    server = MediaServer(db=db, port=0, trigger_download=fake_trigger)
     app = server._build_app()
     tc = TestClient(TestServer(app))
     await tc.start_server()
@@ -796,7 +794,6 @@ async def test_auth_status_with_getter(db: ClipDatabase, tmp_path: Path) -> None
     """auth_state_getter return value is forwarded to the client."""
     server = MediaServer(
         db=db,
-        download_path=tmp_path,
         port=0,
         auth_state_getter=lambda: {"state": "needs_2fa", "message": "Enter your code."},
     )
@@ -818,7 +815,6 @@ async def test_auth_status_forwards_two_fa_result_fields(
     detect a rejected (wrong) 2FA code for a specific submission."""
     server = MediaServer(
         db=db,
-        download_path=tmp_path,
         port=0,
         auth_state_getter=lambda: {
             "state": "needs_2fa",
@@ -852,7 +848,6 @@ async def test_two_fa_submit_valid_code(db: ClipDatabase, tmp_path: Path) -> Non
 
     server = MediaServer(
         db=db,
-        download_path=tmp_path,
         port=0,
         two_fa_callback=_callback,
     )
@@ -877,7 +872,6 @@ async def test_two_fa_submit_returns_seq_from_callback(
     """The seq number returned by the callback is forwarded to the client."""
     server = MediaServer(
         db=db,
-        download_path=tmp_path,
         port=0,
         two_fa_callback=lambda _code: 7,
     )
@@ -896,9 +890,7 @@ async def test_two_fa_submit_returns_seq_from_callback(
 async def test_two_fa_submit_non_numeric_rejected(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, two_fa_callback=lambda _: 0
-    )
+    server = MediaServer(db=db, port=0, two_fa_callback=lambda _: 0)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -911,9 +903,7 @@ async def test_two_fa_submit_non_numeric_rejected(
 async def test_two_fa_submit_wrong_length_rejected(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, two_fa_callback=lambda _: 0
-    )
+    server = MediaServer(db=db, port=0, two_fa_callback=lambda _: 0)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -939,7 +929,7 @@ async def test_stats_returns_disk_from_extra_status(
 ) -> None:
     """Storage section is populated from MediaServer.extra_status['disk'], not
     from request.app (which is aiohttp's internal dict and is never populated)."""
-    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    server = MediaServer(db=db, port=0)
     server.extra_status = {
         "connected": True,
         "disk": {
@@ -1828,7 +1818,7 @@ async def test_ai_camera_configs_put_updates_live_analyzer(
 ) -> None:
     """PUT pushes descriptions/prompts/car-cameras into the live analyzer."""
     analyzer = _make_analyzer()
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -1868,7 +1858,7 @@ async def test_ai_camera_configs_put_updates_live_analyzer_car_zones(
     """PUT pushes a valid car_zone into the live analyzer, keyed by camera,
     and omits cameras with no (or an invalid) zone configured."""
     analyzer = _make_analyzer()
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -1912,7 +1902,7 @@ async def test_ai_camera_configs_put_can_clear_car_cameras(
     car-camera set, not silently preserve the previous one — camera_configs.json
     is the single source of truth for is_car_camera."""
     analyzer = _make_analyzer()
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -1947,7 +1937,7 @@ async def test_ai_camera_configs_put_clears_removed_custom_prompt(
     on the live analyzer — a naive dict.update() merge would silently keep
     the stale prompt around until the add-on restarted."""
     analyzer = _make_analyzer()
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2018,7 +2008,7 @@ def test_is_moondream_installed_true_when_importable(
 
 
 async def test_start_and_stop_lifecycle(db: ClipDatabase, tmp_path: Path) -> None:
-    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    server = MediaServer(db=db, port=0)
     await server.start()
     try:
         assert server._runner is not None
@@ -2154,9 +2144,7 @@ async def test_export_zip_skips_missing_clip_ids(
 
 
 async def test_two_fa_bad_json_body(db: ClipDatabase, tmp_path: Path) -> None:
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, two_fa_callback=lambda _: 0
-    )
+    server = MediaServer(db=db, port=0, two_fa_callback=lambda _: 0)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2177,7 +2165,7 @@ async def test_two_fa_bad_json_body(db: ClipDatabase, tmp_path: Path) -> None:
 
 async def test_ai_status_enabled_ollama(db: ClipDatabase, tmp_path: Path) -> None:
     analyzer = _make_analyzer(provider="ollama")
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2204,7 +2192,6 @@ async def test_ai_status_smtp_configured_true(db: ClipDatabase, tmp_path: Path) 
     )
     server = MediaServer(
         db=db,
-        download_path=tmp_path,
         port=0,
         analyzer=analyzer,
         notification_dispatcher=dispatcher,
@@ -2223,7 +2210,7 @@ async def test_ai_status_car_protection_active_true(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     analyzer = _make_analyzer(provider="openai", car_protection_active=True)
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2238,7 +2225,7 @@ async def test_ai_status_enabled_moondream_local(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     analyzer = _make_analyzer(provider="moondream_local")
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2259,7 +2246,7 @@ async def test_ai_status_includes_escalation_info_when_configured(
     analyzer = _make_analyzer(provider="openai")
     escalation = _make_analyzer(provider="moondream_cloud", health=True)
     analyzer.escalation_analyzer = escalation
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2276,7 +2263,7 @@ async def test_ai_status_omits_escalation_info_when_not_configured(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     analyzer = _make_analyzer(provider="openai")
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2292,7 +2279,7 @@ async def test_ai_status_includes_queue_status(
 ) -> None:
     queue = MagicMock()
     queue.get_queue_status = AsyncMock(return_value={"pending": 2, "processing": 0})
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analysis_queue=queue)
+    server = MediaServer(db=db, port=0, analysis_queue=queue)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2308,7 +2295,7 @@ async def test_ai_status_includes_frame_analysis_stats(
 ) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_analysis_result(_make_analysis_result("c1").to_dict())
-    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    server = MediaServer(db=db, port=0)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2327,7 +2314,7 @@ async def test_ai_usage_enabled_non_anthropic(db: ClipDatabase, tmp_path: Path) 
     v4.0.0 fix that made this hasattr()-based rather than name-based)."""
     analyzer = _make_analyzer(provider="ollama")
     del analyzer.model_pricing
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2344,7 +2331,7 @@ async def test_ai_usage_enabled_anthropic_includes_pricing(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     analyzer = _make_analyzer(provider="anthropic", pricing=(3.0, 15.0))
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2360,7 +2347,7 @@ async def test_ai_usage_enabled_openai_includes_pricing(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     analyzer = _make_analyzer(provider="openai", pricing=(2.5, 10.0))
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2374,7 +2361,7 @@ async def test_ai_usage_enabled_openai_includes_pricing(
 
 async def test_ai_models_enabled(db: ClipDatabase, tmp_path: Path) -> None:
     analyzer = _make_analyzer(models=[{"name": "llava:7b"}])
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2389,7 +2376,7 @@ async def test_ai_models_enabled(db: ClipDatabase, tmp_path: Path) -> None:
 async def test_ai_queue_enabled(db: ClipDatabase, tmp_path: Path) -> None:
     queue = MagicMock()
     queue.get_queue_status = AsyncMock(return_value={"pending": 1})
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analysis_queue=queue)
+    server = MediaServer(db=db, port=0, analysis_queue=queue)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2452,9 +2439,7 @@ async def test_ai_clip_result_omits_prompt_text_when_debug_disabled(
 async def test_ai_clip_result_includes_prompt_text_when_debug_enabled(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, prompt_debug_enabled=True
-    )
+    server = MediaServer(db=db, port=0, prompt_debug_enabled=True)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2484,9 +2469,7 @@ async def test_ai_clip_result_includes_prompt_text_when_debug_enabled(
 async def test_ai_status_reports_prompt_debug_enabled(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, prompt_debug_enabled=True
-    )
+    server = MediaServer(db=db, port=0, prompt_debug_enabled=True)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2524,7 +2507,7 @@ async def test_ai_suspicious_negative_limit_and_offset_are_clamped(
 
 async def test_ai_analyze_now_clip_not_found(db: ClipDatabase, tmp_path: Path) -> None:
     analyzer = _make_analyzer()
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2537,7 +2520,7 @@ async def test_ai_analyze_now_clip_not_found(db: ClipDatabase, tmp_path: Path) -
 async def test_ai_analyze_now_success(db: ClipDatabase, tmp_path: Path) -> None:
     await db.add_clip(_make_clip("an1", duration=47))
     analyzer = _make_analyzer(analyze_result=_make_analysis_result("an1"))
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2564,7 +2547,7 @@ async def test_ai_analyze_now_exception_returns_500(
     await db.add_clip(_make_clip("an2"))
     analyzer = _make_analyzer()
     analyzer.analyze_clip = AsyncMock(side_effect=RuntimeError("model unreachable"))
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2590,7 +2573,7 @@ async def test_ai_test_no_analyzer(client: TestClient) -> None:
 
 async def test_ai_test_no_clips_in_library(db: ClipDatabase, tmp_path: Path) -> None:
     analyzer = _make_analyzer()
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2603,7 +2586,7 @@ async def test_ai_test_no_clips_in_library(db: ClipDatabase, tmp_path: Path) -> 
 async def test_ai_test_success(db: ClipDatabase, tmp_path: Path) -> None:
     await db.add_clip(_make_clip("at1", duration=52))
     analyzer = _make_analyzer(analyze_result=_make_analysis_result("at1"))
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2623,7 +2606,7 @@ async def test_ai_test_analyze_exception_returns_500(
     await db.add_clip(_make_clip("at2"))
     analyzer = _make_analyzer()
     analyzer.analyze_clip = AsyncMock(side_effect=RuntimeError("model unreachable"))
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2656,9 +2639,7 @@ async def test_test_email_success(db: ClipDatabase, tmp_path: Path) -> None:
     dispatcher.send_test_email = AsyncMock(
         return_value=(True, "Test email sent to a@b.com.")
     )
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
-    )
+    server = MediaServer(db=db, port=0, notification_dispatcher=dispatcher)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -2675,9 +2656,7 @@ async def test_test_email_failure(db: ClipDatabase, tmp_path: Path) -> None:
     from blink_downloader.notification_channels import NotificationDispatcher
 
     dispatcher = NotificationDispatcher(smtp_host="", smtp_recipients=[])
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
-    )
+    server = MediaServer(db=db, port=0, notification_dispatcher=dispatcher)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3513,7 +3492,7 @@ async def test_vehicle_settings_get_falls_back_to_analyzer_when_no_file(
 ) -> None:
     analyzer = _make_analyzer()
     analyzer.car_description = "Silver Kia Forte"
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3531,7 +3510,7 @@ async def test_vehicle_settings_get_falls_back_to_analyzer_when_no_file(
 async def test_vehicle_settings_get_empty_without_analyzer(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
-    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    server = MediaServer(db=db, port=0)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3551,7 +3530,7 @@ async def test_vehicle_settings_put_then_get_round_trips(
 ) -> None:
     analyzer = _make_analyzer()
     analyzer.car_description = ""
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     settings_file = tmp_path / "vehicle_settings.json"
@@ -3578,7 +3557,7 @@ async def test_vehicle_settings_get_falls_back_on_corrupt_file(
 ) -> None:
     analyzer = _make_analyzer()
     analyzer.car_description = "Silver Kia Forte"
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     corrupt_file = tmp_path / "vehicle_settings.json"
@@ -3602,7 +3581,7 @@ async def test_vehicle_settings_put_survives_write_failure(
     live analyzer still gets updated for this run, matching the
     camera_configs.json precedent (_handle_ai_camera_configs_put)."""
     analyzer = _make_analyzer()
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     # A directory used as the settings "file" makes write_text() raise OSError.
@@ -3624,7 +3603,7 @@ async def test_vehicle_settings_put_survives_write_failure(
 
 
 async def test_vehicle_settings_put_bad_json(db: ClipDatabase, tmp_path: Path) -> None:
-    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    server = MediaServer(db=db, port=0)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3653,7 +3632,7 @@ async def test_ai_models_escalation_no_escalation_configured(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     analyzer = _make_analyzer(escalation_analyzer=None)
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3671,7 +3650,7 @@ async def test_ai_models_escalation_returns_models(
 ) -> None:
     escalation = _make_analyzer(models=["claude-haiku-4-5", "claude-opus-4-8"])
     analyzer = _make_analyzer(escalation_analyzer=escalation)
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3705,9 +3684,7 @@ async def test_test_mobile_without_dispatcher(client: TestClient) -> None:
 async def test_test_discord_success(db: ClipDatabase, tmp_path: Path) -> None:
     dispatcher = MagicMock()
     dispatcher.send_test_discord = AsyncMock(return_value=(True, "Test message sent."))
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
-    )
+    server = MediaServer(db=db, port=0, notification_dispatcher=dispatcher)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3723,9 +3700,7 @@ async def test_test_discord_success(db: ClipDatabase, tmp_path: Path) -> None:
 async def test_test_discord_failure_status(db: ClipDatabase, tmp_path: Path) -> None:
     dispatcher = MagicMock()
     dispatcher.send_test_discord = AsyncMock(return_value=(False, "Webhook not set."))
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
-    )
+    server = MediaServer(db=db, port=0, notification_dispatcher=dispatcher)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3738,9 +3713,7 @@ async def test_test_discord_failure_status(db: ClipDatabase, tmp_path: Path) -> 
 async def test_test_mobile_success(db: ClipDatabase, tmp_path: Path) -> None:
     dispatcher = MagicMock()
     dispatcher.send_test_mobile = AsyncMock(return_value=(True, "Test sent."))
-    server = MediaServer(
-        db=db, download_path=tmp_path, port=0, notification_dispatcher=dispatcher
-    )
+    server = MediaServer(db=db, port=0, notification_dispatcher=dispatcher)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3818,7 +3791,7 @@ async def test_ai_usage_moondream_cloud_gets_cost_fields(
     model_pricing() — dropping that allowlist lets any priced provider's
     AI Usage tab show its own cost rate."""
     analyzer = _make_analyzer(provider="moondream_cloud", pricing=(3.0, 15.0))
-    server = MediaServer(db=db, download_path=tmp_path, port=0, analyzer=analyzer)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
@@ -3846,7 +3819,6 @@ async def test_finetune_list_wrong_provider(db: ClipDatabase, tmp_path: Path) ->
     analyzer = _make_analyzer(provider="openai")
     server = MediaServer(
         db=db,
-        download_path=tmp_path,
         port=0,
         analyzer=analyzer,
         moondream_api_key="md-key",
@@ -3868,7 +3840,6 @@ def _make_finetune_server(db: ClipDatabase, tmp_path: Path, analyzer=None):
         analyzer = MoondreamCloudAnalyzer(api_key="md-key", prompt="test")
     return MediaServer(
         db=db,
-        download_path=tmp_path,
         port=0,
         analyzer=analyzer,
         moondream_api_key="md-key",
@@ -4482,7 +4453,7 @@ async def test_feedback_untrained_count_reflects_pending_rows(
 ) -> None:
     await _add_feedback_with_clip(db, clip_id="c1")
     await _add_feedback_with_clip(db, clip_id="c2")
-    server = MediaServer(db=db, download_path=tmp_path, port=0)
+    server = MediaServer(db=db, port=0)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:

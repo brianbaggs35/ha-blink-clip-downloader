@@ -463,24 +463,6 @@ class ClipDatabase:
         rows = await self._pool.fetch(_qm(sql), *params)
         return [_row_to_dict(r) for r in rows]
 
-    async def count_clips(
-        self, camera: str | None = None, starred: bool | None = None
-    ) -> int:
-        if self._pool is None:
-            return 0
-        where = ["archived=FALSE"]
-        params: list[Any] = []
-        if camera and camera != "all":
-            where.append("LOWER(camera)=LOWER(?)")
-            params.append(camera)
-        if starred is not None:
-            where.append("starred=?")
-            params.append(starred)
-        count = await self._pool.fetchval(
-            _qm(f"SELECT COUNT(*) FROM clips WHERE {' AND '.join(where)}"), *params
-        )
-        return count or 0
-
     async def get_all_file_paths(self) -> set[str]:
         """Return the set of all ``file_path`` values currently indexed."""
         if self._pool is None:
@@ -574,14 +556,6 @@ class ClipDatabase:
             week_ago,
         )
         return [dict(r) for r in rows]
-
-    async def get_distinct_cameras(self) -> list[str]:
-        if self._pool is None:
-            return []
-        rows = await self._pool.fetch(
-            "SELECT DISTINCT camera FROM clips WHERE archived=FALSE ORDER BY camera"
-        )
-        return [r["camera"] for r in rows]
 
     async def get_distinct_tags(self) -> list[str]:
         """Return all unique tags used across clips (best-effort)."""

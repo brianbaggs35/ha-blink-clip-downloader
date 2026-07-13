@@ -33,7 +33,7 @@ async def test_init_creates_tables(db: ClipDatabase) -> None:
     # A functional check, not just an attribute check: querying a freshly
     # created (and truncated, via the `db` fixture) table succeeds and is
     # empty, proving init() actually created the schema.
-    assert await db.count_clips() == 0
+    assert await db.get_clips() == []
 
 
 async def test_double_close_is_safe(db: ClipDatabase) -> None:
@@ -90,8 +90,7 @@ async def test_add_clip_idempotent(db: ClipDatabase) -> None:
     clip = _make_clip()
     await db.add_clip(clip)
     await db.add_clip(clip)  # INSERT OR IGNORE — no error
-    count = await db.count_clips()
-    assert count == 1
+    assert len(await db.get_clips()) == 1
 
 
 async def test_get_clip_missing_returns_none(db: ClipDatabase) -> None:
@@ -375,8 +374,8 @@ async def test_get_camera_stats(db: ClipDatabase) -> None:
 async def test_get_camera_stats_merges_case_insensitively(db: ClipDatabase) -> None:
     """Regression test: two clips recorded for the same camera under
     different casing (e.g. a Blink camera renamed/retyped over time) must
-    fold into a single stats row, matching how get_clips/count_clips already
-    match camera names case-insensitively elsewhere in this file."""
+    fold into a single stats row, matching how get_clips already matches
+    camera names case-insensitively elsewhere in this file."""
     today = datetime.now(timezone.utc).isoformat()
     await db.add_clip(_make_clip("c1", camera="Front Door", timestamp=today))
     await db.add_clip(_make_clip("c2", camera="front door", timestamp=today))
@@ -384,14 +383,6 @@ async def test_get_camera_stats_merges_case_insensitively(db: ClipDatabase) -> N
     cam_stats = await db.get_camera_stats()
     assert len(cam_stats) == 1
     assert cam_stats[0]["total"] == 3
-
-
-async def test_get_distinct_cameras(db: ClipDatabase) -> None:
-    await db.add_clip(_make_clip("c1", camera="A"))
-    await db.add_clip(_make_clip("c2", camera="B"))
-    await db.add_clip(_make_clip("c3", camera="A"))
-    cameras = await db.get_distinct_cameras()
-    assert cameras == ["A", "B"]
 
 
 async def test_get_distinct_tags(db: ClipDatabase) -> None:
@@ -446,7 +437,6 @@ async def test_operations_without_init_are_safe() -> None:
     d = ClipDatabase()
     assert await d.get_clip("x") is None
     assert await d.get_clips() == []
-    assert await d.count_clips() == 0
     assert await d.get_stats() == {}
     assert await d.get_camera_stats() == []
     assert await d.get_clips_to_archive(30) == []
@@ -750,31 +740,6 @@ async def test_get_clips_tag_filter(db: ClipDatabase) -> None:
     clips = await db.get_clips(tag="important")
     assert len(clips) == 1
     assert clips[0]["id"] == "c1"
-
-
-async def test_count_clips_camera_filter(db: ClipDatabase) -> None:
-    """count_clips(camera=...) counts only clips from that camera (lines 263-264)."""
-    await db.add_clip(_make_clip("c1", camera="Front Door"))
-    await db.add_clip(_make_clip("c2", camera="Back Yard"))
-    await db.add_clip(_make_clip("c3", camera="Front Door"))
-    count = await db.count_clips(camera="Front Door")
-    assert count == 2
-
-
-async def test_count_clips_starred_filter(db: ClipDatabase) -> None:
-    """count_clips(starred=True) counts only starred clips (lines 266-267)."""
-    await db.add_clip(_make_clip("c1"))
-    await db.add_clip(_make_clip("c2"))
-    await db.star_clip("c1", True)
-    count = await db.count_clips(starred=True)
-    assert count == 1
-
-
-async def test_get_distinct_cameras_without_init() -> None:
-    """get_distinct_cameras() returns [] when db is not initialised (line 358)."""
-    d = ClipDatabase()
-    result = await d.get_distinct_cameras()
-    assert result == []
 
 
 async def test_get_distinct_tags_without_init() -> None:

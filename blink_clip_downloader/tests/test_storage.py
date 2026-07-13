@@ -173,11 +173,6 @@ def test_quota_zero_never_exceeded(tmp_path):
     assert not s.is_over_quota()
 
 
-def test_bytes_remaining_unlimited(tmp_path):
-    s = make_storage(tmp_path, max_storage_gb=0)
-    assert s.bytes_remaining() > 0
-
-
 # ---------------------------------------------------------------------------
 # Retention
 # ---------------------------------------------------------------------------
@@ -195,8 +190,8 @@ def test_retention_deletes_old_clips(tmp_path):
     old.write_bytes(b"data")
     _age_file(old, 10)
 
-    deleted = s.apply_retention_policy()
-    assert deleted == 1
+    deleted = s.apply_retention_policy_paths()
+    assert deleted == [old]
     assert not old.exists()
 
 
@@ -206,8 +201,8 @@ def test_retention_keeps_recent_clips(tmp_path):
     recent = tmp_path / "clips" / "recent.mp4"
     recent.write_bytes(b"data")
 
-    deleted = s.apply_retention_policy()
-    assert deleted == 0
+    deleted = s.apply_retention_policy_paths()
+    assert deleted == []
     assert recent.exists()
 
 
@@ -218,8 +213,8 @@ def test_retention_zero_keeps_all(tmp_path):
     old.write_bytes(b"data")
     _age_file(old, 400)
 
-    deleted = s.apply_retention_policy()
-    assert deleted == 0
+    deleted = s.apply_retention_policy_paths()
+    assert deleted == []
     assert old.exists()
 
 
@@ -233,8 +228,9 @@ def test_retention_removes_thumbnails_too(tmp_path):
     _age_file(clip, 10)
     _age_file(thumb, 10)
 
-    deleted = s.apply_retention_policy()
-    assert deleted == 2
+    s.apply_retention_policy_paths()
+    assert not clip.exists()
+    assert not thumb.exists()
 
 
 def test_retention_paths_returns_only_clip_files(tmp_path):
@@ -264,7 +260,7 @@ def test_retention_cleans_empty_dirs(tmp_path):
     only_file.write_bytes(b"x")
     _age_file(only_file, 10)
 
-    s.apply_retention_policy()
+    s.apply_retention_policy_paths()
     assert not subdir.exists()
 
 
@@ -363,14 +359,6 @@ def test_used_bytes_ignores_stat_error(tmp_path):
     assert total == 0  # the only file errored, so nothing summed
 
 
-def test_bytes_remaining_with_quota_set(tmp_path):
-    """bytes_remaining() returns max_bytes - used when quota is configured (line 108)."""
-    s = make_storage(tmp_path, max_storage_gb=1.0)
-    s.ensure_directory()
-    remaining = s.bytes_remaining()
-    assert 0 < remaining <= int(1.0 * 1024**3)
-
-
 def test_apply_retention_oserror_on_delete(tmp_path):
     """When unlink raises OSError the error is logged and the loop continues (lines 132-133)."""
     s = make_storage(tmp_path, retention_days=7)
@@ -380,9 +368,9 @@ def test_apply_retention_oserror_on_delete(tmp_path):
     _age_file(old, 10)
 
     with patch.object(Path, "unlink", side_effect=OSError("permission denied")):
-        deleted = s.apply_retention_policy()
+        deleted = s.apply_retention_policy_paths()
 
-    assert deleted == 0  # unlink failed so counter stays 0
+    assert deleted == []  # unlink failed so nothing was deleted
 
 
 def test_disk_stats_oserror_fallback(tmp_path):

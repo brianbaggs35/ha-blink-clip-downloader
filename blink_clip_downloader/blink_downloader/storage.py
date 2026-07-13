@@ -102,33 +102,18 @@ class StorageManager:
             return False
         return self.used_bytes() >= self._max_bytes
 
-    def bytes_remaining(self) -> int:
-        """Return bytes available before quota is hit (0 = at/over quota)."""
-        if self._max_bytes == 0:
-            return 2**62
-        return max(0, self._max_bytes - self.used_bytes())
-
     # ------------------------------------------------------------------
     # Retention
     # ------------------------------------------------------------------
 
-    def apply_retention_policy(self) -> int:
-        """Delete clips (and thumbnails) older than *retention_days*.
-
-        Returns the number of files deleted.
-        """
-        deleted_count, _ = self._apply_retention_policy()
-        return deleted_count
-
     def apply_retention_policy_paths(self) -> list[Path]:
         """Delete clips (and thumbnails) older than *retention_days*.
 
-        Same as :meth:`apply_retention_policy` but returns the deleted clip
-        (``.mp4``) paths so the caller can remove the matching rows from the
-        ClipDatabase — this class has no DB reference of its own, so callers
-        that run with ``enable_library_db`` must reconcile the two
-        themselves or the DB accumulates orphaned rows for files that no
-        longer exist on disk.
+        Returns the deleted clip (``.mp4``) paths so the caller can remove
+        the matching rows from the ClipDatabase — this class has no DB
+        reference of its own, so callers that run with ``enable_library_db``
+        must reconcile the two themselves or the DB accumulates orphaned
+        rows for files that no longer exist on disk.
         """
         _, deleted_clips = self._apply_retention_policy()
         return deleted_clips

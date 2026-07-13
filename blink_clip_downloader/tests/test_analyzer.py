@@ -24,7 +24,6 @@ from blink_downloader.analyzer import (
     _OPENAI_FALLBACK_MODELS,
     _vision_model_score,
     create_analyzer,
-    is_moondream_installed,
     is_openai_vision_model,
     is_vision_model,
 )
@@ -1369,31 +1368,6 @@ async def test_fetch_models_score_field_present(analyzer: ClipAnalyzer) -> None:
 
     assert "score" in models[0]
     assert models[0]["score"] > 0
-
-
-# ------------------------------------------------------------------
-# is_moondream_installed
-# ------------------------------------------------------------------
-
-
-def test_is_moondream_installed_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys
-
-    fake_md = MagicMock()
-    monkeypatch.setitem(sys.modules, "moondream", fake_md)
-    assert is_moondream_installed() is True
-
-
-def test_is_moondream_installed_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys
-
-    monkeypatch.delitem(sys.modules, "moondream", raising=False)
-
-    with patch(
-        "builtins.__import__", side_effect=ImportError("no module named moondream")
-    ):
-        result = is_moondream_installed()
-    assert result is False
 
 
 # ------------------------------------------------------------------

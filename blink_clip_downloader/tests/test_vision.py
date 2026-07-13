@@ -3,10 +3,10 @@
 None of ultralytics/torch/transformers/facenet-pytorch/opencv are installed
 in the test environment (they're a large optional extra — see pyproject.toml
 "vision"), so every heavy dependency is mocked via sys.modules, mirroring the
-existing is_moondream_installed()/MoondreamLocalAnalyzer pattern in
-test_analyzer.py. numpy and PIL *are* real (numpy is already a transitive
-dependency here; Pillow is a hard dependency), so array/image plumbing is
-exercised for real wherever a stage doesn't itself need the mocked library.
+existing MoondreamLocalAnalyzer pattern in test_analyzer.py. numpy and PIL
+*are* real (numpy is already a transitive dependency here; Pillow is a hard
+dependency), so array/image plumbing is exercised for real wherever a stage
+doesn't itself need the mocked library.
 """
 
 from __future__ import annotations
@@ -45,11 +45,7 @@ from blink_downloader.vision import (
     _build_tracking_hint,
     _proximity_label,
     cosine_similarity,
-    is_depth_estimation_available,
     is_face_recognition_available,
-    is_object_detection_available,
-    is_opencv_available,
-    is_segmentation_available,
 )
 
 
@@ -62,46 +58,6 @@ def _real_jpeg_bytes(size: tuple[int, int] = (10, 10)) -> bytes:
 # ------------------------------------------------------------------
 # Availability checks
 # ------------------------------------------------------------------
-
-
-def test_is_opencv_available_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "cv2", MagicMock())
-    assert is_opencv_available() is True
-
-
-def test_is_opencv_available_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delitem(sys.modules, "cv2", raising=False)
-    with patch("builtins.__import__", side_effect=ImportError):
-        assert is_opencv_available() is False
-
-
-def test_is_object_detection_available_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "ultralytics", MagicMock())
-    assert is_object_detection_available() is True
-
-
-def test_is_object_detection_available_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delitem(sys.modules, "ultralytics", raising=False)
-    with patch("builtins.__import__", side_effect=ImportError):
-        assert is_object_detection_available() is False
-
-
-def test_is_depth_estimation_available_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "transformers", MagicMock())
-    assert is_depth_estimation_available() is True
-
-
-def test_is_depth_estimation_available_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delitem(sys.modules, "transformers", raising=False)
-    with patch("builtins.__import__", side_effect=ImportError):
-        assert is_depth_estimation_available() is False
-
-
-def test_is_segmentation_available_mirrors_transformers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setitem(sys.modules, "transformers", MagicMock())
-    assert is_segmentation_available() is True
 
 
 def test_is_face_recognition_available_true(monkeypatch: pytest.MonkeyPatch) -> None:

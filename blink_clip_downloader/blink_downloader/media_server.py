@@ -130,7 +130,6 @@ class MediaServer:
     def __init__(
         self,
         db: ClipDatabase,
-        download_path: Path,
         port: int,
         trigger_download: Callable[[], None] | None = None,
         two_fa_callback: Callable[[str], int] | None = None,
@@ -142,7 +141,6 @@ class MediaServer:
         prompt_debug_enabled: bool = False,
     ) -> None:
         self._db = db
-        self._download_path = download_path
         self._port = port
         self._trigger_download = trigger_download
         self._two_fa_callback = two_fa_callback

@@ -376,15 +376,6 @@ def lookup_model_pricing(model: str) -> tuple[float, float] | None:
     return None
 
 
-def is_moondream_installed() -> bool:
-    """Return True if the moondream package is importable."""
-    try:
-        __import__("moondream")
-        return True
-    except ImportError:
-        return False
-
-
 @dataclass
 class AnalysisResult:
     """Structured output from a clip analysis run."""

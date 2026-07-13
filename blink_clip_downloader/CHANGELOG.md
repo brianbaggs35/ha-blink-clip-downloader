@@ -548,6 +548,32 @@ Docker build + container run, not just review)
   `pip install` themselves.
 - CI's smoke-test job now also checks `/api/ai/faces` responds correctly
   inside the real built container.
+- Bumped `numpy` (2.4.6 → 2.5.1) and `openai` (2.44.0 → 2.45.0) to the latest
+  versions compatible with this codebase's own minimum-version floors (both
+  already used unbounded `>=` constraints — nothing else needed bumping,
+  everything else was already current); bumped the frontend's
+  `typescript-eslint` dev dependency similarly. Verified via a full
+  lint/typecheck/test run against the upgraded versions before committing.
+- Removed several backend helpers left over from earlier refactors, once
+  confirmed (via static analysis and a full cross-reference of every call
+  site) to have no remaining callers anywhere in the app: `analyzer.py`'s
+  `is_moondream_installed()` (superseded by `media_server.py`'s own
+  `_is_moondream_installed()`, which also handles the persistent
+  moondream-packages path), `database.py`'s `get_distinct_cameras()`
+  (superseded by the richer `get_camera_stats()`) and `count_clips()`,
+  `storage.py`'s `bytes_remaining()` and `apply_retention_policy()` (the
+  app only ever calls its `apply_retention_policy_paths()` sibling), and
+  four `vision.py` availability-check functions
+  (`is_opencv_available`/`is_object_detection_available`/
+  `is_depth_estimation_available`/`is_segmentation_available`) orphaned by
+  the pre-5.0.0 consolidation of per-stage CV toggles into
+  `ai_enhanced_detection_enabled` — only their sibling
+  `is_face_recognition_available()` survived that consolidation, since
+  face recognition kept its own dedicated toggle and Biometrics-tab
+  affordance. Also removed `media_server.py`'s unused `download_path`
+  constructor parameter/attribute. No behavior change; each removal was
+  cross-checked against every call site (production and tests) before
+  deleting, and the full test suite (99.35% coverage) passes unchanged.
 
 ### Bug fixes — CI (numpy dependency, config schema drift)
 
