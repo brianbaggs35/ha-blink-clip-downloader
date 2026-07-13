@@ -417,6 +417,14 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             self._tracker.mark_downloaded(clip_id, size)
             return None
 
+        # Download to a temp path and atomically rename over dest only after
+        # a full, successful download — mirrors _stream_attempt()'s cloud-clip
+        # download. blinkpy's download_video() opens the path we give it in
+        # truncate mode and writes the whole response in one call; without
+        # this, a process kill during that window leaves a truncated (or
+        # zero-byte) file at dest, and the dest.exists() check above would
+        # treat it as a completed download forever.
+        tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
         try:
             _LOGGER.info(
                 "Preparing local-storage clip %s from %r (~%.1f KB)",
@@ -427,26 +435,35 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             await item.prepare_download(self._blink)
             success = await item.download_video(
                 self._blink,
-                str(dest),
+                str(tmp_dest),
                 max_retries=self._config.retry_attempts,
             )
         except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
             _LOGGER.exception(
                 "Error downloading local-storage clip %s: %s", item.id, exc
             )
-            if dest.exists():
-                dest.unlink(missing_ok=True)
+            if tmp_dest.exists():
+                tmp_dest.unlink(missing_ok=True)
             return None
 
         if not success:
             _LOGGER.warning(
                 "Local-storage clip %s download failed (retries exhausted)", item.id
             )
-            if dest.exists():
-                dest.unlink(missing_ok=True)
+            if tmp_dest.exists():
+                tmp_dest.unlink(missing_ok=True)
             return None
 
-        size = dest.stat().st_size if dest.exists() else 0
+        if not tmp_dest.exists():
+            _LOGGER.warning(
+                "Local-storage clip %s download reported success but no file "
+                "was written",
+                item.id,
+            )
+            return None
+        os.replace(tmp_dest, dest)
+
+        size = dest.stat().st_size
         self._tracker.mark_downloaded(clip_id, size)
         _LOGGER.info(
             "Downloaded local-storage clip %s from %r → %s (%d KB)",

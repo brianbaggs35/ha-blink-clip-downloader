@@ -1972,6 +1972,56 @@ async def test_download_local_storage_already_on_disk_marks_downloaded(dl, tmp_p
     assert dl._tracker.is_downloaded("local_4244")
 
 
+async def test_download_local_storage_dest_not_visible_until_write_completes(
+    dl, tmp_path
+):
+    """Regression test: a killed process mid-download must never leave a
+    truncated file at dest — blinkpy's download_video() opens the path we
+    give it in truncate mode, so it must be pointed at a .tmp path that's
+    only atomically renamed over dest after the write fully succeeds,
+    mirroring _stream_attempt()'s cloud-clip download."""
+    from pathlib import Path as _Path
+
+    mock_item = MagicMock()
+    mock_item.id = 7321
+    mock_item.name = "Side Yard"
+    mock_item.created_at = datetime(2024, 6, 3, tzinfo=timezone.utc)
+    mock_item.size = 4096
+    mock_item.prepare_download = AsyncMock(return_value=True)
+
+    dest = dl._storage.resolve_path(
+        mock_item.name, mock_item.created_at, f"local_{mock_item.id}"
+    )
+    tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
+    dest_existed_during_write = False
+
+    async def _fake_download(blink, file_name, max_retries=4):
+        nonlocal dest_existed_during_write
+        assert _Path(file_name) == tmp_dest
+        _Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+        _Path(file_name).write_bytes(b"V" * 100)
+        dest_existed_during_write = dest.exists()
+        return True
+
+    mock_item.download_video = _fake_download
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m7"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = None
+
+    results = await dl.download_local_storage_clips()
+
+    assert len(results) == 1
+    assert dest_existed_during_write is False
+    assert dest.read_bytes() == b"V" * 100
+    assert not tmp_dest.exists()
+
+
 async def test_download_local_storage_prepare_download_exception_cleans_up(
     dl, tmp_path
 ):
@@ -1986,12 +2036,15 @@ async def test_download_local_storage_prepare_download_exception_cleans_up(
     mock_item.size = 1024
 
     async def _failing_prepare(blink):
-        # Simulate a partial file being written before the failure.
+        # Simulate a partial file being written before the failure — at the
+        # .tmp write target, not the final dest (see _download_local_storage_item's
+        # atomic-rename-on-success design, mirroring _stream_attempt).
         dest = dl._storage.resolve_path(
             mock_item.name, mock_item.created_at, f"local_{mock_item.id}"
         )
-        _Path(dest).parent.mkdir(parents=True, exist_ok=True)
-        _Path(dest).write_bytes(b"partial")
+        tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
+        _Path(tmp_dest).parent.mkdir(parents=True, exist_ok=True)
+        _Path(tmp_dest).write_bytes(b"partial")
         raise RuntimeError("sync module offline")
 
     mock_item.prepare_download = _failing_prepare
@@ -2013,6 +2066,7 @@ async def test_download_local_storage_prepare_download_exception_cleans_up(
         mock_item.name, mock_item.created_at, f"local_{mock_item.id}"
     )
     assert not dest.exists()
+    assert not dest.with_suffix(dest.suffix + ".tmp").exists()
 
 
 async def test_download_local_storage_writes_to_db_when_configured(dl, tmp_path):
@@ -2194,10 +2248,13 @@ async def test_download_local_storage_download_failure_cleans_up_partial_file(
     dest = dl._storage.resolve_path(
         mock_item.name, mock_item.created_at, f"local_{mock_item.id}"
     )
+    tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
 
     async def _fake_prepare(blink):
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"partial")
+        # Simulate a partial file at the .tmp write target (see
+        # _download_local_storage_item's atomic-rename-on-success design).
+        tmp_dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp_dest.write_bytes(b"partial")
 
     mock_item.prepare_download = _fake_prepare
     mock_item.download_video = AsyncMock(return_value=False)  # download fails
@@ -2215,3 +2272,4 @@ async def test_download_local_storage_download_failure_cleans_up_partial_file(
     assert results == []
     assert not dl._tracker.is_downloaded("local_6667")
     assert not dest.exists()
+    assert not tmp_dest.exists()
