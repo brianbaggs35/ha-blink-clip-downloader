@@ -2,15 +2,15 @@
 
 ## 5.0.0
 
-Major release, bumped from 4.1.0 (never tagged/shipped) given the scope of
-what landed together: a complete visual redesign of the web UI, an optional
-off-by-default computer-vision enhancement pipeline layered on top of the
-existing AI-provider prompt pipeline, the Moondream Cloud fine-tuning panel
-wired end-to-end to human feedback, and dedicated Vehicles/Biometrics tabs
-with a face-recognition suspicious-flag bypass. None of the AI/CV work
-changes default behavior — every new stage and feature is disabled or empty
-out of the box and the add-on analyzes clips exactly as it did in 4.0.2
-until explicitly turned on.
+Major release, bumped from 4.1.0 given the scope of what landed together: a
+complete visual redesign of the web UI, an optional off-by-default
+computer-vision enhancement pipeline layered on top of the existing
+AI-provider prompt pipeline, the Moondream Cloud fine-tuning panel wired
+end-to-end to human feedback, and dedicated Vehicles/Biometrics tabs with a
+face-recognition suspicious-flag bypass. None of the AI/CV work changes
+default behavior — every new stage and feature is disabled or empty out of
+the box and the add-on analyzes clips exactly as it did in 4.0.2 until
+explicitly turned on.
 
 ### Added — Vehicles tab
 
