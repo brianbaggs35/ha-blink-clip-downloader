@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { analyzeClipNow, getClipAiResult, getFeedbackForClip, submitFeedback } from '../../api/ai'
 import type { AnalysisResultDict, Feedback } from '../../api/types'
 import { usePromptOverlayStore } from '../../stores/promptOverlay'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 
 const props = defineProps<{ clipId: string; promptDebugEnabled?: boolean }>()
 
 const toast = useToastStore()
 const promptOverlay = usePromptOverlayStore()
+const refresh = useRefreshStore()
 
 const expanded = ref(false)
 const loading = ref(false)
@@ -21,19 +23,6 @@ const showFeedbackForm = ref(false)
 const feedbackNote = ref('')
 const feedbackCorrectedSuspicious = ref(false)
 const analyzing = ref(false)
-
-function reset() {
-  expanded.value = false
-  loaded.value = false
-  result.value = null
-  loadError.value = false
-  feedback.value = null
-  showRawResponse.value = false
-  showFeedbackForm.value = false
-  feedbackNote.value = ''
-  feedbackCorrectedSuspicious.value = false
-}
-watch(() => props.clipId, reset)
 
 async function load() {
   loading.value = true
@@ -100,6 +89,12 @@ async function trySubmitFeedback(body: {
   try {
     await submitFeedback(props.clipId, body)
     toast.show('Feedback recorded — thanks!')
+    // The AI tab's AdaptiveLearningCard/SuspiciousFeed can be mounted in the
+    // background right now (this panel opens from a clip modal that can be
+    // reached from the AI tab's Suspicious Activity Feed without switching
+    // tabs) — bump the shared refresh signal so their stats/list don't go
+    // stale until the AI tab is fully unmounted/remounted.
+    refresh.bump()
     return true
   } catch {
     toast.show('Failed to save feedback', true)

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { getAiStatus } from '../../api/ai'
 import type { AiStatus } from '../../api/types'
+import { useRefreshStore } from '../../stores/refresh'
 import AdaptiveLearningCard from './AdaptiveLearningCard.vue'
 import AiConnectionCard from './AiConnectionCard.vue'
 import AiStatusCards from './AiStatusCards.vue'
@@ -12,6 +13,9 @@ import SuspiciousFeed from './SuspiciousFeed.vue'
 
 const status = ref<AiStatus | null>(null)
 const loading = ref(true)
+const refresh = useRefreshStore()
+const adaptiveLearningCard = ref<InstanceType<typeof AdaptiveLearningCard> | null>(null)
+const suspiciousFeed = ref<InstanceType<typeof SuspiciousFeed> | null>(null)
 
 async function load() {
   try {
@@ -30,6 +34,19 @@ onMounted(() => {
   pollTimer = setInterval(load, 10_000)
 })
 onUnmounted(() => clearInterval(pollTimer))
+
+// AdaptiveLearningCard/SuspiciousFeed each expose reload() for exactly this:
+// feedback submitted from a clip's AI panel (reachable from this tab's
+// Suspicious Activity Feed without switching tabs — see ClipAiPanel.vue)
+// bumps this same shared refresh signal, since neither child otherwise has
+// any way to learn that feedback changed underneath it.
+watch(
+  () => refresh.tick,
+  () => {
+    void adaptiveLearningCard.value?.reload()
+    void suspiciousFeed.value?.reload()
+  },
+)
 </script>
 
 <template>
@@ -54,12 +71,12 @@ onUnmounted(() => clearInterval(pollTimer))
         <AiConnectionCard :status="status" />
         <AiStatusCards :status="status" />
         <EmailAlertsCard :smtp-configured="status.smtp_configured" />
-        <AdaptiveLearningCard />
+        <AdaptiveLearningCard ref="adaptiveLearningCard" />
         <FineTuneCard v-if="status.provider === 'moondream_cloud'" @activated="load" />
       </div>
 
       <CameraConfigsSection />
-      <SuspiciousFeed />
+      <SuspiciousFeed ref="suspiciousFeed" />
     </template>
   </div>
 </template>

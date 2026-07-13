@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AiPage from './AiPage.vue'
+import { useRefreshStore } from '../../stores/refresh'
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -144,5 +145,37 @@ describe('AiPage', () => {
     const callsAfterUnmount = vi.mocked(fetch).mock.calls.length
     await vi.advanceTimersByTimeAsync(30_000)
     expect(vi.mocked(fetch).mock.calls.length).toBe(callsAfterUnmount)
+  })
+
+  it('reloads AdaptiveLearningCard and SuspiciousFeed when the refresh store ticks', async () => {
+    // Regression test: feedback submitted from a clip's AI panel (reachable
+    // from this tab's Suspicious Activity Feed without switching tabs) used
+    // to leave these two cards' data stale until the AI tab was fully
+    // unmounted/remounted — they only exposed reload() but nothing ever
+    // called it. ClipAiPanel.vue now bumps the shared refresh store on a
+    // successful feedback submission; this asserts AiPage reacts to that.
+    mockFetch()
+    const wrapper = mount(AiPage)
+    await flushPromises()
+
+    const statsCallsBefore = vi
+      .mocked(fetch)
+      .mock.calls.filter((c) => (c[0] as string).startsWith('/api/ai/feedback/stats')).length
+    const suspiciousCallsBefore = vi
+      .mocked(fetch)
+      .mock.calls.filter((c) => (c[0] as string).startsWith('/api/ai/suspicious')).length
+
+    useRefreshStore().bump()
+    await flushPromises()
+
+    const statsCallsAfter = vi
+      .mocked(fetch)
+      .mock.calls.filter((c) => (c[0] as string).startsWith('/api/ai/feedback/stats')).length
+    const suspiciousCallsAfter = vi
+      .mocked(fetch)
+      .mock.calls.filter((c) => (c[0] as string).startsWith('/api/ai/suspicious')).length
+    expect(statsCallsAfter).toBeGreaterThan(statsCallsBefore)
+    expect(suspiciousCallsAfter).toBeGreaterThan(suspiciousCallsBefore)
+    wrapper.unmount()
   })
 })

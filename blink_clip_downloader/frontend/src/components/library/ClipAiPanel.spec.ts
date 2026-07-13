@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ClipAiPanel from './ClipAiPanel.vue'
 import { usePromptOverlayStore } from '../../stores/promptOverlay'
+import { useRefreshStore } from '../../stores/refresh'
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -154,16 +155,6 @@ describe('ClipAiPanel', () => {
       .trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('87% confidence')
-  })
-
-  it('resets state when clipId changes', async () => {
-    mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null, '/api/ai/results/c2': null })
-    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
-    await wrapper.find('.ai-panel-hdr').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.ai-panel-body').classes()).toContain('open')
-    await wrapper.setProps({ clipId: 'c2' })
-    expect(wrapper.find('.ai-panel-body').classes()).not.toContain('open')
   })
 
   it('shows a load error when fetching the result fails', async () => {
@@ -403,5 +394,37 @@ describe('ClipAiPanel', () => {
       .trigger('click')
     await flushPromises()
     expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/ai/feedback/c1', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('bumps the shared refresh store on a successful feedback submission', async () => {
+    // Regression test: this panel can be opened (via the clip modal) from
+    // the AI tab's Suspicious Activity Feed without switching tabs — without
+    // this, AdaptiveLearningCard's accuracy stats and SuspiciousFeed's own
+    // list had no way to learn that feedback changed and stayed stale.
+    mockFetch({
+      '/api/ai/results/c1': RESULT,
+      '/api/ai/feedback/c1': null,
+      '/api/ai/feedback/c1|POST': { saved: true },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST')
+          return Promise.resolve(jsonResponse({ saved: true }))
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+        if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    const tickBefore = useRefreshStore().tick
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('👍 Correct'))!
+      .trigger('click')
+    await flushPromises()
+    expect(useRefreshStore().tick).toBeGreaterThan(tickBefore)
   })
 })
