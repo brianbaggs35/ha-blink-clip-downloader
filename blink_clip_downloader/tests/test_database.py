@@ -372,6 +372,20 @@ async def test_get_camera_stats(db: ClipDatabase) -> None:
     assert cameras["Back Yard"]["total"] == 1
 
 
+async def test_get_camera_stats_merges_case_insensitively(db: ClipDatabase) -> None:
+    """Regression test: two clips recorded for the same camera under
+    different casing (e.g. a Blink camera renamed/retyped over time) must
+    fold into a single stats row, matching how get_clips/count_clips already
+    match camera names case-insensitively elsewhere in this file."""
+    today = datetime.now(timezone.utc).isoformat()
+    await db.add_clip(_make_clip("c1", camera="Front Door", timestamp=today))
+    await db.add_clip(_make_clip("c2", camera="front door", timestamp=today))
+    await db.add_clip(_make_clip("c3", camera="FRONT DOOR", timestamp=today))
+    cam_stats = await db.get_camera_stats()
+    assert len(cam_stats) == 1
+    assert cam_stats[0]["total"] == 3
+
+
 async def test_get_distinct_cameras(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1", camera="A"))
     await db.add_clip(_make_clip("c2", camera="B"))

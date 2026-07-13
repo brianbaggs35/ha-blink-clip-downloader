@@ -517,21 +517,31 @@ class ClipDatabase:
         yesterday = (_now_utc - timedelta(days=1)).date().isoformat()
         week_ago = (_now_utc - timedelta(days=7)).date().isoformat()
 
-        queries = {
-            "total_count": "SELECT COUNT(*) FROM clips WHERE archived=FALSE",
-            "starred_count": "SELECT COUNT(*) FROM clips WHERE starred=TRUE",
-            "archived_count": "SELECT COUNT(*) FROM clips WHERE archived=TRUE",
-            "total_size_bytes": "SELECT COALESCE(SUM(size_bytes),0) FROM clips",
-            "today_count": f"SELECT COUNT(*) FROM clips WHERE timestamp LIKE '{today}%'",
-            "yesterday_count": (
-                f"SELECT COUNT(*) FROM clips WHERE timestamp LIKE '{yesterday}%'"
+        queries: dict[str, tuple[str, tuple[Any, ...]]] = {
+            "total_count": ("SELECT COUNT(*) FROM clips WHERE archived=FALSE", ()),
+            "starred_count": ("SELECT COUNT(*) FROM clips WHERE starred=TRUE", ()),
+            "archived_count": ("SELECT COUNT(*) FROM clips WHERE archived=TRUE", ()),
+            "total_size_bytes": (
+                "SELECT COALESCE(SUM(size_bytes),0) FROM clips",
+                (),
             ),
-            "week_count": f"SELECT COUNT(*) FROM clips WHERE timestamp >= '{week_ago}'",
+            "today_count": (
+                "SELECT COUNT(*) FROM clips WHERE timestamp LIKE ?",
+                (f"{today}%",),
+            ),
+            "yesterday_count": (
+                "SELECT COUNT(*) FROM clips WHERE timestamp LIKE ?",
+                (f"{yesterday}%",),
+            ),
+            "week_count": (
+                "SELECT COUNT(*) FROM clips WHERE timestamp >= ?",
+                (week_ago,),
+            ),
         }
 
         results: dict[str, Any] = {}
-        for key, sql in queries.items():
-            results[key] = await self._pool.fetchval(sql) or 0
+        for key, (sql, params) in queries.items():
+            results[key] = await self._pool.fetchval(_qm(sql), *params) or 0
 
         return results
 
@@ -548,7 +558,7 @@ class ClipDatabase:
             _qm(
                 """
                 SELECT
-                    camera,
+                    MIN(camera) AS camera,
                     COUNT(*) AS total,
                     COALESCE(SUM(size_bytes), 0) AS size_bytes,
                     SUM(CASE WHEN timestamp LIKE ? THEN 1 ELSE 0 END) AS today,
@@ -556,7 +566,7 @@ class ClipDatabase:
                     MAX(timestamp) AS last_seen
                 FROM clips
                 WHERE archived=FALSE
-                GROUP BY LOWER(camera), camera
+                GROUP BY LOWER(camera)
                 ORDER BY total DESC
                 """
             ),
@@ -703,22 +713,25 @@ class ClipDatabase:
         if self._pool is None:
             return {}
         today = datetime.now(timezone.utc).date().isoformat()
-        queries = {
-            "total_analyzed": "SELECT COUNT(*) FROM analysis_results",
+        queries: dict[str, tuple[str, tuple[Any, ...]]] = {
+            "total_analyzed": ("SELECT COUNT(*) FROM analysis_results", ()),
             "suspicious_count": (
-                "SELECT COUNT(*) FROM analysis_results WHERE is_suspicious"
+                "SELECT COUNT(*) FROM analysis_results WHERE is_suspicious",
+                (),
             ),
             "total_frames_analyzed": (
-                "SELECT COALESCE(SUM(frame_count),0) FROM analysis_results"
+                "SELECT COALESCE(SUM(frame_count),0) FROM analysis_results",
+                (),
             ),
             "frames_analyzed_today": (
                 "SELECT COALESCE(SUM(frame_count),0) FROM analysis_results "
-                f"WHERE analyzed_at LIKE '{today}%'"
+                "WHERE analyzed_at LIKE ?",
+                (f"{today}%",),
             ),
         }
         results: dict[str, Any] = {}
-        for key, sql in queries.items():
-            results[key] = await self._pool.fetchval(sql) or 0
+        for key, (sql, params) in queries.items():
+            results[key] = await self._pool.fetchval(_qm(sql), *params) or 0
 
         results["last_analysis"] = await self._pool.fetchval(
             "SELECT analyzed_at FROM analysis_results ORDER BY analyzed_at DESC LIMIT 1"
