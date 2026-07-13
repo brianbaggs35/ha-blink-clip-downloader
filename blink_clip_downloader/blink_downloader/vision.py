@@ -183,7 +183,8 @@ class FrameEnhancer:
                 img = cv2.fastNlMeansDenoisingColored(img, None, 5, 5, 7, 21)
                 ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
                 enhanced.append(buf.tobytes() if ok else frame)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("Frame enhancement failed, using raw frame: %s", exc)
                 enhanced.append(frame)
         return enhanced
 
@@ -726,14 +727,18 @@ class ContactSegmenter:
         # Dilate the person mask in fixed pixel steps and check for overlap
         # with the vehicle mask each time — a cheap, well-known trick for
         # "do these masks come within N pixels of each other" that avoids an
-        # expensive nearest-point search across every mask pixel pair.
+        # expensive nearest-point search across every mask pixel pair. Each
+        # iteration grows the mask by the kernel's *radius* (3px for a 7x7
+        # kernel), not its full width, so the gap estimate below must use
+        # 3.0, not 7.0 — using the full kernel size would overstate the true
+        # gap by roughly 2.3x.
         for step in range(1, 11):
             probe = cv2.dilate(person_mask, kernel, iterations=step)
             if np.any(probe & vehicle_mask):
                 return ContactResult(
-                    touching=step == 1, mask_gap_pixels=7.0 * (step - 1)
+                    touching=step == 1, mask_gap_pixels=3.0 * (step - 1)
                 )
-        return ContactResult(touching=False, mask_gap_pixels=7.0 * 10)
+        return ContactResult(touching=False, mask_gap_pixels=3.0 * 10)
 
     async def check_contact(
         self,
@@ -794,7 +799,16 @@ class FaceRecognitionResult:
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Cosine similarity between two equal-length embedding vectors."""
+    """Cosine similarity between two equal-length embedding vectors.
+
+    A length mismatch (e.g. an embedding-model change, or a corrupted/
+    malformed stored row) returns 0.0 ("can't compare, no match") rather than
+    silently comparing a truncated, meaningless subset of both vectors via
+    ``zip`` — consistent with this module's general "err toward no-match"
+    safety posture.
+    """
+    if len(a) != len(b):
+        return 0.0
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
@@ -1053,6 +1067,14 @@ class VisionPipeline:
         if not frames:
             return hints
 
+        # Face recognition must always match against raw (pre-enhancement)
+        # frames, since enrolled reference embeddings are computed from raw
+        # reference photos — matching enhanced frames against raw references
+        # is an embedding-space mismatch that can cause real matches (approved
+        # household members) to be missed. Captured before `frames` is
+        # potentially reassigned to CLAHE-enhanced frames below.
+        raw_frames = frames
+
         if self._config.enhanced_detection_enabled:
             frames = FrameEnhancer.enhance(frames)
             hints.enhanced_frames = frames
@@ -1092,7 +1114,7 @@ class VisionPipeline:
 
         if self._config.face_recognition_enabled and self._db is not None:
             recognizer = FaceRecognizer(self._face_embedder, self._db)
-            face_result = await recognizer.recognize(frames)
+            face_result = await recognizer.recognize(raw_frames)
             hints.face_recognition = face_result
             hints.recognized_resident_hint = _build_recognition_hint(face_result)
 

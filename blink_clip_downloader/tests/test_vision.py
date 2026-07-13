@@ -178,12 +178,18 @@ def test_frame_enhancer_falls_back_on_encode_failure(
 
 
 def test_frame_enhancer_falls_back_on_per_frame_exception(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Regression test: a per-frame failure must fall back to the raw frame
+    AND log at debug level, matching every other CV stage's failure path in
+    this module — it previously swallowed the exception with no logging at
+    all."""
     mock_cv2 = _install_fake_cv2(monkeypatch)
     mock_cv2.cvtColor.side_effect = RuntimeError("boom")
     frame = b"fake-jpeg-bytes"
-    assert FrameEnhancer.enhance([frame]) == [frame]
+    with caplog.at_level("DEBUG", logger="blink_downloader.vision"):
+        assert FrameEnhancer.enhance([frame]) == [frame]
+    assert "Frame enhancement failed" in caplog.text
 
 
 # ------------------------------------------------------------------
@@ -819,7 +825,8 @@ async def test_contact_segmenter_touching_after_a_few_steps(
     )
     assert result is not None
     assert result.touching is False
-    assert result.mask_gap_pixels == pytest.approx(14.0)
+    # 3.0 (kernel radius, not the full 7x7 kernel size) * (step 3 - 1) = 6.0.
+    assert result.mask_gap_pixels == pytest.approx(6.0)
 
 
 async def test_contact_segmenter_never_touching(
@@ -839,7 +846,8 @@ async def test_contact_segmenter_never_touching(
     )
     assert result is not None
     assert result.touching is False
-    assert result.mask_gap_pixels == pytest.approx(70.0)
+    # 3.0 (kernel radius, not the full 7x7 kernel size) * 10 max steps = 30.0.
+    assert result.mask_gap_pixels == pytest.approx(30.0)
 
 
 async def test_contact_segmenter_returns_none_for_fewer_than_two_masks(
@@ -1046,6 +1054,16 @@ def test_cosine_similarity_orthogonal_vectors() -> None:
 
 def test_cosine_similarity_zero_vector_is_zero() -> None:
     assert cosine_similarity([0.0, 0.0], [1.0, 1.0]) == 0.0
+
+
+def test_cosine_similarity_mismatched_length_is_zero() -> None:
+    """Regression test: a stored embedding with a different dimensionality
+    (e.g. after an embedding-model change, or a corrupted DB row) must be
+    treated as "can't compare, no match" rather than silently comparing a
+    zip()-truncated subset of both vectors, which could coincidentally
+    produce a similarity score above the match threshold."""
+    assert cosine_similarity([1.0, 0.0, 0.0], [1.0, 0.0]) == 0.0
+    assert cosine_similarity([1.0, 0.0], [1.0, 0.0, 0.0, 0.0]) == 0.0
 
 
 async def test_face_recognizer_no_enrollments_returns_empty(db: ClipDatabase) -> None:
@@ -1406,6 +1424,44 @@ async def test_vision_pipeline_face_recognition(db: ClipDatabase) -> None:
         hints = await pipeline.process_clip([b"frame"])
     assert hints.recognized_resident_hint is not None
     assert "Brian" not in hints.recognized_resident_hint  # name never sent to AI
+    assert hints.face_recognition is not None
+    assert hints.face_recognition.approved_names == ["Brian"]
+
+
+async def test_vision_pipeline_face_recognition_uses_raw_frames_not_enhanced(
+    db: ClipDatabase,
+) -> None:
+    """Regression test: when enhanced_detection_enabled and
+    face_recognition_enabled are both on, face recognition must run against
+    the original raw frames, not the CLAHE-enhanced ones — VisionConfig's
+    docstring promises these two stages are independent, and matching
+    enhanced frames against embeddings computed from raw reference photos is
+    an embedding-space mismatch that can cause a real household member to go
+    unrecognized."""
+    await db.add_face_enrollment("Brian", [1.0, 0.0])
+    raw_frames = [b"raw-frame-1", b"raw-frame-2"]
+    seen_frames: list[bytes] = []
+
+    async def _embed(frame: bytes) -> list[list[float]]:
+        seen_frames.append(frame)
+        return [[1.0, 0.0]]
+
+    config = VisionConfig(
+        enhanced_detection_enabled=True, face_recognition_enabled=True
+    )
+    pipeline = VisionPipeline(config, db=db)
+    with (
+        patch.object(
+            FrameEnhancer,
+            "enhance",
+            side_effect=lambda frames: [b"enhanced-" + f for f in frames],
+        ),
+        patch.object(FaceEmbedder, "embed", side_effect=_embed),
+    ):
+        hints = await pipeline.process_clip(raw_frames)
+
+    assert seen_frames == raw_frames
+    assert hints.enhanced_frames == [b"enhanced-raw-frame-1", b"enhanced-raw-frame-2"]
     assert hints.face_recognition is not None
     assert hints.face_recognition.approved_names == ["Brian"]
 
