@@ -119,12 +119,27 @@ function sinceDate(range: string): string | null {
   return d.toISOString()
 }
 
+function untilDate(range: string): string | null {
+  // Only 'yesterday' is a bounded single-day range — today/week/month all
+  // mean "since X ago through now", so they intentionally have no upper
+  // bound. Without this, selecting "Yesterday" returned everything from
+  // yesterday-midnight onward (including today and beyond), not just
+  // yesterday.
+  if (range !== 'yesterday') return null
+  const d = new Date()
+  d.setDate(d.getDate() - 1)
+  d.setHours(23, 59, 59, 999)
+  return d.toISOString()
+}
+
 function buildFilters(page: number): ClipFilters {
   const filters: ClipFilters = { limit: PAGE_SIZE, offset: page * PAGE_SIZE, sort: sortOrder.value }
   if (library.currentCamera !== 'all') filters.camera = library.currentCamera
   if (search.value.trim()) filters.search = search.value.trim()
   const since = sinceDate(dateRange.value)
   if (since) filters.since = since
+  const until = untilDate(dateRange.value)
+  if (until) filters.until = until
   if (starredOnly.value) filters.starred = true
   if (notifiedOnly.value) filters.notified = true
   if (sourceFilter.value) filters.source = sourceFilter.value
@@ -132,24 +147,36 @@ function buildFilters(page: number): ClipFilters {
   return filters
 }
 
+// Multiple independent triggers (debounced filters, the camera watch,
+// refresh.tick, dateFilter.seq) can call loadClips/loadClipsForDate
+// concurrently with no inherent ordering — whichever request's promise
+// resolves last would otherwise win regardless of which was fired most
+// recently. requestSeq is a monotonically increasing token: each call
+// captures its own value at start, and only applies its result if it's
+// still the most recently fired request by the time it resolves.
+let requestSeq = 0
+
 async function loadClips(page: number) {
+  const seq = ++requestSeq
   if (page === 0) {
     loadingInitial.value = true
     clips.value = []
   }
   try {
     const result = await listClips(buildFilters(page))
+    if (seq !== requestSeq) return
     clips.value = page === 0 ? result : clips.value.concat(result)
     hasMore.value = result.length === PAGE_SIZE
     currentPage.value = page
   } catch {
-    toast.show('Failed to load clips', true)
+    if (seq === requestSeq) toast.show('Failed to load clips', true)
   } finally {
-    loadingInitial.value = false
+    if (seq === requestSeq) loadingInitial.value = false
   }
 }
 
 async function loadClipsForDate(date: string) {
+  const seq = ++requestSeq
   currentPage.value = 0
   try {
     const result = await listClips({
@@ -159,10 +186,11 @@ async function loadClipsForDate(date: string) {
       offset: 0,
       sort: sortOrder.value,
     })
+    if (seq !== requestSeq) return
     clips.value = result
     hasMore.value = result.length === PAGE_SIZE
   } catch {
-    toast.show('Failed to load clips', true)
+    if (seq === requestSeq) toast.show('Failed to load clips', true)
   }
 }
 

@@ -192,6 +192,73 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('does not let a stale response overwrite a newer one', async () => {
+    // Regression test for the request-sequencing race: switching camera
+    // (undebounced, fires immediately) then editing the search text within
+    // the 380ms debounce window can race. If the camera-switch response
+    // happens to resolve *after* the search response, the grid must still
+    // reflect the latest-fired request (search), not silently revert to the
+    // stale camera-switch response.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    // Distinct camera names (rendered in the card) rather than distinct ids
+    // (never rendered) so the assertion below can actually tell which
+    // response's data is on screen.
+    const cameraClip = clip({ id: 'camera-clip', camera: 'CameraSwitchCam' })
+    const searchClip = clip({ id: 'search-clip', camera: 'SearchResultCam' })
+    let resolveCameraFetch: (() => void) | undefined
+    let resolveSearchFetch: (() => void) | undefined
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        // Check the more specific (search) request first — once the camera
+        // filter is active, the debounced search reload's URL contains
+        // *both* camera=front and search=xyz.
+        if (url.startsWith('/api/clips') && url.includes('search=xyz')) {
+          return new Promise((resolve) => {
+            resolveSearchFetch = () => resolve(jsonResponse([searchClip]))
+          })
+        }
+        if (url.startsWith('/api/clips') && url.includes('camera=front')) {
+          return new Promise((resolve) => {
+            resolveCameraFetch = () => resolve(jsonResponse([cameraClip]))
+          })
+        }
+        if (url.startsWith('/api/clips')) return Promise.resolve(jsonResponse([]))
+        if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
+        if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
+        if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
+        if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+
+    const wrapper = mountLibrary()
+    await flushPromises()
+
+    // Camera switch fires immediately (undebounced).
+    useLibraryStore().selectCamera('front')
+    await flushPromises()
+    // Search change fires later but is debounced 380ms.
+    await wrapper.find('#search').setValue('xyz')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+
+    expect(resolveCameraFetch).toBeDefined()
+    expect(resolveSearchFetch).toBeDefined()
+
+    // Resolve the later-fired (search) request first, then the earlier
+    // (camera) one — simulating the stale response arriving last.
+    resolveSearchFetch?.()
+    await flushPromises()
+    resolveCameraFetch?.()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('SearchResultCam')
+    expect(wrapper.text()).not.toContain('CameraSwitchCam')
+    wrapper.unmount()
+  })
+
   it('select mode: selecting a card shows the bulk bar with a count', async () => {
     mockFetch()
     const wrapper = mountLibrary()
@@ -552,6 +619,38 @@ describe('LibraryPage', () => {
       const lastCall = vi.mocked(fetch).mock.calls.at(-1)?.[0] as string
       expect(lastCall).toContain('since=')
     }
+    wrapper.unmount()
+  })
+
+  it('bounds the "Yesterday" filter with both since= and until=, unlike today/month', async () => {
+    // Regression test: "Yesterday" previously only set a lower bound
+    // (midnight yesterday) with no upper bound, so it actually returned
+    // everything from yesterday onward — including today and beyond —
+    // instead of just yesterday.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.setSystemTime(new Date('2024-06-15T12:00:00Z'))
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+
+    await selectOption(wrapper, 'date-range', 'Yesterday')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    const yesterdayCall = new URL(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string, 'http://localhost')
+    expect(yesterdayCall.searchParams.get('since')).toBeTruthy()
+    expect(yesterdayCall.searchParams.get('until')).toBeTruthy()
+    const since = new Date(yesterdayCall.searchParams.get('since')!)
+    const until = new Date(yesterdayCall.searchParams.get('until')!)
+    expect(until.getTime()).toBeGreaterThan(since.getTime())
+    // The bound must not extend into today: less than 24h span.
+    expect(until.getTime() - since.getTime()).toBeLessThan(24 * 60 * 60 * 1000)
+
+    await selectOption(wrapper, 'date-range', 'Today')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    const todayCall = new URL(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string, 'http://localhost')
+    expect(todayCall.searchParams.get('until')).toBeNull()
+
     wrapper.unmount()
   })
 
