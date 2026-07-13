@@ -170,6 +170,20 @@ def test_concurrent_downloads_clamped():
     assert cfg.concurrent_downloads == 10
 
 
+def test_retry_delay_clamped_to_upper_bound():
+    """Regression test: retry_delay previously had only a floor, unlike
+    every sibling numeric option (concurrent_downloads, retry_attempts,
+    ai_frame_interval, smtp_port), so a typo'd huge value would stall every
+    failed-download retry indefinitely."""
+    cfg = _parse_config({"username": "u", "password": "p", "retry_delay": 99999})
+    assert cfg.retry_delay == 300.0
+
+
+def test_retry_delay_floor_still_applies():
+    cfg = _parse_config({"username": "u", "password": "p", "retry_delay": -5})
+    assert cfg.retry_delay == 0.0
+
+
 def test_download_path_as_path_object(tmp_path):
     cfg = _parse_config(
         {"username": "u", "password": "p", "download_path": str(tmp_path)}

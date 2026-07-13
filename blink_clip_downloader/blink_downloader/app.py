@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import signal
 import time
 from datetime import datetime, timezone
@@ -748,7 +749,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             "disk": self._storage.disk_stats(),
         }
         try:
-            STATS_FILE.write_text(json.dumps(payload, indent=2))
+            # Write to a temp file and rename over the target so a crash
+            # mid-write can't leave a truncated/corrupt STATS_FILE behind —
+            # os.replace() is atomic on the same filesystem. Mirrors
+            # BlinkDownloader._persist_auth() / ClipTracker.save().
+            tmp_path = STATS_FILE.with_suffix(STATS_FILE.suffix + ".tmp")
+            tmp_path.write_text(json.dumps(payload, indent=2))
+            os.replace(tmp_path, STATS_FILE)
         except OSError as exc:
             _LOGGER.warning("Could not write stats file: %s", exc)
 

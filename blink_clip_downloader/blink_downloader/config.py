@@ -445,7 +445,7 @@ def _parse_storage_kwargs(data: dict) -> dict[str, Any]:
             1, min(10, int(data.get("concurrent_downloads", 3)))
         ),
         "retry_attempts": max(1, min(10, int(data.get("retry_attempts", 3)))),
-        "retry_delay": max(0.0, float(data.get("retry_delay", 5.0))),
+        "retry_delay": max(0.0, min(300.0, float(data.get("retry_delay", 5.0)))),
     }
 
 

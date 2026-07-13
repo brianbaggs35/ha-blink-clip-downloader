@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import date, datetime
 from pathlib import Path
 
@@ -110,8 +111,12 @@ class DailyDigest:
         try:
             if self._last_sent is None:
                 return
-            self._state_file.write_text(
-                json.dumps({"last_sent": self._last_sent.isoformat()})
-            )
+            # Write to a temp file and rename over the target so a crash
+            # mid-write can't leave a truncated/corrupt state file behind —
+            # os.replace() is atomic on the same filesystem. Mirrors
+            # BlinkDownloader._persist_auth() / ClipTracker.save().
+            tmp_path = self._state_file.with_suffix(self._state_file.suffix + ".tmp")
+            tmp_path.write_text(json.dumps({"last_sent": self._last_sent.isoformat()}))
+            os.replace(tmp_path, self._state_file)
         except OSError as exc:
             _LOGGER.warning("Could not save digest state: %s", exc)
