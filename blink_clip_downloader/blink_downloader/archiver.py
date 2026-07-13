@@ -69,10 +69,21 @@ class ClipArchiver:
         for clip in clips:
             src = Path(str(clip.get("file_path", "")))
             if not src.exists():
-                # File already gone — just mark DB record as archived.
-                await self._db.mark_archived(str(clip["id"]), str(zip_path))
-                archived += 1
+                # File already gone — just mark DB record as archived. A DB
+                # failure here must not abort the rest of the batch (see the
+                # matching comment below) — skip this clip and let the next
+                # archive run retry it.
+                try:
+                    await self._db.mark_archived(str(clip["id"]), str(zip_path))
+                    archived += 1
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Could not mark already-missing clip %s as archived: %s",
+                        clip.get("id"),
+                        exc,
+                    )
                 continue
+
             try:
                 # Open/close the archive once per clip instead of keeping one
                 # ZipFile open across the whole month's batch: the central
@@ -85,11 +96,40 @@ class ClipArchiver:
                     # Store relative name to avoid path collisions in the ZIP.
                     arcname = f"{clip.get('camera', 'unknown')}/{src.name}"
                     zf.write(src, arcname)
-                await self._db.mark_archived(str(clip["id"]), str(zip_path))
-                src.unlink()
-                archived += 1
-                _LOGGER.debug("Archived %s → %s", src.name, zip_path.name)
             except (zipfile.BadZipFile, OSError) as exc:
                 _LOGGER.warning("Could not archive %s: %s", src, exc)
+                continue
+
+            try:
+                # A DB failure here (e.g. a dropped connection) must not
+                # propagate: the clip is already written into the ZIP, and
+                # letting this raise would abort every remaining clip/month
+                # in this run. Leave the source file in place (not marked
+                # archived) so the next run retries it — it'll be re-written
+                # into the ZIP as a duplicate entry, but that's preferable to
+                # losing the rest of this batch.
+                await self._db.mark_archived(str(clip["id"]), str(zip_path))
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Archived %s into %s but failed to record it in the "
+                    "database; will retry next run: %s",
+                    src,
+                    zip_path.name,
+                    exc,
+                )
+                continue
+
+            try:
+                src.unlink()
+            except OSError as exc:
+                _LOGGER.warning(
+                    "Marked %s archived but could not delete the source file: %s",
+                    src,
+                    exc,
+                )
+                continue
+
+            archived += 1
+            _LOGGER.debug("Archived %s → %s", src.name, zip_path.name)
 
         return archived

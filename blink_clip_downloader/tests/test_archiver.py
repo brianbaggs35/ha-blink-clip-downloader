@@ -227,3 +227,90 @@ async def test_archive_month_write_oserror_is_logged(tmp_path: Path) -> None:
 
     assert result == 0  # write failed, not marked as archived
     db.mark_archived.assert_not_awaited()
+
+
+async def test_archive_month_unlink_failure_is_logged(tmp_path: Path) -> None:
+    """An OSError deleting the source file after a successful archive write
+    and DB mark must be caught and logged, not propagate and abort the
+    batch — the clip is left un-counted as archived (its source file is
+    still on disk) rather than crashing the rest of the run."""
+    from unittest.mock import patch
+
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"data")
+    clip = {
+        "id": "c1",
+        "camera": "Cam",
+        "file_path": str(src),
+        "timestamp": "2024-06-01T00:00:00+00:00",
+    }
+    archiver, db = _make_archiver(tmp_path, clips=[clip])
+
+    with patch("pathlib.Path.unlink", side_effect=OSError("permission denied")):
+        result = await archiver.run()
+
+    assert result == 0
+    db.mark_archived.assert_awaited_once()
+
+
+async def test_archive_month_mark_archived_failure_does_not_abort_batch(
+    tmp_path: Path,
+) -> None:
+    """Regression test: a DB failure marking one clip archived (e.g. a
+    dropped connection) must not abort the rest of the batch — other clips
+    in the same run must still archive successfully, and the failing clip's
+    source file must be left in place (untouched, not marked archived) so
+    it's retried on the next archive run instead of crashing the whole
+    month's batch."""
+    src1 = tmp_path / "clip1.mp4"
+    src1.write_bytes(b"data1")
+    src2 = tmp_path / "clip2.mp4"
+    src2.write_bytes(b"data2")
+
+    clips = [
+        {
+            "id": "c1",
+            "camera": "Cam",
+            "file_path": str(src1),
+            "timestamp": "2024-06-01T00:00:00+00:00",
+        },
+        {
+            "id": "c2",
+            "camera": "Cam",
+            "file_path": str(src2),
+            "timestamp": "2024-06-02T00:00:00+00:00",
+        },
+    ]
+    archiver, db = _make_archiver(tmp_path, clips=clips)
+    db.mark_archived = AsyncMock(side_effect=[RuntimeError("connection dropped"), None])
+
+    result = await archiver.run()
+
+    assert result == 1  # only c2 fully archived
+    assert src1.exists()  # c1 left in place so it's retried next run
+    assert not src2.exists()  # c2 successfully archived and removed
+
+    zip_path = tmp_path / "archives" / "blink_archive_2024-06.zip"
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+    assert any("clip1.mp4" in n for n in names)
+    assert any("clip2.mp4" in n for n in names)
+
+
+async def test_archive_month_missing_file_mark_archived_failure_is_logged(
+    tmp_path: Path,
+) -> None:
+    """A DB failure marking an already-missing-file clip as archived must be
+    caught and logged rather than propagating out of the archive run."""
+    clip = {
+        "id": "c1",
+        "camera": "Cam",
+        "file_path": str(tmp_path / "missing.mp4"),  # does not exist
+        "timestamp": "2024-06-01T00:00:00+00:00",
+    }
+    archiver, db = _make_archiver(tmp_path, clips=[clip])
+    db.mark_archived = AsyncMock(side_effect=RuntimeError("connection dropped"))
+
+    result = await archiver.run()
+
+    assert result == 0
