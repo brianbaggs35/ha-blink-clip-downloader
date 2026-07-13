@@ -36,6 +36,11 @@ HARDWARE_ID_FILE = Path("/data/blink_hardware_id.txt")
 
 # Blink returns up to 25 clips per page by default.
 _PAGE_SIZE = 25
+# Defensive cap on pagination (~10k clips) — guards against a pathological
+# API response that never returns a partial/empty page, which would
+# otherwise loop forever. Far beyond any realistic single-poll backlog
+# (max_clips_per_poll itself caps at 500).
+_MAX_PAGES = 400
 # Download stream chunk size (64 KiB).
 _CHUNK_SIZE = 65_536
 
@@ -505,6 +510,14 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             if len(media) < _PAGE_SIZE:
                 break
             page += 1
+            if page >= _MAX_PAGES:
+                _LOGGER.warning(
+                    "request_videos pagination hit the %d-page safety cap; "
+                    "stopping early with %d clip(s) collected so far",
+                    _MAX_PAGES,
+                    len(clips),
+                )
+                break
 
         clips = self._apply_filters(clips)
         return clips
@@ -664,10 +677,13 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         """
         headers = getattr(getattr(self._blink, "auth", None), "header", {}) or {}
         session = self._get_session()
+        tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
 
         for attempt in range(1, self._config.retry_attempts + 1):
             try:
-                size = await self._stream_attempt(session, url, dest, headers, attempt)
+                size = await self._stream_attempt(
+                    session, url, dest, tmp_dest, headers, attempt
+                )
                 if size is not None:
                     return size
 
@@ -689,15 +705,15 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     url,
                     exc,
                 )
-                if dest.exists():
-                    dest.unlink()
+                if tmp_dest.exists():
+                    tmp_dest.unlink()
 
             if attempt < self._config.retry_attempts:
                 await asyncio.sleep(self._config.retry_delay * attempt)
 
         # All attempts exhausted — clean up partial file.
-        if dest.exists():
-            dest.unlink()
+        if tmp_dest.exists():
+            tmp_dest.unlink()
         return None
 
     async def _stream_attempt(
@@ -705,6 +721,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         session: aiohttp.ClientSession,
         url: str,
         dest: Path,
+        tmp_dest: Path,
         headers: dict[str, str],
         attempt: int,
     ) -> int | None:
@@ -729,10 +746,18 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 return None
 
             size = 0
-            async with aiofiles.open(dest, "wb") as fh:
+            # Stream to a temp file and atomically rename over dest only
+            # after a full, successful download — mirrors _persist_auth().
+            # Without this, a process kill mid-download (container restart,
+            # OOM-kill) leaves a truncated file directly at dest, and since
+            # dest.exists() is what _download_clip uses to decide "already
+            # downloaded, skip", that truncated file would be treated as a
+            # complete download forever.
+            async with aiofiles.open(tmp_dest, "wb") as fh:
                 async for chunk in resp.content.iter_chunked(_CHUNK_SIZE):
                     await fh.write(chunk)
                     size += len(chunk)
+            os.replace(tmp_dest, dest)
             return size
 
     async def _generate_thumbnail(self, video_path: Path, thumb_path: Path) -> bool:

@@ -268,6 +268,46 @@ async def test_stream_to_file_writes_content(dl, tmp_path):
     assert dest.read_bytes() == content
 
 
+async def test_stream_to_file_dest_not_visible_until_write_completes(dl, tmp_path):
+    """Regression test: dest must never be visible as a partial/truncated
+    file mid-download — _download_clip's dest.exists() pre-check treats any
+    file at dest as an already-completed download, so a process kill
+    mid-stream (container restart, OOM-kill) must never leave a truncated
+    file there. The stream writes to a .tmp file and only os.replace()s it
+    over dest after every chunk has been written successfully."""
+    dest = tmp_path / "clip.mp4"
+    tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
+    content = b"fake video" * 1000
+    dest_existed_mid_stream = False
+
+    async def _iter_chunks(chunk_size):
+        nonlocal dest_existed_mid_stream
+        yield content[: len(content) // 2]
+        # Halfway through streaming: only the .tmp file should exist so far.
+        dest_existed_mid_stream = dest.exists()
+        yield content[len(content) // 2 :]
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.content.iter_chunked = _iter_chunks
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    dl._session = mock_session
+    dl._blink = MagicMock()
+    dl._blink.auth.header = {}
+
+    size = await dl._stream_to_file("https://host/clip.mp4", dest)
+
+    assert size == len(content)
+    assert dest.read_bytes() == content
+    assert dest_existed_mid_stream is False
+    assert not tmp_dest.exists()
+
+
 async def test_stream_to_file_non_200_returns_none(dl, tmp_path):
     dest = tmp_path / "clip.mp4"
 
@@ -291,6 +331,7 @@ async def test_stream_to_file_deletes_partial_on_failure(dl, tmp_path):
     import aiohttp as _aiohttp
 
     dest = tmp_path / "clip.mp4"
+    tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
     dl._config.retry_attempts = 1
     dl._config.retry_delay = 0.0
 
@@ -301,10 +342,13 @@ async def test_stream_to_file_deletes_partial_on_failure(dl, tmp_path):
     dl._blink = MagicMock()
     dl._blink.auth.header = {}
 
-    # Create partial file to simulate incomplete prior download
-    dest.write_bytes(b"partial")
+    # Create partial file (at the .tmp write target, not the final dest — see
+    # _stream_attempt's atomic-rename-on-success design) to simulate an
+    # incomplete prior download attempt.
+    tmp_dest.write_bytes(b"partial")
     result = await dl._stream_to_file("https://host/clip.mp4", dest)
     assert result is None
+    assert not tmp_dest.exists()
     assert not dest.exists()
 
 
@@ -313,6 +357,7 @@ async def test_stream_to_file_timeout_error_retries_and_cleans_up(dl, tmp_path):
     aiohttp.ClientError subclass, so it must be caught explicitly or a
     slow/hung server would skip retries and leave a partial file behind."""
     dest = tmp_path / "clip.mp4"
+    tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
     dl._config.retry_attempts = 2
     dl._config.retry_delay = 0.0
 
@@ -323,9 +368,10 @@ async def test_stream_to_file_timeout_error_retries_and_cleans_up(dl, tmp_path):
     dl._blink = MagicMock()
     dl._blink.auth.header = {}
 
-    dest.write_bytes(b"partial")
+    tmp_dest.write_bytes(b"partial")
     result = await dl._stream_to_file("https://host/clip.mp4", dest)
     assert result is None
+    assert not tmp_dest.exists()
     assert not dest.exists()
     assert mock_session.get.call_count == 2
 
@@ -336,6 +382,7 @@ async def test_stream_to_file_oserror_during_write_retries_and_cleans_up(dl, tmp
     disk and a later poll's `dest.exists()` pre-check in _download_clip
     would treat that truncated file as a completed download permanently."""
     dest = tmp_path / "clip.mp4"
+    tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
     dl._config.retry_attempts = 2
     dl._config.retry_delay = 0.0
 
@@ -360,11 +407,12 @@ async def test_stream_to_file_oserror_during_write_retries_and_cleans_up(dl, tmp
     mock_file.__aenter__ = AsyncMock(return_value=mock_file)
     mock_file.__aexit__ = AsyncMock(return_value=False)
 
-    dest.write_bytes(b"partial")
+    tmp_dest.write_bytes(b"partial")
     with patch("blink_downloader.downloader.aiofiles.open", return_value=mock_file):
         result = await dl._stream_to_file("https://host/clip.mp4", dest)
 
     assert result is None
+    assert not tmp_dest.exists()
     assert not dest.exists()
     assert mock_session.get.call_count == 2
 
@@ -1632,6 +1680,33 @@ async def test_fetch_clip_list_stops_on_partial_page(dl, sample_clip):
 
     assert len(result) == 10
     assert mock_request.await_count == 1
+
+
+async def test_fetch_clip_list_stops_at_max_pages_safety_cap(dl, sample_clip, caplog):
+    """Regression test: a pathological API response that never returns a
+    partial/empty page must not loop forever — pagination stops at a
+    defensive page cap (_MAX_PAGES=400) and logs a warning rather than
+    growing memory and making requests indefinitely."""
+    full_page = [{**sample_clip, "id": i} for i in range(25)]
+
+    dl._blink = MagicMock()
+    dl._blink.account_id = 1
+
+    async def _always_full_page(*_args, **_kwargs):
+        return {"media": full_page}
+
+    with (
+        patch(
+            "blink_downloader.downloader.blink_api.request_videos",
+            side_effect=_always_full_page,
+        ) as mock_request,
+        caplog.at_level("WARNING"),
+    ):
+        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+
+    assert mock_request.await_count == 400
+    assert len(result) == 400 * 25
+    assert "safety cap" in caplog.text
 
 
 async def test_fetch_clip_list_handles_unexpected_response_type(dl):
