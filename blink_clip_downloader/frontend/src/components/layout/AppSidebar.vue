@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import AppIcon from '../icons/AppIcon.vue'
+import type { IconName } from '../icons/paths'
 import { useThemeStore } from '../../stores/theme'
 import { useToastStore } from '../../stores/toast'
 import { useConnectionStore } from '../../stores/connection'
@@ -12,7 +13,7 @@ import { apiPost } from '../../api/client'
 
 export type TabName = 'library' | 'automations' | 'status' | 'ai' | 'usage' | 'models' | 'vehicles' | 'biometrics'
 
-const TABS: { name: TabName; label: string; icon: string }[] = [
+const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'library', label: 'Library', icon: 'tab-library' },
   { name: 'automations', label: 'Automations', icon: 'tab-automations' },
   { name: 'status', label: 'Status', icon: 'tab-status' },

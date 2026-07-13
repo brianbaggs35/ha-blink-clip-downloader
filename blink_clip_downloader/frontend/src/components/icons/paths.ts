@@ -9,7 +9,7 @@ export interface IconDef {
   rects?: { x: number; y: number; width: number; height: number; rx?: number }[]
 }
 
-export const ICONS: Record<string, IconDef> = {
+export const ICONS = {
   brand: {
     paths: ['M3 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z', 'M15 10.5 21 7v10l-6-3.5z'],
   },
@@ -85,6 +85,10 @@ export const ICONS: Record<string, IconDef> = {
       'M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z',
     ],
   },
-}
+} satisfies Record<string, IconDef>
 
+// keyof typeof ICONS only yields the real literal union of icon names (not
+// plain `string`) because ICONS above has no type annotation — `satisfies`
+// validates each entry against IconDef without widening the object's own
+// inferred type the way `: Record<string, IconDef>` would.
 export type IconName = keyof typeof ICONS
