@@ -1114,6 +1114,14 @@ class BaseAnalyzer(abc.ABC):
             tier2.provider_name,
             tier2.model_name(),
         )
+        # tier2 never goes through its own _reset_analysis_state() (that only
+        # runs for an analyzer's own _analyze_clip_locked()), so its
+        # _current_camera would otherwise stay unset/stale. Providers whose
+        # _call_model() reads _current_camera to decide car-protection
+        # rules (Moondream cloud/local) would then silently evaluate
+        # car_applies for the wrong (or no) camera on every escalated call —
+        # propagate it explicitly so tier-2 sees the same camera tier-1 did.
+        tier2._current_camera = camera  # noqa: SLF001
         escalated = await tier2.run_tier_call(frames, prompt)
         if not escalated or not self._is_well_formed_json_object(escalated):
             if escalated:
@@ -2163,7 +2171,16 @@ class BaseAnalyzer(abc.ABC):
         except json.JSONDecodeError:
             return False, 0.0, ""
 
-        suspicious = bool(obj.get("suspicious", False))
+        raw_suspicious = obj.get("suspicious", False)
+        if isinstance(raw_suspicious, str):
+            # A looser vision model (Ollama-local, Moondream) can emit
+            # "suspicious": "false" as a JSON *string* rather than a
+            # boolean. bool("false") is True in Python, which would flip a
+            # model's clearly-intended "not suspicious" into a false
+            # positive. Only the string "true" (case-insensitive) counts.
+            suspicious = raw_suspicious.strip().lower() == "true"
+        else:
+            suspicious = bool(raw_suspicious)
         try:
             confidence = max(0.0, min(1.0, float(obj.get("confidence", 0.0))))
         except (TypeError, ValueError):

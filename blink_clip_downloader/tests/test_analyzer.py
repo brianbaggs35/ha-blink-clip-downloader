@@ -2026,6 +2026,23 @@ def test_try_parse_json_non_numeric_confidence_defaults_to_zero() -> None:
     assert ClipAnalyzer._try_parse_json(response) == (False, 0.0, "x")
 
 
+def test_try_parse_json_string_false_is_not_suspicious() -> None:
+    """Regression test: a looser vision model can emit "suspicious": "false"
+    as a JSON *string* rather than a boolean. bool("false") is True in
+    Python, which used to flip a model's clearly-intended "not suspicious"
+    into a spurious suspicious verdict (a false-positive "cry wolf" bug)."""
+    response = '{"suspicious": "false", "confidence": 0.8, "description": "x"}'
+    is_suspicious, _, _ = ClipAnalyzer._try_parse_json(response)
+    assert is_suspicious is False
+
+
+def test_try_parse_json_string_true_is_suspicious() -> None:
+    """The string "true" (any case) is still honoured as suspicious."""
+    response = '{"suspicious": "True", "confidence": 0.8, "description": "x"}'
+    is_suspicious, _, _ = ClipAnalyzer._try_parse_json(response)
+    assert is_suspicious is True
+
+
 # ------------------------------------------------------------------
 # Additional coverage: ClipAnalyzer internals
 # ------------------------------------------------------------------
@@ -3463,6 +3480,58 @@ async def test_car_camera_without_zone_restriction_high_recall_applies_everywher
 
     tier2._call_model.assert_awaited_once()
     assert "Contact with car" in result
+
+
+async def test_escalation_propagates_camera_identity_to_tier2() -> None:
+    """Regression test: tier2 never runs its own _reset_analysis_state()
+    (that only happens inside an analyzer's own _analyze_clip_locked()), so
+    without _maybe_escalate explicitly propagating the camera, tier2's
+    _current_camera stays at its unset default (""). Moondream's _call_model
+    reads _current_camera to compute car_applies/look up the car zone, so a
+    restricted (non-empty) ai_car_cameras config would silently degrade the
+    escalated call's car-protection rules to the wrong (empty) camera."""
+    tier1 = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="test",
+        car_description="Silver Honda Civic",
+        car_cameras=["Driveway"],
+    )
+    tier1._current_camera = "Driveway"
+    tier1._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.9, "description": "Empty driveway"}'
+    )
+
+    tier2 = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="test",
+        car_description="Silver Honda Civic",
+        car_cameras=["Driveway"],
+        car_zones={
+            "Driveway": {"x_min": 0.1, "y_min": 0.1, "x_max": 0.5, "y_max": 0.5}
+        },
+    )
+    seen: dict[str, object] = {}
+
+    async def _tier2_call(frames: list, prompt: str) -> str:
+        # Mirrors exactly what MoondreamCloudAnalyzer._call_model itself
+        # does first: read _current_camera, then compute car_applies and
+        # look up the car zone from it.
+        seen["camera"] = tier2._current_camera
+        seen["car_applies"] = tier2._car_protection_applies(tier2._current_camera)
+        seen["zone"] = tier2._car_zones.get(tier2._current_camera)
+        return (
+            '{"suspicious": true, "confidence": 0.8, "description": "Contact with car"}'
+        )
+
+    tier2._call_model = _tier2_call  # type: ignore[method-assign]
+    tier1.set_escalation_analyzer(tier2)
+
+    await tier1._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
+    assert seen["camera"] == "Driveway"
+    assert seen["car_applies"] is True
+    assert seen["zone"] == {"x_min": 0.1, "y_min": 0.1, "x_max": 0.5, "y_max": 0.5}
 
 
 def test_is_well_formed_json_object_true_for_complete_json() -> None:
