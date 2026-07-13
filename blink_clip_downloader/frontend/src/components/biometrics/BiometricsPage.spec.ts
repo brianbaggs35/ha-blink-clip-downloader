@@ -415,6 +415,24 @@ describe('BiometricsPage', () => {
     expect(wrapper.find('img.preview-thumb').exists()).toBe(false)
   })
 
+  it('revokes an abandoned preview object URL on unmount', async () => {
+    // Regression test: the Biometrics tab is v-if-gated in App.vue (fully
+    // destroyed on tab switch). Without an onUnmounted cleanup, selecting a
+    // photo and then switching tabs without enrolling or clicking Clear
+    // leaked the preview's blob URL for the rest of the page's lifetime.
+    stubFaces([])
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    const fileUpload = wrapper.findComponent(FileUpload)
+    await fileUpload.vm.$emit('select', { files: [new File(['x'], 'brian.jpg', { type: 'image/jpeg' })] })
+    await flushPromises()
+    const previewSrc = wrapper.find('img.preview-thumb').attributes('src')!
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL')
+    wrapper.unmount()
+    expect(revokeSpy).toHaveBeenCalledWith(previewSrc)
+  })
+
   it('enrolls from selected clip frames, reporting partial success', async () => {
     const posted: string[] = []
     vi.stubGlobal(

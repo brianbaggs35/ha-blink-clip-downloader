@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Button from 'primevue/button'
 import Card from 'primevue/card'
 import FileUpload, { type FileUploadSelectEvent } from 'primevue/fileupload'
@@ -88,6 +88,14 @@ function clearSelection() {
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = ''
 }
+
+// The Biometrics tab is v-if-gated (see App.vue) — fully destroyed on tab
+// switch — so a preview object URL left over from an abandoned photo
+// selection (switched tabs without enrolling or clicking Clear) must be
+// revoked here too, or it leaks for the rest of the page's lifetime.
+onUnmounted(() => {
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+})
 
 function resetEnrollForm() {
   name.value = ''
