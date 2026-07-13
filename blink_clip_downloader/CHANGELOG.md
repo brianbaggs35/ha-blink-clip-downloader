@@ -219,6 +219,48 @@ until explicitly turned on.
   an unhandled promise rejection; and a dead prop watcher (unreachable since
   the modal already fully remounts the AI panel on clip change) was removed.
 
+A subsequent final line-by-line pass over every backend and frontend file
+turned up a further batch, mostly the same bug classes recurring in code
+paths the first review didn't examine:
+
+- **Local-storage clip downloads had the same non-atomic-write bug already
+  fixed for cloud-clip downloads**: `_download_local_storage_item()` passed
+  the destination path straight to blinkpy's `download_video()`, which opens
+  it in truncate mode and writes the whole response in one call — a process
+  kill mid-download left a truncated file that the already-downloaded check
+  then treated as complete forever. Now downloads to a temp path and
+  atomically renames over the destination, matching every other download
+  path.
+- **A clip's AI panel could get permanently stuck on "Failed to load
+  analysis"**: a failed (re-)analyze attempt set an error flag that nothing
+  ever cleared, and the panel's own reload guard prevented it from ever
+  fetching again — hiding a still-valid previous result behind a dead end
+  with no retry button until the whole panel remounted. A failed attempt now
+  just toasts the error and leaves whatever was already showing in place.
+- **The clip modal had the same stale-response-race bug already fixed in the
+  Library grid and the Vehicles/Biometrics pickers, in a third spot**: rapid
+  prev/next navigation could let an abandoned clip's slow response land
+  after a newer one and overwrite the player and metadata back to the wrong
+  clip. Same request-sequencing fix applied.
+- **The Moondream local-install flow had two ways to get stuck**: a failed
+  install request left the panel showing "Installing…" forever with no
+  button (nothing ever rolled the optimistic state back), and a single
+  dropped status-poll request (plausible over the several minutes an install
+  can take) silently killed the whole progress tracker even though the
+  install was likely still proceeding fine in the background. Both now
+  recover: a failed start reverts to the retry button, and polling keeps
+  going regardless of one attempt's outcome.
+- **`fast_poll_duration` had no upper bound**, unlike its sibling options and
+  its own `config.yaml` schema (which already declared one) — a typo'd huge
+  value left the add-on polling Blink at the aggressive fast-poll rate
+  indefinitely after a single motion event.
+- A photo selected for Biometrics enrollment left its preview's blob URL
+  un-revoked if the tab was switched away from before enrolling or clicking
+  Clear (the tab is destroyed on switch); a dropped anomaly-score lookup and
+  two state-file loaders (clip tracker, digest) failing on an unreadable
+  (not just corrupt) file were logged/handled the same way their siblings
+  already were, instead of staying silent or crashing the add-on at startup.
+
 ### Added — Automations tab
 
 - New **Notification Channels** panel: one-off test actions for Discord and
