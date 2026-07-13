@@ -139,11 +139,28 @@ class AnalysisQueue:
             await self._db.add_analysis_result(result.to_dict())
             await self._db.update_queue_status(clip_id, "completed")
             self._log_result(clip_id, result)
-            await self._maybe_dispatch_alert(item, clip_id, result)
 
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Failed to analyze clip %s: %s", clip_id, exc)
             await self._db.update_queue_status(clip_id, "failed", error=str(exc)[:500])
+            return
+
+        # Dispatch is intentionally outside the try/except above: the
+        # analysis result is already correctly persisted and the queue
+        # status already flipped to "completed" at this point, so a
+        # dispatch-time failure (e.g. a transient DB error computing the
+        # adaptive confidence threshold) must not overwrite that status
+        # with "failed" — doing so would both trigger a wasted re-analysis
+        # of an already-analyzed clip and, worse, silently drop the alert
+        # for a genuinely suspicious clip without surfacing the error.
+        try:
+            await self._maybe_dispatch_alert(item, clip_id, result)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Clip %s was analyzed successfully but alert dispatch failed: %s",
+                clip_id,
+                exc,
+            )
 
     async def _compute_anomaly_score(
         self, camera: str, clip_timestamp: str, clip_duration: float

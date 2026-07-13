@@ -226,6 +226,35 @@ async def test_process_pending_dispatches_suspicious(db: ClipDatabase) -> None:
     assert call_args[0][0].is_suspicious is True
 
 
+async def test_process_one_keeps_completed_status_when_dispatch_fails(
+    db: ClipDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Regression test: a dispatch-time failure (e.g. a transient DB error
+    computing the adaptive confidence threshold) must not overwrite an
+    already-successful analysis's queue status with "failed" — the result
+    is already correctly persisted by that point, so flipping to "failed"
+    would both trigger a wasted re-analysis and silently drop the alert."""
+    analyzer = _make_analyzer_mock()
+    queue = _make_queue(analyzer, db)
+    queue._running = True
+    queue._maybe_dispatch_alert = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("threshold lookup failed")
+    )
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    with caplog.at_level("WARNING"):
+        await queue._process_pending()
+
+    counts = await db.get_queue_counts()
+    assert counts["completed"] == 1
+    assert counts["failed"] == 0
+    result = await db.get_analysis_for_clip("c1")
+    assert result is not None
+    assert "dispatch failed" in caplog.text
+
+
 # ------------------------------------------------------------------
 # Queue status
 # ------------------------------------------------------------------
