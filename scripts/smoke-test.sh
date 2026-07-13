@@ -37,7 +37,12 @@ WORKDIR="$(mktemp -d)"
 
 cleanup() {
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-  rm -rf "$WORKDIR"
+  # postgres inside the container owns files under $WORKDIR/data/postgresql
+  # as its own (container-internal) UID, which the host user running this
+  # script often can't remove via a bind mount — best-effort only, so a
+  # leftover-file permission error here can never mask an otherwise-passing
+  # smoke test's exit status (matching the docker rm guard above).
+  rm -rf "$WORKDIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 
