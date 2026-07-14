@@ -1756,13 +1756,25 @@ class BaseAnalyzer(abc.ABC):
 
     @staticmethod
     def _time_of_day_segment(clip_timestamp: str) -> str | None:
-        """Time-of-day context (helps AI calibrate what's "normal")."""
+        """Time-of-day context (helps AI calibrate what's "normal").
+
+        clip_timestamp is always UTC (Blink's API convention), but "is this
+        normal for the time of day" is inherently a *local* question — a
+        camera in any timezone west of UTC has its afternoon/evening clips
+        fall on the UTC-hour boundaries this function used to read
+        directly, mislabeling broad-daylight clips as "night" and
+        defeating the whole point of telling the model to weigh the time
+        of day at all. astimezone() with no argument converts to the
+        system's configured local timezone (the same TZ the container gets
+        from HA Supervisor that datetime.now() already relies on
+        elsewhere, e.g. ai_schedule_start/end and digest_time).
+        """
         if not clip_timestamp:
             return None
         try:
             from datetime import datetime as _dt  # noqa: PLC0415
 
-            dt = _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00"))
+            dt = _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00")).astimezone()
             hour = dt.hour
             if hour < 5:
                 tod = "late night"
@@ -1777,7 +1789,7 @@ class BaseAnalyzer(abc.ABC):
             else:
                 tod = "night"
             return (
-                f"\n\nTime of day: {tod} ({dt.strftime('%H:%M')} UTC). "
+                f"\n\nTime of day: {tod} ({dt.strftime('%H:%M')} local time). "
                 "Factor this into your assessment of whether the activity is normal."
             )
         except Exception:  # noqa: BLE001

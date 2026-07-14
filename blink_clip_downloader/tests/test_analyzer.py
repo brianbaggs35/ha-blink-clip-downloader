@@ -5037,7 +5037,29 @@ async def test_analyze_clip_uniform_downselects_oversampled_pool() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_prompt_includes_time_of_day() -> None:
+@pytest.fixture
+def utc_local_tz():
+    """_time_of_day_segment converts clip_timestamp (always UTC) to local
+    time before bucketing it — correct in production (see the regression
+    test below), but it means these bucket-boundary tests need a pinned,
+    known local timezone to be deterministic, rather than silently
+    depending on whatever timezone happens to be ambient wherever they
+    run (this sandbox's, for instance, is Atlantic time, not UTC)."""
+    import os
+    import time as _time_module
+
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC"
+    _time_module.tzset()
+    yield
+    if original_tz is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = original_tz
+    _time_module.tzset()
+
+
+def test_build_prompt_includes_time_of_day(utc_local_tz) -> None:
     a = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
@@ -5050,7 +5072,7 @@ def test_build_prompt_includes_time_of_day() -> None:
     assert "late night" in prompt
 
 
-def test_build_prompt_evening_time() -> None:
+def test_build_prompt_evening_time(utc_local_tz) -> None:
     a = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
@@ -5060,7 +5082,7 @@ def test_build_prompt_evening_time() -> None:
     assert "evening" in prompt
 
 
-def test_build_prompt_morning_time() -> None:
+def test_build_prompt_morning_time(utc_local_tz) -> None:
     a = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
@@ -5070,7 +5092,7 @@ def test_build_prompt_morning_time() -> None:
     assert "Time of day: morning" in prompt
 
 
-def test_build_prompt_early_morning_time() -> None:
+def test_build_prompt_early_morning_time(utc_local_tz) -> None:
     a = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
@@ -5080,7 +5102,7 @@ def test_build_prompt_early_morning_time() -> None:
     assert "Time of day: early morning" in prompt
 
 
-def test_build_prompt_afternoon_time() -> None:
+def test_build_prompt_afternoon_time(utc_local_tz) -> None:
     a = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
@@ -5090,7 +5112,7 @@ def test_build_prompt_afternoon_time() -> None:
     assert "Time of day: afternoon" in prompt
 
 
-def test_build_prompt_night_time() -> None:
+def test_build_prompt_night_time(utc_local_tz) -> None:
     a = ClipAnalyzer(
         ollama_url="http://localhost:11434",
         model="llava",
@@ -5098,6 +5120,34 @@ def test_build_prompt_night_time() -> None:
     )
     prompt = a._build_prompt("Cam", clip_timestamp="2026-06-28T21:00:00+00:00")
     assert "Time of day: night" in prompt
+
+
+def test_time_of_day_uses_local_timezone_not_raw_utc_hour() -> None:
+    """clip_timestamp is always UTC (Blink's convention), but "is this
+    normal for the time of day" is a local question — a clip at 20:10 UTC
+    is broad-daylight late afternoon in a UTC-3 (e.g. Atlantic/Halifax)
+    timezone, not "night". Regression test for reading dt.hour directly
+    off the UTC value instead of converting to local time first."""
+    import os
+    import time as _time_module
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    original_tz = os.environ.get("TZ")
+    try:
+        os.environ["TZ"] = "America/Halifax"  # UTC-3 (ADT) in summer
+        _time_module.tzset()
+        # 20:10 UTC -> 17:10 ADT: late afternoon/early evening, nowhere
+        # near "night" despite the UTC hour alone suggesting it.
+        prompt = a._build_prompt("Cam", clip_timestamp="2026-07-14T20:10:00+00:00")
+        assert "Time of day: night" not in prompt
+        assert "Time of day: evening" in prompt
+        assert "17:10 local time" in prompt
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        _time_module.tzset()
 
 
 def test_build_prompt_no_anomaly_alert_below_threshold() -> None:
