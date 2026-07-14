@@ -6,6 +6,7 @@ import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
 import ProgressBar from 'primevue/progressbar'
+import ProgressSpinner from 'primevue/progressspinner'
 import Select from 'primevue/select'
 import {
   deleteClip,
@@ -302,6 +303,9 @@ function toggleSelect(id: string) {
   else next.add(id)
   selectedIds.value = next
 }
+function selectAllVisible() {
+  selectedIds.value = new Set(clips.value.map((c) => c.id))
+}
 
 async function bulkStar() {
   if (!selectedIds.value.size) return
@@ -459,6 +463,7 @@ onUnmounted(() => {
         :options="SOURCE_OPTIONS"
         option-label="label"
         option-value="value"
+        placeholder="All sources"
       />
       <label for="tag-filter" class="sr-only">Tag</label>
       <Select
@@ -468,6 +473,7 @@ onUnmounted(() => {
         :options="tagOptions"
         option-label="label"
         option-value="value"
+        placeholder="All tags"
       />
       <label for="sort-order" class="sr-only">Sort order</label>
       <Select
@@ -493,17 +499,31 @@ onUnmounted(() => {
     <BulkBar
       v-if="selectMode"
       :count="selectedIds.size"
+      :total="clips.length"
       :zipping="zipping"
       @star="bulkStar"
       @delete="bulkDelete"
       @zip="bulkZip"
       @cancel="toggleSelectMode(false)"
+      @select-all="selectAllVisible"
     />
 
     <main class="lib-main">
       <div id="clip-grid" class="clip-grid">
-        <div v-if="loadingInitial" style="grid-column: 1 / -1; padding: 2rem; text-align: center; color: var(--muted)">
-          Loading…
+        <div
+          v-if="loadingInitial"
+          style="
+            grid-column: 1 / -1;
+            padding: 2.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.6rem;
+            color: var(--muted);
+          "
+        >
+          <ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="4" />
+          <span style="font-size: 0.85rem">Loading clips…</span>
         </div>
         <div v-else-if="!clips.length" class="empty">
           <AppIcon name="empty-box" />

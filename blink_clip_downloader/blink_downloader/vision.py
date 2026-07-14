@@ -211,6 +211,19 @@ class ObjectDetector:
         return self._lock
 
     def _load_sync(self) -> None:
+        # Must be set before the ultralytics import below: it probes
+        # ~/.config/Ultralytics for a writable settings dir as a side effect
+        # of import (not lazily), and this container's $HOME isn't writable
+        # by the add-on's runtime user. Finding it unwritable, ultralytics
+        # falls back to /tmp on its own — but does so by printing raw,
+        # unformatted lines straight to stdout (bypassing our logging setup
+        # entirely, unlabeled and timestamp-free among otherwise-structured
+        # log output) and using an ephemeral directory that doesn't survive
+        # a container recreation. Pointing it at the same persistent,
+        # known-writable directory the model weights already cache under
+        # avoids both problems in one step: no fallback needed, so no
+        # notice, and the settings file persists like the weights do.
+        os.environ.setdefault("YOLO_CONFIG_DIR", _YOLO_MODEL_CACHE_DIR)
         from ultralytics import YOLO  # noqa: PLC0415  # type: ignore[import-not-found]
 
         # A bare filename (the default "yolo11n.pt", or any custom
@@ -1105,5 +1118,29 @@ class VisionPipeline:
             face_result = await recognizer.recognize(raw_frames)
             hints.face_recognition = face_result
             hints.recognized_resident_hint = _build_recognition_hint(face_result)
+
+        # The only per-clip evidence any of this ran was the one-time
+        # "model ready" INFO log each stage prints on its first load —
+        # after that, every stage below runs (and produces real hints that
+        # do reach the AI prompt) completely silently, even at debug level.
+        # Names are deliberately never logged here, matching
+        # _build_recognition_hint's own name-free prompt guarantee — only
+        # counts, mirroring what the prompt itself is allowed to say.
+        _LOGGER.debug(
+            "Vision pipeline result: enhanced_detection=%s "
+            "(detection=%r, tracking=%r, depth=%r, contact=%r), "
+            "face_recognition=%s (approved=%d, other=%d, unrecognized_present=%s)",
+            self._config.enhanced_detection_enabled,
+            hints.detection_hint,
+            hints.tracking_hint,
+            hints.depth_hint,
+            hints.contact_hint,
+            self._config.face_recognition_enabled,
+            len(hints.face_recognition.approved_names) if hints.face_recognition else 0,
+            len(hints.face_recognition.other_names) if hints.face_recognition else 0,
+            hints.face_recognition.unrecognized_present
+            if hints.face_recognition
+            else False,
+        )
 
         return hints

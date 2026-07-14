@@ -164,6 +164,31 @@ export const AppTheme = definePreset(Aura, {
         dark: { root: formFieldColorScheme },
       },
     },
+    // Aura's default ProgressSpinner cycles its stroke through 4 unrelated
+    // colors (red/blue/green/yellow) via a 6s keyframe animation — reads as
+    // a generic Material spinner, clashing with this app's single-accent
+    // palette. Pointing all four color slots at the same accent shade
+    // leaves the spin/dash animation intact but keeps the color constant.
+    progressspinner: {
+      colorScheme: {
+        light: {
+          root: {
+            colorOne: '{primary.500}',
+            colorTwo: '{primary.500}',
+            colorThree: '{primary.500}',
+            colorFour: '{primary.500}',
+          },
+        },
+        dark: {
+          root: {
+            colorOne: '{primary.500}',
+            colorTwo: '{primary.500}',
+            colorThree: '{primary.500}',
+            colorFour: '{primary.500}',
+          },
+        },
+      },
+    },
     select: {
       colorScheme: {
         light: { root: formFieldColorScheme },

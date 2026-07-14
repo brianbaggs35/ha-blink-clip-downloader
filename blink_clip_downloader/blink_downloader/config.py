@@ -68,7 +68,7 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     retry_delay: float = 5.0
 
     # --- HA integration ---
-    notify_ha: bool = True
+    notify_ha: bool = False
     ha_notification_title: str = "Blink Clip Downloaded"
 
     # --- Extra features ---
@@ -451,7 +451,7 @@ def _parse_storage_kwargs(data: dict) -> dict[str, Any]:
 
 def _parse_notification_kwargs(data: dict) -> dict[str, Any]:
     return {
-        "notify_ha": bool(data.get("notify_ha", True)),
+        "notify_ha": bool(data.get("notify_ha", False)),
         "ha_notification_title": str(
             data.get("ha_notification_title", "Blink Clip Downloaded")
         ),

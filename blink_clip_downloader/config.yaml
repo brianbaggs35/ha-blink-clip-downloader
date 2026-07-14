@@ -83,7 +83,10 @@ options:
 
   # --- HA notifications ---
   # Send a Home Assistant persistent notification each time a clip is downloaded.
-  notify_ha: true
+  # Off by default: a real, continuously-syncing account can download clips
+  # every poll cycle, and a persistent notification per clip quickly becomes
+  # noise rather than a signal — opt in explicitly if you want it.
+  notify_ha: false
   # Title shown in the HA notification.
   ha_notification_title: "Blink Clip Downloaded"
 
@@ -447,7 +450,7 @@ schema:
     - "str?"
   ai_prompt_debug_enabled: "bool"
   ai_enhanced_detection_enabled: "bool"
-  ai_object_detection_model: "str?"
+  ai_object_detection_model: "list(yolo11n.pt|yolo11s.pt|yolo11m.pt|yolo11l.pt|yolo11x.pt)"
   ai_face_recognition_enabled: "bool"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"

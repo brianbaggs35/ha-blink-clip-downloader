@@ -289,7 +289,7 @@ describe('LibraryPage', () => {
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
     await wrapper.find('.clip-card').trigger('click')
-    const starBtn = wrapper.findAll('button').find((b) => b.text().includes('Star all'))!
+    const starBtn = wrapper.findAll('button').find((b) => b.text().includes('Star selected'))!
     await starBtn.trigger('click')
     await flushPromises()
     expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c1/star', expect.objectContaining({ method: 'PUT' }))
@@ -303,7 +303,7 @@ describe('LibraryPage', () => {
     await findByText(wrapper, 'Select').trigger('click')
     await wrapper.find('.clip-card').trigger('click')
     const confirm = useConfirmStore()
-    const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete all'))!
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete selected'))!
     const clickPromise = deleteBtn.trigger('click')
     await flushPromises()
     expect(confirm.open).toBe(true)
@@ -543,11 +543,11 @@ describe('LibraryPage', () => {
     const callsBefore = vi.mocked(fetch).mock.calls.length
     await wrapper
       .findAll('button')
-      .find((b) => b.text().includes('Star all'))!
+      .find((b) => b.text().includes('Star selected'))!
       .trigger('click')
     await wrapper
       .findAll('button')
-      .find((b) => b.text().includes('Delete all'))!
+      .find((b) => b.text().includes('Delete selected'))!
       .trigger('click')
     await wrapper
       .findAll('button')
@@ -736,7 +736,7 @@ describe('LibraryPage', () => {
     await wrapper.find('.clip-card').trigger('click')
     const confirm = useConfirmStore()
     const callsBefore = vi.mocked(fetch).mock.calls.length
-    const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete all'))!
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete selected'))!
     const clickPromise = deleteBtn.trigger('click')
     await flushPromises()
     confirm.settle(false)

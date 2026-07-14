@@ -249,6 +249,7 @@ h3 {
   white-space: nowrap;
   margin-bottom: 1.5rem;
   padding: 0 0.2rem;
+  flex-shrink: 0;
 }
 .app-nav-brand-mark {
   width: 34px;
@@ -279,6 +280,7 @@ h3 {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+  flex-shrink: 0;
 }
 .app-nav-tab {
   background: transparent;
@@ -326,13 +328,26 @@ h3 {
   letter-spacing: 0.06em;
   color: var(--muted);
   margin: 1.15rem 0 0.5rem 0.75rem;
+  flex-shrink: 0;
 }
+/* flex-shrink:0 is the key fix here: without it, a column-flex parent
+   (.app-nav) shrinks its children — including ones with an explicit
+   max-height — to fit whatever space is left once every sibling is laid
+   out. On a short viewport that squeezed this down to a sliver just tall
+   enough for "All Cameras", silently hiding every other camera button with
+   no visible scrollbar to hint more was there (the 240px cap was only ever
+   an upper bound, never a guaranteed minimum). Pinning this to its natural
+   height means .app-nav-spacer (the one deliberately flexible child) is
+   what shrinks first instead, and .app-nav's own overflow-y:auto only
+   kicks in — scrolling the sidebar as a whole — if content still doesn't
+   fit after that. */
 .app-nav-cameras {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
   max-height: 240px;
   overflow-y: auto;
+  flex-shrink: 0;
 }
 .app-nav-cam {
   background: transparent;
@@ -383,6 +398,7 @@ h3 {
   gap: 0.65rem;
   padding-top: 0.9rem;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .app-nav-conn-tag {
   align-self: flex-start;
@@ -564,6 +580,8 @@ h3 {
   padding: 0.65rem 1.1rem;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 0.2rem;
   box-shadow: var(--shadow-sm);
   min-width: 100px;
@@ -572,11 +590,13 @@ h3 {
   font-size: 0.72rem;
   color: var(--muted);
   white-space: nowrap;
+  text-align: center;
 }
 .lib-stat-value {
   font-size: 1.3rem;
   font-weight: 700;
   color: var(--text);
+  text-align: center;
 }
 .lib-stat-storage {
   flex: 1;
@@ -591,6 +611,15 @@ h3 {
      string instead of wrapping it. */
   white-space: normal;
   line-height: 1.3;
+  width: 100%;
+}
+/* .lib-stat's align-items:center (added for the label/value centering
+   above) makes flex children shrink to their own content width by
+   default — the progress bar needs an explicit full-width override here
+   or it would collapse to PrimeVue's intrinsic default instead of
+   spanning the card like it did under the old align-items:stretch. */
+.lib-stat-storage .p-progressbar {
+  width: 100%;
 }
 .lib-filters {
   padding: 1rem 1.5rem;
@@ -1638,5 +1667,24 @@ h3 {
     margin-top: 0;
     padding-top: 0;
     border-top: none;
+  }
+  /* .app-nav-action-row keeps its desktop column layout (Refresh above
+     Sync) by default, which — sitting inline in .app-nav-utility's row
+     alongside the much shorter connection tag and icon row — stacked two
+     full-width labelled buttons into an ~62px-tall column that dwarfed
+     everything beside it and made the whole bar unnecessarily tall.
+     Matching .app-nav-tab's existing icon-only mobile treatment (label
+     hidden, title/aria-label still carry it for a11y) keeps Refresh/Sync
+     visually consistent with the icon row next to them instead of reading
+     as a mismatched two-line block. */
+  .app-nav-action-row {
+    flex-direction: row;
+    gap: 0.3rem;
+  }
+  .app-nav-action-row .p-button {
+    width: auto;
+  }
+  .app-nav-action-row .p-button-label {
+    display: none;
   }
 }

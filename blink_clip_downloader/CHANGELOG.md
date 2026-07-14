@@ -846,6 +846,95 @@ rather than the Vite dev server or a bare `docker run`:
   to the sidebar's Connected/Disconnected/Unknown tag — a plain
   color-only badge was easy to miss at a glance.
 
+### Fixed — a fourth round of real-account testing (short viewports, mobile)
+
+- **The sidebar's camera list (and everything else in the sidebar) could
+  be silently squeezed down to a sliver on a shorter screen.** Every
+  direct child of the sidebar's column flex layout defaulted to
+  `flex-shrink: 1` with no minimum, so on a short viewport the layout
+  algorithm shrank the camera list (and brand/tabs/utility rows) below
+  their own `max-height`/content size to make everything fit — on a
+  660px-tall viewport this crushed the camera list down to ~29px, hiding
+  every camera but "All Cameras" with no visible scrollbar to hint more
+  was there. Pinned every fixed-size section to `flex-shrink: 0` so only
+  the deliberately-flexible spacer compresses; the sidebar as a whole now
+  scrolls (it already had `overflow-y: auto`) if content still doesn't
+  fit after that, rather than one specific section vanishing.
+- **The Vehicles and Biometrics tabs overflowed horizontally on a phone-width
+  screen**, clipping paragraph text and form fields off the right edge of
+  the viewport instead of wrapping. Both pages' top-level containers were
+  missing the `min-width: 0` that `.auto-content` (used by
+  Automations/AI/Models) already has — flex items default to
+  `min-width: auto`, refusing to shrink below their content's natural
+  width unless told otherwise.
+- **A raw, unformatted Ultralytics warning and settings-file notice printed
+  straight to stdout** the first time the object-detection model loaded
+  each container start, bypassing the add-on's own structured logging.
+  It happens because `$HOME/.config/Ultralytics` isn't writable by the
+  add-on's runtime user; ultralytics falls back to `/tmp` on its own, but
+  announces the fallback with unlabeled print statements. Now points
+  `YOLO_CONFIG_DIR` at the same persistent, already-writable directory the
+  model weights cache under, so no fallback (and no notice) is needed, and
+  the settings file survives a container recreation like the weights do.
+- **HA persistent notifications ("HA Notifications") are now off by
+  default.** With `notify_ha` previously defaulting on, a real,
+  continuously-syncing Blink account generated a notification per
+  downloaded clip — signal quickly turning into noise. Existing installs
+  that already have this explicitly enabled are unaffected; this only
+  changes the default for new installs.
+- **Library tab polish from real-account feedback**: the top stat badges
+  (Today/This week/Total/Starred/Library size/Storage) now center their
+  label and number instead of left-aligning; the Source and Tag filter
+  dropdowns show "All sources"/"All tags" placeholder text; the plain
+  "Loading…" text while clips load is now a themed spinner; and the bulk
+  "★ Star all"/"🗑 Delete all" buttons — which only ever acted on
+  individually-checked clips, doing nothing when none were checked — are
+  now "★ Star selected"/"🗑 Delete selected" alongside a real "Select all
+  N" action that selects every clip currently loaded in the grid.
+
+### Fixed — a fifth round of real-account testing (car-zone accuracy, mobile top bar)
+
+- **A person standing right next to (but not overlapping) a protected
+  vehicle could score near-zero "zone motion"**, causing the ZONE MOTION
+  prompt hint to actively tell the AI "away from the protected vehicle's
+  usual spot" for exactly the near-miss case it most needs to catch.
+  `VehicleZonePicker`'s only instruction is to draw a box around the
+  vehicle itself, so the zone is normally a tight fit around the car's own
+  footprint — a person standing beside it generates motion pixels adjacent
+  to, not inside, that box. `_zone_motion_fraction` now measures motion
+  within the zone padded outward by 20% of its own width/height, so
+  immediately-adjacent activity registers as zone-relevant instead of
+  reading as unrelated background motion elsewhere in frame. (Confirmed via
+  a real clip during testing that this specific hint — not a detection
+  failure — was what pushed a near-vehicle event to a confident
+  not-suspicious verdict.)
+- **Object detection model (`ai_object_detection_model`) can now be picked
+  from a dropdown** in the Supervisor's Configuration tab, matching how
+  `ai_provider` already works, instead of requiring the exact filename
+  (`yolo11n.pt`/`yolo11s.pt`/`yolo11m.pt`/`yolo11l.pt`/`yolo11x.pt`) to be
+  typed by hand.
+- **The mobile top bar's Refresh/Sync buttons stacked into a two-line
+  column** (Refresh above Sync) inline within the same row as the
+  connection badge and icon buttons, making that row roughly twice as tall
+  as everything beside it and the whole header noticeably bulkier than it
+  needed to be on a phone screen. They're now icon-only in a single row
+  under 600px width, matching the icon-only treatment the nav tabs already
+  get at that breakpoint (tooltips/`aria-label`s still carry the text).
+- **The computer-vision pipeline (object detection/tracking, depth,
+  contact segmentation, face recognition) and the car-zone check gave no
+  indication in the logs — even at debug level — that they ran at all**,
+  beyond a one-time "model ready" line the first time each model loaded.
+  Real per-clip results (detected classes, tracking, depth/contact, face
+  match counts) were reaching the AI prompt correctly the whole time, but
+  there was no way to see that from the logs, making it impossible to
+  confirm the features were doing anything without manually inspecting a
+  stored prompt. `analyze_clip` and `VisionPipeline.process_clip` now each
+  log one DEBUG summary line per clip — whether a car zone was found for
+  that camera and what fraction it computed, and what every enabled vision
+  stage actually detected. Face recognition results are logged as counts
+  only (never names), matching the same name-free guarantee the prompt
+  hint itself already follows.
+
 ## 4.0.2
 
 ### Bug fixes

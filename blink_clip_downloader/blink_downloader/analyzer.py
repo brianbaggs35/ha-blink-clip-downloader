@@ -99,6 +99,21 @@ _MOTION_TRAJECTORY_LATERAL_SHIFT_FRACTION: float = 0.15
 # required to call an intensity trend (approaching/retreating proxy).
 _MOTION_TRAJECTORY_INTENSITY_RATIO: float = 1.3
 
+# Outward padding applied to a configured car zone, as a fraction of the
+# zone's own width/height, before measuring what share of a clip's motion
+# fell "inside" it (see BaseAnalyzer._zone_motion_fraction). The zone itself
+# is drawn tightly around the vehicle (VehicleZonePicker's only instruction
+# is "draw ... the protected vehicle's zone"), so a person standing right
+# beside the car — not overlapping its own footprint — generates motion
+# pixels just outside that box. Without padding, that's exactly the
+# near-miss case this heuristic most needs to catch: real-world testing
+# showed a clip where someone stood essentially against a parked car still
+# scored near-zero zone motion, and the resulting prompt hint ("away from
+# the protected vehicle's usual spot") actively pushed the model toward a
+# not-suspicious verdict. This only widens the *measurement* window, not
+# the zone data stored/shown in the picker UI.
+_ZONE_MOTION_PAD_FRACTION: float = 0.2
+
 # The analysis prompt's OUTPUT RULES ask for one sentence, or at most two,
 # but small vision models sometimes ignore that and emit a degenerate loop
 # of near-identical sentences instead of stopping (e.g. repeating "the
@@ -876,8 +891,23 @@ class BaseAnalyzer(abc.ABC):
         frames = self._downselect_frames(frames, clip_duration)
         frames, vision_hints = await self._apply_vision_pipeline(frames, camera)
 
-        trajectory_hint = self._compute_motion_trajectory_hint(frames)
         zone_motion_fraction = self._maybe_compute_zone_motion(frames, camera)
+        # The car-zone box drawn in the Vehicles tab only ever showed up as
+        # a difference in the AI's final prompt text — nothing logged
+        # whether a zone was even found for this camera, let alone what
+        # fraction it computed, making it impossible to tell from the logs
+        # alone whether the box is wired up at all versus just not mattering
+        # for this particular clip.
+        _LOGGER.debug(
+            "Car-zone check for camera=%r: zone_configured=%s, "
+            "car_protection_applies=%s, zone_motion_fraction=%s",
+            camera,
+            camera in self._car_zones,
+            self._car_protection_applies(camera),
+            zone_motion_fraction,
+        )
+
+        trajectory_hint = self._compute_motion_trajectory_hint(frames)
 
         prompt = self._build_prompt(
             camera,
@@ -1551,10 +1581,17 @@ class BaseAnalyzer(abc.ABC):
                 for f in frames
             ]
 
-            zx1 = max(0, min(width - 1, round(zone.get("x_min", 0.0) * width)))
-            zy1 = max(0, min(height - 1, round(zone.get("y_min", 0.0) * height)))
-            zx2 = max(zx1 + 1, min(width, round(zone.get("x_max", 1.0) * width)))
-            zy2 = max(zy1 + 1, min(height, round(zone.get("y_max", 1.0) * height)))
+            raw_x_min = zone.get("x_min", 0.0)
+            raw_y_min = zone.get("y_min", 0.0)
+            raw_x_max = zone.get("x_max", 1.0)
+            raw_y_max = zone.get("y_max", 1.0)
+            pad_x = max(0.0, raw_x_max - raw_x_min) * _ZONE_MOTION_PAD_FRACTION
+            pad_y = max(0.0, raw_y_max - raw_y_min) * _ZONE_MOTION_PAD_FRACTION
+
+            zx1 = max(0, min(width - 1, round((raw_x_min - pad_x) * width)))
+            zy1 = max(0, min(height - 1, round((raw_y_min - pad_y) * height)))
+            zx2 = max(zx1 + 1, min(width, round((raw_x_max + pad_x) * width)))
+            zy2 = max(zy1 + 1, min(height, round((raw_y_max + pad_y) * height)))
 
             total_motion = 0
             zone_motion = 0

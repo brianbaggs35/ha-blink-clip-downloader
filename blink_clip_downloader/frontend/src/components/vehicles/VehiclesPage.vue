@@ -140,6 +140,12 @@ const showInactiveWarning = computed(() => carCameras.value.length > 0 && !prote
 .vehicles-page {
   padding: 1.75rem;
   max-width: 900px;
+  /* Flex items default to min-width:auto, refusing to shrink below their
+     content's natural width — on a narrow (mobile) viewport that pushed
+     this whole page wider than the screen instead of wrapping its text,
+     the same fix .auto-content (Automations/AI/Models) already has. */
+  min-width: 0;
+  width: 100%;
 }
 
 .page-intro {
