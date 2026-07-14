@@ -662,6 +662,115 @@ Docker build + container run, not just review)
   automated Playwright smoke check that both CI and `scripts/smoke-test.sh`
   run. Added.
 
+### Fixed — dark mode and modal styling
+
+- **Card/InputText/Select/Textarea/FileUpload/Checkbox/Dialog ignored dark
+  mode**, showing a white/light background under `.dark` throughout the
+  Vehicles, Biometrics, and AI tabs. Unlike Button/Tag/Message/ToggleSwitch/
+  Toast, Aura's presets for these components reference semantic tokens
+  directly on a single flat `colorScheme`-less block — CSS custom
+  properties are computed once at their `:root, :host` declaration and
+  simply inherited, not re-evaluated per descendant, so the derived
+  `--p-*-background` variable stayed frozen at the light-theme value no
+  matter what `.dark` was doing elsewhere on the page. Added explicit
+  `light`/`dark` `colorScheme` overrides for each of these components in
+  `theme.ts`.
+- **Modal/dialog backdrop turned fully black** instead of dimming the page
+  behind it, most visibly on the "Clear stats?" confirm dialog. This app's
+  dark palette is already very dark (`#0c0d16`-ish), and blending
+  `rgba(0,0,0,0.6)` over a background that dark produces a color
+  indistinguishable from solid black at any reasonable opacity — no amount
+  of opacity tuning fixes it. Matched the app's own pre-existing
+  `.modal-bg` pattern instead: `backdrop-filter: blur(3px)` on
+  `.p-overlay-mask`, so the dimmed page is still visibly (if blurrily)
+  there behind every PrimeVue overlay, in both themes.
+
+### Fixed — spacing between adjacent interactive elements
+
+- **Biometrics' "Enroll" button sat flush against the "Approve
+  immediately" toggle above it** (0px gap) — the button had no
+  `margin-top` of its own. Added `.enroll-submit-btn { margin-top:
+  0.9rem }`.
+- **Automations' notification-test result messages (email/Discord/mobile)
+  had no spacing above or below**, PrimeVue's `Message` component ships
+  with no default margin. Added `.channel-result { margin: 0.6rem 0 }`.
+
+### Fixed — PostgreSQL startup logged a spurious FATAL on every boot
+
+- **`FATAL: role "root" does not exist`** on every single add-on start:
+  `services.d/blink-downloader/run`'s `pg_isready` readiness loop connected
+  with no explicit role, so libpq fell back to the OS user running the
+  script (root, since this service isn't `s6-setuidgid`'d the way the
+  postgresql service itself is) — never a real database role here.
+  Harmless (`pg_isready` only cares whether the server responds at all,
+  and an auth rejection still counts), but alarming log noise on every
+  cold start. Fixed with `-U blink`.
+- That fix alone traded it for a different but equally spurious
+  **`FATAL: database "blink" does not exist`**: without an explicit `-d`,
+  libpq defaults the target *database* to match the *role* name, and the
+  role (`blink`) and the actual database (`blink_clips`) are deliberately
+  different names. Fixed with `-U blink -d blink_clips`; postgres startup
+  logs are now completely clean, verified against a real HA Supervisor
+  install.
+
+### Fixed — issues found testing under a real Home Assistant Supervisor install
+
+The fixes above (dark mode, spacing, postgres) were also found and
+verified this way. Additional issues surfaced only by running the add-on
+inside an actual Supervisor instance with real Blink/OpenAI credentials,
+rather than the Vite dev server or a bare `docker run`:
+
+- **The sidebar's connection badge showed "Unknown" instead of
+  "Disconnected"** for the entire time Blink authentication was failing
+  (bad credentials, still connecting, config error) — `extra_status`
+  (the dict backing `/api/stats`'s `connected` field) was only ever
+  populated on a *successful* connect, so a client that loaded the UI
+  before that point saw no `connected` key at all rather than `false`,
+  and the frontend only distinguishes "Disconnected" from "Unknown" when
+  that key is present. `connected` now defaults to `False` from the
+  moment the media server can answer requests, flipping to `True` only
+  once Blink auth actually succeeds.
+- **The Library page's Storage stat card overflowed its box** instead of
+  wrapping, hard-clipped by an ancestor's `overflow: hidden` — its label
+  reused `.lib-stat`'s `white-space: nowrap` (fine for the other cards'
+  short static text like "Today") for a much longer, dynamic string
+  ("Storage — 645.7 MB used · Free: 764.42 GB") that doesn't fit on one
+  line at typical card widths. That one label now wraps normally.
+- **The Models tab had no top padding and, along with Vehicles and
+  Biometrics, no way to scroll to content past the viewport**: every
+  other content tab has a `#page-<name> { overflow-y: auto; padding:
+  1.75rem }` rule overriding `.page`'s own `overflow: hidden`, added
+  individually as each tab shipped — these three simply never got one.
+  Vehicles/Biometrics already padded themselves internally (at a
+  slightly-off `1.5rem`, now `1.75rem` to match everyone else) so only
+  needed the scroll fix; Models had neither and needed both.
+- **AI Usage's stat tiles (Clips Analyzed, Total Tokens, etc.) ran
+  noticeably larger and bolder than the equivalent numbers on the AI
+  tab's Queue Status card** (`1.95rem`/800 weight vs. `1.5rem`/700) — the
+  one visible font-scale inconsistency in the app once both tabs are open
+  side by side. Sized to match.
+- **A clip that failed AI analysis (rate limit, auth error, timeout,
+  connection drop, ...) was silently recorded as a successful, "not
+  suspicious" analysis with an empty summary, and never retried.** Every
+  provider's `_call_model` returns `""` on failure (already logging the
+  specific reason), but `analyze_clip()` fed that straight into
+  `parse_response()`, which treats an empty string as a normal,
+  confidently-not-suspicious result — permanently recording a false
+  negative for a clip that was never actually analyzed, since
+  `AnalysisQueue` only ever re-selects `status='pending'` rows. A clip
+  that was genuinely suspicious could be silently marked safe. `""` after
+  frames were successfully extracted is now treated as a hard failure
+  (raises, so the caller correctly marks it "failed" instead of
+  "completed" — visible in the AI tab's Queue Status card).
+- **Hitting an OpenAI/Anthropic/Moondream Cloud rate limit mid-batch
+  re-attempted every remaining clip in that batch anyway**, each one
+  doomed to hit the exact same limit immediately (and each retrying
+  internally via the provider SDK before failing) — pure wasted time and
+  repeated `429` log spam for no benefit. `AnalysisQueue` now stops
+  working through the current batch as soon as a rate limit is detected,
+  leaving the rest pending for the next check cycle once the limit has
+  had a chance to cool down.
+
 ## 4.0.2
 
 ### Bug fixes
