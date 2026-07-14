@@ -59,7 +59,13 @@ const sendMobile = () => runTest('Test push notification', sendingMobile, mobile
           {{ sendingEmail ? 'Sending…' : 'Send test email' }}
         </Button>
       </div>
-      <Message v-if="emailResult" :severity="emailResult.success ? 'success' : 'error'" :closable="false" size="small">
+      <Message
+        v-if="emailResult"
+        class="channel-result"
+        :severity="emailResult.success ? 'success' : 'error'"
+        :closable="false"
+        size="small"
+      >
         {{ emailResult.message }}
       </Message>
 
@@ -74,6 +80,7 @@ const sendMobile = () => runTest('Test push notification', sendingMobile, mobile
       </div>
       <Message
         v-if="discordResult"
+        class="channel-result"
         :severity="discordResult.success ? 'success' : 'error'"
         :closable="false"
         size="small"
@@ -92,6 +99,7 @@ const sendMobile = () => runTest('Test push notification', sendingMobile, mobile
       </div>
       <Message
         v-if="mobileResult"
+        class="channel-result"
         :severity="mobileResult.success ? 'success' : 'error'"
         :closable="false"
         size="small"
@@ -118,6 +126,10 @@ const sendMobile = () => runTest('Test push notification', sendingMobile, mobile
 
 .channel-row:last-of-type {
   border-bottom: none;
+}
+
+.channel-result {
+  margin: 0.6rem 0;
 }
 
 .channel-row-main {

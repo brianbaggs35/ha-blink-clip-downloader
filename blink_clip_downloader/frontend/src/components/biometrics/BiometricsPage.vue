@@ -315,7 +315,7 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
           >
         </div>
 
-        <Button :disabled="!available || enrolling" :loading="enrolling" @click="enroll">
+        <Button class="enroll-submit-btn" :disabled="!available || enrolling" :loading="enrolling" @click="enroll">
           {{
             enrolling
               ? 'Enrolling…'
@@ -419,6 +419,10 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  margin-top: 0.9rem;
+}
+
+.enroll-submit-btn {
   margin-top: 0.9rem;
 }
 
