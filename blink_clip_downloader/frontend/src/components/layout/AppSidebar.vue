@@ -64,6 +64,15 @@ const connLabel = computed(() => {
 
 const cameraTotal = computed(() => library.cameras.reduce((sum, c) => sum + (c.total || 0), 0))
 
+// The camera list is a Library filter shortcut, but it's shown in the
+// persistent sidebar (like Sync/Refresh/the connection badge) rather than
+// gated to the Library tab, so clicking one from elsewhere must switch
+// there too — otherwise the click has no visible effect at all.
+function selectCamera(camera: string) {
+  library.selectCamera(camera)
+  activeTab.value = 'library'
+}
+
 const syncing = ref(false)
 async function sync() {
   syncing.value = true
@@ -107,14 +116,14 @@ function onRefreshClick() {
       </button>
     </div>
 
-    <template v-if="activeTab === 'library'">
+    <template v-if="library.cameras.length">
       <div class="app-nav-section-label">Cameras</div>
       <div class="app-nav-cameras">
         <button
           class="app-nav-cam"
-          :class="{ active: library.currentCamera === 'all' }"
+          :class="{ active: activeTab === 'library' && library.currentCamera === 'all' }"
           data-camera="all"
-          @click="library.selectCamera('all')"
+          @click="selectCamera('all')"
         >
           <span>All Cameras</span>
           <span class="app-nav-cam-count">{{ cameraTotal }}</span>
@@ -123,9 +132,9 @@ function onRefreshClick() {
           v-for="cam in library.cameras"
           :key="cam.camera"
           class="app-nav-cam"
-          :class="{ active: library.currentCamera === cam.camera }"
+          :class="{ active: activeTab === 'library' && library.currentCamera === cam.camera }"
           :data-camera="cam.camera"
-          @click="library.selectCamera(cam.camera)"
+          @click="selectCamera(cam.camera)"
         >
           <span>{{ cam.camera }}</span>
           <span class="app-nav-cam-count">{{ cam.total || 0 }}</span>
@@ -141,6 +150,7 @@ function onRefreshClick() {
         <Button
           text
           rounded
+          size="small"
           severity="secondary"
           title="Toggle dark/light theme"
           :aria-label="theme.isDark ? 'Switch to light theme' : 'Switch to dark theme'"
@@ -151,6 +161,7 @@ function onRefreshClick() {
         <Button
           text
           rounded
+          size="small"
           severity="secondary"
           title="Keyboard shortcuts (?)"
           aria-label="Keyboard shortcuts"
@@ -162,6 +173,7 @@ function onRefreshClick() {
           v-if="notifSupported"
           text
           rounded
+          size="small"
           severity="secondary"
           :title="notifEnabled ? 'Notifications ON (click to disable)' : 'Enable browser notifications'"
           :aria-label="notifEnabled ? 'Notifications on' : 'Enable browser notifications'"

@@ -81,15 +81,23 @@ describe('AppSidebar', () => {
     expect(wrapper.emitted('refresh')).toHaveLength(1)
   })
 
-  it('shows the camera list only when the Library tab is active', async () => {
+  it('shows the camera list on every tab once cameras have loaded, not just Library', async () => {
     const library = useLibraryStore()
     library.setCameras([{ camera: 'front', total: 3, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }])
     const wrapper = mountSidebar('library')
     expect(wrapper.find('[data-camera="front"]').exists()).toBe(true)
     expect(wrapper.find('[data-camera="all"]').exists()).toBe(true)
 
+    // It's a persistent sidebar element (like Sync/Refresh/the connection
+    // badge), not gated to the Library tab — switching away must not hide
+    // it, or the camera activity counts are only ever visible on one tab.
     await wrapper.setProps({ modelValue: 'status' })
-    expect(wrapper.find('[data-camera="front"]').exists()).toBe(false)
+    expect(wrapper.find('[data-camera="front"]').exists()).toBe(true)
+  })
+
+  it('hides the camera list entirely until cameras have actually loaded', () => {
+    const wrapper = mountSidebar('status')
+    expect(wrapper.find('[data-camera="all"]').exists()).toBe(false)
   })
 
   it('shows 0 (not blank) for a camera with no clips yet', async () => {
@@ -106,6 +114,15 @@ describe('AppSidebar', () => {
     const wrapper = mountSidebar('library')
     await wrapper.find('[data-camera="front"]').trigger('click')
     expect(library.currentCamera).toBe('front')
+  })
+
+  it('selecting a camera from a non-Library tab switches to Library too', async () => {
+    const library = useLibraryStore()
+    library.setCameras([{ camera: 'front', total: 3, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }])
+    const wrapper = mountSidebar('status')
+    await wrapper.find('[data-camera="front"]').trigger('click')
+    expect(library.currentCamera).toBe('front')
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['library'])
   })
 
   describe('sync', () => {
