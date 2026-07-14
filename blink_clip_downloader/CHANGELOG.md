@@ -827,6 +827,25 @@ rather than the Vite dev server or a bare `docker run`:
   format. Both the add-on's Configuration tab description and the
   `config.yaml` comment now spell out the exact filenames.
 
+### Fixed — a third round of real-account testing (reviewing actual prompts/responses)
+
+- **The AI prompt's "time of day" context used the clip's raw UTC hour**
+  instead of local time — a clip at 17:10 in a UTC-3 timezone (broad
+  daylight) showed up in the prompt as "night (20:10 UTC)", working
+  directly against the prompt's own instruction to factor time of day
+  into the suspicious/not-suspicious judgment. Now converts to the
+  container's configured local timezone first (the same one
+  `ai_schedule_start`/`end` and `digest_time` already rely on).
+- **The background analysis queue hit the AI provider's real API every
+  single idle poll cycle** (default every 60s) just to immediately find
+  nothing to do — its health-check cache (30s) was shorter than the
+  poll interval, so it never actually prevented a call. Now checks the
+  local pending count first and skips the real network call entirely
+  when there's nothing queued.
+- Added a connection-state icon (wifi / times-circle / question-circle)
+  to the sidebar's Connected/Disconnected/Unknown tag — a plain
+  color-only badge was easy to miss at a glance.
+
 ## 4.0.2
 
 ### Bug fixes
