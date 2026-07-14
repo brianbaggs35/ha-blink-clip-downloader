@@ -477,6 +477,13 @@ class BaseAnalyzer(abc.ABC):
         # Reset to 0 at the start of each analyze_clip() call.
         self._last_prompt_tokens: int = 0
         self._last_completion_tokens: int = 0
+        # Set True by a provider's error handler when the most recent
+        # _call_model() failed specifically due to a rate limit (as opposed
+        # to any other failure) — lets AnalysisQueue._process_pending stop
+        # working through the rest of a batch immediately instead of
+        # re-attempting each remaining clip, all doomed to hit the same
+        # limit. Reset to False at the start of each analyze_clip() call.
+        self._last_rate_limited: bool = False
         # Set only by _maybe_escalate() when a tier-1 verdict escalates to a
         # tier-2 analyzer. Left at their defaults (empty/0) when no escalation
         # analyzer is attached, and reset at the start of each analyze_clip()
@@ -717,6 +724,16 @@ class BaseAnalyzer(abc.ABC):
         """Completion tokens used by this analyzer's most recent _call_model() call."""
         return self._last_completion_tokens
 
+    @property
+    def rate_limited(self) -> bool:
+        """True when the most recent _call_model() call failed on a rate limit.
+
+        Checked by AnalysisQueue after each clip to decide whether to stop
+        working through the rest of the current batch — see the comment on
+        ``_last_rate_limited`` in ``__init__``.
+        """
+        return self._last_rate_limited
+
     async def run_tier_call(self, frames: list[bytes], prompt: str) -> str:
         """Public entry point for another analyzer to use this one as its tier 2.
 
@@ -875,6 +892,25 @@ class BaseAnalyzer(abc.ABC):
         )
 
         response = await self._generate_response(frames, prompt)
+        if not response:
+            # frames were successfully extracted above, so an empty response
+            # here can only mean the provider call itself failed (rate limit,
+            # auth error, timeout, connection drop, ...) — every _call_model
+            # implementation's error handler returns "" rather than raising,
+            # already logging the specific reason. parse_response("") would
+            # silently produce is_suspicious=False with an empty summary,
+            # and the caller (AnalysisQueue._process_one) would then mark
+            # the clip "completed" — which get_pending_analysis never
+            # reselects (status='pending' only) — permanently recording a
+            # false "not suspicious" verdict for a clip that was never
+            # actually analyzed. Raising instead routes this through
+            # _process_one's existing except-block, which marks the clip
+            # "failed" (visible in the Queue Status card) with no bogus
+            # result persisted, so it's at least surfaced instead of lost.
+            raise RuntimeError(
+                f"{self.provider_name} returned an empty response — see the "
+                "warning logged above for the specific cause"
+            )
         is_suspicious, confidence, summary = self.parse_response(response)
 
         if is_suspicious and self._face_bypass_applies(vision_hints):
@@ -914,6 +950,7 @@ class BaseAnalyzer(abc.ABC):
     def _reset_analysis_state(self, camera: str) -> None:
         self._last_prompt_tokens = 0
         self._last_completion_tokens = 0
+        self._last_rate_limited = False
         self._last_escalation_model = ""
         self._last_escalation_provider = ""
         self._last_escalation_prompt_tokens = 0
@@ -3084,6 +3121,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 timeout=_API_TIMEOUT,
             ) as resp:
                 if resp.status == 429:
+                    self._last_rate_limited = True
                     _LOGGER.warning("Moondream Cloud: rate limit hit")
                     return ""
                 if resp.status == 401:
@@ -4454,6 +4492,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
                 self._model,
             )
         elif isinstance(exc, _anthropic.RateLimitError):
+            self._last_rate_limited = True
             _LOGGER.warning(
                 "Anthropic: rate limit hit — API quota exceeded; "
                 "analysis will resume on the next cycle"
@@ -4764,8 +4803,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
             return str(choice.message.content)
         return ""
 
-    @staticmethod
-    def _handle_openai_error(_openai: Any, exc: Exception, model: str) -> str:
+    def _handle_openai_error(self, _openai: Any, exc: Exception, model: str) -> str:
         if isinstance(exc, _openai.AuthenticationError):
             _LOGGER.error(
                 "OpenAI: invalid API key (AuthenticationError) — "
@@ -4778,6 +4816,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
                 model,
             )
         elif isinstance(exc, _openai.RateLimitError):
+            self._last_rate_limited = True
             _LOGGER.warning(
                 "OpenAI: rate limit hit — API quota exceeded; "
                 "analysis will resume on the next cycle"

@@ -108,10 +108,23 @@ class AnalysisQueue:
 
         _LOGGER.info("Processing %d pending clip(s) for AI analysis", len(pending))
 
-        for item in pending:
+        for i, item in enumerate(pending):
             if not self._running:
                 break
             await self._process_one(item)
+            if self._analyzer.rate_limited:
+                # Every remaining clip in this batch would hit the exact
+                # same limit immediately (each retrying internally via the
+                # provider SDK before failing again) — that's pure wasted
+                # time and log noise, not a real attempt. Stop now and let
+                # the next check_interval cycle retry with a cooled-down
+                # quota instead of burning through the whole batch.
+                _LOGGER.info(
+                    "Pausing this batch after a rate limit — %d clip(s) remain "
+                    "pending and will be retried next cycle",
+                    len(pending) - (i + 1),
+                )
+                break
 
     async def _process_one(self, item: dict[str, Any]) -> None:
         clip_id = item["clip_id"]

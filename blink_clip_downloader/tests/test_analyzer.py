@@ -471,6 +471,28 @@ async def test_analyze_clip_no_frames(analyzer: ClipAnalyzer) -> None:
     assert "No frames" in result.summary
 
 
+async def test_analyze_clip_raises_when_call_model_returns_empty(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """A provider call that fails (rate limit, auth error, timeout, ...)
+    returns "" from _call_model, already logged by that provider's own
+    error handler. Once frames were successfully extracted, that "" must
+    not be silently parsed into a false is_suspicious=False result — see
+    the comment in _analyze_clip_locked for why that would permanently
+    mis-record a clip that was never actually analyzed. analyze_clip()
+    must raise instead, so AnalysisQueue._process_one marks it "failed"
+    rather than "completed"."""
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_FAKE_JPEG, b""))
+    mock_proc.returncode = 0
+
+    analyzer._call_model = AsyncMock(return_value="")  # type: ignore[method-assign]
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        with pytest.raises(RuntimeError, match="empty response"):
+            await analyzer.analyze_clip("/clips/test.mp4", "clip1", "Front Door")
+
+
 # ------------------------------------------------------------------
 # is_vision_model
 # ------------------------------------------------------------------
@@ -2069,6 +2091,18 @@ async def test_moondream_cloud_close_open_session() -> None:
     mock_session.close.assert_called_once()
 
 
+async def test_moondream_cloud_call_api_frame_429_sets_rate_limited() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 429
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    a._session = _mock_session(post=MagicMock(return_value=mock_resp))
+    assert a.rate_limited is False
+    assert await a._call_api_frame(_FAKE_JPEG, "prompt") == ""
+    assert a.rate_limited is True
+
+
 async def test_moondream_cloud_call_api_frame_401() -> None:
     mock_resp = AsyncMock()
     mock_resp.status = 401
@@ -2256,8 +2290,10 @@ async def test_anthropic_call_model_rate_limit_error() -> None:
     )
     a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
     a._client = mock_mod.AsyncAnthropic.return_value
+    assert a.rate_limited is False
     with patch.dict(sys.modules, {"anthropic": mock_mod}):
         assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+    assert a.rate_limited is True
 
 
 async def test_anthropic_call_model_bad_request_error() -> None:
@@ -2851,9 +2887,11 @@ async def test_openai_call_model_rate_limit_error(
 
     a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
     a._client = mock_mod.AsyncOpenAI.return_value
+    assert a.rate_limited is False
     with patch.dict(sys.modules, {"openai": mock_mod}):
         result = await a._call_model([_FAKE_JPEG], "Analyze")
     assert result == ""
+    assert a.rate_limited is True
 
 
 async def test_openai_call_model_bad_request_error(

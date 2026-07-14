@@ -18,6 +18,11 @@ from blink_downloader.database import ClipDatabase
 def _make_analyzer_mock(**kwargs: Any) -> MagicMock:
     m = MagicMock(spec=ClipAnalyzer)
     m.health_check = AsyncMock(return_value=kwargs.get("healthy", True))
+    # MagicMock(spec=...) would otherwise make `.rate_limited` a truthy
+    # child Mock (properties resolve to a fresh Mock, not their real
+    # getter), which AnalysisQueue._process_pending's new early-break
+    # check would misread as "rate limited" after every single clip.
+    m.rate_limited = kwargs.get("rate_limited", False)
     m.analyze_clip = AsyncMock(
         return_value=kwargs.get(
             "result",
@@ -368,6 +373,48 @@ async def test_process_pending_breaks_when_queue_stopped(db: ClipDatabase) -> No
     await queue._process_pending()
 
     analyzer.analyze_clip.assert_not_awaited()  # break before analysis
+
+
+async def test_process_pending_stops_batch_on_rate_limit(db: ClipDatabase) -> None:
+    """Once the analyzer reports rate_limited after a clip, the rest of the
+    batch must be left pending rather than re-attempted — every remaining
+    clip would hit the exact same limit immediately, wasting time and log
+    noise for no benefit (see the comment in AnalysisQueue._process_pending)."""
+    analyzer = _make_analyzer_mock(rate_limited=True)
+    queue = _make_queue(analyzer, db, batch_size=3)
+    queue._running = True
+
+    for clip_id in ("c1", "c2", "c3"):
+        await db.add_clip(_add_clip(clip_id))
+        await db.enqueue_for_analysis(clip_id, "Front Door", f"/clips/{clip_id}.mp4")
+
+    await queue._process_pending()
+
+    analyzer.analyze_clip.assert_awaited_once()  # stopped after the 1st clip
+    counts = await db.get_queue_counts()
+    assert counts["completed"] == 1
+    assert counts["pending"] == 2  # c2/c3 left for the next cycle
+
+
+async def test_process_pending_continues_batch_without_rate_limit(
+    db: ClipDatabase,
+) -> None:
+    """Sanity check for the test above: with rate_limited left False, a
+    normal batch still processes every clip, not just the first."""
+    analyzer = _make_analyzer_mock()
+    queue = _make_queue(analyzer, db, batch_size=3)
+    queue._running = True
+
+    for clip_id in ("c1", "c2", "c3"):
+        await db.add_clip(_add_clip(clip_id))
+        await db.enqueue_for_analysis(clip_id, "Front Door", f"/clips/{clip_id}.mp4")
+
+    await queue._process_pending()
+
+    assert analyzer.analyze_clip.await_count == 3
+    counts = await db.get_queue_counts()
+    assert counts["completed"] == 3
+    assert counts["pending"] == 0
 
 
 # ------------------------------------------------------------------
