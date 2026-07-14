@@ -55,7 +55,21 @@ class AnalysisQueue:
 
         while self._running:
             try:
-                if self._is_in_schedule() and await self._analyzer.health_check():
+                # health_check() is a real authenticated API call for every
+                # cloud provider (OpenAI, Anthropic, Ollama Cloud, Moondream
+                # Cloud) — its own cache (_HEALTH_CHECK_CACHE_SECONDS, 30s)
+                # is shorter than this loop's default 60s check_interval, so
+                # it never actually avoided a call here; every single idle
+                # cycle (nothing queued) was still hitting the provider just
+                # to immediately find no work. A pending-count check is one
+                # cheap local DB query, versus a real network round-trip on
+                # every cycle regardless of whether there's anything to do.
+                counts = await self._db.get_queue_counts()
+                if (
+                    counts.get("pending")
+                    and self._is_in_schedule()
+                    and await self._analyzer.health_check()
+                ):
                     await self._process_pending()
             except asyncio.CancelledError:
                 _LOGGER.info("Analysis queue stopped")

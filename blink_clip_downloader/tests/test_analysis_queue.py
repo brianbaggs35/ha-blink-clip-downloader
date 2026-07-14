@@ -310,6 +310,10 @@ async def test_start_runs_loop_and_exits_on_stop(db: ClipDatabase) -> None:
 
 async def test_start_exits_on_cancelled_error(db: ClipDatabase) -> None:
     """CancelledError from health_check is re-raised after cleanup, not swallowed."""
+    # health_check is now only reached when something is actually pending
+    # (see start()'s comment) — no clip queued means no call at all.
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
     analyzer = _make_analyzer_mock()
     analyzer.health_check = AsyncMock(side_effect=asyncio.CancelledError)
     queue = _make_queue(analyzer, db, check_interval=1)
@@ -320,6 +324,8 @@ async def test_start_exits_on_cancelled_error(db: ClipDatabase) -> None:
 
 async def test_start_logs_exception_and_continues(db: ClipDatabase) -> None:
     """General exceptions from health_check are logged and the loop continues (lines 60-61)."""
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
     call_count = 0
 
     async def flaky_health() -> bool:
@@ -531,6 +537,8 @@ async def test_min_confidence_property(db: ClipDatabase) -> None:
 
 async def test_start_calls_process_pending_when_healthy(db: ClipDatabase) -> None:
     """When health_check returns True, start() calls _process_pending (line 59)."""
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
     analyzer = _make_analyzer_mock(healthy=True)
     queue = _make_queue(analyzer, db, check_interval=1)
 
@@ -545,6 +553,23 @@ async def test_start_calls_process_pending_when_healthy(db: ClipDatabase) -> Non
     # analyze_clip may or may not have been called depending on whether there
     # are pending clips — what matters is health_check returned True and the
     # branch at line 59 was reached without error.
+
+
+async def test_start_skips_health_check_when_nothing_pending(db: ClipDatabase) -> None:
+    """With no clips queued, start() must not call health_check at all — a
+    real API call for every cloud provider, with a cache shorter than the
+    default check_interval, so it was previously hitting the provider on
+    every single idle cycle for no reason (see the comment in start())."""
+    analyzer = _make_analyzer_mock(healthy=True)
+    queue = _make_queue(analyzer, db, check_interval=1)
+
+    async def fake_sleep(_delay: float) -> None:
+        queue._running = False
+
+    with patch("asyncio.sleep", fake_sleep):
+        await queue.start()
+
+    analyzer.health_check.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
