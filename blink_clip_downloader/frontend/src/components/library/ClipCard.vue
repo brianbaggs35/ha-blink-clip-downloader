@@ -6,7 +6,7 @@ import type { ClipListItem } from '../../api/types'
 import AppIcon from '../icons/AppIcon.vue'
 
 defineProps<{ clip: ClipListItem; selected: boolean }>()
-defineEmits<{ click: [] }>()
+defineEmits<{ click: []; check: [] }>()
 
 const thumbFailed = ref(false)
 </script>
@@ -21,7 +21,9 @@ const thumbFailed = ref(false)
       <div v-if="clip.duration" class="dur-badge">{{ fmtDur(clip.duration) }}</div>
       <div v-if="clip.starred" class="star-badge">★</div>
       <div v-if="clip.notified" class="notified-badge">🔔</div>
-      <div class="sel-check">{{ selected ? '✓' : '' }}</div>
+      <div class="sel-check" role="checkbox" :aria-checked="selected" @click.stop="$emit('check')">
+        {{ selected ? '✓' : '' }}
+      </div>
     </div>
     <div class="clip-info">
       <div class="clip-camera">{{ clip.camera }}</div>

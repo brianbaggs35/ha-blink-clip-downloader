@@ -283,6 +283,15 @@ function onCardClick(clip: ClipListItem) {
   else openModal(clip.id)
 }
 
+// Clicking a card's own checkbox (rather than the "Select" button first)
+// is the more discoverable way most users expect to start a multi-select —
+// it must work whether or not selectMode is already on, unlike the card
+// body click above which only toggles selection once already in that mode.
+function onCardCheck(clip: ClipListItem) {
+  if (!selectMode.value) selectMode.value = true
+  toggleSelect(clip.id)
+}
+
 function toggleSelectMode(on: boolean) {
   selectMode.value = on
   selectedIds.value = new Set()
@@ -431,12 +440,13 @@ onUnmounted(() => {
       <IconField class="lib-search">
         <InputIcon><AppIcon name="tab-library" style="width: 15px; height: 15px" /></InputIcon>
         <label for="search" class="sr-only">Search clips</label>
-        <InputText id="search" v-model="search" placeholder="Search clips…" fluid />
+        <InputText id="search" v-model="search" size="small" placeholder="Search clips…" fluid />
       </IconField>
       <label for="date-range" class="sr-only">Date range</label>
       <Select
         id="date-range"
         v-model="dateRange"
+        size="small"
         :options="DATE_RANGE_OPTIONS"
         option-label="label"
         option-value="value"
@@ -445,14 +455,29 @@ onUnmounted(() => {
       <Select
         id="source-filter"
         v-model="sourceFilter"
+        size="small"
         :options="SOURCE_OPTIONS"
         option-label="label"
         option-value="value"
       />
       <label for="tag-filter" class="sr-only">Tag</label>
-      <Select id="tag-filter" v-model="tagFilter" :options="tagOptions" option-label="label" option-value="value" />
+      <Select
+        id="tag-filter"
+        v-model="tagFilter"
+        size="small"
+        :options="tagOptions"
+        option-label="label"
+        option-value="value"
+      />
       <label for="sort-order" class="sr-only">Sort order</label>
-      <Select id="sort-order" v-model="sortOrder" :options="SORT_OPTIONS" option-label="label" option-value="value" />
+      <Select
+        id="sort-order"
+        v-model="sortOrder"
+        size="small"
+        :options="SORT_OPTIONS"
+        option-label="label"
+        option-value="value"
+      />
       <label class="lib-check"><Checkbox v-model="starredOnly" binary /> ★ Starred</label>
       <label class="lib-check"><Checkbox v-model="notifiedOnly" binary /> 🔔 Notified</label>
       <Button
@@ -492,6 +517,7 @@ onUnmounted(() => {
             :clip="c"
             :selected="selectedIds.has(c.id)"
             @click="onCardClick(c)"
+            @check="onCardCheck(c)"
           />
         </template>
       </div>

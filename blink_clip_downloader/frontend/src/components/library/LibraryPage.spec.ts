@@ -269,6 +269,20 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('clicking a card checkbox enters select mode and selects it, without opening the modal', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await wrapper.find('.sel-check').trigger('click')
+    expect(wrapper.text()).toContain('1 selected')
+    // Opening the modal fetches the clip detail via /api/clips/<id> (no
+    // trailing segment) — confirm that never happened, i.e. the click on
+    // the checkbox didn't also bubble into the card's own modal-opening
+    // click handler.
+    expect(vi.mocked(fetch)).not.toHaveBeenCalledWith('/api/clips/c1', expect.anything())
+    wrapper.unmount()
+  })
+
   it('bulk star stars every selected clip', async () => {
     mockFetch()
     const wrapper = mountLibrary()

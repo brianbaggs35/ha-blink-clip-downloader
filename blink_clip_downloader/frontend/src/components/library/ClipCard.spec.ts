@@ -67,4 +67,11 @@ describe('ClipCard', () => {
     await wrapper.find('.clip-card').trigger('click')
     expect(wrapper.emitted('click')).toHaveLength(1)
   })
+
+  it('clicking the checkbox emits check but not click', async () => {
+    const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false } })
+    await wrapper.find('.sel-check').trigger('click')
+    expect(wrapper.emitted('check')).toHaveLength(1)
+    expect(wrapper.emitted('click')).toBeUndefined()
+  })
 })
