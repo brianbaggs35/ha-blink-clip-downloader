@@ -18,7 +18,16 @@ if (!baseUrl) {
 }
 
 // Order matches the TABS array in frontend/src/components/layout/AppSidebar.vue.
-const TABS = ["library", "automations", "status", "ai", "usage", "models"];
+const TABS = [
+  "library",
+  "automations",
+  "status",
+  "ai",
+  "usage",
+  "models",
+  "vehicles",
+  "biometrics",
+];
 
 // Playwright's own machinery (and page.goto's navigation) can trigger a
 // benign ERR_ABORTED when a request is superseded; only report failures
