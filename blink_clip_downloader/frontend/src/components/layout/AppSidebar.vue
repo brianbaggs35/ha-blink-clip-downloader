@@ -61,6 +61,10 @@ const connLabel = computed(() => {
   if (connection.connected === null) return 'Unknown'
   return connection.connected ? 'Connected' : 'Disconnected'
 })
+const connIcon = computed(() => {
+  if (connection.connected === null) return 'pi pi-question-circle'
+  return connection.connected ? 'pi pi-wifi' : 'pi pi-times-circle'
+})
 
 const cameraTotal = computed(() => library.cameras.reduce((sum, c) => sum + (c.total || 0), 0))
 
@@ -145,7 +149,7 @@ function onRefreshClick() {
     <div class="app-nav-spacer" />
 
     <div class="app-nav-utility">
-      <Tag :severity="connSeverity" :value="connLabel" class="app-nav-conn-tag" />
+      <Tag :severity="connSeverity" :value="connLabel" :icon="connIcon" rounded class="app-nav-conn-tag" />
       <div class="app-nav-icon-row">
         <Button
           text
