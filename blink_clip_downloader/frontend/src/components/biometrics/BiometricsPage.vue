@@ -383,7 +383,7 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
 
 <style scoped>
 .biometrics-page {
-  padding: 1.5rem;
+  padding: 1.75rem;
   max-width: 900px;
 }
 

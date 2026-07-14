@@ -583,6 +583,15 @@ h3 {
   min-width: 220px;
   justify-content: center;
 }
+.lib-stat-storage .lib-stat-label {
+  /* Unlike the other .lib-stat cards (fixed short labels like "Today"),
+     this one interpolates two dynamic numbers and can easily exceed the
+     card's flex-shared width — nowrap combined with the ancestor
+     .lib-page's `overflow: hidden` was hard-clipping the tail of the
+     string instead of wrapping it. */
+  white-space: normal;
+  line-height: 1.3;
+}
 .lib-filters {
   padding: 1rem 1.5rem;
   display: flex;
@@ -1241,9 +1250,19 @@ h3 {
 /* ── Automations page ─────────────────────────────────── */
 #page-automations,
 #page-ai,
-#page-usage {
+#page-usage,
+#page-models {
   overflow-y: auto;
   padding: 1.75rem;
+}
+
+/* Vehicles/Biometrics pad themselves (.vehicles-page/.biometrics-page) —
+   .page's own `overflow: hidden` still needs overriding per page or their
+   content has no way to scroll past the viewport, the same gap #page-models
+   had before it was added above. */
+#page-vehicles,
+#page-biometrics {
+  overflow-y: auto;
 }
 
 /* ── AI Usage page ────────────────────────────────────── */
@@ -1262,8 +1281,12 @@ h3 {
   box-shadow: var(--shadow-sm);
 }
 .usage-stat .num {
-  font-size: 1.95rem;
-  font-weight: 800;
+  /* Matches AiStatusCards.vue's Queue Status numbers (1.5rem/700) — this
+     tile used to run bigger/bolder (1.95rem/800) than every other "number
+     in a card" pattern in the app, the one visible inconsistency once
+     both tabs are open side by side. */
+  font-size: 1.5rem;
+  font-weight: 700;
   color: var(--text);
   line-height: 1.15;
   margin-bottom: 0.25rem;
