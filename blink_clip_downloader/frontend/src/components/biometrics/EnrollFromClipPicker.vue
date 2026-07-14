@@ -96,6 +96,7 @@ function toggleFrame(frame: string) {
       <Select
         id="biometrics-camera-select"
         v-model="selectedCamera"
+        size="small"
         :options="cameras"
         option-label="camera"
         option-value="camera"
@@ -105,13 +106,13 @@ function toggleFrame(frame: string) {
       />
     </div>
 
-    <Message v-if="!loadingCameras && !cameras.length" severity="warn" :closable="false">
+    <Message v-if="!loadingCameras && !cameras.length" severity="warn" size="small" :closable="false">
       No cameras found yet — download at least one clip first.
     </Message>
 
     <div v-if="selectedCamera" class="clip-strip">
       <div v-if="loadingClips" class="muted-note">Loading recent clips…</div>
-      <Message v-else-if="!recentClips.length" severity="warn" :closable="false">
+      <Message v-else-if="!recentClips.length" severity="warn" size="small" :closable="false">
         No clips yet for this camera.
       </Message>
       <div v-else class="thumb-strip">
@@ -130,8 +131,10 @@ function toggleFrame(frame: string) {
 
     <div v-if="selectedClipId" class="frame-grid-wrap">
       <div v-if="loadingFrames" class="muted-note">Extracting frames from this clip…</div>
-      <Message v-else-if="framesError" severity="error" :closable="false">Failed to extract frames.</Message>
-      <Message v-else-if="!frames.length" severity="warn" :closable="false">
+      <Message v-else-if="framesError" severity="error" size="small" :closable="false"
+        >Failed to extract frames.</Message
+      >
+      <Message v-else-if="!frames.length" severity="warn" size="small" :closable="false">
         No frames could be extracted from this clip.
       </Message>
       <template v-else>

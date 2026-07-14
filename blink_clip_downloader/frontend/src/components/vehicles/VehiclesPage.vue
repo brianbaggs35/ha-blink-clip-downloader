@@ -76,11 +76,11 @@ const showInactiveWarning = computed(() => carCameras.value.length > 0 && !prote
       your specific car when several are parked close together (e.g. shared parking, apartment lots).
     </p>
 
-    <Message v-if="showInactiveWarning" severity="warn" :closable="false" class="status-banner">
+    <Message v-if="showInactiveWarning" severity="warn" size="small" :closable="false" class="status-banner">
       A camera below is marked as seeing the protected vehicle, but no description is set yet — car-proximity rules
       won't activate until you save one below.
     </Message>
-    <Message v-else-if="protectionActive" severity="success" :closable="false" class="status-banner">
+    <Message v-else-if="protectionActive" severity="success" size="small" :closable="false" class="status-banner">
       Protection active{{ carCameras.length ? ` for: ${carCameras.map((c) => c.camera).join(', ')}` : '' }}.
     </Message>
 
@@ -93,6 +93,7 @@ const showInactiveWarning = computed(() => carCameras.value.length > 0 && !prote
         <Textarea
           v-model="carDescription"
           rows="2"
+          size="small"
           auto-resize
           class="description-input"
           placeholder="e.g. Silver Kia Forte sedan, usually parked nose-in"
@@ -127,7 +128,7 @@ const showInactiveWarning = computed(() => carCameras.value.length > 0 && !prote
     </div>
 
     <div v-if="configs.length" class="save-row">
-      <Button :disabled="savingCameras" :loading="savingCameras" @click="saveCameras">
+      <Button size="small" :disabled="savingCameras" :loading="savingCameras" @click="saveCameras">
         {{ savingCameras ? 'Saving…' : 'Save Camera Settings' }}
       </Button>
       <span class="muted-note">Changes apply immediately — no restart needed.</span>

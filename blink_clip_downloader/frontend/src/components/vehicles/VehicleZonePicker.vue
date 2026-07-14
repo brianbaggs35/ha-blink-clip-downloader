@@ -162,8 +162,10 @@ function selectClip(id: string) {
 <template>
   <div class="vehicle-zone-picker">
     <div v-if="loading" class="muted-note">Loading recent frames…</div>
-    <Message v-else-if="loadError" severity="error" :closable="false">Failed to load recent clips.</Message>
-    <Message v-else-if="!recentClips.length" severity="warn" :closable="false">
+    <Message v-else-if="loadError" severity="error" size="small" :closable="false"
+      >Failed to load recent clips.</Message
+    >
+    <Message v-else-if="!recentClips.length" severity="warn" size="small" :closable="false">
       No clips yet for this camera — download a clip first, then come back to set the zone.
     </Message>
     <template v-else>

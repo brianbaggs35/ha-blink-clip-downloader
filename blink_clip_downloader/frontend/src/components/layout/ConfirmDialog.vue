@@ -22,8 +22,8 @@ function onHide() {
   >
     <p class="m-0">{{ confirm.message }}</p>
     <template #footer>
-      <Button label="Cancel" severity="secondary" text @click="confirm.settle(false)" />
-      <Button label="Confirm" severity="danger" @click="confirm.settle(true)" />
+      <Button label="Cancel" size="small" severity="secondary" text @click="confirm.settle(false)" />
+      <Button label="Confirm" size="small" severity="danger" @click="confirm.settle(true)" />
     </template>
   </Dialog>
 </template>

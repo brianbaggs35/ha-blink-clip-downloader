@@ -252,7 +252,7 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
       without it — nothing here is required.
     </p>
 
-    <Message severity="info" :closable="false" class="privacy-banner">
+    <Message severity="info" size="small" :closable="false" class="privacy-banner">
       <strong>🔒 Everything here stays local.</strong> Photos, face embeddings, and names never leave this
       device/network and are never sent to any AI provider. Even when using a cloud AI provider (Anthropic, OpenAI,
       Moondream Cloud, Ollama Cloud), analysis only ever receives a generic "recognized household member" signal — never
@@ -260,13 +260,13 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
       personalize your own notifications (e.g. "Brian walked up the driveway").
     </Message>
 
-    <Message severity="warn" :closable="false" class="safety-banner">
+    <Message severity="warn" size="small" :closable="false" class="safety-banner">
       <strong>Safety guarantee:</strong> the suspicious-flag bypass is all-or-nothing per clip. It only fires when
       <em>every</em> face detected belongs to an <strong>approved</strong> enrollment below — a single stranger, or a
       recognized-but-not-approved person, standing next to an approved family member still gets flagged normally.
     </Message>
 
-    <Message v-if="!available" severity="warn" :closable="false">
+    <Message v-if="!available" severity="warn" size="small" :closable="false">
       Face-recognition dependencies are not installed in this image — enrollment is disabled.
     </Message>
 
@@ -292,6 +292,7 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
         <div v-else class="photo-picker">
           <FileUpload
             mode="basic"
+            size="small"
             :auto="false"
             custom-upload
             accept="image/*"
@@ -305,7 +306,7 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
 
         <div class="enroll-form-row">
           <label for="biometrics-name" class="field-label">Name</label>
-          <InputText id="biometrics-name" v-model="name" placeholder="e.g. Brian" :disabled="!available" />
+          <InputText id="biometrics-name" v-model="name" size="small" placeholder="e.g. Brian" :disabled="!available" />
         </div>
 
         <div class="enroll-form-row approved-row">
@@ -315,7 +316,13 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
           >
         </div>
 
-        <Button class="enroll-submit-btn" :disabled="!available || enrolling" :loading="enrolling" @click="enroll">
+        <Button
+          class="enroll-submit-btn"
+          size="small"
+          :disabled="!available || enrolling"
+          :loading="enrolling"
+          @click="enroll"
+        >
           {{
             enrolling
               ? 'Enrolling…'

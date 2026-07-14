@@ -96,12 +96,41 @@ export const AppTheme = definePreset(Aura, {
         },
       },
     },
+    // Button/InputText/Select/Textarea's size="small" variant all read
+    // font size and padding from this one shared token (confirmed via
+    // Aura's own preset: each component only sets a *root* font-size for
+    // sm/lg, never the default size, which just inherits the ambient
+    // 16px body font — so this is the one lever that actually shrinks
+    // them). Default Aura sm (0.875rem/0.625rem/0.375rem) still reads
+    // noticeably larger than this app's own pre-existing hand-rolled
+    // small-button scale (see base.css's .btn.sm: 0.78rem font,
+    // 0.68rem/0.32rem padding) — every PrimeVue form control added
+    // going forward should pass size="small" and rely on this override
+    // to match, rather than the unstyled default (~16px/0.75rem, closer
+    // to 40px tall than the ~28-30px the rest of the app uses).
+    formField: {
+      sm: {
+        fontSize: '0.78rem',
+        paddingX: '0.68rem',
+        paddingY: '0.32rem',
+      },
+    },
   },
   components: {
     card: {
       colorScheme: {
         light: { root: contentColorScheme },
         dark: { root: contentColorScheme },
+      },
+      // Aura's default Card #title (1.25rem/500) reads noticeably larger
+      // than every hand-rolled heading elsewhere in the app (.auto-content
+      // h3 is 0.9rem) — only affects cards that actually use the #title
+      // slot (VehiclesPage's description-card/camera-card, Biometrics'
+      // person-card); most existing cards use a plain <h3> in the default
+      // slot instead and are unaffected either way.
+      title: {
+        fontSize: '1rem',
+        fontWeight: '600',
       },
     },
     checkbox: {
@@ -114,6 +143,13 @@ export const AppTheme = definePreset(Aura, {
       colorScheme: {
         light: { root: overlayModalColorScheme },
         dark: { root: overlayModalColorScheme },
+      },
+      // Same reasoning as card.title above — Aura's default (1.25rem/600)
+      // is the single biggest piece of text in e.g. the "Clear AI usage
+      // stats?" confirm dialog, out of proportion with everything else in it.
+      title: {
+        fontSize: '1rem',
+        fontWeight: '600',
       },
     },
     fileupload: {
@@ -138,6 +174,17 @@ export const AppTheme = definePreset(Aura, {
       colorScheme: {
         light: { root: formFieldColorScheme },
         dark: { root: formFieldColorScheme },
+      },
+    },
+    // Tag has no size prop/variant to opt into (unlike the form controls
+    // above) — its root.fontSize (0.875rem) and padding are hardcoded in
+    // Aura's own preset, so the only way to bring it in line with the
+    // app's existing small-badge scale (base.css's .badge: 0.72rem,
+    // 0.14rem/0.6rem padding) is a direct root override here.
+    tag: {
+      root: {
+        fontSize: '0.72rem',
+        padding: '0.16rem 0.55rem',
       },
     },
   },
