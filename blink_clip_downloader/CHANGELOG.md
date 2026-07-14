@@ -600,6 +600,35 @@ Docker build + container run, not just review)
   add-on config validator rejects. `schema` now matches `options`/`config.py`
   exactly.
 
+### Hardening — Docker image vulnerability count
+
+- **Fix: an earlier setuptools/wheel security upgrade wasn't actually taking
+  effect.** Both packages were reinstalled with `--upgrade --ignore-installed`
+  to work around Debian's apt-managed `python3-wheel` having no pip RECORD
+  file (which otherwise crashes a plain `--upgrade` and silently skips every
+  package installed after it in the same block). `--ignore-installed`
+  installs the new version without removing the old one first, though, so
+  the old `setuptools`/`wheel` — and, since setuptools vendors its own
+  bundled copy of `jaraco.context` internally, an old vendored copy of
+  *that* too — stayed on disk and still showed up in a CVE scan even though
+  nothing imported them anymore. `setuptools` now gets a plain `--upgrade`
+  (it has a proper RECORD file, so this cleanly removes the old version's
+  files, vendor bundle included); only `wheel` keeps `--ignore-installed`,
+  with its now-superseded apt-owned copy explicitly deleted afterward.
+- `apt-get upgrade` now runs right after `apt-get update`, before installing
+  anything new, so already-installed base-image packages (e.g. `curl`,
+  `libtasn1-6`) pick up whatever patched versions the base image's own apt
+  sources already carry by build time — no new source added, nothing new
+  installed, just existing packages caught up to already-available patches.
+- Verified via `docker scout cves` against a full local build of both
+  architectures: 301 → 278 vulnerabilities (12 fewer HIGH, plus a broader
+  Medium/Low drop from the apt upgrade). The remaining CRITICAL findings are
+  either baked into Home Assistant's own base image (a Go-compiled `tempio`
+  binary, self-resolving once HA patches its upstream `trixie` base), an
+  unavoidable `perl` transitive dependency of `postgresql-common` already at
+  its latest available version, or have no fix published at any version yet
+  (`transformers`) — none are fixable from this Dockerfile.
+
 ## 4.0.2
 
 ### Bug fixes
