@@ -568,6 +568,67 @@ async def test_run_startup_error_sets_auth_state(app):
     assert "missing credentials" in app._downloader.auth_message
 
 
+async def test_run_startup_error_marks_disconnected(app):
+    """Config-error mode must report connected=False (not an absent/None
+    key) via extra_status, so the sidebar badge shows "Disconnected"
+    instead of an indefinite "Unknown"."""
+    import dataclasses
+
+    app._config = dataclasses.replace(
+        app._config,
+        startup_error="options.json not found",
+        enable_media_server=False,
+    )
+    app._startup_poll_interval = 0
+    app._storage.ensure_directory = MagicMock()
+
+    task = asyncio.create_task(app.run())
+    await asyncio.sleep(0)
+    app._handle_shutdown()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    assert app._media_server.extra_status.get("connected") is False
+
+
+async def test_run_invalid_credentials_marks_disconnected(app):
+    """AuthenticationError during startup must report connected=False via
+    extra_status — before this fix, extra_status only ever gained a
+    "connected" key on a *successful* connect, so a bad-credentials add-on
+    reported "Unknown" instead of "Disconnected" for its entire lifetime."""
+    app._downloader.connect = AsyncMock(
+        side_effect=AuthenticationError("Blink rejected the configured credentials")
+    )
+    app._startup_poll_interval = 0
+    app._storage.ensure_directory = MagicMock()
+
+    task = asyncio.create_task(app.run())
+    await asyncio.sleep(0)
+    app._handle_shutdown()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    assert app._media_server.extra_status.get("connected") is False
+
+
+async def test_run_successful_connect_marks_connected(app, tmp_path):
+    """A normal successful startup still flips extra_status["connected"]
+    to True via _finish_startup, confirming the new default-False set at
+    the top of run() doesn't shadow the existing success path."""
+    from blink_downloader.tracker import ClipTracker
+
+    app._storage.ensure_directory = MagicMock()
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+
+    async def _fake_poll():
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    assert app._media_server.extra_status.get("connected") is True
+
+
 # ---------------------------------------------------------------------------
 # _connect_with_retry() unit tests
 # ---------------------------------------------------------------------------

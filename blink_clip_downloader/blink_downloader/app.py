@@ -317,6 +317,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._running = True
         self._storage.ensure_directory()
 
+        # Reported to the sidebar's connection badge via /api/stats. Default
+        # to False (not None/absent) from the first moment the media server
+        # can answer requests, so a client that loads mid-startup-error (e.g.
+        # invalid credentials, which never reaches _finish_startup below)
+        # sees "Disconnected" rather than an indefinite "Unknown" — the
+        # frontend only distinguishes those two when this key is present.
+        self._media_server.extra_status["connected"] = False
+
         _LOGGER.info("Blink Clip Downloader starting up")
 
         self._loop = asyncio.get_running_loop()
