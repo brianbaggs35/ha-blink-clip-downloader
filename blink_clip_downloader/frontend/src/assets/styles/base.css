@@ -856,6 +856,25 @@ h3 {
     animation: none;
   }
 }
+/* PrimeVue's own overlay mask (Dialog, and any other PrimeVue component
+   that opens a full-viewport overlay — .p-overlay-mask is the shared base
+   class every one of them gets, see e.g. ConfirmDialog.vue) ships with no
+   backdrop-filter, just a semi-transparent black background. On this app's
+   near-black custom dark palette that reads as solid black — a 60% opacity
+   black tint over an already-near-black page mathematically blends to
+   within a few RGB values of #000, with nothing left to visually signal
+   "the page is still there, just dimmed". The hand-rolled .modal-bg above
+   has the exact same near-black backdrop problem in principle but doesn't
+   suffer from it in practice, because a blur (not the opacity number) is
+   what actually preserves that "dimmed page" perception regardless of how
+   dark the underlying colors are — matching that proven approach here
+   rather than trying to find some other magic opacity value.
+   PrimeVue's own opacity tokens (0.4 light / 0.6 dark, see theme.ts if
+   these ever need overriding) are left as-is; only the missing blur is
+   added. */
+.p-overlay-mask {
+  backdrop-filter: blur(3px);
+}
 .modal {
   background: var(--surface);
   border: 1px solid var(--border);
