@@ -319,10 +319,12 @@ configuration:
   ai_object_detection_model:
     name: Object Detection Model
     description: >-
-      Ultralytics model file the detection stage above runs. "n" (nano)
-      models are the fastest/lightest and the recommended starting point on
-      CPU-only hardware; larger models (s/m/l/x) are more accurate but much
-      slower.
+      Ultralytics model file the detection stage above runs — enter exactly
+      one of: yolo11n.pt (nano — fastest/lightest, recommended starting
+      point on CPU-only hardware), yolo11s.pt (small), yolo11m.pt (medium),
+      yolo11l.pt (large), or yolo11x.pt (extra-large — most accurate, much
+      slower). Downloaded automatically on first use; defaults to
+      yolo11n.pt.
   ai_face_recognition_enabled:
     name: Enable Local Face Recognition
     description: >-

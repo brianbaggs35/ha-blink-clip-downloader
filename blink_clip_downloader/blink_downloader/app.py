@@ -37,7 +37,12 @@ TRIGGER_FILE = Path("/data/trigger_download")
 # How many missing clip thumbnails to generate per poll cycle. Keeps ffmpeg
 # CPU usage low on constrained hardware while gradually backfilling large
 # libraries (e.g. after enabling download_thumbnails or after a reinstall).
-_THUMBNAIL_BACKFILL_BATCH = 5
+# Each is a single `-frames:v 1` extract (well under a second on typical
+# hardware, see _generate_thumbnail), sequential and bounded, so raising
+# this from the original 5 still leaves plenty of margin in a 300s+ poll
+# cycle — 5 meant a few-hundred-clip backlog took hours to fully catch up,
+# which read as "thumbnails aren't working" rather than "still catching up".
+_THUMBNAIL_BACKFILL_BATCH = 15
 
 
 class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,too-few-public-methods

@@ -334,10 +334,10 @@ options:
   # code-computed OBJECT DETECTION / TRACKING / DEPTH ESTIMATE / CONTACT
   # ANALYSIS hint instead of relying on motion-diff heuristics alone.
   ai_enhanced_detection_enabled: false
-  # Ultralytics model the object-detection stage above runs. "n" (nano)
-  # models are the fastest/lightest and the recommended starting point on
-  # CPU-only hardware; larger models (s/m/l/x) are more accurate but much
-  # slower.
+  # Ultralytics model the object-detection stage above runs — one of
+  # yolo11n.pt (nano, fastest/lightest, recommended on CPU-only hardware),
+  # yolo11s.pt, yolo11m.pt, yolo11l.pt, or yolo11x.pt (extra-large, most
+  # accurate, much slower). Downloaded automatically on first use.
   ai_object_detection_model: "yolo11n.pt"
   # Local-only face recognition to suppress alerts for enrolled household
   # members. Enrollment happens entirely on-device via the web UI's AI tab
