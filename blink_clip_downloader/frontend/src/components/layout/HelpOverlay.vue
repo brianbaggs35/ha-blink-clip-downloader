@@ -15,8 +15,14 @@ const SHORTCUTS: [string, string][] = [
 ]
 </script>
 
+<!-- z-index above the default 100 — same reasoning as PromptOverlay.vue:
+     this can be opened (via the ? shortcut) while a clip's modal, which is
+     teleported to <body>, is already up. A leading comment *inside*
+     <template> makes Vue compile this as a multi-root fragment in
+     dev/test mode, breaking wrapper.classes()/wrapper.element in tests —
+     keep any template-level comments outside the <template> tag. -->
 <template>
-  <div class="modal-bg" :class="{ open }" @click.self="open = false">
+  <div class="modal-bg nested-overlay" :class="{ open }" style="z-index: 150" @click.self="open = false">
     <div class="modal" style="max-width: 460px">
       <button class="modal-close" title="Close (Esc)" @click="open = false">
         <AppIcon name="close" />

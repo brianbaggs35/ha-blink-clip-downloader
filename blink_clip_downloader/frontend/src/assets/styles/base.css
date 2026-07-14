@@ -834,6 +834,18 @@ h3 {
   padding: 1.2rem;
   overflow-y: auto;
 }
+/* PromptOverlay/HelpOverlay can open on top of an *already-open* ClipModal
+   (see their z-index: 150 — ClipModal is teleported to <body>, landing
+   after #app, so it needs a higher z-index to not always paint over them).
+   Stacking this same 82%-opaque + blur(3px) background a second time on
+   top of ClipModal's own compounds to ~97% opaque, i.e. the same "turns
+   fully black" bug the outer .p-overlay-mask blur fix addressed, just two
+   layers deep instead of one. Lighter background for these two specific
+   overlays keeps a standalone open (e.g. Help via the "?" shortcut with no
+   clip modal up) legible while not stacking into solid black when nested. */
+.modal-bg.nested-overlay {
+  background: rgba(6, 6, 10, 0.45);
+}
 .modal-bg.open {
   display: flex;
   animation: fadeIn 0.15s ease;

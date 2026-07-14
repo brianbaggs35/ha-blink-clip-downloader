@@ -5,8 +5,16 @@ import { usePromptOverlayStore } from '../../stores/promptOverlay'
 const store = usePromptOverlayStore()
 </script>
 
+<!-- z-index above the default 100 (matches TwoFAOverlay's own override):
+     ClipModal is teleported to <body> (see LibraryPage.vue) so it stays
+     visible across tab switches, which puts it *after* #app as a body
+     sibling — at equal z-index it would always paint over this overlay,
+     which opens *from inside* an already-open clip modal. A leading
+     comment *inside* <template> makes Vue compile this as a multi-root
+     fragment in dev/test mode, breaking wrapper.classes()/wrapper.element
+     in tests — keep any template-level comments outside <template>. -->
 <template>
-  <div class="modal-bg" :class="{ open: store.open }" @click.self="store.close()">
+  <div class="modal-bg nested-overlay" :class="{ open: store.open }" style="z-index: 150" @click.self="store.close()">
     <div class="modal" style="max-width: 700px">
       <button class="modal-close" title="Close (Esc)" @click="store.close()">
         <AppIcon name="close" />
