@@ -8,17 +8,23 @@ set -e
 # connections are two different moments. This loop covers the gap so the
 # very first database query of a fresh container start doesn't race a
 # server that's still replaying WAL/finishing recovery.
-# -U blink: without an explicit role, pg_isready connects as whatever OS
-# user is running this script (root, since this service isn't
+# -U blink -d blink_clips: without an explicit role, pg_isready connects as
+# whatever OS user is running this script (root, since this service isn't
 # s6-setuidgid'd the way the postgresql service itself is) — "root" is
 # never a database role here, so every single startup logged a
 # `FATAL: role "root" does not exist` on the server side. Harmless
 # (pg_isready only cares whether the server responds to a connection
 # attempt at all, and an auth/role rejection still counts), but needlessly
-# alarming in the add-on's log output. "blink" is guaranteed to already
-# exist by the time this runs: cont-init.d/01-postgres-init.sh (which
-# creates it) always completes before any services.d service starts.
-until pg_isready -q -h /var/run/postgresql -U blink; do
+# alarming in the add-on's log output. Both flags are needed, not just
+# -U: without an explicit -d, libpq defaults the target *database* name to
+# match the *role* name, and "blink" (the role) and "blink_clips" (the
+# database, owned by that role) are deliberately different names — verified
+# by hand that -U blink alone still logs a different but equally spurious
+# `FATAL: database "blink" does not exist`. Both "blink" and "blink_clips"
+# are guaranteed to already exist by the time this runs:
+# cont-init.d/01-postgres-init.sh (which creates them) always completes
+# before any services.d service starts.
+until pg_isready -q -h /var/run/postgresql -U blink -d blink_clips; do
   bashio::log.info "Waiting for PostgreSQL to be ready..."
   sleep 1
 done
