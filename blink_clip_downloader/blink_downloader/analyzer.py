@@ -907,7 +907,17 @@ class BaseAnalyzer(abc.ABC):
             zone_motion_fraction,
         )
 
+        # The motion-trajectory ("smart brain") entry/peak/exit frame
+        # selection and approaching/retreating hint had the same silent-
+        # unless-you-read-a-stored-prompt problem as the car-zone check
+        # above — this is the only place that ever showed its actual
+        # per-clip output.
         trajectory_hint = self._compute_motion_trajectory_hint(frames)
+        _LOGGER.debug(
+            "Motion-trajectory hint for camera=%r: %s",
+            camera,
+            trajectory_hint,
+        )
 
         prompt = self._build_prompt(
             camera,
@@ -4822,14 +4832,27 @@ class OpenAIAnalyzer(BaseAnalyzer):
         # models to avoid a truncated/empty response on a harder clip.
         if is_reasoning_model:
             create_kwargs["max_completion_tokens"] = 1024
-            # This is a short, well-defined classification task (suspicious
-            # yes/no + one-sentence description), not multi-step reasoning,
-            # so the lowest effort setting keeps latency/cost down without
-            # sacrificing verdict quality. "-pro" tier reasoning models
-            # (e.g. gpt-5.2-pro) reject anything but "high", so they're
-            # excluded from this optimization.
+            # Was "low" on the theory that this is a short, well-defined
+            # classification task (suspicious yes/no + one-sentence
+            # description) rather than multi-step reasoning. Real-account
+            # testing didn't bear that out: a nano-tier model at "low"
+            # repeatedly flagged completely routine front-door access
+            # (a resident reaching for their own handle, checking their own
+            # mailbox) as suspicious, describing it with words like
+            # "attempting to unlock" or "trying to access" — language that
+            # presumes ill intent for an action the prompt's own rules
+            # already say is NOT suspicious. Distinguishing "resident using
+            # their own door normally" from "stranger tampering with a
+            # lock" from a handful of sparse frames, against a long rule
+            # list with several competing "favor flagging when in doubt"
+            # carve-outs, needs more than the minimum effort tier to apply
+            # reliably. "medium" (the API's own default when unspecified)
+            # trades a modest amount of latency/cost for that reliability.
+            # "-pro" tier reasoning models (e.g. gpt-5.2-pro) reject
+            # anything but "high", so they're excluded from this setting
+            # entirely rather than sent an unsupported value.
             if not model_lower.endswith("-pro"):
-                create_kwargs["reasoning_effort"] = "low"
+                create_kwargs["reasoning_effort"] = "medium"
         else:
             create_kwargs["max_tokens"] = 512
         if supports_structured_outputs:

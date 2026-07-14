@@ -3029,7 +3029,7 @@ async def test_openai_call_model_uses_max_completion_tokens_for_gpt5(
     kwargs = create_call.call_args.kwargs
     assert "max_tokens" not in kwargs
     assert kwargs["max_completion_tokens"] == 1024
-    assert kwargs["reasoning_effort"] == "low"
+    assert kwargs["reasoning_effort"] == "medium"
 
 
 async def test_openai_call_model_omits_reasoning_effort_for_pro_tier(
@@ -3073,7 +3073,7 @@ async def test_openai_call_model_uses_max_completion_tokens_for_o_series(
     kwargs = create_call.call_args.kwargs
     assert "max_tokens" not in kwargs
     assert kwargs["max_completion_tokens"] == 1024
-    assert kwargs["reasoning_effort"] == "low"
+    assert kwargs["reasoning_effort"] == "medium"
 
 
 async def test_openai_call_model_uses_max_tokens_for_gpt4(

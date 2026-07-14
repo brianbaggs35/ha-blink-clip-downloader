@@ -426,7 +426,7 @@ schema:
   anthropic_model: "str?"
   openai_api_key: "password?"
   openai_model: "str?"
-  ai_escalation_provider: "str?"
+  ai_escalation_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic|openai)?"
   ai_escalation_model: "str?"
   ai_prompt: "str?"
   ai_car_description: "str?"

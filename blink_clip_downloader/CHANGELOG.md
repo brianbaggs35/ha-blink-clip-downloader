@@ -933,7 +933,27 @@ rather than the Vite dev server or a bare `docker run`:
   that camera and what fraction it computed, and what every enabled vision
   stage actually detected. Face recognition results are logged as counts
   only (never names), matching the same name-free guarantee the prompt
-  hint itself already follows.
+  hint itself already follows. The motion-trajectory ("smart brain"
+  approaching/retreating) hint had the exact same problem and now gets its
+  own DEBUG line too.
+- **Routine coming and going through a non-vehicle access-point camera
+  (front door, back door, etc.) was getting flagged suspicious more than
+  it should**, with descriptions like "attempting to unlock it" or "trying
+  to access the mailbox" for completely ordinary behavior the prompt's own
+  rules already say is not suspicious. Root cause: every OpenAI reasoning
+  model (o1/o3/o4/gpt-5 family) was hardcoded to the lowest
+  `reasoning_effort` tier for every analysis, on the theory that
+  suspicious/not-suspicious classification is a short, well-defined task.
+  Real-account testing didn't bear that out — correctly weighing "resident
+  using their own door normally" against a long rule list with several
+  deliberate "favor flagging when in doubt" carve-outs needs more than the
+  minimum effort tier to apply reliably. Raised to `"medium"` (the OpenAI
+  API's own default), trading a modest amount of latency/cost for fewer
+  false positives on this class of judgment call.
+- **`ai_escalation_provider` now shows a dropdown** in the Supervisor's
+  Configuration tab (same provider list as `ai_provider`, plus a blank
+  option to leave escalation disabled) instead of requiring the exact
+  provider string typed by hand.
 
 ## 4.0.2
 
