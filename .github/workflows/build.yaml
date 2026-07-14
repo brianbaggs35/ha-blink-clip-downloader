@@ -45,14 +45,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Read add-on version
-        id: version
-        run: |
-          VERSION=$(grep '^version:' blink_clip_downloader/config.yaml \
-            | awk '{print $2}' \
-            | tr -d '"')
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -73,7 +65,7 @@ jobs:
           # preserves the account's actual casing (e.g. "BrianBaggs"), which
           # docker/build-push-action's tag validation rejects outright.
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          TAG_VER="ghcr.io/${OWNER}/blink_clip_downloader"
+          TAG_VER="${{ env.REGISTRY }}/${OWNER}/${{ env.IMAGE_NAME }}"
           TAG_VER="${TAG_VER}:${VERSION}-${{ matrix.arch }}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag_version=${TAG_VER}" >> $GITHUB_OUTPUT
