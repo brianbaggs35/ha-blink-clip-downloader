@@ -60,7 +60,19 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 # since the data directory path itself is versioned
 # (/data/postgresql/<major>/main, see 01-postgres-init.sh) and this had not
 # shipped in a tagged release yet.
-RUN apt-get update && apt-get install --no-install-recommends -y \
+RUN apt-get update \
+    # Patch already-installed base-image packages (e.g. curl, libtasn1-6) to
+    # whatever the base image's own preconfigured apt sources currently
+    # offer, before installing anything new below. The base image is built
+    # and published on its own schedule, so by the time this Dockerfile
+    # builds, security patches for packages it already contains may already
+    # be sitting in the same suite it's already pointed at — no new apt
+    # source/repo is added here, this just catches the base image up to
+    # what it's already configured to see. Safe on a stable release
+    # (trixie): apt-get upgrade never adds/removes packages, only bumps
+    # existing ones within the same suite.
+    && apt-get upgrade -y \
+    && apt-get install --no-install-recommends -y \
         python3 python3-pip python3-dev build-essential \
         libffi-dev libssl-dev ffmpeg libjpeg-dev zlib1g-dev cmake \
         libgl1 libglib2.0-0 ca-certificates postgresql-17 \
@@ -126,6 +138,48 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 RUN ( \
         pip3 install --no-cache-dir "torch>=2.4,<3" "torchvision>=0.19,<1" \
             --index-url https://download.pytorch.org/whl/cpu \
+        # torch's own install pulls in a pinned, older setuptools/wheel as a
+        # transitive build dependency (visible via `pip show`, not declared
+        # by this project) — re-upgrading them here closes known CVEs in
+        # those specific pinned versions. Neither is imported by this
+        # project's own runtime code (they're packaging tools, not
+        # application dependencies), so this is a pure vulnerability-surface
+        # reduction with no functional effect.
+        #
+        # setuptools has a proper pip RECORD file, so a plain --upgrade
+        # cleanly uninstalls the old version first. That matters here beyond
+        # just the CVE fix itself: setuptools vendors its own bundled copies
+        # of jaraco.context/wheel/packaging under setuptools/_vendor, and a
+        # clean uninstall removes the *old* vendor bundle along with the
+        # rest of the old version's files — an --ignore-installed install
+        # (as used for wheel below) would instead leave the old vendor
+        # bundle on disk alongside the new one, still on disk and still
+        # flagged by a CVE scan even though nothing imports it anymore.
+        && pip3 install --no-cache-dir --upgrade "setuptools>=78.1.1" \
+        # wheel is different: Debian's python3-pip apt package (installed
+        # above) hard-depends on python3-wheel, which ships to
+        # /usr/lib/python3/dist-packages with no RECORD file (dpkg tracks
+        # its files itself, not pip) — a plain --upgrade can't cleanly
+        # uninstall it first ("Cannot uninstall wheel: no RECORD file"), and
+        # that failure isn't caught by this block's own `|| echo` fallback
+        # below since it's chained with `&&` *inside* the parens, so it
+        # silently skipped every package after it (ultralytics/opencv/
+        # transformers/facenet-pytorch) the first time this was tried.
+        # --ignore-installed installs the patched version into /usr/local's
+        # site-packages without needing to remove the apt-owned one first;
+        # Python resolves /usr/local before /usr/lib so the new version is
+        # what actually runs, but the old copy still physically exists and
+        # would still surface as a CVE finding (Docker Scout's Python-
+        # ecosystem detection walks for *.dist-info regardless of whether
+        # apt or pip put it there), so it's deleted directly below instead
+        # of just being shadowed. Removing apt's copy of a *file*, not the
+        # apt *package* (python3-wheel is never `apt-get remove`d — that
+        # would take python3-pip down with it, since pip hard-depends on
+        # it): safe because nothing after this point in the build re-runs
+        # apt-get against it.
+        && pip3 install --no-cache-dir --upgrade --ignore-installed "wheel>=0.46.2" \
+        && rm -rf /usr/lib/python3/dist-packages/wheel \
+            /usr/lib/python3/dist-packages/wheel-*.dist-info \
         && pip3 install --no-cache-dir \
             "ultralytics>=8.3,<9" \
             "opencv-python-headless>=4.10,<5" \
