@@ -49,6 +49,17 @@ from blink_downloader.vision import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _yolo_cache_dir_in_tmp_path(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """ObjectDetector._load_sync() resolves a bare model filename against
+    vision._YOLO_MODEL_CACHE_DIR (a hardcoded /data path, see vision.py) and
+    creates it with os.makedirs — unlike ultralytics itself, this isn't
+    mocked away by the sys.modules substitution above, so without this
+    fixture every ObjectDetector test would try to create a real /data
+    directory on whatever machine runs the suite."""
+    monkeypatch.setattr("blink_downloader.vision._YOLO_MODEL_CACHE_DIR", str(tmp_path))
+
+
 def _real_jpeg_bytes(size: tuple[int, int] = (10, 10)) -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", size, color=(128, 128, 128)).save(buf, format="JPEG")

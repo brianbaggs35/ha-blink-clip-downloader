@@ -40,6 +40,26 @@ ARG BUILD_VERSION=2.8.1
 # passing --break-system-packages on every pip3 invocation below.
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
+# TORCH_HOME / HF_HOME: without these, torch.hub (facenet-pytorch's
+# InceptionResnetV1) and the transformers/huggingface_hub library (used by
+# both DepthEstimator and ContactSegmenter in vision.py) each cache their
+# one-time pretrained-weight downloads under $HOME/.cache by default —
+# $HOME here is /root, which is ordinary container filesystem, not the
+# /data volume. That cache is lost every time the container is recreated
+# (an add-on update, not just a restart — verified by hand: a plain
+# `docker restart` keeps it, but removing and recreating the container
+# does not), so every one of these optional CV features would silently
+# redo a many-second, tens-of-MB download the first time it's used after
+# every single update. Redirecting both into /data makes the download
+# genuinely one-time, matching the persistence already given to moondream's
+# own downloaded packages (see __main__.py's /data/moondream_packages
+# handling) and to Ultralytics' YOLO weights (see vision.py's
+# ObjectDetector, which resolves its model filename against this same
+# directory for the same reason — YOLO doesn't consult either of these
+# env vars, it downloads to whatever path it's given).
+ENV TORCH_HOME=/data/model_cache/torch
+ENV HF_HOME=/data/model_cache/hf
+
 # python3-dev + build-essential: compile any C-extension wheel without a
 # prebuilt manylinux wheel for this Python version.
 # libjpeg-dev + zlib1g-dev: required by Pillow.
@@ -182,6 +202,20 @@ RUN ( \
             /usr/lib/python3/dist-packages/wheel-*.dist-info \
         && pip3 install --no-cache-dir \
             "ultralytics>=8.3,<9" \
+            # lap isn't in ultralytics' own declared dependencies (`pip show
+            # ultralytics` doesn't list it) — it's an optional extra
+            # ultralytics only imports inside YOLO.track() (the Hungarian-
+            # algorithm assignment step ByteTrack/BoT-SORT need), which is
+            # exactly the method ObjectDetector in vision.py uses. Without
+            # it installed ahead of time, the first real .track() call
+            # triggers ultralytics' own "AutoUpdate" fallback — a live pip
+            # install from inside the running container, verified by hand
+            # to work but undesirable in production: it depends on outbound
+            # network access being available at that exact moment (which a
+            # user's network policy may not guarantee), and its own log
+            # output warns the *current* process may need restarting for
+            # the newly installed package to actually take effect.
+            "lap>=0.5.12" \
             "opencv-python-headless>=4.10,<5" \
             "transformers>=4.56,<5" \
         && pip3 install --no-cache-dir --no-deps "facenet-pytorch>=2.6,<3" \

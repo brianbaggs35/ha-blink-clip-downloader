@@ -37,6 +37,7 @@ import asyncio
 import io
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,14 @@ if TYPE_CHECKING:
     from .database import ClipDatabase
 
 _LOGGER = logging.getLogger(__name__)
+
+# Persistent cache dir for Ultralytics YOLO weights (see ObjectDetector
+# below) — mirrors TORCH_HOME/HF_HOME (set in the Dockerfile) for the same
+# reason: YOLO downloads to whatever path it's given rather than consulting
+# either of those env vars itself, so a bare model filename would otherwise
+# download into the process's cwd (an ephemeral s6-overlay runtime path,
+# not the /data volume) and be re-fetched after every container recreation.
+_YOLO_MODEL_CACHE_DIR = "/data/model_cache/yolo"
 
 # COCO class names (Ultralytics' default label set) this pipeline surfaces
 # in prompts. Anything else YOLO detects (furniture, traffic lights, sports
@@ -176,12 +185,12 @@ class DetectedObject:
 class ObjectDetector:
     """YOLO object detection + ByteTrack tracking (Ultralytics).
 
-    The model is loaded once (and downloaded on first use) and reused
-    across clips — reloading it per clip would make every analysis pay a
-    multi-second cold-start cost. Inference runs in a thread executor so
-    the asyncio event loop is never blocked, mirroring
-    ``MoondreamLocalAnalyzer``'s pattern in ``analyzer.py`` for the same
-    reason.
+    The model is loaded once (and downloaded on first use, cached under
+    /data — see ``_YOLO_MODEL_CACHE_DIR`` above) and reused across clips —
+    reloading it per clip would make every analysis pay a multi-second
+    cold-start cost. Inference runs in a thread executor so the asyncio
+    event loop is never blocked, mirroring ``MoondreamLocalAnalyzer``'s
+    pattern in ``analyzer.py`` for the same reason.
 
     Note on tracking: Ultralytics' ``.track(persist=True)`` is designed for
     continuous video frames. This pipeline only ever hands it the handful
@@ -204,8 +213,19 @@ class ObjectDetector:
     def _load_sync(self) -> None:
         from ultralytics import YOLO  # noqa: PLC0415  # type: ignore[import-not-found]
 
+        # A bare filename (the default "yolo11n.pt", or any custom
+        # ai_object_detection_model naming a standard pretrained checkpoint)
+        # downloads into YOLO()'s cwd if given as-is; resolving it against a
+        # persistent absolute directory first makes that download (and
+        # every reload after a container recreation) reuse the same file
+        # instead of silently re-fetching it. A caller-supplied path that
+        # already has a directory component is left untouched.
+        model_path = self._model_name
+        if os.path.basename(model_path) == model_path:
+            os.makedirs(_YOLO_MODEL_CACHE_DIR, exist_ok=True)
+            model_path = os.path.join(_YOLO_MODEL_CACHE_DIR, model_path)
         _LOGGER.info("Loading YOLO object-detection model '%s'", self._model_name)
-        self._model = YOLO(self._model_name)
+        self._model = YOLO(model_path)
         _LOGGER.info("YOLO model '%s' ready", self._model_name)
 
     async def ensure_ready(self) -> bool:

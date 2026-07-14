@@ -629,6 +629,39 @@ Docker build + container run, not just review)
   its latest available version, or have no fix published at any version yet
   (`transformers`) — none are fixable from this Dockerfile.
 
+### Fixed — computer-vision pipeline model downloads on every add-on update
+
+- **Fix: face recognition, object detection, depth estimation, and contact
+  segmentation all re-downloaded their pretrained weights (~5-110 MB each)
+  after every add-on update, not just once ever.** torch.hub
+  (facenet-pytorch) and transformers/huggingface_hub (depth estimation,
+  segmentation) both cache downloads under `$HOME/.cache` by default, and
+  Ultralytics YOLO downloads to whatever directory the calling process's
+  cwd happens to be — none of these are the `/data` volume, so a plain
+  `docker restart` kept the cache (same container, same writable layer)
+  but an add-on *update* (a new container from a new image) silently lost
+  it, verified by hand. `TORCH_HOME`/`HF_HOME` now point at `/data`, and
+  `ObjectDetector` resolves its model filename against that same
+  persistent directory before handing it to `YOLO(...)`, since Ultralytics
+  doesn't consult either env var itself.
+- **Fix: enabling object detection could silently trigger a live `pip
+  install` inside the running container.** `ObjectDetector` uses
+  Ultralytics' `.track()` (not `.predict()`), which needs the `lap`
+  package — not one of `ultralytics`'s own declared dependencies, only
+  pulled in via its "AutoUpdate" self-healing fallback the first time
+  `.track()` actually runs. Only surfaced by directly exercising object
+  detection end-to-end (loading the model isn't enough to hit this — it
+  only happens on the first real tracking call), not by anything the
+  existing test suite's mocked-`ultralytics` tests could catch. `lap` is
+  now installed alongside `ultralytics` at build time, so this never
+  depends on the container having outbound network access at the moment a
+  user's first clip is analyzed with object detection on.
+- `e2e/smoke.mjs`'s tab-by-tab check was still only covering six of the
+  eight nav tabs — missing exactly the two newest ones, Vehicles and
+  Biometrics — so neither had ever actually been exercised by the
+  automated Playwright smoke check that both CI and `scripts/smoke-test.sh`
+  run. Added.
+
 ## 4.0.2
 
 ### Bug fixes
