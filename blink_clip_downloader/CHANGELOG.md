@@ -771,6 +771,62 @@ rather than the Vite dev server or a bare `docker run`:
   leaving the rest pending for the next check cycle once the limit has
   had a chance to cool down.
 
+### Fixed — a second round of real-account testing (real Blink + OpenAI credentials)
+
+- **Every PrimeVue form control (Button/InputText/Select/Textarea/
+  FileUpload/Message) across Vehicles, Biometrics, and the confirm
+  dialog rendered noticeably larger than the rest of the app** —
+  Aura's own default size is close to 40px/16px text, and even the ones
+  already passing `size="small"` (0.875rem/0.625rem padding) were still
+  visibly bigger than this app's pre-existing hand-rolled small-button
+  scale, since nothing had ever overridden PrimeVue's own tokens to
+  match it. Card/Dialog titles (1.25rem) and Tag (0.875rem, no `size`
+  prop to opt out of at all) were similarly oversized next to every
+  hand-rolled heading/badge elsewhere. `theme.ts` now overrides the
+  shared `form.field.sm.*` tokens those components' `size="small"`
+  variant reads from, plus direct Card/Dialog/Tag overrides where no
+  size prop exists — and every control that was still on the unstyled
+  default now explicitly passes `size="small"` so it benefits from them.
+- **The sidebar's Cameras section (per-camera clip counts) only ever
+  showed on the Library tab**, unlike every other persistent sidebar
+  element (the connection badge, Sync, Refresh) — switching tabs hid it
+  entirely even though the data was already loaded. Now shown on every
+  tab once cameras have loaded; clicking a camera from elsewhere both
+  applies the filter and switches to Library, so the click still has a
+  visible effect.
+- **Clip-card selection checkboxes couldn't be clicked** — they rendered
+  unconditionally but had no click handler of their own, so the click
+  always bubbled up and opened the clip modal instead. Selecting a clip
+  only ever worked by clicking "Select" first, with no hint from the
+  checkbox itself that that was required. It now stops propagation and
+  emits its own event; clicking it enters select mode (if not already
+  active) and toggles that clip in one click.
+- **Clicking "Prompt" in a clip's AI panel appeared to do nothing** —
+  it actually opened, just rendered behind the already-open clip modal.
+  `ClipModal` is deliberately `<Teleport to="body">`'d (so it survives
+  its tab going `display:none` on switch), landing it as a sibling of
+  `#app` rather than nested inside it, while `PromptOverlay`/
+  `HelpOverlay` render inside `#app` at the same default z-index —
+  opening either from within an open clip modal put it behind that
+  modal. Both now use z-index 150, matching the precedent
+  `TwoFAOverlay` already set for the same reason. That surfaced a second
+  bug once fixed: stacking two overlays' own 82%-opaque + blur(3px)
+  backdrops compounds to ~97% opaque — the same "turns fully black" bug
+  as before, just two layers deep — so these two specifically now use a
+  lighter backdrop, since `ClipModal`'s own already dims the real page
+  underneath both.
+- **A several-hundred-clip thumbnail backlog took hours to catch up**
+  after enabling `download_thumbnails` (5 clips backfilled per poll
+  cycle) — long enough that it read as broken rather than gradually
+  working. Raised to 15/cycle; each is a sub-second ffmpeg
+  `-frames:v 1` extract, so this still leaves plenty of margin in a
+  300s+ poll cycle.
+- **`ai_object_detection_model`'s description explained the n/s/m/l/x
+  size tradeoff but never showed the actual value to type** (e.g.
+  `yolo11n.pt`) — a user reading it had no way to know the expected
+  format. Both the add-on's Configuration tab description and the
+  `config.yaml` comment now spell out the exact filenames.
+
 ## 4.0.2
 
 ### Bug fixes
