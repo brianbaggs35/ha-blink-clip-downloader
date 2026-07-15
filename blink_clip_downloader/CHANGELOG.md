@@ -1093,6 +1093,22 @@ Confirmed already correct, no change needed:
   lookback window resets back to the first page rather than keeping a now
   out-of-context offset.
 
+### Fixed — 🔔 notified badge stuck on after a clip was correctly re-analyzed
+
+- **A clip re-analyzed to "not suspicious" (e.g. via the Library's
+  Re-analyze button, or after a prompt/model fix like this round's
+  `reasoning_effort` change) kept showing the 🔔 notified badge forever.**
+  Root cause: `add_analysis_result` always inserts a new row rather than
+  replacing the previous one, so a re-analyzed clip has multiple
+  `analysis_results` rows — but `get_clips`' `notified` computation checked
+  whether *any* row was ever suspicious, not just the current one.
+  Reproduced directly against real data: one of this session's own
+  test clips had exactly this row history (`{suspicious, not-suspicious}`)
+  and was still showing as notified despite its current, correct verdict
+  being "clear." Scoped the check to only the clip's most recent
+  `analysis_results` row, matching `get_analysis_for_clip`'s own
+  "latest wins" semantics.
+
 ## 4.0.2
 
 ### Bug fixes

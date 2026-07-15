@@ -279,6 +279,59 @@ async def test_get_clips_notified_flag_and_filter(db: ClipDatabase) -> None:
     assert [c["id"] for c in notified_only] == ["c1"]
 
 
+async def test_get_clips_notified_flag_reflects_latest_reanalysis_only(
+    db: ClipDatabase,
+) -> None:
+    """Regression test: add_analysis_result always inserts a new row rather
+    than replacing the old one, so a clip re-analyzed (e.g. via the
+    Library's "Re-analyze" button) after an earlier suspicious pass has
+    *two* analysis_results rows. The 🔔 notified badge must reflect only
+    the most recent verdict, not "was this ever suspicious" — otherwise a
+    clip correctly cleared on re-analysis keeps showing as notified forever."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis(
+            "c1",
+            is_suspicious=True,
+            confidence=0.9,
+            analyzed_at="2024-06-01T09:00:00+00:00",
+        )
+    )
+    await db.add_analysis_result(
+        _make_analysis(
+            "c1",
+            is_suspicious=False,
+            confidence=0.9,
+            analyzed_at="2024-06-01T10:00:00+00:00",
+        )
+    )
+
+    clips = {c["id"]: c for c in await db.get_clips(min_confidence=0.5)}
+    assert clips["c1"]["notified"] is False
+
+    # And the reverse: cleared first, then a later re-analysis genuinely
+    # does find it suspicious — notified must flip back on.
+    await db.add_clip(_make_clip("c2"))
+    await db.add_analysis_result(
+        _make_analysis(
+            "c2",
+            is_suspicious=False,
+            confidence=0.9,
+            analyzed_at="2024-06-01T09:00:00+00:00",
+        )
+    )
+    await db.add_analysis_result(
+        _make_analysis(
+            "c2",
+            is_suspicious=True,
+            confidence=0.9,
+            analyzed_at="2024-06-01T10:00:00+00:00",
+        )
+    )
+    clips2 = {c["id"]: c for c in await db.get_clips(min_confidence=0.5)}
+    assert clips2["c2"]["notified"] is True
+
+
 async def test_get_clips_search(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("abc123", camera="Garage"))
     await db.add_clip(_make_clip("xyz999", camera="Office"))

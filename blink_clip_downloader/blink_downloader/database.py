@@ -407,18 +407,29 @@ class ClipDatabase:
 
         sort values: "newest" | "oldest" | "camera" | "size" | "duration"
 
-        Every returned clip includes a ``notified`` boolean (True if the clip
-        has an AI analysis result that was/would be suspicious at
+        Every returned clip includes a ``notified`` boolean (True if the
+        clip's *most recent* AI analysis result was/would be suspicious at
         *min_confidence* or higher — the same gate ``AnalysisQueue`` uses to
         decide whether to dispatch a notification). Set *notified_only* to
         restrict results to just those clips.
+
+        Deliberately scoped to only the latest ``analysis_results`` row per
+        clip (matching :meth:`get_analysis_for_clip`'s own "most recent
+        wins" semantics) rather than "any row ever" — a clip re-analyzed
+        after its first (suspicious) pass, e.g. via the Library's
+        "Re-analyze" button or a later fix that changes the verdict, would
+        otherwise show the 🔔 notified badge forever even once the current
+        verdict is not-suspicious, since `add_analysis_result` always
+        inserts a new row rather than replacing the old one.
         """
         if self._pool is None:
             return []
 
         notified_exists = (
             "EXISTS (SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
-            "AND ar.is_suspicious AND ar.confidence >= ?)"
+            "AND ar.is_suspicious AND ar.confidence >= ? "
+            "AND ar.analyzed_at = (SELECT MAX(ar2.analyzed_at) FROM analysis_results ar2 "
+            "WHERE ar2.clip_id = clips.id))"
         )
 
         where: list[str] = ["archived = ?"]
