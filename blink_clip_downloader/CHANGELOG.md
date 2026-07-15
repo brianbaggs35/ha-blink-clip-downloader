@@ -1176,6 +1176,24 @@ Confirmed already correct, no change needed:
   on disk" whenever a quota is configured, falling back to the prior
   disk-only wording when it isn't (`quota_gb: 0` — no quota configured).
 
+### Fixed — page loading spinner appeared top-left on the Status tab only
+
+- **`LoadingIndicator.vue`'s own wrapper only centered its children
+  (spinner + label) *within itself* — but as a plain block element it
+  shrink-wraps to its content's width, so `align-items: center` had
+  nothing wider to center against.** On the AI/AI Usage/Automations/Models/
+  Vehicles/Biometrics tabs this was invisible: their loading state sits
+  inside `.auto-content`, a `max-width: 820px; margin: 0 auto` column, so
+  the already-narrow, already-centered column made the spinner's own
+  left-alignment within it hard to notice. The Status tab's loading state
+  isn't wrapped in that column, so the same left-alignment was fully
+  visible as a spinner pinned to the top-left of the page. Fixed at the
+  shared component (`width: 100%` on `.loading-indicator`, so the existing
+  `align-items: center` has the full available width to center against)
+  rather than in each of the 8 call sites, which makes every one of them
+  robustly centered within its actual container instead of relying on
+  `.auto-content`'s width as an incidental crutch.
+
 ## 4.0.2
 
 ### Bug fixes
