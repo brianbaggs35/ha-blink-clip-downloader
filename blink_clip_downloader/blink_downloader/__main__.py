@@ -24,6 +24,25 @@ def _setup_logging(level: str) -> None:
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
     logging.getLogger("aiohttp.client").setLevel(logging.WARNING)
     logging.getLogger("blinkpy.helpers.util").setLevel(logging.WARNING)
+    # At DEBUG level specifically, the openai SDK logs the entire outgoing
+    # request body — including every frame's full base64 image data and
+    # the complete prompt text — on every single analysis call, and
+    # httpcore logs raw per-byte connection/TLS/header tracing underneath
+    # it. Together these dwarf this add-on's own debug output (the
+    # per-clip "Vision pipeline result" / "Car-zone check" / "Motion-
+    # trajectory hint" lines in analyzer.py/vision.py), making a debug-mode
+    # log effectively unreadable without adding anything a user
+    # troubleshooting *this add-on's* behavior can act on. Capped at
+    # WARNING (rather than removed) so a genuine SDK-level problem —
+    # retries, deprecation notices — still surfaces; httpx is deliberately
+    # left alone, since its own contribution is a single concise INFO line
+    # per request ("HTTP Request: POST ... 200 OK") that's actually useful.
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    # matplotlib logs its font-cache setup at DEBUG once per process
+    # (triggered by the first YOLO/object-detection import) — a one-time
+    # startup detail, not per-clip signal, so it's noise the same way.
+    logging.getLogger("matplotlib").setLevel(logging.WARNING)
 
 
 def main() -> None:

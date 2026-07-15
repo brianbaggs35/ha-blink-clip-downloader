@@ -954,6 +954,18 @@ rather than the Vite dev server or a bare `docker run`:
   Configuration tab (same provider list as `ai_provider`, plus a blank
   option to leave escalation disabled) instead of requiring the exact
   provider string typed by hand.
+- **Debug-level logs were dominated by the `openai` SDK's own internal
+  request/response tracing** — including the full base64 image data for
+  every frame and the complete prompt text, logged in full on every single
+  analysis call — plus raw per-byte connection tracing from `httpcore`
+  underneath it. Together these buried this add-on's own debug output (the
+  per-clip vision-pipeline/car-zone/trajectory lines) under what was
+  effectively an unreadable wall of SDK internals and duplicated image
+  data. Both loggers are now capped at WARNING regardless of the add-on's
+  own `log_level`, so genuine SDK-level problems (retries, deprecation
+  notices) still surface, but routine per-request tracing doesn't.
+  `httpx`'s own logging is untouched — it only ever contributes one
+  concise, useful line per request.
 
 ## 4.0.2
 
