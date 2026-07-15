@@ -1109,6 +1109,24 @@ Confirmed already correct, no change needed:
   `analysis_results` row, matching `get_analysis_for_clip`'s own
   "latest wins" semantics.
 
+### Fixed — reconciled clips showed no Duration in the Library
+
+- **A clip re-imported by the startup library scan (`library_scanner.py`,
+  triggered when `/data`'s database is wiped but `download_path`'s files
+  survive — e.g. an add-on reinstall) always showed Duration as "—".**
+  Unlike the normal download path (which reads `duration` straight off the
+  Blink API's own clip response), reconciliation only ever had the bare
+  file to work with and hardcoded `duration: 0` rather than reading it
+  from the file itself. Duration is embedded in every video file's own
+  container metadata though, so — unlike `source` (a Blink-side "how was
+  this clip triggered" fact with no equivalent anywhere in the file
+  itself, which necessarily stays blank for reconciled clips) — it's
+  genuinely recoverable. Reconciliation now probes it with `ffprobe`
+  (already implicitly available — the add-on's AppArmor profile already
+  allows executing anything under `/usr/bin/`, where `ffprobe` ships
+  alongside the `ffmpeg` this add-on already depends on), falling back to
+  the existing "—" placeholder if a probe ever fails.
+
 ## 4.0.2
 
 ### Bug fixes

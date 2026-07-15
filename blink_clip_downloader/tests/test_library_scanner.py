@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from blink_downloader.database import ClipDatabase
 from blink_downloader.library_scanner import (
@@ -15,6 +18,25 @@ from blink_downloader.library_scanner import (
 def _touch(path: Path, content: bytes = b"fake-mp4") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
+
+
+@pytest.fixture(autouse=True)
+def _mock_ffprobe():
+    """Every import_existing_clips() call now shells out to ffprobe per
+    file (see _probe_duration) — none of the .mp4 fixtures in this file are
+    real video, so a real ffprobe would just fail slowly and consistently
+    return 0 anyway. Auto-mocked here so every existing test in this file
+    keeps working without individually caring about duration probing;
+    tests that specifically exercise _probe_duration's own behavior
+    override this with their own more specific patch.
+    """
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"5.0\n", b""))
+    with patch(
+        "blink_downloader.library_scanner.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -190,3 +212,89 @@ def test_timestamp_from_filename_invalid_date() -> None:
     # strptime would raise ValueError for month=99
     result = _timestamp_from_filename("camera_99990099_999999.mp4")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Duration probing (_probe_duration / import_existing_clips wiring)
+# ---------------------------------------------------------------------------
+
+
+async def test_import_stores_probed_duration(db: ClipDatabase, tmp_path: Path) -> None:
+    """Regression test: a reconciled clip's Library detail view showed
+    Duration as "—" (0) even though the file itself has a real duration
+    ffprobe can read — reconciliation just never probed it, unlike the
+    normal download path (which gets duration for free from the Blink API
+    response). Confirmed directly against a real clip found in this
+    session's own testing."""
+    download_path = tmp_path / "clips"
+    clip_path = (
+        download_path / "Front_Door" / "2024-06-01" / "Front_Door_20240601_080000.mp4"
+    )
+    _touch(clip_path)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"12.7\n", b""))
+    with patch(
+        "blink_downloader.library_scanner.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ) as mock_exec:
+        added = await import_existing_clips(db, download_path)
+    assert added == 1
+
+    clips = await db.get_clips()
+    assert clips[0]["duration"] == 12  # truncated to whole seconds
+
+    args = mock_exec.call_args.args
+    assert args[0] == "ffprobe"
+    assert str(clip_path) in args
+
+
+async def test_probe_duration_returns_zero_when_ffprobe_missing(
+    tmp_path: Path,
+) -> None:
+    from blink_downloader.library_scanner import _probe_duration
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+
+    with patch(
+        "blink_downloader.library_scanner.asyncio.create_subprocess_exec",
+        AsyncMock(side_effect=FileNotFoundError("ffprobe not found")),
+    ):
+        assert await _probe_duration(video) == 0
+
+
+async def test_probe_duration_returns_zero_on_timeout(tmp_path: Path) -> None:
+    import asyncio
+
+    from blink_downloader.library_scanner import _probe_duration
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+    mock_proc.kill = lambda: None
+    mock_proc.wait = AsyncMock()
+    with patch(
+        "blink_downloader.library_scanner.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ):
+        assert await _probe_duration(video) == 0
+
+
+async def test_probe_duration_returns_zero_on_unparseable_output(
+    tmp_path: Path,
+) -> None:
+    from blink_downloader.library_scanner import _probe_duration
+
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"N/A\n", b""))
+    with patch(
+        "blink_downloader.library_scanner.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ):
+        assert await _probe_duration(video) == 0
