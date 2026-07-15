@@ -45,16 +45,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Required before setup-buildx-action for the aarch64 leg: this job
-      # runs on an amd64 ubuntu-latest runner, and buildx alone can't
-      # execute RUN steps for a foreign platform — it needs QEMU emulators
-      # registered with the kernel's binfmt_misc first. Without this,
-      # docker/build-push-action's aarch64 build fails the moment the
-      # Dockerfile's first RUN step (apt-get, early in the base layer)
-      # tries to execute an aarch64 binary on this amd64 host.
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 

@@ -1446,56 +1446,52 @@ Confirmed already correct, no change needed:
   issues" section, so filing a report has a visible place to land instead
   of disappearing into the database.
 
-### Fixed — release workflow's aarch64 image build had no QEMU emulation registered
+### Verified — aarch64 release build and runtime behavior
 
-- **`build.yaml`'s release job would have failed to produce an aarch64
-  image at all.** It sets up Docker Buildx (`docker/setup-buildx-action`)
-  and immediately asks it to build `linux/arm64` on a plain `ubuntu-latest`
-  (amd64) GitHub-hosted runner — but Buildx alone can't execute another
-  architecture's instructions; that requires QEMU emulators registered
-  with the kernel's `binfmt_misc`, which is `docker/setup-qemu-action`'s
-  entire job and is *not* something `setup-buildx-action` provides (per
-  Docker's own docs, which explicitly show `setup-qemu-action` running
-  first). Without it, the aarch64 leg's build would fail the moment the
-  Dockerfile's first `RUN` (`apt-get`, in the base layer) tried to execute
-  an aarch64 binary on the amd64 runner. Confirmed by reproducing the
-  exact failure locally (plain Buildx targeting `linux/arm64` with no
-  QEMU registered fails immediately with "exec format error") and
-  confirming it's resolved once `tonistiigi/binfmt` (the mechanism
-  `setup-qemu-action` wraps) registers the `qemu-aarch64` handler. Fixed
-  by adding `docker/setup-qemu-action@v4` before the existing Buildx setup
-  step, matching Docker's documented ordering.
-- **This did not affect the add-on as currently installed** — `config.yaml`
-  has no `image:` field yet (see the earlier "release build/publish
-  workflow" review), so Home Assistant Supervisor always builds this
-  add-on locally, natively, on the installing host's own architecture.
-  On real aarch64 Home Assistant OS hardware that means a native aarch64
-  build with no emulation involved at all, unaffected by this bug. The
-  bug was strictly latent, in the *separate* CI path that publishes
-  prebuilt multi-arch images to GHCR — it would only have surfaced (as a
-  release with no aarch64 image published) once that path is actually
-  relied on, e.g. after `image:` is set for a real release.
+- **`build.yaml`'s aarch64 leg builds and publishes correctly as-is —
+  confirmed against this repo's actual GitHub Actions history**, not just
+  local reasoning. (An earlier pass through this file briefly added a
+  `docker/setup-qemu-action` step in the belief that Buildx can't cross-
+  build for a foreign platform without it; that step was reverted after
+  checking real run logs — see below.) `docker/build-push-action`'s
+  Buildx `docker-container` driver (`moby/buildkit`) carries its own
+  build-time multi-platform emulation and has successfully built and
+  pushed the `linux/arm64` image for every tagged release back through
+  v4.0.2 and earlier, all without a QEMU-setup step. `setup-qemu-action`
+  registers emulation for *running* a foreign-platform container
+  (`docker run --platform ...`) at the kernel's `binfmt_misc` level — a
+  different mechanism from Buildx's own build-time execution, and not
+  needed for this workflow, which only ever builds and pushes, never runs
+  a foreign-arch container itself.
 - **Verified the actual dependency set installs and runs correctly on
-  aarch64**, independent of the CI fix above: ran a full real (QEMU-
-  emulated, not just metadata-checked) build of this add-on's Dockerfile
-  for `linux/arm64` end to end — apt packages, `requirements.txt`, and the
-  full optional computer-vision stack (`torch`/`torchvision` from
-  PyTorch's CPU wheel index, `ultralytics`, `lap`, `opencv-python-
-  headless`, `transformers`, `facenet-pytorch`, and `moondream`/`kestrel`)
-  all installed successfully with real prebuilt aarch64 wheels — no
-  source compilation, no missing distributions. Then actually **ran** the
-  built aarch64 image (not just built it): PostgreSQL 17 initialized and
-  started correctly on `aarch64-unknown-linux-gnu`, the Python app booted,
-  the media server bound to its port and answered `/health`, `/`, and
-  `/api/stats` correctly, and a deliberately-invalid Blink login was
-  rejected with the same clean error handling (no crash-loop) as on
-  amd64. No architecture-specific code paths, hardcoded CUDA device
-  selection, or arch-conditional file paths were found anywhere in the
-  Python backend, rootfs service scripts, or `apparmor.txt` — the one
-  existing `platform.machine()` reference (`media_server.py`'s Moondream
+  aarch64**: ran a full real (QEMU-emulated) build of this add-on's
+  Dockerfile for `linux/arm64` end to end — apt packages,
+  `requirements.txt`, and the full optional computer-vision stack
+  (`torch`/`torchvision` from PyTorch's CPU wheel index, `ultralytics`,
+  `lap`, `opencv-python-headless`, `transformers`, `facenet-pytorch`, and
+  `moondream`/`kestrel`) all installed successfully with real prebuilt
+  aarch64 wheels — no source compilation, no missing distributions. Then
+  actually **ran** the built aarch64 image (not just built it, this time
+  via a separately-registered QEMU handler at the container-run level,
+  the same mechanism `setup-qemu-action` provides): PostgreSQL 17
+  initialized and started correctly on `aarch64-unknown-linux-gnu`, the
+  Python app booted, the media server bound to its port and answered
+  `/health`, `/`, and `/api/stats` correctly, and a deliberately-invalid
+  Blink login was rejected with the same clean error handling (no
+  crash-loop) as on amd64.
+- No architecture-specific code paths, hardcoded CUDA device selection,
+  or arch-conditional file paths were found anywhere in the Python
+  backend, rootfs service scripts, or `apparmor.txt` — the one existing
+  `platform.machine()` reference (`media_server.py`'s Moondream
   install-status message) is unreachable dead code left over from before
   4.1.0's Debian base-image switch (`_moondream_arch_supported()` always
   returns `True` now) and reflects no live bug.
+- On real aarch64 Home Assistant OS hardware (unlike this session's
+  amd64 devcontainer), the add-on builds natively with no emulation
+  involved at all regardless of the above — `config.yaml` has no
+  `image:` field yet, so Supervisor always builds locally rather than
+  pulling a prebuilt image (see the earlier "release build/publish
+  workflow" review).
 
 ## 4.0.2
 
