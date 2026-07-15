@@ -1223,6 +1223,37 @@ Confirmed already correct, no change needed:
   button is only reachable when it's on *now*, re-analyzing the clip will
   capture it.
 
+### Added — cap auto-analysis to the newest few clips in a download burst
+
+- **A genuine backlog burst — a fresh install's first poll pulling a busy
+  24h window, or catch-up after the add-on being down for a while — used
+  to enqueue every single downloaded clip for AI analysis unconditionally,
+  with no cap distinct from `max_clips_per_poll` (default 50).** Downloads
+  are already reasonably bounded, but analysis costs real per-clip API
+  tokens, and nobody wants dozens of already-hours-or-days-old clips
+  auto-analyzed the moment the add-on starts. `_on_clips_downloaded` now
+  auto-queues only the `_MAX_AUTO_ANALYZE_BURST` (5) most recent clips —
+  by timestamp, not download order — whenever a single batch exceeds that;
+  every clip in the batch still downloads, gets its notification/webhook/
+  manifest entry, and appears in the library exactly as before, just
+  without automatic analysis for the older ones. Analyzable on demand any
+  time via the existing "Analyze Now" button. Routine polling (normally
+  1-2 new clips) is unaffected — the cap only ever changes behavior when a
+  batch is larger than 5.
+- **Investigated separately: the "only pull the last 24h unless the
+  database already has more" behavior already existed** —
+  `download_new_clips()` has always derived its Blink API `since` filter
+  from the download tracker's persisted cursor (`/data/downloaded_clips.json`),
+  falling back to 24h-ago only when that cursor is genuinely absent (a
+  fresh tracker). A normal restart/upgrade keeps the real cursor (however
+  far back it goes); only a full wipe (uninstall, or `/data` loss) resets
+  it to the 24h default — and even then, `library_scanner.py`'s
+  reconciliation of surviving clip files never enqueues analysis on its
+  own (confirmed by code inspection: it only calls `db.add_clip`, never
+  the analysis queue), so a reconciled backlog was never actually at risk
+  of a token-burning analysis flood in the first place. No change needed
+  here beyond the auto-analyze cap above.
+
 ## 4.0.2
 
 ### Bug fixes

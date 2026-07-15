@@ -44,6 +44,20 @@ TRIGGER_FILE = Path("/data/trigger_download")
 # which read as "thumbnails aren't working" rather than "still catching up".
 _THUMBNAIL_BACKFILL_BATCH = 15
 
+# How many clips from a single downloaded batch get auto-queued for (paid)
+# AI analysis. download_new_clips() already caps *downloads* per poll via
+# max_clips_per_poll (default 50) to bound bandwidth/disk I/O, but every
+# downloaded clip used to get enqueued for analysis unconditionally — fine
+# for routine polling (usually 1-2 clips), but a genuine backlog burst (a
+# fresh install's first poll pulling a busy 24h window, or catch-up after
+# the add-on being down for a while) could enqueue dozens of clips for
+# analysis in one shot, burning real API tokens on clips that are already
+# hours or days old by the time anyone looks at them. Only the most recent
+# few are worth analyzing automatically; older ones in the same burst still
+# download and appear in the library normally, just not auto-analyzed —
+# analyzable on demand via "Analyze Now" like any other unanalyzed clip.
+_MAX_AUTO_ANALYZE_BURST = 5
+
 
 class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,too-few-public-methods
     """Co-ordinates polling, downloading, library, media server, and events."""
@@ -657,8 +671,24 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         await self._notifier.notify(message)
 
+        analyze_ids: set[Any] | None = None
+        if len(clips) > _MAX_AUTO_ANALYZE_BURST:
+            newest = sorted(clips, key=lambda c: c.get("timestamp") or "")[
+                -_MAX_AUTO_ANALYZE_BURST:
+            ]
+            analyze_ids = {c.get("id") for c in newest}
+            _LOGGER.info(
+                "Downloaded a burst of %d clips at once (backlog catch-up or "
+                "first run) — auto-analyzing only the %d most recent; the "
+                "rest are in the library and analyzable on demand via "
+                "Analyze Now.",
+                len(clips),
+                _MAX_AUTO_ANALYZE_BURST,
+            )
+
         for clip in clips:
-            await self._handle_downloaded_clip(clip)
+            analyze = analyze_ids is None or clip.get("id") in analyze_ids
+            await self._handle_downloaded_clip(clip, analyze=analyze)
 
         tracker_stats = self._tracker.stats
         disk = self._storage.disk_stats()
@@ -680,7 +710,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             },
         )
 
-    async def _handle_downloaded_clip(self, clip: dict[str, Any]) -> None:
+    async def _handle_downloaded_clip(
+        self, clip: dict[str, Any], analyze: bool = True
+    ) -> None:
         if self._config.create_clip_manifest:
             self._manifest.append(clip)
 
@@ -698,7 +730,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         )
         await self._notifier.call_webhook(clip)
 
-        if self._analysis_queue:
+        # analyze=False for backlog clips beyond _MAX_AUTO_ANALYZE_BURST (see
+        # _on_clips_downloaded) — still downloaded, notified, and stored
+        # normally, just not queued for (paid) AI analysis.
+        if analyze and self._analysis_queue:
             await self._analysis_queue.enqueue(clip)
 
         # Record clip in behavior baseline so anomaly scoring improves over time.

@@ -253,6 +253,108 @@ async def test_on_clips_downloaded_enqueues_for_analysis_when_configured(app):
     app._analysis_queue.enqueue.assert_awaited_once_with(clips[0])
 
 
+async def test_on_clips_downloaded_analyzes_every_clip_at_the_burst_cap(app):
+    """Exactly _MAX_AUTO_ANALYZE_BURST (5) clips in one batch is still the
+    normal case, not a backlog — all of them get analyzed."""
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.enqueue = AsyncMock()
+    clips = [
+        {
+            "id": str(i),
+            "camera": "C",
+            "path": f"/p{i}",
+            "timestamp": f"2026-01-01T00:0{i}:00",
+            "size_bytes": 1,
+        }
+        for i in range(5)
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    assert app._analysis_queue.enqueue.await_count == 5
+
+
+async def test_on_clips_downloaded_caps_analysis_to_newest_clips_on_backlog(app):
+    """A burst bigger than _MAX_AUTO_ANALYZE_BURST (5) — e.g. a fresh
+    install's first poll, or catch-up after downtime — must still download
+    and notify about every clip, but only auto-analyze the most recent 5;
+    the rest stay in the library, un-analyzed, until requested on demand.
+    Regression test: this used to enqueue every downloaded clip for
+    analysis unconditionally, which could burn real API tokens re-analyzing
+    a whole backlog of clips that were already days old."""
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.enqueue = AsyncMock()
+    # Deliberately out of chronological order, to prove the cap picks the
+    # newest by timestamp rather than by list position.
+    clips = [
+        {
+            "id": "old-1",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "2026-01-01T00:00:00",
+            "size_bytes": 1,
+        },
+        {
+            "id": "new-1",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "2026-01-07T00:05:00",
+            "size_bytes": 1,
+        },
+        {
+            "id": "old-2",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "2026-01-02T00:00:00",
+            "size_bytes": 1,
+        },
+        {
+            "id": "new-2",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "2026-01-07T00:04:00",
+            "size_bytes": 1,
+        },
+        {
+            "id": "old-3",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "2026-01-03T00:00:00",
+            "size_bytes": 1,
+        },
+        {
+            "id": "new-3",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "2026-01-07T00:03:00",
+            "size_bytes": 1,
+        },
+        {
+            "id": "new-4",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "2026-01-07T00:02:00",
+            "size_bytes": 1,
+        },
+        {
+            "id": "new-5",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "2026-01-07T00:01:00",
+            "size_bytes": 1,
+        },
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    assert app._analysis_queue.enqueue.await_count == 5
+    analyzed_ids = {c[0][0]["id"] for c in app._analysis_queue.enqueue.await_args_list}
+    assert analyzed_ids == {"new-1", "new-2", "new-3", "new-4", "new-5"}
+    # Every clip (analyzed or not) still gets its event/webhook/manifest.
+    assert app._notifier.fire_event.await_count == len(clips)
+    assert app._notifier.call_webhook.await_count == len(clips)
+
+
 async def test_on_clips_downloaded_records_baseline_when_library_db_enabled(app):
     """With enable_library_db=True, each clip's camera/hour/duration is
     recorded into the anomaly-detection baseline."""
