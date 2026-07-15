@@ -109,7 +109,7 @@ describe('useAuthStore', () => {
 
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ state: 'connected' }))
     await auth.check()
-    expect(useToastStore().message).toBe('Signed in to Blink ✓')
+    expect(useToastStore().message).toBe('Signed in to Blink')
   })
 
   it('check(): a missing state field falls back to disconnected', async () => {

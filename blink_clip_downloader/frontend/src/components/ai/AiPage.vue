@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { getAiStatus } from '../../api/ai'
 import type { AiStatus } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import AdaptiveLearningCard from './AdaptiveLearningCard.vue'
 import AiConnectionCard from './AiConnectionCard.vue'
 import AiStatusCards from './AiStatusCards.vue'
@@ -52,7 +53,7 @@ watch(
 <template>
   <div class="auto-content">
     <h2>AI Video Analysis</h2>
-    <div v-if="loading" style="padding: 2rem; text-align: center; color: var(--muted)">Loading…</div>
+    <div v-if="loading" style="padding: 2rem"><LoadingIndicator /></div>
     <div v-else-if="!status?.enabled" class="card" style="padding: 2rem; text-align: center; color: var(--muted)">
       <p style="font-size: 1.2rem; margin-bottom: 0.8rem">🤖 AI Analysis Not Configured</p>
       <p>

@@ -9,6 +9,7 @@ import { getCameraConfigs, saveCameraConfigs } from '../../api/ai'
 import { getVehicleSettings, saveVehicleSettings } from '../../api/vehicle'
 import type { CameraConfig } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import VehicleZonePicker from './VehicleZonePicker.vue'
 
 const toast = useToastStore()
@@ -38,7 +39,7 @@ async function saveDescription() {
   savingDescription.value = true
   try {
     await saveVehicleSettings(carDescription.value.trim())
-    toast.show('Protected vehicle description saved ✓')
+    toast.show('Protected vehicle description saved')
   } catch {
     toast.show('Failed to save description', true)
   } finally {
@@ -50,7 +51,7 @@ async function saveCameras() {
   savingCameras.value = true
   try {
     await saveCameraConfigs(configs.value)
-    toast.show('Vehicle camera settings saved ✓')
+    toast.show('Vehicle camera settings saved')
   } catch {
     toast.show('Failed to save camera settings', true)
   } finally {
@@ -104,7 +105,7 @@ const showInactiveWarning = computed(() => carCameras.value.length > 0 && !prote
       </template>
     </Card>
 
-    <div v-if="loading" class="muted-note">Loading…</div>
+    <div v-if="loading" style="padding: 1rem"><LoadingIndicator /></div>
     <div v-else-if="!configs.length" class="muted-note">No cameras found. Download at least one clip first.</div>
     <div v-else class="camera-list">
       <Card v-for="cfg in configs" :key="cfg.camera" class="camera-card">
@@ -139,6 +140,7 @@ const showInactiveWarning = computed(() => carCameras.value.length > 0 && !prote
 <style scoped>
 .vehicles-page {
   padding: 1.75rem;
+  padding-bottom: 3rem;
   max-width: 900px;
   /* Flex items default to min-width:auto, refusing to shrink below their
      content's natural width — on a narrow (mobile) viewport that pushed

@@ -1019,6 +1019,26 @@ rather than the Vite dev server or a bare `docker run`:
   overflowing on mobile. Also removed the old hand-rolled `.toast` CSS
   class this replaced — confirmed dead, no template has referenced it
   since the toast host moved to PrimeVue's own `<Toast>` component.
+- **Success toasts showed two checkmarks** — PrimeVue's `success` severity
+  already renders its own check icon, but five toast messages
+  ("Camera configs saved ✓", "Signed in to Blink ✓", etc.) also had a
+  literal `✓` baked into the text. Removed the redundant character from
+  all five.
+- **Several tabs (Automations/AI/AI Usage/Models/Status/Vehicles/
+  Biometrics) had content sitting flush against the bottom edge when
+  scrolled all the way down**, unlike the Library tab. Bumped
+  `padding-bottom` on each page container from the shared 1.75rem to
+  3rem.
+- **Plain "Loading…" text replaced with a spinner** (matching the
+  Library tab's own pattern from an earlier round) on every *page*-level
+  loading state: the AI tab, AI Usage, Status, Vehicles, Biometrics, the
+  Suspicious Activity Feed, and the AI tab's Camera Configurations
+  section. New shared `components/layout/LoadingIndicator.vue` avoids
+  repeating the same spinner+label markup at each of those seven call
+  sites. Left as plain text: two genuinely small inline status rows
+  (`ClipAiPanel`'s and `FineTuneCard`'s own compact "Loading…", both
+  0.8rem font in a tight flex row) where a full-size spinner would look
+  disproportionate rather than better.
 
 ## 4.0.2
 

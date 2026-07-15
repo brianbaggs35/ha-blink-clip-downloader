@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { getCameraConfigs, saveCameraConfigs } from '../../api/ai'
 import type { CameraConfig } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
 // is_car_camera and car_zone are edited on the Vehicles tab now, not here —
 // this component only owns description/custom_prompt, but still carries
@@ -59,7 +60,7 @@ async function save() {
       car_zone: c.car_zone,
     }))
     await saveCameraConfigs(payload)
-    toast.show('Camera configs saved ✓')
+    toast.show('Camera configs saved')
   } catch {
     toast.show('Failed to save camera configs', true)
   } finally {
@@ -80,7 +81,7 @@ async function save() {
       Marking a camera as seeing your protected vehicle, and setting where it sits in the frame, now lives on the
       <strong>Vehicles</strong> tab.
     </p>
-    <div v-if="loading" style="color: var(--muted); font-size: 0.85rem; padding: 1rem">Loading…</div>
+    <div v-if="loading" style="padding: 1rem"><LoadingIndicator /></div>
     <div v-else-if="loadError" style="color: var(--danger); font-size: 0.84rem">Failed to load camera configs.</div>
     <div v-else-if="!configs.length" style="color: var(--muted); font-size: 0.84rem; padding: 0.5rem 0">
       No cameras found. Download at least one clip to populate the camera list.

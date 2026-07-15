@@ -187,7 +187,7 @@ async function runTest() {
     const clip = clips[0]
     const r = await analyzeClipNow(clip.id)
     testResult.value = { ok: true, message: '', detail: { ...r, camera: r.camera || clip.camera } }
-    toast.show('Test complete — AI is working ✓')
+    toast.show('Test complete — AI is working')
   } catch {
     testResult.value = { ok: false, message: 'Test failed — check AI provider settings and connection' }
     toast.show('AI test failed', true)

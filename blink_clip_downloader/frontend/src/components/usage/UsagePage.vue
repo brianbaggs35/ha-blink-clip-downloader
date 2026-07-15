@@ -5,6 +5,7 @@ import { fmtCost, fmtNum, providerLabel } from '../../api/constants'
 import type { AiUsage } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import ProviderNote from './ProviderNote.vue'
 
 const toast = useToastStore()
@@ -63,7 +64,7 @@ async function clearUsage() {
       <button class="btn sm danger" @click="clearUsage">🗑 Clear Stats</button>
     </h2>
 
-    <div v-if="loading" style="padding: 2rem; text-align: center; color: var(--muted)">Loading…</div>
+    <div v-if="loading" style="padding: 2rem"><LoadingIndicator /></div>
     <template v-else-if="usage">
       <div v-if="showDisabledMsg" class="status-card" style="padding: 2rem; text-align: center; color: var(--muted)">
         <p style="font-size: 1.2rem; margin-bottom: 0.8rem">📊 No AI Usage Data</p>

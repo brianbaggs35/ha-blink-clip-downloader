@@ -70,7 +70,7 @@ export const useAuthStore = defineStore('auth', {
     },
     _syncConnectedOrDisconnected(prev: TwoFAState) {
       if ((prev === 'needs_2fa' || prev === 'error') && this.state === 'connected') {
-        useToastStore().show('Signed in to Blink ✓')
+        useToastStore().show('Signed in to Blink')
       }
       this.bannerVisible = false
       this.dismissedMessage = null

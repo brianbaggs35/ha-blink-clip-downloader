@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { getSuspiciousClips, submitFeedback } from '../../api/ai'
 import type { SuspiciousClip } from '../../api/types'
 import { useClipViewerStore } from '../../stores/clipViewer'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
 const clipViewer = useClipViewerStore()
 
@@ -47,7 +48,7 @@ async function quickFeedback(clipId: string, correct: boolean) {
   <div>
     <h3 style="margin-bottom: 0.8rem">Suspicious Activity Feed</h3>
     <div style="display: flex; flex-direction: column; gap: 0.5rem">
-      <div v-if="loading" style="color: var(--muted); padding: 1rem; text-align: center">Loading…</div>
+      <div v-if="loading" style="padding: 1rem"><LoadingIndicator /></div>
       <div v-else-if="loadError" style="color: var(--danger); padding: 1rem; text-align: center">
         Failed to load suspicious activity.
       </div>

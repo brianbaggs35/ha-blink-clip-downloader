@@ -8,6 +8,7 @@ import ActivityChart from './ActivityChart.vue'
 import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
 import { useRefreshStore } from '../../stores/refresh'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
 const loading = ref(true)
 const error = ref(false)
@@ -65,7 +66,7 @@ watch(() => refresh.tick, load)
 </script>
 
 <template>
-  <div v-if="loading" style="padding: 2rem; color: var(--muted)">Loading…</div>
+  <div v-if="loading" style="padding: 2rem"><LoadingIndicator /></div>
   <div v-else-if="error" style="padding: 2rem; color: var(--danger)">Failed to load status.</div>
   <div v-else id="status-grid" class="status-grid">
     <div class="status-card">

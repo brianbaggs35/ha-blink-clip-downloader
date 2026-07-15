@@ -11,6 +11,7 @@ import { deleteFacesByName, enrollFace, listFaces, renameFacesByName, setFacesAp
 import type { FaceEnrollment } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import EnrollFromClipPicker from './EnrollFromClipPicker.vue'
 
 interface PersonGroup {
@@ -334,7 +335,7 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
       </template>
     </Card>
 
-    <div v-if="loading" class="muted-note">Loading…</div>
+    <div v-if="loading" style="padding: 1rem"><LoadingIndicator /></div>
     <div v-else-if="!groupedPeople.length" class="muted-note">No one enrolled yet.</div>
     <div v-else class="people-grid">
       <div v-for="group in groupedPeople" :key="group.name" class="person-card">
@@ -391,6 +392,7 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
 <style scoped>
 .biometrics-page {
   padding: 1.75rem;
+  padding-bottom: 3rem;
   max-width: 900px;
   /* Flex items default to min-width:auto, refusing to shrink below their
      content's natural width — on a narrow (mobile) viewport that pushed
