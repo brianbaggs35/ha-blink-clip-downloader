@@ -14,10 +14,14 @@ describe('usePromptOverlayStore', () => {
     expect(store.promptText).toBe('the actual prompt')
   })
 
-  it('show() falls back to a placeholder when no prompt was captured', () => {
+  it('show() keeps promptText empty when no prompt was captured, still opening the overlay', () => {
+    // PromptOverlay.vue owns the empty-state presentation (an explanatory
+    // message instead of a blank code block) — the store just holds
+    // whatever it's given, unsubstituted.
     const store = usePromptOverlayStore()
     store.show('')
-    expect(store.promptText).toBe('No prompt was captured for this clip.')
+    expect(store.open).toBe(true)
+    expect(store.promptText).toBe('')
   })
 
   it('close() closes the overlay without clearing the text', () => {

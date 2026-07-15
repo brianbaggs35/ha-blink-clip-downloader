@@ -1194,6 +1194,35 @@ Confirmed already correct, no change needed:
   robustly centered within its actual container instead of relying on
   `.auto-content`'s width as an incidental crutch.
 
+### Investigated — "the Prompt button isn't showing on the clip modal anymore"
+
+- **Confirmed not a regression.** `ClipAiPanel.vue`'s "📝 Prompt" button is
+  intentionally gated behind `promptDebugEnabled`, wired end-to-end from
+  `ai_prompt_debug_enabled` (`LibraryPage.vue` → `ClipModal.vue` →
+  `ClipAiPanel.vue`) — confirmed live against the real add-on instance
+  (`ai_prompt_debug_enabled: false`), which is also its schema default
+  (`config.yaml`). The wiring is intact; the button is legitimately hidden
+  because the setting is off, not broken. It has no toggle anywhere in the
+  web UI yet, though — the only way to reach it is the raw HA Supervisor
+  Configuration tab, which explains why it can feel like it "disappeared"
+  after being on for a stretch of testing without leaving an obvious way
+  back. Not addressed further here (a proper web UI toggle for it is a
+  larger change than this round's scope); the empty-state fix below covers
+  the concrete rest of the request.
+
+### Fixed — Prompt overlay showed a raw fallback sentence inside a code block
+
+- **When a clip's analysis ran without prompt-debug on, clicking "📝
+  Prompt" (once visible — see above) rendered `usePromptOverlayStore`'s
+  hardcoded `'No prompt was captured for this clip.'` fallback string
+  inside the same monospace `<pre>` block used for real prompt text** —
+  read as an odd, code-styled non-answer rather than an explanation. The
+  store now passes through whatever it's given, unsubstituted, and
+  `PromptOverlay.vue` renders a proper explanatory message in its place
+  when empty: prompt-debug was off when that analysis ran, and since the
+  button is only reachable when it's on *now*, re-analyzing the clip will
+  capture it.
+
 ## 4.0.2
 
 ### Bug fixes

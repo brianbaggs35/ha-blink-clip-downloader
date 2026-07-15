@@ -18,6 +18,14 @@ describe('PromptOverlay', () => {
     expect(wrapper.text()).toContain('secret prompt text')
   })
 
+  it('shows an explanatory message instead of a blank box when no prompt was recorded', async () => {
+    const wrapper = mount(PromptOverlay)
+    usePromptOverlayStore().show('')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('No prompt was recorded')
+    expect(wrapper.find('pre').exists()).toBe(false)
+  })
+
   it('closes via the close button', async () => {
     const store = usePromptOverlayStore()
     store.show('x')

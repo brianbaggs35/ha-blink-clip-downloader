@@ -24,7 +24,12 @@ const store = usePromptOverlayStore()
         <p style="font-size: 0.78rem; color: var(--muted); margin-bottom: 0.6rem">
           The exact text sent to the model for this clip (image frames are not shown).
         </p>
+        <p v-if="!store.promptText" style="font-size: 0.85rem; color: var(--muted)">
+          No prompt was recorded for this clip's analysis — prompt debug mode was off when it ran. It's on now, so
+          re-analyzing this clip (⟳ Re-analyze, in the AI Analysis panel) will capture it.
+        </p>
         <pre
+          v-else
           style="
             font-size: 0.78rem;
             font-family: monospace;

@@ -11,7 +11,7 @@ export const usePromptOverlayStore = defineStore('promptOverlay', {
   }),
   actions: {
     show(promptText: string) {
-      this.promptText = promptText || 'No prompt was captured for this clip.'
+      this.promptText = promptText
       this.open = true
     },
     close() {
