@@ -602,25 +602,44 @@ h3 {
 .lib-stat-storage {
   flex: 1;
   min-width: 220px;
+  align-items: stretch;
   justify-content: center;
+  gap: 0.3rem;
+  text-align: left;
 }
-.lib-stat-storage .lib-stat-label {
-  /* Unlike the other .lib-stat cards (fixed short labels like "Today"),
-     this one interpolates two dynamic numbers and can easily exceed the
-     card's flex-shared width — nowrap combined with the ancestor
-     .lib-page's `overflow: hidden` was hard-clipping the tail of the
-     string instead of wrapping it. */
-  white-space: normal;
-  line-height: 1.3;
-  width: 100%;
+.lib-stat-storage-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
 }
-/* .lib-stat's align-items:center (added for the label/value centering
-   above) makes flex children shrink to their own content width by
-   default — the progress bar needs an explicit full-width override here
-   or it would collapse to PrimeVue's intrinsic default instead of
-   spanning the card like it did under the old align-items:stretch. */
+.lib-stat-storage-used {
+  /* The primary figure — quota headroom is what a user actually came
+     here to check, so it gets the same near-white contrast as a regular
+     .lib-stat-value, not the same dim tone as the section title above it. */
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.lib-stat-storage-free {
+  /* Secondary context. Deliberately var(--text-dim), not var(--muted) —
+     the latter reads as too low-contrast to comfortably read at this
+     size against the card background. */
+  font-size: 0.76rem;
+  color: var(--text-dim);
+}
+/* .lib-stat's align-items:center (added for the label/value centering on
+   the other stat cards) makes flex children shrink to their own content
+   width by default — the progress bar needs an explicit full-width
+   override here or it would collapse to PrimeVue's intrinsic default
+   instead of spanning the card. Height is trimmed well below Aura's
+   1.25rem default: a bar this size only needs to read as a slim quota
+   meter, not compete visually with the text above it. */
 .lib-stat-storage .p-progressbar {
   width: 100%;
+  height: 0.4rem;
+  margin-top: 0.15rem;
 }
 .lib-filters {
   padding: 1rem 1.5rem;

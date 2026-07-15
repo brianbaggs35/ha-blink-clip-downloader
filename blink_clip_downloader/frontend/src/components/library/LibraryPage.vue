@@ -468,13 +468,15 @@ onUnmounted(() => {
         <span class="lib-stat-value">{{ libSizeGb }} GB</span>
       </div>
       <div v-if="stats?.disk" class="lib-stat lib-stat-storage">
-        <span class="lib-stat-label">
-          Storage — {{ stats.disk.used_mb }} MB used
+        <span class="lib-stat-storage-title">💾 Storage</span>
+        <span class="lib-stat-storage-used">
+          {{ stats.disk.used_mb }} MB used
           <template v-if="stats.disk.quota_bytes"> of {{ stats.disk.quota_gb }} GB quota</template>
-          · {{ stats.disk.free_gb }} GB free on disk
         </span>
+        <span class="lib-stat-storage-free">{{ stats.disk.free_gb }} GB free on disk</span>
         <ProgressBar
           v-if="stats.disk.quota_bytes"
+          class="lib-stat-storage-bar"
           :value="diskPct || 0"
           :show-value="false"
           :pt="{

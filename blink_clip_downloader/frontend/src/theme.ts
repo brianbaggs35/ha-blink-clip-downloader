@@ -52,6 +52,24 @@ const overlaySelectColorScheme = {
   background: '{overlay.select.background}',
   color: '{overlay.select.color}',
 }
+// Same bug again, for the individual option rows within that panel — a
+// *third* sibling section (root/overlay/list/option/...), so the overlay
+// fix above (panel background) didn't touch it. Confirmed against Aura's
+// own semantic tokens: {list.option.color} genuinely differs between
+// colorScheme.light/dark (resolves to {text.color}, itself correctly
+// split), but the Select component's own `option.color` referencing it
+// was declared on the same flat, unsplit object as before — so option
+// text stayed permanently at its light-mode color, unreadably dim against
+// the now-correctly-dark panel background from the fix above.
+const selectOptionColorScheme = {
+  focusBackground: '{list.option.focus.background}',
+  selectedBackground: '{list.option.selected.background}',
+  selectedFocusBackground: '{list.option.selected.focus.background}',
+  color: '{list.option.color}',
+  focusColor: '{list.option.focus.color}',
+  selectedColor: '{list.option.selected.color}',
+  selectedFocusColor: '{list.option.selected.focus.color}',
+}
 
 // Custom PrimeVue theme for the redesigned UI: a vivid violet accent on a
 // refined near-black (dark) / soft neutral (light) surface scale, replacing
@@ -202,8 +220,16 @@ export const AppTheme = definePreset(Aura, {
     },
     select: {
       colorScheme: {
-        light: { root: formFieldColorScheme, overlay: overlaySelectColorScheme },
-        dark: { root: formFieldColorScheme, overlay: overlaySelectColorScheme },
+        light: {
+          root: formFieldColorScheme,
+          overlay: overlaySelectColorScheme,
+          option: selectOptionColorScheme,
+        },
+        dark: {
+          root: formFieldColorScheme,
+          overlay: overlaySelectColorScheme,
+          option: selectOptionColorScheme,
+        },
       },
     },
     textarea: {

@@ -1358,6 +1358,32 @@ Confirmed already correct, no change needed:
   ("a cross-cutting concern surfaced in the shell, not owned by one tab")
   but the implementation didn't actually do.
 
+### Redesigned — Library storage widget, and a follow-up dark-mode contrast fix
+
+- **The Library tab's storage stat crammed three pieces of information
+  into one wrapped label above an oversized (Aura's default 1.25rem)
+  progress bar**, reading as cramped and visually heavy against its
+  sibling stat cards. Restructured into a small title ("💾 Storage"), a
+  prominent used/quota line, a secondary free-space line, and a
+  noticeably slimmer 0.4rem bar. Re-confirmed while doing this that the
+  bar's percentage was already quota-based (`used_bytes / quota_bytes`),
+  not total-disk-based — no calculation change needed, just the layout.
+  Text contrast improved along the way: the free-space line now uses
+  `var(--text-dim)` instead of `var(--muted)`, which read as too low-
+  contrast at this size.
+- **Found and fixed a second, related dark-mode contrast bug while
+  investigating a report about dropdown option text being hard to
+  read**: `Select`'s dropdown *panel* background was already fixed
+  earlier this round (`overlay.select.*`), but the individual *option
+  row text* is a separate token section (`option.color`, referencing
+  `{list.option.color}`) that hadn't been re-declared under an explicit
+  `colorScheme.light`/`dark` split — same root cause as every other
+  Aura dark-mode fix this release (a flat component-level token only
+  ever evaluated once, under `:root`, in the light scheme), just a
+  different field within the same component than what was fixed before.
+  Option text was landing at its light-mode color, unreadably dim
+  against the now-correctly-dark panel.
+
 ## 4.0.2
 
 ### Bug fixes
