@@ -213,48 +213,12 @@ function confPct(r: AnalysisResultDict): number {
       >
       <span style="font-size: 0.85rem">{{ status.ai_online ? 'Connected' : 'Offline' }}</span>
     </div>
+    <div class="ai-tier-label">🎯 Tier 1 · Primary Model</div>
     <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.4rem">
       Provider: <strong>{{ providerLabel(status.provider) }}</strong>
     </div>
     <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.6rem">
       Model: <strong>{{ status.model || '—' }}</strong>
-    </div>
-    <div
-      v-if="status.escalation_provider"
-      style="
-        font-size: 0.78rem;
-        color: var(--muted);
-        margin-bottom: 0.6rem;
-        padding: 0.4rem 0.6rem;
-        background: var(--card2);
-        border-radius: var(--radius);
-      "
-    >
-      🪜 Escalation tier 2:
-      <strong
-        >{{ PROVIDER_LABELS[status.escalation_provider] || status.escalation_provider }} —
-        {{ status.escalation_model || '—' }}</strong
-      >
-      <span :style="{ color: status.escalation_online ? 'var(--success)' : 'var(--danger)' }">
-        {{ status.escalation_online ? ' 🟢 online' : ' 🔴 unreachable — falling back to tier 1' }}
-      </span>
-      <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem">
-        <button class="btn sm" :disabled="fetchingEscalationModels" @click="fetchEscalationModelsList">
-          {{ fetchingEscalationModels ? '⏳ Loading…' : '⟳ Fetch Escalation Models' }}
-        </button>
-        <label for="ai-escalation-model-picker" class="sr-only">Escalation model</label>
-        <select id="ai-escalation-model-picker" v-model="selectedEscalationModel" class="sel" style="min-width: 175px">
-          <option value="">Select a model…</option>
-          <option v-for="m in escalationModels" :key="m" :value="m">{{ m }}</option>
-        </select>
-        <button
-          class="btn sm ghost"
-          title="Copy the selected model id, then paste it into this add-on's configuration (ai_escalation_model)"
-          @click="copyEscalationModelId"
-        >
-          📋 Copy
-        </button>
-      </div>
     </div>
 
     <div v-if="showModelPicker()" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">
@@ -341,6 +305,50 @@ function confPct(r: AnalysisResultDict): number {
       </div>
     </div>
 
+    <template v-if="status.escalation_provider">
+      <div class="ai-tier-label" style="margin-top: 0.9rem">🪜 Tier 2 · Escalation Model</div>
+      <div
+        style="
+          font-size: 0.78rem;
+          color: var(--muted);
+          margin-bottom: 0.6rem;
+          padding: 0.4rem 0.6rem;
+          background: var(--card2);
+          border-radius: var(--radius);
+        "
+      >
+        <strong
+          >{{ PROVIDER_LABELS[status.escalation_provider] || status.escalation_provider }} —
+          {{ status.escalation_model || '—' }}</strong
+        >
+        <span :style="{ color: status.escalation_online ? 'var(--success)' : 'var(--danger)' }">
+          {{ status.escalation_online ? ' 🟢 online' : ' 🔴 unreachable — falling back to tier 1' }}
+        </span>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem">
+          <button class="btn sm" :disabled="fetchingEscalationModels" @click="fetchEscalationModelsList">
+            {{ fetchingEscalationModels ? '⏳ Loading…' : '⟳ Fetch Escalation Models' }}
+          </button>
+          <label for="ai-escalation-model-picker" class="sr-only">Escalation model</label>
+          <select
+            id="ai-escalation-model-picker"
+            v-model="selectedEscalationModel"
+            class="sel"
+            style="min-width: 175px"
+          >
+            <option value="">Select a model…</option>
+            <option v-for="m in escalationModels" :key="m" :value="m">{{ m }}</option>
+          </select>
+          <button
+            class="btn sm ghost"
+            title="Copy the selected model id, then paste it into this add-on's configuration (ai_escalation_model)"
+            @click="copyEscalationModelId"
+          >
+            📋 Copy
+          </button>
+        </div>
+      </div>
+    </template>
+
     <div style="margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.6rem">
       <button class="btn sm ghost" :disabled="testing" @click="runTest">
         {{ testing ? '⏳ Testing…' : '🔬 Test Analysis' }}
@@ -386,3 +394,20 @@ function confPct(r: AnalysisResultDict): number {
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Small uppercase divider label, matching the sidebar's existing
+   .app-nav-section-label treatment — separates tier-1 (primary) model
+   controls from tier-2 (escalation) ones, which previously had no visual
+   grouping distinguishing them from each other. */
+.ai-tier-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+</style>

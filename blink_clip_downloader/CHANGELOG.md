@@ -1254,6 +1254,19 @@ Confirmed already correct, no change needed:
   of a token-burning analysis flood in the first place. No change needed
   here beyond the auto-analyze cap above.
 
+### Improved — AI Connection card now visually separates tier-1 from tier-2
+
+- **The AI tab's AI Connection card interleaved tier-1 (primary model) and
+  tier-2 (escalation model) controls with no visual grouping** — the
+  escalation box sat between the plain Provider/Model text and the tier-1
+  fetch/select/copy buttons, so the two tiers' controls didn't even appear
+  next to each other, let alone read as distinct groups. Reordered so all
+  tier-1 content (Provider/Model, the model picker, Moondream local
+  install) is contiguous, followed by tier-2's escalation box (only when
+  `ai_escalation_provider` is configured), each now under its own small
+  uppercase divider label ("🎯 Tier 1 · Primary Model" / "🪜 Tier 2 ·
+  Escalation Model") matching the sidebar's existing section-label style.
+
 ## 4.0.2
 
 ### Bug fixes

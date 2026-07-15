@@ -58,13 +58,25 @@ describe('AiConnectionCard', () => {
     expect(wrapper.text()).toContain('Offline')
   })
 
+  it('always shows the tier-1 label, and only shows the tier-2 label when escalation is configured', () => {
+    const noEscalation = mount(AiConnectionCard, { props: { status: baseStatus() } })
+    expect(noEscalation.text()).toContain('Tier 1 · Primary Model')
+    expect(noEscalation.text()).not.toContain('Tier 2 · Escalation Model')
+
+    const withEscalation = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'openai', escalation_model: 'gpt-4o-mini' }) },
+    })
+    expect(withEscalation.text()).toContain('Tier 1 · Primary Model')
+    expect(withEscalation.text()).toContain('Tier 2 · Escalation Model')
+  })
+
   it('shows escalation info when configured', () => {
     const wrapper = mount(AiConnectionCard, {
       props: {
         status: baseStatus({ escalation_provider: 'openai', escalation_model: 'gpt-4o-mini', escalation_online: true }),
       },
     })
-    expect(wrapper.text()).toContain('Escalation tier 2')
+    expect(wrapper.text()).toContain('Tier 2 · Escalation Model')
     expect(wrapper.text()).toContain('OpenAI (GPT)')
     expect(wrapper.text()).toContain('online')
   })
