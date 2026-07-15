@@ -1081,6 +1081,18 @@ Confirmed already correct, no change needed:
 - **Removing an enrolled person already uses the app's real confirmation
   modal** (`useConfirm()`/`useConfirmStore`), not a native browser prompt.
 
+### Added — pagination for the face-enrollment clip picker
+
+- **`EnrollFromClipPicker`'s clip strip had no way to look further back**
+  than whatever the current time-range window returned — if none of those
+  clips had a clean shot of the face, there was nowhere else to go. Added
+  ‹/› paging buttons flanking the thumbnail strip (offset-based, reusing
+  `listClips`' existing `offset` param), with the outer arrow disabled once
+  a page comes back short (the signal that there's nothing older left) and
+  the inner arrow disabled at the first page. Changing camera or the
+  lookback window resets back to the first page rather than keeping a now
+  out-of-context offset.
+
 ## 4.0.2
 
 ### Bug fixes

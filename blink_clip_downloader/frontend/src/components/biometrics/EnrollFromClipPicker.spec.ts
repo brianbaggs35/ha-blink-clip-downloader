@@ -274,4 +274,106 @@ describe('EnrollFromClipPicker', () => {
     emitted = wrapper.emitted('update:selectedFrames')!
     expect(emitted[emitted.length - 1][0]).toEqual([])
   })
+
+  function makeClips(n: number, prefix = 'c'): ClipListItem[] {
+    return Array.from({ length: n }, (_, i) => makeClip(`${prefix}${i}`))
+  }
+
+  it('disables "older" when a page comes back short, enables it on a full page', async () => {
+    // First page full (24) -> more clips exist; re-mount with a short page
+    // to confirm the opposite.
+    stubRoutedFetch({ cameras: [makeCamera('Front Door')], clips: makeClips(24) })
+    const wrapperFull = mountPicker()
+    await flushPromises()
+    expect(wrapperFull.find('[aria-label="Show older clips"]').attributes('disabled')).toBeUndefined()
+
+    stubRoutedFetch({ cameras: [makeCamera('Front Door')], clips: makeClips(5) })
+    const wrapperShort = mountPicker()
+    await flushPromises()
+    expect(wrapperShort.find('[aria-label="Show older clips"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('"newer" is disabled at offset 0 and paging older/newer round-trips the offset', async () => {
+    const clipUrls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/cameras')) return Promise.resolve(jsonResponse([makeCamera('Front Door')]))
+        if (url.includes('/frames')) return Promise.resolve(jsonResponse({ frames: [] }))
+        if (url.includes('/api/clips')) {
+          clipUrls.push(url)
+          return Promise.resolve(jsonResponse(makeClips(24)))
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`))
+      }),
+    )
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.find('[aria-label="Show newer clips"]').attributes('disabled')).toBeDefined()
+    expect(new URL(clipUrls[0], 'http://x').searchParams.get('offset')).toBe('0')
+
+    await wrapper.find('[aria-label="Show older clips"]').trigger('click')
+    await flushPromises()
+    expect(new URL(clipUrls[1], 'http://x').searchParams.get('offset')).toBe('24')
+    expect(wrapper.find('[aria-label="Show newer clips"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('[aria-label="Show newer clips"]').trigger('click')
+    await flushPromises()
+    expect(new URL(clipUrls[2], 'http://x').searchParams.get('offset')).toBe('0')
+  })
+
+  it('resets the offset back to page 1 when the camera changes', async () => {
+    const clipUrls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/cameras'))
+          return Promise.resolve(jsonResponse([makeCamera('Front Door'), makeCamera('Back Yard')]))
+        if (url.includes('/frames')) return Promise.resolve(jsonResponse({ frames: [] }))
+        if (url.includes('/api/clips')) {
+          clipUrls.push(url)
+          const camera = new URL(url, 'http://x').searchParams.get('camera')
+          return Promise.resolve(jsonResponse(camera === 'Back Yard' ? makeClips(3, 'b') : makeClips(24)))
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`))
+      }),
+    )
+    const wrapper = mountPicker()
+    await flushPromises()
+    await wrapper.find('[aria-label="Show older clips"]').trigger('click')
+    await flushPromises()
+    expect(new URL(clipUrls[1], 'http://x').searchParams.get('offset')).toBe('24')
+
+    await wrapper.findAllComponents(Select)[0].vm.$emit('update:modelValue', 'Back Yard')
+    await flushPromises()
+    expect(new URL(clipUrls[2], 'http://x').searchParams.get('offset')).toBe('0')
+  })
+
+  it('paging past the last clip shows a "back to newest" recovery message', async () => {
+    const clipUrls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/cameras')) return Promise.resolve(jsonResponse([makeCamera('Front Door')]))
+        if (url.includes('/frames')) return Promise.resolve(jsonResponse({ frames: [] }))
+        if (url.includes('/api/clips')) {
+          clipUrls.push(url)
+          const offset = Number(new URL(url, 'http://x').searchParams.get('offset'))
+          return Promise.resolve(jsonResponse(offset === 0 ? makeClips(24) : []))
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`))
+      }),
+    )
+    const wrapper = mountPicker()
+    await flushPromises()
+    await wrapper.find('[aria-label="Show older clips"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No older clips in that time range')
+    const backButton = wrapper.findAll('button').find((b) => b.text().includes('Back to newest'))!
+    await backButton.trigger('click')
+    await flushPromises()
+    expect(new URL(clipUrls[2], 'http://x').searchParams.get('offset')).toBe('0')
+    expect(wrapper.findAll('.thumb-strip-item')).toHaveLength(24)
+  })
 })

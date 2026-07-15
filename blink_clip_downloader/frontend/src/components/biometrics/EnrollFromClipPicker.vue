@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import Button from 'primevue/button'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
 import { clipThumbUrl, getCameras, getClipFrames, listClips } from '../../api/clips'
@@ -23,9 +24,17 @@ function sinceFor(hours: number): string {
   return new Date(Date.now() - hours * 3_600_000).toISOString()
 }
 
+const CLIPS_PAGE_SIZE = 24
+
 const recentClips = ref<ClipListItem[]>([])
 const selectedClipId = ref('')
 const loadingClips = ref(false)
+const clipOffset = ref(0)
+// True once a page comes back shorter than a full page — the only reliable
+// "no more clips" signal listClips gives us without a separate count
+// endpoint. Assume there's more until proven otherwise, so "Next" starts
+// enabled rather than needing a first fetch to enable itself.
+const hasMoreClips = ref(true)
 
 const frames = ref<string[]>([])
 const loadingFrames = ref(false)
@@ -62,22 +71,39 @@ async function loadClips() {
     const result = await listClips({
       camera: selectedCamera.value,
       since: sinceFor(lookbackHours.value),
-      limit: 24,
+      limit: CLIPS_PAGE_SIZE,
+      offset: clipOffset.value,
       sort: 'newest',
     })
     if (seq !== clipsSeq) return
     recentClips.value = result
+    hasMoreClips.value = result.length === CLIPS_PAGE_SIZE
     if (recentClips.value.length) selectedClipId.value = recentClips.value[0].id
   } finally {
     if (seq === clipsSeq) loadingClips.value = false
   }
 }
+function resetAndLoadClips() {
+  clipOffset.value = 0
+  return loadClips()
+}
 // Setting selectedCamera.value inside loadCameras() (once cameras resolve)
 // already triggers this watcher on its own — a second watch(cameras, ...)
 // would fire again for the same initial selection and double the clips
-// fetch, so this one watcher is deliberately the only trigger.
-watch(selectedCamera, loadClips)
-watch(lookbackHours, loadClips)
+// fetch, so this one watcher is deliberately the only trigger. A changed
+// camera or lookback window invalidates whatever page we were on, so both
+// go back to page 1 rather than keeping a now-meaningless offset.
+watch(selectedCamera, resetAndLoadClips)
+watch(lookbackHours, resetAndLoadClips)
+
+function olderClips() {
+  clipOffset.value += CLIPS_PAGE_SIZE
+  loadClips()
+}
+function newerClips() {
+  clipOffset.value = Math.max(0, clipOffset.value - CLIPS_PAGE_SIZE)
+  loadClips()
+}
 
 let framesSeq = 0
 
@@ -144,20 +170,46 @@ function toggleFrame(frame: string) {
 
     <div v-if="selectedCamera" class="clip-strip">
       <div v-if="loadingClips" class="muted-note">Loading recent clips…</div>
-      <Message v-else-if="!recentClips.length" severity="warn" size="small" :closable="false">
+      <Message v-else-if="!recentClips.length && clipOffset === 0" severity="warn" size="small" :closable="false">
         No clips for this camera in that time range — try a longer lookback above.
       </Message>
-      <div v-else class="thumb-strip">
-        <button
-          v-for="clip in recentClips"
-          :key="clip.id"
-          type="button"
-          class="thumb-strip-item"
-          :class="{ active: clip.id === selectedClipId }"
-          @click="selectedClipId = clip.id"
+      <Message v-else-if="!recentClips.length" severity="warn" size="small" :closable="false">
+        No older clips in that time range.
+        <Button label="Back to newest" size="small" text @click="newerClips" />
+      </Message>
+      <div v-else class="thumb-strip-nav">
+        <Button
+          aria-label="Show newer clips"
+          :disabled="clipOffset === 0"
+          text
+          rounded
+          class="thumb-strip-arrow"
+          @click="newerClips"
         >
-          <img :src="clipThumbUrl(clip.id)" alt="" loading="lazy" />
-        </button>
+          ‹
+        </Button>
+        <div class="thumb-strip">
+          <button
+            v-for="clip in recentClips"
+            :key="clip.id"
+            type="button"
+            class="thumb-strip-item"
+            :class="{ active: clip.id === selectedClipId }"
+            @click="selectedClipId = clip.id"
+          >
+            <img :src="clipThumbUrl(clip.id)" alt="" loading="lazy" />
+          </button>
+        </div>
+        <Button
+          aria-label="Show older clips"
+          :disabled="!hasMoreClips"
+          text
+          rounded
+          class="thumb-strip-arrow"
+          @click="olderClips"
+        >
+          ›
+        </Button>
       </div>
     </div>
 
@@ -218,11 +270,24 @@ function toggleFrame(frame: string) {
   color: var(--muted);
 }
 
+.thumb-strip-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.thumb-strip-arrow {
+  flex: 0 0 auto;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
 .thumb-strip {
   display: flex;
   gap: 0.4rem;
   overflow-x: auto;
   padding-bottom: 0.2rem;
+  min-width: 0;
 }
 
 .thumb-strip-item {
