@@ -169,7 +169,37 @@ describe('EnrollFromClipPicker', () => {
     stubRoutedFetch({ cameras: [makeCamera('Front Door')], clips: [] })
     const wrapper = mountPicker()
     await flushPromises()
-    expect(wrapper.text()).toContain('No clips yet for this camera')
+    expect(wrapper.text()).toContain('No clips for this camera in that time range')
+  })
+
+  it('defaults to a 24h lookback and re-fetches with a wider since when changed', async () => {
+    const clipUrls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/cameras')) return Promise.resolve(jsonResponse([makeCamera('Front Door')]))
+        if (url.includes('/frames')) return Promise.resolve(jsonResponse({ frames: [] }))
+        if (url.includes('/api/clips')) {
+          clipUrls.push(url)
+          return Promise.resolve(jsonResponse([makeClip('c1')]))
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`))
+      }),
+    )
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(clipUrls).toHaveLength(1)
+    const firstSince = new URL(clipUrls[0], 'http://x').searchParams.get('since')
+    expect(firstSince).not.toBeNull()
+
+    const selects = wrapper.findAllComponents(Select)
+    await selects[1].vm.$emit('update:modelValue', 24 * 7)
+    await flushPromises()
+    expect(clipUrls).toHaveLength(2)
+    const secondSince = new URL(clipUrls[1], 'http://x').searchParams.get('since')
+    // A 7-day lookback's `since` timestamp is earlier (a smaller ISO string
+    // sorts first) than the initial 24h default's.
+    expect(secondSince! < firstSince!).toBe(true)
   })
 
   it('extracts frames for the first clip and renders a selectable grid', async () => {

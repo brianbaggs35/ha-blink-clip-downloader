@@ -11,6 +11,18 @@ const cameras = ref<CameraStat[]>([])
 const selectedCamera = ref('')
 const loadingCameras = ref(true)
 
+const LOOKBACK_OPTIONS = [
+  { label: 'Last 6 hours', value: 6 },
+  { label: 'Last 24 hours', value: 24 },
+  { label: 'Last 48 hours', value: 48 },
+  { label: 'Last 7 days', value: 24 * 7 },
+]
+const lookbackHours = ref(24)
+
+function sinceFor(hours: number): string {
+  return new Date(Date.now() - hours * 3_600_000).toISOString()
+}
+
 const recentClips = ref<ClipListItem[]>([])
 const selectedClipId = ref('')
 const loadingClips = ref(false)
@@ -47,7 +59,12 @@ async function loadClips() {
   frames.value = []
   selectedFrames.value = []
   try {
-    const result = await listClips({ camera: selectedCamera.value, limit: 8, sort: 'newest' })
+    const result = await listClips({
+      camera: selectedCamera.value,
+      since: sinceFor(lookbackHours.value),
+      limit: 24,
+      sort: 'newest',
+    })
     if (seq !== clipsSeq) return
     recentClips.value = result
     if (recentClips.value.length) selectedClipId.value = recentClips.value[0].id
@@ -60,6 +77,7 @@ async function loadClips() {
 // would fire again for the same initial selection and double the clips
 // fetch, so this one watcher is deliberately the only trigger.
 watch(selectedCamera, loadClips)
+watch(lookbackHours, loadClips)
 
 let framesSeq = 0
 
@@ -91,19 +109,33 @@ function toggleFrame(frame: string) {
 
 <template>
   <div class="enroll-from-clip">
-    <div class="picker-row">
-      <label for="biometrics-camera-select" class="field-label">Camera</label>
-      <Select
-        id="biometrics-camera-select"
-        v-model="selectedCamera"
-        size="small"
-        :options="cameras"
-        option-label="camera"
-        option-value="camera"
-        :disabled="loadingCameras || !cameras.length"
-        placeholder="Select a camera"
-        class="camera-select"
-      />
+    <div class="picker-row-group">
+      <div class="picker-row">
+        <label for="biometrics-camera-select" class="field-label">Camera</label>
+        <Select
+          id="biometrics-camera-select"
+          v-model="selectedCamera"
+          size="small"
+          :options="cameras"
+          option-label="camera"
+          option-value="camera"
+          :disabled="loadingCameras || !cameras.length"
+          placeholder="Select a camera"
+          class="camera-select"
+        />
+      </div>
+      <div class="picker-row">
+        <label for="biometrics-lookback-select" class="field-label">Show clips from</label>
+        <Select
+          id="biometrics-lookback-select"
+          v-model="lookbackHours"
+          size="small"
+          :options="LOOKBACK_OPTIONS"
+          option-label="label"
+          option-value="value"
+          class="lookback-select"
+        />
+      </div>
     </div>
 
     <Message v-if="!loadingCameras && !cameras.length" severity="warn" size="small" :closable="false">
@@ -113,7 +145,7 @@ function toggleFrame(frame: string) {
     <div v-if="selectedCamera" class="clip-strip">
       <div v-if="loadingClips" class="muted-note">Loading recent clips…</div>
       <Message v-else-if="!recentClips.length" severity="warn" size="small" :closable="false">
-        No clips yet for this camera.
+        No clips for this camera in that time range — try a longer lookback above.
       </Message>
       <div v-else class="thumb-strip">
         <button
@@ -164,13 +196,20 @@ function toggleFrame(frame: string) {
   gap: 0.7rem;
 }
 
+.picker-row-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+}
+
 .picker-row {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
 }
 
-.camera-select {
+.camera-select,
+.lookback-select {
   max-width: 260px;
 }
 

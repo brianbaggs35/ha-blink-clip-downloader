@@ -1040,6 +1040,17 @@ rather than the Vite dev server or a bare `docker run`:
   0.8rem font in a tight flex row) where a full-size spinner would look
   disproportionate rather than better.
 
+### Improved — Biometrics face enrollment clip picker
+
+- **`EnrollFromClipPicker` (Biometrics tab) only ever offered clips from a
+  fixed, uncustomizable recent window**, so on an actively-recording
+  camera the available thumbnails could all be nighttime/IR shots with no
+  way to reach back further for a better-lit frame. Added a "Show clips
+  from" dropdown (6h / 24h / 48h / 7 days, default 24h) next to the
+  existing camera picker, and raised the clip count from 8 to 24 so a
+  wider window actually surfaces more choices instead of just spacing the
+  same 8 further apart.
+
 ## 4.0.2
 
 ### Bug fixes
