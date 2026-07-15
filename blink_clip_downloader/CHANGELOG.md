@@ -1139,6 +1139,18 @@ Confirmed already correct, no change needed:
   a duplicate event for an already-starred clip can't double-count), and
   `bulkStar` now reloads stats alongside its existing clip-list reload.
 
+### Fixed — toast checkmark icon not vertically in line with the message
+
+- **Toast messages put their text in PrimeVue's `detail` field, leaving
+  `summary` unset — but `ToastMessage.vue` always renders the `summary`
+  `<span>` unconditionally (only `detail` is behind a `v-if`).** That left
+  an empty-but-still-laid-out line above every message, which pushed the
+  visible text down a line while the severity icon stayed aligned to the
+  top of the whole block — reading as the checkmark sitting above/outside
+  the text rather than next to it. Toasts now populate `summary` (the
+  field this template actually expects to always be present) and leave
+  `detail` unset, eliminating the phantom line entirely.
+
 ## 4.0.2
 
 ### Bug fixes

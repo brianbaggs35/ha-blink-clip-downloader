@@ -17,7 +17,14 @@ watch(
     if (!store.visible) return
     primeToast.add({
       severity: store.isError ? 'error' : 'success',
-      detail: store.message,
+      // PrimeVue's own ToastMessage template always renders the `summary`
+      // <span> (no v-if), but only renders `detail` when it's set (v-if).
+      // We only ever have one line of text — putting it in `detail` (as
+      // this used to) left an empty-but-still-laid-out summary line above
+      // it, which visually pushed the message down and threw off the
+      // icon's vertical alignment against it. `summary` is the field this
+      // component actually expects to always be populated.
+      summary: store.message,
       life: store.duration,
     })
   },
