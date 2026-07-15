@@ -19,8 +19,14 @@ RUN npm run build
 FROM ${BUILD_FROM}
 
 # BUILD_ARCH is injected by the HA build system for multi-arch images.
+# Both this and BUILD_VERSION below are always passed explicitly by both
+# the HA build system and .github/workflows/build.yaml's CI publish job —
+# the default here only ever applies to a manual `docker build` with no
+# --build-arg, so keeping it perfectly current isn't load-bearing, just
+# avoids a wildly stale value in that image's OCI labels (see BUILD_VERSION
+# usage below).
 ARG BUILD_ARCH
-ARG BUILD_VERSION=2.8.1
+ARG BUILD_VERSION=5.0.0
 
 # Base image switched from Alpine to Debian (trixie, glibc) in 4.1.0 — the
 # optional computer-vision pipeline (ai_object_detection_enabled and friends,

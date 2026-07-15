@@ -1295,6 +1295,43 @@ Confirmed already correct, no change needed:
   A per-clip failure doesn't abort the rest of the batch (same as
   bulk-delete); the final toast reports how many succeeded.
 
+### Verified — release build/publish workflow, tier-1-only, and disabled-feature paths
+
+- **Full review of `.github/workflows/build.yaml`** (triggered on `release:
+  published` / manual dispatch): confirmed the per-arch matrix
+  (aarch64/amd64) and base images match `build.yaml`'s own `build_from`
+  mapping, the `Dockerfile`'s three `ARG`s (`BUILD_FROM`/`BUILD_ARCH`/
+  `BUILD_VERSION`) line up exactly with the build-args the workflow passes,
+  and the multi-arch manifest step correctly combines both per-arch pushes
+  into a single `:VERSION` (and `:latest`) tag. No bugs found in the
+  workflow itself. One drive-by fix: `Dockerfile`'s `BUILD_VERSION` default
+  (only used for a manual `docker build` with no `--build-arg` — every real
+  build, CI or HA's own, always passes it explicitly) was stuck at a stale
+  `2.8.1`, now `5.0.0`. Two things worth the user's attention that aren't
+  code fixes: (1) the workflow reads its version purely from `config.yaml`,
+  not the git release tag — nothing cross-checks that a release's tag name
+  actually matches `config.yaml`'s `version:`; (2) whether these published
+  images ever get pulled by a real install depends on `config.yaml` having
+  a matching `image:` field (currently absent — see the CI-verification
+  entry earlier this round) and the GHCR package's visibility being set to
+  public, a one-time GitHub web UI step this workflow doesn't (and can't)
+  control.
+- **Verified tier-1-only operation** (no escalation model configured) both
+  by code (`BaseAnalyzer._maybe_escalate`'s very first line is
+  `if not response or self._escalation_analyzer is None: return response`
+  — a true no-op, no side effects, before touching anything escalation-
+  related) and against real historical data: queried the live database for
+  `analysis_results` rows with an empty `escalation_provider` and confirmed
+  well-formed `is_suspicious`/`confidence`/`summary` values across several
+  real clips.
+- **Verified optional advanced features degrade cleanly when disabled**:
+  `VisionPipeline.process_clip` gates enhanced detection and face
+  recognition behind their own config flags (both `False` by default), and
+  the heavy per-stage dependencies (`ultralytics`, etc.) are only imported
+  inside each stage's actual detection call — never at `VisionPipeline`
+  construction time, which happens unconditionally on every startup
+  regardless of whether any stage is enabled.
+
 ## 4.0.2
 
 ### Bug fixes
