@@ -21,3 +21,4 @@ blink_clip_downloader/frontend/node_modules/
 blink_clip_downloader/frontend/dist/
 blink_clip_downloader/blink_downloader/static/
 .vscode
+node_modules/
