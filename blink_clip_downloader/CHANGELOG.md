@@ -1162,6 +1162,20 @@ Confirmed already correct, no change needed:
   column (`align-self: center` on the tag, `justify-content: center` on
   the icon row) to match.
 
+### Improved — Library storage stat now states the configured quota as text
+
+- **The Library tab's compact "Storage" stat only ever described free disk
+  space in words** (e.g. "Storage — 1270.8 MB used · Free: 785.41 GB") —
+  the configured `max_storage_gb` quota was only visible via the thin
+  progress bar underneath, easy to miss, and the label made it read as if
+  the whole disk were available regardless of quota. The backend has
+  always returned `quota_gb` alongside `free_gb` (`storage.py`'s
+  `disk_stats()`), and the Status tab's own Storage card already showed it
+  as an explicit "Quota" row — the Library stat just never used the field.
+  It now reads "Storage — 1270.8 MB used of 10.0 GB quota · 785.41 GB free
+  on disk" whenever a quota is configured, falling back to the prior
+  disk-only wording when it isn't (`quota_gb: 0` — no quota configured).
+
 ## 4.0.2
 
 ### Bug fixes
