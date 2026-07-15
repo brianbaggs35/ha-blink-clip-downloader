@@ -4103,6 +4103,31 @@ async def test_finetune_activate_success(db: ClipDatabase, tmp_path: Path) -> No
         await tc.close()
 
 
+async def test_finetune_activate_persists_state(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Activating a checkpoint survives a restart via finetune_state.json."""
+    from blink_downloader.analyzer import MoondreamCloudAnalyzer
+
+    analyzer = MoondreamCloudAnalyzer(api_key="md-key", prompt="test")
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    state_file = tmp_path / "finetune_state.json"
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._FINETUNE_STATE_FILE",
+            new=state_file,
+        ):
+            resp = await tc.post("/api/ai/finetune/ft1/activate", json={"step": 50})
+        assert resp.status == 200
+        data = await resp.json()
+        saved = json.loads(state_file.read_text())
+        assert saved == {"active_model_id": data["model"]}
+    finally:
+        await tc.close()
+
+
 async def test_finetune_activate_wrong_provider(client: TestClient) -> None:
     resp = await client.post("/api/ai/finetune/ft1/activate", json={"step": 50})
     assert resp.status == 400

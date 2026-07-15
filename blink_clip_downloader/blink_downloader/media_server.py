@@ -1574,6 +1574,8 @@ class MediaServer:
         finally:
             await manager.close()
 
+    _FINETUNE_STATE_FILE = Path("/data/finetune_state.json")
+
     async def _handle_finetune_activate(self, request: web.Request) -> web.Response:
         """Switch live inference to a fine-tuned checkpoint, no restart.
 
@@ -1581,6 +1583,12 @@ class MediaServer:
         MoondreamCloudAnalyzer (checked via _get_finetune_manager's
         provider_name gate, but the hot-swap itself needs the concrete
         analyzer instance, not just the manager).
+
+        Also persists the activated model id to finetune_state.json —
+        mirroring the camera_configs.json/vehicle_settings.json pattern —
+        so a later add-on restart resumes on this checkpoint instead of
+        silently reverting to whatever moondream_finetune_model was last
+        saved in options.json (see App._load_finetune_model_from_ui()).
         """
         from .analyzer import MoondreamCloudAnalyzer, MoondreamFineTuneManager  # noqa: PLC0415
 
@@ -1600,6 +1608,12 @@ class MediaServer:
 
         model_id = MoondreamFineTuneManager.get_model_id(finetune_id, step)
         self._analyzer.set_finetune_model(model_id)
+        try:
+            self._FINETUNE_STATE_FILE.write_text(
+                json.dumps({"active_model_id": model_id}, indent=2)
+            )
+        except OSError as exc:
+            _LOGGER.warning("Could not save fine-tune activation state: %s", exc)
         return web.json_response({"activated": True, "model": model_id})
 
     async def _handle_feedback_untrained_count(

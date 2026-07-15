@@ -215,6 +215,35 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             )
             return None
 
+    def _load_finetune_model_from_ui(self) -> str | None:
+        """Load the activated Moondream fine-tune checkpoint id, if any.
+
+        finetune_state.json (written by
+        MediaServer._handle_finetune_activate when a checkpoint is
+        activated from the AI tab's Fine-Tune card) is the source of truth
+        once written — falling back to the moondream_finetune_model option
+        in options.json only until a checkpoint has been activated for the
+        first time. Without this, an activated checkpoint would silently
+        revert to whatever (or nothing) was last saved in options.json on
+        every add-on restart, defeating the point of activating it.
+        Returns None (not "") when the file doesn't exist or is
+        unreadable, matching _load_vehicle_settings_from_ui's contract.
+        """
+        state_file = Path("/data/finetune_state.json")
+        if not state_file.exists():
+            return None
+        try:
+            data = json.loads(state_file.read_text())
+            return str(data.get("active_model_id", ""))
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Could not load %s, falling back to the configured "
+                "moondream_finetune_model option: %s",
+                state_file,
+                exc,
+            )
+            return None
+
     @staticmethod
     def _merge_camera_config_fallbacks(
         config: AppConfig,
@@ -258,6 +287,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         if car_description is None:
             car_description = config.ai_car_description
 
+        # finetune_state.json takes priority once a checkpoint has been
+        # activated from the AI tab; fall back to moondream_finetune_model
+        # from options.json until then.
+        moondream_finetune_model = self._load_finetune_model_from_ui()
+        if moondream_finetune_model is None:
+            moondream_finetune_model = config.moondream_finetune_model
+
         self._analyzer = create_analyzer(
             ai_provider=config.ai_provider,
             prompt=config.ai_prompt,
@@ -274,7 +310,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             ollama_model=config.ollama_model,
             ollama_cloud_api_key=config.ollama_cloud_api_key,
             moondream_api_key=config.moondream_api_key,
-            moondream_finetune_model=config.moondream_finetune_model,
+            moondream_finetune_model=moondream_finetune_model,
             anthropic_api_key=config.anthropic_api_key,
             anthropic_model=config.anthropic_model,
             openai_api_key=config.openai_api_key,

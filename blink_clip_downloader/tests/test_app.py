@@ -1519,6 +1519,77 @@ def test_init_vehicle_settings_falls_back_to_options_when_file_missing(
     )
 
 
+def _build_app_with_finetune_state(
+    base_config, tmp_path, finetune_state_content, **config_overrides
+):
+    """Same pattern as _build_app_with_vehicle_settings, but for the
+    activated-Moondream-checkpoint state file."""
+    import dataclasses
+
+    cam_cfg_file = tmp_path / "camera_configs.json"
+    state_file = tmp_path / "finetune_state.json"
+    if finetune_state_content is not None:
+        state_file.write_text(json.dumps(finetune_state_content))
+
+    def _fake_path(path_str):
+        return state_file if path_str == "/data/finetune_state.json" else cam_cfg_file
+
+    config = dataclasses.replace(
+        base_config,
+        ai_analysis_enabled=True,
+        ollama_url="http://localhost:11434",
+        **config_overrides,
+    )
+
+    with (
+        patch("blink_downloader.app.Path", side_effect=_fake_path),
+        patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
+    ):
+        mock_create_analyzer.return_value = MagicMock()
+        app = BlinkClipDownloaderApp(config)
+
+    return app, mock_create_analyzer
+
+
+def test_init_finetune_state_ui_file_overrides_options_json(
+    base_config, tmp_path
+) -> None:
+    """An activated fine-tune checkpoint (finetune_state.json, written by
+    MediaServer._handle_finetune_activate) must survive a restart and reach
+    the analyzer, taking priority over options.json's
+    moondream_finetune_model — without this, activating a checkpoint from
+    the AI tab would silently revert to the base model on every restart."""
+    _app, mock_create_analyzer = _build_app_with_finetune_state(
+        base_config,
+        tmp_path,
+        {"active_model_id": "moondream3-preview/abc123@50"},
+        moondream_finetune_model="options.json model (should be ignored)",
+    )
+
+    assert (
+        mock_create_analyzer.call_args.kwargs["moondream_finetune_model"]
+        == "moondream3-preview/abc123@50"
+    )
+
+
+def test_init_finetune_state_falls_back_to_options_when_file_missing(
+    base_config, tmp_path
+) -> None:
+    """No finetune_state.json yet (no checkpoint ever activated) falls back
+    to options.json's moondream_finetune_model."""
+    _app, mock_create_analyzer = _build_app_with_finetune_state(
+        base_config,
+        tmp_path,
+        None,  # no finetune_state.json written
+        moondream_finetune_model="options.json model",
+    )
+
+    assert (
+        mock_create_analyzer.call_args.kwargs["moondream_finetune_model"]
+        == "options.json model"
+    )
+
+
 def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
     base_config, tmp_path, caplog
 ) -> None:
