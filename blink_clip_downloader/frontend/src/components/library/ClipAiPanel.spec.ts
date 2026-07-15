@@ -457,4 +457,104 @@ describe('ClipAiPanel', () => {
     await flushPromises()
     expect(useRefreshStore().tick).toBeGreaterThan(tickBefore)
   })
+
+  describe('face recognition feedback', () => {
+    it('offers "Report a missed face match" when no bypass applied on this clip', async () => {
+      mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('Report a missed face match')
+      expect(wrapper.text()).not.toContain('Wrong match')
+    })
+
+    it('offers "Wrong match" instead, naming the recognized person, when a bypass applied', async () => {
+      const bypassed = { ...RESULT, face_bypass_applied: true, face_bypass_names: 'Brian' }
+      mockFetch({ '/api/ai/results/c1': bypassed, '/api/ai/feedback/c1': null })
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('Face match (Brian)')
+      expect(wrapper.text()).toContain('Wrong match')
+      expect(wrapper.text()).not.toContain('Report a missed face match')
+    })
+
+    it('submits a false_negative report and shows a confirmation', async () => {
+      let posted: unknown
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string, opts?: RequestInit) => {
+          if (url === '/api/ai/faces/feedback/c1' && opts?.method === 'POST') {
+            posted = JSON.parse(opts.body as string)
+            return Promise.resolve(jsonResponse({ saved: true }))
+          }
+          if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+          if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+          return Promise.reject(new Error(`unexpected ${url}`))
+        }),
+      )
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Report a missed face match'))!
+        .trigger('click')
+      await flushPromises()
+      expect(posted).toEqual({ report_type: 'false_negative', note: '' })
+      expect(wrapper.text()).toContain('Reported')
+      // The report button is replaced by the confirmation, not left clickable.
+      expect(wrapper.text()).not.toContain('Report a missed face match')
+    })
+
+    it('submits a false_positive report for a bypassed clip', async () => {
+      let posted: unknown
+      const bypassed = { ...RESULT, face_bypass_applied: true, face_bypass_names: 'Brian' }
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string, opts?: RequestInit) => {
+          if (url === '/api/ai/faces/feedback/c1' && opts?.method === 'POST') {
+            posted = JSON.parse(opts.body as string)
+            return Promise.resolve(jsonResponse({ saved: true }))
+          }
+          if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(bypassed))
+          if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+          return Promise.reject(new Error(`unexpected ${url}`))
+        }),
+      )
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Wrong match'))!
+        .trigger('click')
+      await flushPromises()
+      expect(posted).toEqual({ report_type: 'false_positive', note: '' })
+      expect(wrapper.text()).toContain('Reported')
+    })
+
+    it('shows a toast and leaves the report button clickable when the report fails to save', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string, opts?: RequestInit) => {
+          if (url === '/api/ai/faces/feedback/c1' && opts?.method === 'POST')
+            return Promise.reject(new Error('network'))
+          if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+          if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+          return Promise.reject(new Error(`unexpected ${url}`))
+        }),
+      )
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Report a missed face match'))!
+        .trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('Report a missed face match')
+      expect(wrapper.text()).not.toContain('Reported')
+    })
+  })
 })

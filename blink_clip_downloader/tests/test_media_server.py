@@ -3787,6 +3787,73 @@ async def test_faces_bypass_stats_reflects_recorded_bypasses(
     assert data["recent"][0]["clip_id"] == "c1"
 
 
+async def test_face_recognition_feedback_list_empty(client: TestClient) -> None:
+    resp = await client.get("/api/ai/faces/feedback")
+    assert resp.status == 200
+    assert await resp.json() == []
+
+
+async def test_face_recognition_feedback_submit_false_positive(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    resp = await client.post(
+        "/api/ai/faces/feedback/c1",
+        json={"report_type": "false_positive", "note": "Not me."},
+    )
+    assert resp.status == 200
+    assert await resp.json() == {"saved": True}
+
+    listing = await client.get("/api/ai/faces/feedback")
+    data = await listing.json()
+    assert len(data) == 1
+    assert data[0]["clip_id"] == "c1"
+    assert data[0]["camera"] == "Front Door"
+    assert data[0]["report_type"] == "false_positive"
+    assert data[0]["note"] == "Not me."
+
+
+async def test_face_recognition_feedback_submit_false_negative_no_analysis_needed(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Unlike /api/ai/feedback/{clip_id}, this endpoint doesn't require an
+    existing analysis result — a missed match can be reported on any clip."""
+    await db.add_clip(_make_clip("c1"))
+    resp = await client.post(
+        "/api/ai/faces/feedback/c1", json={"report_type": "false_negative"}
+    )
+    assert resp.status == 200
+
+
+async def test_face_recognition_feedback_submit_missing_clip(
+    client: TestClient,
+) -> None:
+    resp = await client.post(
+        "/api/ai/faces/feedback/ghost", json={"report_type": "false_positive"}
+    )
+    assert resp.status == 404
+
+
+async def test_face_recognition_feedback_submit_bad_json(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    resp = await client.post(
+        "/api/ai/faces/feedback/c1",
+        data="not json",
+        headers={"Content-Type": "text/plain"},
+    )
+    assert resp.status == 400
+
+
+async def test_face_recognition_feedback_submit_invalid_report_type(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    resp = await client.post("/api/ai/faces/feedback/c1", json={"report_type": "maybe"})
+    assert resp.status == 400
+
+
 async def test_ai_feedback_submit_db_failure_returns_500(
     client: TestClient, db: ClipDatabase
 ) -> None:

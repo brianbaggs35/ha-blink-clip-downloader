@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { analyzeClipNow, getClipAiResult, getFeedbackForClip, submitFeedback } from '../../api/ai'
-import type { AnalysisResultDict, Feedback } from '../../api/types'
+import {
+  analyzeClipNow,
+  getClipAiResult,
+  getFeedbackForClip,
+  submitFaceRecognitionFeedback,
+  submitFeedback,
+} from '../../api/ai'
+import type { AnalysisResultDict, FaceFeedbackReportType, Feedback } from '../../api/types'
 import { usePromptOverlayStore } from '../../stores/promptOverlay'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
@@ -23,6 +29,8 @@ const showFeedbackForm = ref(false)
 const feedbackNote = ref('')
 const feedbackCorrectedSuspicious = ref(false)
 const analyzing = ref(false)
+const faceReportSubmitting = ref(false)
+const faceReportSubmitted = ref<FaceFeedbackReportType | null>(null)
 
 async function load() {
   loading.value = true
@@ -30,6 +38,7 @@ async function load() {
   try {
     result.value = await getClipAiResult(props.clipId)
     feedback.value = result.value ? await getFeedbackForClip(props.clipId).catch(() => null) : null
+    faceReportSubmitted.value = null
     loaded.value = true
   } catch {
     loadError.value = true
@@ -110,6 +119,19 @@ async function trySubmitFeedback(body: {
 
 function changeFeedback() {
   feedback.value = null
+}
+
+async function reportFaceIssue(reportType: FaceFeedbackReportType) {
+  faceReportSubmitting.value = true
+  try {
+    await submitFaceRecognitionFeedback(props.clipId, reportType)
+    faceReportSubmitted.value = reportType
+    toast.show('Thanks, reported — visible on the Biometrics activity card')
+  } catch {
+    toast.show('Failed to save the report', true)
+  } finally {
+    faceReportSubmitting.value = false
+  }
 }
 
 function showPrompt() {
@@ -223,6 +245,27 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
                 <button class="btn sm ghost" @click="showFeedbackForm = false">Cancel</button>
               </div>
             </div>
+          </div>
+          <div style="margin-top: 0.5rem; padding-top: 0.45rem; border-top: 1px solid var(--border)">
+            <div v-if="faceReportSubmitted" style="font-size: 0.76rem; color: var(--success)">✓ Reported — thanks</div>
+            <div
+              v-else-if="result.face_bypass_applied"
+              style="font-size: 0.76rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap"
+            >
+              <span style="color: var(--muted)">👤 Face match ({{ result.face_bypass_names }}) — correct?</span>
+              <button class="btn sm ghost" :disabled="faceReportSubmitting" @click="reportFaceIssue('false_positive')">
+                👎 Wrong match
+              </button>
+            </div>
+            <button
+              v-else
+              class="btn sm ghost"
+              style="font-size: 0.72rem"
+              :disabled="faceReportSubmitting"
+              @click="reportFaceIssue('false_negative')"
+            >
+              🚩 Report a missed face match
+            </button>
           </div>
         </div>
       </div>

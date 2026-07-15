@@ -763,6 +763,48 @@ async def test_get_face_bypass_stats_respects_recent_limit(db: ClipDatabase) -> 
     assert len(stats["recent"]) == 2
 
 
+async def test_add_and_get_face_recognition_feedback(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_face_recognition_feedback(
+        clip_id="c1",
+        camera="Front Door",
+        report_type="false_positive",
+        note="That's not me, wrong person matched.",
+    )
+
+    feedback = await db.get_face_recognition_feedback()
+    assert len(feedback) == 1
+    assert feedback[0]["clip_id"] == "c1"
+    assert feedback[0]["camera"] == "Front Door"
+    assert feedback[0]["report_type"] == "false_positive"
+    assert feedback[0]["note"] == "That's not me, wrong person matched."
+
+
+async def test_get_face_recognition_feedback_orders_newest_first_and_respects_limit(
+    db: ClipDatabase,
+) -> None:
+    for i in range(3):
+        clip_id = f"c{i}"
+        await db.add_clip(_make_clip(clip_id))
+        await db.add_face_recognition_feedback(
+            clip_id=clip_id, camera="Front Door", report_type="false_negative"
+        )
+    feedback = await db.get_face_recognition_feedback(limit=2)
+    assert len(feedback) == 2
+    assert feedback[0]["clip_id"] == "c2"
+
+
+async def test_get_face_recognition_feedback_empty(db: ClipDatabase) -> None:
+    assert await db.get_face_recognition_feedback() == []
+
+
+async def test_add_face_recognition_feedback_without_init_is_noop() -> None:
+    d = ClipDatabase()
+    await d.add_face_recognition_feedback(
+        clip_id="c1", camera="Front Door", report_type="false_positive"
+    )  # should not raise
+
+
 # ------------------------------------------------------------------
 # Analysis Queue
 # ------------------------------------------------------------------

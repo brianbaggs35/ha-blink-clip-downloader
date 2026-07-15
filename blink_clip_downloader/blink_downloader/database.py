@@ -150,6 +150,29 @@ CREATE TABLE IF NOT EXISTS face_enrollments (
     created_at TEXT    NOT NULL,
     approved   BOOLEAN NOT NULL DEFAULT TRUE
 );
+
+-- Human feedback specifically on face-recognition accuracy, distinct from
+-- analysis_feedback above (which is about the suspicious-flag verdict, not
+-- about whether a face was matched correctly). Deliberately a pure audit
+-- trail — see the Biometrics tab's "Report a face match issue" flow and
+-- FaceBypassActivityCard — not wired into any automatic threshold
+-- adjustment. Unlike the suspicious-flag confidence threshold (which can
+-- only ever get *more* conservative from feedback, see
+-- get_effective_confidence_threshold), a wrong automatic adjustment here
+-- risks the opposite mistake: loosening face-match tolerance from a
+-- handful of reports could itself cause the false bypass the safety
+-- design in analyzer.py's docs explicitly warns against. So this data is
+-- surfaced for a human to review and act on (e.g. re-enrolling someone
+-- with clearer reference photos), not consumed automatically.
+CREATE TABLE IF NOT EXISTS face_recognition_feedback (
+    id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    clip_id     TEXT    NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    camera      TEXT    NOT NULL,
+    report_type TEXT    NOT NULL,
+    note        TEXT    DEFAULT '',
+    created_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_face_feedback_clip ON face_recognition_feedback (clip_id);
 """
 
 # Schema changes applied to *already-existing* tables, run every startup
@@ -790,6 +813,54 @@ class ClipDatabase:
             ],
             "recent": recent,
         }
+
+    async def add_face_recognition_feedback(
+        self, clip_id: str, camera: str, report_type: str, note: str = ""
+    ) -> None:
+        """Record a human report that face recognition got a clip wrong.
+
+        *report_type* is ``"false_positive"`` (a face was matched/bypassed
+        that shouldn't have been) or ``"false_negative"`` (an enrolled
+        person was present but not recognized/bypassed). Pure audit trail —
+        see face_recognition_feedback's own schema comment for why this
+        deliberately doesn't feed any automatic adjustment.
+        """
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm(
+                """
+                INSERT INTO face_recognition_feedback
+                  (clip_id, camera, report_type, note, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """
+            ),
+            clip_id,
+            camera,
+            report_type,
+            note,
+            datetime.now(timezone.utc).isoformat(),
+        )
+
+    async def get_face_recognition_feedback(
+        self, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """Most recent face-recognition accuracy reports, for the
+        Biometrics tab's activity card — see add_face_recognition_feedback."""
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT clip_id, camera, report_type, note, created_at
+                FROM face_recognition_feedback
+                ORDER BY created_at DESC
+                LIMIT ?
+                """
+            ),
+            limit,
+        )
+        return [dict(r) for r in rows]
 
     async def _get_ai_usage_reset_at(self) -> str:
         """Return the AI Usage "Clear Stats" cutoff timestamp, or '' if never reset."""

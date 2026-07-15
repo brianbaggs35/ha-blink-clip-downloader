@@ -268,6 +268,13 @@ class MediaServer:
         app.router.add_get(
             "/api/ai/faces/bypass-stats", self._handle_faces_bypass_stats
         )
+        app.router.add_get(
+            "/api/ai/faces/feedback", self._handle_face_recognition_feedback_list
+        )
+        app.router.add_post(
+            "/api/ai/faces/feedback/{clip_id}",
+            self._handle_face_recognition_feedback_submit,
+        )
 
         # Moondream Cloud fine-tuning endpoints
         app.router.add_get("/api/ai/finetune", self._handle_finetune_list)
@@ -1477,6 +1484,50 @@ class MediaServer:
     async def _handle_faces_bypass_stats(self, _request: web.Request) -> web.Response:
         stats = await self._db.get_face_bypass_stats()
         return web.json_response(stats)
+
+    _FACE_FEEDBACK_TYPES = {"false_positive", "false_negative"}
+
+    async def _handle_face_recognition_feedback_submit(
+        self, request: web.Request
+    ) -> web.Response:
+        """Record a human report that face recognition got a clip wrong.
+
+        Body: ``{"report_type": "false_positive"|"false_negative", "note": ""}``.
+        Requires the clip to exist, but deliberately does not require an
+        analysis result — a false negative (an enrolled person present but
+        never recognized) can be reported on any clip, not just ones the
+        bypass already fired on.
+        """
+        clip_id = request.match_info["clip_id"]
+        clip = await self._db.get_clip(clip_id)
+        if not clip:
+            raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
+
+        try:
+            body = await request.json()
+            report_type = str(body.get("report_type", ""))
+            note = str(body.get("note", "") or "")
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+
+        if report_type not in self._FACE_FEEDBACK_TYPES:
+            raise web.HTTPBadRequest(
+                text="report_type must be 'false_positive' or 'false_negative'"
+            )
+
+        await self._db.add_face_recognition_feedback(
+            clip_id=clip_id,
+            camera=clip["camera"],
+            report_type=report_type,
+            note=note,
+        )
+        return web.json_response({"saved": True})
+
+    async def _handle_face_recognition_feedback_list(
+        self, _request: web.Request
+    ) -> web.Response:
+        feedback = await self._db.get_face_recognition_feedback()
+        return web.json_response(feedback)
 
     # ------------------------------------------------------------------
     # Moondream Cloud fine-tuning

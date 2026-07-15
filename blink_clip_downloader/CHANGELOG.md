@@ -1416,6 +1416,36 @@ Confirmed already correct, no change needed:
   always present in the grid's top-right corner, not just during
   bulk-select, so it wasn't actually free space.
 
+### Added — biometric accuracy feedback (report a wrong or missed face match)
+
+- **New "Wrong match" / "Report a missed face match" buttons on a clip's AI
+  panel, alongside the existing correct/incorrect suspicious-verdict
+  feedback** — distinct from that existing feedback (which is about
+  whether the suspicious flag itself was right), this is specifically
+  about whether face *recognition* got it right. A clip where the
+  face-bypass fired shows "Wrong match" (the wrong person was recognized,
+  or the bypass shouldn't have applied); a clip where it didn't fire shows
+  "Report a missed face match" (an enrolled person was actually present
+  but wasn't recognized). Backed by a new `face_recognition_feedback`
+  table and `GET`/`POST /api/ai/faces/feedback` endpoints, separate from
+  the existing `analysis_feedback` table used for suspicious-verdict
+  corrections.
+- **Deliberately a pure audit trail, not wired to any automatic threshold
+  adjustment** — unlike the suspicious-flag confidence threshold (which
+  can only ever get *more* conservative from feedback, see
+  `get_effective_confidence_threshold`), automatically loosening
+  face-match tolerance from a handful of reports risks the opposite
+  mistake: causing the false bypass the safety design explicitly warns
+  against (see this repo's CLAUDE.md and `analyzer.py`'s
+  `_face_bypass_applies` docstring — a false bypass is a missed genuine
+  intrusion, not a cosmetic bug). This data is surfaced for a human to
+  review and act on (e.g. re-enrolling someone with clearer reference
+  photos), not consumed automatically.
+- The Biometrics tab's **Face-bypass activity** card now also lists recent
+  reports (type, camera, and time) under a new "🚩 Reported accuracy
+  issues" section, so filing a report has a visible place to land instead
+  of disappearing into the database.
+
 ## 4.0.2
 
 ### Bug fixes

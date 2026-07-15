@@ -141,6 +141,8 @@ export interface AnalysisResultDict {
   escalation_tokens_completion: number
   escalation_provider: string
   prompt_text?: string
+  face_bypass_applied: boolean
+  face_bypass_names: string
 }
 
 export type SuspiciousClip = AnalysisResultDict & {
@@ -316,6 +318,16 @@ export interface FaceBypassStats {
   total_bypassed: number
   by_name: { name: string; count: number }[]
   recent: FaceBypassEvent[]
+}
+
+export type FaceFeedbackReportType = 'false_positive' | 'false_negative'
+
+export interface FaceRecognitionFeedback {
+  clip_id: string
+  camera: string
+  report_type: FaceFeedbackReportType
+  note: string
+  created_at: string
 }
 
 // ---------------------------------------------------------------------

@@ -8,6 +8,8 @@ import type {
   CheckpointsResponse,
   EscalationModelsResponse,
   FaceBypassStats,
+  FaceFeedbackReportType,
+  FaceRecognitionFeedback,
   FacesResponse,
   Feedback,
   FeedbackStats,
@@ -130,6 +132,18 @@ export function deleteFacesByName(name: string): Promise<{ deleted: boolean }> {
 
 export function getFaceBypassStats(): Promise<FaceBypassStats> {
   return apiGet('/api/ai/faces/bypass-stats')
+}
+
+export function getFaceRecognitionFeedback(): Promise<FaceRecognitionFeedback[]> {
+  return apiGet('/api/ai/faces/feedback')
+}
+
+export function submitFaceRecognitionFeedback(
+  clipId: string,
+  reportType: FaceFeedbackReportType,
+  note = '',
+): Promise<{ saved: boolean } | { error: string }> {
+  return apiPost(`/api/ai/faces/feedback/${clipId}`, { report_type: reportType, note })
 }
 
 export function fetchEscalationModels(): Promise<EscalationModelsResponse> {

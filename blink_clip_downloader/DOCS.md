@@ -617,6 +617,17 @@ deleting them) to keep recognizing/labeling someone — e.g. a regular visitor
 can be managed per person (rename, approve/un-approve, or remove every photo
 for that person at once) from the Biometrics tab.
 
+**Reporting recognition accuracy.** A clip's AI panel has a face-recognition
+feedback button, separate from the regular correct/incorrect suspicious-flag
+feedback: "Wrong match" on a clip where the bypass fired (it recognized the
+wrong person, or shouldn't have applied), or "Report a missed face match" on
+a clip where an enrolled person was actually present but wasn't recognized.
+This is a review trail, not an automatic tuning knob — reports show up on
+the Biometrics tab's Face-bypass activity card for you to act on (e.g.
+re-enrolling someone with clearer reference photos) rather than silently
+loosening matching on their own, since an over-loose match is exactly the
+false-bypass risk this feature is designed to avoid.
+
 ---
 
 ## AI Alerts (Extended Notifications)
