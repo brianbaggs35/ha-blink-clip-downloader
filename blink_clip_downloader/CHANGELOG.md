@@ -984,6 +984,31 @@ rather than the Vite dev server or a bare `docker run`:
   add-on locally from `Dockerfile`/`build.yaml` — the standard distribution
   model for a repository add-on installed via *Settings → Add-ons →
   Repositories*, and the only one CI actually supports.
+- **`ai_escalation_provider`'s shipped default (`""`) failed HA Supervisor's
+  own schema validation, blocking every fresh install from starting at
+  all** — a regression from the `ai_escalation_provider` dropdown fix
+  earlier this round. That fix correctly changed the option's *type* from
+  `str?` to the optional enum `list(ollama|...|openai)?` so the
+  Configuration tab renders a real dropdown, but left the *default value*
+  as `""`. Unlike `str?`, an optional `list(...)?` only accepts "unset" as
+  a fully absent key — a stored `""` fails with `value must be one of
+  [...]`. Reproduced directly against a real Supervisor instance (`ha apps
+  start` refused to start the add-on with this exact error) before being
+  traced back to the shipped default. Removed the default line entirely
+  (the app's own options-loading in `config.py` already treats a missing
+  key as `""` internally, so no Python change was needed) rather than
+  changing the value, since the field's whole point is "unset by default."
+- **Activating a Moondream Cloud fine-tuned checkpoint from the AI tab's
+  Fine-Tune card didn't survive an add-on restart.** `set_finetune_model`
+  only ever updated the live analyzer's in-memory state; nothing persisted
+  the activated model id anywhere, so a restart silently reverted to
+  whichever `moondream_finetune_model` (if any) was last saved in
+  `options.json` — defeating the purpose of activating a checkpoint in the
+  first place. Fixed by mirroring the existing `camera_configs.json`/
+  `vehicle_settings.json` pattern: activation now also writes to a new
+  `finetune_state.json`, which takes priority over the
+  `moondream_finetune_model` option once written (see
+  `app.py`'s `_load_finetune_model_from_ui`).
 
 ## 4.0.2
 

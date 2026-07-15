@@ -184,10 +184,13 @@ options:
   # for a closer second opinion, and that verdict is what gets recorded.
   # May be a DIFFERENT provider than ai_provider (e.g. tier 1 = openai,
   # tier 2 = moondream_cloud) — reuses that provider's own credentials
-  # already set above, no separate API key needed. Leave empty to disable.
-  # Options: "" (disabled) | "ollama" | "ollama_cloud" | "moondream_cloud" |
-  # "moondream_local" | "anthropic" | "openai"
-  ai_escalation_provider: ""
+  # already set above, no separate API key needed. Leave unset (the
+  # dropdown's blank option) to disable — deliberately has no default line
+  # here: the schema below is an optional *enum* (list(...)?), and unlike a
+  # plain "str?" field, HA Supervisor's schema validator only accepts that
+  # as "unset" when the key is absent from options.json entirely, not when
+  # it's present as "". A stored "" fails validation and blocks the add-on
+  # from starting at all — confirmed against a real Supervisor instance.
   # Model ID to use for ai_escalation_provider above (e.g. "gpt-4o",
   # "claude-opus-4-5", or a moondream fine-tune ID). Leave empty to use that
   # provider's default/base model. Not applicable to moondream_local, which
