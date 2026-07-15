@@ -129,6 +129,18 @@ refresh token expires (typically after 30+ days with the add-on stopped).
 | `poll_interval` | `300` | Seconds between regular polls (30–3600) |
 | `max_clips_per_poll` | `50` | Maximum clips downloaded in one cycle |
 
+On a first-ever poll (fresh install, or reconnecting the Blink account after
+`/data` was wiped — e.g. an uninstall/reinstall), the initial download window
+looks back **6 hours**, not further — a normal restart or upgrade always
+resumes from wherever the last real poll left off instead. If AI analysis is
+enabled, only the **5 most recent** clips from any single download batch are
+queued for automatic analysis, regardless of how many clips that batch
+contains; the rest still download and appear in the library normally, just
+without auto-analysis, so a fresh reconnect can't silently burn through a
+large batch of API tokens re-analyzing a backlog. Any clip is always
+analyzable on demand via **Analyze Now** (or **Bulk select → 🔬 Analyze
+selected** for several at once) regardless of this cap.
+
 ### Retention & Quota
 
 | Option | Default | Description |
@@ -658,7 +670,10 @@ from any browser without leaving Home Assistant.
 - **Library tab** — scrollable grid with thumbnails (each showing camera, date,
   source, size, tags, and clip **duration** — both as a badge on the thumbnail and
   as text alongside the rest of the clip's details), sort by
-  newest/oldest/camera/size/duration, starred filter, and a camera sidebar.
+  newest/oldest/camera/size/duration, starred filter, and a camera sidebar. The
+  storage stat shows both free disk space and, when `max_storage_gb` is
+  configured, how much of that quota is used — since a large amount of free disk
+  space doesn't mean much if the configured quota is small.
 - **Status tab** — Blink connection status, library stats, per-camera breakdown, a
   7-day activity chart, and an **AI Analysis** card showing provider name,
   online/offline status, model, pending queue count, and suspicious-clip count.
@@ -692,7 +707,10 @@ from any browser without leaving Home Assistant.
   A **Clear Stats** button resets these counters — handy after switching providers
   so old usage doesn't keep piling into the total — without touching per-clip
   analysis history.
-- **Bulk select** — star, delete, or export multiple clips as a ZIP archive.
+- **Bulk select** — star, delete, export multiple clips as a ZIP archive, or
+  **analyze** them all with AI at once (behind a confirmation dialog stating the
+  exact count, since analysis spends real provider tokens; capped at 25 clips per
+  batch and processed one at a time rather than all in parallel).
 - **Tag management** — add/remove freeform tags per clip; filter the library by tag.
 - **Browser notifications** — opt-in desktop notifications when new clips arrive.
 - **Dark/Light theme** — automatically follows the OS/browser preference; a ☀/🌙
