@@ -1151,6 +1151,17 @@ Confirmed already correct, no change needed:
   field this template actually expects to always be present) and leave
   `detail` unset, eliminating the phantom line entirely.
 
+### Fixed — sidebar Connected badge and icon row left-aligned, not centered
+
+- **The Connected/Disconnected badge and the theme/help/notification icon
+  buttons above the Refresh/Sync buttons were left-aligned**
+  (`.app-nav-conn-tag { align-self: flex-start }`, `.app-nav-icon-row` with
+  no `justify-content`), leaving visibly unused space to their right —
+  inconsistent with Refresh/Sync directly below them, which are full-width
+  and center their own label/icon. Both now center within the sidebar
+  column (`align-self: center` on the tag, `justify-content: center` on
+  the icon row) to match.
+
 ## 4.0.2
 
 ### Bug fixes

@@ -401,11 +401,12 @@ h3 {
   flex-shrink: 0;
 }
 .app-nav-conn-tag {
-  align-self: flex-start;
+  align-self: center;
 }
 .app-nav-icon-row {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.2rem;
 }
 .app-nav-icon-row .icon {
