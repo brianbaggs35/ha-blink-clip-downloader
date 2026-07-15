@@ -1009,6 +1009,16 @@ rather than the Vite dev server or a bare `docker run`:
   `finetune_state.json`, which takes priority over the
   `moondream_finetune_model` option once written (see
   `app.py`'s `_load_finetune_model_from_ui`).
+- **Toast notifications for short messages (e.g. "Camera configs saved")
+  looked off-center** — a wide empty gap sat between the message and the
+  close button. Root cause: PrimeVue's Aura theme hardcodes a flat 25rem
+  width for every toast regardless of message length. Overrode it to
+  `fit-content` in `theme.ts`, following the same pattern already used
+  there for Tag/Card/Dialog's other oversized Aura defaults, plus a
+  `max-width` cap (`base.css`) so long messages still wrap instead of
+  overflowing on mobile. Also removed the old hand-rolled `.toast` CSS
+  class this replaced — confirmed dead, no template has referenced it
+  since the toast host moved to PrimeVue's own `<Toast>` component.
 
 ## 4.0.2
 

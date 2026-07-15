@@ -212,5 +212,17 @@ export const AppTheme = definePreset(Aura, {
         padding: '0.16rem 0.55rem',
       },
     },
+    // Aura hardcodes root.width to a flat 25rem regardless of message
+    // length, so a short detail like "Camera configs saved" leaves a wide
+    // band of empty space between the text and the close button — reads as
+    // misaligned/off-center rather than as a toast sized to its content.
+    // fit-content with the old hand-rolled .toast class's own cap
+    // (min(320px, 100vw - 3rem), see base.css) keeps short toasts tight
+    // and long ones wrapping sanely instead of overflowing on mobile.
+    toast: {
+      root: {
+        width: 'fit-content',
+      },
+    },
   },
 })

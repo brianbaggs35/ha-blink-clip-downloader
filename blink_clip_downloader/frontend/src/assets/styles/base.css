@@ -1522,33 +1522,15 @@ h3 {
 }
 
 /* ── Toast ────────────────────────────────────────────── */
-.toast {
-  position: fixed;
-  bottom: 1.5rem;
-  right: 1.5rem;
-  background: var(--success);
-  color: #06170e;
-  padding: 0.6rem 1.1rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.84rem;
-  font-weight: 600;
-  z-index: 500;
-  opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity 0.22s var(--ease),
-    transform 0.22s var(--ease);
-  pointer-events: none;
+/* PrimeVue's own Toast (see ToastHost.vue) replaced the hand-rolled
+   .toast/.toast.show/.toast.err element this block used to style; nothing
+   in any template references that class anymore, so it's removed rather
+   than kept as dead CSS. The one thing it still got right that Aura's
+   Toast preset doesn't (see theme.ts's toast.root.width override) is a
+   mobile-safe cap, carried forward here since PrimeVue's design-token
+   system has no maxWidth slot for Toast. */
+.p-toast-message {
   max-width: min(320px, calc(100vw - 3rem));
-  box-shadow: var(--shadow-lg);
-}
-.toast.show {
-  opacity: 1;
-  transform: translateY(0);
-}
-.toast.err {
-  background: var(--danger);
-  color: #fff;
 }
 
 /* ── Auth error banner (non-blocking, unlike the 2FA overlay) ────────── */
