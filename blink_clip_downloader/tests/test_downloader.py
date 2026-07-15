@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -648,6 +648,28 @@ async def test_download_new_clips_respects_max_clips(dl, sample_clip):
         await dl.download_new_clips()
 
     assert len(downloaded) == 2
+
+
+async def test_download_new_clips_uses_six_hour_lookback_on_fresh_tracker(
+    dl, sample_clip
+):
+    """With no last_download_time (fresh tracker — first run, or reconnect
+    after a reinstall), the Blink API since= filter must be a short 6-hour
+    lookback, not a wider window that could pull in — and then, before the
+    burst-analysis cap, would have auto-queued for AI analysis — a much
+    larger backlog than a fresh reconnect should reasonably cost tokens on.
+    """
+    assert dl._tracker.last_download_time is None
+    dl._blink = MagicMock()
+
+    with patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=[])) as mock_fetch:
+        await dl.download_new_clips()
+
+    since_arg = mock_fetch.call_args.args[0]
+    expected = datetime.now(timezone.utc) - timedelta(hours=6)
+    # Generous tolerance for test execution time, not for the window itself.
+    assert abs((since_arg - expected).total_seconds()) < 5
+    assert since_arg > datetime.now(timezone.utc) - timedelta(hours=7)
 
 
 async def test_download_new_clips_holds_cursor_when_backlog_remains(dl, sample_clip):

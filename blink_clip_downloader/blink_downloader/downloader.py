@@ -244,10 +244,18 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         if self._blink is None:
             raise RuntimeError("Call connect() before download_new_clips()")
 
-        # Determine since-time: last download or 24 h ago on first run.
+        # Determine since-time: last download, or a short lookback on first
+        # run/reconnect (fresh tracker — e.g. a reinstall or re-authing the
+        # Blink account). Deliberately short (not e.g. 24h): a busy account
+        # reconnecting after time away could otherwise have a large backlog
+        # of clips all fall inside the window on the very first poll, each
+        # one a real (paid) AI analysis candidate. Six hours comfortably
+        # covers "what happened while I was setting this back up" without
+        # risking a multi-hour, multi-token backlog; anything older is still
+        # reachable manually via Analyze Now once downloaded.
         since = self._tracker.last_download_time
         if since is None:
-            since = datetime.now(timezone.utc) - timedelta(hours=24)
+            since = datetime.now(timezone.utc) - timedelta(hours=6)
 
         clips = await self._fetch_clip_list(since)
         if not clips:

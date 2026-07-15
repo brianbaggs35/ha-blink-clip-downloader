@@ -1267,6 +1267,17 @@ Confirmed already correct, no change needed:
   uppercase divider label ("🎯 Tier 1 · Primary Model" / "🪜 Tier 2 ·
   Escalation Model") matching the sidebar's existing section-label style.
 
+### Changed — fresh-connect download lookback shortened from 24h to 6h
+
+- **A reconnect with no download history yet (first install, or after
+  re-authenticating the Blink account) pulled clips from as far back as 24
+  hours, on top of the 5-clip auto-analyze cap added earlier this round.**
+  Six hours comfortably covers "what happened while this was being set
+  back up" with much less chance of a large backlog landing on the very
+  first poll; anything older is still reachable manually via "Analyze
+  Now" once it's downloaded. A normal restart/upgrade is unaffected — this
+  only applies when the download tracker has no persisted cursor at all.
+
 ## 4.0.2
 
 ### Bug fixes
