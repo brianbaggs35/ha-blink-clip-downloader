@@ -1278,6 +1278,23 @@ Confirmed already correct, no change needed:
   Now" once it's downloaded. A normal restart/upgrade is unaffected — this
   only applies when the download tracker has no persisted cursor at all.
 
+### Added — bulk-select multiple clips and analyze them together
+
+- **New "🔬 Analyze selected" action in the Library tab's bulk-select bar**,
+  alongside the existing Star/Delete/ZIP actions — select multiple clips
+  and analyze all of them without opening each one individually. Gated
+  behind a confirmation dialog stating exactly how many clips will be
+  analyzed (matching the existing bulk-delete confirmation pattern) since,
+  unlike starring or deleting, this spends real AI provider tokens. Capped
+  at 25 clips per batch (matching the existing ZIP-export cap) and run
+  **sequentially**, not in parallel like the other bulk actions — unlike
+  the background analysis queue (used for normal downloads), which already
+  throttles and backs off on rate limits, firing many concurrent requests
+  at the synchronous per-clip analyze-now endpoint would have no such
+  protection. Only shown when AI analysis is actually enabled/configured.
+  A per-clip failure doesn't abort the rest of the batch (same as
+  bulk-delete); the final toast reports how many succeeded.
+
 ## 4.0.2
 
 ### Bug fixes

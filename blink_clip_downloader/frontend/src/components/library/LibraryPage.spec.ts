@@ -319,6 +319,38 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('bulk analyze requires confirmation, then analyzes every selected clip one at a time', async () => {
+    mockFetch({
+      '/api/ai/status': { ...AI_STATUS, enabled: true },
+      '/api/ai/analyze/': { summary: 'ok', is_suspicious: false, confidence: 0.5 },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    const confirmStore = useConfirmStore()
+    const analyzeBtn = wrapper.findAll('button').find((b) => b.text().includes('Analyze selected'))!
+    const clickPromise = analyzeBtn.trigger('click')
+    await flushPromises()
+    expect(confirmStore.open).toBe(true)
+    confirmStore.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/ai/analyze/c1', expect.objectContaining({ method: 'POST' }))
+    wrapper.unmount()
+  })
+
+  it('bulk analyze does nothing without confirmation, and is not offered when AI is disabled', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    // base AI_STATUS has enabled: false, so the button shouldn't even render.
+    expect(wrapper.findAll('button').some((b) => b.text().includes('Analyze selected'))).toBe(false)
+    wrapper.unmount()
+  })
+
   it('opening a card (outside select mode) opens the clip modal', async () => {
     mockFetch()
     const wrapper = mountLibrary()

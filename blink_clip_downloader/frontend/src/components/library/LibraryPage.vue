@@ -18,7 +18,7 @@ import {
   starClip,
   type ClipFilters,
 } from '../../api/clips'
-import { getAiStatus } from '../../api/ai'
+import { analyzeClipNow, getAiStatus } from '../../api/ai'
 import type { ClipListItem, LibraryStats } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useClipViewerStore } from '../../stores/clipViewer'
@@ -87,6 +87,17 @@ const loadingInitial = ref(false)
 const selectMode = ref(false)
 const selectedIds = ref<Set<string>>(new Set())
 const zipping = ref(false)
+const bulkAnalyzing = ref(false)
+// Bulk-analyze runs each clip through the same synchronous analyze-now
+// endpoint the per-clip "Analyze Now"/"Re-analyze" buttons use, one at a
+// time — not in parallel like bulkStar/bulkDelete/bulkZip. Firing many of
+// these concurrently would send that many simultaneous requests to the AI
+// provider at once with no rate-limit/concurrency protection (unlike the
+// background analysis queue, which already throttles). Capped for the same
+// reason ZIP export caps at 25: a very large selection would otherwise tie
+// up the browser tab (and spend real API tokens) for a long time with no
+// way to stop partway through.
+const BULK_ANALYZE_MAX = 25
 
 const activeClipId = ref<string | null>(null)
 const aiEnabled = ref(false)
@@ -344,6 +355,35 @@ async function bulkZip() {
     zipping.value = false
   }
 }
+async function bulkAnalyze() {
+  if (!selectedIds.value.size) return
+  const allIds = [...selectedIds.value]
+  const ids = allIds.slice(0, BULK_ANALYZE_MAX)
+  const capped = allIds.length > BULK_ANALYZE_MAX
+  const question = capped
+    ? `Analyze the first ${BULK_ANALYZE_MAX} of ${allIds.length} selected clips with AI? This uses real API tokens and may take a while.`
+    : `Analyze ${ids.length} clip(s) with AI? This uses real API tokens and may take a while.`
+  if (!(await confirm(question))) return
+
+  bulkAnalyzing.value = true
+  let succeeded = 0
+  try {
+    for (const id of ids) {
+      try {
+        await analyzeClipNow(id)
+        succeeded++
+      } catch {
+        // One clip failing (e.g. a transient provider error) must not abort
+        // the rest of the batch — matches bulkDelete's per-item .catch().
+      }
+    }
+    toast.show(`Analyzed ${succeeded}/${ids.length} clip(s)`, succeeded < ids.length)
+  } finally {
+    bulkAnalyzing.value = false
+    toggleSelectMode(false)
+    void loadClips(0)
+  }
+}
 
 function openModal(id: string) {
   activeClipId.value = id
@@ -512,9 +552,12 @@ onUnmounted(() => {
       :count="selectedIds.size"
       :total="clips.length"
       :zipping="zipping"
+      :analyzing="bulkAnalyzing"
+      :ai-enabled="aiEnabled"
       @star="bulkStar"
       @delete="bulkDelete"
       @zip="bulkZip"
+      @analyze="bulkAnalyze"
       @cancel="toggleSelectMode(false)"
       @select-all="selectAllVisible"
     />

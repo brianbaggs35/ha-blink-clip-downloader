@@ -1,6 +1,6 @@
 <script setup lang="ts">
-defineProps<{ count: number; total: number; zipping: boolean }>()
-defineEmits<{ star: []; delete: []; zip: []; cancel: []; selectAll: [] }>()
+defineProps<{ count: number; total: number; zipping: boolean; analyzing: boolean; aiEnabled: boolean }>()
+defineEmits<{ star: []; delete: []; zip: []; analyze: []; cancel: []; selectAll: [] }>()
 </script>
 
 <template>
@@ -16,6 +16,9 @@ defineEmits<{ star: []; delete: []; zip: []; cancel: []; selectAll: [] }>()
     <button class="btn sm" @click="$emit('delete')">🗑 Delete selected</button>
     <button class="btn sm" :disabled="zipping" @click="$emit('zip')">
       {{ zipping ? '⏳ Zipping…' : '⬇ ZIP' }}
+    </button>
+    <button v-if="aiEnabled" class="btn sm" :disabled="analyzing" @click="$emit('analyze')">
+      {{ analyzing ? '⏳ Analyzing…' : '🔬 Analyze selected' }}
     </button>
     <button class="btn sm" style="margin-left: auto" @click="$emit('cancel')">✕ Cancel</button>
   </div>
