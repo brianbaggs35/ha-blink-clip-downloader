@@ -1332,6 +1332,18 @@ Confirmed already correct, no change needed:
   construction time, which happens unconditionally on every startup
   regardless of whether any stage is enabled.
 
+### Improved — smoke-test coverage for the newer tabs
+
+- **`e2e/smoke.mjs` (the script CI's smoke-test job actually runs) already
+  derives its tab list from `AppSidebar.vue`'s own `TABS` array, so it was
+  already clicking through Vehicles and Biometrics along with everything
+  else** — no change needed there. `e2e/verify.mjs` (an ad-hoc dev/AI
+  screenshot helper, not run in CI) had a separate, hand-maintained tab
+  list that had gone stale from before those two tabs existed; updated to
+  match. CI's own endpoint smoke checks already covered
+  `/api/ai/faces` (Biometrics) but nothing Vehicles-specific — added
+  `/api/vehicle/settings` and `/api/ai/camera-configs` alongside it.
+
 ## 4.0.2
 
 ### Bug fixes

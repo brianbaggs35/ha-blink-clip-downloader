@@ -10,7 +10,11 @@ await page.goto('http://localhost:8199/', { waitUntil: 'networkidle' });
 await page.waitForTimeout(500);
 await page.screenshot({ path: '/tmp/shots/01-library.png' });
 
-const tabs = ['status', 'usage', 'automations', 'ai', 'models'];
+// Matches AppSidebar.vue's TABS array (see smoke.mjs, which is kept in
+// sync with the same source of truth for the CI-run check) - this list
+// had gone stale from before the vehicles/biometrics tabs existed, so
+// this manual verification helper was never actually screenshotting them.
+const tabs = ['status', 'usage', 'automations', 'ai', 'models', 'vehicles', 'biometrics'];
 for (const tab of tabs) {
   await page.click(`[data-tab="${tab}"]`);
   await page.waitForTimeout(700);
