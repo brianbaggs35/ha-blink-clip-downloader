@@ -286,6 +286,20 @@ def test_download_local_storage_can_be_enabled():
     assert cfg.download_local_storage is True
 
 
+def test_download_thumbnails_defaults_to_true():
+    """Required for the Vehicles tab's car-zone picker and Biometrics'
+    clip-browsing strip — on by default so both work out of the box."""
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.download_thumbnails is True
+
+
+def test_download_thumbnails_can_be_disabled():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "download_thumbnails": False}
+    )
+    assert cfg.download_thumbnails is False
+
+
 # ---------------------------------------------------------------------------
 # AI Video Analysis config (v2.7.0)
 # ---------------------------------------------------------------------------

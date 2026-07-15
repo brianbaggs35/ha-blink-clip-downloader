@@ -1384,6 +1384,21 @@ Confirmed already correct, no change needed:
   Option text was landing at its light-mode color, unreadably dim
   against the now-correctly-dark panel.
 
+### Changed — `download_thumbnails` now defaults to on
+
+- **`download_thumbnails` defaulted to `false`, but the Vehicles tab's
+  car-zone picker (both browsing clips and drawing the zone) and the
+  Biometrics tab's clip-browsing strip both display a clip's thumbnail
+  directly** — without one, they show a broken image with no way to
+  pick a clip at all. (Biometrics' actual frame-extraction-for-
+  enrollment step is unaffected either way — it pulls frames from the
+  video file on demand, per `/api/clips/{id}/frames` — but the strip you
+  use to *choose* a clip in the first place still needs the thumbnail.)
+  Now defaults to `true` so both tabs work without a manual settings
+  change first; `config.yaml`'s description text (shown by Supervisor
+  next to the toggle) explains why. Still fully toggleable off for
+  anyone who doesn't use either tab and wants to save the disk/bandwidth.
+
 ## 4.0.2
 
 ### Bug fixes

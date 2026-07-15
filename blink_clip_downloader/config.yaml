@@ -71,8 +71,14 @@ options:
   min_clip_duration: 0
 
   # --- Download options ---
-  # Also download thumbnail images alongside each clip.
-  download_thumbnails: false
+  # Also download thumbnail images alongside each clip. Required for the
+  # Vehicles tab's car-zone picker (both browsing clips and drawing the
+  # zone use the thumbnail directly); the Biometrics tab's face enrollment
+  # extracts its own frames on demand so it still works either way, but
+  # the clip-browsing strip there also uses thumbnails and looks broken
+  # without them. On by default so both tabs work out of the box; turn off
+  # to save disk/bandwidth if you don't use either.
+  download_thumbnails: true
   # Number of clips to download in parallel. Higher values use more bandwidth.
   concurrent_downloads: 3
   # How many times to retry a failed download before giving up.

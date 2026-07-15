@@ -62,7 +62,10 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     time_window_end: str = ""
 
     # --- Download options ---
-    download_thumbnails: bool = False
+    # Required for the Vehicles tab's car-zone picker; Biometrics enrollment
+    # extracts its own frames on demand but its clip-browsing strip also
+    # relies on thumbnails. See config.yaml's own comment on this option.
+    download_thumbnails: bool = True
     concurrent_downloads: int = 3
     retry_attempts: int = 3
     retry_delay: float = 5.0
@@ -440,7 +443,7 @@ def _parse_storage_kwargs(data: dict) -> dict[str, Any]:
         "motion_only": bool(data.get("motion_only", False)),
         "time_window_start": str(data.get("time_window_start", "") or ""),
         "time_window_end": str(data.get("time_window_end", "") or ""),
-        "download_thumbnails": bool(data.get("download_thumbnails", False)),
+        "download_thumbnails": bool(data.get("download_thumbnails", True)),
         "concurrent_downloads": max(
             1, min(10, int(data.get("concurrent_downloads", 3)))
         ),
