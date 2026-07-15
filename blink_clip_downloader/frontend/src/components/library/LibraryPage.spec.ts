@@ -388,6 +388,26 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('unstarring from the modal decrements the ★ Starred stat the same way', async () => {
+    mockFetch({}, [clip({ starred: true })])
+    const wrapper = mountLibrary()
+    await flushPromises()
+    const starredStat = () =>
+      wrapper.findAll('.lib-stat').find((s) => s.find('.lib-stat-label').text().includes('Starred'))!
+    expect(starredStat().find('.lib-stat-value').text()).toBe('1')
+
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    const unstarBtn = body()
+      .findAll('button')
+      .find((b) => b.text().includes('Starred'))!
+    await unstarBtn.trigger('click')
+    await flushPromises()
+
+    expect(starredStat().find('.lib-stat-value').text()).toBe('0')
+    wrapper.unmount()
+  })
+
   it('shows a Load more button when a full page is returned and loads the next page on click', async () => {
     const fullPage = Array.from({ length: 48 }, (_, i) => clip({ id: `c${i}` }))
     mockFetch({}, fullPage)
