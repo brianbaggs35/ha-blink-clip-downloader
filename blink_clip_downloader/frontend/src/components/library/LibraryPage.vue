@@ -314,6 +314,7 @@ async function bulkStar() {
   toast.show(`Starred ${ids.length} clip(s)`)
   toggleSelectMode(false)
   void loadClips(0)
+  void loadStats()
 }
 async function bulkDelete() {
   if (!selectedIds.value.size) return
@@ -372,6 +373,14 @@ async function onDeleted(id: string) {
 }
 function onStarred(id: string, starred: boolean) {
   const clip = clips.value.find((c) => c.id === id)
+  // Only adjust the count if this clip's starred state is actually
+  // changing — ClipModal's toggleStar() always fires this on click
+  // regardless of the previous value, and double-counting (or the count
+  // drifting when clicked twice back to back) would be worse than the
+  // stale-count bug this is fixing.
+  if (clip && clip.starred !== starred && stats.value) {
+    stats.value.starred_count += starred ? 1 : -1
+  }
   if (clip) clip.starred = starred
 }
 

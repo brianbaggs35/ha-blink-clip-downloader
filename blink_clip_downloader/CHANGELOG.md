@@ -1127,6 +1127,18 @@ Confirmed already correct, no change needed:
   alongside the `ffmpeg` this add-on already depends on), falling back to
   the existing "—" placeholder if a probe ever fails.
 
+### Fixed — ★ Starred count stat stuck until a manual page refresh
+
+- **Starring/unstarring a clip (from the modal or in bulk) updated the
+  clip's own star icon immediately but left the "★ Starred" stat badge at
+  the top of the Library tab showing the stale count** until the whole
+  page was reloaded. The per-card patch (`onStarred`) and the bulk-star
+  flow (`bulkStar`) both updated `clips` but never touched the separately-
+  loaded `stats` aggregate. `onStarred` now adjusts `stats.starred_count`
+  by ±1 in place (only when the clip's starred state actually changes, so
+  a duplicate event for an already-starred clip can't double-count), and
+  `bulkStar` now reloads stats alongside its existing clip-list reload.
+
 ## 4.0.2
 
 ### Bug fixes

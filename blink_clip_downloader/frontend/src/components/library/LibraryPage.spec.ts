@@ -105,7 +105,12 @@ function jsonResponse(body: unknown, ok = true) {
     ok,
     status: ok ? 200 : 500,
     statusText: 'x',
-    json: () => Promise.resolve(body),
+    // A real Response.json() always parses a fresh object from the response
+    // body text, never the same reference twice. Cloning here matches that:
+    // without it, every test sharing e.g. the module-level STATS fixture
+    // would hand components the exact same object, so in-place mutations
+    // (like LibraryPage's starred_count += 1) leak across tests.
+    json: () => Promise.resolve(structuredClone(body)),
     text: () => Promise.resolve(''),
   } as Response
 }
@@ -356,6 +361,30 @@ describe('LibraryPage', () => {
     await starBtn.trigger('click')
     await flushPromises()
     expect(wrapper.find('.clip-card .star-badge').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('starring from the modal bumps the ★ Starred stat immediately, without a manual refresh', async () => {
+    // Regression test: the count badge only ever loaded once on mount —
+    // starring a clip updated the card's own star icon instantly (via
+    // onStarred patching the clip in place) but left the aggregate count
+    // stale until the whole page was reloaded.
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    const starredStat = () =>
+      wrapper.findAll('.lib-stat').find((s) => s.find('.lib-stat-label').text().includes('Starred'))!
+    expect(starredStat().find('.lib-stat-value').text()).toBe('1')
+
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    const starBtn = body()
+      .findAll('button')
+      .find((b) => b.text().includes('Star'))!
+    await starBtn.trigger('click')
+    await flushPromises()
+
+    expect(starredStat().find('.lib-stat-value').text()).toBe('2')
     wrapper.unmount()
   })
 
