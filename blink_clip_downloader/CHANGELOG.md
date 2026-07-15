@@ -1344,6 +1344,20 @@ Confirmed already correct, no change needed:
   `/api/ai/faces` (Biometrics) but nothing Vehicles-specific — added
   `/api/vehicle/settings` and `/api/ai/camera-configs` alongside it.
 
+### Fixed — Connected badge stuck until visiting Library or Status
+
+- **The sidebar's Connected/Disconnected badge only ever updated as a side
+  effect of Library's or Status's own `/api/stats` polling** — if the app
+  opened straight to a different tab (e.g. AI) while the Blink connection
+  was still being established, the badge stayed at whatever it started
+  as until the user happened to navigate to one of those two tabs, or
+  reloaded the page. `AppSidebar.vue` is the one thing that's always
+  mounted for the app's whole lifetime, so it now owns a small
+  independent poll (every 10s, plus once immediately on mount) of its
+  own, matching what the store's own doc comment already claimed
+  ("a cross-cutting concern surfaced in the shell, not owned by one tab")
+  but the implementation didn't actually do.
+
 ## 4.0.2
 
 ### Bug fixes

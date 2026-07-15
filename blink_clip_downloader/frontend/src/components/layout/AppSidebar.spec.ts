@@ -125,6 +125,54 @@ describe('AppSidebar', () => {
     expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['library'])
   })
 
+  describe('connection polling', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('picks up the connection state on its own, without Library/Status ever mounting', async () => {
+      // Regression test: the badge used to only update as a side effect of
+      // Library's or Status's own /api/stats polling — if the app opened
+      // straight to a different tab while Blink auth was still connecting,
+      // the badge stayed stuck until the user happened to visit one of
+      // those two tabs or reloaded the page.
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ connected: true })))
+      mountSidebar('ai')
+      const connection = useConnectionStore()
+      expect(connection.connected).toBe(null)
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(connection.connected).toBe(true)
+    })
+
+    it('re-polls periodically and reflects a state change with no manual trigger', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ connected: false }))
+      vi.stubGlobal('fetch', fetchMock)
+      mountSidebar('ai')
+      const connection = useConnectionStore()
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(connection.connected).toBe(false)
+
+      fetchMock.mockResolvedValue(jsonResponse({ connected: true }))
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(connection.connected).toBe(true)
+    })
+
+    it('leaves the badge at its last known state when a poll fails', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')))
+      mountSidebar('ai')
+      const connection = useConnectionStore()
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(connection.connected).toBe(null)
+    })
+  })
+
   describe('sync', () => {
     beforeEach(() => {
       vi.useFakeTimers()

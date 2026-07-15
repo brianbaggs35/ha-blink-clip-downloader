@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import AppIcon from '../icons/AppIcon.vue'
@@ -10,6 +10,7 @@ import { useConnectionStore } from '../../stores/connection'
 import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { apiPost } from '../../api/client'
+import { getStats } from '../../api/clips'
 
 export type TabName = 'library' | 'automations' | 'status' | 'ai' | 'usage' | 'models' | 'vehicles' | 'biometrics'
 
@@ -97,6 +98,34 @@ function onRefreshClick() {
   refresh.bump()
   emit('refresh')
 }
+
+// The Connected/Disconnected badge previously only updated as a side effect
+// of Library's or Status's own /api/stats polling — if neither tab had ever
+// been mounted yet (e.g. the app opened straight to AI while Blink auth was
+// still connecting), the badge stayed stuck at whatever it started as until
+// the user happened to visit one of those two tabs, or reloaded the page.
+// AppSidebar is the one thing that's always mounted for the app's whole
+// lifetime, so it's the right place to own this independently.
+const CONNECTION_POLL_INTERVAL_MS = 10000
+let connectionPollTimer: ReturnType<typeof setInterval> | undefined
+
+async function pollConnection() {
+  try {
+    const s = await getStats()
+    if (typeof s.connected === 'boolean') connection.setConnected(s.connected)
+  } catch {
+    // Transient — leave the badge at its last known state rather than
+    // flipping it to Unknown on a single dropped poll.
+  }
+}
+
+onMounted(() => {
+  void pollConnection()
+  connectionPollTimer = setInterval(pollConnection, CONNECTION_POLL_INTERVAL_MS)
+})
+onUnmounted(() => {
+  if (connectionPollTimer) clearInterval(connectionPollTimer)
+})
 </script>
 
 <template>
