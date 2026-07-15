@@ -424,6 +424,17 @@ class AnalysisResult:
     # only when ai_prompt_debug_enabled is on (see BaseAnalyzer.set_prompt_debug).
     # Empty when the feature is off, regardless of whether analysis ran.
     prompt_text: str = ""
+    # Set when _face_bypass_applies cleared this clip's suspicious flag —
+    # see BiometricsPage's face-bypass activity card, which lets a household
+    # member audit whether the bypass is firing for the right people (and
+    # catch it firing for the wrong one) instead of trusting it blindly.
+    face_bypass_applied: bool = False
+    # Comma-separated approved name(s) that triggered the bypass above.
+    # Local-only — this never leaves the process the way the equivalent
+    # name-free vision.py hint sent to the AI provider does (see
+    # BaseAnalyzer._personalize_summary's docstring) — it is written to this
+    # add-on's own database and displayed only in this add-on's own web UI.
+    face_bypass_names: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -445,6 +456,8 @@ class AnalysisResult:
             "escalation_tokens_completion": self.escalation_tokens_completion,
             "escalation_provider": self.escalation_provider,
             "prompt_text": self.prompt_text,
+            "face_bypass_applied": self.face_bypass_applied,
+            "face_bypass_names": self.face_bypass_names,
         }
 
 
@@ -953,13 +966,28 @@ class BaseAnalyzer(abc.ABC):
             )
         is_suspicious, confidence, summary = self.parse_response(response)
 
+        face_bypass_applied = False
+        face_bypass_names = ""
         if is_suspicious and self._face_bypass_applies(vision_hints):
             assert (
                 vision_hints is not None and vision_hints.face_recognition is not None
             )
+            approved_names = vision_hints.face_recognition.approved_names
             is_suspicious = False
-            summary = self._personalize_summary(
-                summary, vision_hints.face_recognition.approved_names
+            face_bypass_applied = True
+            face_bypass_names = ", ".join(approved_names)
+            summary = self._personalize_summary(summary, approved_names)
+            # Unlike vision.py's name-free hint sent to the AI provider, this
+            # log line stays entirely local — naming who was matched is
+            # exactly what lets a household member audit whether the bypass
+            # is firing correctly (see BiometricsPage's bypass activity
+            # card) versus clearing a flag it shouldn't have.
+            _LOGGER.info(
+                "Face-recognition bypass cleared suspicious flag for "
+                "clip=%r camera=%r: matched approved member(s) %s",
+                clip_id,
+                camera,
+                face_bypass_names,
             )
 
         await self._maybe_update_scene_baseline(
@@ -985,6 +1013,8 @@ class BaseAnalyzer(abc.ABC):
             escalation_tokens_completion=self._last_escalation_completion_tokens,
             escalation_provider=self._last_escalation_provider,
             prompt_text=prompt if self._store_prompt_debug else "",
+            face_bypass_applied=face_bypass_applied,
+            face_bypass_names=face_bypass_names,
         )
 
     def _reset_analysis_state(self, camera: str) -> None:

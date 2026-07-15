@@ -3753,6 +3753,40 @@ async def test_ai_feedback_stats_filters_by_camera(
     assert data2["total"] == 0
 
 
+async def test_faces_bypass_stats_empty(client: TestClient) -> None:
+    resp = await client.get("/api/ai/faces/bypass-stats")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data == {"total_bypassed": 0, "by_name": [], "recent": []}
+
+
+async def test_faces_bypass_stats_reflects_recorded_bypasses(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "gpt-4o-mini",
+            "response_text": "{}",
+            "is_suspicious": False,
+            "confidence": 0.9,
+            "summary": "Brian arrived home.",
+            "frame_count": 5,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "face_bypass_applied": True,
+            "face_bypass_names": "Brian",
+        }
+    )
+    resp = await client.get("/api/ai/faces/bypass-stats")
+    data = await resp.json()
+    assert data["total_bypassed"] == 1
+    assert data["by_name"] == [{"name": "Brian", "count": 1}]
+    assert data["recent"][0]["clip_id"] == "c1"
+
+
 async def test_ai_feedback_submit_db_failure_returns_500(
     client: TestClient, db: ClipDatabase
 ) -> None:

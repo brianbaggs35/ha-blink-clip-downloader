@@ -41,6 +41,17 @@ const overlayModalColorScheme = {
   background: '{overlay.modal.background}',
   color: '{overlay.modal.color}',
 }
+// Same bug, same fix, for Select's dropdown panel (overlay.select.*) — its
+// closed input box already re-evaluates correctly via formFieldColorScheme
+// below, but the *opened* panel is a separate root-level token section
+// (see node_modules/@primeuix/themes/.../select/index.d.ts: root, overlay,
+// list, option, ... are siblings), so it needed its own explicit dark
+// declaration too. Without this, every Select's dropdown list rendered
+// with a permanently light background/text regardless of active theme.
+const overlaySelectColorScheme = {
+  background: '{overlay.select.background}',
+  color: '{overlay.select.color}',
+}
 
 // Custom PrimeVue theme for the redesigned UI: a vivid violet accent on a
 // refined near-black (dark) / soft neutral (light) surface scale, replacing
@@ -191,8 +202,8 @@ export const AppTheme = definePreset(Aura, {
     },
     select: {
       colorScheme: {
-        light: { root: formFieldColorScheme },
-        dark: { root: formFieldColorScheme },
+        light: { root: formFieldColorScheme, overlay: overlaySelectColorScheme },
+        dark: { root: formFieldColorScheme, overlay: overlaySelectColorScheme },
       },
     },
     textarea: {

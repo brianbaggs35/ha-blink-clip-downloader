@@ -7,6 +7,7 @@ import type {
   CameraConfig,
   CheckpointsResponse,
   EscalationModelsResponse,
+  FaceBypassStats,
   FacesResponse,
   Feedback,
   FeedbackStats,
@@ -125,6 +126,10 @@ export function renameFacesByName(oldName: string, newName: string): Promise<{ u
 
 export function deleteFacesByName(name: string): Promise<{ deleted: boolean }> {
   return apiDelete(`/api/ai/faces/by-name/${encodeURIComponent(name)}`)
+}
+
+export function getFaceBypassStats(): Promise<FaceBypassStats> {
+  return apiGet('/api/ai/faces/bypass-stats')
 }
 
 export function fetchEscalationModels(): Promise<EscalationModelsResponse> {

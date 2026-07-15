@@ -13,6 +13,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import EnrollFromClipPicker from './EnrollFromClipPicker.vue'
+import FaceBypassActivityCard from './FaceBypassActivityCard.vue'
 
 interface PersonGroup {
   name: string
@@ -270,6 +271,8 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
     <Message v-if="!available" severity="warn" size="small" :closable="false">
       Face-recognition dependencies are not installed in this image — enrollment is disabled.
     </Message>
+
+    <FaceBypassActivityCard />
 
     <Card class="enroll-card">
       <template #title>Add a person</template>

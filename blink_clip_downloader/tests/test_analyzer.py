@@ -4284,7 +4284,9 @@ def test_personalize_summary_noop_without_names_or_summary() -> None:
     assert ClipAnalyzer._personalize_summary("", ["Brian"]) == ""
 
 
-async def test_analyze_clip_bypasses_suspicious_flag_for_approved_only() -> None:
+async def test_analyze_clip_bypasses_suspicious_flag_for_approved_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """End-to-end: when the vision pipeline reports only approved household
     members present (no strangers, no unapproved matches), a suspicious AI
     verdict must be overridden to not-suspicious and the summary personalized."""
@@ -4309,12 +4311,20 @@ async def test_analyze_clip_bypasses_suspicious_flag_for_approved_only() -> None
         )
     )
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+        caplog.at_level("INFO"),
+    ):
         result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
 
     assert result.is_suspicious is False
     assert result.confidence == pytest.approx(0.8)  # confidence itself is untouched
     assert result.summary == "Brian is lingering near the vehicle."
+    assert result.face_bypass_applied is True
+    assert result.face_bypass_names == "Brian"
+    assert "Face-recognition bypass" in caplog.text
+    assert "Brian" in caplog.text
+    assert "c1" in caplog.text
 
 
 async def test_analyze_clip_stays_suspicious_when_stranger_also_present() -> None:
@@ -4350,6 +4360,8 @@ async def test_analyze_clip_stays_suspicious_when_stranger_also_present() -> Non
 
     assert result.is_suspicious is True
     assert result.summary == "A person is tampering with the vehicle."
+    assert result.face_bypass_applied is False
+    assert result.face_bypass_names == ""
 
 
 async def test_analyze_clip_stays_suspicious_when_only_unapproved_match() -> None:

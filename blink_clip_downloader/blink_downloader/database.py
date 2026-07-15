@@ -67,7 +67,9 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     escalation_tokens_prompt     INTEGER DEFAULT 0,
     escalation_tokens_completion INTEGER DEFAULT 0,
     escalation_provider          TEXT    DEFAULT '',
-    prompt_text                  TEXT    DEFAULT ''
+    prompt_text                  TEXT    DEFAULT '',
+    face_bypass_applied          BOOLEAN DEFAULT FALSE,
+    face_bypass_names            TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
@@ -161,6 +163,8 @@ CREATE TABLE IF NOT EXISTS face_enrollments (
 # extend this string for any future column addition to an existing table.
 _MIGRATIONS = """
 ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_applied BOOLEAN DEFAULT FALSE;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_names TEXT DEFAULT '';
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -625,8 +629,8 @@ class ClipDatabase:
                    confidence, summary, frame_count, analysis_duration, analyzed_at,
                    tokens_prompt, tokens_completion, anomaly_score,
                    escalation_model, escalation_tokens_prompt, escalation_tokens_completion,
-                   escalation_provider, prompt_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   escalation_provider, prompt_text, face_bypass_applied, face_bypass_names)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             ),
             self._res_str(result, "clip_id"),
@@ -647,6 +651,8 @@ class ClipDatabase:
             self._res_int(result, "escalation_tokens_completion"),
             self._res_str(result, "escalation_provider"),
             self._res_str(result, "prompt_text"),
+            bool(result.get("face_bypass_applied")),
+            self._res_str(result, "face_bypass_names"),
         )
 
     async def get_analysis_for_clip(self, clip_id: str) -> dict[str, Any] | None:
@@ -711,6 +717,54 @@ class ClipDatabase:
             "SELECT analyzed_at FROM analysis_results ORDER BY analyzed_at DESC LIMIT 1"
         )
         return results
+
+    async def get_face_bypass_stats(self, recent_limit: int = 20) -> dict[str, Any]:
+        """Auditable summary of face-recognition suspicious-flag bypasses.
+
+        Backs the Biometrics tab's bypass activity card, which exists so a
+        household member can confirm the bypass is firing for the right
+        people (and catch it if it's ever wrong) instead of trusting it
+        blindly — see analyzer.py's face-bypass-gating docstrings.
+        """
+        if self._pool is None:
+            return {"total_bypassed": 0, "by_name": [], "recent": []}
+        total = (
+            await self._pool.fetchval(
+                "SELECT COUNT(*) FROM analysis_results WHERE face_bypass_applied"
+            )
+            or 0
+        )
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT clip_id, camera, face_bypass_names, analyzed_at
+                FROM analysis_results
+                WHERE face_bypass_applied
+                ORDER BY analyzed_at DESC
+                LIMIT ?
+                """
+            ),
+            recent_limit,
+        )
+        recent = [dict(r) for r in rows]
+
+        by_name: dict[str, int] = {}
+        for row in recent:
+            for name in str(row.get("face_bypass_names", "")).split(", "):
+                if name:
+                    by_name[name] = by_name.get(name, 0) + 1
+        # The per-name breakdown above only covers `recent` (bounded, cheap)
+        # rather than a full-table GROUP BY — good enough for "which names
+        # are showing up lately", not meant to be an exact lifetime tally.
+
+        return {
+            "total_bypassed": total,
+            "by_name": [
+                {"name": name, "count": count}
+                for name, count in sorted(by_name.items(), key=lambda kv: -kv[1])
+            ],
+            "recent": recent,
+        }
 
     async def _get_ai_usage_reset_at(self) -> str:
         """Return the AI Usage "Clear Stats" cutoff timestamp, or '' if never reset."""

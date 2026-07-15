@@ -304,6 +304,19 @@ export interface FacesResponse {
   faces: FaceEnrollment[]
 }
 
+export interface FaceBypassEvent {
+  clip_id: string
+  camera: string
+  face_bypass_names: string
+  analyzed_at: string
+}
+
+export interface FaceBypassStats {
+  total_bypassed: number
+  by_name: { name: string; count: number }[]
+  recent: FaceBypassEvent[]
+}
+
 // ---------------------------------------------------------------------
 // Vehicle settings (Vehicles tab)
 // ---------------------------------------------------------------------

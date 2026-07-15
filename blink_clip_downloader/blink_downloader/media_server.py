@@ -265,6 +265,9 @@ class MediaServer:
         app.router.add_delete(
             "/api/ai/faces/by-name/{name}", self._handle_faces_delete_by_name
         )
+        app.router.add_get(
+            "/api/ai/faces/bypass-stats", self._handle_faces_bypass_stats
+        )
 
         # Moondream Cloud fine-tuning endpoints
         app.router.add_get("/api/ai/finetune", self._handle_finetune_list)
@@ -1470,6 +1473,10 @@ class MediaServer:
         name = request.match_info["name"]
         await self._db.delete_face_enrollments_by_name(name)
         return web.json_response({"deleted": True})
+
+    async def _handle_faces_bypass_stats(self, _request: web.Request) -> web.Response:
+        stats = await self._db.get_face_bypass_stats()
+        return web.json_response(stats)
 
     # ------------------------------------------------------------------
     # Moondream Cloud fine-tuning

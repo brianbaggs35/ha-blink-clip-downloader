@@ -515,6 +515,8 @@ def _make_analysis(clip_id: str = "clip1", **kwargs) -> dict:
         "frame_count": kwargs.get("frame_count", 3),
         "analysis_duration": kwargs.get("analysis_duration", 4.5),
         "analyzed_at": kwargs.get("analyzed_at", "2024-06-01T09:00:00+00:00"),
+        "face_bypass_applied": kwargs.get("face_bypass_applied", False),
+        "face_bypass_names": kwargs.get("face_bypass_names", ""),
     }
 
 
@@ -607,6 +609,66 @@ async def test_analysis_stats_empty(db: ClipDatabase) -> None:
     assert stats["last_analysis"] is None
     assert stats["total_frames_analyzed"] == 0
     assert stats["frames_analyzed_today"] == 0
+
+
+async def test_get_face_bypass_stats_empty(db: ClipDatabase) -> None:
+    stats = await db.get_face_bypass_stats()
+    assert stats == {"total_bypassed": 0, "by_name": [], "recent": []}
+
+
+async def test_get_face_bypass_stats_counts_and_recent(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_clip(_make_clip("c3"))
+    # Not a bypass — is_suspicious stayed true, no face match.
+    await db.add_analysis_result(_make_analysis("c1", is_suspicious=True))
+    await db.add_analysis_result(
+        _make_analysis(
+            "c2",
+            camera="Front Door",
+            is_suspicious=False,
+            face_bypass_applied=True,
+            face_bypass_names="Brian",
+            analyzed_at="2024-06-01T10:00:00+00:00",
+        )
+    )
+    await db.add_analysis_result(
+        _make_analysis(
+            "c3",
+            camera="Driveway",
+            is_suspicious=False,
+            face_bypass_applied=True,
+            face_bypass_names="Brian, Amy",
+            analyzed_at="2024-06-01T11:00:00+00:00",
+        )
+    )
+
+    stats = await db.get_face_bypass_stats()
+    assert stats["total_bypassed"] == 2
+    # Most recent first.
+    assert [r["clip_id"] for r in stats["recent"]] == ["c3", "c2"]
+    assert stats["recent"][0]["camera"] == "Driveway"
+    assert stats["recent"][0]["face_bypass_names"] == "Brian, Amy"
+    by_name = {row["name"]: row["count"] for row in stats["by_name"]}
+    assert by_name == {"Brian": 2, "Amy": 1}
+
+
+async def test_get_face_bypass_stats_respects_recent_limit(db: ClipDatabase) -> None:
+    for i in range(3):
+        clip_id = f"c{i}"
+        await db.add_clip(_make_clip(clip_id))
+        await db.add_analysis_result(
+            _make_analysis(
+                clip_id,
+                is_suspicious=False,
+                face_bypass_applied=True,
+                face_bypass_names="Brian",
+                analyzed_at=f"2024-06-01T1{i}:00:00+00:00",
+            )
+        )
+    stats = await db.get_face_bypass_stats(recent_limit=2)
+    assert stats["total_bypassed"] == 3  # total is unaffected by the recent cap
+    assert len(stats["recent"]) == 2
 
 
 # ------------------------------------------------------------------

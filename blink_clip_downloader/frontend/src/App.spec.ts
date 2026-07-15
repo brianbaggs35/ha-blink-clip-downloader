@@ -49,7 +49,9 @@ describe('App', () => {
         let body: unknown = { state: 'connected', enabled: false }
         if (arrayEndpoints.some((p) => url.startsWith(p))) body = []
         else if (url.startsWith('/api/vehicle/settings')) body = { car_description: '' }
-        else if (url.startsWith('/api/ai/faces')) body = { available: true, faces: [] }
+        else if (url.startsWith('/api/ai/faces/bypass-stats')) {
+          body = { total_bypassed: 0, by_name: [], recent: [] }
+        } else if (url.startsWith('/api/ai/faces')) body = { available: true, faces: [] }
         return Promise.resolve({ ok: true, json: () => Promise.resolve(body), text: () => Promise.resolve('') })
       }),
     )

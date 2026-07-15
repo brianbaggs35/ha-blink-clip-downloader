@@ -40,14 +40,19 @@ function stubFileReader(result = 'data:image/jpeg;base64,AAAA') {
 
 // BiometricsPage always mounts EnrollFromClipPicker (the default enrollment
 // mode), which fetches /api/cameras, /api/clips, and .../frames on its own
-// as soon as it appears — every fetch mock in this file needs to answer
-// those regardless of what the individual test actually cares about, or
-// PrimeVue's Select crashes on a non-array `options`.
+// as soon as it appears, and FaceBypassActivityCard, which fetches
+// /api/ai/faces/bypass-stats — every fetch mock in this file needs to
+// answer those regardless of what the individual test actually cares
+// about, or PrimeVue's Select crashes on a non-array `options` (cameras/
+// clips) and FaceBypassActivityCard renders "Failed to load" (bypass-stats).
 function routedFetch(extra: (url: string, init?: RequestInit) => Promise<Response> | undefined) {
   return vi.fn((url: string, init?: RequestInit) => {
     if (url.includes('/api/cameras')) return Promise.resolve(jsonResponse([]))
     if (url.includes('/frames')) return Promise.resolve(jsonResponse({ frames: [] }))
     if (url.includes('/api/clips')) return Promise.resolve(jsonResponse([]))
+    if (url.includes('/api/ai/faces/bypass-stats')) {
+      return Promise.resolve(jsonResponse({ total_bypassed: 0, by_name: [], recent: [] }))
+    }
     return extra(url, init) ?? Promise.reject(new Error(`unhandled fetch: ${url}`))
   })
 }
@@ -467,6 +472,9 @@ describe('BiometricsPage', () => {
               },
             ]),
           )
+        }
+        if (url.includes('/api/ai/faces/bypass-stats')) {
+          return Promise.resolve(jsonResponse({ total_bypassed: 0, by_name: [], recent: [] }))
         }
         if (init?.method === 'POST') {
           posted.push(JSON.parse(init.body as string).image_base64)

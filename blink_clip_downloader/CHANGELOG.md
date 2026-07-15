@@ -1051,6 +1051,36 @@ rather than the Vite dev server or a bare `docker run`:
   wider window actually surfaces more choices instead of just spacing the
   same 8 further apart.
 
+### Added — face-bypass auditability, and PrimeVue Select dark-mode fix
+
+- **No way to tell whether the suspicious-flag face-recognition bypass was
+  firing correctly** — it's designed to be all-or-nothing and never names
+  anyone in a prompt (see `analyzer.py`'s `_face_bypass_applies`), but that
+  also meant there was no way to *see* it working, or catch it if it were
+  ever bypassing for the wrong person. Every bypass now logs a local-only
+  INFO line naming the matched approved member(s) and the clip/camera, and
+  `analysis_results` gained `face_bypass_applied`/`face_bypass_names`
+  columns so this is queryable, not just grep-in-the-logs. The Biometrics
+  tab's new "Face-bypass activity" card (`GET /api/ai/faces/bypass-stats`)
+  shows the running total, a per-person breakdown, and recent events —
+  local-only display, same as everything else on that tab.
+- **PrimeVue `Select`'s dropdown panel ignored dark mode**, always
+  rendering with a white background and dark text regardless of the active
+  theme — the same root-cause pattern already fixed here for Card/
+  InputText/Checkbox/Dialog (`theme.ts`'s dark-mode-color-scheme comment):
+  the panel is a separate `overlay` token section from the closed input
+  box's `root`, and only `root` had an explicit dark declaration. Fixed by
+  adding the equivalent `overlay.select.*` override.
+
+Confirmed already correct, no change needed:
+- **Face recognition already matches across every camera, not just the one
+  a person was enrolled from** — `FaceRecognizer.recognize()` and
+  `list_face_enrollments()` have no camera parameter or filter at all
+  (`face_enrollments` doesn't even have a camera column), so an enrollment
+  is inherently global.
+- **Removing an enrolled person already uses the app's real confirmation
+  modal** (`useConfirm()`/`useConfirmStore`), not a native browser prompt.
+
 ## 4.0.2
 
 ### Bug fixes
