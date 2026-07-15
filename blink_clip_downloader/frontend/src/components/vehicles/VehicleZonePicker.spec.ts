@@ -19,6 +19,7 @@ function makeClip(id: string): ClipListItem {
     archived: false,
     archive_path: '',
     notified: false,
+    face_recognized: false,
   }
 }
 

@@ -32,9 +32,10 @@ export interface ClipListItem {
   archived: boolean
   archive_path: string
   notified: boolean
+  face_recognized: boolean
 }
 
-export type ClipDetail = Omit<ClipListItem, 'notified'>
+export type ClipDetail = Omit<ClipListItem, 'notified' | 'face_recognized'>
 
 export interface CameraStat {
   camera: string

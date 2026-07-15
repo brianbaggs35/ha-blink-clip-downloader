@@ -21,6 +21,7 @@ const thumbFailed = ref(false)
       <div v-if="clip.duration" class="dur-badge">{{ fmtDur(clip.duration) }}</div>
       <div v-if="clip.starred" class="star-badge">★</div>
       <div v-if="clip.notified" class="notified-badge">🔔</div>
+      <div v-if="clip.face_recognized" class="face-badge" title="An enrolled household member was recognized">👤</div>
       <div class="sel-check" role="checkbox" :aria-checked="selected" @click.stop="$emit('check')">
         {{ selected ? '✓' : '' }}
       </div>

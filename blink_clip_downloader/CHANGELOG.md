@@ -1399,6 +1399,23 @@ Confirmed already correct, no change needed:
   next to the toggle) explains why. Still fully toggleable off for
   anyone who doesn't use either tab and wants to save the disk/bandwidth.
 
+### Added — 👤 face-recognized badge on clip thumbnails
+
+- **New `face_recognized` field on `/api/clips`, and a 👤 badge on the
+  clip's thumbnail in the Library grid, when that clip's most recent
+  analysis had an approved household member recognized (the same
+  face-bypass that clears the suspicious flag)** — previously the only
+  way to confirm the bypass had actually fired for a clip was to open
+  the Biometrics tab's activity card or check the clip's own AI panel;
+  now it's visible at a glance across the whole grid, same as the ★
+  starred and 🔔 notified badges. Same "latest analysis wins" scoping as
+  the notified badge (`get_clips`'s existing pattern, mirrored for this
+  field) — a clip that no longer bypasses after a later re-analysis
+  doesn't keep showing the badge forever. Placed just left of the
+  selection checkbox rather than overlapping it — that checkbox is
+  always present in the grid's top-right corner, not just during
+  bulk-select, so it wasn't actually free space.
+
 ## 4.0.2
 
 ### Bug fixes

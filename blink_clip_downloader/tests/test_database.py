@@ -332,6 +332,45 @@ async def test_get_clips_notified_flag_reflects_latest_reanalysis_only(
     assert clips2["c2"]["notified"] is True
 
 
+async def test_get_clips_face_recognized_flag(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_clip(_make_clip("c3"))
+    # c1: face bypass applied -> face_recognized
+    await db.add_analysis_result(_make_analysis("c1", face_bypass_applied=True))
+    # c2: analyzed, but no face bypass -> not face_recognized
+    await db.add_analysis_result(_make_analysis("c2", face_bypass_applied=False))
+    # c3: no analysis at all -> not face_recognized
+
+    clips = {c["id"]: c for c in await db.get_clips()}
+    assert clips["c1"]["face_recognized"] is True
+    assert clips["c2"]["face_recognized"] is False
+    assert clips["c3"]["face_recognized"] is False
+
+
+async def test_get_clips_face_recognized_flag_reflects_latest_reanalysis_only(
+    db: ClipDatabase,
+) -> None:
+    """Same latest-row-wins scoping as the notified flag — a clip that was
+    once bypassed but no longer is after a later re-analysis (e.g. the
+    approved person's enrollment was removed) must not keep showing the
+    face-recognized badge forever."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis(
+            "c1", face_bypass_applied=True, analyzed_at="2024-06-01T09:00:00+00:00"
+        )
+    )
+    await db.add_analysis_result(
+        _make_analysis(
+            "c1", face_bypass_applied=False, analyzed_at="2024-06-01T10:00:00+00:00"
+        )
+    )
+
+    clips = {c["id"]: c for c in await db.get_clips()}
+    assert clips["c1"]["face_recognized"] is False
+
+
 async def test_get_clips_search(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("abc123", camera="Garage"))
     await db.add_clip(_make_clip("xyz999", camera="Office"))

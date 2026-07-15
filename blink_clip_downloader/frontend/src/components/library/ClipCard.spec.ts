@@ -18,6 +18,7 @@ const CLIP: ClipListItem = {
   archived: false,
   archive_path: '',
   notified: true,
+  face_recognized: false,
 }
 
 describe('ClipCard', () => {
@@ -29,6 +30,15 @@ describe('ClipCard', () => {
     expect(wrapper.text()).toContain('delivery')
     expect(wrapper.find('.star-badge').exists()).toBe(true)
     expect(wrapper.find('.notified-badge').exists()).toBe(true)
+  })
+
+  it('shows the face badge when an enrolled member was recognized, and hides it otherwise', () => {
+    const recognized: ClipListItem = { ...CLIP, face_recognized: true }
+    const withFace = mount(ClipCard, { props: { clip: recognized, selected: false } })
+    expect(withFace.find('.face-badge').exists()).toBe(true)
+
+    const withoutFace = mount(ClipCard, { props: { clip: CLIP, selected: false } })
+    expect(withoutFace.find('.face-badge').exists()).toBe(false)
   })
 
   it('shows a checkmark and the selected class when selected', () => {

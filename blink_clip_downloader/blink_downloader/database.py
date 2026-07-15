@@ -421,6 +421,13 @@ class ClipDatabase:
         otherwise show the 🔔 notified badge forever even once the current
         verdict is not-suspicious, since `add_analysis_result` always
         inserts a new row rather than replacing the old one.
+
+        Also includes a ``face_recognized`` boolean, True when the clip's
+        most recent analysis had ``face_bypass_applied`` set (an approved
+        household member was recognized and the suspicious flag bypassed —
+        see analyzer.py's face-bypass docs) — same latest-row scoping, so a
+        clip that no longer bypasses after a later re-analysis doesn't keep
+        showing the badge forever either.
         """
         if self._pool is None:
             return []
@@ -428,6 +435,12 @@ class ClipDatabase:
         notified_exists = (
             "EXISTS (SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
             "AND ar.is_suspicious AND ar.confidence >= ? "
+            "AND ar.analyzed_at = (SELECT MAX(ar2.analyzed_at) FROM analysis_results ar2 "
+            "WHERE ar2.clip_id = clips.id))"
+        )
+        face_recognized_exists = (
+            "EXISTS (SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
+            "AND ar.face_bypass_applied "
             "AND ar.analyzed_at = (SELECT MAX(ar2.analyzed_at) FROM analysis_results ar2 "
             "WHERE ar2.clip_id = clips.id))"
         )
@@ -470,7 +483,8 @@ class ClipDatabase:
         order = _sort_map.get(sort, "timestamp DESC")
 
         sql = (
-            f"SELECT *, {notified_exists} AS notified FROM clips "
+            f"SELECT *, {notified_exists} AS notified, "
+            f"{face_recognized_exists} AS face_recognized FROM clips "
             f"WHERE {' AND '.join(where)} ORDER BY {order} LIMIT ? OFFSET ?"
         )
         params = [min_confidence, *params, limit, offset]
