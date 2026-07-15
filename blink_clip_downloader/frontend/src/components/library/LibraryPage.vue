@@ -73,7 +73,6 @@ const starredOnly = ref(false)
 const notifiedOnly = ref(false)
 
 const tags = ref<string[]>([])
-const tagsLoaded = ref(false)
 const tagOptions = computed(() => [
   { label: 'All tags', value: '' },
   ...tags.value.map((t) => ({ label: `#${t}`, value: t })),
@@ -244,10 +243,8 @@ async function loadStats() {
 }
 
 async function loadTags() {
-  if (tagsLoaded.value) return
   try {
     tags.value = await getTags()
-    tagsLoaded.value = true
   } catch {
     /* non-fatal */
   }
@@ -264,7 +261,7 @@ async function loadAiStatus() {
 }
 
 async function loadAll() {
-  await Promise.all([loadStats(), loadCameras(), loadClips(0), loadAiStatus()])
+  await Promise.all([loadStats(), loadCameras(), loadClips(0), loadAiStatus(), loadTags()])
 }
 
 let debounceTimer: ReturnType<typeof setTimeout>
@@ -427,7 +424,6 @@ function onStarred(id: string, starred: boolean) {
 let pollTimer: ReturnType<typeof setInterval>
 onMounted(() => {
   void loadAll()
-  void loadTags()
   // Auto-refresh every 60s when the modal is closed, mirroring the pre-Vue
   // UI's interval — only stats/cameras, never the grid, so browsing isn't
   // interrupted mid-scroll.

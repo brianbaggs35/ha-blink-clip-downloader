@@ -23,6 +23,7 @@ vi.mock('video.js/dist/video-js.css', () => ({}))
 
 import ClipModal from './ClipModal.vue'
 import { useConfirmStore } from '../../stores/confirm'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 
 const CLIP = {
@@ -189,23 +190,51 @@ describe('ClipModal', () => {
     expect(wrapper.emitted('deleted')).toEqual([['c1']])
   })
 
-  it('adds a tag on Enter, sanitized to lowercase alnum/dash/underscore', async () => {
+  it('adds a tag on Enter, spaces replaced with dashes rather than stripped', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
     const input = wrapper.find('.tag-input')
     await input.setValue('New Tag!!')
     await input.trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(wrapper.findAll('.tag-item').map((el) => el.text())).toContain('newtag×')
+    expect(wrapper.findAll('.tag-item').map((el) => el.text())).toContain('new-tag×')
   })
 
-  it('removes a tag on click', async () => {
+  it('bumps the shared refresh signal after saving a tag, so the Library filter picks it up', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
+    const refresh = useRefreshStore()
+    const before = refresh.tick
+    const input = wrapper.find('.tag-input')
+    await input.setValue('another')
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(refresh.tick).toBe(before + 1)
+  })
+
+  it('removes a tag on click after confirming', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const confirm = useConfirmStore()
     expect(wrapper.text()).toContain('delivery')
-    await wrapper.find('.tag-item .rm').trigger('click')
+    const clickPromise = wrapper.find('.tag-item .rm').trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
     await flushPromises()
     expect(wrapper.find('.tag-item').exists()).toBe(false)
+  })
+
+  it('does not remove a tag when the confirm dialog is dismissed', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.find('.tag-item .rm').trigger('click')
+    await flushPromises()
+    confirm.settle(false)
+    await clickPromise
+    await flushPromises()
+    expect(wrapper.find('.tag-item').exists()).toBe(true)
   })
 
   it('toggles theater mode', async () => {

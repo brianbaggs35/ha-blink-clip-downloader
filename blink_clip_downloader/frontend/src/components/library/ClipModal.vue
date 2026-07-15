@@ -9,6 +9,7 @@ import type { ClipDetail } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useConfirmStore } from '../../stores/confirm'
 import { usePromptOverlayStore } from '../../stores/promptOverlay'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import AppIcon from '../icons/AppIcon.vue'
 import ClipAiPanel from './ClipAiPanel.vue'
@@ -28,6 +29,7 @@ const emit = defineEmits<{
 const toast = useToastStore()
 const confirmStore = useConfirmStore()
 const promptOverlay = usePromptOverlayStore()
+const refresh = useRefreshStore()
 const confirm = useConfirm()
 
 const videoEl = ref<HTMLVideoElement | null>(null)
@@ -143,6 +145,10 @@ function toggleTheater() {
 async function saveTags() {
   if (!props.clipId) return
   await setClipTags(props.clipId, currentTags.value)
+  // The Library tab's tag filter dropdown lists every distinct tag in use —
+  // bump the shared refresh signal so it picks up a newly-added or just-
+  // removed tag without the user having to reload the page.
+  refresh.bump()
 }
 
 async function onTagInputKeydown(e: KeyboardEvent) {
@@ -150,6 +156,7 @@ async function onTagInputKeydown(e: KeyboardEvent) {
   const v = tagInput.value
     .trim()
     .toLowerCase()
+    .replace(/\s+/g, '-')
     .replace(/[^a-z0-9_-]/g, '')
   tagInput.value = ''
   if (v && !currentTags.value.includes(v)) {
@@ -159,6 +166,7 @@ async function onTagInputKeydown(e: KeyboardEvent) {
 }
 
 async function removeTag(tag: string) {
+  if (!(await confirm(`Remove tag "${tag}" from this clip?`))) return
   currentTags.value = currentTags.value.filter((t) => t !== tag)
   await saveTags()
 }

@@ -1493,6 +1493,61 @@ Confirmed already correct, no change needed:
   pulling a prebuilt image (see the earlier "release build/publish
   workflow" review).
 
+### Fixed — tag input, tag filter staleness, and accidental-removal protection
+
+- **Adding a tag with spaces (e.g. "Test tag") silently dropped the
+  space** instead of preserving a word boundary (`onTagInputKeydown`'s
+  sanitizer stripped anything outside `[a-z0-9_-]` with no substitution
+  step first) — "Test tag" became "testtag". Spaces are now converted to
+  a single dash before the character filter runs, so "Test tag" becomes
+  "test-tag"; multiple/repeated spaces collapse to one dash.
+- **A newly-added or just-removed tag didn't appear/disappear from the
+  Library tab's tag filter dropdown until a manual page reload.**
+  `LibraryPage.vue`'s tag list was fetched once behind a `tagsLoaded`
+  guard and never invalidated; `ClipModal.vue`'s tag save never signaled
+  anything back to the Library page. Removed the one-time-load guard
+  (folded `loadTags()` into the existing `loadAll()`, which the page
+  already re-runs on the shared refresh signal) and had `saveTags()`
+  bump that shared signal after every add/remove, matching the pattern
+  already used for AI feedback (`ClipAiPanel.vue`) — no full-page reload
+  needed for either direction.
+- **Added a confirmation dialog before removing a tag** (`useConfirm()`,
+  the same composable already used for clip deletion and removing an
+  enrolled face) — the × was previously a single accidental click away
+  from silently removing a tag.
+
+### Verified — thumbnail dependency claim, filter dropdown contrast, and the face-bypass activity card
+
+- **Re-confirmed, against current source, that `VehicleZonePicker.vue`
+  is fully `download_thumbnails`-dependent** (both its clip-browsing
+  strip and the actual zone-drawing canvas image use `clipThumbUrl`),
+  **while `EnrollFromClipPicker.vue` only needs thumbnails for its
+  browsing strip** — the actual face-picking step calls a separate
+  on-demand endpoint (`GET /api/clips/{id}/frames`) that runs `ffmpeg`
+  directly against the clip file, independent of `download_thumbnails`.
+  No change from the earlier statement of this — re-verified line by
+  line rather than re-asserted from memory.
+- **Filter dropdown text contrast in dark mode, checked live in a real
+  browser (Playwright) against the running add-on**: every option in
+  the Library tab's date-range/source/tag/sort filters, and the
+  Biometrics tab's "Show clips from" lookback filter, renders unselected
+  options in solid white and the selected option in a tinted purple
+  highlight — the fix already shipped earlier in this branch. A reported
+  screenshot showing washed-out grey text on these same dropdowns
+  reflected a build from before this session's latest redeploy, not the
+  current code.
+- **The Biometrics tab's Face-bypass activity card is present and wired
+  correctly** — it's just showing its empty state, confirmed against the
+  live database (0 of 41 analyses this session have `face_bypass_applied
+  = true`). This is plausible rather than broken: the bypass only has
+  something to clear when the AI's own raw judgment first flags a clip
+  suspicious, and re-analyzing recent Front Door clips (including the
+  one clip from earlier this session that *was* flagged suspicious) shows
+  the AI already judging them non-suspicious on its own — leaving nothing
+  for the bypass to override. No evidence of a bug in the bypass logic
+  itself was found; if the user wants to force a concrete live example
+  from this exact account, that's a further, separate investigation.
+
 ## 4.0.2
 
 ### Bug fixes
