@@ -967,6 +967,24 @@ rather than the Vite dev server or a bare `docker run`:
   `httpx`'s own logging is untouched — it only ever contributes one
   concise, useful line per request.
 
+### Fixed — a sixth round of real-account testing (install-blocking config.yaml bug)
+
+- **`config.yaml` had a committed `image: ghcr.io/brianbaggs35/blink_clip_downloader`
+  field, which would have broken installation for every real user.** When an
+  add-on's `config.yaml` declares `image:`, Home Assistant Supervisor pulls
+  that exact tag from the registry instead of building from the bundled
+  `Dockerfile`/`build.yaml` — it never falls back to a local build if the
+  pull fails. No CI job in `.github/workflows/ci.yaml` publishes to that (or
+  any) registry — the `build` job only runs a local `docker build` and
+  `docker save`s the result as a workflow artifact for `smoke-test` to
+  consume, with `permissions: contents: read` (no `packages: write`). A
+  Supervisor install attempt against a freshly recreated test environment
+  reproduced this directly: `Failed to fetch manifest ... 404` followed by
+  `manifest unknown`. Removed the `image:` field so Supervisor builds the
+  add-on locally from `Dockerfile`/`build.yaml` — the standard distribution
+  model for a repository add-on installed via *Settings → Add-ons →
+  Repositories*, and the only one CI actually supports.
+
 ## 4.0.2
 
 ### Bug fixes
