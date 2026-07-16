@@ -5,6 +5,7 @@ profile blink_clip_downloader flags=(attach_disconnected,mediate_deleted) {
 
   # Capabilities
   file,
+  capability,
   signal (send) set=(kill,term,int,hup,cont),
 
   # S6-Overlay

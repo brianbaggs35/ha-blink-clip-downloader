@@ -2352,6 +2352,22 @@ horizontal overflow), and dark mode.
   person's exact name and preserving their current approval state rather
   than resetting it.
 
+### Fixed — add-on failed to start on a real Home Assistant OS install
+
+- **PostgreSQL init crashed the container's entire s6 boot** — surfaced only
+  when testing an install on a real Home Assistant OS host (not the
+  nested-Docker Supervisor devcontainer this add-on had been validated
+  against up to this point). `01-postgres-init.sh`'s
+  `chown postgres:postgres /data/postgresql` failed with "Operation not
+  permitted", `cont-init.d` treated that as fatal, and s6 stopped the
+  container before any service — including the media server — ever started.
+  `apparmor.txt` granted broad `file,` access but no `capability` rules at
+  all; AppArmor mediates Linux capabilities (`CAP_CHOWN` among them, needed
+  to hand the PostgreSQL data directory to the `postgres` user) separately
+  from file access, and denies anything not explicitly listed regardless of
+  what Docker itself grants the container. Added a bare `capability,` rule
+  alongside the existing `file,` one.
+
 ## 4.0.2
 
 ### Bug fixes
