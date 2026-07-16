@@ -1181,18 +1181,24 @@ Confirmed already correct, no change needed:
 - **`LoadingIndicator.vue`'s own wrapper only centered its children
   (spinner + label) *within itself* — but as a plain block element it
   shrink-wraps to its content's width, so `align-items: center` had
-  nothing wider to center against.** On the AI/AI Usage/Automations/Models/
-  Vehicles/Biometrics tabs this was invisible: their loading state sits
-  inside `.auto-content`, a `max-width: 820px; margin: 0 auto` column, so
-  the already-narrow, already-centered column made the spinner's own
-  left-alignment within it hard to notice. The Status tab's loading state
-  isn't wrapped in that column, so the same left-alignment was fully
-  visible as a spinner pinned to the top-left of the page. Fixed at the
-  shared component (`width: 100%` on `.loading-indicator`, so the existing
-  `align-items: center` has the full available width to center against)
-  rather than in each of the 8 call sites, which makes every one of them
-  robustly centered within its actual container instead of relying on
-  `.auto-content`'s width as an incidental crutch.
+  nothing wider to center against.** Gave the shared component
+  `width: 100%` so it fills whatever container it's placed in, which is
+  the right fix in general — but the Status tab's own loading/error
+  states are direct children of `.page.active` (`display: flex`), and a
+  flex item with no explicit width shrink-wraps to its content regardless
+  of what its own children ask for, so the shared-component fix alone
+  couldn't reach it. Every other tab avoids this because its loading
+  state sits inside its own already-`width: 100%` block wrapper
+  (`.auto-content` for AI/AI Usage/Automations/Models, `.vehicles-page`/
+  `.biometrics-page` for Vehicles/Biometrics) — normal block children
+  fill their container's width by default, so the shared-component fix
+  was sufficient there. Status has no such wrapper, so its loading/error
+  `<div>`s now also set `width: 100%` directly, giving them a definite
+  width to fill the row before `LoadingIndicator`'s own centering takes
+  over. Audited every other tab and their nested cards
+  (`CameraConfigsSection`, `SuspiciousFeed`, `FaceBypassActivityCard`) —
+  all already sit inside a `width: 100%` block wrapper and needed no
+  change.
 
 ### Investigated — "the Prompt button isn't showing on the clip modal anymore"
 

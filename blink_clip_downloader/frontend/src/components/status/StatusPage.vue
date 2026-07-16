@@ -66,8 +66,8 @@ watch(() => refresh.tick, load)
 </script>
 
 <template>
-  <div v-if="loading" style="padding: 2rem"><LoadingIndicator /></div>
-  <div v-else-if="error" style="padding: 2rem; color: var(--danger)">Failed to load status.</div>
+  <div v-if="loading" style="padding: 2rem; width: 100%"><LoadingIndicator /></div>
+  <div v-else-if="error" style="padding: 2rem; width: 100%; color: var(--danger)">Failed to load status.</div>
   <div v-else id="status-grid" class="status-grid">
     <div class="status-card">
       <h3>📡 Blink Connection</h3>
