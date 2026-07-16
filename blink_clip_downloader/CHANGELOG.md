@@ -1839,6 +1839,36 @@ Confirmed already correct, no change needed:
     local run (system load varies run to run), a real illustration of why
     a tight, "worked on my machine" timeout isn't a safe bet for a shared
     CI runner.
+  - A third real GitHub Actions run, after that timing fix landed, failed
+    differently again: the media-server health check exhausted its full
+    (now 40-attempt/120s) budget with *every single attempt* failing, not
+    a late-attempt near-miss — ruling out "just needs more time" entirely.
+    The dumped `hassio_supervisor` log (not the add-on's own log) showed
+    the real cause: a wall of `s6-ipcserver-socketbinder: fatal: unable to
+    create socket: Permission denied`, an internal control socket
+    Supervisor's own container was stuck permanently retrying and never
+    winning. Root cause: GitHub's Ubuntu runner images run with AppArmor
+    active by default, unlike the host this job was developed and locally
+    verified against via `act` (`/sys/module/apparmor/parameters/enabled`
+    reads `N` there — the kernel has no AppArmor enforcement to trigger in
+    the first place). `--privileged` on this job's own outer
+    `ha-supervisor-ci` container doesn't make its *inner* dockerd's own
+    default container security profile unconfined for the containers *it*
+    launches (`hassio_supervisor`, two levels of nesting deep) — on a host
+    where AppArmor is actually enforcing, that inner container hit a
+    real confinement conflict. This is an acknowledged, known class of
+    issue for nested/privileged containers on GitHub-hosted runners
+    specifically (`actions/runner-images#10015`: "apparmor should be
+    disabled by default on Ubuntu" — these are single-job ephemeral VMs
+    with full root access already, so AppArmor there has no real security
+    benefit, only the cost of exactly this kind of failure). Added a
+    GitHub-Actions-only step (`aa-teardown`, falling back to `systemctl
+    stop apparmor`) immediately after checkout to unload it before the
+    Supervisor devcontainer starts. **Could not be verified locally** —
+    the whole point of the fix is a host difference `act`/this dev
+    machine structurally cannot reproduce (confirmed: the new step
+    correctly no-ops there, and the rest of the job still passes) — this
+    one needs a real GitHub Actions run to confirm either way.
 
 ### Fixed — `build.yaml` deprecation warning
 

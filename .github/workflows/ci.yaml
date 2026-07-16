@@ -458,6 +458,38 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Disable AppArmor (real GitHub-hosted runners only)
+        # GitHub's Ubuntu runner images ship with AppArmor active, unlike
+        # the WSL2/plain-Linux Docker hosts this job was developed and
+        # locally verified against via `act` (which sets ACT=true — see
+        # the other !env.ACT steps in this file — and never exercises real
+        # AppArmor enforcement at all, since it isn't active on that host
+        # either). Confirmed via a real failed run's dumped Supervisor log:
+        # `hassio_supervisor` itself was stuck in a permanent retry loop on
+        # `s6-ipcserver-socketbinder: fatal: unable to create socket:
+        # Permission denied` — an internal control socket this doubly
+        # nested container (GitHub runner -> this job's own --privileged
+        # ha-supervisor-ci -> hassio_supervisor) needs, blocked because
+        # --privileged on the *outer* container doesn't make the *inner*
+        # dockerd's own default container security profile unconfined too.
+        # This exact failure mode for nested/privileged containers on
+        # GitHub-hosted runners is acknowledged upstream (actions/
+        # runner-images#10015: "apparmor should be disabled by default on
+        # Ubuntu" — these are ephemeral, single-job VMs with full root
+        # access already, so AppArmor has no real security benefit here,
+        # only the cost of exactly this kind of hard-to-debug breakage).
+        # `aa-teardown` unloads every currently-loaded profile immediately,
+        # no service restart/reboot needed, which fits a single CI job;
+        # falls back to stopping the systemd unit if that command isn't
+        # present on a future runner image, and either way this step must
+        # never fail the job — losing AppArmor confinement one way or the
+        # other is the goal, not a hard requirement to proceed.
+        if: ${{ !env.ACT }}
+        run: |
+          sudo aa-teardown 2>/dev/null \
+            || sudo systemctl stop apparmor 2>/dev/null \
+            || true
+
       - name: Start Home Assistant Supervisor devcontainer
         run: |
           # Volume names are prefixed ci- and container removal is forced
