@@ -555,9 +555,7 @@ describe('VehicleZonePicker', () => {
       await flushPromises()
 
       expect(wrapper.text()).toContain('No vehicle selected')
-      expect(
-        vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('camera=Backyard')),
-      ).toBe(true)
+      expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('camera=Backyard'))).toBe(true)
     })
 
     it('ignores a slower, stale recent-clips response after a newer camera switch already resolved', async () => {

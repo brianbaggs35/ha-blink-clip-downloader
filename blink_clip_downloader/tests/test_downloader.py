@@ -236,6 +236,25 @@ def test_resolve_url_fallback_when_no_blink(dl):
     assert "immedia-semi.com" in result
 
 
+def test_resolve_url_falls_back_when_urls_check_raises_attributeerror(dl):
+    """getattr(obj, name, default) already swallows an AttributeError raised
+    while resolving `urls`/`base_url` themselves — the outer except only
+    guards a stranger case where checking truthiness of the resolved value
+    itself raises (e.g. a broken __bool__). Contrived, but confirms the
+    fallback URL still wins rather than propagating the error."""
+
+    class _WeirdUrls:
+        def __bool__(self):
+            raise AttributeError("boom")
+
+    class _WeirdBlink:
+        urls = _WeirdUrls()
+
+    dl._blink = _WeirdBlink()
+    result = dl._resolve_url("/clip.mp4")
+    assert "immedia-semi.com" in result
+
+
 # ---------------------------------------------------------------------------
 # _stream_to_file
 # ---------------------------------------------------------------------------
@@ -439,6 +458,35 @@ async def test_stream_to_file_non_200_retries_then_gives_up(dl, tmp_path):
     result = await dl._stream_to_file("https://host/clip.mp4", dest)
     assert result is None
     assert mock_session.get.call_count == 3
+
+
+async def test_stream_to_file_non_200_exhausted_cleans_up_stale_tmp_file(dl, tmp_path):
+    """A non-200 response never touches tmp_dest itself (unlike a raised
+    ClientError, which is cleaned up per-attempt) — so if a stale .tmp file
+    from an earlier crashed run was already sitting there, only the final
+    loop-exit cleanup removes it once every retry is exhausted."""
+    dest = tmp_path / "clip.mp4"
+    tmp_dest = dest.with_suffix(dest.suffix + ".tmp")
+    dl._config.retry_attempts = 2
+    dl._config.retry_delay = 0.0
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 503
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    dl._session = mock_session
+    dl._blink = MagicMock()
+    dl._blink.auth.header = {}
+
+    tmp_dest.write_bytes(b"stale leftover from a crashed run")
+    result = await dl._stream_to_file("https://host/clip.mp4", dest)
+
+    assert result is None
+    assert not tmp_dest.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -2084,6 +2132,34 @@ async def test_download_local_storage_prepare_download_exception_cleans_up(
 
     assert results == []
     assert not dl._tracker.is_downloaded("local_4245")
+
+
+async def test_download_local_storage_success_but_no_file_written(dl, tmp_path):
+    """blinkpy reports download_video() as succeeded (True), but the target
+    .tmp file never actually appeared on disk — must be logged and skipped,
+    not treated as a completed download (which os.replace() would then
+    raise FileNotFoundError trying to finish)."""
+    mock_item = MagicMock()
+    mock_item.id = 9911
+    mock_item.name = "Garage"
+    mock_item.created_at = datetime(2024, 6, 4, tzinfo=timezone.utc)
+    mock_item.size = 2048
+    mock_item.prepare_download = AsyncMock(return_value=True)
+    mock_item.download_video = AsyncMock(return_value=True)
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m9"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = None
+
+    results = await dl.download_local_storage_clips()
+
+    assert results == []
+    assert not dl._tracker.is_downloaded("local_9911")
     dest = dl._storage.resolve_path(
         mock_item.name, mock_item.created_at, f"local_{mock_item.id}"
     )

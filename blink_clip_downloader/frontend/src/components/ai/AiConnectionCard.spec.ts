@@ -113,6 +113,27 @@ describe('AiConnectionCard', () => {
     expect(options.some((o) => o.text() === 'claude-opus-4-8')).toBe(true)
   })
 
+  it('updates the selected escalation model when a different option is picked', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: ['claude-haiku-4-5', 'claude-opus-4-8'] }))),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
+    })
+    const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    const select = wrapper.find('#ai-escalation-model-picker')
+    await select.setValue('claude-opus-4-8')
+
+    const copyBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('ai_escalation_model'))!
+    await copyBtn.trigger('click')
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('claude-opus-4-8')
+  })
+
   it('shows the escalation error message when no models are found', async () => {
     vi.stubGlobal(
       'fetch',
@@ -144,6 +165,26 @@ describe('AiConnectionCard', () => {
       .findAll('button')
       .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('ai_escalation_model'))!
     await copyBtn.trigger('click')
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('claude-haiku-4-5')
+  })
+
+  it('shows the raw escalation model id as a toast when the clipboard write fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: ['claude-haiku-4-5'] }))),
+    )
+    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
+    })
+    const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    const copyBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('ai_escalation_model'))!
+    await copyBtn.trigger('click')
+    await flushPromises()
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('claude-haiku-4-5')
   })
 

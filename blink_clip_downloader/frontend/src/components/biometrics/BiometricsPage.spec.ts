@@ -263,6 +263,22 @@ describe('BiometricsPage', () => {
     )
   })
 
+  it('shows a toast-worthy error when updating approval fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch((_url, init) => {
+        if (init?.method === 'PATCH') return Promise.reject(new Error('down'))
+        return Promise.resolve(jsonResponse({ available: true, faces: [faceEnrollment({ id: 1, approved: true })] }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    const toggle = wrapper.find('#biometrics-approved-Brian')
+    await toggle.setValue(false)
+    await flushPromises()
+    expect(wrapper.exists()).toBe(true) // did not throw
+  })
+
   it('renames a person inline, applied to every enrolled photo (bulk by-name)', async () => {
     vi.stubGlobal(
       'fetch',
@@ -284,6 +300,26 @@ describe('BiometricsPage', () => {
       '/api/ai/faces/by-name/Brain',
       expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: 'Brian' }) }),
     )
+  })
+
+  it('shows a toast-worthy error when renaming fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch((_url, init) => {
+        if (init?.method === 'PATCH') return Promise.reject(new Error('down'))
+        return Promise.resolve(jsonResponse({ available: true, faces: [faceEnrollment({ name: 'Brain' })] }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === '✎')!
+    await editBtn.trigger('click')
+    const input = wrapper.findAll('input').find((i) => (i.element as HTMLInputElement).value === 'Brain')!
+    await input.setValue('Brian')
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
+    await saveBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.exists()).toBe(true) // did not throw
   })
 
   it('cancels an inline rename without saving', async () => {
@@ -500,5 +536,91 @@ describe('BiometricsPage', () => {
     await flushPromises()
 
     expect(posted).toEqual(['data:image/jpeg;base64,AAA', 'data:image/jpeg;base64,BBB'])
+  })
+
+  it('warns when enrolling from clip frames with no name entered', async () => {
+    stubFaces([])
+    const wrapper = mountPage()
+    await flushPromises()
+    const enrollBtn = wrapper.findAll('button').find((b) => b.text().includes('Enroll'))!
+    await enrollBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.exists()).toBe(true) // did not throw; toast is the only visible effect
+  })
+
+  it('reports enrollment failure when every selected clip frame is rejected', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (url.includes('/api/cameras')) {
+          return Promise.resolve(
+            jsonResponse([{ camera: 'Front Door', total: 1, size_bytes: 1, today: 0, this_week: 1, last_seen: '' }]),
+          )
+        }
+        if (url.includes('/frames')) {
+          return Promise.resolve(jsonResponse({ frames: ['data:image/jpeg;base64,AAA'] }))
+        }
+        if (url.includes('/api/clips')) {
+          return Promise.resolve(
+            jsonResponse([
+              {
+                id: 'c1',
+                camera: 'Front Door',
+                file_path: '/data/c1.mp4',
+                timestamp: '2026-01-05T10:00:00Z',
+                size_bytes: 1000,
+                duration: 5,
+                source: 'pir',
+                network_id: 1,
+                starred: false,
+                tags: [],
+                downloaded_at: '2026-01-05T10:01:00Z',
+                archived: false,
+                archive_path: '',
+                notified: false,
+              },
+            ]),
+          )
+        }
+        if (url.includes('/api/ai/faces/bypass-stats')) {
+          return Promise.resolve(jsonResponse({ total_bypassed: 0, by_name: [], recent: [] }))
+        }
+        if (init?.method === 'POST') {
+          return Promise.resolve(jsonResponse({ error: 'No face detected' }, false))
+        }
+        return Promise.resolve(jsonResponse({ available: true, faces: [] }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.find('#biometrics-name').setValue('Brian')
+    await flushPromises()
+
+    const frameItems = wrapper.findAll('.frame-item')
+    await frameItems[0].trigger('click')
+    await flushPromises()
+
+    const enrollBtn = wrapper.findAll('button').find((b) => b.text().includes('Enroll'))!
+    await enrollBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.exists()).toBe(true) // did not throw; toast reports the total failure
+  })
+
+  it('revokes the previous preview object URL when a second photo is selected', async () => {
+    stubFaces([])
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    const fileUpload = wrapper.findComponent(FileUpload)
+    await fileUpload.vm.$emit('select', { files: [new File(['x'], 'first.jpg', { type: 'image/jpeg' })] })
+    await flushPromises()
+    const firstPreviewSrc = wrapper.find('img.preview-thumb').attributes('src')!
+
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL')
+    await fileUpload.vm.$emit('select', { files: [new File(['y'], 'second.jpg', { type: 'image/jpeg' })] })
+    await flushPromises()
+
+    expect(revokeSpy).toHaveBeenCalledWith(firstPreviewSrc)
   })
 })

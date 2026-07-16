@@ -166,6 +166,50 @@ describe('EnrollFromClipPicker', () => {
     expect(wrapper.find('.thumb-strip-item img').attributes('src')).toContain('front1')
   })
 
+  it('does not let a stale frames response overwrite a newer clip selection', async () => {
+    let resolveClip1: (() => void) | undefined
+    let resolveClip2: (() => void) | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/cameras')) return Promise.resolve(jsonResponse([makeCamera('Front Door')]))
+        if (url.includes('/clips/clip1/frames')) {
+          return new Promise((resolve) => {
+            resolveClip1 = () => resolve(jsonResponse({ frames: ['data:image/jpeg;base64,ONE'] }))
+          })
+        }
+        if (url.includes('/clips/clip2/frames')) {
+          return new Promise((resolve) => {
+            resolveClip2 = () => resolve(jsonResponse({ frames: ['data:image/jpeg;base64,TWO'] }))
+          })
+        }
+        if (url.includes('/api/clips')) return Promise.resolve(jsonResponse([makeClip('clip1'), makeClip('clip2')]))
+        return Promise.reject(new Error(`unexpected fetch: ${url}`))
+      }),
+    )
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const thumbs = wrapper.findAll('.thumb-strip-item')
+    await thumbs[0].trigger('click') // clip1 (auto-selected on load already fired clip1's request too)
+    await flushPromises()
+    await thumbs[1].trigger('click') // clip2, before clip1's frames response arrives
+    await flushPromises()
+
+    expect(resolveClip1).toBeDefined()
+    expect(resolveClip2).toBeDefined()
+
+    // Resolve the newer (clip2) request first, then the stale (clip1) one.
+    resolveClip2?.()
+    await flushPromises()
+    resolveClip1?.()
+    await flushPromises()
+
+    const frameImgs = wrapper.findAll('.frame-item img')
+    expect(frameImgs).toHaveLength(1)
+    expect(frameImgs[0].attributes('src')).toContain('TWO')
+  })
+
   it('shows a warning when the selected camera has no clips', async () => {
     stubRoutedFetch({ cameras: [makeCamera('Front Door')], clips: [] })
     const wrapper = mountPicker()

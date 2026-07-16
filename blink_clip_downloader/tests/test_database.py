@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from blink_downloader.database import ClipDatabase, _row_to_dict
+from blink_downloader.database import ClipDatabase, _affected, _row_to_dict
 from tests.conftest import TEST_DB_DSN
 
 
@@ -708,6 +708,15 @@ async def test_get_face_bypass_stats_empty(db: ClipDatabase) -> None:
     assert stats == {"total_bypassed": 0, "by_name": [], "recent": []}
 
 
+async def test_get_face_bypass_stats_without_init_returns_empty() -> None:
+    d = ClipDatabase()
+    assert await d.get_face_bypass_stats() == {
+        "total_bypassed": 0,
+        "by_name": [],
+        "recent": [],
+    }
+
+
 async def test_get_face_bypass_stats_counts_and_recent(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_clip(_make_clip("c2"))
@@ -796,6 +805,11 @@ async def test_get_face_recognition_feedback_orders_newest_first_and_respects_li
 
 async def test_get_face_recognition_feedback_empty(db: ClipDatabase) -> None:
     assert await db.get_face_recognition_feedback() == []
+
+
+async def test_get_face_recognition_feedback_without_init_returns_empty() -> None:
+    d = ClipDatabase()
+    assert await d.get_face_recognition_feedback() == []
 
 
 async def test_add_face_recognition_feedback_without_init_is_noop() -> None:
@@ -893,6 +907,18 @@ def test_row_to_dict_invalid_json_tags() -> None:
     }
     result = _row_to_dict(row)  # type: ignore[arg-type]
     assert result["tags"] == []
+
+
+def test_affected_valid_command_tag() -> None:
+    assert _affected("UPDATE 3") == 3
+    assert _affected("DELETE 0") == 0
+
+
+def test_affected_malformed_command_tag_returns_zero() -> None:
+    """A command tag with no trailing integer (or an empty string) must not
+    raise — falls back to 0 rather than crash the caller."""
+    assert _affected("not a command tag") == 0
+    assert _affected("") == 0
 
 
 async def test_mark_archived_without_init() -> None:
@@ -1401,6 +1427,60 @@ async def test_get_anomaly_score_uninitialised_db() -> None:
     d = ClipDatabase()
     score = await d.get_anomaly_score("Camera", 8, 5.0)
     assert score == 0.0
+
+
+async def test_total_camera_events_uninitialised_db() -> None:
+    """get_anomaly_score already short-circuits on an unconnected db before
+    ever reaching this — call the private helper directly to reach its own
+    redundant guard."""
+    d = ClipDatabase()
+    assert await d._total_camera_events("Camera") == 0
+
+
+async def test_hour_event_count_uninitialised_db() -> None:
+    d = ClipDatabase()
+    assert await d._hour_event_count("Camera", 8) == 0
+
+
+async def test_score_duration_anomaly_uninitialised_db() -> None:
+    d = ClipDatabase()
+    assert await d._score_duration_anomaly("Camera", 5.0) == 0.0
+
+
+async def test_score_duration_anomaly_no_history_returns_zero(
+    db: ClipDatabase,
+) -> None:
+    """A camera with no recorded duration stats at all (no row, as opposed
+    to too few samples) must score 0.0, not raise on a None row."""
+    assert await db._score_duration_anomaly("Never Seen Camera", 5.0) == 0.0
+
+
+async def test_score_duration_anomaly_below_sample_floor_returns_zero(
+    db: ClipDatabase,
+) -> None:
+    """Fewer than 10 recorded samples for this camera → not enough history
+    to score, regardless of how anomalous the duration looks."""
+    for _ in range(5):
+        await db.record_clip_baseline("New Camera", 12, 5.0)
+    assert await db._score_duration_anomaly("New Camera", 500.0) == 0.0
+
+
+async def test_score_duration_anomaly_zero_average_returns_zero(
+    db: ClipDatabase,
+) -> None:
+    """A stored avg_duration of 0 (not reachable via record_clip_baseline,
+    which only ever writes a positive duration, but defensive against any
+    other origin for this row) must not raise a divide-by-zero computing
+    the ratio."""
+    assert db._pool is not None  # noqa: SLF001
+    await db._pool.execute(  # noqa: SLF001
+        "INSERT INTO camera_duration_stats (camera, avg_duration, sample_count) "
+        "VALUES ($1, $2, $3)",
+        "Zero Avg Camera",
+        0.0,
+        10,
+    )
+    assert await db._score_duration_anomaly("Zero Avg Camera", 5.0) == 0.0
 
 
 async def test_record_clip_baseline_uninitialised_db() -> None:

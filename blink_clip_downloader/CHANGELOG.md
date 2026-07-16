@@ -1708,6 +1708,29 @@ Confirmed already correct, no change needed:
   zone saved before ever clicking that batch save would have silently had
   no effect.
 
+### Testing — coverage pushed further toward 100%
+
+- Backend now at 99.96% (`analyzer.py`/`database.py` each have exactly one
+  remaining line, both confirmed structurally unreachable rather than
+  untested: `_clean_summary`'s dedup loop can't produce an empty split
+  segment once `text.strip()` has already run, and `get_feedback_stats`'s
+  `not row` guard can't fire because a bare aggregate query with no
+  `GROUP BY` always returns exactly one row in PostgreSQL, even over zero
+  matching rows). Closed real gaps along the way, including a genuine
+  async double-checked-locking race in `MoondreamLocalAnalyzer._ensure_model`
+  (a second caller blocked on the load lock must see the model already
+  ready once it acquires it, not reload it) and several `self._pool is
+  None` "not connected yet" guards in `database.py` that had no direct
+  test.
+- Frontend now at 99.16% statements / 99.84% lines (up from 98.69% /
+  99.47%), including closing every reachable gap the new vehicle-zone-picker
+  code introduced. Remaining gaps are almost entirely branch-only (both
+  sides of a conditional are already exercised by different tests; V8's
+  branch counter just wants every logical-operator permutation individually)
+  spread thinly across many files — chasing those further has real
+  diminishing returns against the 80% CI gate both suites already clear
+  comfortably.
+
 ## 4.0.2
 
 ### Bug fixes

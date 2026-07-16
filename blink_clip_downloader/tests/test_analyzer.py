@@ -2207,10 +2207,61 @@ async def test_moondream_local_ensure_model_generic_exception() -> None:
         assert await a._ensure_model() is False
 
 
+async def test_moondream_local_ensure_model_second_waiter_sees_already_ready() -> None:
+    """Double-checked locking: a second concurrent caller that was blocked
+    waiting for the load lock must see the model already marked ready once
+    it acquires the lock, and return True without loading a second time —
+    rather than the two callers racing to load it twice."""
+    a = MoondreamLocalAnalyzer(prompt="test")
+    load_started = asyncio.Event()
+    proceed = asyncio.Event()
+    load_calls = 0
+
+    def fake_load_sync() -> None:
+        nonlocal load_calls
+        load_calls += 1
+        a._md_model = MagicMock()
+        a._model_ready = True
+
+    async def fake_run_in_executor(_executor, func):
+        load_started.set()
+        await proceed.wait()
+        func()
+
+    with patch("asyncio.get_running_loop") as mock_loop:
+        mock_loop.return_value.run_in_executor = fake_run_in_executor
+        a._load_model_sync = fake_load_sync  # type: ignore[method-assign]
+
+        first = asyncio.create_task(a._ensure_model())
+        await load_started.wait()
+        # `first` now holds the lock and is blocked inside run_in_executor —
+        # `second` starts here, finds _model_ready still False, and blocks
+        # acquiring the same lock.
+        second = asyncio.create_task(a._ensure_model())
+        await asyncio.sleep(0)  # let `second` reach the lock and block on it
+
+        proceed.set()
+        results = await asyncio.gather(first, second)
+
+    assert results == [True, True]
+    assert load_calls == 1
+
+
 async def test_moondream_local_call_model_no_frames_after_ready() -> None:
     a = MoondreamLocalAnalyzer(prompt="test")
     a._model_ready = True
     assert await a._call_model([], "prompt") == ""
+
+
+async def test_moondream_local_call_model_returns_empty_when_model_fails_to_load() -> (
+    None
+):
+    """_call_model must not attempt to analyze any frames when the model
+    itself never became ready — mirrors the empty-frames guard right after
+    it, but for the "model unavailable" precondition instead."""
+    a = MoondreamLocalAnalyzer(prompt="test")
+    with patch.object(a, "_ensure_model", AsyncMock(return_value=False)):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
 
 
 async def test_moondream_local_call_model_inference_exception() -> None:
@@ -6801,6 +6852,72 @@ async def test_moondream_cloud_call_model_falls_back_to_polygon_car_zone_when_no
     assert injected_prompts
     assert "INTERNAL PROXIMITY HINT" in injected_prompts[0]
     assert "touching or pressed against" in injected_prompts[0]
+
+
+async def test_moondream_cloud_call_model_falls_back_to_raw_response_when_description_empty() -> (
+    None
+):
+    """A frame's /query call returns syntactically valid JSON but with no
+    (or an empty) description field — still used as the best-so-far
+    response rather than discarded, since it's the only result available."""
+    person_boxes = [{"x_min": 0.2, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    query_answer = '{"suspicious": false, "confidence": 0.3}'
+
+    def detect(obj: str) -> list[dict[str, float]]:
+        return person_boxes if obj == "person" else []
+
+    def side_effect(url, **kwargs):
+        return _dispatch_moondream(
+            url, kwargs, detect=detect, query_answer=query_answer
+        )
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="base prompt")
+    a._session = session
+    a._current_camera = "Front Door"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "base prompt")
+
+    assert result == query_answer
+
+
+async def test_moondream_cloud_call_model_skips_frame_with_no_query_response() -> None:
+    """A frame with a detected subject but an empty /query answer (e.g. a
+    dropped response) is skipped ("no_response") rather than treated as a
+    usable result — the next frame's real result still wins."""
+    person_boxes = [{"x_min": 0.2, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    good_answer = (
+        '{"suspicious": true, "confidence": 0.7, "description": "Person at the door."}'
+    )
+    call_count = {"query": 0}
+
+    def detect(obj: str) -> list[dict[str, float]]:
+        return person_boxes if obj == "person" else []
+
+    def side_effect(url, **kwargs):
+        if "/query" in url:
+            call_count["query"] += 1
+            answer = "" if call_count["query"] == 1 else good_answer
+            return _dispatch_moondream(url, kwargs, detect=detect, query_answer=answer)
+        return _dispatch_moondream(url, kwargs, detect=detect, query_answer=good_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="base prompt")
+    a._session = session
+    a._current_camera = "Front Door"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG_2], "base prompt")
+
+    assert result == good_answer
+    assert call_count["query"] == 2
 
 
 @pytest.mark.asyncio

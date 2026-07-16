@@ -224,6 +224,24 @@ describe('ClipAiPanel', () => {
     expect(wrapper.text()).toContain('87% confidence')
   })
 
+  it('shows the result even when the feedback fetch itself fails', async () => {
+    // getFeedbackForClip() is deliberately best-effort (.catch(() => null))
+    // — a broken/500ing feedback lookup must not block the analysis result
+    // itself from rendering.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+        if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null, false))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('87% confidence')
+  })
+
   it('renders a clean (non-suspicious) result without summary/analyzed_at/frame_count', async () => {
     const clean = { ...RESULT, is_suspicious: false, summary: '', analyzed_at: '', frame_count: 0 }
     mockFetch({ '/api/ai/results/c1': clean, '/api/ai/feedback/c1': null })
