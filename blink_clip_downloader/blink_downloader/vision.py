@@ -39,6 +39,7 @@ import logging
 import math
 import os
 import platform
+import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -46,6 +47,26 @@ if TYPE_CHECKING:
     from .database import ClipDatabase
 
 _LOGGER = logging.getLogger(__name__)
+
+# Each stage below guards its own *first load* with an asyncio.Lock (see each
+# ensure_ready()), but that only serializes concurrent calls to that same
+# stage - it does nothing to stop two *different* stages (e.g. ObjectDetector
+# and FaceEmbedder) from each hitting their first-ever `import cv2`/`import
+# numpy`/`import torch` at the same moment on different threads (each
+# _load_sync() runs in its own executor thread; FrameEnhancer.enhance() runs
+# directly on the event loop thread). Concurrent clip analysis
+# (concurrent_downloads > 1, or a startup backlog) makes this a real race,
+# not just a theoretical one: CPython's import machinery isn't safe against
+# two threads both performing the *first* import of the same native
+# extension module at once, and can leave it permanently broken for the
+# rest of the process's lifetime ("ImportError: cannot load module more
+# than once per process") rather than raising a transient, retryable error.
+# A single lock shared by every stage's import statement (not the model
+# loading/download that follows, which is safe once the import itself has
+# completed) closes this for good - found via a real crash on a fresh
+# Home Assistant OS install with several clips analyzed concurrently at
+# startup.
+_native_import_lock = threading.Lock()
 
 # Persistent cache dir for Ultralytics YOLO weights (see ObjectDetector
 # below) — mirrors TORCH_HOME/HF_HOME (set in the Dockerfile) for the same
@@ -188,8 +209,9 @@ class FrameEnhancer:
         for analysis to proceed.
         """
         try:
-            import cv2  # noqa: PLC0415  # type: ignore[import-not-found]
-            import numpy as np  # noqa: PLC0415
+            with _native_import_lock:
+                import cv2  # noqa: PLC0415  # type: ignore[import-not-found]
+                import numpy as np  # noqa: PLC0415
         except ImportError:
             return frames
 
@@ -280,22 +302,29 @@ class ObjectDetector:
         # avoids both problems in one step: no fallback needed, so no
         # notice, and the settings file persists like the weights do.
         os.environ.setdefault("YOLO_CONFIG_DIR", _YOLO_MODEL_CACHE_DIR)
-        from ultralytics import YOLO  # noqa: PLC0415  # type: ignore[import-not-found]
+        # The whole body below (not just the import) runs under the shared
+        # lock: this method only ever executes once per process (ensure_ready
+        # already guards repeat calls), so the only cost is a one-time wait
+        # if another stage's first load is in flight at the same moment -
+        # see _native_import_lock's own comment for why that's necessary.
+        with _native_import_lock:
+            from ultralytics import YOLO  # noqa: PLC0415  # type: ignore[import-not-found]
 
-        # A bare filename (the default "yolo11n.pt", or any custom
-        # ai_object_detection_model naming a standard pretrained checkpoint)
-        # downloads into YOLO()'s cwd if given as-is; resolving it against a
-        # persistent absolute directory first makes that download (and
-        # every reload after a container recreation) reuse the same file
-        # instead of silently re-fetching it. A caller-supplied path that
-        # already has a directory component is left untouched.
-        model_path = self._model_name
-        if os.path.basename(model_path) == model_path:
-            os.makedirs(_YOLO_MODEL_CACHE_DIR, exist_ok=True)
-            model_path = os.path.join(_YOLO_MODEL_CACHE_DIR, model_path)
-        _LOGGER.info("Loading YOLO object-detection model '%s'", self._model_name)
-        self._model = YOLO(model_path)
-        _LOGGER.info("YOLO model '%s' ready", self._model_name)
+            # A bare filename (the default "yolo11n.pt", or any custom
+            # ai_object_detection_model naming a standard pretrained
+            # checkpoint) downloads into YOLO()'s cwd if given as-is;
+            # resolving it against a persistent absolute directory first
+            # makes that download (and every reload after a container
+            # recreation) reuse the same file instead of silently
+            # re-fetching it. A caller-supplied path that already has a
+            # directory component is left untouched.
+            model_path = self._model_name
+            if os.path.basename(model_path) == model_path:
+                os.makedirs(_YOLO_MODEL_CACHE_DIR, exist_ok=True)
+                model_path = os.path.join(_YOLO_MODEL_CACHE_DIR, model_path)
+            _LOGGER.info("Loading YOLO object-detection model '%s'", self._model_name)
+            self._model = YOLO(model_path)
+            _LOGGER.info("YOLO model '%s' ready", self._model_name)
 
     async def ensure_ready(self) -> bool:
         """Ensure the model is loaded. Returns True when ready."""
@@ -584,13 +613,17 @@ class DepthEstimator:
                 "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
                 "Pi 5 is not affected)"
             )
-        from transformers import pipeline  # noqa: PLC0415  # type: ignore[import-not-found]
+        # Whole body under the shared lock, not just the import - see
+        # _native_import_lock's comment and ObjectDetector._load_sync above
+        # for why (this method also only ever runs once per process).
+        with _native_import_lock:
+            from transformers import pipeline  # noqa: PLC0415  # type: ignore[import-not-found]
 
-        _LOGGER.info("Loading depth-estimation model '%s'", self._MODEL_ID)
-        self._pipe = pipeline(
-            task="depth-estimation", model=self._MODEL_ID, device="cpu"
-        )
-        _LOGGER.info("Depth-estimation model ready")
+            _LOGGER.info("Loading depth-estimation model '%s'", self._MODEL_ID)
+            self._pipe = pipeline(
+                task="depth-estimation", model=self._MODEL_ID, device="cpu"
+            )
+            _LOGGER.info("Depth-estimation model ready")
 
     async def ensure_ready(self) -> bool:
         if self._pipe is not None:
@@ -739,15 +772,19 @@ class ContactSegmenter:
                 "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
                 "Pi 5 is not affected)"
             )
-        from transformers import (  # noqa: PLC0415  # type: ignore[import-not-found]
-            Sam2Model,
-            Sam2Processor,
-        )
+        # Whole body under the shared lock, not just the import - see
+        # _native_import_lock's comment and ObjectDetector._load_sync above
+        # for why (this method also only ever runs once per process).
+        with _native_import_lock:
+            from transformers import (  # noqa: PLC0415  # type: ignore[import-not-found]
+                Sam2Model,
+                Sam2Processor,
+            )
 
-        _LOGGER.info("Loading SAM2 segmentation model '%s'", self._MODEL_ID)
-        self._model = Sam2Model.from_pretrained(self._MODEL_ID)
-        self._processor = Sam2Processor.from_pretrained(self._MODEL_ID)
-        _LOGGER.info("SAM2 segmentation model ready")
+            _LOGGER.info("Loading SAM2 segmentation model '%s'", self._MODEL_ID)
+            self._model = Sam2Model.from_pretrained(self._MODEL_ID)
+            self._processor = Sam2Processor.from_pretrained(self._MODEL_ID)
+            _LOGGER.info("SAM2 segmentation model ready")
 
     async def ensure_ready(self) -> bool:
         if self._model is not None:
@@ -922,15 +959,19 @@ class FaceEmbedder:
                 "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
                 "Pi 5 is not affected)"
             )
-        from facenet_pytorch import (  # noqa: PLC0415  # type: ignore[import-not-found]
-            MTCNN,
-            InceptionResnetV1,
-        )
+        # Whole body under the shared lock, not just the import - see
+        # _native_import_lock's comment and ObjectDetector._load_sync above
+        # for why (this method also only ever runs once per process).
+        with _native_import_lock:
+            from facenet_pytorch import (  # noqa: PLC0415  # type: ignore[import-not-found]
+                MTCNN,
+                InceptionResnetV1,
+            )
 
-        _LOGGER.info("Loading local face-recognition models")
-        self._mtcnn = MTCNN(keep_all=True)
-        self._resnet = InceptionResnetV1(pretrained="vggface2").eval()
-        _LOGGER.info("Face-recognition models ready")
+            _LOGGER.info("Loading local face-recognition models")
+            self._mtcnn = MTCNN(keep_all=True)
+            self._resnet = InceptionResnetV1(pretrained="vggface2").eval()
+            _LOGGER.info("Face-recognition models ready")
 
     async def ensure_ready(self) -> bool:
         if self._resnet is not None:

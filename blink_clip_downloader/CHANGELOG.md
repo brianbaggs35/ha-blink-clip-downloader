@@ -2371,6 +2371,27 @@ horizontal overflow), and dark mode.
   set of capabilities and doesn't include it) would otherwise allow it. Added
   a bare `capability,` rule to `apparmor.txt` alongside the existing `file,`
   one.
+- **The computer-vision pipeline could permanently break for the rest of a
+  container's lifetime** after a burst of clips at startup (a backlog, or
+  simply `concurrent_downloads` > 1) — every stage in `vision.py` guards its
+  *own* first model load with an `asyncio.Lock`, but nothing stopped two
+  *different* stages (e.g. object detection and face recognition) from each
+  hitting their first-ever `import cv2`/`torch`/`ultralytics`/
+  `facenet_pytorch` at the same moment on different threads, and
+  `FrameEnhancer.enhance()` (unlike every other stage) imported `cv2`/
+  `numpy` on every call with no protection at all. CPython's import
+  machinery isn't safe against two threads both performing the first import
+  of the same native extension module at once, and running Ultralytics
+  object detection and biometrics face recognition concurrently made this a
+  real, reproducible race rather than a theoretical one — once triggered, it
+  left `numpy`/`cv2` raising `ImportError: cannot load module more than once
+  per process` on every subsequent call, silently disabling object
+  detection, enhanced-frame preprocessing, and face recognition (surfacing
+  in the web UI as the Biometrics tab disappearing, since it hides itself
+  when face recognition reports itself unavailable) for as long as the
+  container kept running. Found via a real burst of concurrent clip analysis
+  on a fresh Home Assistant OS install. A single lock now serializes every
+  stage's first load against every other stage's.
 
 ## 4.0.2
 
