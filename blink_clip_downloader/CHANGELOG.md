@@ -2204,6 +2204,63 @@ horizontal overflow), and dark mode.
   the system stays conservative (keeps the suspicious flag, if any) rather
   than risking a false clear.
 
+### Added — recognized clips name the household member instead of "a person"
+
+- **AI analysis summaries now name an approved household member whenever
+  one was recognized, even on an already-not-suspicious clip** — "Brian
+  walked up the driveway" instead of "A person walked up the driveway".
+  Previously `_personalize_summary` only ran inside the safety-bypass
+  branch (`if is_suspicious and bypass_condition_met`), so a clip the AI
+  never called suspicious in the first place — the overwhelmingly common
+  case — kept the generic wording despite recognition having succeeded.
+  Restructured `_analyze_clip_locked` so personalization runs whenever the
+  same all-or-nothing recognition condition is met, independent of
+  `is_suspicious`; clearing the suspicious flag itself (`face_bypass_applied`,
+  the actual safety bypass) stays exactly as gated as before. No change to
+  `_face_bypass_applies` or any safety-critical logic — this only affects
+  which text a summary the AI already wrote gets rewritten with, entirely
+  locally, same as the existing bypass-path personalization always did.
+- **New 👤 Recognized stat** on the Library's stats row, alongside Today/
+  This week/Total/★ Starred — a live count of non-archived clips whose
+  latest analysis has `approved_faces_seen`, same semantics and latest-row
+  scoping as the `face_recognized` column `get_clips` already returns.
+- **Face-recognized badge moved to the thumbnail's bottom-right corner**,
+  now the only badge there — previously top-right, squeezed to the left of
+  the always-present selection checkbox. Also removed the separate
+  duration-pill overlay that used to occupy that corner (duration remains
+  shown as text in the info row below the thumbnail, where it was already
+  duplicated) so the corner is unambiguously the face badge's alone. Every
+  corner is now single-purpose: ★ star top-left, 🔔 notified bottom-left,
+  👤 face-recognized bottom-right, selection checkbox top-right — any
+  combination of star/notified/face can show simultaneously without ever
+  competing for the same spot.
+
+### Fixed — Codecov patch-coverage gaps from the 5.0.0 PR
+
+- Closed all four lines Codecov's patch-coverage check flagged on the
+  actual 5.0.0 pull request (`vision.py` 2 partial branches, `database.py`
+  1 partial branch, `downloader.py` 1 partial branch) — confirmed the exact
+  lines by running the same `pytest --cov-branch` CI uses locally and
+  cross-referencing against the PR's real diff (`git merge-base` against
+  `upstream/main`, which is pinned at 4.0.2), rather than guessing from
+  file-level percentages alone. `downloader.py` had six other long-standing
+  partial branches from well before this PR's base commit — left alone,
+  since only the one from a July 13 commit (atomic local-storage downloads)
+  was actually part of this patch. Added targeted tests for each: an
+  object-detection model path with an explicit directory component (left
+  untouched, not joined with the model cache dir), a subject/vehicle pair
+  evaluated after a better one was already found (must not replace it), a
+  depth comparison that comes back empty even though a pair was found, a
+  local-storage download failing before any partial file was ever written
+  (nothing to clean up), a face-bypass stats row with blank names (DB-layer
+  defensive code, not reachable through analyzer.py's own invariants but
+  not something that should crash the aggregation either), and a feedback-
+  stats aggregate query defensively handling a `None` row (unreachable
+  through real Postgres aggregate semantics without `GROUP BY`, which
+  always return exactly one row — covered directly via a stand-in for the
+  pool object, since asyncpg's real `Pool` doesn't allow monkeypatching
+  individual methods).
+
 ## 4.0.2
 
 ### Bug fixes

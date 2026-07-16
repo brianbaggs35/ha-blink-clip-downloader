@@ -18,7 +18,6 @@ const thumbFailed = ref(false)
       <div v-else class="no-thumb">
         <AppIcon name="no-thumb" />
       </div>
-      <div v-if="clip.duration" class="dur-badge">{{ fmtDur(clip.duration) }}</div>
       <div v-if="clip.starred" class="star-badge">★</div>
       <div v-if="clip.notified" class="notified-badge">🔔</div>
       <div v-if="clip.face_recognized" class="face-badge" title="An enrolled household member was recognized">👤</div>

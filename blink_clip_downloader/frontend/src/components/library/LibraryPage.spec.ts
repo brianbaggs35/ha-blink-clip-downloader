@@ -84,6 +84,7 @@ const STATS = {
   today_count: 2,
   week_count: 5,
   starred_count: 1,
+  recognized_count: 3,
   archived_count: 0,
   total_size_bytes: 1_073_741_824,
 }
@@ -437,6 +438,17 @@ describe('LibraryPage', () => {
     await flushPromises()
 
     expect(starredStat().find('.lib-stat-value').text()).toBe('0')
+    wrapper.unmount()
+  })
+
+  it('shows the 👤 Recognized stat from the stats response', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    const recognizedStat = wrapper
+      .findAll('.lib-stat')
+      .find((s) => s.find('.lib-stat-label').text().includes('Recognized'))!
+    expect(recognizedStat.find('.lib-stat-value').text()).toBe('3')
     wrapper.unmount()
   })
 

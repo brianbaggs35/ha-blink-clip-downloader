@@ -55,17 +55,16 @@ describe('ClipCard', () => {
     expect(wrapper.find('.no-thumb').exists()).toBe(true)
   })
 
-  it('omits the duration badge, source pill, and star/notified badges when absent', () => {
+  it('omits the duration text, source pill, and star/notified badges when absent', () => {
     const minimal: ClipListItem = { ...CLIP, duration: 0, source: '', starred: false, notified: false, tags: [] }
     const wrapper = mount(ClipCard, { props: { clip: minimal, selected: false } })
-    expect(wrapper.find('.dur-badge').exists()).toBe(false)
     expect(wrapper.find('.src-pill').exists()).toBe(false)
     expect(wrapper.find('.star-badge').exists()).toBe(false)
     expect(wrapper.find('.notified-badge').exists()).toBe(false)
     expect(wrapper.find('.clip-meta').text()).not.toContain('⏱')
   })
 
-  it('shows duration as text in the meta row alongside camera/date/size, not just as a thumbnail badge', () => {
+  it('shows duration as text in the meta row alongside camera/date/size', () => {
     const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false } })
     const meta = wrapper.find('.clip-meta').text()
     expect(meta).toContain('⏱')

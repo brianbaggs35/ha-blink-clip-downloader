@@ -585,6 +585,18 @@ class ClipDatabase:
                 "SELECT COUNT(*) FROM clips WHERE timestamp >= ?",
                 (week_ago,),
             ),
+            # Same "latest analysis row wins" + approved_faces_seen semantics
+            # as get_clips()'s face_recognized column (see its docstring) —
+            # a clip that no longer matches after a later re-analysis isn't
+            # counted here either.
+            "recognized_count": (
+                "SELECT COUNT(*) FROM clips WHERE archived=FALSE AND EXISTS ("
+                "SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
+                "AND ar.approved_faces_seen "
+                "AND ar.analyzed_at = (SELECT MAX(ar2.analyzed_at) "
+                "FROM analysis_results ar2 WHERE ar2.clip_id = clips.id))",
+                (),
+            ),
         }
 
         results: dict[str, Any] = {}

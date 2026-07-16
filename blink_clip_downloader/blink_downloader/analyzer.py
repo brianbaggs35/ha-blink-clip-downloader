@@ -990,34 +990,46 @@ class BaseAnalyzer(abc.ABC):
         # Computed once, unconditionally: whether every face recognition
         # found across this clip's sampled frames belongs to an approved
         # household member (same all-or-nothing condition the safety
-        # bypass below requires). Reused for both the bypass gate (only
-        # when the clip is also suspicious) and approved_faces_seen (always
-        # — see its field docstring for why that has to be unconditional).
+        # bypass below requires). Reused for the bypass gate (only when the
+        # clip is also suspicious), approved_faces_seen (always — see its
+        # field docstring for why that has to be unconditional), and
+        # personalizing the summary text below (also unconditional — a
+        # recognized household member's own routine, non-suspicious visit
+        # should still read "Brian walked up the driveway", not "A person
+        # walked up the driveway").
         bypass_condition_met = self._face_bypass_applies(vision_hints)
 
         face_bypass_applied = False
         face_bypass_names = ""
-        if is_suspicious and bypass_condition_met:
+        if bypass_condition_met:
             assert (
                 vision_hints is not None and vision_hints.face_recognition is not None
             )
             approved_names = vision_hints.face_recognition.approved_names
-            is_suspicious = False
-            face_bypass_applied = True
-            face_bypass_names = ", ".join(approved_names)
+            # Personalizing the summary text is safe regardless of
+            # is_suspicious — it only ever rewrites text the AI already
+            # generated, entirely locally, and never feeds back into the
+            # AI prompt (see _personalize_summary's docstring). Clearing
+            # the suspicious flag itself must stay gated on is_suspicious:
+            # that's the actual safety bypass, not just a text rewrite.
             summary = self._personalize_summary(summary, approved_names)
-            # Unlike vision.py's name-free hint sent to the AI provider, this
-            # log line stays entirely local — naming who was matched is
-            # exactly what lets a household member audit whether the bypass
-            # is firing correctly (see BiometricsPage's bypass activity
-            # card) versus clearing a flag it shouldn't have.
-            _LOGGER.info(
-                "Face-recognition bypass cleared suspicious flag for "
-                "clip=%r camera=%r: matched approved member(s) %s",
-                clip_id,
-                camera,
-                face_bypass_names,
-            )
+            if is_suspicious:
+                is_suspicious = False
+                face_bypass_applied = True
+                face_bypass_names = ", ".join(approved_names)
+                # Unlike vision.py's name-free hint sent to the AI provider,
+                # this log line stays entirely local — naming who was
+                # matched is exactly what lets a household member audit
+                # whether the bypass is firing correctly (see
+                # BiometricsPage's bypass activity card) versus clearing a
+                # flag it shouldn't have.
+                _LOGGER.info(
+                    "Face-recognition bypass cleared suspicious flag for "
+                    "clip=%r camera=%r: matched approved member(s) %s",
+                    clip_id,
+                    camera,
+                    face_bypass_names,
+                )
 
         await self._maybe_update_scene_baseline(
             camera, scene_thumbnail, is_suspicious, confidence

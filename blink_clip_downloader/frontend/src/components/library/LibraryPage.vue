@@ -460,6 +460,10 @@ onUnmounted(() => {
         <span class="lib-stat-value">{{ stats?.starred_count ?? 0 }}</span>
       </div>
       <div class="lib-stat">
+        <span class="lib-stat-label">👤 Recognized</span>
+        <span class="lib-stat-value">{{ stats?.recognized_count ?? 0 }}</span>
+      </div>
+      <div class="lib-stat">
         <span class="lib-stat-label">Library size</span>
         <span class="lib-stat-value">{{ libSizeGb }} GB</span>
       </div>

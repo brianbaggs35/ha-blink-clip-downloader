@@ -2134,6 +2134,39 @@ async def test_download_local_storage_prepare_download_exception_cleans_up(
     assert not dl._tracker.is_downloaded("local_4245")
 
 
+async def test_download_local_storage_prepare_download_exception_no_partial_file(
+    dl, tmp_path
+):
+    """Same failure path as the test above, but the exception happens before
+    any bytes were ever written (e.g. prepare_download() itself fails) — the
+    .tmp cleanup must be skipped gracefully rather than erroring on a path
+    that was never created."""
+    mock_item = MagicMock()
+    mock_item.id = 4246
+    mock_item.name = "Patio"
+    mock_item.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    mock_item.size = 1024
+
+    async def _failing_prepare(blink):
+        raise RuntimeError("sync module offline")
+
+    mock_item.prepare_download = _failing_prepare
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m5"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = None
+
+    results = await dl.download_local_storage_clips()
+
+    assert results == []
+    assert not dl._tracker.is_downloaded("local_4246")
+
+
 async def test_download_local_storage_success_but_no_file_written(dl, tmp_path):
     """blinkpy reports download_video() as succeeded (True), but the target
     .tmp file never actually appeared on disk — must be logged and skipped,

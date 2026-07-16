@@ -4549,7 +4549,11 @@ async def test_analyze_clip_approved_faces_seen_even_when_not_suspicious() -> No
     bypass (gated behind `if is_suspicious and ...`) is never even consulted.
     approved_faces_seen must still report the match — unlike face_bypass_applied,
     it is not gated behind is_suspicious, since it powers the Library's
-    face-recognized badge and this is the case that badge exists for."""
+    face-recognized badge and this is the case that badge exists for. The
+    summary text must also be personalized here — a recognized household
+    member's own non-suspicious visit should read "Brian is standing...",
+    not the AI's generic "A person is standing..." — even though nothing
+    about the suspicious flag itself changes (there was nothing to bypass)."""
     from blink_downloader.vision import FaceRecognitionResult, VisionHints
 
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
@@ -4575,9 +4579,9 @@ async def test_analyze_clip_approved_faces_seen_even_when_not_suspicious() -> No
         result = await a.analyze_clip("/clips/test.mp4", "c1", "Front Door")
 
     assert result.is_suspicious is False
-    # Never-suspicious summary is left exactly as the AI returned it - only
-    # the bypass path personalizes text, and the bypass never ran here.
-    assert result.summary == "A person is standing at the front door."
+    # Personalized even though nothing was suspicious and the bypass never
+    # ran — text personalization is decoupled from the suspicious-flag gate.
+    assert result.summary == "Brian is standing at the front door."
     assert result.face_bypass_applied is False
     assert result.face_bypass_names == ""
     assert result.approved_faces_seen is True

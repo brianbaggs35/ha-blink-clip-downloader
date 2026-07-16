@@ -274,6 +274,22 @@ def test_best_subject_vehicle_pair_picks_smallest_gap() -> None:
     assert frame_idx == 1
 
 
+def test_best_subject_vehicle_pair_rejects_later_worse_pair() -> None:
+    """A pair evaluated after the best one has already been found, but with
+    a larger (worse) gap, must not replace it — exercises the comparison's
+    False branch, not just the "no best yet" initial-assignment case."""
+    detections = [
+        DetectedObject("person", 0.9, (0, 0, 10, 10), None, 0),
+        DetectedObject("car", 0.9, (5, 5, 20, 20), None, 0),
+        DetectedObject("person", 0.9, (0, 0, 10, 10), None, 1),
+        DetectedObject("car", 0.9, (200, 200, 210, 210), None, 1),
+    ]
+    pair = _best_subject_vehicle_pair(detections)
+    assert pair is not None
+    _person, _vehicle, frame_idx = pair
+    assert frame_idx == 0
+
+
 def test_best_subject_vehicle_pair_none_when_no_pairing() -> None:
     detections = [DetectedObject("person", 0.9, (0, 0, 10, 10), None, 0)]
     assert _best_subject_vehicle_pair(detections) is None
@@ -443,6 +459,23 @@ def test_object_detector_load_sync_raises_cpu_incompatible(
     detector = ObjectDetector()
     with pytest.raises(CPUIncompatibleError):
         detector._load_sync()
+
+
+def test_object_detector_load_sync_leaves_explicit_path_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller-supplied model path that already has a directory component
+    (unlike the default bare "yolo11n.pt") must be passed to YOLO() exactly
+    as given — not joined with the model cache dir, which is only for
+    resolving a bare filename (see _load_sync's comment)."""
+    mock_ultra = MagicMock()
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+    explicit_path = "/custom/models/my-yolo.pt"
+    detector = ObjectDetector(explicit_path)
+    detector._load_sync()
+
+    mock_ultra.YOLO.assert_called_once_with(explicit_path)
 
 
 async def test_object_detector_ensure_ready_false_when_cpu_incompatible(
@@ -1388,6 +1421,52 @@ async def test_vision_pipeline_full_stack(monkeypatch: pytest.MonkeyPatch) -> No
     assert "distance estimate" in hints.detection_hint
     assert hints.depth_hint is not None
     assert hints.contact_hint is not None
+
+
+async def test_vision_pipeline_depth_hint_unset_when_compare_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subject/vehicle pair is found (so depth comparison actually runs),
+    but the depth stage itself comes back empty (e.g. its dependency is
+    unavailable) — depth_hint must stay unset rather than a stale/garbage
+    value, and this must not prevent contact_hint from still being
+    evaluated independently."""
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    boxes = _FakeBoxes(
+        cls=[0, 2],
+        conf=[0.9, 0.9],
+        xyxy=[(0.0, 0.0, 5.0, 5.0), (5.0, 5.0, 10.0, 10.0)],
+        ids=None,
+    )
+    fake_model = MagicMock()
+    fake_model.track.return_value = [_FakeYoloResult(boxes, {0: "person", 2: "car"})]
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+    # DepthEstimator.compare() (and ContactSegmenter.check_contact())
+    # degrade to None when their shared dependency (transformers) can't be
+    # imported. A `None` entry in sys.modules makes Python re-raise
+    # ImportError immediately for just that one module, unlike patching
+    # builtins.__import__ globally — which would also break the (already
+    # mocked, cached-in-sys.modules) ultralytics import this test still
+    # needs for object detection to find the subject/vehicle pair at all.
+    monkeypatch.setitem(sys.modules, "transformers", None)
+
+    config = VisionConfig(enhanced_detection_enabled=True)
+    pipeline = VisionPipeline(config)
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes()],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+    )
+
+    assert hints.depth_hint is None
+    assert hints.contact_hint is None
 
 
 async def test_vision_pipeline_skips_vehicle_analysis_on_non_car_camera(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -460,6 +461,7 @@ async def test_get_stats_empty(db: ClipDatabase) -> None:
     stats = await db.get_stats()
     assert stats["total_count"] == 0
     assert stats["starred_count"] == 0
+    assert stats["recognized_count"] == 0
 
 
 async def test_get_stats_counts(db: ClipDatabase) -> None:
@@ -472,6 +474,30 @@ async def test_get_stats_counts(db: ClipDatabase) -> None:
     assert stats["today_count"] == 2
     assert stats["starred_count"] == 1
     assert stats["total_size_bytes"] >= 2_000_000
+
+
+async def test_get_stats_recognized_count(db: ClipDatabase) -> None:
+    """Same approved_faces_seen + latest-row-wins semantics as get_clips'
+    face_recognized column (see its docstring) — a clip re-analyzed to no
+    longer match isn't counted, and an archived clip isn't counted either,
+    matching total_count's own archived=FALSE scoping."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_clip(_make_clip("c3"))
+    await db.add_analysis_result(_make_analysis("c1", approved_faces_seen=True))
+    await db.add_analysis_result(_make_analysis("c2", approved_faces_seen=False))
+    await db.add_analysis_result(
+        _make_analysis(
+            "c3", approved_faces_seen=True, analyzed_at="2024-06-01T09:00:00+00:00"
+        )
+    )
+    await db.add_analysis_result(
+        _make_analysis(
+            "c3", approved_faces_seen=False, analyzed_at="2024-06-01T10:00:00+00:00"
+        )
+    )
+    stats = await db.get_stats()
+    assert stats["recognized_count"] == 1
 
 
 async def test_get_camera_stats(db: ClipDatabase) -> None:
@@ -775,6 +801,26 @@ async def test_get_face_bypass_stats_counts_and_recent(db: ClipDatabase) -> None
     assert stats["recent"][0]["face_bypass_names"] == "Brian, Amy"
     by_name = {row["name"]: row["count"] for row in stats["by_name"]}
     assert by_name == {"Brian": 2, "Amy": 1}
+
+
+async def test_get_face_bypass_stats_tolerates_blank_names(db: ClipDatabase) -> None:
+    """The by_name breakdown must not choke on a row with an empty
+    face_bypass_names — analyzer.py never produces face_bypass_applied=True
+    with blank names (that combination requires a non-empty approved match,
+    see _face_bypass_applies), but this is a DB-layer aggregation that
+    shouldn't assume every caller upholds that invariant forever."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis(
+            "c1",
+            is_suspicious=False,
+            face_bypass_applied=True,
+            face_bypass_names="",
+        )
+    )
+    stats = await db.get_face_bypass_stats()
+    assert stats["total_bypassed"] == 1
+    assert stats["by_name"] == []
 
 
 async def test_get_face_bypass_stats_respects_recent_limit(db: ClipDatabase) -> None:
@@ -2039,6 +2085,25 @@ async def test_get_feedback_stats_counts_correct_and_incorrect(
 async def test_get_feedback_stats_without_init_returns_empty() -> None:
     d = ClipDatabase()
     stats = await d.get_feedback_stats()
+    assert stats["total"] == 0
+
+
+async def test_get_feedback_stats_returns_empty_when_fetchrow_returns_none(
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defensive fallback: a bare aggregate query (no GROUP BY) always
+    returns exactly one row even over an empty table, so this can't happen
+    through real Postgres query semantics — covers the fallback directly in
+    case a future change to this query ever changes that. asyncpg's real
+    Pool doesn't allow monkeypatching individual methods (read-only
+    attributes), so get_feedback_stats' one pool call (fetchrow) is stubbed
+    via a minimal stand-in object instead."""
+
+    class _FetchrowNonePool:
+        fetchrow = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(db, "_pool", _FetchrowNonePool())  # noqa: SLF001
+    stats = await db.get_feedback_stats()
     assert stats["total"] == 0
 
 

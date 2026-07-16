@@ -65,6 +65,7 @@ export interface LibraryStats {
   today_count: number
   yesterday_count: number
   week_count: number
+  recognized_count: number
   disk?: DiskStats
   connected?: boolean
   account_id?: string

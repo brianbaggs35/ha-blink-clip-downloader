@@ -729,18 +729,6 @@ h3 {
   width: 2.4rem;
   height: 2.4rem;
 }
-.dur-badge {
-  position: absolute;
-  bottom: 0.4rem;
-  right: 0.4rem;
-  background: rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(6px);
-  color: #fff;
-  font-size: 0.68rem;
-  font-weight: 600;
-  padding: 0.14rem 0.42rem;
-  border-radius: 6px;
-}
 .star-badge {
   position: absolute;
   top: 0.4rem;
@@ -756,12 +744,14 @@ h3 {
   font-size: 0.9rem;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
-/* Top-right is otherwise occupied by .sel-check (always rendered, not just
-   in select mode) — sits just to its left rather than overlapping. */
+/* Bottom-right is reserved for .face-badge alone — independent of
+   .notified-badge (bottom-left) and .sel-check (top-right), so a clip can
+   show any combination of star/notified/face without any of them ever
+   competing for the same spot. */
 .face-badge {
   position: absolute;
-  top: 0.4rem;
-  right: calc(0.4rem + 19px + 0.3rem);
+  bottom: 0.4rem;
+  right: 0.4rem;
   font-size: 0.9rem;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
