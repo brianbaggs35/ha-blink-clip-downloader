@@ -2019,6 +2019,26 @@ Confirmed already correct, no change needed:
     actually fixed the add-on's own boot failure) and added `touch
     /sys/kernel/security/apparmor/profiles` inside it, so the specific
     `open()` call Supervisor's own error message named succeeds.
+  - **That fix worked for its own specific check, and moved the failure
+    one level deeper again — which turned out to be the actual dead end.**
+    A real run confirmed the "check if loaded" error was gone, replaced
+    by a new one: `AppArmor enabled on system but the docker-default
+    profile could not be loaded: running '/usr/sbin/apparmor_parser -Kr'
+    failed with output: Cache read/write disabled: interface file
+    missing.` Every fix up to this point worked by making a userspace
+    file *read* succeed (does a path exist; does opening a specific file
+    return sensible content) — this one is fundamentally different:
+    `apparmor_parser` needs to actually **load a profile into the
+    kernel's real AppArmor LSM**, a genuine kernel operation that no
+    amount of tmpfs file-stubbing from inside a container can provide,
+    since the kernel itself is the only thing that can process it. Nine
+    rounds of real GitHub Actions failures (see the full account above)
+    fixed every layer that could be faked from userspace; this is the
+    layer that can't be. Removed the `supervisor-install-test` job
+    entirely rather than continue — the entries above are kept as-is,
+    unedited, as a record of what was tried and why, in case a future
+    attempt at Supervisor-based CI testing for this add-on wants to pick
+    up from here instead of rediscovering the same nine layers.
 
 ### Fixed — `build.yaml` deprecation warning
 
