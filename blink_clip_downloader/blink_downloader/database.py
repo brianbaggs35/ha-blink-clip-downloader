@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     escalation_provider          TEXT    DEFAULT '',
     prompt_text                  TEXT    DEFAULT '',
     face_bypass_applied          BOOLEAN DEFAULT FALSE,
-    face_bypass_names            TEXT    DEFAULT ''
+    face_bypass_names            TEXT    DEFAULT '',
+    approved_faces_seen          BOOLEAN DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
@@ -188,6 +189,7 @@ _MIGRATIONS = """
 ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_applied BOOLEAN DEFAULT FALSE;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_names TEXT DEFAULT '';
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS approved_faces_seen BOOLEAN DEFAULT FALSE;
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -446,11 +448,23 @@ class ClipDatabase:
         inserts a new row rather than replacing the old one.
 
         Also includes a ``face_recognized`` boolean, True when the clip's
-        most recent analysis had ``face_bypass_applied`` set (an approved
-        household member was recognized and the suspicious flag bypassed —
-        see analyzer.py's face-bypass docs) — same latest-row scoping, so a
-        clip that no longer bypasses after a later re-analysis doesn't keep
-        showing the badge forever either.
+        most recent analysis unambiguously matched only approved,
+        locally-enrolled household member(s) with no stranger or
+        unrecognized face anywhere in the sampled frames (``analyzer.py``'s
+        ``approved_faces_seen``, the same all-or-nothing condition
+        ``_face_bypass_applies`` itself checks — see its docstring — just
+        recorded regardless of whether the clip also happened to need its
+        suspicious flag cleared). Deliberately *not* the narrower
+        ``face_bypass_applied`` (whether the bypass actually fired): most
+        real matches are a household member's own routine, already
+        non-suspicious visit, which never reaches the bypass check at all
+        (see analyzer.py's `if is_suspicious and ...` gating) and would
+        otherwise never show any recognition signal at all despite a clear
+        match. `face_bypass_applied` itself is intentionally left alone
+        for `get_face_bypass_stats`'s narrower audit purpose (confirming
+        the *safety* bypass fires for the right people) — same latest-row
+        scoping here, so a clip that no longer matches after a later
+        re-analysis doesn't keep showing the badge forever either.
         """
         if self._pool is None:
             return []
@@ -463,7 +477,7 @@ class ClipDatabase:
         )
         face_recognized_exists = (
             "EXISTS (SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
-            "AND ar.face_bypass_applied "
+            "AND ar.approved_faces_seen "
             "AND ar.analyzed_at = (SELECT MAX(ar2.analyzed_at) FROM analysis_results ar2 "
             "WHERE ar2.clip_id = clips.id))"
         )
@@ -677,8 +691,9 @@ class ClipDatabase:
                    confidence, summary, frame_count, analysis_duration, analyzed_at,
                    tokens_prompt, tokens_completion, anomaly_score,
                    escalation_model, escalation_tokens_prompt, escalation_tokens_completion,
-                   escalation_provider, prompt_text, face_bypass_applied, face_bypass_names)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   escalation_provider, prompt_text, face_bypass_applied, face_bypass_names,
+                   approved_faces_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             ),
             self._res_str(result, "clip_id"),
@@ -701,6 +716,7 @@ class ClipDatabase:
             self._res_str(result, "prompt_text"),
             bool(result.get("face_bypass_applied")),
             self._res_str(result, "face_bypass_names"),
+            bool(result.get("approved_faces_seen")),
         )
 
     async def get_analysis_for_clip(self, clip_id: str) -> dict[str, Any] | None:

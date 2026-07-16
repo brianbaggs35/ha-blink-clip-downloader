@@ -1138,6 +1138,7 @@ class VisionPipeline:
         frames: list[bytes],
         car_description: str = "",
         car_protection_applies: bool = False,
+        face_recognition_frames: list[bytes] | None = None,
     ) -> VisionHints:
         """Run every enabled stage against *frames* and return the resulting hints.
 
@@ -1149,6 +1150,11 @@ class VisionPipeline:
         a camera that doesn't view the protected vehicle never generates
         vehicle-proximity hints just because it happened to detect an
         unrelated car and a person in frame.
+
+        *face_recognition_frames*, when given, is used for face recognition
+        instead of *frames* — see the comment where it's consumed below for
+        why recognition needs a wider frame pool than the rest of this
+        pipeline.
         """
         hints = VisionHints()
         if not frames:
@@ -1160,7 +1166,18 @@ class VisionPipeline:
         # is an embedding-space mismatch that can cause real matches (approved
         # household members) to be missed. Captured before `frames` is
         # potentially reassigned to CLAHE-enhanced frames below.
-        raw_frames = frames
+        #
+        # Prefer face_recognition_frames (the full pre-down-selection extraction
+        # pool) over frames (the handful already down-selected for the AI
+        # prompt) when the caller supplies it. The down-selection in
+        # analyzer.py picks frames by motion (entry/peak/exit) to narrate the
+        # clip for the AI model — but a person can stand still while looking
+        # straight at the camera, which is exactly a *low*-motion moment, so
+        # that selection is liable to drop the one frame with the clearest,
+        # most front-on view of a face. Recognition doesn't need a narrative
+        # sequence; it just needs the best chance of seeing every face that
+        # appears anywhere in the clip.
+        raw_frames = face_recognition_frames if face_recognition_frames else frames
 
         if self._config.enhanced_detection_enabled:
             frames = FrameEnhancer.enhance(frames)

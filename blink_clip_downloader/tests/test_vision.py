@@ -1540,6 +1540,35 @@ async def test_vision_pipeline_face_recognition_uses_raw_frames_not_enhanced(
     assert hints.face_recognition.approved_names == ["Brian"]
 
 
+async def test_vision_pipeline_face_recognition_prefers_face_recognition_frames_param(
+    db: ClipDatabase,
+) -> None:
+    """When the caller supplies face_recognition_frames (the wider,
+    pre-down-selection extraction pool from analyzer.py), face recognition
+    must scan that instead of the smaller `frames` set used for the AI
+    prompt and the other CV stages — see process_clip's docstring for why a
+    person can be in the raw pool but missing from the down-selected set."""
+    await db.add_face_enrollment("Brian", [1.0, 0.0])
+    prompt_frames = [b"prompt-frame-1"]
+    wider_pool = [b"pool-frame-1", b"pool-frame-2", b"pool-frame-3"]
+    seen_frames: list[bytes] = []
+
+    async def _embed(frame: bytes) -> list[list[float]]:
+        seen_frames.append(frame)
+        return [[1.0, 0.0]]
+
+    config = VisionConfig(face_recognition_enabled=True)
+    pipeline = VisionPipeline(config, db=db)
+    with patch.object(FaceEmbedder, "embed", side_effect=_embed):
+        hints = await pipeline.process_clip(
+            prompt_frames, face_recognition_frames=wider_pool
+        )
+
+    assert seen_frames == wider_pool
+    assert hints.face_recognition is not None
+    assert hints.face_recognition.approved_names == ["Brian"]
+
+
 async def test_vision_pipeline_face_recognition_without_db_is_noop() -> None:
     pipeline = VisionPipeline(VisionConfig(face_recognition_enabled=True), db=None)
     hints = await pipeline.process_clip([b"frame"])

@@ -336,10 +336,10 @@ async def test_get_clips_face_recognized_flag(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_clip(_make_clip("c2"))
     await db.add_clip(_make_clip("c3"))
-    # c1: face bypass applied -> face_recognized
-    await db.add_analysis_result(_make_analysis("c1", face_bypass_applied=True))
-    # c2: analyzed, but no face bypass -> not face_recognized
-    await db.add_analysis_result(_make_analysis("c2", face_bypass_applied=False))
+    # c1: approved household member seen -> face_recognized
+    await db.add_analysis_result(_make_analysis("c1", approved_faces_seen=True))
+    # c2: analyzed, but no approved match -> not face_recognized
+    await db.add_analysis_result(_make_analysis("c2", approved_faces_seen=False))
     # c3: no analysis at all -> not face_recognized
 
     clips = {c["id"]: c for c in await db.get_clips()}
@@ -348,22 +348,44 @@ async def test_get_clips_face_recognized_flag(db: ClipDatabase) -> None:
     assert clips["c3"]["face_recognized"] is False
 
 
+async def test_get_clips_face_recognized_flag_reflects_approved_faces_seen_not_just_bypass(
+    db: ClipDatabase,
+) -> None:
+    """The overwhelmingly common real case: a household member's own routine,
+    already-non-suspicious visit, so the safety bypass is never even
+    consulted (face_bypass_applied stays False) yet a face was still
+    unambiguously recognized. face_recognized must reflect approved_faces_seen
+    here, not face_bypass_applied, or the Library badge would almost never
+    show up for the case it exists to cover."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis("c1", face_bypass_applied=False, approved_faces_seen=True)
+    )
+
+    clips = {c["id"]: c for c in await db.get_clips()}
+    assert clips["c1"]["face_recognized"] is True
+
+
 async def test_get_clips_face_recognized_flag_reflects_latest_reanalysis_only(
     db: ClipDatabase,
 ) -> None:
-    """Same latest-row-wins scoping as the notified flag — a clip that was
-    once bypassed but no longer is after a later re-analysis (e.g. the
-    approved person's enrollment was removed) must not keep showing the
+    """Same latest-row-wins scoping as the notified flag — a clip that once
+    had an approved match but no longer does after a later re-analysis (e.g.
+    the approved person's enrollment was removed) must not keep showing the
     face-recognized badge forever."""
     await db.add_clip(_make_clip("c1"))
     await db.add_analysis_result(
         _make_analysis(
-            "c1", face_bypass_applied=True, analyzed_at="2024-06-01T09:00:00+00:00"
+            "c1",
+            approved_faces_seen=True,
+            analyzed_at="2024-06-01T09:00:00+00:00",
         )
     )
     await db.add_analysis_result(
         _make_analysis(
-            "c1", face_bypass_applied=False, analyzed_at="2024-06-01T10:00:00+00:00"
+            "c1",
+            approved_faces_seen=False,
+            analyzed_at="2024-06-01T10:00:00+00:00",
         )
     )
 
@@ -609,6 +631,7 @@ def _make_analysis(clip_id: str = "clip1", **kwargs) -> dict:
         "analyzed_at": kwargs.get("analyzed_at", "2024-06-01T09:00:00+00:00"),
         "face_bypass_applied": kwargs.get("face_bypass_applied", False),
         "face_bypass_names": kwargs.get("face_bypass_names", ""),
+        "approved_faces_seen": kwargs.get("approved_faces_seen", False),
     }
 
 

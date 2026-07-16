@@ -435,6 +435,19 @@ class AnalysisResult:
     # BaseAnalyzer._personalize_summary's docstring) — it is written to this
     # add-on's own database and displayed only in this add-on's own web UI.
     face_bypass_names: str = ""
+    # True whenever face recognition unambiguously matched only approved
+    # household member(s) in this clip's sampled frames (the same
+    # all-or-nothing condition _face_bypass_applies checks), computed
+    # unconditionally rather than gated behind is_suspicious like the
+    # bypass fields above. Most real matches are a household member's own
+    # routine, already non-suspicious visit — the bypass is never even
+    # consulted for those (see the `if is_suspicious and ...` gate below),
+    # so without this separate field there would be no way to show a
+    # library clip was actually recognized in the overwhelmingly common
+    # case where nothing needed bypassing. Powers the Library's
+    # face-recognized badge; face_bypass_applied above stays narrowly
+    # about the safety bypass itself for the Biometrics audit card.
+    approved_faces_seen: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -458,6 +471,7 @@ class AnalysisResult:
             "prompt_text": self.prompt_text,
             "face_bypass_applied": self.face_bypass_applied,
             "face_bypass_names": self.face_bypass_names,
+            "approved_faces_seen": self.approved_faces_seen,
         }
 
 
@@ -901,8 +915,15 @@ class BaseAnalyzer(abc.ABC):
             camera, frames
         )
 
+        # Captured before down-selection narrows `frames` to the handful
+        # actually sent to the AI model — face recognition gets this wider
+        # pool (see _apply_vision_pipeline), everything else still runs
+        # against the down-selected set below.
+        raw_frame_pool = frames
         frames = self._downselect_frames(frames, clip_duration)
-        frames, vision_hints = await self._apply_vision_pipeline(frames, camera)
+        frames, vision_hints = await self._apply_vision_pipeline(
+            frames, camera, raw_frames=raw_frame_pool
+        )
 
         zone_motion_fraction = self._maybe_compute_zone_motion(frames, camera)
         # The car-zone box drawn in the Vehicles tab only ever showed up as
@@ -966,9 +987,17 @@ class BaseAnalyzer(abc.ABC):
             )
         is_suspicious, confidence, summary = self.parse_response(response)
 
+        # Computed once, unconditionally: whether every face recognition
+        # found across this clip's sampled frames belongs to an approved
+        # household member (same all-or-nothing condition the safety
+        # bypass below requires). Reused for both the bypass gate (only
+        # when the clip is also suspicious) and approved_faces_seen (always
+        # — see its field docstring for why that has to be unconditional).
+        bypass_condition_met = self._face_bypass_applies(vision_hints)
+
         face_bypass_applied = False
         face_bypass_names = ""
-        if is_suspicious and self._face_bypass_applies(vision_hints):
+        if is_suspicious and bypass_condition_met:
             assert (
                 vision_hints is not None and vision_hints.face_recognition is not None
             )
@@ -1015,6 +1044,7 @@ class BaseAnalyzer(abc.ABC):
             prompt_text=prompt if self._store_prompt_debug else "",
             face_bypass_applied=face_bypass_applied,
             face_bypass_names=face_bypass_names,
+            approved_faces_seen=bypass_condition_met,
         )
 
     def _reset_analysis_state(self, camera: str) -> None:
@@ -1071,7 +1101,7 @@ class BaseAnalyzer(abc.ABC):
         return self._select_best_frames(frames, target_frame_count)
 
     async def _apply_vision_pipeline(
-        self, frames: list[bytes], camera: str
+        self, frames: list[bytes], camera: str, raw_frames: list[bytes] | None = None
     ) -> tuple[list[bytes], Any]:
         """Run the optional computer-vision enhancement pipeline (see vision.py).
 
@@ -1080,6 +1110,13 @@ class BaseAnalyzer(abc.ABC):
         trajectory/zone-motion heuristics so that, when frame preprocessing
         is enabled, those heuristics see the same enhanced frames that get
         sent to the AI model.
+
+        *raw_frames*, when given, is the full pre-down-selection extraction
+        pool — passed through to face recognition only (see
+        VisionPipeline.process_clip's face_recognition_frames parameter).
+        Every other stage still runs against *frames*, the same set the AI
+        model sees, so their hints stay describing what's actually in the
+        prompt.
         """
         if self._vision_pipeline is None:
             return frames, None
@@ -1087,6 +1124,7 @@ class BaseAnalyzer(abc.ABC):
             frames,
             car_description=self._car_description,
             car_protection_applies=self._car_protection_applies(camera),
+            face_recognition_frames=raw_frames,
         )
         if vision_hints.enhanced_frames is not None:
             frames = vision_hints.enhanced_frames

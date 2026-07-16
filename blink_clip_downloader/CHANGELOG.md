@@ -2112,6 +2112,98 @@ horizontal overflow), and dark mode.
   keep as-is and write user-facing notes separately — before publishing,
   not resolved here.
 
+### Fixed — 👤 face-recognized badge almost never showed, even when recognition succeeded
+
+- **Reported against a real clip** (a Front Door recording where the
+  household member was looking directly at the camera) as "facial
+  recognition doesn't appear to be working." Reproduced with a direct,
+  targeted diagnostic rather than reasoning from the code alone: extracted
+  the exact frames `analyzer.py` would have sampled from that clip via the
+  same `ffmpeg` command it uses, ran the same MTCNN + InceptionResnetV1
+  models against them, and compared the result to the person's real
+  enrolled embeddings pulled from the live database. Recognition had
+  actually succeeded — one sampled frame matched an enrolled embedding at
+  0.8075 cosine similarity, comfortably above the 0.75 match threshold.
+  The bug was never detection accuracy; it was that the Library's only
+  "recognized" signal (`face_recognized` on `GET /api/clips`) was derived
+  from `face_bypass_applied`, which only ever gets set when a clip is
+  *also* suspicious (see `_face_bypass_applies`, gated behind
+  `if is_suspicious and ...`). The ordinary case — a household member's
+  own routine visit, which the AI never called suspicious in the first
+  place — never reaches that gate at all, so the badge essentially never
+  had a chance to show for the case it exists to cover.
+  Fixed by adding a new field, `approved_faces_seen`, computed from the
+  exact same all-or-nothing recognition condition `_face_bypass_applies`
+  already checks (at least one approved match, zero unrecognized or
+  unapproved faces anywhere in the clip's sampled frames) but recorded
+  unconditionally rather than only when the bypass fires. `get_clips`'
+  `face_recognized` now reads this new field instead of
+  `face_bypass_applied`. The safety-critical bypass logic itself —
+  `_face_bypass_applies`, and the suspicious-flag clearing it gates — is
+  untouched; `approved_faces_seen` is purely an additional, informational
+  read of the same already-computed result. The Biometrics tab's bypass
+  audit card (`get_face_bypass_stats`) also keeps querying
+  `face_bypass_applied` directly, so it still reports only genuine
+  suspicious-flag-clearing events, not every routine recognized visit.
+  New `analysis_results.approved_faces_seen` column via a migration
+  (existing rows default `FALSE` until their next re-analysis).
+- **Second, deeper bug found re-testing the same clip live**: re-analyzing
+  the exact reported clip after the fix above still returned
+  `approved_faces_seen: false`. Diagnosed directly against the real
+  pipeline (not a re-implementation): `extract_frames()` pulls a generously
+  oversampled raw pool (14 frames for this clip), but
+  `_downselect_frames()` immediately trims that down to just the handful
+  actually sent to the AI (5 by default), chosen by *motion* — entry frame,
+  peak-motion frame, exit frame, spread across the timeline. Face
+  recognition was running against that already-trimmed set, not the raw
+  pool. A person standing still to look directly at the camera is exactly
+  a *low*-motion moment, so this clip's one clean, front-on, high-confidence
+  frame (MTCNN detection probability 0.9999) was consistently the frame
+  motion-scoring dropped — confirmed by literally calling the real
+  `_downselect_frames()` against the real raw pool and checking whether
+  that frame's index survived (it didn't). Fixed by threading the raw,
+  pre-down-selection pool through to face recognition specifically
+  (`analyzer.py`'s new `_apply_vision_pipeline(..., raw_frames=...)` /
+  `vision.py`'s new `VisionPipeline.process_clip(..., face_recognition_frames=...)`
+  parameters), while every other stage — object detection, depth, contact,
+  and what actually gets sent to the AI model — keeps using the same
+  down-selected set as before, unchanged. This is a strict widening of the
+  data face recognition gets to look at against the same, unmodified
+  matching logic; it cannot make a real stranger *less* likely to be
+  caught, only make a real household member *more* likely to be found.
+- **Flagged, not changed — a third, deeper layer under the two fixes
+  above.** Re-running the real `FaceRecognizer.recognize()` against the
+  widened raw pool for this same clip does now find the approved match
+  (`approved_names=["Brian"]`) — but `unrecognized_present` is *also* still
+  `True`, so `_face_bypass_applies`'s all-or-nothing condition still isn't
+  met and `approved_faces_seen` stays `False` for this specific clip.
+  Root cause: `recognize()` scores every detected face independently, and
+  as the same real person walks toward a camera their face is naturally
+  captured at a range of quality — a few frames of this clip detected a
+  face that scored well below the 0.75 match threshold (similarity
+  0.27-0.43) against the enrolled reference photos, most likely motion
+  blur or an off angle mid-stride, not a second person. The current logic
+  has no way to distinguish "the same approved person at a bad angle"
+  from "an actual stranger" — it treats any non-matching detection as
+  the latter, by design (`_face_bypass_applies`'s docstring: "a single
+  stranger... must still allow the clip to be flagged; this is a hard
+  safety requirement, not a convenience default, so do not loosen this
+  condition without equally strong justification"). Deliberately **not**
+  changed here: distinguishing the two cases correctly needs real
+  cross-frame identity tracking (e.g. clustering a low-confidence
+  detection with a high-confidence approved match in an adjacent frame by
+  spatial continuity) — meaningfully more surface area in exactly the code
+  this repo's own CLAUDE.md singles out as safety-critical, and a genuine
+  false-negative-rate trade-off on a security feature that deserves a
+  deliberate decision rather than a same-session judgment call. Net effect
+  today: recognition is now substantially more likely to succeed than
+  before this round of fixes (any clip where the person is clearly visible
+  in *any* extracted frame, without a lower-quality detection elsewhere,
+  now works), but a clip where the same person is also caught at a poor
+  angle elsewhere can still fail to show the badge / fire the bypass —
+  the system stays conservative (keeps the suspicious flag, if any) rather
+  than risking a false clear.
+
 ## 4.0.2
 
 ### Bug fixes

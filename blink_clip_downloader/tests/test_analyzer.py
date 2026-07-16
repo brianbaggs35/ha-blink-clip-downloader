@@ -4357,6 +4357,44 @@ async def test_analyze_clip_passes_car_protection_applies_per_camera() -> None:
     assert front_door_kwargs["car_protection_applies"] is False
 
 
+async def test_analyze_clip_gives_face_recognition_the_full_raw_frame_pool() -> None:
+    """Face recognition must see every extracted frame, not just the handful
+    the motion-based down-selection picked to narrate the clip for the AI
+    model. A person can stand still while looking straight at the camera —
+    exactly a low-motion moment the "smart" strategy's entry/peak/exit
+    selection is liable to drop — so recognition needs the wider pool to
+    have a fair chance of seeing a clear, front-on face."""
+    from blink_downloader.vision import VisionHints
+
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        max_frames=2,
+        frame_strategy="smart",
+    )
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(return_value=VisionHints())
+    a.attach_vision_pipeline(fake_pipeline)
+
+    many_frames = (_FAKE_JPEG + _FAKE_JPEG_2 + _FAKE_JPEG_3) * 4  # 12 raw frames
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(many_frames, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "Clear"}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    call = fake_pipeline.process_clip.call_args
+    ai_prompt_frames = call.args[0]
+    face_recognition_frames = call.kwargs["face_recognition_frames"]
+    assert len(ai_prompt_frames) == 2  # down-selected to max_frames
+    assert len(face_recognition_frames) == 12  # full raw extraction pool
+
+
 # ------------------------------------------------------------------
 # Face-recognition suspicious-flag bypass (safety-critical) — see
 # BaseAnalyzer._face_bypass_applies / _personalize_summary
@@ -4499,9 +4537,50 @@ async def test_analyze_clip_bypasses_suspicious_flag_for_approved_only(
     assert result.summary == "Brian is lingering near the vehicle."
     assert result.face_bypass_applied is True
     assert result.face_bypass_names == "Brian"
+    assert result.approved_faces_seen is True
     assert "Face-recognition bypass" in caplog.text
     assert "Brian" in caplog.text
     assert "c1" in caplog.text
+
+
+async def test_analyze_clip_approved_faces_seen_even_when_not_suspicious() -> None:
+    """The overwhelmingly common real case: a household member's own routine
+    visit, which the AI never called suspicious in the first place, so the
+    bypass (gated behind `if is_suspicious and ...`) is never even consulted.
+    approved_faces_seen must still report the match — unlike face_bypass_applied,
+    it is not gated behind is_suspicious, since it powers the Library's
+    face-recognized badge and this is the case that badge exists for."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(approved_names=["Brian"])
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": false, "confidence": 0.9, '
+            '"description": "A person is standing at the front door."}'
+        )
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Front Door")
+
+    assert result.is_suspicious is False
+    # Never-suspicious summary is left exactly as the AI returned it - only
+    # the bypass path personalizes text, and the bypass never ran here.
+    assert result.summary == "A person is standing at the front door."
+    assert result.face_bypass_applied is False
+    assert result.face_bypass_names == ""
+    assert result.approved_faces_seen is True
 
 
 async def test_analyze_clip_stays_suspicious_when_stranger_also_present() -> None:
@@ -4539,6 +4618,10 @@ async def test_analyze_clip_stays_suspicious_when_stranger_also_present() -> Non
     assert result.summary == "A person is tampering with the vehicle."
     assert result.face_bypass_applied is False
     assert result.face_bypass_names == ""
+    # The badge must not claim "recognized" either - a stranger is also
+    # present, so this is exactly the ambiguous case neither signal may
+    # paper over, whether or not the clip stayed suspicious.
+    assert result.approved_faces_seen is False
 
 
 async def test_analyze_clip_stays_suspicious_when_only_unapproved_match() -> None:
@@ -4565,6 +4648,7 @@ async def test_analyze_clip_stays_suspicious_when_only_unapproved_match() -> Non
         result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
 
     assert result.is_suspicious is True
+    assert result.approved_faces_seen is False
 
 
 async def test_analyze_clip_face_bypass_applies_to_escalated_tier2_verdict() -> None:
@@ -4610,6 +4694,7 @@ async def test_analyze_clip_face_bypass_applies_to_escalated_tier2_verdict() -> 
     assert result.is_suspicious is False
     assert result.face_bypass_applied is True
     assert result.face_bypass_names == "Brian"
+    assert result.approved_faces_seen is True
     # tier 2's well-formed suspicious response is authoritative (per
     # _maybe_escalate), so it's tier 2's text that gets personalized here,
     # not tier 1's original description.
@@ -4661,6 +4746,9 @@ async def test_analyze_clip_stranger_stays_suspicious_through_escalation() -> No
     assert result.is_suspicious is True
     assert result.face_bypass_applied is False
     assert result.face_bypass_names == ""
+    # A stranger is present alongside Brian, so the badge must not claim
+    # "recognized" here either — same all-or-nothing guard as the bypass.
+    assert result.approved_faces_seen is False
     assert result.escalation_provider == "anthropic"
 
 
