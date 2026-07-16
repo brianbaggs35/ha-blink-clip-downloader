@@ -1821,6 +1821,24 @@ Confirmed already correct, no change needed:
   - Verified with a full local `act` run reaching `Job succeeded`
     end-to-end: Supervisor bootstrap, add-on discovery, a from-scratch
     install, start, and the media-server health check all passed.
+  - That local pass didn't catch everything: the same fixes still failed
+    on a real GitHub Actions run, one step later this time — the add-on
+    itself reached Supervisor's own `state: started` promptly, but the
+    following health-check step exhausted a 10-attempt/30s budget with
+    *every* attempt failing outright (not "succeeded on a late attempt").
+    Root cause: Supervisor's "started" bookkeeping only means the
+    container process was launched, not that the app inside has finished
+    booting — this add-on's entrypoint initializes a brand new PostgreSQL
+    17 data directory from scratch before the Python app can even connect,
+    let alone bind its port, and a real GitHub-hosted runner is slower and
+    more contended than the local machine this was developed against
+    (where the same check had passed in well under a second). Both the
+    add-on-start check and the health-check loop are now more generous,
+    and re-verified via another full local `act` run — which itself this
+    time took over twice as long to reach `state: running` as the previous
+    local run (system load varies run to run), a real illustration of why
+    a tight, "worked on my machine" timeout isn't a safe bet for a shared
+    CI runner.
 
 ## 4.0.2
 

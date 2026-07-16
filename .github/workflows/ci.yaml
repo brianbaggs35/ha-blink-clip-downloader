@@ -601,19 +601,41 @@ jobs:
       - name: Start the add-on and confirm it reaches "started"
         run: |
           docker exec ha-supervisor-ci docker exec hassio_cli ha apps start local_blink_clip_downloader --raw-json
-          sleep 5
-          docker exec ha-supervisor-ci docker exec hassio_cli ha apps info local_blink_clip_downloader \
-            | grep -q '^state: started'
+          for i in $(seq 1 20); do
+            if docker exec ha-supervisor-ci docker exec hassio_cli ha apps info local_blink_clip_downloader \
+                2>/dev/null | grep -q '^state: started$'; then
+              echo "Add-on state: started, after ${i} check(s)"
+              exit 0
+            fi
+            echo "Waiting for add-on state to reach started (attempt $i/20)..."
+            sleep 3
+          done
+          echo "Add-on state never reached started"
+          docker exec ha-supervisor-ci docker exec hassio_cli ha apps info local_blink_clip_downloader || true
+          exit 1
 
       - name: Verify the media server responds through Supervisor
         run: |
-          for i in $(seq 1 10); do
+          # Supervisor reporting the add-on state as "started" only means
+          # the container process was launched, not that the app inside has
+          # finished booting — this add-on's entrypoint initializes a brand
+          # new PostgreSQL 17 data directory from scratch (no cache, unlike
+          # every local `ha-supervisor-dev` run this project's manual
+          # testing normally hits) before the Python app can even connect,
+          # let alone bind its own port. A local `act` run on a fast,
+          # otherwise-idle machine saw this succeed on the very first check
+          # (well under a second); a real GitHub-hosted runner is slower
+          # and more contended, and exhausted a 10-attempt/30s budget here
+          # with *every* attempt failing (not "succeeded on a late attempt"),
+          # consistent with this being a still-booting budget problem rather
+          # than a genuine failure. Generous on purpose for that reason.
+          for i in $(seq 1 40); do
             if docker exec ha-supervisor-ci docker exec addon_local_blink_clip_downloader \
                 curl -fsS http://localhost:8099/health >/dev/null 2>&1; then
-              echo "Media server is up"
+              echo "Media server is up, after ${i} check(s)"
               exit 0
             fi
-            echo "Media server not reachable yet (attempt $i/10), retrying..."
+            echo "Media server not reachable yet (attempt $i/40), retrying..."
             sleep 3
           done
           echo "Media server never became reachable"
