@@ -43,6 +43,56 @@ _PAGE_SIZE = 25
 _MAX_PAGES = 400
 # Download stream chunk size (64 KiB).
 _CHUNK_SIZE = 65_536
+# ffprobe subprocess timeout for probe_clip_duration() below.
+_PROBE_TIMEOUT = 15
+
+
+async def probe_clip_duration(video_path: Path) -> int:
+    """Best-effort clip duration in whole seconds, via ffprobe.
+
+    The Blink API's own clip-list response is the normal source for
+    duration (see the main download path below, which reads it straight
+    off ``clip.get("duration")``) — but on some accounts/clip types that
+    field is consistently null or 0 despite the clip itself being a normal
+    playable video, and duration is embedded in every video file's own
+    container metadata regardless, so it's always independently
+    recoverable this way as a fallback. Also used by ``library_scanner.py``
+    to reconstruct duration for a reconciled clip, which has no API
+    response to draw from at all — only the file itself. Returns 0
+    (matching the Library UI's existing "—" placeholder for a clip with no
+    known duration) on any failure — a probe going wrong must never block
+    a download or reconciling the rest of the library.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            str(video_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        _LOGGER.warning("Could not run ffprobe on %s: %s", video_path, exc)
+        return 0
+
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_PROBE_TIMEOUT)
+    except asyncio.TimeoutError:
+        _LOGGER.warning("ffprobe timed out probing duration for %s", video_path)
+        proc.kill()
+        await proc.wait()
+        return 0
+
+    try:
+        return max(0, int(float(stdout.decode().strip())))
+    except (ValueError, UnicodeDecodeError):
+        _LOGGER.warning("ffprobe gave no usable duration for %s", video_path)
+        return 0
 
 
 class TwoFARequired(Exception):
@@ -488,7 +538,10 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             "timestamp": ts.isoformat(),
             "size_bytes": size,
             "network_id": 0,
-            "duration": 0,
+            # Local-storage items never carry a duration in their own API
+            # metadata (unlike the cloud clip-list path above) — probe the
+            # file we just downloaded instead, same fallback used there.
+            "duration": await probe_clip_duration(dest),
             "source": "local_storage",
         }
         if self._db:
@@ -666,6 +719,15 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             # clip types (live-view, certain cameras).  Coerce to safe types
             # so downstream consumers (database, notifier, sensor) never see
             # NoneType where they expect int/str.
+            duration = int(clip.get("duration") or 0)
+            if duration <= 0:
+                # Some accounts/clip types never populate the API's own
+                # duration field at all (confirmed against a real account:
+                # every clip came back 0 despite downloading and playing
+                # fine) — fall back to probing the file we just downloaded,
+                # same technique library_scanner.py already relies on for
+                # reconciled clips that have no API response to draw from.
+                duration = await probe_clip_duration(dest)
             result = {
                 "id": clip_id,
                 "camera": camera_name,
@@ -673,7 +735,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 "timestamp": timestamp.isoformat(),
                 "size_bytes": size,
                 "network_id": int(clip.get("network_id") or 0),
-                "duration": int(clip.get("duration") or 0),
+                "duration": duration,
                 "source": str(clip.get("source") or ""),
             }
             if self._db:

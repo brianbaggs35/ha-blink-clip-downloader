@@ -17,11 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .database import ClipDatabase
-
-# ffprobe timing out or misbehaving on one oddball file must not stall the
-# whole reconciliation scan — mirrors the timeout used for the equivalent
-# ffmpeg thumbnail-generation subprocess call in downloader.py.
-_PROBE_TIMEOUT = 15
+from .downloader import probe_clip_duration
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,7 +55,11 @@ async def import_existing_clips(db: ClipDatabase, download_path: Path) -> int:
             continue
 
         record = _build_clip_record(download_path, file_path)
-        record["duration"] = await _probe_duration(file_path)
+        # A reconciled file has no API response to draw from — only the
+        # file itself — so duration always comes from probe_clip_duration
+        # (see downloader.py) here, unlike the normal download path where
+        # it's only a fallback.
+        record["duration"] = await probe_clip_duration(file_path)
         await db.add_clip(record)
         known.add(path_str)
         added += 1
@@ -71,52 +71,6 @@ async def import_existing_clips(db: ClipDatabase, download_path: Path) -> int:
             download_path,
         )
     return added
-
-
-async def _probe_duration(video_path: Path) -> int:
-    """Best-effort clip duration in whole seconds, via ffprobe.
-
-    Unlike the normal download path (downloader.py reads `duration`
-    straight off the Blink API's own clip metadata), a reconciled file has
-    no API response to draw from — only the file itself. Duration is
-    embedded in the file's own container metadata though, so it's
-    genuinely recoverable here, unlike `source` (a Blink-side "how was
-    this clip triggered" fact with no equivalent anywhere in the video
-    file, which stays "" for reconciled clips). Returns 0 (matching the
-    Library UI's existing "—" placeholder for a clip with no known
-    duration) on any failure — a probe going wrong must never block
-    reconciling the rest of the library.
-    """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "csv=p=0",
-            str(video_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    except OSError as exc:
-        _LOGGER.warning("Could not run ffprobe on %s: %s", video_path, exc)
-        return 0
-
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_PROBE_TIMEOUT)
-    except asyncio.TimeoutError:
-        _LOGGER.warning("ffprobe timed out probing duration for %s", video_path)
-        proc.kill()
-        await proc.wait()
-        return 0
-
-    try:
-        return max(0, int(float(stdout.decode().strip())))
-    except (ValueError, UnicodeDecodeError):
-        _LOGGER.warning("ffprobe gave no usable duration for %s", video_path)
-        return 0
 
 
 def _build_clip_record(download_path: Path, file_path: Path) -> dict:

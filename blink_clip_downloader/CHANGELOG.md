@@ -2261,6 +2261,31 @@ horizontal overflow), and dark mode.
   pool object, since asyncpg's real `Pool` doesn't allow monkeypatching
   individual methods).
 
+### Fixed — clip Duration showed "—" for every real clip
+
+- **Found while investigating why the duration overlay badge "wasn't
+  showing" on the Library thumbnails** — checked the real live database
+  directly rather than assuming a frontend display bug: all 143 real
+  clips had `duration = 0`. Every one of them downloaded and plays
+  correctly, so this was never a bad file — the main download path
+  (`downloader.py`'s `_download_clip`) stores `duration` straight from
+  the Blink API's own clip-list response, and on this account that field
+  is consistently null/0 even for perfectly normal clips. (An earlier fix
+  in this same changelog, "reconciled clips showed no Duration," assumed
+  the normal download path was fine and only reconciliation needed a
+  fallback — that assumption didn't hold up against real data.)
+  Local-storage downloads had the same problem for a different reason:
+  `duration` was simply hardcoded to `0`, since local-storage items never
+  carry it in their own metadata at all. Fixed both the same way
+  reconciliation already handled its own version of this problem: probe
+  the actual downloaded file with `ffprobe` — duration is embedded in
+  every video file's own container metadata regardless of what the API
+  says. Moved the existing `library_scanner.py` probing helper (used only
+  for reconciliation) into `downloader.py` as `probe_clip_duration`, used
+  as a fallback whenever the API's own value is `<= 0` on the main path,
+  and unconditionally for local-storage downloads; `library_scanner.py`
+  now imports the shared version instead of keeping its own copy.
+
 ## 4.0.2
 
 ### Bug fixes

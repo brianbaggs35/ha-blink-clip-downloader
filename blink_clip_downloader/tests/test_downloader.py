@@ -18,6 +18,7 @@ from blink_downloader.downloader import (
     AuthenticationError,
     BlinkDownloader,
     TwoFARequired,
+    probe_clip_duration,
 )
 from blink_downloader.storage import StorageManager
 from blink_downloader.tracker import ClipTracker
@@ -849,12 +850,76 @@ async def test_download_clip_null_api_fields(dl, tmp_path):
     dl._db = None  # skip DB write
 
     sem = asyncio.Semaphore(1)
-    result = await dl._download_clip(clip, sem)
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(side_effect=FileNotFoundError("ffprobe not found")),
+    ):
+        result = await dl._download_clip(clip, sem)
 
     assert result is not None
+    # duration=None from the API falls back to probe_clip_duration, which
+    # also comes back 0 here (ffprobe unavailable in this unit test) —
+    # covers the same "must not crash" null-handling this test targets
+    # without a real, slow, environment-dependent subprocess call.
     assert result["duration"] == 0
     assert result["network_id"] == 0
     assert result["source"] == ""
+
+
+async def test_download_clip_falls_back_to_probed_duration(dl, tmp_path):
+    """Confirmed against a real account: the Blink API's own duration field
+    came back 0 for every single clip despite each one downloading and
+    playing fine — _download_clip must probe the file it just downloaded
+    in that case rather than storing the API's useless 0."""
+    clip = {
+        "id": 55555,
+        "device_name": "Front Door",
+        "media": "/api/v1/accounts/1/clip/55555.mp4",
+        "thumbnail": None,
+        "created_at": "2024-06-01T08:30:00+00:00",
+        "duration": 0,
+        "network_id": 3,
+        "source": "pir",
+        "deleted": False,
+    }
+    content = b"fake video data"
+
+    async def _iter_chunks(chunk_size):
+        yield content
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.content.iter_chunked = _iter_chunks
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    dl._session = mock_session
+
+    mock_blink = MagicMock()
+    mock_blink.auth.header = {}
+    mock_blink.urls.base_url = "https://rest-prod.immedia-semi.com"
+    dl._blink = mock_blink
+
+    dl._storage = MagicMock()
+    dl._storage.is_over_quota.return_value = False
+    dl._storage.resolve_path.return_value = tmp_path / "clip.mp4"
+    dl._tracker = MagicMock()
+    dl._db = None
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"23.4\n", b""))
+    sem = asyncio.Semaphore(1)
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ):
+        result = await dl._download_clip(clip, sem)
+
+    assert result is not None
+    assert result["duration"] == 23
 
 
 async def _download_sample_clip(dl, tmp_path, *, download_thumbnails):
@@ -2404,3 +2469,64 @@ async def test_download_local_storage_download_failure_cleans_up_partial_file(
     assert not dl._tracker.is_downloaded("local_6667")
     assert not dest.exists()
     assert not tmp_dest.exists()
+
+
+# ---------------------------------------------------------------------------
+# probe_clip_duration
+# ---------------------------------------------------------------------------
+
+
+async def test_probe_clip_duration_returns_zero_when_ffprobe_missing(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(side_effect=FileNotFoundError("ffprobe not found")),
+    ):
+        assert await probe_clip_duration(video) == 0
+
+
+async def test_probe_clip_duration_returns_zero_on_timeout(tmp_path: Path) -> None:
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+    mock_proc.kill = lambda: None
+    mock_proc.wait = AsyncMock()
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ):
+        assert await probe_clip_duration(video) == 0
+
+
+async def test_probe_clip_duration_returns_zero_on_unparseable_output(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"N/A\n", b""))
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ):
+        assert await probe_clip_duration(video) == 0
+
+
+async def test_probe_clip_duration_parses_and_truncates(tmp_path: Path) -> None:
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"12.7\n", b""))
+    with patch(
+        "blink_downloader.downloader.asyncio.create_subprocess_exec",
+        AsyncMock(return_value=mock_proc),
+    ):
+        assert await probe_clip_duration(video) == 12
