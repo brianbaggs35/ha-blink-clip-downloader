@@ -2072,6 +2072,46 @@ Confirmed already correct, no change needed:
   (`torch`, `torchvision`, `ultralytics`, `facenet-pytorch`, `opencv`)
   still imports cleanly on aarch64.
 
+### Verified — final pre-release pass against the real live account
+
+Before this release: a full automated re-run (ruff format/check, pyright,
+pytest, eslint, prettier, vue-tsc, vitest) confirmed no regressions from
+everything landed this cycle (backend 99.96% coverage, frontend 99.16%
+statements, 568 frontend tests), and a real browser testing pass against
+the live devcontainer (real Blink account, real OpenAI credentials)
+covered every nav tab, the vehicle-zone-picker end to end (viewing an
+already-saved zone, entering edit mode, drawing a rectangle, canceling
+without saving, and the clear-zone confirmation dialog — all confirmed to
+persist nothing unless explicitly saved), a mobile viewport pass (no
+horizontal overflow), and dark mode.
+
+- **Added — graceful fallback when a clip's video can't be played.**
+  `ClipModal.vue` previously let Video.js's own raw, unstyled "The media
+  could not be loaded…" browser error render directly inside the player
+  chrome on any playback failure. It now shows the clip's own thumbnail
+  with a plain-language message and a "Download instead" link, matching
+  the rest of the UI, and resets cleanly when navigating to another clip
+  instead of carrying a stale error over. **Important correction to how
+  this was found**: initial browser testing this session showed *every*
+  clip failing this way, which looked like a serious, widespread codec
+  bug — it wasn't. That testing used Playwright's bundled open-source
+  Chromium, which (unlike real Chrome, Edge, Safari, or Firefox) lacks
+  licensed H.264 decoding by design; re-testing the identical clips,
+  through the real app UI, with real Google Chrome confirmed every one
+  plays correctly, including the original one that looked broken.
+  Verified with `ffprobe` too: the files themselves are standard,
+  well-formed H.264 (`ffprobe` reports `probe_score=100`). Kept the
+  fallback anyway as a genuine hardening improvement for any real future
+  playback failure (a corrupted download, a truly unsupported edge case)
+  rather than reverting it — it does not trigger for clips that actually
+  play, confirmed via the same real-Chrome re-test.
+- **Flagged, not changed**: this file's own `## 5.0.0` section has grown
+  very long (180+ subsections) tracking the full development/debugging
+  history rather than reading as end-user-facing release notes. Worth a
+  developer decision — condense for the actual release announcement, or
+  keep as-is and write user-facing notes separately — before publishing,
+  not resolved here.
+
 ## 4.0.2
 
 ### Bug fixes

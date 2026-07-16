@@ -134,6 +134,38 @@ describe('ClipModal', () => {
     expect(fakePlayer.play).toHaveBeenCalled()
   })
 
+  it('falls back to the thumbnail when video.js reports a playback error, and clears it on the next clip', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1') return Promise.resolve(jsonResponse(CLIP))
+        if (url === '/api/clips/c2') return Promise.resolve(jsonResponse({ ...CLIP, id: 'c2' }))
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    expect(wrapper.find('.video-fallback').exists()).toBe(false)
+    expect(wrapper.find('.video-js-wrap').classes()).not.toContain('video-hidden')
+
+    const errorHandler = fakePlayer.on.mock.calls.find(([event]) => event === 'error')![1] as () => void
+    errorHandler()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.video-js-wrap').classes()).toContain('video-hidden')
+    const fallback = wrapper.find('.video-fallback')
+    expect(fallback.exists()).toBe(true)
+    expect(fallback.find('.video-fallback-thumb').attributes('src')).toBe('/api/clips/c1/thumb')
+    expect(fallback.text()).toContain("Video preview isn't available")
+    expect(fallback.find('a[download]').exists()).toBe(true)
+
+    // Loading a different clip clears the stale error instead of carrying it over.
+    await wrapper.setProps({ clipId: 'c2' })
+    await flushPromises()
+    expect(wrapper.find('.video-fallback').exists()).toBe(false)
+    expect(wrapper.find('.video-js-wrap').classes()).not.toContain('video-hidden')
+  })
+
   it('emits close on backdrop click and close button', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()

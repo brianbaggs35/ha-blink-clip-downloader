@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import videojs from 'video.js'
 import type Player from 'video.js/dist/types/player'
 import 'video.js/dist/video-js.css'
-import { clipStreamUrl, getClip, setClipTags, starClip } from '../../api/clips'
+import { clipStreamUrl, clipThumbUrl, getClip, setClipTags, starClip } from '../../api/clips'
 import { fmtDur, fmtRelative, fmtSize, fmtTs } from '../../api/constants'
 import type { ClipDetail } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
@@ -42,6 +42,14 @@ const tagInput = ref('')
 const theater = ref(false)
 const autoplayNext = ref(false)
 const loopClip = ref(false)
+// A handful of real Blink clips (source: "snapshot" in particular) download
+// as technically-valid but near-static MP4s (e.g. 5 frames across several
+// seconds) that some browsers' video decoders refuse to play even though
+// the file itself is fine — ffprobe accepts them without complaint. Video.js
+// surfaces that as a raw, unstyled "media could not be loaded" error inside
+// the player chrome; fall back to the clip's own thumbnail instead of
+// leaking that browser-level message.
+const videoError = ref(false)
 
 function ensurePlayer(): Player {
   if (player) return player
@@ -67,6 +75,9 @@ function ensurePlayer(): Player {
   player.on('ended', () => {
     if (autoplayNext.value) emit('nav', 1)
   })
+  player.on('error', () => {
+    videoError.value = true
+  })
   return player
 }
 
@@ -79,6 +90,7 @@ let requestSeq = 0
 
 async function load(id: string) {
   const seq = ++requestSeq
+  videoError.value = false
   try {
     const c = await getClip(id)
     if (seq !== requestSeq) return
@@ -249,9 +261,27 @@ onUnmounted(() => {
         <AppIcon name="close" />
       </button>
       <div class="video-wrap">
-        <video ref="videoEl" class="video-js vjs-big-play-centered" preload="auto" playsinline>
-          <p class="vjs-no-js">JavaScript is required to play videos.</p>
-        </video>
+        <!--
+          Video.js takes over the <video> tag on init and wraps it in its
+          own outer chrome div (controls, big-play button, and — the reason
+          this wrapper exists — its own error overlay), which ends up as a
+          *sibling* structure Vue's own :class binding on the original
+          <video> tag can't reach. Hiding this dedicated wrapper div (which
+          Video.js only ever adds *into*, never replaces) reliably hides
+          all of that instead.
+        -->
+        <div class="video-js-wrap" :class="{ 'video-hidden': videoError }">
+          <video ref="videoEl" class="video-js vjs-big-play-centered" preload="auto" playsinline>
+            <p class="vjs-no-js">JavaScript is required to play videos.</p>
+          </video>
+        </div>
+        <div v-if="videoError && clipId" class="video-fallback">
+          <img :src="clipThumbUrl(clipId)" alt="" class="video-fallback-thumb" />
+          <div class="video-fallback-msg">
+            <p>Video preview isn't available for this clip.</p>
+            <a class="btn sm outline" :href="clipStreamUrl(clipId)" :download="downloadName()">⬇ Download instead</a>
+          </div>
+        </div>
         <div class="vid-nav">
           <button class="vid-nav-btn" title="Previous (↑)" @click="emit('nav', -1)">‹</button>
           <button class="vid-nav-btn" title="Next (↓)" @click="emit('nav', 1)">›</button>
