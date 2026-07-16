@@ -1654,6 +1654,60 @@ Confirmed already correct, no change needed:
   have caught the Pi 4-class illegal-instruction risk in CI going forward,
   rather than relying on this round's one-off manual verification.
 
+### Added — persisted vehicle-zone reference image, Clear confirmation, and freeform (lasso) zone drawing
+
+- **The car-zone picker's reference frame is now persisted at save time**,
+  instead of always showing whichever clip happens to be newest whenever
+  the Vehicles tab is revisited. Saving a zone captures a still snapshot of
+  the exact frame it was drawn on (served from a new
+  `/data/vehicle_zone_snapshots/<camera>.jpg`, one per camera) and shows
+  that frozen image with the zone overlaid from then on — so something
+  that shows up in a *later* clip (another car, a person) never visually
+  overlaps a zone that was set before it arrived, even though the
+  underlying saved zone data was never actually affected by this in the
+  first place.
+- The picker is now a **preview/edit** flow rather than always-interactive:
+  preview shows the persisted snapshot + zone (read-only) with **Edit
+  zone**/**Clear zone** actions; edit shows the interactive thumb-strip +
+  drawing canvas, entered explicitly, with nothing persisted until **Save
+  zone** is clicked (drawing a rectangle no longer silently auto-commits on
+  every drag release the way it used to).
+- **Clear zone** now asks for confirmation (the existing app-wide confirm
+  dialog) before removing a saved zone and its reference image, landing on
+  a clear empty state ("No vehicle selected. Select your vehicle in a
+  frame below and click save to set a vehicle.") rather than an ambiguous
+  blank picker.
+- **New freeform ("lasso") drawing mode**, alongside the existing
+  rectangle tool, via a PrimeVue `SelectButton` mode switch — click, hold,
+  and trace an outline around the vehicle; releasing the pointer anywhere
+  auto-closes the shape back to the start point, matching a real paint
+  app's lasso tool rather than requiring a precise manual trace back to
+  where you started. Useful for a vehicle a rectangle would necessarily
+  over-include a lot around (parked at an angle, boxed in by neighbors).
+- `car_zone` is now a shape-discriminated value (`{"shape": "rect", ...}`
+  or `{"shape": "polygon", "points": [...]}`) end to end —
+  `_normalize_car_zone` (backend validation), the frontend `CarZone` type,
+  and `_zone_motion_fraction`'s AI-prompt "zone motion" signal (true
+  point-in-polygon matching for freeform zones, not just a bounding-box
+  approximation) all understand both shapes. Zones saved before this
+  feature existed have no `shape` key at all and are treated as
+  rectangles — no data migration needed. The Moondream fallback proximity
+  hint (used when a clip's own car detection finds nothing) uses a new
+  `_car_zone_bbox` helper to reduce either shape to a plain bounding box,
+  since that one code path is already just an approximation, not exact
+  geometry.
+- New dedicated endpoints — `PUT`/`DELETE /api/vehicle/zone/{camera}`,
+  `GET /api/vehicle/zone-snapshot/{camera}` — so saving or clearing a zone
+  takes effect immediately, the same way the rest of the Vehicles tab's
+  camera settings already do, rather than staying implicit in the
+  page-level "Save Camera Settings" batch action (which still round-trips
+  `car_zone` unchanged, so nothing about that existing flow broke). Saving
+  a zone now also force-sets `is_car_camera: true` on that camera's config,
+  since the picker is only reachable once that flag is on but it's
+  normally only persisted by the separate batch save — without this, a
+  zone saved before ever clicking that batch save would have silently had
+  no effect.
+
 ## 4.0.2
 
 ### Bug fixes

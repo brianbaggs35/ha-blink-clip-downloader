@@ -1581,6 +1581,7 @@ async def test_ai_camera_configs_get_returns_car_zone_field(
     driveway = next((c for c in data if c["camera"] == "Driveway"), None)
     if driveway:
         assert driveway["car_zone"] == {
+            "shape": "rect",
             "x_min": 0.2,
             "y_min": 0.3,
             "x_max": 0.8,
@@ -1629,7 +1630,60 @@ async def test_ai_camera_configs_get_malformed_car_zone_becomes_none(
 def test_normalize_car_zone_valid() -> None:
     assert MediaServer._normalize_car_zone(
         {"x_min": 0.1, "y_min": "0.2", "x_max": 0.9, "y_max": 0.95}
-    ) == {"x_min": 0.1, "y_min": 0.2, "x_max": 0.9, "y_max": 0.95}
+    ) == {"shape": "rect", "x_min": 0.1, "y_min": 0.2, "x_max": 0.9, "y_max": 0.95}
+
+
+def test_normalize_car_zone_valid_polygon() -> None:
+    assert MediaServer._normalize_car_zone(
+        {
+            "shape": "polygon",
+            "points": [["0.1", 0.2], [0.5, 0.1], [0.3, 0.5]],
+        }
+    ) == {
+        "shape": "polygon",
+        "points": [[0.1, 0.2], [0.5, 0.1], [0.3, 0.5]],
+    }
+
+
+def test_normalize_car_zone_polygon_too_few_points() -> None:
+    assert (
+        MediaServer._normalize_car_zone(
+            {"shape": "polygon", "points": [[0.1, 0.2], [0.5, 0.1]]}
+        )
+        is None
+    )
+
+
+def test_normalize_car_zone_polygon_not_a_list() -> None:
+    assert (
+        MediaServer._normalize_car_zone({"shape": "polygon", "points": "nope"}) is None
+    )
+
+
+def test_normalize_car_zone_polygon_non_numeric_point() -> None:
+    assert (
+        MediaServer._normalize_car_zone(
+            {"shape": "polygon", "points": [[0.1, 0.2], [0.5, "x"], [0.3, 0.5]]}
+        )
+        is None
+    )
+
+
+def test_normalize_car_zone_polygon_out_of_bounds_point() -> None:
+    assert (
+        MediaServer._normalize_car_zone(
+            {"shape": "polygon", "points": [[0.1, 0.2], [1.5, 0.1], [0.3, 0.5]]}
+        )
+        is None
+    )
+
+
+def test_normalize_car_zone_missing_shape_key_defaults_to_rect() -> None:
+    """Zones saved before the polygon feature existed have no `shape` key at
+    all — they must keep working without a data migration."""
+    assert MediaServer._normalize_car_zone(
+        {"x_min": 0.1, "y_min": 0.2, "x_max": 0.9, "y_max": 0.95}
+    ) == {"shape": "rect", "x_min": 0.1, "y_min": 0.2, "x_max": 0.9, "y_max": 0.95}
 
 
 def test_normalize_car_zone_not_a_dict() -> None:
@@ -1695,6 +1749,7 @@ async def test_ai_camera_configs_put_saves_and_normalizes_car_zone(
     saved = json.loads(cfg_file.read_text())
     driveway = next(c for c in saved if c["camera"] == "Driveway")
     assert driveway["car_zone"] == {
+        "shape": "rect",
         "x_min": 0.1,
         "y_min": 0.2,
         "x_max": 0.9,
@@ -1889,7 +1944,15 @@ async def test_ai_camera_configs_put_updates_live_analyzer_car_zones(
             )
         assert resp.status == 200
         analyzer.update_car_zones.assert_called_once_with(
-            {"Driveway": {"x_min": 0.2, "y_min": 0.3, "x_max": 0.8, "y_max": 0.9}}
+            {
+                "Driveway": {
+                    "shape": "rect",
+                    "x_min": 0.2,
+                    "y_min": 0.3,
+                    "x_max": 0.8,
+                    "y_max": 0.9,
+                }
+            }
         )
     finally:
         await tc.close()
@@ -3615,6 +3678,555 @@ async def test_vehicle_settings_put_bad_json(db: ClipDatabase, tmp_path: Path) -
         assert resp.status == 400
     finally:
         await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# Vehicle zone (Vehicles tab picker) — PUT/DELETE /api/vehicle/zone/{camera},
+# GET /api/vehicle/zone-snapshot/{camera}
+# ---------------------------------------------------------------------------
+
+
+def _make_clip_with_thumb(
+    db_dir: Path, clip_id: str, jpeg: bytes = b"\xff\xd8\xff" + b"\x00" * 16
+) -> dict:
+    fp = db_dir / f"{clip_id}.mp4"
+    fp.write_bytes(b"vid")
+    (db_dir / f"{clip_id}.jpg").write_bytes(jpeg)
+    return _make_clip(clip_id, path=str(fp))
+
+
+def test_vehicle_zone_snapshot_path_slugifies_the_camera_name() -> None:
+    with patch(
+        "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+        new=Path("/data/vehicle_zone_snapshots"),
+    ):
+        assert MediaServer._vehicle_zone_snapshot_path("Front Door Cam!") == Path(
+            "/data/vehicle_zone_snapshots/front-door-cam.jpg"
+        )
+        assert MediaServer._vehicle_zone_snapshot_path("") == Path(
+            "/data/vehicle_zone_snapshots/camera.jpg"
+        )
+
+
+async def test_vehicle_zone_put_saves_zone_snapshot_and_updates_analyzer(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await db.add_clip(_make_clip_with_thumb(tmp_path, "z1"))
+    analyzer = _make_analyzer()
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    cfg_file = tmp_path / "camera_configs.json"
+    snapshots_dir = tmp_path / "snapshots"
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+                new=cfg_file,
+            ),
+            patch(
+                "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+                new=snapshots_dir,
+            ),
+        ):
+            resp = await tc.put(
+                "/api/vehicle/zone/Front Door",
+                json={
+                    "zone": {
+                        "shape": "rect",
+                        "x_min": 0.1,
+                        "y_min": 0.1,
+                        "x_max": 0.5,
+                        "y_max": 0.5,
+                    },
+                    "clip_id": "z1",
+                },
+            )
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["saved"] is True
+            assert body["car_zone"] == {
+                "shape": "rect",
+                "x_min": 0.1,
+                "y_min": 0.1,
+                "x_max": 0.5,
+                "y_max": 0.5,
+            }
+
+            saved = json.loads(cfg_file.read_text())
+            entry = next(c for c in saved if c["camera"] == "Front Door")
+            assert entry["car_zone"]["shape"] == "rect"
+            assert entry["is_car_camera"] is True
+
+            snapshot = MediaServer._vehicle_zone_snapshot_path("Front Door")
+            assert snapshot.exists()
+            assert snapshot.read_bytes() == (tmp_path / "z1.jpg").read_bytes()
+
+            analyzer.update_car_zones.assert_called_once()
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_zone_put_saves_polygon_zone(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await db.add_clip(_make_clip_with_thumb(tmp_path, "z2"))
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    cfg_file = tmp_path / "camera_configs.json"
+    snapshots_dir = tmp_path / "snapshots"
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+                new=cfg_file,
+            ),
+            patch(
+                "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+                new=snapshots_dir,
+            ),
+        ):
+            resp = await tc.put(
+                "/api/vehicle/zone/Driveway",
+                json={
+                    "zone": {
+                        "shape": "polygon",
+                        "points": [[0.1, 0.1], [0.5, 0.1], [0.3, 0.5]],
+                    },
+                    "clip_id": "z2",
+                },
+            )
+            assert resp.status == 200
+            body = await resp.json()
+            assert body["car_zone"]["shape"] == "polygon"
+            assert body["car_zone"]["points"] == [[0.1, 0.1], [0.5, 0.1], [0.3, 0.5]]
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_zone_put_preserves_other_camera_config_fields(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Saving a zone must not clobber description/custom_prompt someone set
+    from the AI tab's Camera Configurations section for the same camera."""
+    await db.add_clip(_make_clip_with_thumb(tmp_path, "z3"))
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Driveway",
+                    "description": "Front driveway camera",
+                    "custom_prompt": "Watch for the mail truck",
+                    "is_car_camera": False,
+                    "car_zone": None,
+                }
+            ]
+        )
+    )
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    snapshots_dir = tmp_path / "snapshots"
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+                new=cfg_file,
+            ),
+            patch(
+                "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+                new=snapshots_dir,
+            ),
+        ):
+            resp = await tc.put(
+                "/api/vehicle/zone/Driveway",
+                json={
+                    "zone": {
+                        "shape": "rect",
+                        "x_min": 0.1,
+                        "y_min": 0.1,
+                        "x_max": 0.5,
+                        "y_max": 0.5,
+                    },
+                    "clip_id": "z3",
+                },
+            )
+            assert resp.status == 200
+    finally:
+        await tc.close()
+
+    saved = json.loads(cfg_file.read_text())
+    entry = next(c for c in saved if c["camera"] == "Driveway")
+    assert entry["description"] == "Front driveway camera"
+    assert entry["custom_prompt"] == "Watch for the mail truck"
+    # The picker is only reachable once is_car_camera is (or becomes) true —
+    # saving a zone must force this even if the toggle's own separate save
+    # (the Vehicles page's batch button) hasn't happened yet, or the just-
+    # saved zone would silently have no effect (see _car_protection_applies).
+    assert entry["is_car_camera"] is True
+
+
+async def test_vehicle_zone_put_invalid_zone_returns_400(client: TestClient) -> None:
+    resp = await client.put(
+        "/api/vehicle/zone/Driveway",
+        json={"zone": {"x_min": 0.9, "x_max": 0.1}, "clip_id": "z1"},
+    )
+    assert resp.status == 400
+
+
+async def test_vehicle_zone_put_missing_clip_id_returns_400(client: TestClient) -> None:
+    resp = await client.put(
+        "/api/vehicle/zone/Driveway",
+        json={
+            "zone": {
+                "shape": "rect",
+                "x_min": 0.1,
+                "y_min": 0.1,
+                "x_max": 0.5,
+                "y_max": 0.5,
+            }
+        },
+    )
+    assert resp.status == 400
+
+
+async def test_vehicle_zone_put_bad_json_returns_400(client: TestClient) -> None:
+    resp = await client.put(
+        "/api/vehicle/zone/Driveway",
+        data="not json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status == 400
+
+
+async def test_vehicle_zone_put_unknown_clip_returns_404(client: TestClient) -> None:
+    resp = await client.put(
+        "/api/vehicle/zone/Driveway",
+        json={
+            "zone": {
+                "shape": "rect",
+                "x_min": 0.1,
+                "y_min": 0.1,
+                "x_max": 0.5,
+                "y_max": 0.5,
+            },
+            "clip_id": "does-not-exist",
+        },
+    )
+    assert resp.status == 404
+
+
+async def test_vehicle_zone_put_clip_with_no_thumbnail_returns_404(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    fp = tmp_path / "z4.mp4"
+    fp.write_bytes(b"vid")
+    await db.add_clip(_make_clip("z4", path=str(fp)))  # no .jpg written
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.put(
+            "/api/vehicle/zone/Driveway",
+            json={
+                "zone": {
+                    "shape": "rect",
+                    "x_min": 0.1,
+                    "y_min": 0.1,
+                    "x_max": 0.5,
+                    "y_max": 0.5,
+                },
+                "clip_id": "z4",
+            },
+        )
+        assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_zone_put_survives_snapshot_write_failure(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    await db.add_clip(_make_clip_with_thumb(tmp_path, "z5"))
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    cfg_file = tmp_path / "camera_configs.json"
+    # A file (not a directory) where the snapshots dir should be makes
+    # mkdir(parents=True, exist_ok=True) raise OSError (NotADirectoryError).
+    unwritable = tmp_path / "snapshots-blocked"
+    unwritable.write_text("blocking file")
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+                new=cfg_file,
+            ),
+            patch(
+                "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+                new=unwritable / "nested",
+            ),
+        ):
+            resp = await tc.put(
+                "/api/vehicle/zone/Driveway",
+                json={
+                    "zone": {
+                        "shape": "rect",
+                        "x_min": 0.1,
+                        "y_min": 0.1,
+                        "x_max": 0.5,
+                        "y_max": 0.5,
+                    },
+                    "clip_id": "z5",
+                },
+            )
+        assert resp.status == 200
+        assert (await resp.json())["saved"] is True
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_zone_put_survives_camera_configs_write_failure(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A filesystem error saving camera_configs.json must not crash the
+    request — the snapshot and live analyzer are still updated for this
+    run, matching the vehicle_settings.json precedent."""
+    await db.add_clip(_make_clip_with_thumb(tmp_path, "z6"))
+    analyzer = _make_analyzer()
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    # A directory used as the config "file" makes write_text() raise OSError.
+    unwritable = tmp_path / "not-a-file"
+    unwritable.mkdir()
+    snapshots_dir = tmp_path / "snapshots"
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+                new=unwritable,
+            ),
+            patch(
+                "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+                new=snapshots_dir,
+            ),
+        ):
+            resp = await tc.put(
+                "/api/vehicle/zone/Driveway",
+                json={
+                    "zone": {
+                        "shape": "rect",
+                        "x_min": 0.1,
+                        "y_min": 0.1,
+                        "x_max": 0.5,
+                        "y_max": 0.5,
+                    },
+                    "clip_id": "z6",
+                },
+            )
+            assert resp.status == 200
+            assert (await resp.json())["saved"] is True
+            assert MediaServer._vehicle_zone_snapshot_path("Driveway").exists()
+        analyzer.update_car_zones.assert_called_once()
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_zone_put_with_corrupt_existing_camera_configs_starts_fresh(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A corrupt camera_configs.json on disk must not block saving a new
+    zone — treated as empty, same as the AI tab's GET handler does."""
+    await db.add_clip(_make_clip_with_thumb(tmp_path, "z7"))
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text("not valid json")
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    snapshots_dir = tmp_path / "snapshots"
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+                new=cfg_file,
+            ),
+            patch(
+                "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+                new=snapshots_dir,
+            ),
+        ):
+            resp = await tc.put(
+                "/api/vehicle/zone/Driveway",
+                json={
+                    "zone": {
+                        "shape": "rect",
+                        "x_min": 0.1,
+                        "y_min": 0.1,
+                        "x_max": 0.5,
+                        "y_max": 0.5,
+                    },
+                    "clip_id": "z7",
+                },
+            )
+        assert resp.status == 200
+    finally:
+        await tc.close()
+
+    saved = json.loads(cfg_file.read_text())
+    assert [c["camera"] for c in saved] == ["Driveway"]
+
+
+async def test_vehicle_zone_delete_survives_camera_configs_write_failure(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A filesystem error saving camera_configs.json must not crash the
+    request. Needs a *readable* existing file (so _read_camera_configs
+    finds the "Driveway" entry and reaches the write attempt at all) with
+    only the write itself failing — unlike the PUT precedent, a directory
+    standing in for the file would break the read step too, since delete
+    reads-then-writes rather than just writing."""
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Driveway",
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": True,
+                    "car_zone": {
+                        "shape": "rect",
+                        "x_min": 0.1,
+                        "y_min": 0.1,
+                        "x_max": 0.5,
+                        "y_max": 0.5,
+                    },
+                }
+            ]
+        )
+    )
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+                new=cfg_file,
+            ),
+            patch.object(Path, "write_text", side_effect=OSError("disk full")),
+        ):
+            resp = await tc.delete("/api/vehicle/zone/Driveway")
+        assert resp.status == 200
+        assert (await resp.json())["saved"] is True
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_zone_delete_clears_zone_and_snapshot(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Driveway",
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": True,
+                    "car_zone": {
+                        "shape": "rect",
+                        "x_min": 0.1,
+                        "y_min": 0.1,
+                        "x_max": 0.5,
+                        "y_max": 0.5,
+                    },
+                }
+            ]
+        )
+    )
+    snapshots_dir = tmp_path / "snapshots"
+    snapshots_dir.mkdir()
+    analyzer = _make_analyzer()
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+                new=cfg_file,
+            ),
+            patch(
+                "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+                new=snapshots_dir,
+            ),
+        ):
+            snapshot_path = MediaServer._vehicle_zone_snapshot_path("Driveway")
+            snapshot_path.write_bytes(b"\xff\xd8\xff")
+
+            resp = await tc.delete("/api/vehicle/zone/Driveway")
+            assert resp.status == 200
+            assert (await resp.json())["saved"] is True
+
+            saved = json.loads(cfg_file.read_text())
+            entry = next(c for c in saved if c["camera"] == "Driveway")
+            assert entry["car_zone"] is None
+            assert not snapshot_path.exists()
+            analyzer.update_car_zones.assert_called_once_with({})
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_zone_delete_missing_camera_and_snapshot_is_a_no_op(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Clearing a camera that was never saved (no config entry, no
+    snapshot) must not error."""
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+            new=tmp_path / "snapshots",
+        ):
+            resp = await tc.delete("/api/vehicle/zone/Nowhere")
+        assert resp.status == 200
+        assert (await resp.json())["saved"] is True
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_zone_snapshot_get_returns_jpeg(
+    client: TestClient, tmp_path: Path
+) -> None:
+    snapshots_dir = tmp_path / "snapshots"
+    snapshots_dir.mkdir()
+    with patch(
+        "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+        new=snapshots_dir,
+    ):
+        snapshot_path = MediaServer._vehicle_zone_snapshot_path("Driveway")
+        snapshot_path.write_bytes(b"\xff\xd8\xff" + b"\x00" * 16)
+        resp = await client.get("/api/vehicle/zone-snapshot/Driveway")
+    assert resp.status == 200
+    assert resp.content_type == "image/jpeg"
+
+
+async def test_vehicle_zone_snapshot_get_not_found(
+    client: TestClient, tmp_path: Path
+) -> None:
+    with patch(
+        "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+        new=tmp_path / "no-such-dir",
+    ):
+        resp = await client.get("/api/vehicle/zone-snapshot/Driveway")
+    assert resp.status == 404
 
 
 # ---------------------------------------------------------------------------

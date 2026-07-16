@@ -475,7 +475,7 @@ class BaseAnalyzer(abc.ABC):
         camera_descriptions: dict[str, str] | None = None,
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
-        car_zones: dict[str, dict[str, float]] | None = None,
+        car_zones: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self._base_prompt = prompt
         self._car_description = car_description
@@ -500,7 +500,7 @@ class BaseAnalyzer(abc.ABC):
         # user-drawn zone is fixed ground truth: Blink cameras don't move, so
         # it never needs to be re-derived per clip. Used to compute
         # zone-restricted motion evidence — see :meth:`_zone_motion_fraction`.
-        self._car_zones: dict[str, dict[str, float]] = car_zones or {}
+        self._car_zones: dict[str, dict[str, Any]] = car_zones or {}
         # Token counts set by _call_model() implementations that support them.
         # Reset to 0 at the start of each analyze_clip() call.
         self._last_prompt_tokens: int = 0
@@ -605,7 +605,7 @@ class BaseAnalyzer(abc.ABC):
         """
         self._car_cameras = set(car_cameras)
 
-    def update_car_zones(self, car_zones: dict[str, dict[str, float]]) -> None:
+    def update_car_zones(self, car_zones: dict[str, dict[str, Any]]) -> None:
         """Replace the per-camera car-zone map at runtime without restart.
 
         Full replace, not a merge — clearing a camera's zone in the AI tab
@@ -1583,12 +1583,35 @@ class BaseAnalyzer(abc.ABC):
         return None
 
     @staticmethod
+    def _point_in_polygon(
+        x: float, y: float, points: list[tuple[float, float]]
+    ) -> bool:
+        """Ray-casting point-in-polygon test.
+
+        *points* is a closed ring of ``(x, y)`` vertices in the same
+        coordinate space as *x*/*y* — the algorithm itself is scale-
+        independent, so callers may pass either pixel or fractional
+        coordinates as long as both sides agree.
+        """
+        inside = False
+        x2, y2 = points[-1]
+        for x1, y1 in points:
+            if (y1 > y) != (y2 > y):
+                x_intersect = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+                if x < x_intersect:
+                    inside = not inside
+            x2, y2 = x1, y1
+        return inside
+
+    @staticmethod
     def _zone_motion_fraction(
-        frames: list[bytes], zone: dict[str, float]
+        frames: list[bytes], zone: dict[str, Any]
     ) -> float | None:
         """Return the fraction (0.0-1.0) of this clip's total pixel motion
-        that fell inside *zone* — a normalised ``x_min``/``y_min``/``x_max``/
-        ``y_max`` rectangle, e.g. a user-drawn "car zone".
+        that fell inside *zone* — either a normalised ``x_min``/``y_min``/
+        ``x_max``/``y_max`` rectangle, or a
+        ``{"shape": "polygon", "points": [[x, y], ...]}`` freeform outline
+        (fractional 0-1 coordinates) — e.g. a user-drawn "car zone".
 
         Reuses the same grayscale-thumbnail-diff approach as
         :meth:`_compute_motion_trajectory_hint`, but instead of
@@ -1621,17 +1644,28 @@ class BaseAnalyzer(abc.ABC):
                 for f in frames
             ]
 
-            raw_x_min = zone.get("x_min", 0.0)
-            raw_y_min = zone.get("y_min", 0.0)
-            raw_x_max = zone.get("x_max", 1.0)
-            raw_y_max = zone.get("y_max", 1.0)
-            pad_x = max(0.0, raw_x_max - raw_x_min) * _ZONE_MOTION_PAD_FRACTION
-            pad_y = max(0.0, raw_y_max - raw_y_min) * _ZONE_MOTION_PAD_FRACTION
+            is_polygon = zone.get("shape") == "polygon"
+            poly_px: list[tuple[float, float]] = []
+            zx1 = zy1 = zx2 = zy2 = 0
+            if is_polygon:
+                # Already precisely traced by the user, unlike a quick
+                # rectangle drag — skip the tolerance padding rects get
+                # below and test membership against the exact outline.
+                poly_px = [
+                    (px * width, py * height) for px, py in zone.get("points", [])
+                ]
+            else:
+                raw_x_min = zone.get("x_min", 0.0)
+                raw_y_min = zone.get("y_min", 0.0)
+                raw_x_max = zone.get("x_max", 1.0)
+                raw_y_max = zone.get("y_max", 1.0)
+                pad_x = max(0.0, raw_x_max - raw_x_min) * _ZONE_MOTION_PAD_FRACTION
+                pad_y = max(0.0, raw_y_max - raw_y_min) * _ZONE_MOTION_PAD_FRACTION
 
-            zx1 = max(0, min(width - 1, round((raw_x_min - pad_x) * width)))
-            zy1 = max(0, min(height - 1, round((raw_y_min - pad_y) * height)))
-            zx2 = max(zx1 + 1, min(width, round((raw_x_max + pad_x) * width)))
-            zy2 = max(zy1 + 1, min(height, round((raw_y_max + pad_y) * height)))
+                zx1 = max(0, min(width - 1, round((raw_x_min - pad_x) * width)))
+                zy1 = max(0, min(height - 1, round((raw_y_min - pad_y) * height)))
+                zx2 = max(zx1 + 1, min(width, round((raw_x_max + pad_x) * width)))
+                zy2 = max(zy1 + 1, min(height, round((raw_y_max + pad_y) * height)))
 
             total_motion = 0
             zone_motion = 0
@@ -1642,7 +1676,12 @@ class BaseAnalyzer(abc.ABC):
                         continue
                     total_motion += d
                     x, y = idx % width, idx // width
-                    if zx1 <= x < zx2 and zy1 <= y < zy2:
+                    hit = (
+                        BaseAnalyzer._point_in_polygon(x + 0.5, y + 0.5, poly_px)
+                        if is_polygon
+                        else zx1 <= x < zx2 and zy1 <= y < zy2
+                    )
+                    if hit:
                         zone_motion += d
 
             pixels_per_pair = width * height
@@ -2347,7 +2386,7 @@ class ClipAnalyzer(BaseAnalyzer):
         camera_descriptions: dict[str, str] | None = None,
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
-        car_zones: dict[str, dict[str, float]] | None = None,
+        car_zones: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -2489,7 +2528,7 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
         camera_descriptions: dict[str, str] | None = None,
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
-        car_zones: dict[str, dict[str, float]] | None = None,
+        car_zones: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(
             ollama_url=self._CLOUD_BASE_URL,
@@ -2582,6 +2621,27 @@ class _MoondreamDetectionMixin:
         stripped = re.sub(r"\s{2,}", " ", stripped)
         stripped = re.sub(r"\s*(?:,\s*){2}", ", ", stripped).strip(" ,.-")
         return stripped or car_description
+
+    @staticmethod
+    def _car_zone_bbox(zone: dict[str, Any]) -> dict[str, float]:
+        """Reduce a ``car_zone`` (rectangle or freeform polygon) to a plain
+        ``x_min``/``y_min``/``x_max``/``y_max`` box for use with
+        :meth:`_bbox_gap`/:meth:`_bbox_min_gap`, which only understand that
+        shape. For a polygon this is its axis-aligned bounding box — an
+        approximation, but this call site is already just a rough fallback
+        proximity reference (used only when per-frame car detection found no
+        box at all), not exact geometry, so the same tolerance that was
+        already implicit for a rectangle zone applies here too. A rectangle
+        zone already has the right keys and is returned unchanged.
+        """
+        if zone.get("shape") != "polygon":
+            return zone
+        points = zone.get("points") or []
+        if not points:
+            return {"x_min": 0.0, "y_min": 0.0, "x_max": 0.0, "y_max": 0.0}
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        return {"x_min": min(xs), "y_min": min(ys), "x_max": max(xs), "y_max": max(ys)}
 
     @staticmethod
     def _bbox_gap(a: dict[str, float], b: dict[str, float]) -> float:
@@ -2948,7 +3008,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         camera_descriptions: dict[str, str] | None = None,
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
-        car_zones: dict[str, dict[str, float]] | None = None,
+        car_zones: dict[str, dict[str, Any]] | None = None,
         finetune_model: str = "",
     ) -> None:
         super().__init__(
@@ -3497,10 +3557,12 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             # camera — use it as a fallback proximity reference so a
             # person standing where the car normally is still gets
             # flagged instead of silently falling through with no
-            # hint at all. The zone dict uses the same
-            # x_min/y_min/x_max/y_max keys as a detected box, so it
-            # can be passed to _bbox_min_gap directly.
-            gap = self._bbox_min_gap(subjects, [self._car_zones[camera]])
+            # hint at all. _car_zone_bbox reduces either a rectangle or a
+            # freeform polygon zone to the plain x_min/y_min/x_max/y_max
+            # shape _bbox_min_gap expects.
+            gap = self._bbox_min_gap(
+                subjects, [self._car_zone_bbox(self._car_zones[camera])]
+            )
             augmented_prompt += f"\n\n{self._proximity_hint(gap, 'person or animal')}"
         # else: car detect returned nothing and no zone is configured —
         # no proximity hint; the base prompt's vehicle-distance rules
@@ -3544,7 +3606,7 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         camera_descriptions: dict[str, str] | None = None,
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
-        car_zones: dict[str, dict[str, float]] | None = None,
+        car_zones: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -3854,7 +3916,7 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             # fall back to the fixed car zone when detect found no car
             # box at all this frame, so a person standing where the car
             # normally is still gets flagged.
-            zone = self._car_zones[camera]
+            zone = self._car_zone_bbox(self._car_zones[camera])
             gap = self._bbox_min_gap(subjects, [zone])
             augmented_prompt += f"\n\n{self._proximity_hint(gap, 'person or animal')}"
         # else: car detect returned nothing and no zone is configured — no
@@ -4359,7 +4421,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
         camera_descriptions: dict[str, str] | None = None,
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
-        car_zones: dict[str, dict[str, float]] | None = None,
+        car_zones: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -4640,7 +4702,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
         camera_descriptions: dict[str, str] | None = None,
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
-        car_zones: dict[str, dict[str, float]] | None = None,
+        car_zones: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -4975,7 +5037,7 @@ def _build_single_analyzer(
     camera_descriptions: dict[str, str] | None = None,
     frame_strategy: str = "smart",
     car_cameras: list[str] | None = None,
-    car_zones: dict[str, dict[str, float]] | None = None,
+    car_zones: dict[str, dict[str, Any]] | None = None,
     *,
     ollama_url: str = "",
     ollama_model: str = "",
@@ -5110,7 +5172,7 @@ def create_analyzer(
     camera_descriptions: dict[str, str] | None = None,
     frame_strategy: str = "smart",
     car_cameras: list[str] | None = None,
-    car_zones: dict[str, dict[str, float]] | None = None,
+    car_zones: dict[str, dict[str, Any]] | None = None,
     *,
     ollama_url: str = "",
     ollama_model: str = "",

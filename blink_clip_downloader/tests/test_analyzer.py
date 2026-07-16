@@ -1322,6 +1322,49 @@ def test_analyze_frame_sync_falls_back_to_car_zone_when_no_car_detected() -> Non
     assert "touching or pressed against" in prompt_arg
 
 
+def test_analyze_frame_sync_falls_back_to_polygon_car_zone_when_no_car_detected() -> (
+    None
+):
+    """Same fallback as above, but with a freeform polygon zone — confirms
+    _car_zone_bbox is wired into this real prompt-augmentation path, not
+    just correct in isolation."""
+    person_boxes = [{"x_min": 0.55, "y_min": 0.2, "x_max": 0.65, "y_max": 0.9}]
+
+    def fake_detect(encoded: Any, object_name: str) -> dict[str, Any]:
+        if object_name == "person":
+            return {"objects": person_boxes}
+        return {"objects": []}
+
+    mock_model = MagicMock()
+    mock_model.encode_image.return_value = "encoded"
+    mock_model.detect.side_effect = fake_detect
+    mock_model.caption.return_value = {"caption": "A person stands in the driveway."}
+    mock_model.query.return_value = {
+        "answer": '{"suspicious": true, "confidence": 0.8, "description": "Person at the car spot."}'
+    }
+
+    a = MoondreamLocalAnalyzer(
+        prompt="p",
+        car_description="Silver Kia",
+        car_zones={
+            "Driveway": {
+                "shape": "polygon",
+                "points": [[0.5, 0.2], [0.9, 0.2], [0.9, 0.9], [0.5, 0.9]],
+            }
+        },
+    )
+    a._md_model = mock_model
+    a._current_camera = "Driveway"
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=True)
+
+    assert "Person at the car spot" in result
+    prompt_arg = mock_model.query.call_args[0][1]
+    assert "INTERNAL PROXIMITY HINT" in prompt_arg
+    assert "touching or pressed against" in prompt_arg
+
+
 # ------------------------------------------------------------------
 # _vision_model_score
 # ------------------------------------------------------------------
@@ -6708,6 +6751,58 @@ async def test_moondream_cloud_call_model_falls_back_to_car_zone_when_no_car_det
     assert "touching or pressed against" in injected_prompts[0]
 
 
+async def test_moondream_cloud_call_model_falls_back_to_polygon_car_zone_when_no_car_detected() -> (
+    None
+):
+    """Same fallback as the rectangle version above, but with a freeform
+    polygon zone — confirms _car_zone_bbox is actually wired into this real
+    prompt-augmentation path, not just correct in isolation."""
+    person_boxes = [{"x_min": 0.55, "y_min": 0.2, "x_max": 0.65, "y_max": 0.9}]
+    query_answer = '{"suspicious": true, "confidence": 0.8, "description": "Person at the car spot."}'
+
+    injected_prompts: list[str] = []
+
+    def detect(obj: str) -> list[dict[str, float]]:
+        if obj == "person":
+            return person_boxes
+        return []  # car detect finds nothing, either query
+
+    def side_effect(url, **kwargs):
+        return _dispatch_moondream(
+            url,
+            kwargs,
+            detect=detect,
+            query_answer=query_answer,
+            injected_prompts=injected_prompts,
+        )
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(
+        api_key="key",
+        prompt="base prompt",
+        car_description="Silver Kia",
+        car_zones={
+            "Driveway": {
+                "shape": "polygon",
+                "points": [[0.5, 0.2], [0.9, 0.2], [0.9, 0.9], [0.5, 0.9]],
+            }
+        },
+    )
+    a._session = session
+    a._current_camera = "Driveway"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG], "base prompt")
+
+    assert result != ""
+    assert injected_prompts
+    assert "INTERNAL PROXIMITY HINT" in injected_prompts[0]
+    assert "touching or pressed against" in injected_prompts[0]
+
+
 @pytest.mark.asyncio
 async def test_moondream_cloud_call_model_non_car_camera_injects_position() -> None:
     """Non-car camera: person position injected into prompt without car rules."""
@@ -8379,6 +8474,153 @@ def test_zone_motion_fraction_returns_none_on_pil_error() -> None:
     frames = [_FAKE_JPEG, _FAKE_JPEG_2]
     zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
     assert BaseAnalyzer._zone_motion_fraction(frames, zone) is None
+
+
+def test_zone_motion_fraction_rect_zone_with_no_shape_key_still_works() -> None:
+    """Zones saved before the polygon feature existed have no `shape` key —
+    must still be treated as a rectangle, not silently misread."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+    assert "shape" not in zone
+    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    assert fraction == pytest.approx(1.0, abs=0.02)
+
+
+def test_zone_motion_fraction_polygon_covering_whole_frame() -> None:
+    """A polygon covering the whole frame captures ~100% of the motion,
+    same as the equivalent whole-frame rectangle."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {
+        "shape": "polygon",
+        "points": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    }
+    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    assert fraction == pytest.approx(1.0, abs=0.02)
+
+
+def test_zone_motion_fraction_polygon_outside_motion() -> None:
+    """A polygon that never overlaps either bar position captures ~0%,
+    same as the equivalent rectangle."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {
+        "shape": "polygon",
+        "points": [
+            [20 / 64, 0.0],
+            [40 / 64, 0.0],
+            [40 / 64, 1.0],
+            [20 / 64, 1.0],
+        ],
+    }
+    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    assert fraction == pytest.approx(0.0, abs=0.02)
+
+
+def test_zone_motion_fraction_polygon_triangle_partial_overlap() -> None:
+    """A genuinely non-rectangular (triangular) zone still produces a
+    sane, bounded fraction — confirms the point-in-polygon path isn't just
+    exercised on axis-aligned squares standing in for rectangles."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {
+        "shape": "polygon",
+        "points": [[40 / 64, 0.0], [60 / 64, 0.0], [50 / 64, 1.0]],
+    }
+    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    assert fraction is not None
+    assert 0.0 <= fraction <= 1.0
+
+
+def test_zone_motion_fraction_polygon_empty_points_returns_none() -> None:
+    """An empty points list should never actually reach here in practice —
+    _normalize_car_zone requires >= 3 points — but must fail safely (via
+    the broad except) rather than crash the whole analysis."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {"shape": "polygon", "points": []}
+    assert BaseAnalyzer._zone_motion_fraction(frames, zone) is None
+
+
+# ---------------------------------------------------------------------------
+# _point_in_polygon — ray-casting test used by _zone_motion_fraction's
+# polygon path
+# ---------------------------------------------------------------------------
+
+
+def test_point_in_polygon_inside_square() -> None:
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    assert BaseAnalyzer._point_in_polygon(5.0, 5.0, square) is True
+
+
+def test_point_in_polygon_outside_square() -> None:
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    assert BaseAnalyzer._point_in_polygon(15.0, 5.0, square) is False
+
+
+def test_point_in_polygon_inside_triangle() -> None:
+    triangle = [(0.0, 0.0), (10.0, 0.0), (5.0, 10.0)]
+    assert BaseAnalyzer._point_in_polygon(5.0, 3.0, triangle) is True
+
+
+def test_point_in_polygon_outside_triangle_but_inside_bounding_box() -> None:
+    triangle = [(0.0, 0.0), (10.0, 0.0), (5.0, 10.0)]
+    # Bottom-right corner of the triangle's bounding box, outside the
+    # triangle itself — the check a plain bbox test would get wrong.
+    assert BaseAnalyzer._point_in_polygon(9.0, 9.0, triangle) is False
+
+
+def test_point_in_polygon_concave_shape() -> None:
+    """A square with a rectangular notch bitten out of the middle of its
+    left edge — a point inside the notch must read as outside the shape,
+    which a convex-only test (e.g. a bounding box) could not distinguish."""
+    notch = [
+        (0.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 10.0),
+        (0.0, 10.0),
+        (0.0, 6.0),
+        (6.0, 6.0),
+        (6.0, 4.0),
+        (0.0, 4.0),
+    ]
+    assert BaseAnalyzer._point_in_polygon(3.0, 5.0, notch) is False
+    assert BaseAnalyzer._point_in_polygon(8.0, 5.0, notch) is True
+
+
+# ---------------------------------------------------------------------------
+# _car_zone_bbox — reduces a rect-or-polygon car_zone to a plain bbox for
+# _bbox_gap/_bbox_min_gap (the fallback proximity-hint call sites)
+# ---------------------------------------------------------------------------
+
+
+def test_car_zone_bbox_rect_returned_unchanged() -> None:
+    zone = {"shape": "rect", "x_min": 0.1, "y_min": 0.2, "x_max": 0.9, "y_max": 0.8}
+    assert MoondreamCloudAnalyzer._car_zone_bbox(zone) is zone
+
+
+def test_car_zone_bbox_legacy_rect_with_no_shape_key_returned_unchanged() -> None:
+    zone = {"x_min": 0.1, "y_min": 0.2, "x_max": 0.9, "y_max": 0.8}
+    assert MoondreamCloudAnalyzer._car_zone_bbox(zone) is zone
+
+
+def test_car_zone_bbox_polygon_reduced_to_axis_aligned_bounds() -> None:
+    zone = {
+        "shape": "polygon",
+        "points": [[0.2, 0.5], [0.6, 0.1], [0.4, 0.9]],
+    }
+    assert MoondreamCloudAnalyzer._car_zone_bbox(zone) == {
+        "x_min": 0.2,
+        "y_min": 0.1,
+        "x_max": 0.6,
+        "y_max": 0.9,
+    }
+
+
+def test_car_zone_bbox_polygon_with_no_points_returns_zero_box() -> None:
+    zone = {"shape": "polygon", "points": []}
+    assert MoondreamCloudAnalyzer._car_zone_bbox(zone) == {
+        "x_min": 0.0,
+        "y_min": 0.0,
+        "x_max": 0.0,
+        "y_max": 0.0,
+    }
 
 
 def test_maybe_compute_zone_motion_requires_car_description() -> None:

@@ -246,12 +246,20 @@ export interface AiModelsResponse {
 // Camera configs (AI tab)
 // ---------------------------------------------------------------------
 
-export interface CarZone {
+export interface CarZoneRect {
+  shape: 'rect'
   x_min: number
   y_min: number
   x_max: number
   y_max: number
 }
+
+export interface CarZonePolygon {
+  shape: 'polygon'
+  points: [number, number][]
+}
+
+export type CarZone = CarZoneRect | CarZonePolygon
 
 export interface CameraConfig {
   camera: string

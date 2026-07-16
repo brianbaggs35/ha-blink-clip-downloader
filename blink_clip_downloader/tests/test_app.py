@@ -1401,7 +1401,44 @@ def test_init_camera_configs_car_zone_reaches_analyzer(base_config, tmp_path) ->
 
     kwargs = mock_create_analyzer.call_args.kwargs
     assert kwargs["car_zones"] == {
-        "Driveway": {"x_min": 0.2, "y_min": 0.3, "x_max": 0.8, "y_max": 0.9}
+        "Driveway": {
+            "shape": "rect",
+            "x_min": 0.2,
+            "y_min": 0.3,
+            "x_max": 0.8,
+            "y_max": 0.9,
+        }
+    }
+
+
+def test_init_camera_configs_polygon_car_zone_reaches_analyzer(
+    base_config, tmp_path
+) -> None:
+    """A freeform polygon car_zone in camera_configs.json must reach
+    create_analyzer() normalised the same way a rectangle does."""
+    _app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        [
+            {
+                "camera": "Driveway",
+                "description": "",
+                "custom_prompt": "",
+                "is_car_camera": True,
+                "car_zone": {
+                    "shape": "polygon",
+                    "points": [[0.1, 0.1], [0.5, 0.1], [0.3, 0.5]],
+                },
+            }
+        ],
+    )
+
+    kwargs = mock_create_analyzer.call_args.kwargs
+    assert kwargs["car_zones"] == {
+        "Driveway": {
+            "shape": "polygon",
+            "points": [[0.1, 0.1], [0.5, 0.1], [0.3, 0.5]],
+        }
     }
 
 

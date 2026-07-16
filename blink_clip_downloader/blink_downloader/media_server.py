@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import platform
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -241,6 +242,14 @@ class MediaServer:
         app.router.add_put("/api/ai/camera-configs", self._handle_ai_camera_configs_put)
         app.router.add_get("/api/vehicle/settings", self._handle_vehicle_settings_get)
         app.router.add_put("/api/vehicle/settings", self._handle_vehicle_settings_put)
+        app.router.add_put("/api/vehicle/zone/{camera}", self._handle_vehicle_zone_put)
+        app.router.add_delete(
+            "/api/vehicle/zone/{camera}", self._handle_vehicle_zone_delete
+        )
+        app.router.add_get(
+            "/api/vehicle/zone-snapshot/{camera}",
+            self._handle_vehicle_zone_snapshot_get,
+        )
         app.router.add_get(
             "/api/ai/models/escalation", self._handle_ai_models_escalation
         )
@@ -1104,13 +1113,30 @@ class MediaServer:
         return web.json_response(result)
 
     @staticmethod
-    def _normalize_car_zone(zone: Any) -> dict[str, float] | None:
+    def _normalize_car_zone(zone: Any) -> dict[str, Any] | None:
         """Validate and coerce a raw ``car_zone`` value from stored/incoming
-        JSON into a clean ``{x_min, y_min, x_max, y_max}`` dict, or ``None``
-        if it's missing, malformed, or not a sane rectangle (min >= max).
+        JSON into either a clean ``{shape: "rect", x_min, y_min, x_max,
+        y_max}`` or ``{shape: "polygon", points: [[x, y], ...]}`` dict, or
+        ``None`` if it's missing or malformed.
+
+        Zones saved before the freeform-polygon feature have no ``shape``
+        key at all — treated as ``"rect"`` here so existing saved data keeps
+        working without a migration, and always stamped with an explicit
+        ``shape`` going forward.
         """
         if not isinstance(zone, dict):
             return None
+        if zone.get("shape") == "polygon":
+            points = zone.get("points")
+            if not isinstance(points, list) or len(points) < 3:
+                return None
+            try:
+                norm_points = [[float(p[0]), float(p[1])] for p in points]
+            except (TypeError, ValueError, IndexError):
+                return None
+            if not all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in norm_points):
+                return None
+            return {"shape": "polygon", "points": norm_points}
         try:
             x_min, y_min = float(zone["x_min"]), float(zone["y_min"])
             x_max, y_max = float(zone["x_max"]), float(zone["y_max"])
@@ -1118,7 +1144,13 @@ class MediaServer:
             return None
         if not (0.0 <= x_min < x_max <= 1.0 and 0.0 <= y_min < y_max <= 1.0):
             return None
-        return {"x_min": x_min, "y_min": y_min, "x_max": x_max, "y_max": y_max}
+        return {
+            "shape": "rect",
+            "x_min": x_min,
+            "y_min": y_min,
+            "x_max": x_max,
+            "y_max": y_max,
+        }
 
     async def _handle_ai_camera_configs_put(self, request: web.Request) -> web.Response:
         """Save per-camera AI configurations and update the live analyzer."""
@@ -1224,6 +1256,127 @@ class MediaServer:
             self._analyzer.update_car_description(car_description)
 
         return web.json_response({"saved": True})
+
+    # ------------------------------------------------------------------
+    # Per-camera car zone (Vehicles tab picker) — a dedicated,
+    # immediately-applied endpoint distinct from the AI tab's full-array
+    # /api/ai/camera-configs (which only takes effect once "Save Camera
+    # Settings" is clicked). The picker's own Save action needs an
+    # unambiguous, instant effect, and the reference snapshot below must be
+    # captured at the exact moment a zone is saved rather than re-derived
+    # from whatever clip happens to be newest whenever the tab is next
+    # opened. Only touches car_zone on the target camera's entry — every
+    # other field (description, custom_prompt, is_car_camera) is preserved
+    # unchanged, same round-trip contract as the batch endpoint.
+    # ------------------------------------------------------------------
+
+    _VEHICLE_ZONE_SNAPSHOTS_DIR = Path("/data/vehicle_zone_snapshots")
+
+    def _read_camera_configs(self) -> list[dict[str, Any]]:
+        if not self._CAMERA_CONFIGS_FILE.exists():
+            return []
+        try:
+            data = json.loads(self._CAMERA_CONFIGS_FILE.read_text())
+            return data if isinstance(data, list) else []
+        except Exception:  # noqa: BLE001
+            return []
+
+    @classmethod
+    def _vehicle_zone_snapshot_path(cls, camera: str) -> Path:
+        slug = re.sub(r"[^a-z0-9]+", "-", camera.lower()).strip("-") or "camera"
+        return cls._VEHICLE_ZONE_SNAPSHOTS_DIR / f"{slug}.jpg"
+
+    async def _handle_vehicle_zone_put(self, request: web.Request) -> web.Response:
+        """Save one camera's protected-vehicle zone, together with a
+        persisted snapshot of the exact frame it was drawn on, so the
+        picker's reference image never silently changes later just because
+        a newer clip came in for that camera.
+        """
+        camera = request.match_info["camera"]
+        try:
+            body = await request.json()
+            clip_id = str(body.get("clip_id") or "")
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+
+        zone = self._normalize_car_zone(
+            body.get("zone") if isinstance(body, dict) else None
+        )
+        if zone is None:
+            raise web.HTTPBadRequest(text="Invalid or missing zone")
+        if not clip_id:
+            raise web.HTTPBadRequest(text="Missing clip_id")
+
+        clip = await self._db.get_clip(clip_id)
+        if not clip:
+            raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
+        thumb = Path(clip["file_path"]).with_suffix(".jpg")
+        if not thumb.exists():
+            raise web.HTTPNotFound(text="Thumbnail not available for that clip")
+
+        configs = self._read_camera_configs()
+        entry = next((c for c in configs if c.get("camera") == camera), None)
+        if entry is None:
+            entry = {
+                "camera": camera,
+                "description": "",
+                "custom_prompt": "",
+                "is_car_camera": True,
+                "car_zone": None,
+            }
+            configs.append(entry)
+        entry["car_zone"] = zone
+        # The picker is only reachable once the "protected vehicle visible
+        # from this camera" toggle is on, but that toggle only persists via
+        # the Vehicles page's own batch save — without this, saving a zone
+        # before ever clicking that batch save would silently have no
+        # effect (car-zone rules are gated on is_car_camera).
+        entry["is_car_camera"] = True
+
+        try:
+            self._VEHICLE_ZONE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+            self._vehicle_zone_snapshot_path(camera).write_bytes(thumb.read_bytes())
+        except OSError as exc:
+            _LOGGER.warning(
+                "Could not save vehicle zone snapshot for %s: %s", camera, exc
+            )
+
+        try:
+            self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
+        except OSError as exc:
+            _LOGGER.warning("Could not save camera configs: %s", exc)
+
+        self._apply_camera_configs_to_analyzer(configs)
+
+        return web.json_response({"saved": True, "car_zone": zone})
+
+    async def _handle_vehicle_zone_delete(self, request: web.Request) -> web.Response:
+        camera = request.match_info["camera"]
+        configs = self._read_camera_configs()
+        entry = next((c for c in configs if c.get("camera") == camera), None)
+        if entry is not None:
+            entry["car_zone"] = None
+            try:
+                self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
+            except OSError as exc:
+                _LOGGER.warning("Could not save camera configs: %s", exc)
+            self._apply_camera_configs_to_analyzer(configs)
+
+        self._vehicle_zone_snapshot_path(camera).unlink(missing_ok=True)
+
+        return web.json_response({"saved": True})
+
+    async def _handle_vehicle_zone_snapshot_get(
+        self, request: web.Request
+    ) -> web.StreamResponse:
+        camera = request.match_info["camera"]
+        snapshot_path = self._vehicle_zone_snapshot_path(camera)
+        if not snapshot_path.exists():
+            raise web.HTTPNotFound(text="No snapshot saved for this camera")
+        # Always revalidate rather than a max-age cache: the filename is
+        # stable per camera, so a stale browser cache would otherwise keep
+        # showing the previous zone's frame after a new save overwrites it.
+        return web.FileResponse(snapshot_path, headers={"Cache-Control": "no-cache"})
 
     # ------------------------------------------------------------------
     # Adaptive learning (human feedback on AI verdicts)

@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MIN_POLYGON_SPAN,
+  addFreeformPoint,
   clampRect,
+  fractionToPolygonPoints,
   fractionToRect,
   hitTest,
   moveRect,
+  pointsToSvgAttr,
+  polygonToFraction,
   rectFromPoints,
   rectToFraction,
   resizeRect,
@@ -60,6 +65,7 @@ describe('clampRect', () => {
 describe('rectToFraction / fractionToRect round trip', () => {
   it('converts a pixel rect to 0-1 fractions', () => {
     expect(rectToFraction({ x: 25, y: 50, width: 50, height: 100 }, 100, 200)).toEqual({
+      shape: 'rect',
       x_min: 0.25,
       y_min: 0.25,
       x_max: 0.75,
@@ -141,5 +147,123 @@ describe('moveRect', () => {
       width: 20,
       height: 20,
     })
+  })
+})
+
+describe('addFreeformPoint', () => {
+  it('appends the first point unconditionally', () => {
+    expect(addFreeformPoint([], [10, 10])).toEqual([[10, 10]])
+  })
+
+  it('appends a point far enough from the last one', () => {
+    const path: [number, number][] = [[10, 10]]
+    expect(addFreeformPoint(path, [20, 10])).toEqual([
+      [10, 10],
+      [20, 10],
+    ])
+  })
+
+  it('skips a point too close to the last captured point', () => {
+    const path: [number, number][] = [[10, 10]]
+    expect(addFreeformPoint(path, [11, 10])).toBe(path)
+  })
+
+  it('does not mutate the original array', () => {
+    const path: [number, number][] = [[10, 10]]
+    addFreeformPoint(path, [20, 10])
+    expect(path).toEqual([[10, 10]])
+  })
+})
+
+describe('polygonToFraction', () => {
+  const triangle: [number, number][] = [
+    [10, 10],
+    [50, 10],
+    [30, 50],
+  ]
+
+  it('converts a pixel-space path to 0-1 fractional polygon points', () => {
+    expect(polygonToFraction(triangle, 100, 100)).toEqual({
+      shape: 'polygon',
+      points: [
+        [0.1, 0.1],
+        [0.5, 0.1],
+        [0.3, 0.5],
+      ],
+    })
+  })
+
+  it('returns null for fewer than 3 points', () => {
+    expect(
+      polygonToFraction(
+        [
+          [10, 10],
+          [50, 10],
+        ],
+        100,
+        100,
+      ),
+    ).toBeNull()
+  })
+
+  it(`returns null when the path's bounding box is smaller than MIN_POLYGON_SPAN in both axes`, () => {
+    const span = MIN_POLYGON_SPAN - 1
+    expect(
+      polygonToFraction(
+        [
+          [10, 10],
+          [10 + span, 10],
+          [10, 10 + span],
+        ],
+        100,
+        100,
+      ),
+    ).toBeNull()
+  })
+
+  it('accepts a path spanning MIN_POLYGON_SPAN in only one axis (a thin sliver is still intentional)', () => {
+    expect(
+      polygonToFraction(
+        [
+          [10, 10],
+          [10 + MIN_POLYGON_SPAN, 10],
+          [10, 11],
+        ],
+        100,
+        100,
+      ),
+    ).not.toBeNull()
+  })
+
+  it('returns null when the container has no measured size yet', () => {
+    expect(polygonToFraction(triangle, 0, 0)).toBeNull()
+  })
+})
+
+describe('fractionToPolygonPoints', () => {
+  it('is the inverse of polygonToFraction', () => {
+    const triangle: [number, number][] = [
+      [10, 10],
+      [50, 10],
+      [30, 50],
+    ]
+    const frac = polygonToFraction(triangle, 100, 100)!
+    expect(fractionToPolygonPoints(frac, 100, 100)).toEqual(triangle)
+  })
+})
+
+describe('pointsToSvgAttr', () => {
+  it('formats a point path as an SVG points attribute string', () => {
+    expect(
+      pointsToSvgAttr([
+        [10, 10],
+        [50, 10],
+        [30, 50],
+      ]),
+    ).toBe('10,10 50,10 30,50')
+  })
+
+  it('returns an empty string for an empty path', () => {
+    expect(pointsToSvgAttr([])).toBe('')
   })
 })

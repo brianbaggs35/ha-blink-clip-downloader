@@ -464,20 +464,30 @@ per-camera AI prompt tuning):
   AI needs to know *what vehicle* to protect, not just which camera can see
   it; the tab shows a warning banner until both are set.
 - **Visual car-zone picker** — once a camera is checked, pick one of its
-  recent clips and click-drag directly on the frame to draw a rectangle over
-  where the vehicle normally sits (drag the corner handles to resize, drag
-  the body to move, or clear it entirely). This replaced manual
-  left/top/right/bottom percentage fields with an actual visual picker — much
-  easier to get right, and essential for picking out *your* vehicle when
-  several are parked close together (shared/apartment parking). Since a Blink
-  camera doesn't move, this zone is stable ground truth that doesn't depend
-  on any single clip's object detection succeeding: it sharpens accuracy in
-  two ways — a code-computed "zone motion" signal (what share of the clip's
-  overall motion happened inside the zone vs. elsewhere) is added to the AI's
-  evidence, and for Moondream providers it's used as a fallback proximity
-  reference when a clip's vehicle detection finds nothing at all. Clear the
-  zone to skip it — everything else (distance rules, description-based
-  disambiguation) works the same with or without one configured.
+  recent clips and either click-drag a rectangle over where the vehicle
+  normally sits (drag the corner handles to resize, drag the body to move),
+  or switch to **Freeform** and trace a lasso outline around the vehicle's
+  actual silhouette — release the pointer anywhere to auto-close the shape,
+  no need to trace precisely back to the start point. Freeform is worth
+  reaching for when a rectangle would necessarily include a lot of
+  neighboring pavement/another vehicle (e.g. a car parked at an angle, or
+  tightly boxed in). Clicking **Save zone** captures a still reference image
+  of the exact frame the zone was drawn on alongside it: once saved, the tab
+  always shows that frozen snapshot with the zone overlaid, not whatever
+  clip happens to be newest whenever you revisit it later — so a car, person,
+  or anything else that shows up in a *newer* clip never appears to overlap
+  a zone that was set before it arrived. Click **Edit zone** to redraw from a
+  fresh frame, or **Clear zone** (with a confirmation prompt) to remove it
+  and its reference image entirely. Since a Blink camera doesn't move, the
+  zone itself is stable ground truth that doesn't depend on any single
+  clip's object detection succeeding: it sharpens accuracy in two ways — a
+  code-computed "zone motion" signal (what share of the clip's overall
+  motion happened inside the zone vs. elsewhere, using true point-in-polygon
+  matching for freeform zones) is added to the AI's evidence, and for
+  Moondream providers it's used as a fallback proximity reference when a
+  clip's vehicle detection finds nothing at all. Clear the zone to skip it —
+  everything else (distance rules, description-based disambiguation) works
+  the same with or without one configured.
 
 > **Priority:** `camera_configs.json`/`vehicle_settings.json` (both set via
 > the web UI) are the primary source for descriptions, custom prompts,
@@ -737,8 +747,9 @@ from any browser without leaving Home Assistant.
   downloaded clip to confirm the AI backend is working end-to-end.
 - **Models tab** — reference info on each AI provider's capabilities.
 - **Vehicles tab** — protected-vehicle description, per-camera "sees the vehicle"
-  flag, and a visual click-drag zone picker drawn over an actual recent frame from
-  that camera — see **Vehicles Tab** above.
+  flag, and a visual rectangle-or-freeform zone picker drawn over an actual recent
+  frame from that camera, with a persisted reference snapshot — see
+  **Vehicles Tab** above.
 - **Biometrics tab** — enroll household members' faces (from a clip's frames or a
   single photo), approve/un-approve/rename/remove them, and the all-or-nothing
   suspicious-flag bypass this powers — see **Biometrics Tab** above.
@@ -865,8 +876,9 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/last_digest.json` | Timestamp of the last daily digest |
 | `/data/two_fa_code.txt` | Write your 2FA code here when prompted |
 | `/data/trigger_download` | Touch to force an immediate poll |
-| `/data/camera_configs.json` | Per-camera descriptions, custom prompts, and car-camera flags set via the web UI |
-| `/data/vehicle_settings.json` | Protected-vehicle description and per-camera car zones set via the Vehicles tab |
+| `/data/camera_configs.json` | Per-camera descriptions, custom prompts, car-camera flags, and car zones set via the web UI |
+| `/data/vehicle_settings.json` | Protected-vehicle description set via the Vehicles tab |
+| `/data/vehicle_zone_snapshots/` | One reference frame (JPEG) per camera with a saved car zone — the exact image the zone was drawn on, so the Vehicles tab's preview never silently shows a different, newer frame |
 | `/data/moondream_packages/` | The `moondream` Python package itself, installed here via the AI tab's **Install** button so it persists across restarts |
 | `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch) — see **Disk Space** above |
 

@@ -172,7 +172,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         camera_descriptions: dict[str, str] = {}
         camera_prompts: dict[str, str] = {}
         car_cameras_from_ui: list[str] = []
-        car_zones: dict[str, dict[str, float]] = {}
+        car_zones: dict[str, dict[str, Any]] = {}
 
         cam_desc_file = Path("/data/camera_configs.json")
         if not cam_desc_file.exists():
