@@ -436,3 +436,106 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f addon || true
+
+  supervisor-install-test:
+    name: Install Add-on via Real HA Supervisor
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Independent of build/smoke-test above (no `needs:`) and not gated on
+    # their artifact — config.yaml has no `image:` field, so a real HAOS
+    # install always builds this add-on locally and natively rather than
+    # pulling a pre-built image (see CLAUDE.md), and this job mirrors that
+    # exactly: real HA Supervisor discovers, builds, and installs the
+    # add-on from source, the same way this whole project has been
+    # manually verified throughout development. This exists specifically
+    # to catch problems the smoke-test job's bare `docker run` structurally
+    # cannot see, since it never goes through Supervisor at all — config.yaml
+    # schema validation, AppArmor profile registration, and the generated
+    # Configuration tab. That gap is not hypothetical: an optional-select
+    # schema quirk once made a Configuration field permanently unreachable
+    # in the real Supervisor UI while every container-level check still
+    # passed clean.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Start Home Assistant Supervisor devcontainer
+        run: |
+          docker run -d --name ha-supervisor-ci --privileged \
+            -v supervisor-mnt:/mnt/supervisor \
+            -v supervisor-docker-lib:/var/lib/docker \
+            -v supervisor-containerd-lib:/var/lib/containerd \
+            ghcr.io/home-assistant/devcontainer:5-apps
+          docker exec -d ha-supervisor-ci supervisor_run
+
+      - name: Wait for Supervisor to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec ha-supervisor-ci docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^hassio_cli$'; then
+              echo "Supervisor ready after ${i} check(s)"
+              exit 0
+            fi
+            echo "Waiting for Supervisor to bootstrap (attempt $i/30)..."
+            sleep 10
+          done
+          echo "Supervisor never became ready"
+          docker exec ha-supervisor-ci docker ps -a || true
+          docker logs ha-supervisor-ci || true
+          exit 1
+
+      - name: Copy add-on source into Supervisor's local apps
+        run: |
+          tar --exclude='node_modules' --exclude='.venv' --exclude='__pycache__' \
+              --exclude='*.egg-info' --exclude='.pytest_cache' --exclude='.ruff_cache' \
+              --exclude='static' -czf - blink_clip_downloader \
+            | docker exec -i ha-supervisor-ci sh -c \
+              'rm -rf /tmp/blink_build_ctx \
+               && mkdir -p /tmp/blink_build_ctx \
+               && tar -xzf - -C /tmp/blink_build_ctx --strip-components=1'
+          docker exec ha-supervisor-ci sh -c \
+            'rm -rf /mnt/supervisor/apps/local/blink_clip_downloader \
+             && mkdir -p /mnt/supervisor/apps/local/blink_clip_downloader \
+             && cp -r /tmp/blink_build_ctx/. /mnt/supervisor/apps/local/blink_clip_downloader/'
+
+      - name: Discover the add-on
+        run: |
+          docker exec ha-supervisor-ci docker exec hassio_cli ha refresh-updates
+          docker exec ha-supervisor-ci docker exec hassio_cli ha apps info local_blink_clip_downloader \
+            | grep -q 'available: true'
+
+      - name: Install the add-on through Supervisor (builds from source — takes several minutes)
+        run: docker exec ha-supervisor-ci docker exec hassio_cli ha apps install local_blink_clip_downloader --raw-json
+
+      - name: Start the add-on and confirm it reaches "started"
+        run: |
+          docker exec ha-supervisor-ci docker exec hassio_cli ha apps start local_blink_clip_downloader --raw-json
+          sleep 5
+          docker exec ha-supervisor-ci docker exec hassio_cli ha apps info local_blink_clip_downloader \
+            | grep -q '^state: started'
+
+      - name: Verify the media server responds through Supervisor
+        run: |
+          for i in $(seq 1 10); do
+            if docker exec ha-supervisor-ci docker exec addon_local_blink_clip_downloader \
+                curl -fsS http://localhost:8099/health >/dev/null 2>&1; then
+              echo "Media server is up"
+              exit 0
+            fi
+            echo "Media server not reachable yet (attempt $i/10), retrying..."
+            sleep 3
+          done
+          echo "Media server never became reachable"
+          exit 1
+
+      - name: Dump Supervisor and add-on logs on failure
+        if: failure()
+        run: |
+          docker exec ha-supervisor-ci docker logs hassio_supervisor 2>&1 | tail -200 || true
+          docker exec ha-supervisor-ci docker logs addon_local_blink_clip_downloader 2>&1 | tail -200 || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f ha-supervisor-ci || true
+          docker volume rm supervisor-mnt supervisor-docker-lib supervisor-containerd-lib || true

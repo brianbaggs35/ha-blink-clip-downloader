@@ -1731,6 +1731,63 @@ Confirmed already correct, no change needed:
   diminishing returns against the 80% CI gate both suites already clear
   comfortably.
 
+### Testing — CI smoke test now verifies real tab content, not just clicks
+
+- `e2e/smoke.mjs` previously clicked through every nav tab and only checked
+  for console/page errors — a tab stuck on its loading spinner forever, or
+  one that silently rendered nothing, passed the smoke test as long as
+  nothing *threw*. It now waits (with a real, failing timeout, not a fixed
+  sleep) for a tab-specific piece of text that only appears once that
+  page's own component has actually mounted and its data fetch has
+  resolved into its real UI — e.g. Library's "No clips found" empty state,
+  the AI tab's "AI Analysis Not Configured" card, Vehicles' "No cameras
+  found" message — scoped to that tab's own `#page-<name>` container so it
+  can't accidentally match a different, inactive tab's still-mounted (but
+  CSS-hidden) DOM. Also confirms each tab's loading spinner is actually
+  gone once its content renders, catching a stuck/partial render that a
+  content-only check would miss. Verified against a real locally-built
+  image before landing this — every assertion passed on the first run.
+- `scripts/smoke-test.sh`'s curl/jq endpoint checks had drifted out of sync
+  with `ci.yaml`'s inline copy (missing the `/api/vehicle/settings` and
+  `/api/ai/camera-configs` checks CI already had) despite both claiming to
+  be "one source of truth" — resynced.
+
+### Added — new CI job installs the add-on through a real HA Supervisor instance
+
+- New `supervisor-install-test` job in `ci.yaml`, independent of and
+  running in parallel with `build`/`smoke-test`. Where the existing
+  smoke-test boots the add-on via a bare `docker run` (fast, but bypasses
+  Supervisor entirely), this job runs the same `ghcr.io/home-assistant/
+  devcontainer:5-apps` Supervisor-in-Docker environment this add-on has
+  been manually verified against all through development: bootstraps a
+  real Supervisor, copies the checked-out source into its local-apps
+  directory, and lets Supervisor itself discover, build, and install the
+  add-on from source — the same path a real HAOS install takes, since
+  `config.yaml` has no `image:` field. Catches the class of bug a bare
+  container can't see at all: config.yaml schema validation, AppArmor
+  profile registration, and whatever the generated Configuration tab
+  actually renders — not hypothetical, this is exactly the shape of bug an
+  earlier round of this same testing session found by hand (an
+  optional-select schema quirk that permanently hid a Configuration field
+  in the real Supervisor UI while every container-level check stayed
+  green).
+- Every command in the new job was verified against a real, disposable
+  Supervisor instance before landing (not just written from documentation)
+  — including confirming the actual CLI verb for a *fresh* local-add-on
+  install (`ha refresh-updates` to make Supervisor discover it, then
+  `ha apps install`, which does not auto-start — a separate `ha apps
+  start` is required), which this project had never exercised before
+  (every prior manual round only ever rebuilt an add-on already installed
+  from an earlier session). A real from-scratch build (no Docker layer
+  cache at all, full CV-pipeline dependencies included) took about 6.5
+  minutes; the job's 20-minute timeout leaves comfortable headroom above
+  that plus Supervisor's own bootstrap.
+- Found one real, pre-existing issue while verifying this: Supervisor logs
+  `App local_blink_clip_downloader uses build.yaml which is deprecated.
+  Move build parameters into the Dockerfile directly` on every install —
+  not fixed here (out of scope for a CI-only change), flagged for a
+  follow-up.
+
 ## 4.0.2
 
 ### Bug fixes
