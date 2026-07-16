@@ -2358,24 +2358,19 @@ horizontal overflow), and dark mode.
   when testing an install on a real Home Assistant OS host (not the
   nested-Docker Supervisor devcontainer this add-on had been validated
   against up to this point, which turned out to be more permissive than real
-  hardware about container capabilities, the same way it previously was
-  about AppArmor enforcement). `01-postgres-init.sh`'s
-  `chown postgres:postgres /data/postgresql` failed with "Operation not
-  permitted", `cont-init.d` treated that as fatal, and s6 stopped the
-  container before any service — including the media server — ever started.
-  Two independent layers both needed to grant this, and were missing it:
-  `apparmor.txt` had broad `file,` access but no `capability` rules (AppArmor
-  mediates Linux capabilities like `CAP_CHOWN` separately from file access,
-  and denies anything not explicitly listed); and `config.yaml` had no
-  `privileged` list, so Docker itself never granted the container
-  `CAP_CHOWN`/`CAP_SETUID`/`CAP_SETGID` in the first place — AppArmor can
-  only restrict further, not substitute for a capability Docker never
-  granted. PostgreSQL refuses outright to run as root, and `/data` is a host
-  bind-mount whose ownership can't be baked into the image, so some form of
-  runtime chown-and-drop-privileges is unavoidable here. Added a bare
-  `capability,` rule to `apparmor.txt` and `privileged: [CHOWN, SETUID,
-  SETGID]` to `config.yaml` — the minimum both layers need to agree to allow
-  before this script's `chown` and `su` calls can succeed.
+  hardware here, the same way it previously was about AppArmor enforcement).
+  `01-postgres-init.sh`'s `chown postgres:postgres /data/postgresql` failed
+  with "Operation not permitted", `cont-init.d` treated that as fatal, and s6
+  stopped the container before any service — including the media server —
+  ever started. `apparmor.txt` granted broad `file,` access but no
+  `capability` rules at all; AppArmor mediates Linux capabilities (`CAP_CHOWN`
+  among them) separately from file access, and denies anything not
+  explicitly listed even when Docker's own default capability set (which
+  already includes `CAP_CHOWN`, unlike Supervisor's separate opt-in
+  `privileged` config.yaml option, which covers a different, more dangerous
+  set of capabilities and doesn't include it) would otherwise allow it. Added
+  a bare `capability,` rule to `apparmor.txt` alongside the existing `file,`
+  one.
 
 ## 4.0.2
 
