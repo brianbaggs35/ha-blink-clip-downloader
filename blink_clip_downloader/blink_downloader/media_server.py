@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from aiohttp import web
 
 from .database import ClipDatabase
-from .vision import FaceEmbedder, is_face_recognition_available
+from .vision import FaceEmbedder, is_face_recognition_available, torch_cpu_compatible
 
 if TYPE_CHECKING:
     from .analysis_queue import AnalysisQueue
@@ -696,6 +696,10 @@ class MediaServer:
             data["provider"] = self._analyzer.provider_name
             data["model"] = self._analyzer.model_name()
             data["car_protection_active"] = self._analyzer.car_protection_active
+            # Independent of which ai_provider is configured — gates the
+            # enhanced-detection/face-recognition pipeline (vision.py), which
+            # any provider can have layered on top. See torch_cpu_compatible().
+            data["torch_cpu_compatible"] = torch_cpu_compatible()
             if self._analyzer.provider_name == "moondream_local":
                 data["moondream_installed"] = _is_moondream_installed()
                 data["moondream_arch_supported"] = _moondream_arch_supported()
@@ -1377,7 +1381,10 @@ class MediaServer:
 
         if not is_face_recognition_available():
             return web.json_response(
-                {"error": "Face recognition dependencies are not installed"},
+                {
+                    "error": "Face recognition is not available on this system "
+                    "(missing dependencies, or a CPU that can't run them)"
+                },
                 status=400,
             )
 

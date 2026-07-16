@@ -38,6 +38,7 @@ import io
 import logging
 import math
 import os
+import platform
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -105,8 +106,57 @@ _DEPTH_SIMILARITY_FRACTION = 0.15
 # ----------------------------------------------------------------------
 
 
+class CPUIncompatibleError(RuntimeError):
+    """Raised by a stage's _load_sync() when torch_cpu_compatible() is
+    False, instead of attempting the import that would otherwise crash the
+    process. A distinct type from plain RuntimeError so each stage's
+    ensure_ready() can catch this specific case (clean "unavailable on this
+    CPU" warning) without also swallowing an unrelated RuntimeError from
+    the model/import machinery itself (which should keep getting the
+    existing generic-failure handling, traceback and all)."""
+
+
+def torch_cpu_compatible() -> bool:
+    """Return True if this CPU can safely run PyTorch's official builds.
+
+    PyTorch's official aarch64 wheels assume the CPU supports the ARMv8.1
+    LSE atomic instructions (exposed as "atomics" in /proc/cpuinfo's
+    Features line). Without them, importing torch — or any package that
+    imports it, which is every stage below except FrameEnhancer — can
+    crash the whole process with an illegal-instruction signal (SIGILL)
+    rather than a catchable Python exception. This is a well-documented,
+    still-unresolved upstream issue specific to Raspberry Pi 4 and older
+    boards (Cortex-A72 and earlier predate LSE); Raspberry Pi 5's
+    Cortex-A76 is unaffected, and x86_64 has no such requirement at all.
+    Every torch-dependent stage's ``_load_sync`` below calls this *before*
+    attempting its import, since a SIGILL can't be caught after the fact —
+    prevention is the only option. An unreadable/unparseable /proc/cpuinfo
+    is conservatively treated as unsupported, since a false "unavailable"
+    just costs a feature, while a false "available" risks the crash this
+    check exists to prevent.
+    """
+    if platform.machine() not in ("aarch64", "arm64"):
+        return True
+    try:
+        with open("/proc/cpuinfo") as f:
+            cpuinfo = f.read()
+    except OSError:
+        return False
+    for line in cpuinfo.splitlines():
+        if line.lower().startswith("features"):
+            _, _, features = line.partition(":")
+            return "atomics" in features.split()
+    return False
+
+
 def is_face_recognition_available() -> bool:
-    """Return True if the facenet_pytorch package is importable."""
+    """Return True if facenet_pytorch is importable and the CPU supports it.
+
+    See :func:`torch_cpu_compatible` — facenet_pytorch depends on torch, so
+    this must gate on CPU compatibility too, not just package presence.
+    """
+    if not torch_cpu_compatible():
+        return False
     try:
         __import__("facenet_pytorch")
         return True
@@ -211,6 +261,12 @@ class ObjectDetector:
         return self._lock
 
     def _load_sync(self) -> None:
+        if not torch_cpu_compatible():
+            raise CPUIncompatibleError(
+                "this device's CPU is missing instructions PyTorch needs "
+                "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
+                "Pi 5 is not affected)"
+            )
         # Must be set before the ultralytics import below: it probes
         # ~/.config/Ultralytics for a writable settings dir as a side effect
         # of import (not lazily), and this container's $HOME isn't writable
@@ -258,6 +314,9 @@ class ObjectDetector:
                     "unavailable: %s. Install it with: pip install ultralytics",
                     exc,
                 )
+                return False
+            except CPUIncompatibleError as exc:
+                _LOGGER.warning("Object detection unavailable: %s", exc)
                 return False
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.exception("Failed to load YOLO model: %s", exc)
@@ -519,6 +578,12 @@ class DepthEstimator:
         return self._lock
 
     def _load_sync(self) -> None:
+        if not torch_cpu_compatible():
+            raise CPUIncompatibleError(
+                "this device's CPU is missing instructions PyTorch needs "
+                "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
+                "Pi 5 is not affected)"
+            )
         from transformers import pipeline  # noqa: PLC0415  # type: ignore[import-not-found]
 
         _LOGGER.info("Loading depth-estimation model '%s'", self._MODEL_ID)
@@ -543,6 +608,9 @@ class DepthEstimator:
                     "unavailable: %s. Install it with: pip install transformers",
                     exc,
                 )
+                return False
+            except CPUIncompatibleError as exc:
+                _LOGGER.warning("Depth estimation unavailable: %s", exc)
                 return False
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.exception("Failed to load depth-estimation model: %s", exc)
@@ -665,6 +733,12 @@ class ContactSegmenter:
         return self._lock
 
     def _load_sync(self) -> None:
+        if not torch_cpu_compatible():
+            raise CPUIncompatibleError(
+                "this device's CPU is missing instructions PyTorch needs "
+                "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
+                "Pi 5 is not affected)"
+            )
         from transformers import (  # noqa: PLC0415  # type: ignore[import-not-found]
             Sam2Model,
             Sam2Processor,
@@ -692,6 +766,9 @@ class ContactSegmenter:
                     "pip install transformers",
                     exc,
                 )
+                return False
+            except CPUIncompatibleError as exc:
+                _LOGGER.warning("Contact segmentation unavailable: %s", exc)
                 return False
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.exception("Failed to load SAM2 model: %s", exc)
@@ -839,6 +916,12 @@ class FaceEmbedder:
         return self._lock
 
     def _load_sync(self) -> None:
+        if not torch_cpu_compatible():
+            raise CPUIncompatibleError(
+                "this device's CPU is missing instructions PyTorch needs "
+                "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
+                "Pi 5 is not affected)"
+            )
         from facenet_pytorch import (  # noqa: PLC0415  # type: ignore[import-not-found]
             MTCNN,
             InceptionResnetV1,
@@ -866,6 +949,9 @@ class FaceEmbedder:
                     "pip install facenet-pytorch",
                     exc,
                 )
+                return False
+            except CPUIncompatibleError as exc:
+                _LOGGER.warning("Face recognition unavailable: %s", exc)
                 return False
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.exception("Failed to load face-recognition models: %s", exc)

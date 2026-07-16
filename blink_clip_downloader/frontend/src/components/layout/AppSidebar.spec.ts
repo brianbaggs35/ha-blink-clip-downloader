@@ -8,6 +8,7 @@ import { useConnectionStore } from '../../stores/connection'
 import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
+import { useCapabilitiesStore } from '../../stores/capabilities'
 
 function jsonResponse(body: unknown, ok = true) {
   return { ok, json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
@@ -170,6 +171,73 @@ describe('AppSidebar', () => {
 
       await vi.advanceTimersByTimeAsync(0)
       expect(connection.connected).toBe(null)
+    })
+  })
+
+  describe('biometrics tab visibility', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('shows Biometrics before the availability check resolves', () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ connected: null })))
+      const wrapper = mountSidebar()
+      expect(wrapper.find('[data-tab="biometrics"]').exists()).toBe(true)
+    })
+
+    it('hides Biometrics once the CPU/dependency check reports unavailable', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ connected: true, available: false, faces: [] })))
+      const wrapper = mountSidebar()
+      expect(wrapper.find('[data-tab="biometrics"]').exists()).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(0)
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('[data-tab="biometrics"]').exists()).toBe(false)
+    })
+
+    it('leaves Biometrics visible when face recognition is available', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ connected: true, available: true, faces: [] })))
+      const wrapper = mountSidebar()
+      await vi.advanceTimersByTimeAsync(0)
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('[data-tab="biometrics"]').exists()).toBe(true)
+    })
+
+    it('leaves Biometrics visible when the availability check fails', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')))
+      const wrapper = mountSidebar()
+      await vi.advanceTimersByTimeAsync(0)
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('[data-tab="biometrics"]').exists()).toBe(true)
+    })
+
+    it('redirects away if the user is already on Biometrics when it becomes unavailable', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ connected: true, available: false, faces: [] })))
+      const wrapper = mountSidebar('biometrics')
+
+      await vi.advanceTimersByTimeAsync(0)
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['library'])
+    })
+
+    it('does not redirect away from Biometrics when it stays available', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ connected: true, available: true, faces: [] })))
+      const wrapper = mountSidebar('biometrics')
+      const capabilities = useCapabilitiesStore()
+
+      await vi.advanceTimersByTimeAsync(0)
+      await wrapper.vm.$nextTick()
+
+      expect(capabilities.faceRecognitionAvailable).toBe(true)
+      expect(wrapper.emitted('update:modelValue')).toBeUndefined()
     })
   })
 

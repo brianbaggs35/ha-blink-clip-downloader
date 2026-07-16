@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import AppIcon from '../icons/AppIcon.vue'
@@ -9,8 +9,10 @@ import { useToastStore } from '../../stores/toast'
 import { useConnectionStore } from '../../stores/connection'
 import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
+import { useCapabilitiesStore } from '../../stores/capabilities'
 import { apiPost } from '../../api/client'
 import { getStats } from '../../api/clips'
+import { listFaces } from '../../api/ai'
 
 export type TabName = 'library' | 'automations' | 'status' | 'ai' | 'usage' | 'models' | 'vehicles' | 'biometrics'
 
@@ -33,6 +35,39 @@ const toast = useToastStore()
 const connection = useConnectionStore()
 const library = useLibraryStore()
 const refresh = useRefreshStore()
+const capabilities = useCapabilitiesStore()
+
+// Biometrics is the one tab that's entirely unusable when face recognition
+// can't run (a Raspberry Pi 4's Cortex-A72 CPU, missing dependencies, ...)
+// — hiding it avoids sending someone into a tab where every action would
+// just fail. Defaults to visible (null = "not checked yet") rather than
+// flashing hidden-then-shown once the check completes.
+const visibleTabs = computed(() =>
+  capabilities.faceRecognitionAvailable === false ? TABS.filter((t) => t.name !== 'biometrics') : TABS,
+)
+
+async function pollFaceRecognitionAvailable() {
+  try {
+    const r = await listFaces()
+    capabilities.setFaceRecognitionAvailable(r.available)
+  } catch {
+    // Transient — leave the tab visible rather than hide it on a single
+    // dropped request; the tab's own load() will surface a real error.
+  }
+}
+
+// Narrow race: the check above resolves after the user has already
+// clicked into Biometrics (slow network, or clicked before the initial
+// fetch settled). Without this, the tab would vanish from the nav but the
+// page would stay stuck showing it, with no visible way back.
+watch(
+  () => capabilities.faceRecognitionAvailable,
+  (available) => {
+    if (available === false && activeTab.value === 'biometrics') {
+      activeTab.value = 'library'
+    }
+  },
+)
 
 const notifSupported = 'Notification' in window
 const notifEnabled = ref(localStorage.getItem('blink_notif') === '1')
@@ -121,6 +156,7 @@ async function pollConnection() {
 
 onMounted(() => {
   void pollConnection()
+  void pollFaceRecognitionAvailable()
   connectionPollTimer = setInterval(pollConnection, CONNECTION_POLL_INTERVAL_MS)
 })
 onUnmounted(() => {
@@ -137,7 +173,7 @@ onUnmounted(() => {
 
     <div class="app-nav-tabs">
       <button
-        v-for="tab in TABS"
+        v-for="tab in visibleTabs"
         :key="tab.name"
         class="app-nav-tab"
         :class="{ active: activeTab === tab.name }"

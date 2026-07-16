@@ -26,6 +26,7 @@ from blink_downloader.database import ClipDatabase
 from blink_downloader.vision import (
     ContactResult,
     ContactSegmenter,
+    CPUIncompatibleError,
     DepthComparison,
     DepthEstimator,
     DetectedObject,
@@ -46,6 +47,7 @@ from blink_downloader.vision import (
     _proximity_label,
     cosine_similarity,
     is_face_recognition_available,
+    torch_cpu_compatible,
 )
 
 
@@ -71,15 +73,76 @@ def _real_jpeg_bytes(size: tuple[int, int] = (10, 10)) -> bytes:
 # ------------------------------------------------------------------
 
 
+def test_torch_cpu_compatible_true_on_non_arm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """x86_64 (and any non-ARM arch) never needs the /proc/cpuinfo check —
+    the LSE/illegal-instruction risk is ARM-specific."""
+    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "x86_64")
+    assert torch_cpu_compatible() is True
+
+
+def test_torch_cpu_compatible_true_when_atomics_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    cpuinfo = "processor\t: 0\nFeatures\t: fp asimd evtstrm aes atomics fphp\n"
+    with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
+        assert torch_cpu_compatible() is True
+
+
+def test_torch_cpu_compatible_false_when_atomics_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This is the actual Raspberry Pi 4 (Cortex-A72) case — LSE/atomics
+    was only added in ARMv8.1, which A72 predates."""
+    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    cpuinfo = "processor\t: 0\nFeatures\t: fp asimd evtstrm aes fphp\n"
+    with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
+        assert torch_cpu_compatible() is False
+
+
+def test_torch_cpu_compatible_false_when_no_features_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    cpuinfo = "processor\t: 0\nmodel name\t: whatever\n"
+    with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
+        assert torch_cpu_compatible() is False
+
+
+def test_torch_cpu_compatible_false_when_cpuinfo_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Conservative default: can't confirm safety, so assume unsupported
+    rather than risk the crash this check exists to prevent."""
+    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    with patch("builtins.open", side_effect=OSError("no such file")):
+        assert torch_cpu_compatible() is False
+
+
 def test_is_face_recognition_available_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: True)
     monkeypatch.setitem(sys.modules, "facenet_pytorch", MagicMock())
     assert is_face_recognition_available() is True
 
 
-def test_is_face_recognition_available_false(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_is_face_recognition_available_false_when_package_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: True)
     monkeypatch.delitem(sys.modules, "facenet_pytorch", raising=False)
     with patch("builtins.__import__", side_effect=ImportError):
         assert is_face_recognition_available() is False
+
+
+def test_is_face_recognition_available_false_when_cpu_incompatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even with the package present, an incompatible CPU must still report
+    unavailable — this is what keeps the enrollment endpoint from ever
+    trying the import that would crash the process."""
+    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", MagicMock())
+    assert is_face_recognition_available() is False
 
 
 # ------------------------------------------------------------------
@@ -370,6 +433,26 @@ async def test_object_detector_ensure_ready_fails_when_missing(
         assert await detector.ensure_ready() is False
 
 
+def test_object_detector_load_sync_raises_cpu_incompatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_load_sync() must refuse before attempting the ultralytics import at
+    all when the CPU can't safely run it — that import is what would
+    actually crash the process, so the guard has to come first."""
+    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    detector = ObjectDetector()
+    with pytest.raises(CPUIncompatibleError):
+        detector._load_sync()
+
+
+async def test_object_detector_ensure_ready_false_when_cpu_incompatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    detector = ObjectDetector()
+    assert await detector.ensure_ready() is False
+
+
 async def test_object_detector_ensure_ready_handles_generic_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -532,6 +615,14 @@ async def test_depth_estimator_ensure_ready_fails_when_missing(
     with patch("builtins.__import__", side_effect=ImportError("no transformers")):
         estimator = DepthEstimator()
         assert await estimator.ensure_ready() is False
+
+
+async def test_depth_estimator_ensure_ready_false_when_cpu_incompatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    estimator = DepthEstimator()
+    assert await estimator.ensure_ready() is False
 
 
 async def test_depth_estimator_ensure_ready_concurrent_calls_load_once(
@@ -712,6 +803,14 @@ async def test_contact_segmenter_ensure_ready_fails_when_missing(
     with patch("builtins.__import__", side_effect=ImportError("no transformers")):
         segmenter = ContactSegmenter()
         assert await segmenter.ensure_ready() is False
+
+
+async def test_contact_segmenter_ensure_ready_false_when_cpu_incompatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    segmenter = ContactSegmenter()
+    assert await segmenter.ensure_ready() is False
 
 
 async def test_contact_segmenter_ensure_ready_concurrent_calls_load_once(
@@ -902,6 +1001,14 @@ async def test_face_embedder_ensure_ready_fails_when_missing(
     with patch("builtins.__import__", side_effect=ImportError("no facenet_pytorch")):
         embedder = FaceEmbedder()
         assert await embedder.ensure_ready() is False
+
+
+async def test_face_embedder_ensure_ready_false_when_cpu_incompatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    embedder = FaceEmbedder()
+    assert await embedder.ensure_ready() is False
 
 
 async def test_face_embedder_ensure_ready_concurrent_calls_load_once(

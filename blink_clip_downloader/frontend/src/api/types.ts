@@ -111,6 +111,11 @@ export interface AiStatus {
   provider?: AiProvider
   model?: string
   car_protection_active?: boolean
+  /** False on a CPU that can't safely run PyTorch (e.g. Raspberry Pi 4's
+   *  Cortex-A72) — gates the enhanced-detection pipeline and local face
+   *  recognition. See vision.py's torch_cpu_compatible(). Undefined only
+   *  when AI analysis itself is off (enabled: false). */
+  torch_cpu_compatible?: boolean
   moondream_installed?: boolean
   moondream_arch_supported?: boolean
   escalation_provider?: AiProvider
