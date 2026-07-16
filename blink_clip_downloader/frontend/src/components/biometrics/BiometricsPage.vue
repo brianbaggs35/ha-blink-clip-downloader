@@ -5,6 +5,7 @@ import Card from 'primevue/card'
 import FileUpload, { type FileUploadSelectEvent } from 'primevue/fileupload'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
+import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import ToggleSwitch from 'primevue/toggleswitch'
 import { deleteFacesByName, enrollFace, listFaces, renameFacesByName, setFacesApprovedByName } from '../../api/ai'
@@ -37,6 +38,7 @@ const enrollMode = ref<EnrollMode>('clip')
 const name = ref('')
 const approvedOnEnroll = ref(true)
 const enrolling = ref(false)
+const addToExistingName = ref('')
 
 // "From a clip" mode (ADVANCED FEATURE, recommended) — pull several frames
 // from a real clip and pick out whichever ones show the face clearly,
@@ -167,6 +169,26 @@ async function enrollFromClipFrames() {
 
 function enroll() {
   return enrollMode.value === 'clip' ? enrollFromClipFrames() : enrollFromPhoto()
+}
+
+// More reference photos — especially covering different cameras, distances,
+// and angles — is the single biggest lever on match accuracy, and adding
+// them to an already-enrolled person needs no new backend support at all:
+// face_enrollments has no uniqueness constraint on name, so enrollFace()
+// already just adds another independently-matched row under whichever name
+// it's given. The only gap was the UI only ever offering a free-text name
+// field, with no guaranteed-exact-match way to target an existing person
+// (a typo'd or differently-cased name would silently create a new, separate
+// person instead of adding to the right one).
+// The "Add to person" button is only ever enabled once addToExistingName
+// is set (see its :disabled binding below), so there's no reachable state
+// here to guard against.
+async function enrollToExisting() {
+  const target = groupedPeople.value.find((g) => g.name === addToExistingName.value)
+  name.value = addToExistingName.value
+  approvedOnEnroll.value = target?.approved ?? true
+  await enroll()
+  addToExistingName.value = ''
 }
 
 async function toggleApproved(group: PersonGroup, approved: boolean) {
@@ -320,21 +342,44 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
           >
         </div>
 
-        <Button
-          class="enroll-submit-btn"
-          size="small"
-          :disabled="!available || enrolling"
-          :loading="enrolling"
-          @click="enroll"
-        >
-          {{
-            enrolling
-              ? 'Enrolling…'
-              : enrollMode === 'clip' && selectedClipFrames.length
-                ? `+ Enroll ${selectedClipFrames.length} selected frame(s)`
-                : '+ Enroll'
-          }}
-        </Button>
+        <div class="enroll-actions-row">
+          <Button
+            class="enroll-submit-btn"
+            size="small"
+            :disabled="!available || enrolling"
+            :loading="enrolling"
+            @click="enroll"
+          >
+            {{
+              enrolling
+                ? 'Enrolling…'
+                : enrollMode === 'clip' && selectedClipFrames.length
+                  ? `+ Enroll ${selectedClipFrames.length} selected frame(s)`
+                  : '+ Enroll'
+            }}
+          </Button>
+
+          <template v-if="groupedPeople.length">
+            <span class="enroll-actions-or">or</span>
+            <Select
+              v-model="addToExistingName"
+              size="small"
+              :options="groupedPeople.map((g) => g.name)"
+              placeholder="Add to existing person…"
+              :disabled="!available"
+              show-clear
+            />
+            <Button
+              size="small"
+              severity="secondary"
+              :disabled="!available || enrolling || !addToExistingName"
+              :loading="enrolling"
+              @click="enrollToExisting"
+            >
+              ➕ Add to person
+            </Button>
+          </template>
+        </div>
       </template>
     </Card>
 
@@ -440,8 +485,17 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
   margin-top: 0.9rem;
 }
 
-.enroll-submit-btn {
+.enroll-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
   margin-top: 0.9rem;
+}
+
+.enroll-actions-or {
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .field-label {
@@ -512,6 +566,7 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .muted-note {

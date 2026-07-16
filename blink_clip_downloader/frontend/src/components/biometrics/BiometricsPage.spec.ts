@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import FileUpload from 'primevue/fileupload'
+import Select from 'primevue/select'
 import BiometricsPage from './BiometricsPage.vue'
 import { useConfirmStore } from '../../stores/confirm'
 import type { FaceEnrollment } from '../../api/types'
@@ -217,6 +218,78 @@ describe('BiometricsPage', () => {
     const postCall = calls.find(([, init]) => init?.method === 'POST')!
     const body = JSON.parse(postCall[1]!.body as string)
     expect(body.approved).toBe(false)
+  })
+
+  it('does not offer "add to existing person" when no one is enrolled yet', async () => {
+    stubFaces([])
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    expect(wrapper.findComponent(Select).exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Add to person')
+  })
+
+  it('adds a photo to an existing enrolled person, matching their current approval state', async () => {
+    const calls: [string, RequestInit?][] = []
+    vi.stubGlobal(
+      'fetch',
+      routedFetch((url, init) => {
+        calls.push([url, init])
+        if (init?.method === 'POST') return Promise.resolve(jsonResponse({ id: 2, name: 'Brian', approved: true }))
+        return Promise.resolve(jsonResponse({ available: true, faces: [faceEnrollment({ approved: true })] }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    const fileUpload = wrapper.findComponent(FileUpload)
+    await fileUpload.vm.$emit('select', { files: [new File(['x'], 'brian2.jpg', { type: 'image/jpeg' })] })
+    await wrapper.findComponent(Select).vm.$emit('update:modelValue', 'Brian')
+    const addBtn = wrapper.findAll('button').find((b) => b.text().includes('Add to person'))!
+    await addBtn.trigger('click')
+    await flushPromises()
+
+    const postCall = calls.find(([, init]) => init?.method === 'POST')!
+    const body = JSON.parse(postCall[1]!.body as string)
+    expect(body).toEqual({ name: 'Brian', image_base64: 'data:image/jpeg;base64,AAAA', approved: true })
+  })
+
+  it('adds to an existing not-approved person without flipping them to approved', async () => {
+    const calls: [string, RequestInit?][] = []
+    vi.stubGlobal(
+      'fetch',
+      routedFetch((url, init) => {
+        calls.push([url, init])
+        if (init?.method === 'POST') return Promise.resolve(jsonResponse({ id: 2, name: 'Nanny', approved: false }))
+        return Promise.resolve(
+          jsonResponse({ available: true, faces: [faceEnrollment({ name: 'Nanny', approved: false })] }),
+        )
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    const fileUpload = wrapper.findComponent(FileUpload)
+    await fileUpload.vm.$emit('select', { files: [new File(['x'], 'nanny2.jpg', { type: 'image/jpeg' })] })
+    await wrapper.findComponent(Select).vm.$emit('update:modelValue', 'Nanny')
+    const addBtn = wrapper.findAll('button').find((b) => b.text().includes('Add to person'))!
+    await addBtn.trigger('click')
+    await flushPromises()
+
+    const postCall = calls.find(([, init]) => init?.method === 'POST')!
+    const body = JSON.parse(postCall[1]!.body as string)
+    expect(body.approved).toBe(false)
+  })
+
+  it('disables "Add to person" until an existing person is selected', async () => {
+    stubFaces([faceEnrollment()])
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    const fileUpload = wrapper.findComponent(FileUpload)
+    await fileUpload.vm.$emit('select', { files: [new File(['x'], 'brian.jpg', { type: 'image/jpeg' })] })
+    const addBtn = wrapper.findAll('button').find((b) => b.text().includes('Add to person'))!
+    expect((addBtn.element as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('shows an error toast-worthy message when photo enrollment fails', async () => {

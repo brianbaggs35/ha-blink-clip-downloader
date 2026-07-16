@@ -2334,6 +2334,24 @@ horizontal overflow), and dark mode.
   `notified_only`/`min_confidence` — `approved_faces_seen` has no
   equivalent threshold to pass through) and `GET /api/clips?recognized=1`.
 
+### Added — Biometrics: add more photos to an already-enrolled person
+
+- Match accuracy scales directly with how many reference angles/distances/
+  lighting conditions a person has enrolled — this already worked at the
+  database level with zero changes needed (`face_enrollments` has no
+  uniqueness constraint on `name`; every row is an independently-matched
+  reference photo, and `enrollFace()` already just adds another one under
+  whichever name it's given). The only real gap was discoverability: the
+  Biometrics tab only ever offered a free-text Name field, with no
+  guaranteed-exact-match way to target an existing person — a typo'd or
+  differently-cased name would silently create a new, separate person
+  instead of adding to the right one. Added a "— or —" dropdown of already-
+  enrolled names next to the existing "+ Enroll" button, with its own
+  "➕ Add to person" action that reuses the exact same clip-frame/photo
+  picker and enrollment call, just guaranteed-targeting the selected
+  person's exact name and preserving their current approval state rather
+  than resetting it.
+
 ## 4.0.2
 
 ### Bug fixes
