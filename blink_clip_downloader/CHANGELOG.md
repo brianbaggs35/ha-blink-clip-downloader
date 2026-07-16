@@ -2321,6 +2321,18 @@ horizontal overflow), and dark mode.
   line) moved to the card's hover tooltip — there's no room for a second
   line at this width, and it's secondary information next to the quota
   figure most users came to check.
+- **Second follow-up**: centered the stats row (`justify-content: center`)
+  so the empty space to the right of the last card is distributed evenly
+  instead of all sitting on one side.
+
+### Added — 👤 Recognized filter
+
+- New checkbox filter next to ★ Starred/🔔 Notified, restricting the
+  Library grid to clips with `face_recognized` true — same underlying
+  `approved_faces_seen` condition the badge and stat already use. New
+  `get_clips(recognized_only=...)` parameter (parameter-free, unlike
+  `notified_only`/`min_confidence` — `approved_faces_seen` has no
+  equivalent threshold to pass through) and `GET /api/clips?recognized=1`.
 
 ## 4.0.2
 

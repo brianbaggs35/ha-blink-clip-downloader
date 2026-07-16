@@ -808,6 +808,12 @@ describe('LibraryPage', () => {
     await flushPromises()
     expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).toContain('notified=1')
 
+    await wrapper.findAll('.lib-check input[type="checkbox"]')[1].setValue(false)
+    await wrapper.findAll('.lib-check input[type="checkbox"]')[2].setValue(true)
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).toContain('recognized=1')
+
     await selectOption(wrapper, 'source-filter', 'Motion (PIR)')
     await vi.advanceTimersByTimeAsync(400)
     await flushPromises()

@@ -14,6 +14,7 @@ export interface ClipFilters {
   limit?: number
   offset?: number
   notified?: boolean
+  recognized?: boolean
 }
 
 function buildQuery(filters: ClipFilters): string {
@@ -29,6 +30,7 @@ function buildQuery(filters: ClipFilters): string {
   if (filters.limit !== undefined) params.set('limit', String(filters.limit))
   if (filters.offset !== undefined) params.set('offset', String(filters.offset))
   if (filters.notified) params.set('notified', '1')
+  if (filters.recognized) params.set('recognized', '1')
   const qs = params.toString()
   return qs ? `?${qs}` : ''
 }

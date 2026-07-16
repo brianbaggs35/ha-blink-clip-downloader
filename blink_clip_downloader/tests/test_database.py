@@ -396,6 +396,9 @@ async def test_get_clips_face_recognized_flag(db: ClipDatabase) -> None:
     assert clips["c2"]["face_recognized"] is False
     assert clips["c3"]["face_recognized"] is False
 
+    recognized_only = await db.get_clips(recognized_only=True)
+    assert [c["id"] for c in recognized_only] == ["c1"]
+
 
 async def test_get_clips_face_recognized_flag_reflects_approved_faces_seen_not_just_bypass(
     db: ClipDatabase,

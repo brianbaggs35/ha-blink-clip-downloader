@@ -571,6 +571,7 @@ h3 {
   gap: 0.75rem;
   flex-wrap: wrap;
   align-items: stretch;
+  justify-content: center;
   padding: 1.1rem 1.5rem 0;
   flex-shrink: 0;
 }

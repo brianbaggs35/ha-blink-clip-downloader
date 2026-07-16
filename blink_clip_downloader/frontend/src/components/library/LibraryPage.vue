@@ -71,6 +71,7 @@ const tagFilter = ref('')
 const sortOrder = ref<'newest' | 'oldest' | 'camera' | 'size' | 'duration'>('newest')
 const starredOnly = ref(false)
 const notifiedOnly = ref(false)
+const recognizedOnly = ref(false)
 
 const tags = ref<string[]>([])
 const tagOptions = computed(() => [
@@ -151,6 +152,7 @@ function buildFilters(page: number): ClipFilters {
   if (until) filters.until = until
   if (starredOnly.value) filters.starred = true
   if (notifiedOnly.value) filters.notified = true
+  if (recognizedOnly.value) filters.recognized = true
   if (sourceFilter.value) filters.source = sourceFilter.value
   if (tagFilter.value) filters.tag = tagFilter.value
   return filters
@@ -263,7 +265,7 @@ async function loadAll() {
 }
 
 let debounceTimer: ReturnType<typeof setTimeout>
-watch([search, dateRange, sourceFilter, tagFilter, sortOrder, starredOnly, notifiedOnly], () => {
+watch([search, dateRange, sourceFilter, tagFilter, sortOrder, starredOnly, notifiedOnly, recognizedOnly], () => {
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => loadClips(0), 380)
 })
@@ -527,6 +529,7 @@ onUnmounted(() => {
       />
       <label class="lib-check"><Checkbox v-model="starredOnly" binary /> ★ Starred</label>
       <label class="lib-check"><Checkbox v-model="notifiedOnly" binary /> 🔔 Notified</label>
+      <label class="lib-check"><Checkbox v-model="recognizedOnly" binary /> 👤 Recognized</label>
       <Button
         size="small"
         :severity="selectMode ? 'primary' : 'secondary'"

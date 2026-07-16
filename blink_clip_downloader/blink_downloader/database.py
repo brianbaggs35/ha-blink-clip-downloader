@@ -457,6 +457,7 @@ class ClipDatabase:
         limit: int = 50,
         offset: int = 0,
         notified_only: bool = False,
+        recognized_only: bool = False,
         min_confidence: float = 0.0,
     ) -> list[dict[str, Any]]:
         """Query clips with optional filters and sort order.
@@ -467,7 +468,10 @@ class ClipDatabase:
         clip's *most recent* AI analysis result was/would be suspicious at
         *min_confidence* or higher — the same gate ``AnalysisQueue`` uses to
         decide whether to dispatch a notification). Set *notified_only* to
-        restrict results to just those clips.
+        restrict results to just those clips. Set *recognized_only* to
+        restrict to clips with ``face_recognized`` true (see below) —
+        parameter-free, unlike *notified_only*/*min_confidence*, since
+        ``approved_faces_seen`` has no equivalent threshold.
 
         Deliberately scoped to only the latest ``analysis_results`` row per
         clip (matching :meth:`get_analysis_for_clip`'s own "most recent
@@ -540,6 +544,8 @@ class ClipDatabase:
         if notified_only:
             where.append(notified_exists)
             params.append(min_confidence)
+        if recognized_only:
+            where.append(face_recognized_exists)
 
         _sort_map = {
             "newest": "timestamp DESC",
