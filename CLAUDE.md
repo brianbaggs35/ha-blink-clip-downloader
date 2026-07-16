@@ -70,7 +70,6 @@ architecture.
   `conftest.py` with shared fixtures (`base_config`, `sample_clip`,
   `options_file`, `tmp_download_dir`).
 - `config.yaml` — HA add-on manifest (options schema, version, ports, maps).
-- `build.yaml` — base images per architecture.
 - `pyproject.toml` — package metadata, dependencies, pytest/coverage/pyright
   config.
 - `CHANGELOG.md` / `DOCS.md` — user-facing changelog and add-on docs.

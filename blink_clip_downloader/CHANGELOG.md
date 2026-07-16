@@ -1840,6 +1840,38 @@ Confirmed already correct, no change needed:
     a tight, "worked on my machine" timeout isn't a safe bet for a shared
     CI runner.
 
+### Fixed — `build.yaml` deprecation warning
+
+- Supervisor logged `App local_blink_clip_downloader uses build.yaml which
+  is deprecated. Move build parameters into the Dockerfile directly` on
+  every install (first noticed while verifying the CI job above). As of
+  Supervisor 2026.04.0, `BUILD_FROM` is no longer auto-provided from
+  `build.yaml`'s per-arch `build_from` mapping; the [official migration
+  guide](https://developers.home-assistant.io/blog/2026/04/02/builder-migration/)
+  recommends a single hardcoded `FROM` in the Dockerfile instead. Deleted
+  `build.yaml` and changed the Dockerfile's `FROM ${BUILD_FROM}` (with a
+  per-arch `ARG BUILD_FROM`) to a single `FROM
+  ghcr.io/home-assistant/base-debian:trixie` — confirmed via `docker
+  buildx imagetools inspect` that this is a real multi-platform manifest
+  covering both `linux/amd64` and `linux/arm64` under one tag, not a
+  per-arch image, so BuildKit resolves the right platform automatically
+  from whatever `--platform`/`platforms` the build is invoked with.
+  `BUILD_ARCH` is unaffected (the migration guide keeps it; still used for
+  the `io.hass.arch` OCI label) and both this repo's CI workflows already
+  drove target architecture via their own `--platform`/`platforms` inputs
+  rather than reading `build.yaml`, so `.github/workflows/build.yaml` and
+  `ci.yaml`'s `build` job needed only their now-unnecessary `base_image`/
+  `build_from` matrix fields and `BUILD_FROM=` build-args removed, no
+  structural changes.
+- Verified with real, from-scratch builds on both architectures (not just
+  reading the manifest) before landing: amd64 built and ran natively;
+  aarch64 built and ran under QEMU emulation, including the full add-on
+  entrypoint (s6-overlay init, a real PostgreSQL 17 bootstrap, the app
+  starting in web-only mode without `/data/options.json`, then a graceful
+  shutdown) and confirming every optional computer-vision dependency
+  (`torch`, `torchvision`, `ultralytics`, `facenet-pytorch`, `opencv`)
+  still imports cleanly on aarch64.
+
 ## 4.0.2
 
 ### Bug fixes

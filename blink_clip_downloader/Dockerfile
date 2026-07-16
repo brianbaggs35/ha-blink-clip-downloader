@@ -1,14 +1,8 @@
-# Declared before any FROM (required so its value reaches the *second*
-# stage's FROM below — an ARG declared between stages instead of at the top
-# of the file isn't visible to a later FROM under the legacy (non-BuildKit)
-# builder, which some CI/local Docker setups still default to).
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:trixie
-
 # Separate build stage so the Node toolchain (and its node_modules) never
 # lands in the final image — only the static build output (frontend/dist,
 # written to blink_downloader/static/ per vite.config.ts) is copied over
 # below. Pinned to the Node LTS matching this repo's engines; bumping this
-# needs no coordination with the Python base image argument above.
+# needs no coordination with the base image below.
 FROM node:22-bookworm-slim AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
@@ -16,15 +10,31 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM ${BUILD_FROM}
+# A single multi-platform manifest, not a per-arch ARG BUILD_FROM — HA's
+# base images now publish one tag covering both linux/amd64 and
+# linux/arm64 (verified: `docker buildx imagetools inspect
+# ghcr.io/home-assistant/base-debian:trixie` lists both platforms under
+# the same tag), and BuildKit automatically pulls the manifest entry
+# matching whatever --platform the build is invoked with. This replaces
+# the old build.yaml + `ARG BUILD_FROM`/`FROM ${BUILD_FROM}` pattern,
+# which Supervisor now logs as deprecated (see the official migration
+# guide: https://developers.home-assistant.io/blog/2026/04/02/builder-migration/)
+# — Supervisor still reads build.yaml if present for backward
+# compatibility, but there's no reason to keep it once nothing needs a
+# per-arch mapping. Both CI workflows (.github/workflows/build.yaml's
+# release publish, .github/workflows/ci.yaml's build job) drive the
+# target architecture via their own --platform/platforms input, same as
+# Supervisor's own local build does — nothing else needed to change.
+FROM ghcr.io/home-assistant/base-debian:trixie
 
-# BUILD_ARCH is injected by the HA build system for multi-arch images.
-# Both this and BUILD_VERSION below are always passed explicitly by both
-# the HA build system and .github/workflows/build.yaml's CI publish job —
-# the default here only ever applies to a manual `docker build` with no
-# --build-arg, so keeping it perfectly current isn't load-bearing, just
-# avoids a wildly stale value in that image's OCI labels (see BUILD_VERSION
-# usage below).
+# BUILD_ARCH is still injected by both the HA build system and this
+# repo's own CI workflows for multi-arch images (unlike BUILD_FROM above,
+# this one HA's migration guide explicitly keeps) — used below only for
+# the io.hass.arch OCI label. BUILD_VERSION likewise always passed
+# explicitly by both; the default here only applies to a manual
+# `docker build` with no --build-arg, so keeping it perfectly current
+# isn't load-bearing, just avoids a wildly stale value in that image's
+# OCI labels.
 ARG BUILD_ARCH
 ARG BUILD_VERSION=5.0.0
 

@@ -209,18 +209,17 @@ jobs:
     # actual dependency resolution (see the Dockerfile's computer-vision
     # pipeline block) exactly as it would run on real hardware — most
     # relevantly a Raspberry Pi 5, since that's this project's aarch64
-    # reference target. base_from/build_from mirror build.yaml's own
-    # per-arch mapping.
+    # reference target. The Dockerfile's own FROM is a single multi-platform
+    # manifest tag (see its top-of-file comment), so no per-arch base image
+    # needs to be threaded through here — only BUILD_ARCH.
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
             runner: ubuntu-latest
-            build_from: ghcr.io/home-assistant/amd64-base-debian:trixie
           - arch: aarch64
             runner: ubuntu-24.04-arm
-            build_from: ghcr.io/home-assistant/aarch64-base-debian:trixie
 
     steps:
       - name: Checkout repository
@@ -230,7 +229,6 @@ jobs:
         run: |
           docker build \
             --pull \
-            --build-arg BUILD_FROM=${{ matrix.build_from }} \
             --build-arg BUILD_ARCH=${{ matrix.arch }} \
             -t ${{ env.ADDON_IMAGE }}:${{ env.TAG }} \
             blink_clip_downloader

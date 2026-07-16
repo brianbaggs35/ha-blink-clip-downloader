@@ -34,12 +34,8 @@ jobs:
         arch: [aarch64, amd64]
         include:
           - arch: aarch64
-            base_image: >
-              ghcr.io/home-assistant/aarch64-base-debian:trixie
             platform: linux/arm64
           - arch: amd64
-            base_image: >
-              ghcr.io/home-assistant/amd64-base-debian:trixie
             platform: linux/amd64
 
     steps:
@@ -80,7 +76,6 @@ jobs:
           tags: |
             ${{ steps.tags.outputs.tag_version }}
           build-args: |
-            BUILD_FROM=${{ matrix.base_image }}
             BUILD_ARCH=${{ matrix.arch }}
             BUILD_VERSION=${{ steps.tags.outputs.version }}
 
