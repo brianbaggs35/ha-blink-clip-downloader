@@ -2308,6 +2308,19 @@ horizontal overflow), and dark mode.
   means every stat card matches the *tallest* card's height, so the
   storage card's extra lines were shrinking the clip grid's scroll area
   below it for every card in the row, not just itself.
+- **Follow-up, same report**: even compacted, the storage card was still
+  wide enough (a full sentence of text) that it always wrapped onto its
+  own row below the other five stat cards, leaving visible empty space to
+  their right and *still* pushing the clip grid down. Removed "Total"
+  (redundant with the Status tab's own "Total clips" figure, same
+  reasoning as the "Library size" removal above) and rebuilt the storage
+  card to match the other cards' compact label/value layout ("💾 Storage"
+  / "560.1 MB / 10 GB") instead of a sentence — it now fits on the same
+  row as the others, top-right, matching their height instead of
+  stretching them. Free-disk-space detail (previously its own visible
+  line) moved to the card's hover tooltip — there's no room for a second
+  line at this width, and it's secondary information next to the quota
+  figure most users came to check.
 
 ## 4.0.2
 

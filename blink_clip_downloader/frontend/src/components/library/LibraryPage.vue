@@ -450,10 +450,6 @@ onUnmounted(() => {
         <span class="lib-stat-value">{{ stats?.week_count ?? 0 }}</span>
       </div>
       <div class="lib-stat">
-        <span class="lib-stat-label">Total</span>
-        <span class="lib-stat-value">{{ stats?.total_count ?? 0 }}</span>
-      </div>
-      <div class="lib-stat">
         <span class="lib-stat-label">★ Starred</span>
         <span class="lib-stat-value">{{ stats?.starred_count ?? 0 }}</span>
       </div>
@@ -461,11 +457,10 @@ onUnmounted(() => {
         <span class="lib-stat-label">👤 Recognized</span>
         <span class="lib-stat-value">{{ stats?.recognized_count ?? 0 }}</span>
       </div>
-      <div v-if="stats?.disk" class="lib-stat lib-stat-storage">
-        <span class="lib-stat-storage-used">
-          💾 {{ stats.disk.used_mb }} MB used
-          <template v-if="stats.disk.quota_bytes"> of {{ stats.disk.quota_gb }} GB quota</template>
-          <span class="lib-stat-storage-free"> · {{ stats.disk.free_gb }} GB free on disk</span>
+      <div v-if="stats?.disk" class="lib-stat lib-stat-storage" :title="`${stats.disk.free_gb} GB free on disk`">
+        <span class="lib-stat-label">💾 Storage</span>
+        <span class="lib-stat-value lib-stat-storage-value">
+          {{ stats.disk.used_mb }} MB<template v-if="stats.disk.quota_bytes"> / {{ stats.disk.quota_gb }} GB</template>
         </span>
         <ProgressBar
           v-if="stats.disk.quota_bytes"

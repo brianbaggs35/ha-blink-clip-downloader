@@ -611,13 +611,16 @@ describe('LibraryPage', () => {
     })
     const wrapper = mountLibrary()
     await flushPromises()
-    expect(wrapper.text()).toContain('1 GB free on disk')
-    expect(wrapper.text()).not.toContain('quota')
+    expect(wrapper.text()).toContain('1 MB')
+    expect(wrapper.text()).not.toContain('GB')
+    // Free-disk-space detail lives in the card's hover tooltip, not visible
+    // text — there's no room for a second line at this card's width.
+    expect(wrapper.find('.lib-stat-storage').attributes('title')).toBe('1 GB free on disk')
     expect(wrapper.findComponent({ name: 'ProgressBar' }).exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('shows the configured quota alongside free disk space when a quota is set', async () => {
+  it('shows the configured quota, and free disk space in the hover tooltip, when a quota is set', async () => {
     mockFetch({
       '/api/stats': {
         ...STATS,
@@ -636,10 +639,10 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     // Regression test: a user could have hundreds of GB free on disk but a
-    // much smaller configured quota — the label used to only ever describe
+    // much smaller configured quota — the value used to only ever describe
     // free disk space, with quota only implied by the (easy to miss) bar.
-    expect(wrapper.text()).toContain('of 10 GB quota')
-    expect(wrapper.text()).toContain('785.41 GB free on disk')
+    expect(wrapper.text()).toContain('1 MB / 10 GB')
+    expect(wrapper.find('.lib-stat-storage').attributes('title')).toBe('785.41 GB free on disk')
     wrapper.unmount()
   })
 

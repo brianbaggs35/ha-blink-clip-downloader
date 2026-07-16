@@ -600,46 +600,27 @@ h3 {
   text-align: center;
 }
 .lib-stat-storage {
-  /* Deliberately compact — this used to be title + used-line + free-line
-     stacked above the bar (4 rows total), which stretched every other
-     stat card in the row to match (.lib-stats-row's align-items:stretch)
-     and ate into the clip grid's scroll area below. Down to a single text
-     row (icon + used/quota + free-space folded in as a trailing clause)
-     plus the bar. */
-  flex: 1;
-  min-width: 220px;
-  align-items: stretch;
-  justify-content: center;
-  gap: 0.25rem;
-  text-align: left;
+  /* Matches the other stat cards' compact label/value layout instead of a
+     wide sentence-plus-bar card, so it fits on the same row as the others
+     (top-right) rather than always wrapping onto its own row below and
+     eating into the clip grid's scroll area. Free-disk-space detail moved
+     to the card's title attribute (hover tooltip) — there's no room for a
+     second line of text at this width. */
+  min-width: 128px;
 }
-.lib-stat-storage-used {
-  /* The primary figure — quota headroom is what a user actually came
-     here to check, so it gets the same near-white contrast as a regular
-     .lib-stat-value. */
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text);
+.lib-stat-storage-value {
+  /* Slightly smaller than the plain-number .lib-stat-value (1.3rem) since
+     "560.1 MB / 10 GB" is meaningfully longer than "147". */
+  font-size: 1.05rem;
 }
-.lib-stat-storage-free {
-  /* Secondary context, folded inline into .lib-stat-storage-used above.
-     Deliberately var(--text-dim), not var(--muted) — the latter reads as
-     too low-contrast to comfortably read at this size against the card
-     background. */
-  font-size: 0.76rem;
-  font-weight: 400;
-  color: var(--text-dim);
-}
-/* .lib-stat's align-items:center (added for the label/value centering on
-   the other stat cards) makes flex children shrink to their own content
-   width by default — the progress bar needs an explicit full-width
-   override here or it would collapse to PrimeVue's intrinsic default
-   instead of spanning the card. Height is trimmed well below Aura's
+/* the progress bar needs an explicit full-width override or it collapses
+   to PrimeVue's intrinsic default instead of spanning the card (see
+   .lib-stat's align-items:center). Height trimmed well below Aura's
    1.25rem default: a bar this size only needs to read as a slim quota
-   meter, not compete visually with the text above it. */
+   meter under the value above it, not compete visually with it. */
 .lib-stat-storage .p-progressbar {
   width: 100%;
-  height: 0.4rem;
+  height: 0.3rem;
   margin-top: 0.15rem;
 }
 .lib-filters {
