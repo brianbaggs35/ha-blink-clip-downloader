@@ -187,6 +187,15 @@ configuration:
   moondream_api_key:
     name: Moondream API Key
     description: API key from moondream.ai. Required when ai_provider is "moondream_cloud".
+  moondream_finetune_model:
+    name: Moondream Fine-Tune Model (optional)
+    description: >-
+      Fine-tuned checkpoint model ID to use for inference instead of the base
+      model, e.g. "moondream3-preview/abc123@50". Leave empty to use the base
+      model. Set this via the AI tab's Fine-Tuning panel (Activate button)
+      rather than typing it by hand — that panel lists your actual
+      fine-tunes/checkpoints. A value set live via the panel takes effect
+      immediately but only persists across restarts if also saved here.
   anthropic_api_key:
     name: Anthropic API Key
     description: >-
@@ -207,14 +216,32 @@ configuration:
     description: >-
       GPT model to use. gpt-4o-mini is the most cost-effective vision option.
       Use "Fetch Models" in the web UI AI tab.
-  openai_escalation_model:
-    name: OpenAI Escalation Model (optional)
+  ai_escalation_enabled:
+    name: Enable Tier-2 Escalation
     description: >-
-      OpenAI only. Optional stronger second-tier model. Every clip is first
-      analyzed with OpenAI Model above; only clips flagged suspicious are
-      re-analyzed with this model for a closer second opinion, which becomes
-      the recorded verdict. Leave empty to disable escalation. Example:
-      OpenAI Model "gpt-4o-mini" with this set to "gpt-4o".
+      Turns two-tier escalation on or off. When enabled, every clip is first
+      analyzed with AI Provider above (tier 1); only clips tier 1 flags as
+      suspicious are re-analyzed by AI Escalation Provider below (tier 2) for
+      a closer second opinion, and that verdict is what gets recorded. Most
+      clips are not suspicious, so pairing a cheap tier-1 model with a
+      stronger tier-2 model saves on API cost/tokens compared to running the
+      stronger model on every clip. When disabled, AI Escalation Provider and
+      Model below are ignored entirely and analysis runs on tier 1 alone.
+  ai_escalation_provider:
+    name: AI Escalation Provider
+    description: >-
+      Tier-2 provider for two-tier escalation, only used when Enable Tier-2
+      Escalation above is on. May be a different provider than AI Provider
+      (e.g. tier 1 = openai, tier 2 = moondream_cloud) — reuses that
+      provider's own credentials already set above, no separate API key
+      needed.
+  ai_escalation_model:
+    name: AI Escalation Model (optional)
+    description: >-
+      Model ID to use for AI Escalation Provider above, e.g. "gpt-4o",
+      "claude-opus-4-5", or a Moondream fine-tune ID. Leave empty to use that
+      provider's default/base model. Not applicable to moondream_local, which
+      has no selectable model.
   ai_prompt:
     name: AI Analysis Prompt
     description: >-
@@ -304,6 +331,14 @@ configuration:
       "Protected vehicle visible from this camera" checkbox in the web UI AI
       tab under Camera Configurations instead — it lists your actual camera
       names so there is nothing to type or get wrong.
+  ai_prompt_debug_enabled:
+    name: Enable Prompt Debug Logging
+    description: >-
+      Store each clip's exact prompt text (not the image frames) so it can be
+      inspected via the "📝 Prompt" button on that clip's AI panel — open any
+      clip from the web UI's Library tab to see it — useful for understanding
+      and fine-tuning what's actually being sent. Off by default since
+      prompts are long and this is an opt-in debugging aid.
   ai_enhanced_detection_enabled:
     name: "⚠️ Enable Enhanced Detection & Tracking (heavy)"
     description: >-

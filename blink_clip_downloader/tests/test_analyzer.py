@@ -320,6 +320,11 @@ def test_clean_summary_drops_repeated_sentence() -> None:
     assert summary == "A person walks up the driveway."
 
 
+def test_clean_summary_strips_trailing_whitespace() -> None:
+    summary = ClipAnalyzer._clean_summary("A person is walking by. ")
+    assert summary == "A person is walking by."
+
+
 # ------------------------------------------------------------------
 # Prompt building
 # ------------------------------------------------------------------
@@ -3562,6 +3567,84 @@ def test_is_well_formed_json_object_false_for_no_braces() -> None:
     assert not BaseAnalyzer._is_well_formed_json_object("not json at all")
 
 
+def test_is_well_formed_json_object_false_for_invalid_json_between_braces() -> None:
+    """Braces are present and well-positioned, but the content between them
+    isn't valid JSON — a different failure mode than a truncated response."""
+    assert not BaseAnalyzer._is_well_formed_json_object("{not: valid, json}")
+
+
+def test_car_description_property_returns_current_value() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    a.update_car_description("Silver Kia Forte")
+    assert a.car_description == "Silver Kia Forte"
+
+
+async def test_lookup_scene_baseline_none_when_scene_thumbnail_fails() -> None:
+    """A frame that _scene_thumbnail can't decode must short-circuit to
+    (None, None) even with a real scene_baseline_db attached, rather than
+    calling get_scene_deviation with a bogus thumbnail."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_db = MagicMock()
+    fake_db.get_scene_deviation = AsyncMock(return_value=0.5)
+    a.attach_scene_baseline_db(fake_db)
+
+    thumbnail, deviation = await a._lookup_scene_baseline(
+        "Driveway", [b"not a real jpeg"]
+    )
+
+    assert thumbnail is None
+    assert deviation is None
+    fake_db.get_scene_deviation.assert_not_awaited()
+
+
+def test_select_frames_by_motion_falls_back_when_gap_constraint_underfills() -> None:
+    """When the min-gap-constrained first pass can't fill target_count slots
+    (motion spikes clustered too close together), the second, unconstrained
+    pass must fill the remaining slots from whatever's left in ranked order
+    rather than returning fewer frames than requested."""
+    diffs = [
+        53.40111496982611,
+        30.946789656278963,
+        80.86238710907864,
+        46.90156050322527,
+        83.51133927257074,
+        36.78409582250328,
+        94.7130170244123,
+        98.44397935315773,
+        46.16799784409892,
+        28.177173270377544,
+        38.18724341907105,
+    ]
+    frames = [f"frame{i}".encode() for i in range(12)]
+
+    result = ClipAnalyzer._select_frames_by_motion(frames, diffs, 6)
+
+    assert len(result) == 6
+
+
+def test_select_frames_evenly_spaced_single_target_returns_first_frame() -> None:
+    frames = [b"a", b"b", b"c"]
+    assert ClipAnalyzer._select_frames_evenly_spaced(frames, 1) == [b"a"]
+
+
+def test_classify_lateral_shift_none_with_fewer_than_two_valid_centroids() -> None:
+    assert ClipAnalyzer._classify_lateral_shift([-1.0, 5.0, -1.0], width=100) is None
+
+
+def test_classify_intensity_trend_none_with_fewer_than_two_magnitudes() -> None:
+    assert ClipAnalyzer._classify_intensity_trend([1.0]) is None
+
+
+def test_classify_intensity_trend_none_when_roughly_steady() -> None:
+    """Neither half is meaningfully louder than the other — no trend."""
+    assert ClipAnalyzer._classify_intensity_trend([10.0, 10.0, 10.5, 10.0]) is None
+
+
+def test_bbox_iou_zero_when_union_is_zero() -> None:
+    zero_box = {"x_min": 0.5, "y_min": 0.5, "x_max": 0.5, "y_max": 0.5}
+    assert MoondreamCloudAnalyzer._bbox_iou(zero_box, zero_box) == 0.0
+
+
 # ------------------------------------------------------------------
 # OpenAIAnalyzer — close / _get_client
 # ------------------------------------------------------------------
@@ -4388,6 +4471,103 @@ async def test_analyze_clip_stays_suspicious_when_only_unapproved_match() -> Non
         result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
 
     assert result.is_suspicious is True
+
+
+async def test_analyze_clip_face_bypass_applies_to_escalated_tier2_verdict() -> None:
+    """Face bypass must override the FINAL verdict regardless of which tier
+    produced it. Vision hints (including face recognition) are computed once
+    on the original clip before either tier runs, and the bypass check runs
+    once, after _generate_response returns — so it must apply here exactly
+    as it would for a tier-1-only result, even though this clip escalates and
+    tier 2 also calls it suspicious."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(approved_names=["Brian"])
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.8, '
+            '"description": "A person is lingering near the vehicle."}'
+        )
+    )
+
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="p")
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.95, '
+            '"description": "A person is confirmed loitering near the vehicle."}'
+        )
+    )
+    a.set_escalation_analyzer(tier2)
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.is_suspicious is False
+    assert result.face_bypass_applied is True
+    assert result.face_bypass_names == "Brian"
+    # tier 2's well-formed suspicious response is authoritative (per
+    # _maybe_escalate), so it's tier 2's text that gets personalized here,
+    # not tier 1's original description.
+    assert result.summary == "Brian is confirmed loitering near the vehicle."
+    assert result.escalation_provider == "anthropic"
+
+
+async def test_analyze_clip_stranger_stays_suspicious_through_escalation() -> None:
+    """Adversarial case combined with escalation: an approved member AND a
+    stranger both appear, and the clip also escalates to tier 2. The bypass
+    must still never apply — escalation must not create a second path that
+    accidentally clears a flag the non-escalation adversarial test already
+    guards against."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(
+                approved_names=["Brian"], unrecognized_present=True
+            )
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.9, '
+            '"description": "A person is tampering with the vehicle."}'
+        )
+    )
+
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="p")
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.97, '
+            '"description": "Confirmed tampering."}'
+        )
+    )
+    a.set_escalation_analyzer(tier2)
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.is_suspicious is True
+    assert result.face_bypass_applied is False
+    assert result.face_bypass_names == ""
+    assert result.escalation_provider == "anthropic"
 
 
 async def test_analyze_clip_face_recognition_never_appears_in_prompt_sent_to_model() -> (
@@ -7290,6 +7470,19 @@ async def test_list_checkpoints_success() -> None:
     )
     result = await m.list_checkpoints("ft-1")
     assert result == checkpoints
+
+
+async def test_list_checkpoints_with_cursor_passes_it_as_param() -> None:
+    checkpoints = [{"step": 30}]
+    m = MoondreamFineTuneManager(api_key="key")
+    mock_get = MagicMock(return_value=_make_ft_resp(200, {"checkpoints": checkpoints}))
+    m._session = _mock_session(get=mock_get)
+
+    result = await m.list_checkpoints("ft-1", cursor="page-2")
+
+    assert result == checkpoints
+    _, kwargs = mock_get.call_args
+    assert kwargs["params"]["cursor"] == "page-2"
 
 
 async def test_list_checkpoints_non_200_returns_empty() -> None:

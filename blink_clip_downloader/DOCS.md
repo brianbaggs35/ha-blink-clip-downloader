@@ -30,6 +30,31 @@ After starting, the clip library is accessible two ways:
 
 ---
 
+## Disk Space
+
+This add-on can use noticeably more disk space than a typical add-on, mostly driven
+by what you enable. Actual measurements from a real running install:
+
+| What | Size | Notes |
+|---|---|---|
+| Docker image | ~4.2 GB | Bundles PyTorch, OpenCV, and the rest of the optional computer-vision stack (see below) whether or not you ever turn it on — the image size itself doesn't shrink if you leave those features off, only their runtime CPU/RAM/model-download cost does. |
+| PostgreSQL database (`/data/postgresql/`) | ~50 MB baseline, grows slowly | Mostly fixed overhead (system catalogs, indexes) at small clip counts, not a strict per-clip cost — expect gradual growth as your clip/analysis history accumulates, not a runaway one. |
+| Downloaded clips (`/share/blink-clips/`) | Depends entirely on your cameras and settings | Individual clip sizes vary by resolution and motion duration — a real account's recent clips ranged roughly 0.2–14 MB each, a few MB on average. Total storage is governed by `retention_days` and `max_storage_gb` (see **Retention & Quota** below); this is the number that grows unbounded if you don't set a quota. |
+| Computer-vision models (`/data/model_cache/`), only if `ai_enhanced_detection_enabled` is on | 100 MB–800 MB+ combined | Downloaded once, on first use, and cached — see **Computer-Vision Enhancement Pipeline** below for which model sizes correspond to which detection-model choice. |
+| Moondream local model, only if `ai_provider`/`ai_escalation_provider` is `moondream_local` | ~430 MB | Downloaded automatically on first health check. |
+
+**Practical takeaway:** the Docker image itself is the one cost every install pays
+regardless of configuration (~4.2 GB) — budget for that plus whatever clip storage
+your `max_storage_gb` quota allows, and add the CV model sizes above only if you
+turn on those specific features. A boot medium recommendation from Home Assistant's
+own installation docs applies here as much as anywhere: pair a Raspberry Pi with a
+USB SSD or NVMe HAT rather than a microSD card, both for the extra room this add-on
+needs and because microSD cards are not recommended for production Home Assistant
+installs generally (wear-induced failures under sustained write load, which this
+add-on's continuous polling and clip downloads generate a fair amount of).
+
+---
+
 ## Uninstallation
 
 1. Go to **Settings → Add-ons → Blink Clip Downloader → Uninstall**.
@@ -343,14 +368,15 @@ this is handled automatically based on the model name.
 #### Two-tier escalation (any provider)
 
 Most motion clips are not suspicious, so paying for a strong model on every clip is
-wasted spend or wasted time. When `ai_escalation_provider` is set, every clip is first
+wasted spend or wasted time. When `ai_escalation_enabled` is on, every clip is first
 analyzed with the normal `ai_provider`/model (tier 1). Only clips tier 1 flags as
-suspicious are re-analyzed by the escalation provider (tier 2) for a closer second
+suspicious are re-analyzed by `ai_escalation_provider` (tier 2) for a closer second
 opinion, and the tier-2 verdict — not tier 1's — is what gets recorded and alerted on.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `ai_escalation_provider` | `""` | Tier-2 provider: `""` (disabled), `"ollama"`, `"ollama_cloud"`, `"moondream_cloud"`, `"moondream_local"`, `"anthropic"`, or `"openai"`. May be a **different** provider than `ai_provider` (e.g. tier 1 = `openai`, tier 2 = `moondream_cloud`) — it reuses that provider's own credential fields already configured above, no separate API key needed. |
+| `ai_escalation_enabled` | `false` | Master on/off switch for two-tier escalation. When off, `ai_escalation_provider`/`ai_escalation_model` below are ignored entirely and analysis runs on tier 1 alone. |
+| `ai_escalation_provider` | `"ollama"` | Tier-2 provider, only used when `ai_escalation_enabled` is on: `"ollama"`, `"ollama_cloud"`, `"moondream_cloud"`, `"moondream_local"`, `"anthropic"`, or `"openai"`. May be a **different** provider than `ai_provider` (e.g. tier 1 = `openai`, tier 2 = `moondream_cloud`) — it reuses that provider's own credential fields already configured above, no separate API key needed. This field always has a value (its dropdown can't be left blank) — `ai_escalation_enabled` is the actual disable switch. |
 | `ai_escalation_model` | `""` | Model ID for the escalation provider (e.g. `"gpt-4o"`, `"claude-opus-4-5"`, or a Moondream fine-tune ID). Leave empty to use that provider's default/base model. Not applicable to `moondream_local`, which has no selectable model. |
 
 Recommended pairings: `gpt-4o-mini` + `gpt-4o`, `gpt-5.4-nano` + `gpt-5.4`, or an
@@ -360,15 +386,16 @@ shows the escalation model as its own row (priced at its own rate) plus a runnin
 count of how many clips were escalated.
 
 The AI tab's Fetch Models picker works for the escalation model too, once
-`ai_escalation_provider` is configured and connected — fetch, pick from the
-list, and copy the id to paste into `ai_escalation_model`, the same
+`ai_escalation_enabled` is on and `ai_escalation_provider` is connected — fetch,
+pick from the list, and copy the id to paste into `ai_escalation_model`, the same
 copy-to-clipboard flow the tier-1 model picker already uses.
 
 > **Removed in 5.0.0:** `openai_escalation_model` (OpenAI-only, second OpenAI
 > model) is no longer part of this add-on's Configuration options — use
-> `ai_escalation_provider`/`ai_escalation_model` above, which work for every
-> provider, not just OpenAI. If you already had `openai_escalation_model` set,
-> nothing changes for you: it's still read and automatically promoted to
+> `ai_escalation_enabled`/`ai_escalation_provider`/`ai_escalation_model`
+> above, which work for every provider, not just OpenAI. If you already had
+> `openai_escalation_model` set, nothing changes for you: it's still read
+> and automatically promoted to `ai_escalation_enabled=true` +
 > `ai_escalation_provider="openai"` + `ai_escalation_model` on startup, so
 > upgrading doesn't silently drop your existing setting.
 
@@ -556,10 +583,25 @@ activate.
 ⚠️ **Resource warning:** both options below require substantially more CPU and RAM
 than the rest of this add-on, and download large ML models (100MB-800MB+ each,
 cached under `/data` after first use). Comfortable on a Raspberry Pi 5 (8GB) or
-better; more constrained on an older or lower-RAM Pi. Both are off by default, and
-clip analysis works exactly as it did before this section existed with both left
-disabled — the AI provider (Ollama/Anthropic/OpenAI/Moondream) still makes every
-suspicious/not-suspicious call; these stages only feed it better evidence.
+better. Both are off by default, and clip analysis works exactly as it did before
+this section existed with both left disabled — the AI provider
+(Ollama/Anthropic/OpenAI/Moondream) still makes every suspicious/not-suspicious
+call; these stages only feed it better evidence.
+
+ℹ️ **Raspberry Pi 4 and older:** PyTorch (which both options below depend on) has
+long-standing, still-unresolved upstream crash reports (`illegal instruction`, e.g.
+[pytorch/pytorch#176993](https://github.com/pytorch/pytorch/issues/176993)) on the
+Pi 4's Cortex-A72 CPU, which lacks the ARMv8.1 LSE atomic instructions PyTorch's
+official ARM builds assume are available. Raspberry Pi 5's Cortex-A76 does not have
+this limitation. Because this is a hardware-level crash rather than a Python
+exception — nothing catches it after the fact — this add-on checks CPU compatibility
+(`/proc/cpuinfo` for the `atomics` feature flag) *before* ever attempting the import
+that would trigger it, for every stage below plus local face recognition. On an
+incompatible CPU, those stages automatically report themselves unavailable (a
+warning in the add-on log, no crash) instead of running; everything else is
+unaffected. You don't need to manually avoid enabling these options on a Pi 4 — the
+add-on won't let the risky code path run either way — this is just the reason
+you'll see them report unavailable there.
 
 | Option | Default | What it adds |
 |---|---|---|
@@ -713,8 +755,8 @@ from any browser without leaving Home Assistant.
 - **AI Usage tab** — per-provider token usage statistics including prompt tokens,
   completion tokens, per-model breakdown, and estimated API cost (for Anthropic and
   OpenAI, priced per model). Moondream Cloud shows request count with a billing note.
-  When `ai_escalation_provider`/`ai_escalation_model` is configured, escalated
-  analyses appear as their own row and count toward a separate "Escalations" total.
+  When `ai_escalation_enabled` is on, escalated analyses appear as their own row
+  and count toward a separate "Escalations" total.
   A **Clear Stats** button resets these counters — handy after switching providers
   so old usage doesn't keep piling into the total — without touching per-clip
   analysis history.
@@ -824,7 +866,9 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/two_fa_code.txt` | Write your 2FA code here when prompted |
 | `/data/trigger_download` | Touch to force an immediate poll |
 | `/data/camera_configs.json` | Per-camera descriptions, custom prompts, and car-camera flags set via the web UI |
+| `/data/vehicle_settings.json` | Protected-vehicle description and per-camera car zones set via the Vehicles tab |
 | `/data/moondream_packages/` | The `moondream` Python package itself, installed here via the AI tab's **Install** button so it persists across restarts |
+| `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch) — see **Disk Space** above |
 
 > All `/data/` files are stored inside the add-on's private data directory and are
 > automatically removed by the supervisor when the add-on is uninstalled.

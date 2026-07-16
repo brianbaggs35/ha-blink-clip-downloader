@@ -39,6 +39,41 @@ Periodically polls the Blink API for new clips and saves them to `/share/blink-c
 (or a path you configure). Supports per-camera organisation, retention policies, storage
 quotas, Home Assistant notifications, and much more.
 
+## System Requirements
+
+Runs on any **Home Assistant OS or Supervised** install (not Core-only —
+this add-on needs the Supervisor). Supports **amd64** and **aarch64**,
+verified via a real build-and-boot check against both architectures.
+
+|                    | Minimum                                   | Recommended |
+|--------------------|--------------------------------------------|-------------|
+| **CPU**            | 2 cores                                     | 4 cores (Raspberry Pi 5 or better) |
+| **RAM**             | 2 GB free                                   | 4 GB+ free — 8 GB total on the host (e.g. Pi 5 8GB) if you'll also enable the optional computer-vision pipeline below |
+| **Disk (add-on)**   | ~4.2 GB for the Docker image alone          | Add 100 MB–800 MB+ if you enable the optional computer-vision pipeline (object detection, depth estimation, face recognition — downloaded once, on first use), plus ~430 MB if you use the local Moondream AI provider |
+| **Disk (clips)**    | Governed entirely by your own `retention_days`/`max_storage_gb` settings | A USB SSD or NVMe HAT rather than a microSD card — this add-on's continuous polling and clip downloads generate meaningful sustained write load |
+| **Architecture**   | amd64 or aarch64                            | — |
+
+The baseline (Blink polling, clip download, web library, single-tier AI
+analysis) is comfortable on the minimums above, on **any** aarch64 board
+including a Raspberry Pi 4. The optional **Enhanced Detection & Tracking**
+pipeline (YOLO object detection, Depth Anything V2, SAM2 contact
+segmentation) is what actually needs the recommended tier — it's off by
+default and analysis works identically without it.
+
+> ℹ️ **Raspberry Pi 4 or older:** the Enhanced Detection & Tracking pipeline
+> depends on PyTorch, which has long-standing, still-unresolved crashes on
+> the Pi 4's Cortex-A72 CPU (missing ARM instructions PyTorch's official
+> builds assume are present). This add-on detects that at startup and
+> automatically disables just the affected stages — a hardware-level crash
+> isn't something Python can catch after the fact, so the add-on checks
+> *before* ever attempting the risky import, rather than relying on you to
+> know not to enable it. Everything else (clip downloading, the web
+> library, single-tier AI analysis) is unaffected. Raspberry Pi 5's newer
+> CPU doesn't have this limitation.
+
+See the [full documentation](blink_clip_downloader/DOCS.md#disk-space) for
+a detailed disk-space breakdown.
+
 ## Installation
 
 1. In Home Assistant go to **Settings → Apps → Install App**.

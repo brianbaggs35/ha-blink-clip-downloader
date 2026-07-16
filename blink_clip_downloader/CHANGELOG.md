@@ -1548,6 +1548,106 @@ Confirmed already correct, no change needed:
   itself was found; if the user wants to force a concrete live example
   from this exact account, that's a further, separate investigation.
 
+### Fixed — AI analysis startup log always showed `model=(auto)` for non-Ollama providers
+
+- **`  AI analysis    : on (provider=..., model=...)` hardcoded `ollama_model`
+  regardless of `ai_provider`**, so any non-Ollama provider (openai,
+  anthropic, moondream_cloud, ...) always logged `model=(auto)` even with a
+  real model configured — found live, testing a real OpenAI setup that had
+  `openai_model="gpt-5.4-nano"` explicitly set. `_finish_startup` now maps
+  each provider to its own configured model field, matching
+  `create_analyzer()`'s own provider dispatch. Covered by two new tests
+  (openai and anthropic, to confirm the fix is provider-aware and not just
+  an openai-specific patch).
+
+### Added — dedicated Enable Tier-2 Escalation toggle; fixed `ai_escalation_provider` never appearing in Configuration
+
+- **Real, user-facing lockout bug found live-testing this round**:
+  `ai_escalation_provider`'s dropdown never appeared in HA Supervisor's
+  Configuration tab on a fresh install. Root cause confirmed by direct
+  testing against a live Supervisor instance (schema, validation, and
+  persistence all worked correctly via the Supervisor API) — the field was
+  deliberately optional with no default, to avoid a startup-validation
+  failure a stored `""` causes for an optional enum, but HA Supervisor's
+  Configuration UI never renders a row for an optional select field that
+  has no value in options.json. Every fresh install starts in exactly that
+  state, so no one could ever turn escalation on through the UI alone.
+- **Fixed properly rather than patched around**: added a new **Enable
+  Tier-2 Escalation** toggle (`ai_escalation_enabled`, off by default) as
+  the real on/off switch. `ai_escalation_provider` is now a required field
+  with a real default (`"ollama"`) — always has a concrete value for its
+  dropdown to show — and is only consulted when the toggle is on;
+  `_resolve_ai_escalation()` forces it back to disabled regardless of
+  whatever provider is selected when the toggle is off. The existing
+  `openai_escalation_model` legacy-migration path (for installs from before
+  two-tier escalation existed) now also implicitly turns the new toggle on,
+  so upgrading installs relying on it keep working unchanged.
+- **Verified all downstream consumers needed zero changes** — `create_analyzer()`'s
+  escalation wiring, `media_server.py`'s status API, and the AI tab's tier-2
+  display all key off the already-resolved provider string, which stays the
+  empty-string "disabled" contract they already expected.
+- **Filled a real test-coverage gap found while auditing this**: no existing
+  test combined face-recognition bypass with escalation, despite that being
+  a safety-critical interaction (see this file's face-bypass section).
+  Added coverage confirming the bypass correctly overrides an *escalated*
+  (tier-2) suspicious verdict when every face in the clip is an approved
+  household member, and that the adversarial "an approved member and a
+  stranger both present" case still stays suspicious through the
+  escalation path too — the bypass must never regress here, escalated or
+  not.
+- Added missing translations for `ai_escalation_provider`, `ai_escalation_model`,
+  `ai_escalation_enabled`, `ai_prompt_debug_enabled`, and
+  `moondream_finetune_model` — all previously rendered as raw snake_case
+  option names with no description in the Configuration tab. Removed the
+  stale `openai_escalation_model` translation entry left over from when
+  that option itself was already removed from `config.yaml`'s schema in an
+  earlier round.
+
+### Added — automatic CPU-compatibility guard for the computer-vision pipeline
+
+- **Real risk found researching aarch64/Raspberry Pi deployment**: PyTorch's
+  official ARM builds assume the CPU supports the ARMv8.1 LSE atomic
+  instructions. Raspberry Pi 4 and older boards (Cortex-A72 and earlier)
+  don't have them, and this has caused long-standing, still-unresolved
+  upstream `illegal instruction` crashes across many PyTorch versions
+  (e.g. [pytorch/pytorch#176993](https://github.com/pytorch/pytorch/issues/176993)).
+  Critically, this is a hardware-level signal (SIGILL), not a Python
+  exception — nothing in this add-on's existing "report unavailable rather
+  than raise" pattern for missing dependencies could have caught it, since
+  that pattern only guards against `ImportError`, and the crash happens
+  *during* the import itself. Raspberry Pi 5's Cortex-A76 is unaffected.
+- `vision.py` now checks CPU compatibility (reading `/proc/cpuinfo` for the
+  `atomics` feature flag, always true on non-ARM) *before* every
+  torch-dependent stage's import — object detection, depth estimation,
+  contact segmentation, and local face recognition — via a new
+  `torch_cpu_compatible()` check and a dedicated `CPUIncompatibleError`
+  raised early enough to prevent the risky import from ever executing.
+  Each stage reports itself unavailable (a clean warning, no crash) exactly
+  like the existing missing-package case, distinct from an unrelated
+  `RuntimeError` during model loading so that failure mode keeps its own
+  full-traceback logging. `is_face_recognition_available()` — already
+  surfaced to the web UI and gating the face-enrollment endpoint — now
+  factors this in too, and the general AI status API exposes a new
+  `torch_cpu_compatible` field for the frontend to use going forward.
+- Updated README.md and DOCS.md to describe this as automatic protection
+  rather than a "don't enable this" warning users would have to remember.
+- **Biometrics nav tab now hides itself** when face recognition is
+  unavailable (incompatible CPU or missing dependencies) rather than
+  sending users into a tab where every action would fail — new
+  `useCapabilitiesStore`, checked once by `AppSidebar` via the existing
+  `GET /api/ai/faces` `available` field. Verified the **Vehicles** tab
+  (including the car-zone rectangle picker) needs no equivalent change —
+  it's built entirely on frame-diffing and JSON storage, no PyTorch
+  dependency at all, so it already works identically regardless of CPU
+  compatibility.
+- **CI now builds and smoke-tests on real aarch64, not just amd64** —
+  `build` and `smoke-test` in `ci.yaml` are now a 2-way matrix using
+  GitHub's native arm64-hosted runners (`ubuntu-24.04-arm`, free for public
+  repos), so both jobs run natively on each architecture with no QEMU
+  involved for either building or running. This is what actually would
+  have caught the Pi 4-class illegal-instruction risk in CI going forward,
+  rather than relying on this round's one-off manual verification.
+
 ## 4.0.2
 
 ### Bug fixes
