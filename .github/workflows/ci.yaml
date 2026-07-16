@@ -197,10 +197,30 @@ jobs:
         run: npm run test:coverage
 
   build:
-    name: Build Add-on Image
-    runs-on: ubuntu-latest
+    name: Build Add-on Image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+
+    # Both legs build *natively* on a runner of the matching architecture —
+    # GitHub's arm64-hosted runners (free for public repos as of 2025) make
+    # this possible without QEMU cross-emulation, which is both faster and a
+    # more faithful test than an emulated build: it exercises this add-on's
+    # actual dependency resolution (see the Dockerfile's computer-vision
+    # pipeline block) exactly as it would run on real hardware — most
+    # relevantly a Raspberry Pi 5, since that's this project's aarch64
+    # reference target. base_from/build_from mirror build.yaml's own
+    # per-arch mapping.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            build_from: ghcr.io/home-assistant/amd64-base-debian:trixie
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            build_from: ghcr.io/home-assistant/aarch64-base-debian:trixie
 
     steps:
       - name: Checkout repository
@@ -210,6 +230,8 @@ jobs:
         run: |
           docker build \
             --pull \
+            --build-arg BUILD_FROM=${{ matrix.build_from }} \
+            --build-arg BUILD_ARCH=${{ matrix.arch }} \
             -t ${{ env.ADDON_IMAGE }}:${{ env.TAG }} \
             blink_clip_downloader
 
@@ -223,17 +245,35 @@ jobs:
         # Skipped under `act` — see the coverage-artifact step above for why.
         # `act` runs jobs against the host's Docker daemon, so the image
         # `build` just created is already visible to `smoke-test` without
-        # needing to round-trip through the artifact service.
+        # needing to round-trip through the artifact service. (`act` also
+        # has no equivalent of GitHub's hosted arm64 runners, so only the
+        # amd64 leg is meaningful to run locally under it.)
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v7
         with:
-          name: addon-image
+          name: addon-image-${{ matrix.arch }}
           path: addon-image.tar
 
   smoke-test:
-    name: Smoke Test Add-on Container
-    runs-on: ubuntu-latest
+    name: Smoke Test Add-on Container (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     needs: build
+
+    # Matches the build job's matrix so each image runs on a real host of
+    # its own architecture — no QEMU involved for either building or
+    # running, so this catches native-only failures (like the
+    # illegal-instruction-on-incompatible-CPU class of PyTorch bug the
+    # computer-vision pipeline now guards against at runtime — see
+    # vision.py's torch_cpu_compatible()) that an emulated smoke test could
+    # miss entirely.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Checkout repository
@@ -259,7 +299,7 @@ jobs:
         if: ${{ !env.ACT }}
         uses: actions/download-artifact@v8
         with:
-          name: addon-image
+          name: addon-image-${{ matrix.arch }}
 
       - name: Load Docker image
         # Under `act`, the `build` job already loaded this image into the
