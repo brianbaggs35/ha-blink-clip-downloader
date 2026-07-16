@@ -1932,6 +1932,49 @@ Confirmed already correct, no change needed:
     doesn't fully resolve it either. Sanity-checked locally (still
     passes), same caveat as both previous attempts — only a real GitHub
     Actions run can confirm whether it actually works.
+  - **Confirmed: that flagged per-add-on profile was the actual cause all
+    along.** A real GitHub Actions run finally produced the *complete*
+    diagnostic dump (earlier rounds had been working from a truncated
+    view). It showed the socket-permission wall starting the instant
+    Supervisor logged `Starting Docker app
+    local/amd64-addon-blink_clip_downloader`, interleaved with that
+    add-on's own s6-overlay's first-ever boot line (`s6-rc: info: service
+    s6rc-oneshot-runner: starting`) — meaning this was **the add-on's own
+    container failing to boot**, the whole time, not `hassio_supervisor`
+    itself. It only ever *looked* like Supervisor's own problem because
+    Supervisor's docker manager attaches to a freshly-started add-on and
+    folds its output into `docker logs hassio_supervisor`, while `docker
+    logs addon_local_blink_clip_downloader` directly came back empty
+    every round (the add-on container's own log capture apparently never
+    got far enough to attach before this crashed it). Retroactively,
+    every fix so far had been aimed at the wrong container: `aa-teardown`
+    and `SUPERVISOR_UNCONFINED` both only affect Supervisor's *own*
+    confinement, and `--cgroupns=host` targets the outer job container —
+    none of them touch the **separate** AppArmor profile Supervisor
+    generates and loads per add-on (`local_blink_clip_downloader` here,
+    confirmed via `[supervisor.host.apparmor] Adding/updating AppArmor
+    profile: local_blink_clip_downloader` in the log), which is what
+    actually confines the add-on's container. There's no documented
+    per-add-on equivalent of `SUPERVISOR_UNCONFINED`, and this add-on's
+    own `config.yaml` is deliberately *not* being changed to opt out —
+    that's a real security boundary for actual end-user installs, not a
+    knob worth trading away just to unblock a CI-only nested-container
+    artifact. Instead, mask AppArmor's kernel interface (`securityfs` at
+    `/sys/kernel/security/apparmor`) from everything inside the outer
+    `ha-supervisor-ci` container before Supervisor ever starts (a tmpfs
+    mounted over it, only if present), so Supervisor's own
+    host-capability detection correctly concludes AppArmor isn't usable
+    at all in this environment — uniformly, for itself and for every
+    add-on it manages — without touching anything the add-on ships or how
+    a real install behaves. Also added `--security-opt apparmor=unconfined`
+    explicitly to the outer container (`--privileged` should already
+    imply this, but costs nothing to state directly). Kept all of the
+    previous fixes in place alongside these two — cumulatively addressing
+    every AppArmor/cgroup-namespace mechanism found across this whole
+    investigation, not replacing earlier attempts. Sanity-checked locally,
+    though this dev machine has no `/sys/kernel/security/apparmor` at all
+    to mask in the first place, so — more than any fix so far in this
+    thread — only a real GitHub Actions run can actually confirm this one.
 
 ### Fixed — `build.yaml` deprecation warning
 
