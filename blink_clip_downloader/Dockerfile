@@ -223,7 +223,20 @@ RUN ( \
             # the newly installed package to actually take effect.
             "lap>=0.5.12" \
             "opencv-python-headless>=4.10,<5" \
-            "transformers>=4.56,<5" \
+            # Floor raised from 4.56 to 5.5 to clear two HIGH-severity CVEs
+            # (2026-4372 RCE, 2026-5241 arbitrary code execution via
+            # trust_remote_code) that the 4.x line never fixed — found via a
+            # trivy image scan. Verified by hand before bumping: the pinned
+            # depth-estimation model (VisionPipeline._DepthEstimator in
+            # vision.py, "depth-anything/Depth-Anything-V2-Small-hf") loads
+            # and runs identically under transformers 5.14 in an isolated
+            # venv, producing the same predicted_depth/depth pipeline()
+            # output shape this code already expects — the 5.x line's
+            # high-level pipeline() API is HuggingFace's most
+            # backward-compatible surface across major versions, and this
+            # add-on's usage here is exactly that surface, never
+            # trust_remote_code (which stays at its safe default of False).
+            "transformers>=5.5,<6" \
         && pip3 install --no-cache-dir --no-deps "facenet-pytorch>=2.6,<3" \
         2>&1 | tail -20 \
     ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled \
