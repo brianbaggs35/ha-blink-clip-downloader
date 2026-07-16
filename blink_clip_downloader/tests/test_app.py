@@ -1275,6 +1275,71 @@ async def test_poll_cycle_logs_when_thumbnails_backfilled(app):
 
 
 # ---------------------------------------------------------------------------
+# _backfill_clip_durations — startup catch-up for duration=0 rows already
+# in the DB, see probe_clip_duration in downloader.py
+# ---------------------------------------------------------------------------
+
+
+async def test_backfill_clip_durations_noop_when_nothing_missing(app):
+    app._db.get_clips_missing_duration = AsyncMock(return_value=[])
+    app._db.update_clip_duration = AsyncMock()
+
+    await app._backfill_clip_durations()
+
+    app._db.update_clip_duration.assert_not_awaited()
+
+
+async def test_backfill_clip_durations_probes_and_updates(app, tmp_path):
+    clip_path = tmp_path / "clip.mp4"
+    clip_path.write_bytes(b"fake")
+    app._db.get_clips_missing_duration = AsyncMock(
+        return_value=[{"id": "c1", "file_path": str(clip_path)}]
+    )
+    app._db.update_clip_duration = AsyncMock(return_value=True)
+
+    with patch("blink_downloader.app.probe_clip_duration", AsyncMock(return_value=17)):
+        await app._backfill_clip_durations()
+
+    app._db.update_clip_duration.assert_awaited_once_with("c1", 17)
+
+
+async def test_backfill_clip_durations_skips_when_probe_still_zero(app, tmp_path):
+    """A clip ffprobe genuinely can't determine duration for must not
+    trigger a pointless UPDATE — it stays in the "missing" set and gets
+    tried again next startup instead."""
+    clip_path = tmp_path / "clip.mp4"
+    clip_path.write_bytes(b"fake")
+    app._db.get_clips_missing_duration = AsyncMock(
+        return_value=[{"id": "c1", "file_path": str(clip_path)}]
+    )
+    app._db.update_clip_duration = AsyncMock(return_value=True)
+
+    with patch("blink_downloader.app.probe_clip_duration", AsyncMock(return_value=0)):
+        await app._backfill_clip_durations()
+
+    app._db.update_clip_duration.assert_not_awaited()
+
+
+async def test_backfill_clip_durations_skips_missing_file(app, tmp_path):
+    """A clip whose file no longer exists on disk (deleted/moved outside
+    the app) must be skipped rather than wasting a probe call that can
+    only fail."""
+    missing_path = tmp_path / "gone.mp4"
+    app._db.get_clips_missing_duration = AsyncMock(
+        return_value=[{"id": "c1", "file_path": str(missing_path)}]
+    )
+    app._db.update_clip_duration = AsyncMock()
+
+    with patch(
+        "blink_downloader.app.probe_clip_duration", AsyncMock(return_value=17)
+    ) as mock_probe:
+        await app._backfill_clip_durations()
+
+    mock_probe.assert_not_awaited()
+    app._db.update_clip_duration.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
 # __init__ — AI analyzer wiring: camera_configs.json (web UI) merged with
 # options.json, then passed to create_analyzer(). This is the machinery
 # that gives each camera its own perspective/description/car-camera flag.

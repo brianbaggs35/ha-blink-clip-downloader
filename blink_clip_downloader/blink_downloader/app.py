@@ -19,7 +19,12 @@ from .config import AppConfig
 from .database import ClipDatabase
 from .vision import VisionConfig, VisionPipeline
 from .digest import DailyDigest
-from .downloader import AuthenticationError, BlinkDownloader, TwoFARequired
+from .downloader import (
+    AuthenticationError,
+    BlinkDownloader,
+    TwoFARequired,
+    probe_clip_duration,
+)
 from .event_watcher import HAEventWatcher
 from .library_scanner import import_existing_clips
 from .manifest import ClipManifest
@@ -412,6 +417,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             # a 504) for however long the filesystem walk took.
             self._bg_tasks.append(
                 asyncio.create_task(self._reimport_library(), name="library_reimport")
+            )
+            # Backfill duration for clips stuck at 0/unset (see
+            # _backfill_clip_durations) — same "don't block startup"
+            # reasoning as the reimport above.
+            self._bg_tasks.append(
+                asyncio.create_task(
+                    self._backfill_clip_durations(), name="duration_backfill"
+                )
             )
 
         # ── Configuration error mode ─────────────────────────────────────────
@@ -868,6 +881,39 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         imported = await import_existing_clips(self._db, self._config.download_path)
         if imported:
             _LOGGER.info("Library re-import: added %d pre-existing clip(s)", imported)
+
+    async def _backfill_clip_durations(self) -> None:
+        """One-time-per-clip catch-up for duration=0 rows already in the DB.
+
+        Covers clips downloaded before probe_clip_duration existed, and any
+        the Blink API never gave a real value for in the first place (see
+        downloader.py's _download_clip) — both cases are already handled
+        going forward for new downloads; this is only for clips that were
+        already stored with duration=0 by the time this add-on updated.
+        Self-limiting: a clip successfully backfilled here has a real
+        duration from then on, so it's never selected again on a later
+        startup. Runs as a background task, same non-blocking reasoning as
+        _reimport_library — a large library means a lot of ffprobe calls.
+        """
+        candidates = await self._db.get_clips_missing_duration()
+        if not candidates:
+            return
+        backfilled = 0
+        for clip in candidates:
+            file_path = Path(clip["file_path"])
+            if not file_path.is_file():
+                continue
+            duration = await probe_clip_duration(file_path)
+            if duration > 0 and await self._db.update_clip_duration(
+                clip["id"], duration
+            ):
+                backfilled += 1
+        if backfilled:
+            _LOGGER.info(
+                "Duration backfill: fixed %d of %d clip(s) with no known duration",
+                backfilled,
+                len(candidates),
+            )
 
     # ------------------------------------------------------------------
     # Shutdown

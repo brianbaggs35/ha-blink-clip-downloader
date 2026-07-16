@@ -116,8 +116,6 @@ const diskClass = computed(() => {
   if (pct > 70) return 'warn'
   return ''
 })
-const libSizeGb = computed(() => ((stats.value?.total_size_bytes ?? 0) / 1_073_741_824).toFixed(2))
-
 function sinceDate(range: string): string | null {
   const d = new Date()
   if (range === 'today') d.setHours(0, 0, 0, 0)
@@ -463,17 +461,12 @@ onUnmounted(() => {
         <span class="lib-stat-label">👤 Recognized</span>
         <span class="lib-stat-value">{{ stats?.recognized_count ?? 0 }}</span>
       </div>
-      <div class="lib-stat">
-        <span class="lib-stat-label">Library size</span>
-        <span class="lib-stat-value">{{ libSizeGb }} GB</span>
-      </div>
       <div v-if="stats?.disk" class="lib-stat lib-stat-storage">
-        <span class="lib-stat-storage-title">💾 Storage</span>
         <span class="lib-stat-storage-used">
-          {{ stats.disk.used_mb }} MB used
+          💾 {{ stats.disk.used_mb }} MB used
           <template v-if="stats.disk.quota_bytes"> of {{ stats.disk.quota_gb }} GB quota</template>
+          <span class="lib-stat-storage-free"> · {{ stats.disk.free_gb }} GB free on disk</span>
         </span>
-        <span class="lib-stat-storage-free">{{ stats.disk.free_gb }} GB free on disk</span>
         <ProgressBar
           v-if="stats.disk.quota_bytes"
           class="lib-stat-storage-bar"

@@ -361,6 +361,21 @@ class ClipDatabase:
         )
         return _affected(status) > 0
 
+    async def update_clip_duration(self, clip_id: str, duration: int) -> bool:
+        """Backfill a clip's duration (see app.py's startup duration backfill).
+
+        Only ever called with a freshly-probed, positive value — a clip
+        already showing a real duration is never re-probed in the first
+        place (see get_clips_missing_duration), so this never needs to
+        guard against overwriting a good value with a worse one.
+        """
+        if self._pool is None:
+            return False
+        status = await self._pool.execute(
+            _qm("UPDATE clips SET duration=? WHERE id=?"), duration, clip_id
+        )
+        return _affected(status) > 0
+
     async def set_tags(self, clip_id: str, tags: list[str]) -> bool:
         """Replace the tag list for a clip."""
         if self._pool is None:
@@ -411,6 +426,22 @@ class ClipDatabase:
             return None
         row = await self._pool.fetchrow(_qm("SELECT * FROM clips WHERE id=?"), clip_id)
         return _row_to_dict(row) if row else None
+
+    async def get_clips_missing_duration(self) -> list[dict[str, Any]]:
+        """Clips with no known duration, for app.py's startup backfill.
+
+        Covers both a clip whose Blink API response never included a real
+        duration (some accounts/clip types consistently don't) and a
+        pre-5.0.1 clip downloaded before that fallback existed — either
+        way, the file itself is the source of truth once probed. Returns
+        just id/file_path, the only two fields the backfill needs.
+        """
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            "SELECT id, file_path FROM clips WHERE duration <= 0"
+        )
+        return [dict(row) for row in rows]
 
     async def get_clips(
         self,

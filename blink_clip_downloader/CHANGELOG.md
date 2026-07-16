@@ -2285,6 +2285,29 @@ horizontal overflow), and dark mode.
   as a fallback whenever the API's own value is `<= 0` on the main path,
   and unconditionally for local-storage downloads; `library_scanner.py`
   now imports the shared version instead of keeping its own copy.
+- **Existing clips already stored with `duration=0` don't get fixed by the
+  above alone** — the fallback only runs at download time, and these
+  clips were already downloaded. Added a startup backfill
+  (`app.py`'s `_backfill_clip_durations`, mirroring the existing
+  `_reimport_library` background task): scans for clips with
+  `duration <= 0`, probes each still-present file, and updates the row.
+  Self-limiting — a clip successfully backfilled has a real duration from
+  then on, so later startups only re-check the shrinking remainder (or
+  none, once caught up). New `database.py` methods
+  `get_clips_missing_duration()` / `update_clip_duration()`.
+
+### Improved — Library stats row decluttered
+
+- **Removed the "Library size" stat** — redundant with the "💾 Storage"
+  card right next to it, which already shows the same figure as "X MB
+  used of Y GB quota."
+- **Storage card is now a single text line + progress bar**, not three
+  stacked text lines (a separate "STORAGE" title, a "used of quota" line,
+  a "free on disk" line) plus the bar. Reported as making the stats row
+  taller than it needed to be — `.lib-stats-row`'s `align-items: stretch`
+  means every stat card matches the *tallest* card's height, so the
+  storage card's extra lines were shrinking the clip grid's scroll area
+  below it for every card in the row, not just itself.
 
 ## 4.0.2
 

@@ -600,33 +600,34 @@ h3 {
   text-align: center;
 }
 .lib-stat-storage {
+  /* Deliberately compact — this used to be title + used-line + free-line
+     stacked above the bar (4 rows total), which stretched every other
+     stat card in the row to match (.lib-stats-row's align-items:stretch)
+     and ate into the clip grid's scroll area below. Down to a single text
+     row (icon + used/quota + free-space folded in as a trailing clause)
+     plus the bar. */
   flex: 1;
   min-width: 220px;
   align-items: stretch;
   justify-content: center;
-  gap: 0.3rem;
+  gap: 0.25rem;
   text-align: left;
-}
-.lib-stat-storage-title {
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
 }
 .lib-stat-storage-used {
   /* The primary figure — quota headroom is what a user actually came
      here to check, so it gets the same near-white contrast as a regular
-     .lib-stat-value, not the same dim tone as the section title above it. */
-  font-size: 0.92rem;
+     .lib-stat-value. */
+  font-size: 0.85rem;
   font-weight: 600;
   color: var(--text);
 }
 .lib-stat-storage-free {
-  /* Secondary context. Deliberately var(--text-dim), not var(--muted) —
-     the latter reads as too low-contrast to comfortably read at this
-     size against the card background. */
+  /* Secondary context, folded inline into .lib-stat-storage-used above.
+     Deliberately var(--text-dim), not var(--muted) — the latter reads as
+     too low-contrast to comfortably read at this size against the card
+     background. */
   font-size: 0.76rem;
+  font-weight: 400;
   color: var(--text-dim);
 }
 /* .lib-stat's align-items:center (added for the label/value centering on

@@ -159,6 +159,54 @@ async def test_set_tags(db: ClipDatabase) -> None:
     assert "night" in result["tags"]
 
 
+# ------------------------------------------------------------------
+# update_clip_duration / get_clips_missing_duration
+# ------------------------------------------------------------------
+
+
+async def test_update_clip_duration(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip(duration=0))
+    assert await db.update_clip_duration("clip1", 42) is True
+    result = await db.get_clip("clip1")
+    assert result is not None
+    assert result["duration"] == 42
+
+
+async def test_update_clip_duration_nonexistent_returns_false(
+    db: ClipDatabase,
+) -> None:
+    assert await db.update_clip_duration("ghost", 42) is False
+
+
+async def test_update_clip_duration_without_init_returns_false() -> None:
+    d = ClipDatabase()
+    assert await d.update_clip_duration("clip1", 42) is False
+
+
+async def test_get_clips_missing_duration(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1", duration=0))
+    await db.add_clip(_make_clip("c2", duration=5))
+    await db.add_clip(_make_clip("c3", duration=0))
+    missing = await db.get_clips_missing_duration()
+    assert {c["id"] for c in missing} == {"c1", "c3"}
+    assert all("file_path" in c for c in missing)
+
+
+async def test_get_clips_missing_duration_excludes_backfilled(
+    db: ClipDatabase,
+) -> None:
+    """Self-limiting: once a clip is backfilled it must not keep showing up
+    on every future startup's scan."""
+    await db.add_clip(_make_clip("c1", duration=0))
+    await db.update_clip_duration("c1", 12)
+    assert await db.get_clips_missing_duration() == []
+
+
+async def test_get_clips_missing_duration_without_init_returns_empty() -> None:
+    d = ClipDatabase()
+    assert await d.get_clips_missing_duration() == []
+
+
 async def test_set_tags_nonexistent_returns_false(db: ClipDatabase) -> None:
     assert await db.set_tags("ghost", ["foo"]) is False
 
