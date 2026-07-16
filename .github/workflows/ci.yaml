@@ -510,7 +510,28 @@ jobs:
           docker rm -f ha-supervisor-ci >/dev/null 2>&1 || true
           docker volume rm ci-supervisor-mnt ci-supervisor-docker-lib \
             ci-supervisor-containerd-lib >/dev/null 2>&1 || true
+
+          # --cgroupns=host: disabling AppArmor (previous fix, still kept -
+          # it's a legitimate no-cost hardening step on an ephemeral runner
+          # regardless) didn't resolve a real GitHub Actions run's
+          # `s6-ipcserver-socketbinder: fatal: unable to create socket:
+          # Permission denied` wall inside hassio_supervisor's own log,
+          # which turned out to be the actual blocker after all - the
+          # add-on's own container log was completely empty (not slow to
+          # populate, empty), meaning Supervisor's self-reported
+          # `state: started` was simply wrong, not just premature. Root
+          # cause: Docker 20.10+ defaults new containers to a *private*
+          # cgroup namespace on a cgroup v2 host (GitHub's Ubuntu runners
+          # use cgroup v2; --privileged alone does not change this), which
+          # breaks tooling like this that needs the nested dockerd's own
+          # containers to manage cgroups the way a *host* cgroup namespace
+          # allows. This is a well-documented Docker/cgroup-v2 requirement
+          # for nested/DinD-style containers generally, not specific to
+          # this devcontainer image. Harmless to request unconditionally
+          # (not gated by !env.ACT like the AppArmor step): on a cgroup v1
+          # host, or one where this doesn't matter, it's a no-op.
           docker run -d --name ha-supervisor-ci --privileged \
+            --cgroupns=host \
             -v ci-supervisor-mnt:/mnt/supervisor \
             -v ci-supervisor-docker-lib:/var/lib/docker \
             -v ci-supervisor-containerd-lib:/var/lib/containerd \

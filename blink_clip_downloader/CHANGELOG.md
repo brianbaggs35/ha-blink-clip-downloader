@@ -1869,6 +1869,37 @@ Confirmed already correct, no change needed:
     machine structurally cannot reproduce (confirmed: the new step
     correctly no-ops there, and the rest of the job still passes) — this
     one needs a real GitHub Actions run to confirm either way.
+  - **That AppArmor fix did not work.** A real GitHub Actions run showed
+    the new `aa-teardown` step executing successfully ("Unloading AppArmor
+    profiles") and the exact same `s6-ipcserver-socketbinder: Permission
+    denied` wall still appearing — direct evidence AppArmor enforcement
+    wasn't the (whole) cause, since tearing it down host-wide before the
+    nested container even exists should have prevented it entirely if it
+    were. Re-reading the fuller log changed the diagnosis in a second way
+    too: Supervisor's own bookkeeping (`ha apps info` → `state: started`)
+    reported success even though `docker logs
+    addon_local_blink_clip_downloader` came back **completely empty** —
+    not slow to populate, empty, meaning the container never actually ran
+    at all. That means the socket errors were the real blocker after all,
+    just not for the reason first suspected. Root cause, on a second,
+    more targeted search: Docker 20.10+ defaults new containers to a
+    *private* cgroup namespace on a cgroup v2 host, which breaks nested
+    Docker-in-Docker tooling like this whose inner dockerd needs to
+    manage its own containers' cgroups the way a *host* cgroup namespace
+    allows — `--privileged` alone does not change this. Confirmed this
+    dev machine's own WSL2 Docker already behaves like `--cgroupns=host`
+    by default regardless of flags (a fresh container's `/proc/self/cgroup`
+    shows a flat `0::/`, not the nested `0::/docker/<id>` path a real
+    private cgroup namespace produces) — direct evidence for *why* this
+    class of bug specifically cannot reproduce locally on this machine,
+    on top of the general "GitHub's runner differs from this dev
+    machine" pattern the AppArmor entry above already covers. Added
+    `--cgroupns=host` to the outer `ha-supervisor-ci` container's
+    `docker run`, unconditionally (harmless on a host where it isn't
+    needed, unlike the AppArmor step there's no reason to gate it behind
+    `!env.ACT`). Sanity-checked locally (still passes), but — same
+    caveat as the AppArmor attempt — the actual fix can only be confirmed
+    by a real GitHub Actions run.
 
 ### Fixed — `build.yaml` deprecation warning
 
