@@ -2000,6 +2000,25 @@ Confirmed already correct, no change needed:
     existing hollow. Confirmed locally this path is already empty on this
     dev machine (so masking it is a true no-op there, same verification
     limit as the previous attempt) before landing.
+  - **That theory was wrong too — proven by the identical error recurring
+    byte-for-byte on the next real run.** `open()` raises the same "no
+    such file or directory" whether the immediate file or a parent
+    directory is missing, so a recurring identical error message doesn't
+    distinguish those cases — the real signal was that masking the parent
+    made *no observable difference at all*. That means Supervisor's
+    plugin-launch code has no graceful fallback for this specific check
+    at all (unlike its general AppArmor capability detection elsewhere,
+    which does degrade gracefully): it unconditionally tries to open
+    exactly `/sys/kernel/security/apparmor/profiles` whenever starting
+    any container, and treats any failure to open it as fatal, regardless
+    of the reason. The only way to satisfy that is to make the file
+    genuinely exist and be readable — empty is fine, since empty
+    correctly means "no profiles currently loaded" — not to make the
+    surrounding path vanish more thoroughly, which was exactly backwards.
+    Reverted to masking just the `apparmor/` subdirectory (which is what
+    actually fixed the add-on's own boot failure) and added `touch
+    /sys/kernel/security/apparmor/profiles` inside it, so the specific
+    `open()` call Supervisor's own error message named succeeds.
 
 ### Fixed — `build.yaml` deprecation warning
 

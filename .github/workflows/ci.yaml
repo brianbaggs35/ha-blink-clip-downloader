@@ -628,17 +628,28 @@ jobs:
           # /sys/kernel/security/apparmor/profiles: no such file or
           # directory", which then blocked every plugin container
           # (dns/audio/multicast/observer) from ever starting, worse than
-          # the original symptom. An empty-but-*present* apparmor/
-          # directory is an unusual, thinly-tested state - genuinely
-          # having *no* AppArmor kernel support at all (the parent
-          # securityfs path itself absent) is the far more common,
-          # robustly-handled real-world case, so mask the parent
-          # (/sys/kernel/security) instead of just the apparmor/
-          # subdirectory - this makes the whole path, and everything
-          # under it, cleanly not-exist rather than exist-but-hollow.
+          # the original symptom.
+          #
+          # Tried masking the *parent* (/sys/kernel/security) instead, on
+          # the theory that "the whole path doesn't exist" is a more
+          # robustly-handled real-world case than "exists but hollow" -
+          # that theory was wrong: the next real run hit the exact same
+          # error, byte for byte. That's the actual signal that matters -
+          # `open()` raises the identical "no such file or directory"
+          # whether the immediate file or one of its parent directories is
+          # missing, and Supervisor's code apparently has no fallback for
+          # this *specific* check at all (unlike its general AppArmor
+          # *capability* detection elsewhere, which does degrade
+          # gracefully) - it unconditionally tries to open exactly this
+          # file whenever starting any container, and treats any failure
+          # to open it as fatal. The only way to satisfy that is to make
+          # the file genuinely exist and be readable, empty is fine (empty
+          # means "no profiles currently loaded," which is just true) -
+          # not to make the surrounding path vanish more thoroughly.
           docker exec ha-supervisor-ci sh -c \
-            'if [ -d /sys/kernel/security ]; then
-               mount -t tmpfs tmpfs /sys/kernel/security
+            'if [ -d /sys/kernel/security/apparmor ]; then
+               mount -t tmpfs tmpfs /sys/kernel/security/apparmor
+               touch /sys/kernel/security/apparmor/profiles
              fi' || true
 
           # supervisor_run is started via `docker exec -d` (detached) so
