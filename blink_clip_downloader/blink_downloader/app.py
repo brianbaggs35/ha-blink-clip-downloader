@@ -497,10 +497,17 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             )
 
         if self._analysis_queue:
+            _model_by_provider = {
+                "ollama": self._config.ollama_model,
+                "ollama_cloud": self._config.ollama_model,
+                "moondream_cloud": self._config.moondream_finetune_model,
+                "anthropic": self._config.anthropic_model,
+                "openai": self._config.openai_model,
+            }
             _LOGGER.info(
                 "  AI analysis    : on (provider=%s, model=%s)",
                 self._config.ai_provider,
-                self._config.ollama_model or "(auto)",
+                _model_by_provider.get(self._config.ai_provider) or "(auto)",
             )
             self._bg_tasks.append(
                 asyncio.create_task(self._analysis_queue.start(), name="analysis_queue")

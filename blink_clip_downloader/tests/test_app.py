@@ -958,6 +958,48 @@ async def test_run_starts_media_server_event_watcher_and_analysis_queue(app, tmp
     app._analysis_queue.stop.assert_called_once()
 
 
+async def test_finish_startup_logs_configured_model_for_active_provider(app, caplog):
+    """The startup log line must report the model actually configured for
+    ai_provider, not always ollama_model — previously it hardcoded
+    ollama_model regardless of provider, so any non-Ollama provider (e.g.
+    openai, anthropic) always logged "model=(auto)" even with a real model
+    configured."""
+    import dataclasses
+
+    app._config = dataclasses.replace(
+        app._config,
+        ai_provider="openai",
+        openai_model="gpt-5.4-nano",
+    )
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.start = AsyncMock()
+
+    with caplog.at_level("INFO", logger="blink_downloader.app"):
+        await app._finish_startup()
+
+    assert "provider=openai, model=gpt-5.4-nano" in caplog.text
+    assert "(auto)" not in caplog.text
+
+
+async def test_finish_startup_logs_anthropic_model_not_ollama(app, caplog):
+    """Same bug, different provider — confirms the fix maps every provider to
+    its own model field rather than special-casing openai alone."""
+    import dataclasses
+
+    app._config = dataclasses.replace(
+        app._config,
+        ai_provider="anthropic",
+        anthropic_model="claude-opus-4-5",
+    )
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.start = AsyncMock()
+
+    with caplog.at_level("INFO", logger="blink_downloader.app"):
+        await app._finish_startup()
+
+    assert "provider=anthropic, model=claude-opus-4-5" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # Signal handler
 # ---------------------------------------------------------------------------
