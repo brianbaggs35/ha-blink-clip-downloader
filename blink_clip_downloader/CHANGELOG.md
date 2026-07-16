@@ -1975,6 +1975,31 @@ Confirmed already correct, no change needed:
     though this dev machine has no `/sys/kernel/security/apparmor` at all
     to mask in the first place, so — more than any fix so far in this
     thread — only a real GitHub Actions run can actually confirm this one.
+  - **That fix worked for the add-on's own boot failure — the
+    `s6-ipcserver-socketbinder` wall is gone entirely — but introduced a
+    new regression in the process.** Masking only the `apparmor/`
+    subdirectory left it existing-but-empty, and Supervisor's own
+    plugin-launch code (used for *every* container it starts, not just
+    the add-on) separately does `open(/sys/kernel/security/apparmor/
+    profiles)` to check whether a specific profile is loaded, hard-erroring
+    on a plain "file not found" instead of treating AppArmor-unavailable
+    as the graceful fallback — a real run's error, verbatim: `Could not
+    check if docker-default AppArmor profile was loaded: open
+    /sys/kernel/security/apparmor/profiles: no such file or directory`.
+    That blocked *every* plugin container (`hassio_dns`/`hassio_audio`/
+    `hassio_multicast`/`hassio_observer`, all stuck in `Created`, never
+    started) — worse than the original symptom, since Supervisor never
+    even reached `hassio_cli` this time. An empty-but-present `apparmor/`
+    directory is an unusual, thinly-tested state; genuinely having no
+    AppArmor kernel support at all (the parent securityfs path itself
+    absent) is the far more common, robustly-handled real-world case that
+    Supervisor's own code is much more likely to have been tested
+    against. Changed the mask to cover the *parent* (`/sys/kernel/
+    security`) instead of just the `apparmor/` subdirectory, so the whole
+    path — and everything under it — genuinely doesn't exist rather than
+    existing hollow. Confirmed locally this path is already empty on this
+    dev machine (so masking it is a true no-op there, same verification
+    limit as the previous attempt) before landing.
 
 ### Fixed — `build.yaml` deprecation warning
 

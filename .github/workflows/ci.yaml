@@ -614,9 +614,31 @@ jobs:
           # correctly concludes AppArmor isn't usable here - for itself
           # *and* uniformly for every add-on it manages - without touching
           # anything the add-on ships or how a real install behaves.
+          #
+          # Masking only the apparmor/ subdirectory (an earlier version of
+          # this step) fixed the add-on's own boot failure above, but
+          # created a *new* regression: Supervisor's own plugin-launch code
+          # (used for every container it starts, not just the add-on)
+          # separately does `open(/sys/kernel/security/apparmor/profiles)`
+          # to check whether a specific profile is currently loaded, and
+          # hard-errors on a plain ENOENT instead of treating "AppArmor
+          # unavailable" as the graceful fallback - confirmed via a real
+          # run's error, verbatim: "Could not check if docker-default
+          # AppArmor profile was loaded: open
+          # /sys/kernel/security/apparmor/profiles: no such file or
+          # directory", which then blocked every plugin container
+          # (dns/audio/multicast/observer) from ever starting, worse than
+          # the original symptom. An empty-but-*present* apparmor/
+          # directory is an unusual, thinly-tested state - genuinely
+          # having *no* AppArmor kernel support at all (the parent
+          # securityfs path itself absent) is the far more common,
+          # robustly-handled real-world case, so mask the parent
+          # (/sys/kernel/security) instead of just the apparmor/
+          # subdirectory - this makes the whole path, and everything
+          # under it, cleanly not-exist rather than exist-but-hollow.
           docker exec ha-supervisor-ci sh -c \
-            'if [ -d /sys/kernel/security/apparmor ]; then
-               mount -t tmpfs tmpfs /sys/kernel/security/apparmor
+            'if [ -d /sys/kernel/security ]; then
+               mount -t tmpfs tmpfs /sys/kernel/security
              fi' || true
 
           # supervisor_run is started via `docker exec -d` (detached) so
