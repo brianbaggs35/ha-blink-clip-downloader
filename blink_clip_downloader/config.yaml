@@ -12,6 +12,18 @@ arch:
 init: false
 homeassistant_api: true
 
+# CHOWN/SETUID/SETGID: the bundled PostgreSQL server can't run as root (it
+# refuses outright), and /data is a host bind-mount whose ownership can't be
+# baked into the image - 01-postgres-init.sh must chown it to the postgres
+# user and su into that user at container start, both of which need these
+# capabilities explicitly (AppArmor's `capability,` rule in apparmor.txt only
+# permits what Docker itself has already granted - it can't substitute for
+# this).
+privileged:
+  - CHOWN
+  - SETUID
+  - SETGID
+
 # Ingress provides a secure panel entry in the HA sidebar at no extra port.
 ingress: true
 panel_icon: mdi:cctv

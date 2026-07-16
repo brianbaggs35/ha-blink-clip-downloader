@@ -2357,16 +2357,25 @@ horizontal overflow), and dark mode.
 - **PostgreSQL init crashed the container's entire s6 boot** — surfaced only
   when testing an install on a real Home Assistant OS host (not the
   nested-Docker Supervisor devcontainer this add-on had been validated
-  against up to this point). `01-postgres-init.sh`'s
+  against up to this point, which turned out to be more permissive than real
+  hardware about container capabilities, the same way it previously was
+  about AppArmor enforcement). `01-postgres-init.sh`'s
   `chown postgres:postgres /data/postgresql` failed with "Operation not
   permitted", `cont-init.d` treated that as fatal, and s6 stopped the
   container before any service — including the media server — ever started.
-  `apparmor.txt` granted broad `file,` access but no `capability` rules at
-  all; AppArmor mediates Linux capabilities (`CAP_CHOWN` among them, needed
-  to hand the PostgreSQL data directory to the `postgres` user) separately
-  from file access, and denies anything not explicitly listed regardless of
-  what Docker itself grants the container. Added a bare `capability,` rule
-  alongside the existing `file,` one.
+  Two independent layers both needed to grant this, and were missing it:
+  `apparmor.txt` had broad `file,` access but no `capability` rules (AppArmor
+  mediates Linux capabilities like `CAP_CHOWN` separately from file access,
+  and denies anything not explicitly listed); and `config.yaml` had no
+  `privileged` list, so Docker itself never granted the container
+  `CAP_CHOWN`/`CAP_SETUID`/`CAP_SETGID` in the first place — AppArmor can
+  only restrict further, not substitute for a capability Docker never
+  granted. PostgreSQL refuses outright to run as root, and `/data` is a host
+  bind-mount whose ownership can't be baked into the image, so some form of
+  runtime chown-and-drop-privileges is unavoidable here. Added a bare
+  `capability,` rule to `apparmor.txt` and `privileged: [CHOWN, SETUID,
+  SETGID]` to `config.yaml` — the minimum both layers need to agree to allow
+  before this script's `chown` and `su` calls can succeed.
 
 ## 4.0.2
 
