@@ -462,27 +462,118 @@ jobs:
 
       - name: Start Home Assistant Supervisor devcontainer
         run: |
+          # Volume names are prefixed ci- and container removal is forced
+          # up front deliberately: a GitHub-hosted runner is a fresh VM
+          # every run so this never matters there, but this job is also
+          # run locally via `act` (this repo's established way to test
+          # workflow changes without pushing — see ci.yaml's other !env.ACT
+          # checks), on the same Docker host as any long-lived local dev
+          # environment such as a manually-run Supervisor devcontainer.
+          # An earlier version of this job used unprefixed supervisor-*
+          # volume names, which collided with exactly that kind of
+          # already-running container's own /var/lib/docker mount — two
+          # independent nested dockerd processes fighting over the same
+          # on-disk state, which left this job's own Supervisor unable to
+          # start anything at all. Forcing removal first also makes
+          # repeated local `act` runs safe if an earlier one was
+          # interrupted before its own cleanup step ran.
+          docker rm -f ha-supervisor-ci >/dev/null 2>&1 || true
+          docker volume rm ci-supervisor-mnt ci-supervisor-docker-lib \
+            ci-supervisor-containerd-lib >/dev/null 2>&1 || true
           docker run -d --name ha-supervisor-ci --privileged \
-            -v supervisor-mnt:/mnt/supervisor \
-            -v supervisor-docker-lib:/var/lib/docker \
-            -v supervisor-containerd-lib:/var/lib/containerd \
+            -v ci-supervisor-mnt:/mnt/supervisor \
+            -v ci-supervisor-docker-lib:/var/lib/docker \
+            -v ci-supervisor-containerd-lib:/var/lib/containerd \
             ghcr.io/home-assistant/devcontainer:5-apps
-          docker exec -d ha-supervisor-ci supervisor_run
+
+          # Wait for the container's *own internal* Docker daemon (which its
+          # entrypoint starts) to actually be responsive before invoking
+          # supervisor_run — starting it immediately after `docker run -d`
+          # assumes that daemon is already up, which is a race: `docker run
+          # -d` only guarantees the entrypoint has *begun*, not that
+          # everything it starts internally is ready yet. This is invisible
+          # on a fast host where the daemon happens to initialize within the
+          # gap before the next command runs, but not guaranteed in general.
+          for i in $(seq 1 30); do
+            if docker exec ha-supervisor-ci docker info >/dev/null 2>&1; then
+              echo "Internal Docker daemon ready after ${i} check(s)"
+              break
+            fi
+            if [ "$i" = 30 ]; then
+              echo "Internal Docker daemon never became ready"
+              docker logs ha-supervisor-ci || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          # supervisor_run is started via `docker exec -d` (detached) so
+          # this step can return immediately — but that means its own
+          # output is *not* the container's entrypoint stdout/stderr, so
+          # `docker logs ha-supervisor-ci` alone would never show it if it
+          # fails. Redirect explicitly to a file inside the container that
+          # the next step's failure branch can dump.
+          docker exec -d ha-supervisor-ci sh -c \
+            'supervisor_run > /tmp/supervisor_run.log 2>&1'
 
       - name: Wait for Supervisor to be ready
         run: |
+          dump_diagnostics() {
+            echo "--- docker ps -a (inside ha-supervisor-ci) ---"
+            docker exec ha-supervisor-ci docker ps -a || true
+            echo "--- supervisor_run output ---"
+            docker exec ha-supervisor-ci cat /tmp/supervisor_run.log || true
+            echo "--- ha-supervisor-ci container logs (its own entrypoint) ---"
+            docker logs ha-supervisor-ci || true
+          }
+
           for i in $(seq 1 30); do
             if docker exec ha-supervisor-ci docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^hassio_cli$'; then
-              echo "Supervisor ready after ${i} check(s)"
-              exit 0
+              echo "hassio_cli container up after ${i} check(s)"
+              break
             fi
             echo "Waiting for Supervisor to bootstrap (attempt $i/30)..."
+            if [ "$i" = 30 ]; then
+              echo "Supervisor never became ready (hassio_cli container never appeared)"
+              dump_diagnostics
+              exit 1
+            fi
             sleep 10
           done
-          echo "Supervisor never became ready"
-          docker exec ha-supervisor-ci docker ps -a || true
-          docker logs ha-supervisor-ci || true
-          exit 1
+
+          # hassio_cli existing is not the same as Supervisor itself being
+          # ready to act on: verified locally that `ha apps info`/`ha
+          # refresh-updates` right after this can still fail with "System
+          # is not ready with state: setup" — Supervisor's own internal
+          # state (surfaced by `ha info`, not `ha supervisor info`, which
+          # has no state field at all) needs to reach "running" separately.
+          #
+          # `ha info` itself *exits non-zero* (`Error: System is not ready
+          # with state: setup`) for as long as that's true - confirmed by
+          # direct local probing. That matters here because act runs each
+          # step as `bash -e`: capturing the command into a variable first
+          # (`state_line=$(... ha info)`) is a plain assignment statement,
+          # not the direct condition of an `if`/`while`, so set -e does NOT
+          # exempt it - the very first "not ready" check killed the whole
+          # step instantly instead of retrying (seen as a ~30s failure
+          # instead of exhausting the timeout). Keeping the whole pipeline
+          # as the `if` condition directly, like the loop above, is exempt
+          # from set -e and retries correctly.
+          for i in $(seq 1 60); do
+            if docker exec ha-supervisor-ci docker exec hassio_cli ha info 2>/dev/null \
+                | grep -q '^state: running$'; then
+              echo "Supervisor state: running, after ${i} check(s)"
+              exit 0
+            fi
+            echo "Waiting for Supervisor's own state to reach running (attempt $i/60)..."
+            if [ "$i" = 60 ]; then
+              echo "Supervisor's state never reached running"
+              docker exec ha-supervisor-ci docker exec hassio_cli ha info || true
+              dump_diagnostics
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Copy add-on source into Supervisor's local apps
         run: |
@@ -538,4 +629,4 @@ jobs:
         if: always()
         run: |
           docker rm -f ha-supervisor-ci || true
-          docker volume rm supervisor-mnt supervisor-docker-lib supervisor-containerd-lib || true
+          docker volume rm ci-supervisor-mnt ci-supervisor-docker-lib ci-supervisor-containerd-lib || true

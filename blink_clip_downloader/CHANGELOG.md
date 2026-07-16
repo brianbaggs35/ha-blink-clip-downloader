@@ -1787,6 +1787,40 @@ Confirmed already correct, no change needed:
   Move build parameters into the Dockerfile directly` on every install —
   not fixed here (out of scope for a CI-only change), flagged for a
   follow-up.
+- The job's first real runs (both on GitHub Actions and under local `act`)
+  failed before ever reaching the add-on itself, exposing three bugs the
+  earlier by-hand command verification hadn't caught because it never ran
+  the assembled script back-to-back on a cold environment:
+  - The devcontainer and its three volumes were named identically to this
+    project's own long-running local Supervisor dev environment
+    (`supervisor-mnt`/`supervisor-docker-lib`/`supervisor-containerd-lib`).
+    On a machine where that dev environment is already running, the job's
+    `docker run` silently attached to those in-use volumes instead of
+    getting fresh ones, and its cleanup step could have removed them out
+    from under the dev environment. Renamed to a `ci-supervisor-*` prefix,
+    with defensive pre-removal before creating them, so the job is safe to
+    run repeatedly alongside that dev environment without ever touching it.
+  - `supervisor_run` is started via a detached `docker exec -d` so the step
+    can return immediately, but that means its stdout/stderr weren't the
+    container's own entrypoint output — `docker logs` on failure showed
+    nothing useful. Redirected to a file inside the container that the
+    failure branch now dumps.
+  - Two separate readiness races: the job could invoke `supervisor_run`
+    before the container's own nested Docker daemon had finished starting,
+    and — less obviously — `hassio_cli` existing is not the same as
+    Supervisor's own internal state machine reaching `running`; commands
+    issued in between fail with `System is not ready with state: setup`.
+    Both are now polled for explicitly before moving on. The second poll
+    initially looked broken even after this fix (a real `act` run failed
+    in ~30s, far short of its own timeout) — the actual bug was one level
+    down: `ha info` itself exits non-zero while not ready, and capturing
+    it into a variable first (`state_line=$(...)`) before testing it is an
+    ordinary assignment statement, not the direct condition of an `if`, so
+    it wasn't exempt from the workflow runner's `bash -e` and killed the
+    step on the very first "not ready" check instead of retrying.
+  - Verified with a full local `act` run reaching `Job succeeded`
+    end-to-end: Supervisor bootstrap, add-on discovery, a from-scratch
+    install, start, and the media-server health check all passed.
 
 ## 4.0.2
 
