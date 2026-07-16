@@ -135,6 +135,12 @@ curl -fsS "http://localhost:${PORT}/api/auth/status" | jq -e 'has("state")' >/de
 echo "GET /api/ai/faces (local-only face-recognition enrollment)"
 curl -fsS "http://localhost:${PORT}/api/ai/faces" | jq -e 'has("faces")' >/dev/null
 
+echo "GET /api/vehicle/settings (Vehicles tab)"
+curl -fsS "http://localhost:${PORT}/api/vehicle/settings" | jq -e 'has("car_description")' >/dev/null
+
+echo "GET /api/ai/camera-configs (Vehicles/AI tab camera config)"
+curl -fsS "http://localhost:${PORT}/api/ai/camera-configs" | jq -e 'type == "array"' >/dev/null
+
 echo "All media server endpoints responded as expected"
 
 if [ "${SMOKE_TEST_SKIP_E2E:-}" != "1" ]; then
