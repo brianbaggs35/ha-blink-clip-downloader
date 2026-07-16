@@ -1900,6 +1900,38 @@ Confirmed already correct, no change needed:
     `!env.ACT`). Sanity-checked locally (still passes), but — same
     caveat as the AppArmor attempt — the actual fix can only be confirmed
     by a real GitHub Actions run.
+  - **That cgroup fix didn't resolve it either** — a real GitHub Actions
+    run showed the exact same `s6-ipcserver-socketbinder: Permission
+    denied` wall, unchanged. Found the actual missing piece by reading the
+    [home-assistant/devcontainer](https://github.com/home-assistant/devcontainer)
+    project's own README rather than general Docker/kernel research: this
+    devcontainer image has its own internal AppArmor handling, independent
+    of anything the outer job does at the runner-host level — "If the host
+    kernel supports AppArmor, it is automatically active inside the
+    devcontainer for the Supervisor and apps," loading its own
+    `hassio-supervisor` profile. The earlier `aa-teardown` step tore down
+    AppArmor on the *outer* GitHub runner host before `ha-supervisor-ci`
+    even existed, but that doesn't stop the devcontainer's own entrypoint
+    from separately detecting kernel-level AppArmor support and re-loading
+    its own profile regardless — host-level teardown and the
+    devcontainer's own internal activation are independent mechanisms.
+    `SUPERVISOR_UNCONFINED=1` is that project's own documented environment
+    variable for making the Supervisor container run `apparmor=unconfined`
+    instead (normally set via `containerEnv` in a `devcontainer.json`,
+    which is just a plain container environment variable, so `-e` on a
+    bare `docker run` does the same thing). Added it alongside the
+    existing `--cgroupns=host` and `aa-teardown` fixes, all three kept
+    together since each targets a distinct, independently-confirmed
+    mechanism. Worth noting this may only cover Supervisor's *own*
+    confinement — `hassio_supervisor`'s log separately showed
+    `[supervisor.host.apparmor] Adding/updating AppArmor profile:
+    local_blink_clip_downloader`, a **second**, per-add-on AppArmor
+    profile Supervisor generates dynamically from the add-on's own
+    `apparmor.txt`, which `SUPERVISOR_UNCONFINED` doesn't obviously
+    address — flagged as a likely next thing to investigate if this round
+    doesn't fully resolve it either. Sanity-checked locally (still
+    passes), same caveat as both previous attempts — only a real GitHub
+    Actions run can confirm whether it actually works.
 
 ### Fixed — `build.yaml` deprecation warning
 

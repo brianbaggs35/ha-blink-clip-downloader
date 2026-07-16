@@ -530,8 +530,29 @@ jobs:
           # this devcontainer image. Harmless to request unconditionally
           # (not gated by !env.ACT like the AppArmor step): on a cgroup v1
           # host, or one where this doesn't matter, it's a no-op.
+          #
+          # SUPERVISOR_UNCONFINED=1: --cgroupns=host above *also* wasn't
+          # enough on its own - the exact same socket-permission wall
+          # persisted on the next real GitHub Actions run. Turns out this
+          # devcontainer image has its own internal AppArmor handling,
+          # independent of whatever this outer job does at the runner-host
+          # level (the earlier `aa-teardown` step): per the devcontainer
+          # project's own README (github.com/home-assistant/devcontainer),
+          # "If the host kernel supports AppArmor, it is automatically
+          # active inside the devcontainer for the Supervisor and apps"
+          # via a `hassio-supervisor` profile it loads itself - tearing
+          # down AppArmor at the outer host level before that happens
+          # doesn't stop the devcontainer's own entrypoint from detecting
+          # kernel-level AppArmor support and re-loading its own profile
+          # regardless. `SUPERVISOR_UNCONFINED=1` is that project's own
+          # documented way to make the Supervisor container run
+          # `apparmor=unconfined` instead - normally set via `containerEnv`
+          # in a devcontainer.json, which is just a plain environment
+          # variable inside the container, so -e works the same way for a
+          # bare `docker run` like this one.
           docker run -d --name ha-supervisor-ci --privileged \
             --cgroupns=host \
+            -e SUPERVISOR_UNCONFINED=1 \
             -v ci-supervisor-mnt:/mnt/supervisor \
             -v ci-supervisor-docker-lib:/var/lib/docker \
             -v ci-supervisor-containerd-lib:/var/lib/containerd \
