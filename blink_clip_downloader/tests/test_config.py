@@ -386,18 +386,63 @@ def test_ai_escalation_provider_and_model_parsed_and_stripped():
             "username": "u",
             "password": "p",
             "ai_provider": "openai",
+            "ai_escalation_enabled": True,
             "ai_escalation_provider": "  Moondream_Cloud  ",
             "ai_escalation_model": "  moondream3-preview/abc@50  ",
         }
     )
+    assert cfg.ai_escalation_enabled is True
     assert cfg.ai_escalation_provider == "moondream_cloud"
     assert cfg.ai_escalation_model == "moondream3-preview/abc@50"
 
 
 def test_ai_escalation_provider_defaults_empty():
     cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.ai_escalation_enabled is False
     assert cfg.ai_escalation_provider == ""
     assert cfg.ai_escalation_model == ""
+
+
+def test_ai_escalation_disabled_ignores_provider_and_model_even_when_set():
+    """The toggle is the sole on/off switch — a real provider/model sitting
+    in options.json (e.g. left over from before the user turned the toggle
+    off, or the schema's own "ollama" default the dropdown always shows)
+    must not leak into an active escalation when ai_escalation_enabled is
+    False."""
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_provider": "openai",
+            "ai_escalation_enabled": False,
+            "ai_escalation_provider": "anthropic",
+            "ai_escalation_model": "claude-opus-4-5",
+        }
+    )
+    assert cfg.ai_escalation_enabled is False
+    assert cfg.ai_escalation_provider == ""
+    assert cfg.ai_escalation_model == ""
+
+
+def test_ai_escalation_enabled_with_different_provider_than_tier_one():
+    """Tier 2 must be able to use a completely different provider than
+    tier 1 — this is the whole point of cross-provider escalation."""
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "ai_provider": "openai",
+            "openai_model": "gpt-5.4-nano",
+            "ai_escalation_enabled": True,
+            "ai_escalation_provider": "anthropic",
+            "ai_escalation_model": "claude-opus-4-5",
+        }
+    )
+    assert cfg.ai_provider == "openai"
+    assert cfg.openai_model == "gpt-5.4-nano"
+    assert cfg.ai_escalation_enabled is True
+    assert cfg.ai_escalation_provider == "anthropic"
+    assert cfg.ai_escalation_model == "claude-opus-4-5"
 
 
 def test_legacy_openai_escalation_model_migrates_when_provider_is_openai():
@@ -435,12 +480,16 @@ def test_legacy_openai_escalation_model_not_migrated_for_other_providers():
 
 
 def test_explicit_escalation_provider_takes_precedence_over_legacy():
+    """With ai_escalation_enabled explicitly on, the legacy migration path
+    (keyed off "not enabled") must not fire and clobber an explicit
+    provider/model choice with the stale legacy field."""
     cfg = _parse_config(
         {
             "username": "u",
             "password": "p",
             "ai_provider": "openai",
             "openai_escalation_model": "gpt-4o",
+            "ai_escalation_enabled": True,
             "ai_escalation_provider": "anthropic",
             "ai_escalation_model": "claude-opus-4-5",
         }

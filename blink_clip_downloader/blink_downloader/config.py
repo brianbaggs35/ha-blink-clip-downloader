@@ -137,14 +137,19 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # rather than silently dropping it. Safe to delete this field entirely
     # once no realistic upgrade path still has it set.
     openai_escalation_model: str = ""
-    # Two-tier escalation: when set, every clip is first analyzed with the
+    # Two-tier escalation: when True, every clip is first analyzed with the
     # normal ai_provider/model (tier 1); only clips tier 1 flags as suspicious
-    # are re-analyzed by this provider/model (tier 2) for a closer second
-    # opinion, and the tier-2 verdict is what gets recorded. Tier 2 may be any
-    # provider — including a different one than tier 1 (e.g. tier 1 = openai,
-    # tier 2 = moondream_cloud) — and reuses that provider's own credential
-    # fields already configured above (no separate API key needed). Leave
-    # empty to disable escalation.
+    # are re-analyzed by ai_escalation_provider/model (tier 2) for a closer
+    # second opinion, and the tier-2 verdict is what gets recorded. The
+    # provider/model fields below are only consulted when this is True —
+    # _resolve_ai_escalation() forces both back to "" when it's False, so
+    # nothing downstream needs to check this flag separately.
+    ai_escalation_enabled: bool = False
+    # Tier-2 provider for two-tier escalation, only used when
+    # ai_escalation_enabled is True. May be a DIFFERENT provider than tier 1
+    # (e.g. tier 1 = openai, tier 2 = moondream_cloud) — reuses that
+    # provider's own credential fields already configured above (no separate
+    # API key needed).
     ai_escalation_provider: str = ""
     # Model ID to use for the ai_escalation_provider above. For moondream_cloud
     # this is a fine-tuned checkpoint ID (like moondream_finetune_model); the
@@ -390,13 +395,23 @@ def _parse_log_level(data: dict) -> str:
     return log_level
 
 
-def _resolve_ai_escalation(data: dict, ai_provider: str) -> tuple[str, str, str]:
-    """Resolve the escalation provider/model, honoring the deprecated
-    ``openai_escalation_model`` option.
+def _resolve_ai_escalation(data: dict, ai_provider: str) -> tuple[bool, str, str, str]:
+    """Resolve the escalation enabled flag, provider, and model, honoring the
+    deprecated ``openai_escalation_model`` option.
 
-    Returns ``(ai_escalation_provider, ai_escalation_model,
-    legacy_openai_escalation_model)``.
+    ``ai_escalation_provider`` is a required schema field (always has a real
+    provider value, defaulting to "ollama") rather than optional — an earlier
+    design left it optional/absent-when-unset, but HA Supervisor's
+    Configuration UI never renders a row for an optional select field with no
+    value in options.json, which made it impossible for a user to ever set it
+    through the UI on a fresh install (confirmed against a real Supervisor
+    instance). ``ai_escalation_enabled`` is the actual on/off switch instead;
+    the provider/model below are only meaningful when it's True.
+
+    Returns ``(ai_escalation_enabled, ai_escalation_provider,
+    ai_escalation_model, legacy_openai_escalation_model)``.
     """
+    ai_escalation_enabled = bool(data.get("ai_escalation_enabled", False))
     ai_escalation_provider = (
         str(data.get("ai_escalation_provider", "") or "").strip().lower()
     )
@@ -405,16 +420,18 @@ def _resolve_ai_escalation(data: dict, ai_provider: str) -> tuple[str, str, str]
         data.get("openai_escalation_model", "") or ""
     ).strip()
     if (
-        not ai_escalation_provider
+        not ai_escalation_enabled
         and legacy_openai_escalation_model
         and ai_provider == "openai"
     ):
         _LOGGER.warning(
-            "openai_escalation_model is deprecated as of 4.0.0 — use "
-            "ai_escalation_provider='openai' and ai_escalation_model=%r "
-            "instead. Continuing to honor the legacy option for now.",
+            "openai_escalation_model is deprecated as of 4.0.0 — use the "
+            "'Enable Tier-2 Escalation' toggle with ai_escalation_provider="
+            "'openai' and ai_escalation_model=%r instead. Continuing to "
+            "honor the legacy option for now.",
             legacy_openai_escalation_model,
         )
+        ai_escalation_enabled = True
         ai_escalation_provider = "openai"
         ai_escalation_model = legacy_openai_escalation_model
     if ai_escalation_provider and ai_escalation_provider not in _VALID_AI_PROVIDERS:
@@ -422,9 +439,18 @@ def _resolve_ai_escalation(data: dict, ai_provider: str) -> tuple[str, str, str]
             "Unknown ai_escalation_provider %r, disabling escalation",
             ai_escalation_provider,
         )
+        ai_escalation_enabled = False
         ai_escalation_provider = ""
         ai_escalation_model = ""
-    return ai_escalation_provider, ai_escalation_model, legacy_openai_escalation_model
+    if not ai_escalation_enabled:
+        ai_escalation_provider = ""
+        ai_escalation_model = ""
+    return (
+        ai_escalation_enabled,
+        ai_escalation_provider,
+        ai_escalation_model,
+        legacy_openai_escalation_model,
+    )
 
 
 def _parse_storage_kwargs(data: dict) -> dict[str, Any]:
@@ -503,6 +529,7 @@ def _parse_ai_frame_strategy(data: dict) -> str:
 def _parse_ai_provider_kwargs(
     data: dict,
     ai_provider: str,
+    ai_escalation_enabled: bool,
     ai_escalation_provider: str,
     ai_escalation_model: str,
     legacy_openai_escalation_model: str,
@@ -524,6 +551,7 @@ def _parse_ai_provider_kwargs(
         "openai_model": str(data.get("openai_model", "") or "").strip()
         or "gpt-4o-mini",
         "openai_escalation_model": legacy_openai_escalation_model,
+        "ai_escalation_enabled": ai_escalation_enabled,
         "ai_escalation_provider": ai_escalation_provider,
         "ai_escalation_model": ai_escalation_model,
     }
@@ -597,6 +625,7 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
 def _parse_ai_kwargs(
     data: dict,
     ai_provider: str,
+    ai_escalation_enabled: bool,
     ai_escalation_provider: str,
     ai_escalation_model: str,
     legacy_openai_escalation_model: str,
@@ -604,6 +633,7 @@ def _parse_ai_kwargs(
     kwargs = _parse_ai_provider_kwargs(
         data,
         ai_provider,
+        ai_escalation_enabled,
         ai_escalation_provider,
         ai_escalation_model,
         legacy_openai_escalation_model,
@@ -640,9 +670,12 @@ def _parse_config(data: dict) -> AppConfig:
     poll_interval, retention_days, max_clips = _parse_poll_limits(data)
     log_level = _parse_log_level(data)
     ai_provider = str(data.get("ai_provider", "ollama") or "ollama").strip().lower()
-    ai_escalation_provider, ai_escalation_model, legacy_openai_escalation_model = (
-        _resolve_ai_escalation(data, ai_provider)
-    )
+    (
+        ai_escalation_enabled,
+        ai_escalation_provider,
+        ai_escalation_model,
+        legacy_openai_escalation_model,
+    ) = _resolve_ai_escalation(data, ai_provider)
 
     kwargs: dict[str, Any] = {
         "username": username,
@@ -660,6 +693,7 @@ def _parse_config(data: dict) -> AppConfig:
         _parse_ai_kwargs(
             data,
             ai_provider,
+            ai_escalation_enabled,
             ai_escalation_provider,
             ai_escalation_model,
             legacy_openai_escalation_model,
