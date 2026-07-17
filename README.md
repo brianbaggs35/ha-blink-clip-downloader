@@ -31,6 +31,10 @@ If this project helps you, consider supporting its development.
 A Home Assistant OS add-on that continuously downloads Blink camera clips to your
 local hard drive using [blinkpy](https://github.com/fronzbot/blinkpy).
 
+# Note About Installation On aarch64
+
+This image takes anywhere from 5 to 20 minutes to be built depending on your device speed. Please be patient when installing updates and rest assured it will give you an error if it fails.
+
 ## Add-ons
 
 ### [Blink Clip Downloader](blink_clip_downloader/DOCS.md)
