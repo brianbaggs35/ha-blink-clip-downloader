@@ -196,7 +196,7 @@ selected** for several at once) regardless of this cap.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `notify_ha` | `true` | Send a persistent HA notification when new clips arrive |
+| `notify_ha` | `false` | Send a persistent HA notification when new clips arrive (also covers the daily digest and system events — 2FA/auth/storage). Off by default: a continuously-syncing account can download clips every poll cycle, and a notification per download quickly becomes noise. See `notify_ha_suspicious` below for an alert scoped to suspicious clips only. |
 | `ha_notification_title` | `"Blink Clip Downloaded"` | Title for HA notifications |
 
 ### Extra Features
@@ -684,10 +684,10 @@ false-bypass risk this feature is designed to avoid.
 
 ## AI Alerts (Extended Notifications)
 
-When AI analysis flags a clip as suspicious it can notify you through three channels
-in addition to HA persistent notifications. The **Automations** tab has a
-**Notification Channels** panel with a one-off test button for each channel
-(email, Discord, mobile app push) so you can verify credentials are correct
+When AI analysis flags a clip as suspicious it can notify you through four
+independent channels. The **Automations** tab has a **Notification Channels**
+panel with a one-off test button for each channel (email, Discord, mobile app
+push, HA persistent notification) so you can verify credentials are correct
 before actually enabling a channel for real alerts.
 
 ### HA Mobile App Push
@@ -720,6 +720,20 @@ credentials work before turning real alerts on.
 |--------|---------|-------------|
 | `discord_enabled` | `false` | Enable Discord alerts for suspicious clips |
 | `discord_webhook_url` | `""` | Discord webhook URL to post suspicious-clip alerts to |
+
+### Home Assistant Persistent Notification
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `notify_ha_suspicious` | `false` | Create a Home Assistant persistent notification for suspicious clips |
+
+Independent of `notify_ha` (see [HA Notifications](#ha-notifications) above),
+which covers every new clip download plus the daily digest and system events
+— enable this instead if you only want an in-HA alert for suspicious clips
+specifically, without the per-download noise `notify_ha` also produces. Like
+`notify_ha`, this shows in HA's own notification panel, not as a phone push
+— enable `mobile_app_enabled` above (in [HA Mobile App
+Push](#ha-mobile-app-push)) for an actual push notification to your phone.
 
 ---
 

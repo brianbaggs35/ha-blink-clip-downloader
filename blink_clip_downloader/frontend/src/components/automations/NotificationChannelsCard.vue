@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import Button from 'primevue/button'
 import Card from 'primevue/card'
 import Message from 'primevue/message'
-import { testDiscord, testEmail, testMobile } from '../../api/ai'
+import { testDiscord, testEmail, testHaNotification, testMobile } from '../../api/ai'
 import { useToastStore } from '../../stores/toast'
 
 type ChannelResult = { success: boolean; message: string } | null
@@ -13,9 +13,11 @@ const toast = useToastStore()
 const sendingEmail = ref(false)
 const sendingDiscord = ref(false)
 const sendingMobile = ref(false)
+const sendingHa = ref(false)
 const emailResult = ref<ChannelResult>(null)
 const discordResult = ref<ChannelResult>(null)
 const mobileResult = ref<ChannelResult>(null)
+const haResult = ref<ChannelResult>(null)
 
 async function runTest(
   label: string,
@@ -40,6 +42,7 @@ async function runTest(
 const sendEmail = () => runTest('Test email', sendingEmail, emailResult, testEmail)
 const sendDiscord = () => runTest('Test Discord message', sendingDiscord, discordResult, testDiscord)
 const sendMobile = () => runTest('Test push notification', sendingMobile, mobileResult, testMobile)
+const sendHa = () => runTest('Test HA notification', sendingHa, haResult, testHaNotification)
 </script>
 
 <template>
@@ -105,6 +108,27 @@ const sendMobile = () => runTest('Test push notification', sendingMobile, mobile
         size="small"
       >
         {{ mobileResult.message }}
+      </Message>
+
+      <div class="channel-row">
+        <div class="channel-row-main">
+          <strong>Home Assistant</strong>
+          <span class="channel-row-hint"
+            >Persistent notification for suspicious clips only — separate from Notify Home Assistant</span
+          >
+        </div>
+        <Button size="small" outlined :disabled="sendingHa" :loading="sendingHa" @click="sendHa">
+          {{ sendingHa ? 'Sending…' : 'Send test HA notification' }}
+        </Button>
+      </div>
+      <Message
+        v-if="haResult"
+        class="channel-result"
+        :severity="haResult.success ? 'success' : 'error'"
+        :closable="false"
+        size="small"
+      >
+        {{ haResult.message }}
       </Message>
     </template>
   </Card>

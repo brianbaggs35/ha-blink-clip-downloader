@@ -122,6 +122,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             smtp_enabled=config.smtp_enabled,
             discord_webhook_url=config.discord_webhook_url,
             discord_enabled=config.discord_enabled,
+            ha_notify_enabled=config.notify_ha_suspicious,
         )
 
         if config.ai_analysis_enabled:

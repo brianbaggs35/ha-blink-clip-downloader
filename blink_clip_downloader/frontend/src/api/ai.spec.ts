@@ -34,6 +34,7 @@ import {
   submitFeedback,
   testDiscord,
   testEmail,
+  testHaNotification,
   testMobile,
   trainFromFeedback,
 } from './ai'
@@ -218,7 +219,7 @@ describe('ai api', () => {
     })
   })
 
-  it('testEmail() / testDiscord() / testMobile()', async () => {
+  it('testEmail() / testDiscord() / testMobile() / testHaNotification()', async () => {
     await testEmail()
     expect(fetch).toHaveBeenCalledWith('/api/notifications/test-email', {
       method: 'POST',
@@ -233,6 +234,12 @@ describe('ai api', () => {
     })
     await testMobile()
     expect(fetch).toHaveBeenCalledWith('/api/notifications/test-mobile', {
+      method: 'POST',
+      headers: undefined,
+      body: undefined,
+    })
+    await testHaNotification()
+    expect(fetch).toHaveBeenCalledWith('/api/notifications/test-ha', {
       method: 'POST',
       headers: undefined,
       body: undefined,

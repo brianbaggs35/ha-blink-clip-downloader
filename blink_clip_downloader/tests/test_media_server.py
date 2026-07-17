@@ -4364,6 +4364,47 @@ async def test_test_mobile_success(db: ClipDatabase, tmp_path: Path) -> None:
         await tc.close()
 
 
+async def test_test_ha_notification_without_dispatcher(client: TestClient) -> None:
+    resp = await client.post("/api/notifications/test-ha")
+    assert resp.status == 400
+    assert (await resp.json())["success"] is False
+
+
+async def test_test_ha_notification_success(db: ClipDatabase, tmp_path: Path) -> None:
+    dispatcher = MagicMock()
+    dispatcher.send_test_ha_notification = AsyncMock(
+        return_value=(True, "Test notification sent to Home Assistant.")
+    )
+    server = MediaServer(db=db, port=0, notification_dispatcher=dispatcher)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/notifications/test-ha")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is True
+        assert data["message"] == "Test notification sent to Home Assistant."
+    finally:
+        await tc.close()
+
+
+async def test_test_ha_notification_failure_status(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    dispatcher = MagicMock()
+    dispatcher.send_test_ha_notification = AsyncMock(
+        return_value=(False, "No Supervisor token available.")
+    )
+    server = MediaServer(db=db, port=0, notification_dispatcher=dispatcher)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/notifications/test-ha")
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
 async def test_ai_feedback_stats_empty(client: TestClient) -> None:
     resp = await client.get("/api/ai/feedback/stats")
     assert resp.status == 200

@@ -37,6 +37,7 @@ class NotificationDispatcher:
         smtp_enabled: bool = False,
         discord_webhook_url: str = "",
         discord_enabled: bool = False,
+        ha_notify_enabled: bool = False,
     ) -> None:
         self._token = supervisor_token
         self._mobile_target = mobile_app_target
@@ -50,6 +51,7 @@ class NotificationDispatcher:
         self._smtp_enabled = smtp_enabled
         self._discord_url = discord_webhook_url
         self._discord_enabled = discord_enabled
+        self._ha_notify_enabled = ha_notify_enabled
         self._session: aiohttp.ClientSession | None = None
 
     @property
@@ -99,6 +101,8 @@ class NotificationDispatcher:
             await self.send_email(title, body)
         if self._discord_enabled:
             await self.send_discord(title, result.summary, camera, result.confidence)
+        if self._ha_notify_enabled:
+            await self.send_ha_notification(title, body)
 
     # ------------------------------------------------------------------
     # Mobile App (HA Companion)
@@ -286,4 +290,57 @@ class NotificationDispatcher:
                 return False
         except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.warning("Discord notification failed: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Home Assistant persistent notification (suspicious activity only —
+    # distinct from HANotifier/notify_ha, which covers new-clip-downloaded,
+    # the daily digest, and system events like 2FA/auth/storage. A user who
+    # wants an in-HA alert specifically for suspicious clips, without the
+    # per-download noise notify_ha also produces, enables this instead.)
+    # ------------------------------------------------------------------
+
+    async def send_ha_notification(self, title: str, message: str) -> bool:
+        """Create a persistent notification in Home Assistant."""
+        if not self._ha_notify_enabled or not self._token:
+            return False
+        return await self._send_ha_notification_now(title, message)
+
+    async def send_test_ha_notification(self) -> tuple[bool, str]:
+        """Send a one-off test persistent notification, ignoring ha_notify_enabled.
+
+        Same rationale as :meth:`send_test_email` — verify this works from
+        the Automations tab before flipping the channel on.
+        """
+        if not self._token:
+            return False, "No Supervisor token available."
+        ok = await self._send_ha_notification_now(
+            "Blink Clip Downloader — Test Notification",
+            "This is a test notification from the Blink Clip Downloader "
+            "add-on. If you received this, Home Assistant suspicious-activity "
+            "notifications are working correctly.",
+        )
+        if ok:
+            return True, "Test notification sent to Home Assistant."
+        return (
+            False,
+            "Failed to send test notification — check the add-on logs for details.",
+        )
+
+    async def _send_ha_notification_now(self, title: str, message: str) -> bool:
+        try:
+            session = self._get_session()
+            async with session.post(
+                f"{_HA_API}/services/persistent_notification/create",
+                json={"title": title, "message": message},
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=_TIMEOUT,
+            ) as resp:
+                if resp.status in (200, 201):
+                    _LOGGER.info("HA persistent notification sent")
+                    return True
+                _LOGGER.warning("HA notify returned HTTP %d", resp.status)
+                return False
+        except (aiohttp.ClientError, OSError) as exc:
+            _LOGGER.warning("HA persistent notification failed: %s", exc)
             return False

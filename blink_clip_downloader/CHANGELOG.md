@@ -2415,6 +2415,19 @@ horizontal overflow), and dark mode.
   requirement — confirmed the underlying detection itself already correctly
   reports every x86_64 host (any age) and Raspberry Pi 5+ (any ARMv8.1+
   Cortex-A76-class CPU) as compatible.
+- **There was no way to get a Home Assistant notification specifically for
+  suspicious clips.** `notify_ha` fires a persistent notification on *every*
+  new-clip download, plus the daily digest and system events (2FA/auth
+  failures, storage full) — useful for some, but far too noisy for anyone
+  who only wants to know when something's actually flagged. Mobile
+  push/email/Discord already had this suspicious-only behavior via
+  `NotificationDispatcher.dispatch()`; HA persistent notifications didn't.
+  Added a new, independent `notify_ha_suspicious` option (default `false`)
+  wired into that same dispatch path — alongside a **Send test HA
+  notification** button on the Automations tab's Notification Channels
+  panel, matching the existing email/Discord/mobile test buttons. Also
+  fixed DOCS.md's `notify_ha` default, documented as `true` but actually
+  `false` since it was introduced.
 
 ## 4.0.2
 

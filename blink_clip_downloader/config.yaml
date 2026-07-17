@@ -263,6 +263,10 @@ options:
   # Optional description of a vehicle to protect. When set, the AI applies strict
   # distance rules and flags anyone within ~2 feet of the vehicle as suspicious.
   # Example: "Silver Kia Forte, parked in the driveway"
+  # Entering a description in the Vehicles tab of the web UI overrides this
+  # setting permanently — once saved there (even as blank), this option is
+  # ignored regardless of what you set it to here; edit the Vehicles tab
+  # directly instead.
   ai_car_description: ""
   # Number of frames extracted per clip for analysis (1–100). More frames = better
   # coverage of the full clip but higher API cost and analysis time.
@@ -387,6 +391,12 @@ options:
   discord_webhook_url: ""
   # Enable Discord alerts for suspicious clips.
   discord_enabled: false
+  # Create a Home Assistant persistent notification for suspicious clips —
+  # independent of notify_ha above, which covers new-clip-downloaded, the
+  # daily digest, and system events (2FA/auth/storage) and can be too noisy
+  # for someone who only wants an in-HA alert when something's actually
+  # flagged suspicious.
+  notify_ha_suspicious: false
 
   # --- Logging ---
   # Log verbosity level. Use "debug" to troubleshoot connection issues.
@@ -481,4 +491,5 @@ schema:
   smtp_enabled: "bool"
   discord_webhook_url: "str?"
   discord_enabled: "bool"
+  notify_ha_suspicious: "bool"
   log_level: "list(debug|info|warning|error)"

@@ -328,6 +328,11 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     smtp_enabled: bool = False
     discord_webhook_url: str = ""
     discord_enabled: bool = False
+    # Separate from notify_ha (below): that one fires on every new-clip
+    # download plus the daily digest and system events (2FA/auth/storage),
+    # opt-in noise some users want and others don't. This fires only for
+    # clips actually marked suspicious, alongside mobile/email/Discord.
+    notify_ha_suspicious: bool = False
 
     # --- Logging ---
     log_level: str = "info"
@@ -661,6 +666,7 @@ def _parse_extended_notification_kwargs(data: dict) -> dict[str, Any]:
         "smtp_enabled": bool(data.get("smtp_enabled", False)),
         "discord_webhook_url": str(data.get("discord_webhook_url", "") or "").strip(),
         "discord_enabled": bool(data.get("discord_enabled", False)),
+        "notify_ha_suspicious": bool(data.get("notify_ha_suspicious", False)),
     }
 
 

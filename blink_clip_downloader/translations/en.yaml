@@ -73,7 +73,11 @@ configuration:
   notify_ha:
     name: HA Notifications
     description: >-
-      Send a persistent notification in Home Assistant when new clips arrive.
+      Send a persistent Home Assistant notification every time new clips
+      arrive, plus the daily digest and system events (2FA required, auth
+      failures, storage full). This shows in the HA notification panel, not
+      as a phone push — for suspicious-clip alerts specifically (without the
+      per-download noise), use Enable Home Assistant Alerts below instead.
   ha_notification_title:
     name: Notification Title
     description: Title used for Home Assistant persistent notifications.
@@ -254,7 +258,10 @@ configuration:
     description: >-
       Optional description of a vehicle to protect, e.g. "Silver Kia Forte,
       parked in the driveway". When set the AI applies strict distance rules
-      and flags anyone touching the vehicle as suspicious.
+      and flags anyone touching the vehicle as suspicious. Entering a
+      description in the Vehicles tab of the web UI overrides this setting
+      permanently — once saved there, this option is ignored regardless of
+      what you set it to here; edit the Vehicles tab directly instead.
   ai_max_frames:
     name: Max Frames per Clip
     description: >-
@@ -415,6 +422,15 @@ configuration:
     description: >-
       Post a Discord message with clip details when suspicious activity is
       detected.
+  notify_ha_suspicious:
+    name: Enable Home Assistant Alerts
+    description: >-
+      Create a Home Assistant persistent notification only when suspicious
+      activity is detected — independent of HA Notifications above, which
+      covers every new clip download plus the daily digest and system
+      events. Like that option, this shows in HA's own notification panel,
+      not as a phone push; for an actual push notification to your phone,
+      also enable Enable Mobile App Alerts above.
   log_level:
     name: Log Level
     description: Verbosity of add-on logs.

@@ -314,6 +314,9 @@ class MediaServer:
             "/api/notifications/test-discord", self._handle_test_discord
         )
         app.router.add_post("/api/notifications/test-mobile", self._handle_test_mobile)
+        app.router.add_post(
+            "/api/notifications/test-ha", self._handle_test_ha_notification
+        )
         return app
 
     # ------------------------------------------------------------------
@@ -972,6 +975,18 @@ class MediaServer:
                 status=400,
             )
         ok, message = await self._notification_dispatcher.send_test_mobile()
+        return web.json_response(
+            {"success": ok, "message": message}, status=200 if ok else 400
+        )
+
+    async def _handle_test_ha_notification(self, _request: web.Request) -> web.Response:
+        """Send a one-off test Home Assistant persistent notification."""
+        if not self._notification_dispatcher:
+            return web.json_response(
+                {"success": False, "message": "Notifications not configured"},
+                status=400,
+            )
+        ok, message = await self._notification_dispatcher.send_test_ha_notification()
         return web.json_response(
             {"success": ok, "message": message}, status=200 if ok else 400
         )

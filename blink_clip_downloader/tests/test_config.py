@@ -608,6 +608,15 @@ def test_notification_channels_default_disabled():
     assert cfg.smtp_recipients == []
     assert cfg.discord_enabled is False
     assert cfg.discord_webhook_url == ""
+    assert cfg.notify_ha_suspicious is False
+
+
+def test_notify_ha_suspicious_enabled():
+    """Independent of notify_ha — see notification_channels.py's dispatch()."""
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "notify_ha_suspicious": True}
+    )
+    assert cfg.notify_ha_suspicious is True
 
 
 def test_smtp_port_clamped():

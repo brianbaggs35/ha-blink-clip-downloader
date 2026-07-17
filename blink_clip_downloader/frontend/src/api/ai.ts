@@ -196,3 +196,7 @@ export function testDiscord(): Promise<TestEmailResult> {
 export function testMobile(): Promise<TestEmailResult> {
   return apiPost('/api/notifications/test-mobile')
 }
+
+export function testHaNotification(): Promise<TestEmailResult> {
+  return apiPost('/api/notifications/test-ha')
+}

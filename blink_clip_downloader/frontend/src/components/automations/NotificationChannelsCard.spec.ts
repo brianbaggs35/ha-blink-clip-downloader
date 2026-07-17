@@ -36,7 +36,8 @@ describe('NotificationChannelsCard', () => {
     expect(wrapper.text()).toContain('Email')
     expect(wrapper.text()).toContain('Discord')
     expect(wrapper.text()).toContain('Mobile App')
-    expect(wrapper.findAll('button')).toHaveLength(3)
+    expect(wrapper.text()).toContain('Home Assistant')
+    expect(wrapper.findAll('button')).toHaveLength(4)
   })
 
   it('sends a test email and shows the success message', async () => {
@@ -79,6 +80,20 @@ describe('NotificationChannelsCard', () => {
     await findButtonByText(wrapper, 'Send test notification').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Mobile app target is not configured.')
+  })
+
+  it('sends a test HA notification and shows the success message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        expect(url).toContain('/api/notifications/test-ha')
+        return Promise.resolve(jsonResponse({ success: true, message: 'Test notification sent to Home Assistant.' }))
+      }),
+    )
+    const wrapper = mount(NotificationChannelsCard)
+    await findButtonByText(wrapper, 'Send test HA notification').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Test notification sent to Home Assistant.')
   })
 
   it('shows a generic failure message when the request throws', async () => {

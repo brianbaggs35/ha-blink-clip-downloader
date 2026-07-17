@@ -416,6 +416,114 @@ async def test_send_test_discord_failure_message() -> None:
 
 
 # ------------------------------------------------------------------
+# Home Assistant Notification (suspicious activity only — distinct
+# from HANotifier/notify_ha, which covers new-clip-downloaded, the
+# digest, and system events)
+# ------------------------------------------------------------------
+
+
+async def test_send_ha_notification_success() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        ha_notify_enabled=True,
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    result = await dispatcher.send_ha_notification("Alert", "Test message")
+    assert result is True
+
+
+async def test_send_ha_notification_attaches_authorization_header() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        supervisor_token="secret-token",
+        ha_notify_enabled=True,
+    )
+    post = MagicMock(return_value=mock_resp)
+    dispatcher._session = _mock_session(post=post)
+
+    await dispatcher.send_ha_notification("Alert", "Test message")
+
+    assert post.call_args.kwargs["headers"] == {"Authorization": "Bearer secret-token"}
+
+
+async def test_send_ha_notification_disabled() -> None:
+    dispatcher = NotificationDispatcher(supervisor_token="tok", ha_notify_enabled=False)
+    assert await dispatcher.send_ha_notification("Alert", "Test") is False
+
+
+async def test_send_ha_notification_no_token() -> None:
+    dispatcher = NotificationDispatcher(supervisor_token="", ha_notify_enabled=True)
+    assert await dispatcher.send_ha_notification("Alert", "Test") is False
+
+
+async def test_send_ha_notification_http_error() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 500
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(supervisor_token="tok", ha_notify_enabled=True)
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    assert await dispatcher.send_ha_notification("Alert", "Test") is False
+
+
+async def test_send_ha_notification_network_error_returns_false() -> None:
+    dispatcher = NotificationDispatcher(supervisor_token="tok", ha_notify_enabled=True)
+    dispatcher._session = _mock_session(
+        post=MagicMock(side_effect=aiohttp.ClientError("down"))
+    )
+    assert await dispatcher.send_ha_notification("Alert", "Test") is False
+
+
+async def test_send_test_ha_notification_ignores_ha_notify_enabled_false() -> None:
+    """send_test_ha_notification works even when ha_notify_enabled is off,
+    unlike send_ha_notification — same rationale as send_test_email."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(supervisor_token="tok", ha_notify_enabled=False)
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    ok, message = await dispatcher.send_test_ha_notification()
+    assert ok is True
+    assert "Home Assistant" in message
+
+
+async def test_send_test_ha_notification_no_token() -> None:
+    dispatcher = NotificationDispatcher(supervisor_token="")
+    ok, message = await dispatcher.send_test_ha_notification()
+    assert ok is False
+    assert "Supervisor token" in message
+
+
+async def test_send_test_ha_notification_failure_message() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 500
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(supervisor_token="tok")
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    ok, message = await dispatcher.send_test_ha_notification()
+    assert ok is False
+    assert "Failed" in message
+
+
+# ------------------------------------------------------------------
 # Dispatch (orchestration)
 # ------------------------------------------------------------------
 
@@ -430,10 +538,12 @@ async def test_dispatch_calls_all_enabled_channels() -> None:
         smtp_recipients=["a@b.com"],
         discord_enabled=True,
         discord_webhook_url="https://discord.com/hook",
+        ha_notify_enabled=True,
     )
     dispatcher.send_mobile = AsyncMock(return_value=True)
     dispatcher.send_email = AsyncMock(return_value=True)
     dispatcher.send_discord = AsyncMock(return_value=True)
+    dispatcher.send_ha_notification = AsyncMock(return_value=True)
 
     result = _make_result(suspicious=True)
     clip = {"id": "c1", "camera": "Front Door", "path": "/c1.mp4"}
@@ -443,6 +553,7 @@ async def test_dispatch_calls_all_enabled_channels() -> None:
     dispatcher.send_mobile.assert_awaited_once()
     dispatcher.send_email.assert_awaited_once()
     dispatcher.send_discord.assert_awaited_once()
+    dispatcher.send_ha_notification.assert_awaited_once()
 
 
 async def test_dispatch_skips_non_suspicious() -> None:
@@ -466,10 +577,12 @@ async def test_dispatch_only_enabled_channels() -> None:
         smtp_enabled=False,
         discord_enabled=True,
         discord_webhook_url="https://discord.com/hook",
+        ha_notify_enabled=False,
     )
     dispatcher.send_mobile = AsyncMock()
     dispatcher.send_email = AsyncMock()
     dispatcher.send_discord = AsyncMock(return_value=True)
+    dispatcher.send_ha_notification = AsyncMock()
 
     result = _make_result(suspicious=True)
     await dispatcher.dispatch(result, {"id": "c1", "camera": "A"})
@@ -477,6 +590,7 @@ async def test_dispatch_only_enabled_channels() -> None:
     dispatcher.send_mobile.assert_not_awaited()
     dispatcher.send_email.assert_not_awaited()
     dispatcher.send_discord.assert_awaited_once()
+    dispatcher.send_ha_notification.assert_not_awaited()
 
 
 # ------------------------------------------------------------------
