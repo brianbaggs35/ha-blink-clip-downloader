@@ -21,6 +21,7 @@ import {
 import { analyzeClipNow, getAiStatus } from '../../api/ai'
 import type { ClipListItem, LibraryStats } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
+import { useCapabilitiesStore } from '../../stores/capabilities'
 import { useClipViewerStore } from '../../stores/clipViewer'
 import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
@@ -57,6 +58,7 @@ const PAGE_SIZE = 48
 
 const toast = useToastStore()
 const confirm = useConfirm()
+const capabilities = useCapabilitiesStore()
 const connection = useConnectionStore()
 const refresh = useRefreshStore()
 const dateFilter = useDateFilterStore()
@@ -269,6 +271,16 @@ watch([search, dateRange, sourceFilter, tagFilter, sortOrder, starredOnly, notif
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => loadClips(0), 380)
 })
+// The Recognized stat/filter above are hidden once face recognition reports
+// itself unavailable (same guard as the Biometrics tab in AppSidebar) - if
+// that happens while the filter is checked, clear it too rather than
+// leaving clips silently filtered by a now-invisible criterion.
+watch(
+  () => capabilities.faceRecognitionAvailable,
+  (available) => {
+    if (available === false) recognizedOnly.value = false
+  },
+)
 watch(
   () => library.currentCamera,
   () => loadClips(0),
@@ -455,7 +467,7 @@ onUnmounted(() => {
         <span class="lib-stat-label">★ Starred</span>
         <span class="lib-stat-value">{{ stats?.starred_count ?? 0 }}</span>
       </div>
-      <div class="lib-stat">
+      <div v-if="capabilities.faceRecognitionAvailable !== false" class="lib-stat">
         <span class="lib-stat-label">👤 Recognized</span>
         <span class="lib-stat-value">{{ stats?.recognized_count ?? 0 }}</span>
       </div>
@@ -529,7 +541,9 @@ onUnmounted(() => {
       />
       <label class="lib-check"><Checkbox v-model="starredOnly" binary /> ★ Starred</label>
       <label class="lib-check"><Checkbox v-model="notifiedOnly" binary /> 🔔 Notified</label>
-      <label class="lib-check"><Checkbox v-model="recognizedOnly" binary /> 👤 Recognized</label>
+      <label v-if="capabilities.faceRecognitionAvailable !== false" class="lib-check">
+        <Checkbox v-model="recognizedOnly" binary /> 👤 Recognized
+      </label>
       <Button
         size="small"
         :severity="selectMode ? 'primary' : 'secondary'"

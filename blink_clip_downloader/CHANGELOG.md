@@ -2392,6 +2392,15 @@ horizontal overflow), and dark mode.
   container kept running. Found via a real burst of concurrent clip analysis
   on a fresh Home Assistant OS install. A single lock now serializes every
   stage's first load against every other stage's.
+- **Library's Recognized stat and filter stayed visible even when face
+  recognition itself was unavailable** (see above) — unlike the Biometrics
+  tab, which already correctly hides itself in that case. Checking the
+  filter or reading the stat in that state was misleading (it can only ever
+  read zero, since nothing was ever able to recognize anyone), and if
+  availability flipped to unavailable while the filter was checked, clips
+  stayed silently filtered by a criterion no longer shown anywhere. Both now
+  hide behind the same availability check, and the filter clears itself if
+  availability drops while it's checked.
 
 ## 4.0.2
 

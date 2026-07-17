@@ -42,6 +42,7 @@ vi.mock('video.js', () => ({ default: vi.fn(() => fakePlayer) }))
 vi.mock('video.js/dist/video-js.css', () => ({}))
 
 import LibraryPage from './LibraryPage.vue'
+import { useCapabilitiesStore } from '../../stores/capabilities'
 import { useConfirmStore } from '../../stores/confirm'
 import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
@@ -449,6 +450,42 @@ describe('LibraryPage', () => {
       .findAll('.lib-stat')
       .find((s) => s.find('.lib-stat-label').text().includes('Recognized'))!
     expect(recognizedStat.find('.lib-stat-value').text()).toBe('3')
+    wrapper.unmount()
+  })
+
+  it('hides the Recognized stat and filter when face recognition is unavailable', async () => {
+    mockFetch()
+    useCapabilitiesStore().setFaceRecognitionAvailable(false)
+    const wrapper = mountLibrary()
+    await flushPromises()
+
+    expect(
+      wrapper.findAll('.lib-stat').find((s) => s.find('.lib-stat-label').text().includes('Recognized')),
+    ).toBeUndefined()
+    expect(wrapper.findAll('.lib-check').find((l) => l.text().includes('Recognized'))).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('clears the Recognized filter if it becomes unavailable while checked', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockFetch()
+    const capabilities = useCapabilitiesStore()
+    capabilities.setFaceRecognitionAvailable(true)
+    const wrapper = mountLibrary()
+    await flushPromises()
+
+    await wrapper.findAll('.lib-check input[type="checkbox"]')[2].setValue(true)
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).toContain('recognized=1')
+
+    capabilities.setFaceRecognitionAvailable(false)
+    await wrapper.vm.$nextTick()
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+
+    expect(wrapper.findAll('.lib-check').find((l) => l.text().includes('Recognized'))).toBeUndefined()
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).not.toContain('recognized=1')
     wrapper.unmount()
   })
 
