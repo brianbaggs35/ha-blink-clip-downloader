@@ -40,4 +40,13 @@ describe('ModelsPage', () => {
     expect(wrapper.text()).toContain('ai_escalation_provider')
     expect(wrapper.text()).toContain('AI Usage')
   })
+
+  it('documents the CV pipeline/face recognition CPU requirement', () => {
+    const wrapper = mount(ModelsPage)
+    expect(wrapper.text()).toContain('ARMv8.1+ LSE atomic instructions')
+    expect(wrapper.text()).toContain('Raspberry Pi 5')
+    expect(wrapper.text()).toContain('Raspberry Pi 4')
+    expect(wrapper.text()).toContain('ai_enhanced_detection_enabled')
+    expect(wrapper.text()).toContain('ai_face_recognition_enabled')
+  })
 })

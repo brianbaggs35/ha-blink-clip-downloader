@@ -447,6 +447,79 @@ describe('VehicleZonePicker', () => {
     })
   })
 
+  describe('clear draft', () => {
+    it('does not show a "Clear" button when there is no draft yet', async () => {
+      const wrapper = await mountInEditMode()
+      expect(wrapper.findAll('button').some((b) => b.text() === 'Clear')).toBe(false)
+    })
+
+    it('wipes an in-progress rectangle draft without touching the saved zone or clip selection', async () => {
+      const wrapper = await mountInEditMode()
+      const overlay = wrapper.find('.picker-overlay')
+      await firePointer(overlay.element, 'pointerdown', 40, 30)
+      await firePointer(overlay.element, 'pointermove', 200, 150)
+      await firePointer(overlay.element, 'pointerup', 200, 150)
+      expect(wrapper.find('.zone-rect').exists()).toBe(true)
+
+      const clearBtn = wrapper.findAll('button').find((b) => b.text() === 'Clear')!
+      await clearBtn.trigger('click')
+
+      expect(wrapper.find('.zone-rect').exists()).toBe(false)
+      expect(wrapper.findAll('button').some((b) => b.text() === 'Clear')).toBe(false)
+      const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('Save zone'))!
+      expect(saveBtn.attributes('disabled')).toBeDefined()
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      // Still on the same frame/shape — redrawing immediately is possible
+      // without re-selecting a thumbnail or the shape toggle.
+      expect(wrapper.find('.thumb-strip-item.active').exists()).toBe(true)
+    })
+
+    it('wipes an in-progress freeform draft and lets the user retrace immediately', async () => {
+      const wrapper = await mountInEditMode()
+      await switchToFreeform(wrapper)
+      const overlay = wrapper.find('.picker-overlay')
+      await firePointer(overlay.element, 'pointerdown', 40, 30)
+      await firePointer(overlay.element, 'pointermove', 200, 30)
+      await firePointer(overlay.element, 'pointermove', 120, 150)
+      await firePointer(overlay.element, 'pointerup', 120, 150)
+      expect(wrapper.find('.zone-polygon').exists()).toBe(true)
+
+      const clearBtn = wrapper.findAll('button').find((b) => b.text() === 'Clear')!
+      await clearBtn.trigger('click')
+      expect(wrapper.find('.zone-polygon').exists()).toBe(false)
+
+      // Retrace on the same (still-freeform) canvas without switching shape.
+      await firePointer(overlay.element, 'pointerdown', 10, 10)
+      await firePointer(overlay.element, 'pointermove', 90, 10)
+      await firePointer(overlay.element, 'pointermove', 50, 90)
+      await firePointer(overlay.element, 'pointerup', 50, 90)
+      expect(wrapper.find('.zone-polygon').exists()).toBe(true)
+    })
+
+    it('leaves an already-saved zone alone when clearing a fresh redraw draft', async () => {
+      const wrapper = mountPicker(RECT_ZONE)
+      await flushPromises()
+      const editBtn = wrapper.findAll('button').find((b) => b.text().includes('Edit zone'))!
+      await editBtn.trigger('click')
+      await flushPromises()
+      await wrapper.find('img.picker-image').trigger('load')
+      await flushPromises()
+
+      const overlay = wrapper.find('.picker-overlay')
+      await firePointer(overlay.element, 'pointerdown', 10, 10)
+      await firePointer(overlay.element, 'pointermove', 100, 100)
+      await firePointer(overlay.element, 'pointerup', 100, 100)
+
+      const clearBtn = wrapper.findAll('button').find((b) => b.text() === 'Clear')!
+      await clearBtn.trigger('click')
+
+      expect(wrapper.find('.zone-rect').exists()).toBe(false)
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      // "Cancel" (back to the old saved zone) is still available too.
+      expect(wrapper.findAll('button').some((b) => b.text() === 'Cancel')).toBe(true)
+    })
+  })
+
   describe('cancel', () => {
     it('discards the draft and returns to preview without saving', async () => {
       const wrapper = mountPicker(RECT_ZONE)

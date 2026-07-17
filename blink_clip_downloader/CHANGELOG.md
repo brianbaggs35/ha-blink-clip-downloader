@@ -30,6 +30,10 @@ explicitly turned on.
   parked close together (shared/apartment parking). A "Clear zone" action
   removes it entirely. Stored in the exact same `car_zone` shape the backend
   already validated, so no data migration was needed.
+- Zone picker: a **"Clear" button** resets a bad in-progress rectangle or
+  freeform trace back to nothing (without discarding the whole edit or
+  falling back to a previously-saved zone), so a mis-drawn shape can be
+  wiped and immediately redrawn on the same frame.
 - `CameraConfigsSection` (AI tab) now only owns camera description/custom
   prompt — the car-camera checkbox and zone editor moved to the Vehicles tab.
 
@@ -2401,6 +2405,16 @@ horizontal overflow), and dark mode.
   stayed silently filtered by a criterion no longer shown anywhere. Both now
   hide behind the same availability check, and the filter clears itself if
   availability drops while it's checked.
+- **The CV pipeline/face-recognition CPU requirement was undocumented in the
+  web UI itself** — a Raspberry Pi 4 (or older) owner would just see the
+  Biometrics tab and Library's Recognized filter silently missing, with no
+  explanation anywhere they'd actually be looking. README.md and DOCS.md
+  already covered it, but the in-app Models tab (the one static/reference
+  page shown to everyone regardless of hardware) didn't. Added a hardware
+  note there matching the existing one for `moondream_local`'s GPU
+  requirement — confirmed the underlying detection itself already correctly
+  reports every x86_64 host (any age) and Raspberry Pi 5+ (any ARMv8.1+
+  Cortex-A76-class CPU) as compatible.
 
 ## 4.0.2
 

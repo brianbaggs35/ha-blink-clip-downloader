@@ -72,6 +72,246 @@ def _real_jpeg_bytes(size: tuple[int, int] = (10, 10)) -> bytes:
 # Availability checks
 # ------------------------------------------------------------------
 
+# Real, full multi-core /proc/cpuinfo dumps (not synthetic one-liners) for
+# actual devices this add-on runs on in the wild, used below to confirm
+# torch_cpu_compatible() reads the right thing from a realistic file, not
+# just a minimal fixture shaped exactly like the parser expects. Trailing
+# per-core fields (CPU implementer/architecture/variant/part/revision) are
+# included since a real file always has them between one core's Features
+# line and the next core's "processor" line - the parser must skip over
+# them correctly rather than accidentally matching on something in between.
+
+# Raspberry Pi 5 (BCM2712, 4x Cortex-A76, ARMv8.2-A) - the add-on's own
+# documented minimum-recommended board (see README.md). A76 has LSE atomics.
+_CPUINFO_PI5 = """\
+processor\t: 0
+BogoMIPS\t: 108.00
+Features\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd0b
+CPU revision\t: 3
+
+processor\t: 1
+BogoMIPS\t: 108.00
+Features\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd0b
+CPU revision\t: 3
+
+processor\t: 2
+BogoMIPS\t: 108.00
+Features\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd0b
+CPU revision\t: 3
+
+processor\t: 3
+BogoMIPS\t: 108.00
+Features\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd0b
+CPU revision\t: 3
+
+Hardware\t: BCM2712
+Revision\t: c04170
+Serial\t\t: 1000000012345678
+Model\t\t: Raspberry Pi 5 Model B Rev 1.0
+"""
+
+# Raspberry Pi 4 (BCM2711, 4x Cortex-A72, ARMv8.0-A) - the documented
+# unsupported case (see torch_cpu_compatible's docstring and README.md).
+# A72 predates LSE atomics; note this Features line is real, not guessed -
+# it genuinely has no "atomics" token, same as Pi 3 below.
+_CPUINFO_PI4 = """\
+processor\t: 0
+BogoMIPS\t: 108.00
+Features\t: fp asimd evtstrm crc32 cpuid
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd08
+CPU revision\t: 3
+
+processor\t: 1
+BogoMIPS\t: 108.00
+Features\t: fp asimd evtstrm crc32 cpuid
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd08
+CPU revision\t: 3
+
+processor\t: 2
+BogoMIPS\t: 108.00
+Features\t: fp asimd evtstrm crc32 cpuid
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd08
+CPU revision\t: 3
+
+processor\t: 3
+BogoMIPS\t: 108.00
+Features\t: fp asimd evtstrm crc32 cpuid
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd08
+CPU revision\t: 3
+
+Hardware\t: BCM2835
+Revision\t: c03111
+Serial\t\t: 1000000087654321
+Model\t\t: Raspberry Pi 4 Model B Rev 1.1
+"""
+
+# Raspberry Pi 3 B+ (BCM2837B0, 4x Cortex-A53, ARMv8.0-A) - older and
+# weaker than the Pi 4 case above, but the same architecture generation
+# (no LSE atomics either), broadening negative-case device coverage beyond
+# just the one board the docstring happens to name.
+_CPUINFO_PI3 = """\
+processor\t: 0
+model name\t: ARMv7 Processor rev 4 (v7l)
+BogoMIPS\t: 38.40
+Features\t: half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae evtstrm crc32
+CPU implementer\t: 0x41
+CPU architecture: 7
+CPU variant\t: 0x0
+CPU part\t: 0xd03
+CPU revision\t: 4
+
+processor\t: 1
+model name\t: ARMv7 Processor rev 4 (v7l)
+BogoMIPS\t: 38.40
+Features\t: half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae evtstrm crc32
+CPU implementer\t: 0x41
+CPU architecture: 7
+CPU variant\t: 0x0
+CPU part\t: 0xd03
+CPU revision\t: 4
+
+Hardware\t: BCM2835
+Revision\t: a020d3
+Serial\t\t: 1000000011223344
+Model\t\t: Raspberry Pi 3 Model B Plus Rev 1.3
+"""
+
+# RK3588 (e.g. Orange Pi 5 / Radxa Rock 5), a big.LITTLE design pairing 4x
+# Cortex-A55 with 4x Cortex-A76 - both ARMv8.2-A, so both core types have
+# atomics. This is the realistic case for the "heterogeneous cores" worry:
+# the LITTLE cores (which conventionally sort first as processor 0-3) must
+# not be mistaken for an incompatible board just because they're the
+# lower-power cluster - they're a different core, not a different (older)
+# architecture generation, and still have atomics.
+_CPUINFO_RK3588 = """\
+processor\t: 0
+BogoMIPS\t: 48.00
+Features\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd05
+CPU revision\t: 0
+
+processor\t: 4
+BogoMIPS\t: 48.00
+Features\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop sha3 asimddp sb dcpodp flagm
+CPU implementer\t: 0x41
+CPU architecture: 8
+CPU variant\t: 0x0
+CPU part\t: 0xd0b
+CPU revision\t: 0
+
+Hardware\t: Rockchip RK3588
+"""
+
+
+@pytest.mark.parametrize(
+    ("device", "cpuinfo", "expected"),
+    [
+        ("Raspberry Pi 5 (Cortex-A76)", _CPUINFO_PI5, True),
+        ("Raspberry Pi 4 (Cortex-A72)", _CPUINFO_PI4, False),
+        ("Raspberry Pi 3 B+ (Cortex-A53)", _CPUINFO_PI3, False),
+        ("RK3588 (Cortex-A55 + A76 big.LITTLE)", _CPUINFO_RK3588, True),
+    ],
+    ids=lambda v: v if isinstance(v, str) and " " in v else None,
+)
+def test_torch_cpu_compatible_real_device_cpuinfo(
+    monkeypatch: pytest.MonkeyPatch, device: str, cpuinfo: str, expected: bool
+) -> None:
+    """Real, full /proc/cpuinfo content from actual boards, not a minimal
+    synthetic fixture - covers multiple manufacturers/generations so a
+    parsing quirk (extra fields between the Features line and the next
+    core, multi-core files, big.LITTLE core-part-number variety) can't
+    silently pass on a toy fixture while breaking on real hardware. See
+    each _CPUINFO_* constant's own comment for why that specific device
+    was chosen and what it's meant to guard against.
+    """
+    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
+        assert torch_cpu_compatible() is expected, device
+
+
+def test_torch_cpu_compatible_reads_first_core_not_a_later_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard for the multi-core case: the function must return
+    based on the *first* "processor" block's Features line, not scan past
+    it and accidentally match something in a later block or an unrelated
+    line further down the file (e.g. if a later section happened to
+    contain the word "atomics" in a different context)."""
+    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    cpuinfo = (
+        "processor\t: 0\nFeatures\t: fp asimd evtstrm crc32\n\n"
+        "processor\t: 1\nFeatures\t: fp asimd evtstrm crc32 atomics\n"
+    )
+    with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
+        assert torch_cpu_compatible() is False
+
+
+def test_torch_cpu_compatible_atomics_matched_as_whole_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "atomics" must be matched as an exact whitespace-delimited token
+    (features.split() + membership test), not a substring - a feature flag
+    that merely *contains* "atomics" as part of a longer word must not
+    false-positive a device into being reported as compatible."""
+    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    cpuinfo = "processor\t: 0\nFeatures\t: fp asimd notarealatomicsflag\n"
+    with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
+        assert torch_cpu_compatible() is False
+
+
+@pytest.mark.parametrize(
+    "cpuinfo",
+    [
+        # Mixed case, matching this project's case-insensitive startswith check.
+        "processor\t: 0\nFEATURES\t: fp asimd atomics\n",
+        "processor\t: 0\nfeatures\t: fp asimd atomics\n",
+        # No leading whitespace/tab before the colon.
+        "processor: 0\nFeatures: fp asimd atomics\n",
+    ],
+)
+def test_torch_cpu_compatible_tolerates_formatting_variance(
+    monkeypatch: pytest.MonkeyPatch, cpuinfo: str
+) -> None:
+    """Real /proc/cpuinfo formatting (capitalization, tab-vs-space before
+    the colon) varies slightly across kernel versions and vendors - none of
+    that should affect whether a genuinely capable device gets correctly
+    detected. (The kernel always left-aligns field names with no leading
+    indentation, so that's not a case worth fabricating here.)"""
+    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
+        assert torch_cpu_compatible() is True
+
 
 def test_torch_cpu_compatible_true_on_non_arm(monkeypatch: pytest.MonkeyPatch) -> None:
     """x86_64 (and any non-ARM arch) never needs the /proc/cpuinfo check —

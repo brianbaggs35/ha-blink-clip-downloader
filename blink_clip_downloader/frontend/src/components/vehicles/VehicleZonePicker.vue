@@ -245,6 +245,16 @@ function cancelEdit() {
   if (savedZone.value) mode.value = 'preview'
 }
 
+// Resets just the in-progress shape (not drawShape/selectedClipId) so a
+// messy freeform trace or a badly-placed rectangle can be wiped and
+// immediately redrawn on the same frame, without falling back to "Cancel"
+// (which only exists once a zone is already saved) or starting a new drag
+// gesture just to implicitly clear the old one.
+function clearDraft() {
+  rect.value = null
+  freeformPath.value = []
+}
+
 async function clearZone() {
   const ok = await confirm(
     `Clear the protected-vehicle zone for "${props.camera}"? This removes the saved zone and its reference image.`,
@@ -396,6 +406,9 @@ const previewPolygonAttr = computed(() => {
           <Button size="small" :disabled="!hasDraft || saving" :loading="saving" @click="saveZone">
             {{ saving ? 'Saving…' : 'Save zone' }}
           </Button>
+          <Button v-if="hasDraft" size="small" outlined severity="secondary" :disabled="saving" @click="clearDraft"
+            >Clear</Button
+          >
           <Button v-if="savedZone" size="small" outlined severity="secondary" :disabled="saving" @click="cancelEdit"
             >Cancel</Button
           >

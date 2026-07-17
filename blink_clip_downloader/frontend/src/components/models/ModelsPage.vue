@@ -135,5 +135,16 @@ const PROVIDERS: ProviderInfo[] = [
       escalating to Moondream Cloud or Claude for a closer second look. Track tier-1 vs. escalation token usage and cost
       separately on the <strong>AI Usage</strong> tab.
     </p>
+
+    <h3 style="margin-bottom: 0.75rem">🧭 Computer-vision pipeline &amp; face recognition (hardware note)</h3>
+    <p style="font-size: 0.85rem; color: var(--muted); line-height: 1.55; max-width: 70ch">
+      The optional enhanced-detection pipeline (object detection/tracking, depth estimation, contact segmentation —
+      <code>ai_enhanced_detection_enabled</code>) and local face recognition (<code>ai_face_recognition_enabled</code>)
+      both require a CPU with ARMv8.1+ LSE atomic instructions on 64-bit ARM hosts — present on Raspberry Pi 5
+      (Cortex-A76) and newer, absent on Raspberry Pi 4 and older (Cortex-A72). Every x86_64/amd64 host is fully
+      supported regardless of CPU age. This is detected automatically at startup; on unsupported hardware the pipeline
+      reports itself unavailable rather than crashing, and the Biometrics tab and Library's "Recognized" filter are
+      hidden automatically rather than shown non-functional.
+    </p>
   </div>
 </template>
