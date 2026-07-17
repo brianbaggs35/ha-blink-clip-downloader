@@ -220,6 +220,13 @@ configuration:
     description: >-
       GPT model to use. gpt-4o-mini is the most cost-effective vision option.
       Use "Fetch Models" in the web UI AI tab.
+  openai_escalation_model:
+    name: OpenAI Escalation Model (deprecated)
+    description: >-
+      Deprecated — use Enable Tier-2 Escalation and AI Escalation
+      Provider/Model below instead, which work for every provider, not just
+      OpenAI. Leave this blank. Existing values are still read and
+      auto-migrated to the fields below on startup.
   ai_escalation_enabled:
     name: Enable Tier-2 Escalation
     description: >-

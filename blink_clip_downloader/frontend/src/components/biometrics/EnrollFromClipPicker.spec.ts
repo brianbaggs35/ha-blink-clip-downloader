@@ -302,6 +302,44 @@ describe('EnrollFromClipPicker', () => {
     expect(emitted[emitted.length - 1][0]).toEqual(['data:image/jpeg;base64,BBB'])
   })
 
+  it('paginates frames across pages without losing selections made on another page', async () => {
+    const manyFrames = Array.from({ length: 14 }, (_, i) => `data:image/jpeg;base64,F${i}`)
+    stubRoutedFetch({ cameras: [makeCamera('Front Door')], clips: [makeClip('c1')], frames: manyFrames })
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    expect(wrapper.findAll('.frame-item')).toHaveLength(12)
+    expect(wrapper.text()).toContain('Frames 1–12 of 14')
+
+    await wrapper.findAll('.frame-item')[0].trigger('click')
+    let emitted = wrapper.emitted('update:selectedFrames')!
+    expect(emitted[emitted.length - 1][0]).toEqual(['data:image/jpeg;base64,F0'])
+
+    await wrapper.find('[aria-label="Next frames"]').trigger('click')
+    expect(wrapper.findAll('.frame-item')).toHaveLength(2)
+    expect(wrapper.text()).toContain('Frames 13–14 of 14')
+
+    // Paging never re-emits selectedFrames on its own — the last emission
+    // is still the page-1 selection, confirming it survived the page turn.
+    emitted = wrapper.emitted('update:selectedFrames')!
+    expect(emitted[emitted.length - 1][0]).toEqual(['data:image/jpeg;base64,F0'])
+
+    await wrapper.find('[aria-label="Previous frames"]').trigger('click')
+    expect(wrapper.findAll('.frame-item')).toHaveLength(12)
+    expect(wrapper.find('.frame-item.selected').exists()).toBe(true)
+  })
+
+  it('does not show pagination controls when everything fits on one page', async () => {
+    stubRoutedFetch({
+      cameras: [makeCamera('Front Door')],
+      clips: [makeClip('c1')],
+      frames: ['data:image/jpeg;base64,AAA', 'data:image/jpeg;base64,BBB'],
+    })
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.find('.frame-grid-nav').exists()).toBe(false)
+  })
+
   it('switches clips and re-fetches frames, clearing the previous selection', async () => {
     stubRoutedFetch({
       cameras: [makeCamera('Front Door')],

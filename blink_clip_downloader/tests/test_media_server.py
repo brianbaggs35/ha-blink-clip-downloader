@@ -704,7 +704,7 @@ async def test_clip_frames_clamps_count(client: TestClient, db: ClipDatabase) ->
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
         await client.get("/api/clips/f2/frames?count=999")
     cmd = mock_exec.call_args.args
-    assert "16" in cmd  # clamped to the max
+    assert "60" in cmd  # clamped to the max
 
 
 async def test_clip_frames_bad_count_falls_back_to_default(
@@ -718,7 +718,37 @@ async def test_clip_frames_bad_count_falls_back_to_default(
         resp = await client.get("/api/clips/f3/frames?count=notanumber")
     assert resp.status == 200
     cmd = mock_exec.call_args.args
-    assert "8" in cmd  # default
+    assert "10" in cmd  # default: ~1fps of a 10s clip
+
+
+async def test_clip_frames_default_count_derives_from_duration(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """No ?count= at all should sample roughly one frame per second of the
+    clip's actual duration, not a fixed number regardless of length."""
+    await db.add_clip(_make_clip("f10", path="/data/f10.mp4", duration=25))
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        resp = await client.get("/api/clips/f10/frames")
+    assert resp.status == 200
+    cmd = mock_exec.call_args.args
+    assert "25" in cmd
+    assert "-frames:v" in cmd
+
+
+async def test_clip_frames_default_count_clamped_to_max_for_long_clip(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("f11", path="/data/f11.mp4", duration=200))
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        await client.get("/api/clips/f11/frames")
+    cmd = mock_exec.call_args.args
+    assert "60" in cmd  # clamped to the max even though duration is 200s
 
 
 async def test_clip_frames_ffmpeg_not_available(
@@ -4254,6 +4284,56 @@ async def test_vehicle_zone_snapshot_get_not_found(
     ):
         resp = await client.get("/api/vehicle/zone-snapshot/Driveway")
     assert resp.status == 404
+
+
+async def test_vehicle_zone_snapshot_get_falls_back_to_newest_clip_thumbnail(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A car_zone saved before the persisted-snapshot redesign has no
+    snapshot file on disk. Rather than 404 (which silently breaks the
+    preview overlay client-side — see _handle_vehicle_zone_snapshot_get),
+    this should fall back to the camera's newest clip thumbnail and persist
+    it so the camera gets a stable snapshot going forward.
+    """
+    await db.add_clip(_make_clip_with_thumb(tmp_path, "z1"))
+    snapshots_dir = tmp_path / "snapshots"
+    with patch(
+        "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+        new=snapshots_dir,
+    ):
+        resp = await client.get("/api/vehicle/zone-snapshot/Front Door")
+        assert resp.status == 200
+        assert resp.content_type == "image/jpeg"
+
+        snapshot = MediaServer._vehicle_zone_snapshot_path("Front Door")
+        assert snapshot.exists()
+        assert snapshot.read_bytes() == (tmp_path / "z1.jpg").read_bytes()
+
+
+async def test_vehicle_zone_snapshot_get_fallback_serves_even_if_persist_fails(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    """If the fallback thumbnail can't be persisted as the real snapshot
+    (read-only filesystem, disk full, ...), the response should still serve
+    the thumbnail directly rather than failing the request — persisting it
+    is a nice-to-have for next time, not a precondition for this one.
+    """
+    await db.add_clip(_make_clip_with_thumb(tmp_path, "z1"))
+    snapshots_dir = tmp_path / "snapshots"
+    with (
+        patch(
+            "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+            new=snapshots_dir,
+        ),
+        patch(
+            "blink_downloader.media_server.Path.write_bytes",
+            side_effect=OSError("read-only filesystem"),
+        ),
+    ):
+        resp = await client.get("/api/vehicle/zone-snapshot/Front Door")
+    assert resp.status == 200
+    assert resp.content_type == "image/jpeg"
+    assert not MediaServer._vehicle_zone_snapshot_path("Front Door").exists()
 
 
 # ---------------------------------------------------------------------------

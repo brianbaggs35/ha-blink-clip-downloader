@@ -16,6 +16,7 @@ blink_downloader/manifest.py
 blink_downloader/media_server.py
 blink_downloader/notification_channels.py
 blink_downloader/notifier.py
+blink_downloader/sqlite_migration.py
 blink_downloader/storage.py
 blink_downloader/tracker.py
 blink_downloader/vision.py
@@ -26,8 +27,8 @@ blink_downloader.egg-info/requires.txt
 blink_downloader.egg-info/top_level.txt
 blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
-blink_downloader/static/assets/index-BBk0xkMM.js
-blink_downloader/static/assets/index-OLDQn751.css
+blink_downloader/static/assets/index-CI8XJY8c.css
+blink_downloader/static/assets/index-CVR6TWUb.js
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2
@@ -118,6 +119,7 @@ tests/test_manifest.py
 tests/test_media_server.py
 tests/test_notification_channels.py
 tests/test_notifier.py
+tests/test_sqlite_migration.py
 tests/test_storage.py
 tests/test_tracker.py
 tests/test_vision.py
