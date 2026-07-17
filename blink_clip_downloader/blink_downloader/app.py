@@ -31,6 +31,7 @@ from .manifest import ClipManifest
 from .media_server import MediaServer
 from .notification_channels import NotificationDispatcher
 from .notifier import HANotifier
+from .sqlite_migration import migrate_legacy_sqlite
 from .storage import StorageManager
 from .tracker import ClipTracker
 
@@ -879,6 +880,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             _LOGGER.warning("Could not write stats file: %s", exc)
 
     async def _reimport_library(self) -> None:
+        # Must run before import_existing_clips below: that function
+        # reconstructs untracked clip *files* with synthetic IDs and none
+        # of a clip's original metadata, so migrating any pre-5.0.0 SQLite
+        # data first means those clips already exist with their real data
+        # by the time the filesystem rescan checks which paths are already
+        # known, and correctly skips them instead of creating a lossy
+        # duplicate. See sqlite_migration.py for why this exists at all.
+        await migrate_legacy_sqlite(self._db)
         imported = await import_existing_clips(self._db, self._config.download_path)
         if imported:
             _LOGGER.info("Library re-import: added %d pre-existing clip(s)", imported)

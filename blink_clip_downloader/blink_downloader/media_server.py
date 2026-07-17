@@ -7,6 +7,7 @@ import base64
 import io
 import json
 import logging
+import math
 import platform
 import re
 import sys
@@ -27,6 +28,12 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _CLIP_NOT_FOUND = "Clip not found"
+
+# Upper bound on how many frames _handle_clip_frames will ever extract from
+# one clip, whether derived from duration (the ~1fps default) or requested
+# explicitly via ?count=. Bounds ffmpeg's work and the JSON response size
+# (each frame is a base64 480px-wide JPEG) for an unusually long clip.
+_MAX_CLIP_FRAMES = 60
 
 # Built by `npm run build` in frontend/ (vite.config.ts writes straight into
 # this directory) — the Dockerfile's frontend-builder stage runs that build
@@ -506,22 +513,34 @@ class MediaServer:
         makes recognition robust enough to reduce false positives on an
         access-point camera watched by the same few people every day.
 
-        Query: ``count`` (default 8, clamped 1-16). Returns
-        ``{"frames": ["data:image/jpeg;base64,...", ...]}`` — capped and
-        scaled down (480px wide) since this is a manual, occasional action,
-        not a hot path.
+        Query: ``count`` (default: one frame per second of the clip's
+        duration, clamped 1-``_MAX_CLIP_FRAMES``). Defaulting to duration
+        rather than a fixed count matters here specifically: someone facing
+        the camera is often a brief, low-motion moment, easy to land between
+        samples when a fixed handful of frames get stretched across a whole
+        clip. Returns ``{"frames": ["data:image/jpeg;base64,...", ...]}`` —
+        capped and scaled down (480px wide) since this is a manual,
+        occasional action, not a hot path; the picker paginates client-side
+        rather than this endpoint truncating what it returns.
         """
         clip_id = request.match_info["id"]
         clip = await self._db.get_clip(clip_id)
         if not clip:
             raise web.HTTPNotFound()
 
-        try:
-            count = max(1, min(int(request.rel_url.query.get("count", 8)), 16))
-        except ValueError:
-            count = 8
-
         duration = float(clip.get("duration") or 0) or 10.0
+        default_count = max(1, min(math.ceil(duration), _MAX_CLIP_FRAMES))
+        try:
+            count = max(
+                1,
+                min(
+                    int(request.rel_url.query.get("count", default_count)),
+                    _MAX_CLIP_FRAMES,
+                ),
+            )
+        except ValueError:
+            count = default_count
+
         interval = max(duration / count, 0.5)
         cmd = [
             "ffmpeg",
@@ -1389,7 +1408,33 @@ class MediaServer:
         camera = request.match_info["camera"]
         snapshot_path = self._vehicle_zone_snapshot_path(camera)
         if not snapshot_path.exists():
-            raise web.HTTPNotFound(text="No snapshot saved for this camera")
+            # A car_zone saved before the persisted-snapshot redesign (see
+            # _handle_vehicle_zone_put) has no snapshot file on disk — the
+            # picker's preview <img> would 404, which also means its @load
+            # handler never fires, containerSize never gets measured, and
+            # the saved zone overlay silently never renders (VehicleZonePicker.vue's
+            # previewRectStyle/previewPolygonAttr both bail out on
+            # !width || !height), leaving "Clear zone" as the only way
+            # forward. Fall back to that camera's newest clip thumbnail —
+            # matching what the picker always showed before this redesign —
+            # and persist it as the real snapshot so this is self-healing
+            # after the first view.
+            clips = await self._db.get_clips(camera=camera, limit=1, sort="newest")
+            fallback = (
+                Path(clips[0]["file_path"]).with_suffix(".jpg") if clips else None
+            )
+            if not fallback or not fallback.exists():
+                raise web.HTTPNotFound(text="No snapshot saved for this camera")
+            try:
+                self._VEHICLE_ZONE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+                snapshot_path.write_bytes(fallback.read_bytes())
+            except OSError as exc:
+                _LOGGER.warning(
+                    "Could not persist fallback vehicle zone snapshot for %s: %s",
+                    camera,
+                    exc,
+                )
+                return web.FileResponse(fallback, headers={"Cache-Control": "no-cache"})
         # Always revalidate rather than a max-age cache: the filename is
         # stable per camera, so a stale browser cache would otherwise keep
         # showing the previous zone's frame after a new save overwrites it.

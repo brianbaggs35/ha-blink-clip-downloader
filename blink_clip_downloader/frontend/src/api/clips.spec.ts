@@ -106,10 +106,10 @@ describe('clips api', () => {
     expect(fetch).toHaveBeenCalledWith('/api/tags', {})
   })
 
-  it('getClipFrames(): defaults to 8 frames and forwards a custom count', async () => {
+  it('getClipFrames(): omits count by default (server derives it from duration) and forwards a custom count', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ frames: [] }))
     await getClipFrames('c1')
-    expect(fetch).toHaveBeenCalledWith('/api/clips/c1/frames?count=8', {})
+    expect(fetch).toHaveBeenCalledWith('/api/clips/c1/frames', {})
     await getClipFrames('c1', 12)
     expect(fetch).toHaveBeenCalledWith('/api/clips/c1/frames?count=12', {})
   })

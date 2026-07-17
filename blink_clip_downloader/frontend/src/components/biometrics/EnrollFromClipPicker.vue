@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
 import Select from 'primevue/select'
@@ -39,6 +39,24 @@ const hasMoreClips = ref(true)
 const frames = ref<string[]>([])
 const loadingFrames = ref(false)
 const framesError = ref(false)
+
+// Frames now come back at roughly one per second of the clip's duration
+// (see getClipFrames/_handle_clip_frames) rather than a fixed handful, so a
+// longer clip can return well more than fits comfortably on screen at once.
+// Paginated client-side, not re-fetched — the whole array is already in
+// hand and selection is keyed by frame content, so paging never disturbs
+// which frames are selected.
+const FRAMES_PAGE_SIZE = 12
+const frameOffset = ref(0)
+const visibleFrames = computed(() => frames.value.slice(frameOffset.value, frameOffset.value + FRAMES_PAGE_SIZE))
+const hasPreviousFrames = computed(() => frameOffset.value > 0)
+const hasNextFrames = computed(() => frameOffset.value + FRAMES_PAGE_SIZE < frames.value.length)
+function previousFrames() {
+  frameOffset.value = Math.max(0, frameOffset.value - FRAMES_PAGE_SIZE)
+}
+function nextFrames() {
+  if (hasNextFrames.value) frameOffset.value += FRAMES_PAGE_SIZE
+}
 
 async function loadCameras() {
   loadingCameras.value = true
@@ -113,9 +131,10 @@ async function loadFrames() {
   loadingFrames.value = true
   framesError.value = false
   frames.value = []
+  frameOffset.value = 0
   selectedFrames.value = []
   try {
-    const result = await getClipFrames(selectedClipId.value, 8)
+    const result = await getClipFrames(selectedClipId.value)
     if (seq !== framesSeq) return
     frames.value = result.frames
   } catch {
@@ -225,8 +244,8 @@ function toggleFrame(frame: string) {
         <p class="field-label">Click every frame that shows the face clearly (you can pick more than one):</p>
         <div class="frame-grid">
           <button
-            v-for="(frame, i) in frames"
-            :key="i"
+            v-for="frame in visibleFrames"
+            :key="frame"
             type="button"
             class="frame-item"
             :class="{ selected: selectedFrames.includes(frame) }"
@@ -235,6 +254,34 @@ function toggleFrame(frame: string) {
             <img :src="frame" alt="" />
             <span v-if="selectedFrames.includes(frame)" class="frame-check">✓</span>
           </button>
+        </div>
+        <div v-if="frames.length > FRAMES_PAGE_SIZE" class="frame-grid-nav">
+          <Button
+            aria-label="Previous frames"
+            :disabled="!hasPreviousFrames"
+            size="small"
+            text
+            rounded
+            class="thumb-strip-arrow"
+            @click="previousFrames"
+          >
+            ‹
+          </Button>
+          <span class="muted-note">
+            Frames {{ frameOffset + 1 }}–{{ Math.min(frameOffset + FRAMES_PAGE_SIZE, frames.length) }} of
+            {{ frames.length }}
+          </span>
+          <Button
+            aria-label="Next frames"
+            :disabled="!hasNextFrames"
+            size="small"
+            text
+            rounded
+            class="thumb-strip-arrow"
+            @click="nextFrames"
+          >
+            ›
+          </Button>
         </div>
       </template>
     </div>
@@ -316,6 +363,13 @@ function toggleFrame(frame: string) {
 .frame-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(110px, 100%), 1fr));
+  gap: 0.5rem;
+}
+
+.frame-grid-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: 0.5rem;
 }
 

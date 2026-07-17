@@ -82,6 +82,18 @@ a detailed disk-space breakdown.
 4. Search for **Blink Clip Downloader** and click **Install**.
 5. Fill in your Blink credentials and click **Save**, then **Start**.
 
+### Updating from 4.0.2 or earlier
+
+Expect this specific update to take roughly **10-15 minutes**, well beyond
+the usual under-a-minute add-on restart — the Supervisor is pulling a
+genuinely new ~4.2 GB image from scratch, not an incremental diff, since
+4.0.2 and earlier ran on Alpine and this release switched to Debian (no
+shared image layers between the two) and also added a bundled PostgreSQL
+server plus the always-installed computer-vision pipeline dependencies.
+This is a one-time cost of crossing that version boundary; updates after
+that are back to normal. See the [CHANGELOG](blink_clip_downloader/CHANGELOG.md)
+for details.
+
 ## AI Provider Setup
 
 The add-on can analyse each downloaded clip using an AI vision model to detect

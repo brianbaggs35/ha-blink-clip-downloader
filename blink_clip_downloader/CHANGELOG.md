@@ -1,5 +1,78 @@
 # Changelog
 
+## 5.0.1
+
+### Bug fixes
+
+- **Pre-5.0.0 data (AI usage stats, starred/tagged/archived status on old
+  clips, each clip's `source`, analysis history) never actually carried
+  over the SQLite→PostgreSQL switch**, despite 5.0.0's own changelog entry
+  claiming "no user-facing config or data-migration step" — that was only
+  true of the *code* (nothing needed reconfiguring), not the *data*: an
+  upgrading install started from a genuinely empty PostgreSQL database.
+  Clips reappeared anyway purely as a side effect of an unrelated safety
+  net (`library_scanner.py` reconstructing bare-bones rows — synthetic id,
+  `source=''`, no starred/tags — from clip files still on disk), which
+  masked the fact that everything that only ever lived in the database —
+  most visibly, AI Usage tab stats, and every reconstructed clip's blank
+  `source` — was gone. Nothing ever deletes the old SQLite file, so a new
+  startup step (`sqlite_migration.py`) now imports
+  `clips`/`analysis_results`/the usage reset marker from it, if present.
+  Deliberately a *merge*, not a plain "only if the database is empty"
+  import: anyone who already upgraded to 5.0.0 already has a non-empty,
+  reconstructed `clips` table by the time this ships, so gating on
+  emptiness would make the fix a permanent no-op for exactly the installs
+  it exists for. Each old row is matched to an existing reconstructed one
+  by file path and backfilled in place (camera, source, real timestamp,
+  starred, tags, real download time, archived status) — preserving its
+  current id, and with it any real analysis already run against it since
+  upgrading — rather than assuming there's nothing there yet; a clip with
+  no reconstructed match is inserted fresh under its original id. The
+  whole operation runs in a single transaction, so a failure partway
+  through is safe to simply retry on the next restart, and the old file is
+  renamed on success so it never runs again once done. Deliberately
+  doesn't import `face_enrollments`/`analysis_feedback`/per-camera
+  baselines — biometrics is new in 5.0.0, so a pre-5.0.0 file never has
+  enrollments to lose, and learned baselines are cheap to re-establish
+  rather than risky to carry across a schema that changed meaningfully
+  more between versions than clips/analysis_results did.
+- **Biometrics enrollment frame picker sampled too sparsely to reliably catch
+  someone facing the camera.** `GET /api/clips/{id}/frames` (used by the
+  "enroll from a clip" flow) defaulted to a fixed 8 frames spread evenly
+  across the whole clip regardless of length — a brief, low-motion moment of
+  looking straight at the camera could easily land between samples. Now
+  defaults to roughly one frame per second of the clip's actual duration
+  (clamped to a max of 60 frames), with the enrollment picker paginating the
+  results client-side (12 per page, selections preserved across pages)
+  instead of rendering everything at once.
+- **Vehicles tab: a `car_zone` saved before the persisted-snapshot picker
+  redesign silently failed to render**, forcing a manual "Clear zone" +
+  redraw on every camera that already had a zone configured pre-upgrade.
+  Root cause: the picker's preview `<img>` requests
+  `GET /api/vehicle/zone-snapshot/{camera}`, which 404s unless
+  `/data/vehicle_zone_snapshots/<camera>.jpg` exists — but that file is
+  only ever written by the zone-save endpoint, so any zone set before that
+  endpoint existed has no snapshot. A 404'd `<img>` never fires `@load`, so
+  the picker's container is never measured, and its saved-zone overlay
+  silently never draws (both `previewRectStyle`/`previewPolygonAttr` bail
+  out with no width/height) — leaving an apparently-blank picker with only
+  "Clear zone" as a way forward. `_handle_vehicle_zone_snapshot_get` now
+  falls back to that camera's newest clip thumbnail (matching what the
+  picker always showed before the snapshot redesign) and persists it as
+  the real snapshot, so this self-heals on first view with no data loss
+  and no user action needed.
+- **`openai_escalation_model` restored to `config.yaml`'s schema (marked
+  deprecated)**, fixing a regression from 5.0.0: removing it from the
+  schema entirely meant any install that had it set from before 4.0.0 now
+  permanently logs `WARNING ... Option 'openai_escalation_model' does not
+  exist in the schema` from the Supervisor on every options validation
+  pass, since the value was still present in that install's saved options
+  with no matching schema entry to validate it against. No behavior
+  change — it was, and still is, read and auto-migrated to
+  `ai_escalation_enabled`/`ai_escalation_provider`/`ai_escalation_model` on
+  startup (see `config.py`'s `_resolve_ai_escalation()`); this only stops
+  the spurious warning. See `DOCS.md`'s AI Provider Settings section.
+
 ## 5.0.0
 
 Major release, bumped from 4.1.0 given the scope of what landed together: a
@@ -11,6 +84,19 @@ face-recognition suspicious-flag bypass. None of the AI/CV work changes
 default behavior — every new stage and feature is disabled or empty out of
 the box and the add-on analyzes clips exactly as it did in 4.0.2 until
 explicitly turned on.
+
+> ⏱️ **Updating from 4.0.2 or earlier takes noticeably longer than a normal
+> add-on update — expect roughly 10-15 minutes, not the usual under-a-minute
+> restart.** This release also carries 4.1.0's base-image switch (see
+> "Breaking change — Docker base image" below): 4.0.2 and earlier ran on
+> Alpine, this release runs on Debian, and those two share no image layers
+> at all, so the Supervisor has to pull a genuinely new image from scratch
+> rather than an incremental diff — compounded by the new bundled
+> PostgreSQL server and (unconditionally installed, even if left disabled)
+> computer-vision pipeline dependencies pushing the image itself to around
+> 4.2 GB (see the root README's System Requirements table). This is a
+> one-time cost of crossing that boundary, not a sign anything is stuck —
+> give it time before assuming the update has hung.
 
 ### Added — Vehicles tab
 

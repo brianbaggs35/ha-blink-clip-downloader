@@ -390,14 +390,19 @@ The AI tab's Fetch Models picker works for the escalation model too, once
 pick from the list, and copy the id to paste into `ai_escalation_model`, the same
 copy-to-clipboard flow the tier-1 model picker already uses.
 
-> **Removed in 5.0.0:** `openai_escalation_model` (OpenAI-only, second OpenAI
-> model) is no longer part of this add-on's Configuration options — use
+> **Deprecated as of 5.0.0:** `openai_escalation_model` (OpenAI-only, second
+> OpenAI model) is deprecated in favor of
 > `ai_escalation_enabled`/`ai_escalation_provider`/`ai_escalation_model`
-> above, which work for every provider, not just OpenAI. If you already had
-> `openai_escalation_model` set, nothing changes for you: it's still read
-> and automatically promoted to `ai_escalation_enabled=true` +
-> `ai_escalation_provider="openai"` + `ai_escalation_model` on startup, so
-> upgrading doesn't silently drop your existing setting.
+> above, which work for every provider, not just OpenAI — leave it blank on
+> any new configuration. It was briefly removed from this add-on's
+> Configuration options entirely in 5.0.0, which caused installs that
+> already had it set to permanently log an "unknown option" warning from
+> the Supervisor (a value can still be present in your saved options with
+> no matching schema entry to validate it against); it's back in
+> Configuration, clearly marked deprecated, purely to stop that warning. If
+> you already had `openai_escalation_model` set, nothing changes for you:
+> it's still read and automatically promoted to `ai_escalation_enabled=true`
+> + `ai_escalation_provider="openai"` + `ai_escalation_model` on startup.
 
 ### Analysis Prompt & Behaviour
 

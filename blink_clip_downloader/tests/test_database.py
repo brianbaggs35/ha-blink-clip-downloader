@@ -129,6 +129,23 @@ async def test_add_clip_with_null_fields(db: ClipDatabase) -> None:
 
 
 # ------------------------------------------------------------------
+# import_legacy_sqlite_data (see sqlite_migration.py, the real caller —
+# these tests exercise the guard clauses directly rather than through it)
+# ------------------------------------------------------------------
+
+
+async def test_import_legacy_sqlite_data_when_db_not_init() -> None:
+    d = ClipDatabase()
+    assert await d.import_legacy_sqlite_data([], [], None) == 0
+
+
+async def test_import_legacy_sqlite_data_with_no_clips_is_a_noop(
+    db: ClipDatabase,
+) -> None:
+    assert await db.import_legacy_sqlite_data([], [], None) == 0
+
+
+# ------------------------------------------------------------------
 # star_clip / set_tags
 # ------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v5.0.0"
+version: "v5.0.1"
 slug: blink_clip_downloader
 description: >-
   Downloads Blink camera clips locally with AI-powered suspicious activity
@@ -184,6 +184,16 @@ options:
   # [OpenAI] GPT model to use. Use "Fetch Models" in the web UI to see available
   # models. gpt-4o-mini is the most cost-effective vision option.
   openai_model: "gpt-4o-mini"
+  # Deprecated — superseded by ai_escalation_enabled/ai_escalation_provider/
+  # ai_escalation_model below, which work for every provider, not just
+  # OpenAI. Leave blank on any new configuration. Kept in the schema (rather
+  # than removed, as 5.0.0 briefly tried) only so upgrading installs that
+  # already have this set don't permanently trip a Supervisor "unknown
+  # option" warning — a value can still exist in a user's saved options
+  # without a matching schema entry to validate it, and that's exactly what
+  # happened here. Still fully honored: auto-migrated to the fields below on
+  # startup, see config.py's _resolve_ai_escalation().
+  openai_escalation_model: ""
   # Master on/off switch for two-tier escalation. When true, every clip is
   # first analyzed with ai_provider/model above (tier 1); only clips tier 1
   # flags as suspicious are re-analyzed by ai_escalation_provider/model
@@ -452,6 +462,7 @@ schema:
   anthropic_model: "str?"
   openai_api_key: "password?"
   openai_model: "str?"
+  openai_escalation_model: "str?"
   ai_escalation_enabled: "bool"
   ai_escalation_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic|openai)"
   ai_escalation_model: "str?"

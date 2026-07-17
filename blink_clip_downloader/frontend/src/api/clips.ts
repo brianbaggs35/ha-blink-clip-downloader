@@ -66,9 +66,12 @@ export function clipThumbUrl(id: string): string {
 /** ADVANCED FEATURE: several evenly-spaced frames pulled from one clip's
  * video, for the Biometrics tab's "enroll from a clip" flow — lets you pick
  * out whichever frame(s) actually show a face well, since the first frame
- * of a motion-triggered clip often doesn't (see BiometricsPage.vue). */
-export function getClipFrames(id: string, count = 8): Promise<{ frames: string[] }> {
-  return apiGet(`/api/clips/${id}/frames?count=${count}`)
+ * of a motion-triggered clip often doesn't (see BiometricsPage.vue). Omit
+ * `count` to let the backend derive it from the clip's duration (roughly
+ * one frame per second) rather than a fixed number regardless of length. */
+export function getClipFrames(id: string, count?: number): Promise<{ frames: string[] }> {
+  const query = count ? `?count=${count}` : ''
+  return apiGet(`/api/clips/${id}/frames${query}`)
 }
 
 export function getCameras(): Promise<CameraStat[]> {
