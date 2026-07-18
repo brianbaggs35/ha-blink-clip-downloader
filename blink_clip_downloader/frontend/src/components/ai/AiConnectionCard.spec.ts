@@ -98,7 +98,11 @@ describe('AiConnectionCard', () => {
   it('fetches escalation models and lists them in the escalation picker', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: ['claude-haiku-4-5', 'claude-opus-4-8'] }))),
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({ enabled: true, models: [{ name: 'claude-haiku-4-5' }, { name: 'claude-opus-4-8' }] }),
+        ),
+      ),
     )
     const wrapper = mount(AiConnectionCard, {
       props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
@@ -109,14 +113,22 @@ describe('AiConnectionCard', () => {
     const select = wrapper.find('#ai-escalation-model-picker')
     expect(select.exists()).toBe(true)
     const options = select.findAll('option')
-    expect(options.some((o) => o.text() === 'claude-haiku-4-5')).toBe(true)
-    expect(options.some((o) => o.text() === 'claude-opus-4-8')).toBe(true)
+    expect(options.some((o) => o.text().includes('claude-haiku-4-5'))).toBe(true)
+    expect(options.some((o) => o.text().includes('claude-opus-4-8'))).toBe(true)
+    // Regression test for the JSON-blob bug: an option's rendered text must
+    // never be the object's own JSON stringification (Vue's default
+    // interpolation for a non-primitive value) — only ever the plain name.
+    expect(options.some((o) => o.text().includes('{'))).toBe(false)
   })
 
   it('updates the selected escalation model when a different option is picked', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: ['claude-haiku-4-5', 'claude-opus-4-8'] }))),
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({ enabled: true, models: [{ name: 'claude-haiku-4-5' }, { name: 'claude-opus-4-8' }] }),
+        ),
+      ),
     )
     const wrapper = mount(AiConnectionCard, {
       props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
@@ -132,6 +144,31 @@ describe('AiConnectionCard', () => {
       .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('AI Escalation Model'))!
     await copyBtn.trigger('click')
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('claude-opus-4-8')
+  })
+
+  it('marks gpt-5.4-mini as best in the escalation picker for openai, regardless of position', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            enabled: true,
+            models: [{ name: 'gpt-5.5' }, { name: 'gpt-5.4-mini' }, { name: 'gpt-4-turbo' }],
+          }),
+        ),
+      ),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'openai', escalation_model: '' }) },
+    })
+    const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    const options = wrapper.find('#ai-escalation-model-picker').findAll('option')
+    const best = options.find((o) => o.text().includes('gpt-5.4-mini'))!
+    expect(best.text()).toContain('⭐ Best')
+    expect(options.find((o) => o.text().includes('gpt-5.5'))!.text()).not.toContain('⭐ Best')
+    expect(options.find((o) => o.text().includes('gpt-4-turbo'))!.text()).not.toContain('⭐ Best')
   })
 
   it('shows the escalation error message when no models are found', async () => {
@@ -153,7 +190,7 @@ describe('AiConnectionCard', () => {
   it('copies the selected escalation model id to the clipboard', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: ['claude-haiku-4-5'] }))),
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [{ name: 'claude-haiku-4-5' }] }))),
     )
     const wrapper = mount(AiConnectionCard, {
       props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
@@ -171,7 +208,7 @@ describe('AiConnectionCard', () => {
   it('shows the raw escalation model id as a toast when the clipboard write fails', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: ['claude-haiku-4-5'] }))),
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true, models: [{ name: 'claude-haiku-4-5' }] }))),
     )
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
     const wrapper = mount(AiConnectionCard, {
@@ -214,6 +251,10 @@ describe('AiConnectionCard', () => {
   })
 
   it('shows the model picker for ollama/openai/anthropic providers and fetches models', async () => {
+    // provider is 'ollama' here (not 'openai') so index-0-is-best still
+    // applies to these fake ids — openai's picker instead marks a specific
+    // known-good model as best regardless of position, see the dedicated
+    // "marks gpt-5.4-nano as best" test below.
     vi.stubGlobal(
       'fetch',
       vi.fn(() =>
@@ -222,7 +263,7 @@ describe('AiConnectionCard', () => {
         ),
       ),
     )
-    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'openai' }) } })
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
     expect(wrapper.find('select.sel').exists()).toBe(true)
     await wrapper.find('button').trigger('click')
     await flushPromises()
@@ -230,6 +271,46 @@ describe('AiConnectionCard', () => {
     expect(
       options.some((o) => o.text().includes('model-a') && o.text().includes('4.0 GB') && o.text().includes('Best')),
     ).toBe(true)
+  })
+
+  it('marks gpt-5.4-nano as best in the primary picker for openai, regardless of position', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({
+            enabled: true,
+            models: [{ name: 'gpt-5.5' }, { name: 'gpt-5.4-nano' }, { name: 'gpt-4-turbo' }],
+          }),
+        ),
+      ),
+    )
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'openai' }) } })
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    const options = wrapper.findAll('option')
+    const best = options.find((o) => o.text().includes('gpt-5.4-nano'))!
+    expect(best.text()).toContain('⭐ Best')
+    expect(options.find((o) => o.text().includes('gpt-5.5'))!.text()).not.toContain('⭐ Best')
+    expect(options.find((o) => o.text().includes('gpt-4-turbo'))!.text()).not.toContain('⭐ Best')
+  })
+
+  it('keeps the fetch button and the select+copy row in a stable stacked layout', () => {
+    // Regression test: the fetch button and the select used to share one
+    // flex-wrap row, so the select started out beside the fetch button but
+    // reflowed onto its own line once real (longer) options arrived — the
+    // layout visibly jumped every time models were fetched. Asserting the
+    // DOM structure (not just fetched-vs-empty text) locks in that the
+    // select+copy row is always a distinct block below the fetch button.
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
+    const picker = wrapper.find('.model-picker')
+    expect(picker.exists()).toBe(true)
+    const fetchBtn = picker.find('.model-picker__fetch')
+    const row = picker.find('.model-picker__row')
+    expect(fetchBtn.exists()).toBe(true)
+    expect(row.exists()).toBe(true)
+    expect(row.find('select.model-picker__select').exists()).toBe(true)
+    expect(row.find('.model-picker__copy').exists()).toBe(true)
   })
 
   it('shows a toast when the server has no vision models', async () => {

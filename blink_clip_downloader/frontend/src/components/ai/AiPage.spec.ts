@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import PrimeVue from 'primevue/config'
 import AiPage from './AiPage.vue'
 import { useRefreshStore } from '../../stores/refresh'
+
+// SuspiciousFeed's period filter is a PrimeVue Select, which throws on a
+// missing $primevue injection without this plugin — see CLAUDE.md.
+function mountAiPage() {
+  return mount(AiPage, { global: { plugins: [PrimeVue] } })
+}
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -38,7 +45,7 @@ function mockFetch(status: unknown = AI_STATUS_ENABLED) {
       if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(status))
       if (url.startsWith('/api/ai/camera-configs')) return Promise.resolve(jsonResponse([]))
       if (url.startsWith('/api/ai/faces')) return Promise.resolve(jsonResponse({ available: true, faces: [] }))
-      if (url.startsWith('/api/ai/suspicious')) return Promise.resolve(jsonResponse([]))
+      if (url.startsWith('/api/ai/suspicious')) return Promise.resolve(jsonResponse({ items: [], total: 0 }))
       if (url.startsWith('/api/ai/feedback/stats'))
         return Promise.resolve(
           jsonResponse({ total: 0, correct: 0, incorrect: 0, false_positive: 0, false_negative: 0 }),
@@ -70,7 +77,7 @@ describe('AiPage', () => {
         last_analysis: null,
       },
     })
-    const wrapper = mount(AiPage)
+    const wrapper = mountAiPage()
     await flushPromises()
     expect(wrapper.text()).toContain('AI Analysis Not Configured')
     wrapper.unmount()
@@ -78,7 +85,7 @@ describe('AiPage', () => {
 
   it('renders every card when AI is enabled', async () => {
     mockFetch()
-    const wrapper = mount(AiPage)
+    const wrapper = mountAiPage()
     await flushPromises()
     expect(wrapper.text()).toContain('AI Connection')
     expect(wrapper.text()).toContain('Schedule')
@@ -93,7 +100,7 @@ describe('AiPage', () => {
 
   it('only shows the Fine-Tuning card for moondream_cloud', async () => {
     mockFetch({ ...AI_STATUS_ENABLED, provider: 'anthropic' })
-    const wrapper = mount(AiPage)
+    const wrapper = mountAiPage()
     await flushPromises()
     expect(wrapper.text()).not.toContain('Fine-Tuning')
     wrapper.unmount()
@@ -109,7 +116,7 @@ describe('AiPage', () => {
         if (url.startsWith('/api/ai/feedback/untrained-count')) return Promise.resolve(jsonResponse({ count: 0 }))
         if (url.startsWith('/api/ai/camera-configs')) return Promise.resolve(jsonResponse([]))
         if (url.startsWith('/api/ai/faces')) return Promise.resolve(jsonResponse({ available: true, faces: [] }))
-        if (url.startsWith('/api/ai/suspicious')) return Promise.resolve(jsonResponse([]))
+        if (url.startsWith('/api/ai/suspicious')) return Promise.resolve(jsonResponse({ items: [], total: 0 }))
         if (url.startsWith('/api/ai/feedback/stats'))
           return Promise.resolve(
             jsonResponse({ total: 0, correct: 0, incorrect: 0, false_positive: 0, false_negative: 0 }),
@@ -117,7 +124,7 @@ describe('AiPage', () => {
         return Promise.reject(new Error(`unexpected fetch ${url}`))
       }),
     )
-    const wrapper = mount(AiPage)
+    const wrapper = mountAiPage()
     await flushPromises()
     expect(wrapper.text()).toContain('Fine-Tuning')
     wrapper.unmount()
@@ -126,7 +133,7 @@ describe('AiPage', () => {
   it('auto-refreshes status every 10s while mounted', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch()
-    const wrapper = mount(AiPage)
+    const wrapper = mountAiPage()
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.filter((c) => (c[0] as string).startsWith('/api/ai/status')).length
     await vi.advanceTimersByTimeAsync(10_000)
@@ -139,7 +146,7 @@ describe('AiPage', () => {
   it('stops polling after unmount', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch()
-    const wrapper = mount(AiPage)
+    const wrapper = mountAiPage()
     await flushPromises()
     wrapper.unmount()
     const callsAfterUnmount = vi.mocked(fetch).mock.calls.length
@@ -155,7 +162,7 @@ describe('AiPage', () => {
     // called it. ClipAiPanel.vue now bumps the shared refresh store on a
     // successful feedback submission; this asserts AiPage reacts to that.
     mockFetch()
-    const wrapper = mount(AiPage)
+    const wrapper = mountAiPage()
     await flushPromises()
 
     const statsCallsBefore = vi

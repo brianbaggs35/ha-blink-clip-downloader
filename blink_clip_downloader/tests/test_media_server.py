@@ -1394,7 +1394,7 @@ async def test_ai_suspicious_empty(client: TestClient) -> None:
     resp = await client.get("/api/ai/suspicious")
     assert resp.status == 200
     data = await resp.json()
-    assert data == []
+    assert data == {"items": [], "total": 0}
 
 
 async def test_ai_clip_result_not_found(client: TestClient) -> None:
@@ -1423,9 +1423,10 @@ async def test_ai_suspicious_returns_results(
     resp = await client.get("/api/ai/suspicious")
     assert resp.status == 200
     data = await resp.json()
-    assert len(data) == 1
-    assert data[0]["clip_id"] == "s1"
-    assert data[0]["is_suspicious"] is True
+    assert data["total"] == 1
+    assert len(data["items"]) == 1
+    assert data["items"][0]["clip_id"] == "s1"
+    assert data["items"][0]["is_suspicious"] is True
 
 
 async def test_ai_analyze_now_no_analyzer(client: TestClient) -> None:
@@ -2624,8 +2625,107 @@ async def test_ai_suspicious_negative_limit_and_offset_are_clamped(
     ) as mock_get_suspicious:
         resp = await client.get("/api/ai/suspicious?limit=-10&offset=-1")
     assert resp.status == 200
+    data = await resp.json()
+    assert data == {"items": [], "total": 0}
     assert mock_get_suspicious.call_args.kwargs["limit"] == 0
     assert mock_get_suspicious.call_args.kwargs["offset"] == 0
+    assert mock_get_suspicious.call_args.kwargs["period"] is None
+
+
+async def test_ai_suspicious_default_limit_is_20(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    with patch.object(
+        db, "get_suspicious_clips", AsyncMock(return_value=[])
+    ) as mock_get_suspicious:
+        resp = await client.get("/api/ai/suspicious")
+    assert resp.status == 200
+    assert mock_get_suspicious.call_args.kwargs["limit"] == 20
+    assert mock_get_suspicious.call_args.kwargs["offset"] == 0
+
+
+async def test_ai_suspicious_rejects_unknown_period(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """An unrecognized period value is treated as "no filter" rather than
+    erroring, so a stale/typo'd query param degrades gracefully."""
+    with patch.object(
+        db, "get_suspicious_clips", AsyncMock(return_value=[])
+    ) as mock_get_suspicious:
+        resp = await client.get("/api/ai/suspicious?period=decade")
+    assert resp.status == 200
+    assert mock_get_suspicious.call_args.kwargs["period"] is None
+
+
+@pytest.mark.parametrize("period", ["today", "yesterday", "week", "month"])
+async def test_ai_suspicious_accepts_each_period(
+    client: TestClient, db: ClipDatabase, period: str
+) -> None:
+    with patch.object(
+        db, "get_suspicious_clips", AsyncMock(return_value=[])
+    ) as mock_get_suspicious:
+        resp = await client.get(f"/api/ai/suspicious?period={period}")
+    assert resp.status == 200
+    assert mock_get_suspicious.call_args.kwargs["period"] == period
+
+
+async def test_ai_suspicious_total_reflects_full_count_beyond_page(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """total in the response must be the full matching count, not just the
+    length of the current page — this is what lets the frontend build
+    accurate pagination instead of guessing from a single page's length."""
+    for i in range(3):
+        await db.add_clip(_make_clip(f"sp{i}"))
+        await db.add_analysis_result(
+            {
+                "clip_id": f"sp{i}",
+                "camera": "Front Door",
+                "model": "llava",
+                "response_text": "Suspicious person",
+                "is_suspicious": True,
+                "confidence": 0.85,
+                "summary": "Unknown person near car",
+                "frame_count": 3,
+                "analysis_duration": 4.0,
+                "analyzed_at": "2024-06-01T09:00:00+00:00",
+            }
+        )
+    resp = await client.get("/api/ai/suspicious?limit=2&offset=0")
+    assert resp.status == 200
+    data = await resp.json()
+    assert len(data["items"]) == 2
+    assert data["total"] == 3
+
+    resp2 = await client.get("/api/ai/suspicious?limit=2&offset=2")
+    data2 = await resp2.json()
+    assert len(data2["items"]) == 1
+    assert data2["total"] == 3
+
+
+async def test_ai_suspicious_period_excludes_older_clips(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """period=today must exclude a suspicious clip analyzed weeks ago."""
+    await db.add_clip(_make_clip("old1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "old1",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "Suspicious person",
+            "is_suspicious": True,
+            "confidence": 0.85,
+            "summary": "Unknown person near car",
+            "frame_count": 3,
+            "analysis_duration": 4.0,
+            "analyzed_at": "2024-01-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.get("/api/ai/suspicious?period=today")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data == {"items": [], "total": 0}
 
 
 async def test_ai_analyze_now_clip_not_found(db: ClipDatabase, tmp_path: Path) -> None:

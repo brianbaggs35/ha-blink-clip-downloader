@@ -343,7 +343,7 @@ Uses the Anthropic Claude API for high-quality vision analysis. Billed per token
 | Option | Default | Description |
 |--------|---------|-------------|
 | `anthropic_api_key` | `""` | API key from [console.anthropic.com](https://console.anthropic.com) |
-| `anthropic_model` | `"claude-haiku-4-5"` | Claude model to use. Use **Fetch Models** in the web UI to browse available models and pricing. |
+| `anthropic_model` | `"claude-haiku-4-5"` | Claude model to use. Use **Fetch Models** in the web UI to browse available models. |
 
 Claude models receive a dedicated system prompt that separates role/format instructions
 from user content, improving JSON compliance. `claude-haiku-4-5` is the default as
@@ -357,7 +357,7 @@ supported (GPT-4o, GPT-4.1, GPT-4-Turbo, GPT-5, and variants).
 | Option | Default | Description |
 |--------|---------|-------------|
 | `openai_api_key` | `""` | API key from [platform.openai.com](https://platform.openai.com) |
-| `openai_model` | `"gpt-4o-mini"` | GPT model to use. Use **Fetch Models** in the web UI to browse models with pricing. |
+| `openai_model` | `"gpt-4o-mini"` | GPT model to use. Use **Fetch Models** in the web UI to browse available models, newest first. |
 
 GPT models use `response_format: json_object` to guarantee valid JSON output, and
 `"high"` image detail for better scene analysis. `gpt-4o-mini` is selected by default

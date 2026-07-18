@@ -73,9 +73,11 @@ describe('ai api', () => {
     await getClipAiResult('c1')
     expect(fetch).toHaveBeenCalledWith('/api/ai/results/c1', {})
     await getSuspiciousClips()
-    expect(fetch).toHaveBeenCalledWith('/api/ai/suspicious?limit=20', {})
-    await getSuspiciousClips(5)
-    expect(fetch).toHaveBeenCalledWith('/api/ai/suspicious?limit=5', {})
+    expect(fetch).toHaveBeenCalledWith('/api/ai/suspicious?limit=20&offset=0', {})
+    await getSuspiciousClips({ limit: 5, offset: 10 })
+    expect(fetch).toHaveBeenCalledWith('/api/ai/suspicious?limit=5&offset=10', {})
+    await getSuspiciousClips({ period: 'week' })
+    expect(fetch).toHaveBeenCalledWith('/api/ai/suspicious?limit=20&offset=0&period=week', {})
     await analyzeClipNow('c1')
     expect(fetch).toHaveBeenCalledWith('/api/ai/analyze/c1', {
       method: 'POST',
