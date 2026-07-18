@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
 import Tag from 'primevue/tag'
 import AppIcon from '../icons/AppIcon.vue'
 import type { IconName } from '../icons/paths'
@@ -88,6 +89,10 @@ async function toggleNotifications() {
     toast.show('Notifications disabled')
   }
 }
+
+const showAbout = ref(false)
+const REPO_URL = 'https://github.com/brianbaggs35/ha-blink-clip-downloader'
+const BLINKPY_URL = 'https://github.com/fronzbot/blinkpy'
 
 const connSeverity = computed(() => {
   if (connection.connected === null) return 'secondary'
@@ -250,6 +255,16 @@ onUnmounted(() => {
         >
           <template #icon><AppIcon :name="notifEnabled ? 'notif-on' : 'notif-off'" /></template>
         </Button>
+        <Button
+          text
+          rounded
+          size="small"
+          severity="secondary"
+          icon="pi pi-info-circle"
+          title="About this app"
+          aria-label="About this app"
+          @click="showAbout = true"
+        />
       </div>
       <div class="app-nav-action-row">
         <Button size="small" severity="secondary" outlined label="Refresh" title="Refresh" @click="onRefreshClick">
@@ -260,5 +275,23 @@ onUnmounted(() => {
         </Button>
       </div>
     </div>
+
+    <Dialog
+      v-model:visible="showAbout"
+      modal
+      dismissable-mask
+      header="About Blink Clips"
+      :style="{ width: '26rem' }"
+      :draggable="false"
+    >
+      <p class="m-0">Built by Brian Baggs.</p>
+      <p>
+        <a :href="REPO_URL" target="_blank" rel="noopener">{{ REPO_URL }}</a>
+      </p>
+      <p class="m-0">
+        Built on <a :href="BLINKPY_URL" target="_blank" rel="noopener">blinkpy</a>, an open-source Blink camera API
+        client.
+      </p>
+    </Dialog>
   </nav>
 </template>

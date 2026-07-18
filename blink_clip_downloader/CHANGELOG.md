@@ -1,11 +1,6 @@
 # Changelog
 
-## 5.0.4 (unreleased — skipped)
-
-_Not published. More fixes/enhancements are landing on top of this before
-anything ships, so this version number is being folded into whatever
-release follows rather than going out on its own — kept here for the
-record of what changed._
+## 5.0.4
 
 ### Bug fixes
 
@@ -31,6 +26,14 @@ record of what changed._
   one up by half its own height on top of the intended scale. Removed the
   errant translate — hovering now only scales the button slightly, with no
   jump.
+
+### Added
+
+- **An About button in the sidebar** (info icon, between the connection
+  badge and the Refresh/Sync buttons) opens a small dialog with the
+  add-on's author, a link to this repository, and credit/link to
+  [blinkpy](https://github.com/fronzbot/blinkpy), the library this add-on's
+  (and Home Assistant's own Blink integration's) camera access is built on.
 
 ## 5.0.3
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { DOMWrapper, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import AppSidebar, { type TabName } from './AppSidebar.vue'
@@ -23,6 +23,13 @@ function mountSidebar(modelValue: TabName = 'library') {
 
 function findByText(wrapper: ReturnType<typeof mountSidebar>, text: string) {
   return wrapper.findAll('button').find((b) => b.text().includes(text))!
+}
+
+// PrimeVue's Dialog teleports to <body> by default (same pattern as
+// ConfirmDialog.spec.ts) — assertions/interactions on the About dialog query
+// body() rather than the mounted wrapper.
+function body() {
+  return new DOMWrapper(document.body)
 }
 
 describe('AppSidebar', () => {
@@ -309,6 +316,43 @@ describe('AppSidebar', () => {
       await wrapper.find('[title="Notifications ON (click to disable)"]').trigger('click')
       expect(localStorage.getItem('blink_notif')).toBeNull()
       expect(useToastStore().message).toBe('Notifications disabled')
+    })
+  })
+
+  describe('About dialog', () => {
+    it('is not shown until the About button is clicked', () => {
+      mountSidebar()
+      expect(body().find('.p-dialog').exists()).toBe(false)
+    })
+
+    it('opens on click and shows the author, repo link, and blinkpy credit', async () => {
+      const wrapper = mountSidebar()
+      await wrapper.find('[title="About this app"]').trigger('click')
+
+      expect(body().text()).toContain('About Blink Clips')
+      expect(body().text()).toContain('Brian Baggs')
+
+      const repoLink = body()
+        .findAll('a')
+        .find((a) => a.attributes('href') === 'https://github.com/brianbaggs35/ha-blink-clip-downloader')
+      expect(repoLink).toBeTruthy()
+
+      const blinkpyLink = body()
+        .findAll('a')
+        .find((a) => a.attributes('href') === 'https://github.com/fronzbot/blinkpy')
+      expect(blinkpyLink).toBeTruthy()
+      expect(blinkpyLink!.text()).toBe('blinkpy')
+      expect(body().text()).toContain('Built on blinkpy')
+    })
+
+    it('closes when the dialog emits update:visible(false), e.g. via its close button', async () => {
+      const wrapper = mountSidebar()
+      await wrapper.find('[title="About this app"]').trigger('click')
+      const dialog = wrapper.findComponent({ name: 'Dialog' })
+      expect(dialog.props('visible')).toBe(true)
+
+      await dialog.vm.$emit('update:visible', false)
+      expect(dialog.props('visible')).toBe(false)
     })
   })
 })
