@@ -1,5 +1,33 @@
 # Changelog
 
+## 5.1.0
+
+### Added
+
+- **A new Storage tab**, with two parts: an **Archived Clips** list (view and
+  delete clips already compressed into monthly ZIP files by `archive_enabled`
+  — previously invisible to the web UI entirely once archived), and a
+  **Google Drive Backup** card that connects a Google account and uploads
+  clips there as an extra copy. Connecting uses Google's OAuth device flow
+  (a short code entered at `google.com/device`) since this add-on runs
+  behind Home Assistant ingress with no fixed redirect URL for a standard
+  sign-in button. A folder browser (navigate, create, or pick an existing
+  Drive folder) is deliberately folders-only — it never lists or touches
+  files of any other kind. Backup policy is configurable between "archived
+  clips only" (default) and "all clips"; a **Back Up Existing Clips Now**
+  button covers the pre-existing library once connected. Deleting a clip
+  also moves its Drive copy to trash (recoverable there for ~30 days, not a
+  permanent delete). Client ID/secret, backup policy, connection, and folder
+  choice are all managed directly from the Storage tab — the only step
+  outside the app is a one-time OAuth client registration in Google Cloud
+  Console (documented in DOCS.md), since Google requires every application
+  to have one and a shared one isn't practical for an independently
+  distributed add-on.
+- **A matching "Upload to Drive" bulk action on the Library tab**, alongside
+  the existing Star/Delete/ZIP/Analyze actions — select any clips and send
+  them to a chosen Drive folder without waiting for the automatic backup
+  policy.
+
 ## 5.0.8
 
 ### Container security & packaging
@@ -29,6 +57,7 @@
   scanner against every Debian-based image and is not actionable from this
   repository. As of this release both images scan clean under that gate;
   the Python dependency tree scans clean at every severity.
+
 
 ## 5.0.7
 

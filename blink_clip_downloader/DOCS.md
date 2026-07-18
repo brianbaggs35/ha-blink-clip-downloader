@@ -247,6 +247,20 @@ selected** for several at once) regardless of this cap.
 | `archive_enabled` | `false` | Compress old clips into monthly ZIP files |
 | `archive_after_days` | `60` | Clips older than N days are archived (1–365) |
 
+### Google Drive Backup
+
+Everything about connecting an account, choosing a backup folder, and picking a
+backup policy is done from the **Storage** tab in the web UI, not here — see
+[Storage Tab — Google Drive Backup](#storage-tab--google-drive-backup) below
+for setup steps. These two options are the only Google Drive knobs that live
+in the add-on's own configuration, matching how `ai_batch_size`/
+`ai_check_interval` work for the AI analysis queue:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `gdrive_batch_size` | `5` | Clips uploaded to Drive per check cycle (1–50) |
+| `gdrive_check_interval` | `300` | Seconds between upload-queue checks (30–3600) |
+
 ### Sync Module Local Storage
 
 When a USB drive is plugged into a Blink Sync Module, the module records clips to it
@@ -772,6 +786,9 @@ from any browser without leaving Home Assistant.
 - **Biometrics tab** — enroll household members' faces (from a clip's frames or a
   single photo), approve/un-approve/rename/remove them, and the all-or-nothing
   suspicious-flag bypass this powers — see **Biometrics Tab** above.
+- **Storage tab** — view and delete archived clips, and connect a Google Drive
+  account to back them up — see [Storage Tab — Google Drive
+  Backup](#storage-tab--google-drive-backup) below.
 - **Automations tab** — ready-to-paste HA automation YAML snippets, plus a
   **Notification Channels** panel to test-send an email/Discord message/mobile
   push before enabling that channel for real.
@@ -790,10 +807,12 @@ from any browser without leaving Home Assistant.
   A **Clear Stats** button resets these counters — handy after switching providers
   so old usage doesn't keep piling into the total — without touching per-clip
   analysis history.
-- **Bulk select** — star, delete, export multiple clips as a ZIP archive, or
+- **Bulk select** — star, delete, export multiple clips as a ZIP archive,
   **analyze** them all with AI at once (behind a confirmation dialog stating the
   exact count, since analysis spends real provider tokens; capped at 25 clips per
-  batch and processed one at a time rather than all in parallel).
+  batch and processed one at a time rather than all in parallel), or **upload**
+  them to Google Drive (once connected — see the Storage tab) via a folder
+  picker that lets you choose an existing folder or create a new one.
 - **Tag management** — add/remove freeform tags per clip; filter the library by tag.
 - **Browser notifications** — opt-in desktop notifications when new clips arrive.
 - **Dark/Light theme** — automatically follows the OS/browser preference; a ☀/🌙
@@ -811,6 +830,89 @@ from any browser without leaving Home Assistant.
 | `L` | Toggle loop |
 | `Esc` | Close player or help overlay |
 | `?` | Show / hide keyboard shortcut help |
+
+---
+
+## Storage Tab — Google Drive Backup
+
+The Storage tab has two parts: an **Archived Clips** list (view/delete clips
+`archive_enabled` has already compressed into ZIP files), and a **Google
+Drive Backup** card that connects a Google account and uploads clips there
+as an extra copy.
+
+### Why a one-time Google Cloud Console step is needed
+
+Google requires every application talking to its APIs to be registered as an
+OAuth client. This add-on can't ship a single shared client the way Home
+Assistant Core's own built-in integrations sometimes do — Core is a large,
+Google-verified project; a single add-on's shared client would mean every
+installer sharing one API quota bucket, and a client secret that's public in
+this repo's source. Instead, **you register your own free OAuth client** in
+your own Google account, the same pattern used by many self-hosted tools
+(e.g. rclone's Google Drive backend). It takes a few minutes and is only
+needed once.
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create
+   a new project (or reuse an existing one).
+2. Under **APIs & Services → Library**, enable the **Google Drive API**.
+3. Under **APIs & Services → OAuth consent screen**, configure it (External
+   is fine for personal use) and add yourself as a test user.
+4. Under **APIs & Services → Credentials → Create Credentials → OAuth client
+   ID**, choose application type **"TVs and Limited Input devices"**. This is
+   the type that supports the code-based device sign-in the Storage tab uses
+   — there is no redirect URL to configure.
+5. Copy the generated **Client ID** and **Client Secret**.
+6. **Important:** under **OAuth consent screen**, move the app from
+   "Testing" to "In production" once you've confirmed it works. Google
+   commonly expires refresh tokens after about a week for apps left in
+   Testing status, which would otherwise force you to reconnect weekly. For
+   the narrow `drive.file`/`drive.readonly` scopes this add-on requests,
+   moving to production doesn't require Google's full verification review.
+
+### Connecting from the Storage tab
+
+Everything past that one-time registration happens in the app itself:
+
+1. Open the **Storage** tab and paste the **Client ID**/**Client Secret**
+   from step 5 above into the **Google Drive Setup** card, choose a backup
+   policy, and click **Save Setup**.
+2. Click **Connect Google Drive**. The card shows a short code and a URL
+   (`google.com/device`) — open that URL on any device, sign in, and enter
+   the code. The Storage tab polls automatically and updates once you've
+   finished.
+3. Choose a folder for your backups — browse your existing Drive folders or
+   create a new one — or use **Change Folder** later to switch.
+
+Backup policy (also settable from the same card):
+
+- **Archived clips only** (default) — clips `archive_enabled` compresses
+  into a ZIP are automatically queued for backup once connected.
+- **All clips** — every downloaded clip is queued for backup, not just
+  archived ones.
+
+A **Back Up Existing Clips Now** button queues everything already eligible
+under the current policy — without it, connecting Drive for the first time
+would only cover clips going forward.
+
+### What this does and doesn't do
+
+- Uploads are additive: a successful Drive backup never causes early local
+  deletion. Local retention/archiving behavior is unchanged.
+- Deleting a clip (from the Library or the Storage tab's archived list) also
+  moves its Drive copy to Drive's own trash (recoverable there for about 30
+  days), not a permanent delete.
+- Deleting an *archived* clip removes its database record and Drive copy,
+  but not the bytes inside its shared monthly ZIP file (a ZIP can't have a
+  single member removed without rewriting the whole archive) — local disk
+  space for that ZIP isn't reclaimed by deleting one clip from it.
+- The folder browser only ever lists and creates **folders** — it never
+  shows or touches files of any other kind, so there's nothing here that
+  could interact with unrelated files elsewhere in your Drive. The clip
+  list itself is always this add-on's own upload record, not a live scan of
+  the folder's contents — a file you drop into that folder yourself via
+  Drive's own app stays completely invisible to this add-on.
+- There's no download/restore-from-Drive feature — clips already live
+  locally; Drive is a backup destination, not a second source to sync from.
 
 ---
 
@@ -900,6 +1002,8 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/vehicle_zone_snapshots/` | One reference frame (JPEG) per camera with a saved car zone — the exact image the zone was drawn on, so the Vehicles tab's preview never silently shows a different, newer frame |
 | `/data/moondream_packages/` | The `moondream` Python package itself, installed here via the AI tab's **Install** button so it persists across restarts |
 | `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch) — see **Disk Space** above |
+| `/data/google_drive_settings.json` | Google OAuth client ID/secret and backup policy, set via the Storage tab |
+| `/data/google_drive_credentials.json` | Cached Google Drive OAuth token and selected backup folder (do not edit) |
 
 > All `/data/` files are stored inside the add-on's private data directory and are
 > automatically removed by the supervisor when the add-on is uninstalled.

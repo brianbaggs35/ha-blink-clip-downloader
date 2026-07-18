@@ -63,7 +63,9 @@ class ClipArchiver:
     # Internal
     # ------------------------------------------------------------------
 
-    async def _archive_month(self, month: str, clips: list[dict]) -> list[dict[str, Any]]:
+    async def _archive_month(
+        self, month: str, clips: list[dict]
+    ) -> list[dict[str, Any]]:
         zip_path = self._archive_dir / f"blink_archive_{month}.zip"
         archived: list[dict[str, Any]] = []
 
