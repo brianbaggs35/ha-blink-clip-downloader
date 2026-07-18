@@ -363,6 +363,23 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('passes the library-wide tag list into the modal for the add-tag typeahead', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    await body().find('.tag-input').trigger('focus')
+    const suggestions = body()
+      .findAll('.tag-suggestions li')
+      .map((el) => el.text())
+    // /api/tags (mocked above) is the same distinct-tags list this page's own
+    // filter dropdown uses — the modal must reuse it rather than fetching
+    // its own copy.
+    expect(suggestions).toContain('delivery')
+    wrapper.unmount()
+  })
+
   it('deleting from the modal removes the card and closes the modal', async () => {
     mockFetch()
     const wrapper = mountLibrary()

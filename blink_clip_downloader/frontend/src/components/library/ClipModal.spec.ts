@@ -244,6 +244,72 @@ describe('ClipModal', () => {
     expect(refresh.tick).toBe(before + 1)
   })
 
+  it('shows a suggestions dropdown of available tags on focus, excluding tags already on this clip', async () => {
+    const wrapper = mount(ClipModal, {
+      props: {
+        clipId: 'c1',
+        aiEnabled: false,
+        promptDebugEnabled: false,
+        availableTags: ['delivery', 'package', 'mail'],
+      },
+    })
+    await flushPromises()
+    expect(wrapper.find('.tag-suggestions').exists()).toBe(false)
+    await wrapper.find('.tag-input').trigger('focus')
+    // 'delivery' is already on this clip (see the CLIP fixture) and must not
+    // be suggested again.
+    expect(wrapper.findAll('.tag-suggestions li').map((el) => el.text())).toEqual(['package', 'mail'])
+  })
+
+  it('filters suggestions as the user types (typeahead)', async () => {
+    const wrapper = mount(ClipModal, {
+      props: {
+        clipId: 'c1',
+        aiEnabled: false,
+        promptDebugEnabled: false,
+        availableTags: ['package', 'mail', 'porch'],
+      },
+    })
+    await flushPromises()
+    const input = wrapper.find('.tag-input')
+    await input.trigger('focus')
+    await input.setValue('pa')
+    expect(wrapper.findAll('.tag-suggestions li').map((el) => el.text())).toEqual(['package'])
+  })
+
+  it('selecting a suggestion adds it as a tag, saves, and clears the input', async () => {
+    const wrapper = mount(ClipModal, {
+      props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false, availableTags: ['package'] },
+    })
+    await flushPromises()
+    const input = wrapper.find('.tag-input')
+    await input.trigger('focus')
+    await wrapper.find('.tag-suggestions li').trigger('mousedown')
+    await flushPromises()
+    expect(wrapper.findAll('.tag-item').map((el) => el.text())).toContain('package×')
+    expect((input.element as HTMLInputElement).value).toBe('')
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c1/tags', expect.objectContaining({ method: 'PUT' }))
+  })
+
+  it('hides the suggestions dropdown on blur', async () => {
+    const wrapper = mount(ClipModal, {
+      props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false, availableTags: ['package'] },
+    })
+    await flushPromises()
+    const input = wrapper.find('.tag-input')
+    await input.trigger('focus')
+    expect(wrapper.find('.tag-suggestions').exists()).toBe(true)
+    await input.trigger('blur')
+    expect(wrapper.find('.tag-suggestions').exists()).toBe(false)
+  })
+
+  it('shows no suggestions dropdown when no tag list is passed in', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    await wrapper.find('.tag-input').trigger('focus')
+    expect(wrapper.find('.tag-suggestions').exists()).toBe(false)
+  })
+
   it('removes a tag on click after confirming', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
@@ -276,6 +342,14 @@ describe('ClipModal', () => {
     await theaterBtn.trigger('click')
     expect(wrapper.find('.modal').classes()).toContain('theater')
     expect(fakePlayer.fluid).toHaveBeenCalledWith(false)
+  })
+
+  it('toggles loop playback via the Loop checkbox', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const loopCheckbox = wrapper.findAll('.modal-options input[type="checkbox"]')[1]
+    await loopCheckbox.setValue(true)
+    expect(fakePlayer.loop).toHaveBeenCalledWith(true)
   })
 
   it('copies the file path to the clipboard', async () => {
