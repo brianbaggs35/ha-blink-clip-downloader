@@ -27,11 +27,11 @@ describe('ProviderNote', () => {
 
   it('appends the escalation note when showEscalationNote is true', () => {
     const wrapper = mount(ProviderNote, { props: { provider: 'anthropic', showEscalationNote: true } })
-    expect(wrapper.text()).toContain('ai_escalation_provider')
+    expect(wrapper.text()).toContain('AI Escalation Provider')
   })
 
   it('shows only the escalation note when the provider is unknown', () => {
     const wrapper = mount(ProviderNote, { props: { showEscalationNote: true } })
-    expect(wrapper.text()).toContain('ai_escalation_provider')
+    expect(wrapper.text()).toContain('AI Escalation Provider')
   })
 })

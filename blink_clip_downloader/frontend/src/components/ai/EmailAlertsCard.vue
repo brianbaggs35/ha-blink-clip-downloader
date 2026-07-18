@@ -29,7 +29,7 @@ async function sendTestEmail() {
   <div class="card" style="padding: 1.2rem">
     <h3 style="margin-bottom: 0.8rem">Email Alerts</h3>
     <div v-if="!smtpConfigured" style="font-size: 0.82rem; color: var(--muted)">
-      No SMTP settings configured — set <code>smtp_host</code> and <code>smtp_recipients</code> in the add-on's
+      No SMTP settings configured — set the SMTP Host and Email Alert Recipients options in the add-on's
       <strong>Configuration</strong> tab to enable email alerts.
     </div>
     <div v-else>
@@ -37,7 +37,7 @@ async function sendTestEmail() {
         {{ sending ? '⏳ Sending…' : '✉️ Send Test Email' }}
       </button>
       <p style="font-size: 0.73rem; color: var(--muted); margin: 0.3rem 0 0">
-        Sends a one-off test email to verify SMTP settings, even if <code>smtp_enabled</code> is currently off.
+        Sends a one-off test email to verify SMTP settings, even if Enable Email Alerts is currently off.
       </p>
       <div
         v-if="result"

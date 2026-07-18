@@ -271,9 +271,9 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
     <p class="page-intro">
       Enroll household members so their clips can be recognized and treated as routine. An approved, recognized person
       can automatically clear a clip's suspicious flag — but only when no one else unrecognized or not-approved also
-      appears in the same clip. This is entirely optional: with face recognition off (the default, set via
-      <code>ai_face_recognition_enabled</code> in the add-on's Configuration tab), everything works exactly as it does
-      without it — nothing here is required.
+      appears in the same clip. This is entirely optional: with face recognition off (the default — the Enable Local
+      Face Recognition option in the add-on's Configuration tab), everything works exactly as it does without it —
+      nothing here is required.
     </p>
 
     <Message severity="info" size="small" :closable="false" class="privacy-banner">

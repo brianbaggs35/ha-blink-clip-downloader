@@ -38,10 +38,10 @@ defineProps<{ provider?: string; showEscalationNote: boolean }>()
       OpenAI charges per token. Input and output tokens are tracked from the API response for every analysis.
     </p>
     <p v-if="showEscalationNote">
-      Two-tier escalation (<code>ai_escalation_provider</code> / <code>ai_escalation_model</code>) works with any
-      provider as tier 2, including a different one than tier 1 — e.g. a fast OpenAI model escalating to Moondream Cloud
-      or Claude for a closer second look. When configured, tier-1 and escalation tokens/cost are tracked and priced
-      separately (see the escalation row in the table below).
+      Two-tier escalation (the AI Escalation Provider / AI Escalation Model options) works with any provider as tier 2,
+      including a different one than tier 1 — e.g. a fast OpenAI model escalating to Moondream Cloud or Claude for a
+      closer second look. When configured, tier-1 and escalation tokens/cost are tracked and priced separately (see the
+      escalation row in the table below).
     </p>
   </div>
 </template>

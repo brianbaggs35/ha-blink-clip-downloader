@@ -133,7 +133,7 @@ describe('UsagePage', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Escalations')
     expect(wrapper.text()).toContain('Escalation Tokens')
-    expect(wrapper.text()).toContain('ai_escalation_provider')
+    expect(wrapper.text()).toContain('AI Escalation Provider')
     wrapper.unmount()
   })
 
