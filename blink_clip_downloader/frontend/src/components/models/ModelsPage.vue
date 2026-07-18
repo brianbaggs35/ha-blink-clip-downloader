@@ -6,6 +6,10 @@ interface ProviderInfo {
   configFields: string[]
   notes: string[]
   link: { href: string; label: string }
+  // Local providers have no pricing to link to — a docs link takes that
+  // button's place instead. 'kind' picks the icon/label in the template
+  // rather than baking them into each entry, so all six stay consistent.
+  secondaryLink: { href: string; kind: 'pricing' | 'docs' }
 }
 
 const PROVIDERS: ProviderInfo[] = [
@@ -22,6 +26,7 @@ const PROVIDERS: ProviderInfo[] = [
       'Use "Fetch Models" on the AI tab to browse available models — only vision-capable models are shown, text-only models are filtered out.',
     ],
     link: { href: 'https://ollama.com/library', label: 'Browse Ollama models' },
+    secondaryLink: { href: 'https://docs.ollama.com/', kind: 'docs' },
   },
   {
     key: 'ollama_cloud',
@@ -35,6 +40,7 @@ const PROVIDERS: ProviderInfo[] = [
     ],
     notes: [],
     link: { href: 'https://api.ollama.com', label: 'api.ollama.com' },
+    secondaryLink: { href: 'https://ollama.com/pricing', kind: 'pricing' },
   },
   {
     key: 'moondream_cloud',
@@ -44,6 +50,7 @@ const PROVIDERS: ProviderInfo[] = [
     configFields: ['moondream_api_key — API key from moondream.ai'],
     notes: ['Also supports fine-tuning — see the Fine-Tuning card on the AI tab (only shown for this provider).'],
     link: { href: 'https://docs.moondream.ai/api', label: 'Moondream Cloud API docs' },
+    secondaryLink: { href: 'https://docs.moondream.ai/pricing/', kind: 'pricing' },
   },
   {
     key: 'moondream_local',
@@ -54,6 +61,7 @@ const PROVIDERS: ProviderInfo[] = [
       "Hardware note: on-device inference requires an NVIDIA CUDA or Apple Silicon GPU — pure-CPU inference is not offered by the moondream package's 1.x line. Most Home Assistant OS hosts have no GPU passed through to the add-on container, so this provider reports itself unavailable on them (both amd64 and aarch64). Use moondream_cloud or ollama instead if that applies to you.",
     ],
     link: { href: 'https://moondream.ai', label: 'moondream.ai' },
+    secondaryLink: { href: 'https://docs.moondream.ai/running-locally/', kind: 'docs' },
   },
   {
     key: 'anthropic',
@@ -67,6 +75,7 @@ const PROVIDERS: ProviderInfo[] = [
       'Claude models receive a dedicated system prompt that separates role/format instructions from user content, improving JSON compliance. claude-haiku-4-5 is the default as the most cost-effective option.',
     ],
     link: { href: 'https://console.anthropic.com', label: 'console.anthropic.com' },
+    secondaryLink: { href: 'https://platform.claude.com/docs/en/about-claude/pricing', kind: 'pricing' },
   },
   {
     key: 'openai',
@@ -81,6 +90,7 @@ const PROVIDERS: ProviderInfo[] = [
       'GPT models use response_format: json_object to guarantee valid JSON output, and "high" image detail for better scene analysis. The o1/o3/o4-mini reasoning models and the entire GPT-5 family use max_completion_tokens instead of the legacy max_tokens parameter — handled automatically based on the model name.',
     ],
     link: { href: 'https://platform.openai.com', label: 'platform.openai.com' },
+    secondaryLink: { href: 'https://developers.openai.com/api/docs/pricing', kind: 'pricing' },
   },
 ]
 </script>
@@ -121,7 +131,12 @@ const PROVIDERS: ProviderInfo[] = [
         >
           {{ note }}
         </p>
-        <a :href="p.link.href" target="_blank" rel="noopener" class="btn sm ghost">↗ {{ p.link.label }}</a>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
+          <a :href="p.link.href" target="_blank" rel="noopener" class="btn sm ghost">↗ {{ p.link.label }}</a>
+          <a :href="p.secondaryLink.href" target="_blank" rel="noopener" class="btn sm ghost">
+            {{ p.secondaryLink.kind === 'pricing' ? '💲 Pricing' : '📖 Documentation' }}
+          </a>
+        </div>
       </div>
     </div>
 
