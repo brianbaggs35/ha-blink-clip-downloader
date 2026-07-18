@@ -6,6 +6,7 @@ import logging
 import zipfile
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from .database import ClipDatabase
 
@@ -31,14 +32,14 @@ class ClipArchiver:
         self._archive_after = archive_after_days
         self._enabled = enabled
 
-    async def run(self) -> int:
-        """Archive clips older than *archive_after_days*. Returns archived count."""
+    async def run(self) -> list[dict[str, Any]]:
+        """Archive clips older than *archive_after_days*. Returns the archived clips."""
         if not self._enabled:
-            return 0
+            return []
 
         clips = await self._db.get_clips_to_archive(self._archive_after)
         if not clips:
-            return 0
+            return []
 
         _LOGGER.info(
             "Archiving %d clip(s) older than %d days", len(clips), self._archive_after
@@ -51,20 +52,20 @@ class ClipArchiver:
             month = str(clip.get("timestamp", ""))[:7] or "unknown"
             by_month[month].append(clip)
 
-        archived_count = 0
+        archived: list[dict[str, Any]] = []
         for month, month_clips in by_month.items():
-            archived_count += await self._archive_month(month, month_clips)
+            archived.extend(await self._archive_month(month, month_clips))
 
-        _LOGGER.info("Archive run complete: %d file(s) archived", archived_count)
-        return archived_count
+        _LOGGER.info("Archive run complete: %d file(s) archived", len(archived))
+        return archived
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    async def _archive_month(self, month: str, clips: list[dict]) -> int:
+    async def _archive_month(self, month: str, clips: list[dict]) -> list[dict[str, Any]]:
         zip_path = self._archive_dir / f"blink_archive_{month}.zip"
-        archived = 0
+        archived: list[dict[str, Any]] = []
 
         for clip in clips:
             src = Path(str(clip.get("file_path", "")))
@@ -75,7 +76,7 @@ class ClipArchiver:
                 # archive run retry it.
                 try:
                     await self._db.mark_archived(str(clip["id"]), str(zip_path))
-                    archived += 1
+                    archived.append(clip)
                 except Exception as exc:  # noqa: BLE001
                     _LOGGER.warning(
                         "Could not mark already-missing clip %s as archived: %s",
@@ -129,7 +130,7 @@ class ClipArchiver:
                 )
                 continue
 
-            archived += 1
+            archived.append(clip)
             _LOGGER.debug("Archived %s → %s", src.name, zip_path.name)
 
         return archived

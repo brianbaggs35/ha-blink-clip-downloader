@@ -103,6 +103,19 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     archive_enabled: bool = False
     archive_after_days: int = 60
 
+    # --- Google Drive backup ---
+    # Backs up clips to Google Drive via OAuth device flow — HA ingress gives
+    # this add-on no fixed, pre-registerable redirect URL, so a standard
+    # redirect-based OAuth sign-in isn't viable here (see gdrive_client.py).
+    # Everything else about this feature (OAuth client id/secret, connect/
+    # disconnect, backup policy, folder choice) is configured entirely from
+    # the Storage tab, not here — see google_drive_settings.json/
+    # google_drive_credentials.json — these two are the only knobs that stay
+    # config.yaml options, matching ai_batch_size/ai_check_interval's
+    # precedent for background-queue tuning.
+    gdrive_batch_size: int = 5
+    gdrive_check_interval: int = 300
+
     # --- Sync Module local storage (USB drive clips) ---
     # When True, each poll cycle also downloads clips stored on the physical
     # USB drive attached to the Blink Sync Module.  Blink's API does not
@@ -526,6 +539,15 @@ def _parse_digest_archive_kwargs(data: dict) -> dict[str, Any]:
     }
 
 
+def _parse_gdrive_kwargs(data: dict) -> dict[str, Any]:
+    return {
+        "gdrive_batch_size": max(1, min(int(data.get("gdrive_batch_size", 5)), 50)),
+        "gdrive_check_interval": max(
+            30, min(int(data.get("gdrive_check_interval", 300)), 3600)
+        ),
+    }
+
+
 def _parse_ai_frame_strategy(data: dict) -> str:
     strategy = str(data.get("ai_frame_strategy", "smart") or "smart").strip().lower()
     return strategy if strategy in {"smart", "sequential", "uniform"} else "smart"
@@ -695,6 +717,7 @@ def _parse_config(data: dict) -> AppConfig:
     kwargs.update(_parse_notification_kwargs(data))
     kwargs.update(_parse_media_server_kwargs(data))
     kwargs.update(_parse_digest_archive_kwargs(data))
+    kwargs.update(_parse_gdrive_kwargs(data))
     kwargs.update(
         _parse_ai_kwargs(
             data,

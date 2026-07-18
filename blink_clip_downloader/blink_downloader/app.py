@@ -26,6 +26,8 @@ from .downloader import (
     probe_clip_duration,
 )
 from .event_watcher import HAEventWatcher
+from .gdrive_client import GDriveClient
+from .gdrive_queue import GDriveUploadQueue
 from .library_scanner import import_existing_clips
 from .manifest import ClipManifest
 from .media_server import MediaServer
@@ -105,6 +107,25 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             enabled=config.archive_enabled,
         )
 
+        # --- Google Drive backup (optional) ---
+        # Constructed unconditionally (no config-level enable flag) — there
+        # is nothing to gate at construction time: client_id/secret, backup
+        # policy, and the connected account itself are all set later from
+        # the Storage tab, not config.yaml (see gdrive_client.py). Until
+        # then GDriveClient.connected is False and GDriveUploadQueue's loop
+        # harmlessly idles, the same way AnalysisQueue idles when nothing is
+        # queued — this also means clips archived before the user ever
+        # connects Drive still get enqueued (see _poll_cycle below) and are
+        # picked up automatically the moment they do connect.
+        self._gdrive_client = GDriveClient()
+        self._gdrive_queue = GDriveUploadQueue(
+            client=self._gdrive_client,
+            db=self._db,
+            notifier=self._notifier,
+            batch_size=config.gdrive_batch_size,
+            check_interval=config.gdrive_check_interval,
+        )
+
         # --- AI Analysis (optional) ---
         self._analyzer: BaseAnalyzer | None = None
         self._analysis_queue: AnalysisQueue | None = None
@@ -144,6 +165,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             analyzer=self._analyzer,
             analysis_queue=self._analysis_queue,
             notification_dispatcher=self._alert_dispatcher,
+            gdrive_client=self._gdrive_client,
+            gdrive_queue=self._gdrive_queue,
             moondream_api_key=config.moondream_api_key,
             prompt_debug_enabled=config.ai_prompt_debug_enabled,
         )
@@ -429,6 +452,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     self._backfill_clip_durations(), name="duration_backfill"
                 )
             )
+            # Started unconditionally alongside the tasks above, not gated
+            # behind Blink auth like AnalysisQueue (_finish_startup below) —
+            # Drive backup only needs already-downloaded clips and the DB,
+            # not a live Blink session.
+            self._bg_tasks.append(
+                asyncio.create_task(self._gdrive_queue.start(), name="gdrive_queue")
+            )
 
         # ── Configuration error mode ─────────────────────────────────────────
         # options.json was missing or invalid.  Show the error on the Status
@@ -660,7 +690,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         archived = await self._archiver.run()
         if archived:
-            _LOGGER.info("Archiver compressed %d clip(s)", archived)
+            _LOGGER.info("Archiver compressed %d clip(s)", len(archived))
+            # Always enqueue — both backup policies cover archived clips (the
+            # policy only affects whether *regular* clips also get backed
+            # up, see _handle_downloaded_clip). Enqueueing doesn't require
+            # Drive to be connected yet: rows sit "pending" until the user
+            # eventually connects, so nothing archived is ever missed.
+            for clip in archived:
+                await self._gdrive_queue.enqueue(clip)
 
         if self._storage.is_over_quota():
             msg = (
@@ -792,6 +829,16 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # normally, just not queued for (paid) AI analysis.
         if analyze and self._analysis_queue:
             await self._analysis_queue.enqueue(clip)
+
+        # Regular (not-yet-archived) clips only get backed up under the
+        # "all_clips" policy — "archived_only" clips are enqueued later by
+        # _poll_cycle once archiver.py compresses them. Deliberately *not*
+        # gated on `analyze`/the AI burst limiter above — that gate exists
+        # to cap paid, per-token AI usage, which doesn't apply to Drive
+        # uploads, so reusing it would silently skip legitimate backlog
+        # clips from ever being backed up.
+        if self._gdrive_client.backup_policy == "all_clips":
+            await self._gdrive_queue.enqueue(clip)
 
         # Record clip in behavior baseline so anomaly scoring improves over time.
         # This runs regardless of whether AI analysis is enabled.
@@ -989,6 +1036,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         await self._shutdown_step("media_server.stop", self._media_server.stop())
         await self._shutdown_step("event_watcher.stop", self._event_watcher.stop())
+        self._gdrive_queue.stop()
+        await self._shutdown_step("gdrive_client.close", self._gdrive_client.close())
         if self._analysis_queue:
             self._analysis_queue.stop()
         if self._analyzer:

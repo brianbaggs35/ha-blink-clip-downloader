@@ -11,6 +11,7 @@ import math
 import platform
 import re
 import sys
+import time
 import zipfile
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +25,8 @@ from .vision import FaceEmbedder, is_face_recognition_available, torch_cpu_compa
 if TYPE_CHECKING:
     from .analysis_queue import AnalysisQueue
     from .analyzer import BaseAnalyzer, MoondreamFineTuneManager
+    from .gdrive_client import GDriveClient
+    from .gdrive_queue import GDriveUploadQueue
     from .notification_channels import NotificationDispatcher
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,6 +60,15 @@ _MOONDREAM_PACKAGES_DIR = Path("/data/moondream_packages")
 _MOONDREAM_PIP_SPEC = "moondream>=1.3,<2"
 
 _moondream_install_state: dict = {"status": "idle", "log": ""}
+
+# ---------------------------------------------------------------------------
+# Google Drive device-flow connect state (persists for the lifetime of the
+# process) — same module-level shared-state pattern as the moondream install
+# state above, since both are "kick off a background task, poll a status
+# endpoint for its progress" flows.
+# ---------------------------------------------------------------------------
+
+_gdrive_connect_state: dict = {"phase": "idle"}
 
 
 def _moondream_arch_supported() -> bool:
@@ -146,6 +158,8 @@ class MediaServer:
         analyzer: BaseAnalyzer | None = None,
         analysis_queue: AnalysisQueue | None = None,
         notification_dispatcher: NotificationDispatcher | None = None,
+        gdrive_client: GDriveClient | None = None,
+        gdrive_queue: GDriveUploadQueue | None = None,
         moondream_api_key: str = "",
         prompt_debug_enabled: bool = False,
     ) -> None:
@@ -157,6 +171,8 @@ class MediaServer:
         self._analyzer = analyzer
         self._analysis_queue = analysis_queue
         self._notification_dispatcher = notification_dispatcher
+        self._gdrive_client = gdrive_client
+        self._gdrive_queue = gdrive_queue
         # Used only to stand up a MoondreamFineTuneManager for the Fine-Tuning
         # API/panel when provider == "moondream_cloud" — see _handle_finetune_*.
         self._moondream_api_key = moondream_api_key
@@ -177,6 +193,8 @@ class MediaServer:
         # asyncio only keeps a weak reference internally, so an unreferenced
         # task can be garbage-collected mid-install.
         self._moondream_install_task: asyncio.Task | None = None
+        # Same reasoning, for the Google Drive device-flow poll task.
+        self._gdrive_connect_task: asyncio.Task | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -319,6 +337,36 @@ class MediaServer:
         app.router.add_get(
             "/api/ai/feedback/untrained-count", self._handle_feedback_untrained_count
         )
+
+        # Storage tab: archived clips + Google Drive backup
+        app.router.add_get(
+            "/api/storage/gdrive/settings", self._handle_gdrive_settings_get
+        )
+        app.router.add_put(
+            "/api/storage/gdrive/settings", self._handle_gdrive_settings_put
+        )
+        app.router.add_get("/api/storage/gdrive/status", self._handle_gdrive_status)
+        app.router.add_post("/api/storage/gdrive/connect", self._handle_gdrive_connect)
+        app.router.add_get(
+            "/api/storage/gdrive/connect-status", self._handle_gdrive_connect_status
+        )
+        app.router.add_post(
+            "/api/storage/gdrive/disconnect", self._handle_gdrive_disconnect
+        )
+        app.router.add_get("/api/storage/gdrive/quota", self._handle_gdrive_quota)
+        app.router.add_get("/api/storage/gdrive/queue", self._handle_gdrive_queue)
+        app.router.add_get("/api/storage/gdrive/folders", self._handle_gdrive_folders)
+        app.router.add_post(
+            "/api/storage/gdrive/folders", self._handle_gdrive_create_folder
+        )
+        app.router.add_put(
+            "/api/storage/gdrive/folder", self._handle_gdrive_select_folder
+        )
+        app.router.add_post(
+            "/api/storage/gdrive/backup-now", self._handle_gdrive_backup_now
+        )
+        app.router.add_post("/api/storage/gdrive/upload", self._handle_gdrive_upload)
+
         app.router.add_post("/api/notifications/test-email", self._handle_test_email)
         app.router.add_post(
             "/api/notifications/test-discord", self._handle_test_discord
@@ -393,6 +441,7 @@ class MediaServer:
         starred = True if starred_raw == "1" else False if starred_raw == "0" else None
         notified_only = q.get("notified") == "1"
         recognized_only = q.get("recognized") == "1"
+        archived = q.get("archived") == "1"
         min_confidence = (
             self._analysis_queue.min_confidence if self._analysis_queue else 0.0
         )
@@ -405,6 +454,7 @@ class MediaServer:
             source=q.get("source") or None,
             tag=q.get("tag") or None,
             search=q.get("search") or None,
+            archived=archived,
             sort=q.get("sort") or "newest",
             limit=limit,
             offset=offset,
@@ -426,6 +476,25 @@ class MediaServer:
         clip = await self._db.get_clip(clip_id)
         if not clip:
             raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
+
+        gdrive_deleted: bool | None = None
+        if clip.get("gdrive_file_id") and self._gdrive_client:
+            # Trash the Drive copy first, in its own try/except — matches
+            # archiver.py's per-step resilience style (log-and-continue): a
+            # Drive failure here must not block the local/DB delete below,
+            # which proceeds regardless of whether this succeeded.
+            try:
+                gdrive_deleted = await self._gdrive_client.delete_file(
+                    clip["gdrive_file_id"]
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Could not remove Google Drive backup for clip %s: %s",
+                    clip_id,
+                    exc,
+                )
+                gdrive_deleted = False
+
         file_path = Path(clip["file_path"])
         if file_path.exists():
             try:
@@ -436,7 +505,7 @@ class MediaServer:
             except OSError as exc:
                 _LOGGER.warning("Could not delete file %s: %s", file_path, exc)
         await self._db.delete_clip(clip_id)
-        return web.json_response({"deleted": True})
+        return web.json_response({"deleted": True, "gdrive_deleted": gdrive_deleted})
 
     async def _handle_star_clip(self, request: web.Request) -> web.Response:
         clip_id = request.match_info["id"]
@@ -1436,6 +1505,287 @@ class MediaServer:
         # stable per camera, so a stale browser cache would otherwise keep
         # showing the previous zone's frame after a new save overwrites it.
         return web.FileResponse(snapshot_path, headers={"Cache-Control": "no-cache"})
+
+    # ------------------------------------------------------------------
+    # Storage tab: Google Drive backup
+    #
+    # Everything here (OAuth client id/secret, backup policy, connect
+    # account, choose folder) is driven entirely from the Storage tab, not
+    # config.yaml — see gdrive_client.py's SETTINGS_FILE/CREDENTIALS_FILE.
+    # ------------------------------------------------------------------
+
+    async def _handle_gdrive_settings_get(self, _request: web.Request) -> web.Response:
+        if self._gdrive_client is None:
+            return web.json_response(
+                {
+                    "client_id": "",
+                    "has_client_secret": False,
+                    "backup_policy": "archived_only",
+                }
+            )
+        return web.json_response(
+            {
+                "client_id": self._gdrive_client.client_id,
+                "has_client_secret": self._gdrive_client.has_client_secret,
+                "backup_policy": self._gdrive_client.backup_policy,
+            }
+        )
+
+    async def _handle_gdrive_settings_put(self, request: web.Request) -> web.Response:
+        if self._gdrive_client is None:
+            raise web.HTTPServiceUnavailable(
+                text="Google Drive backup is not available"
+            )
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+
+        client_id = str(body.get("client_id", "") or "")
+        # Omitted/empty client_secret means "keep the previously stored one"
+        # — see GDriveClient.set_settings — so re-saving just the backup
+        # policy doesn't force re-entering it every time.
+        client_secret = body.get("client_secret") or None
+        backup_policy = str(
+            body.get("backup_policy", "archived_only") or "archived_only"
+        )
+        self._gdrive_client.set_settings(
+            client_id, str(client_secret) if client_secret else None, backup_policy
+        )
+        return web.json_response({"saved": True})
+
+    async def _handle_gdrive_status(self, _request: web.Request) -> web.Response:
+        if self._gdrive_client is None:
+            return web.json_response(
+                {
+                    "configured": False,
+                    "connected": False,
+                    "account_email": "",
+                    "folder_id": "",
+                    "folder_name": "",
+                }
+            )
+        return web.json_response(
+            {
+                "configured": self._gdrive_client.is_configured,
+                "connected": self._gdrive_client.connected,
+                "account_email": self._gdrive_client.account_email,
+                "folder_id": self._gdrive_client.folder_id,
+                "folder_name": self._gdrive_client.folder_name,
+            }
+        )
+
+    async def _handle_gdrive_connect(self, _request: web.Request) -> web.Response:
+        global _gdrive_connect_state  # noqa: PLW0603
+        if self._gdrive_client is None:
+            raise web.HTTPServiceUnavailable(
+                text="Google Drive backup is not available"
+            )
+        if not self._gdrive_client.is_configured:
+            raise web.HTTPBadRequest(
+                text="Set a Google OAuth client ID and secret first"
+            )
+        if _gdrive_connect_state.get("phase") == "pending":
+            # Already connecting — return the in-flight code rather than
+            # starting a second device flow, which would invalidate the
+            # code the user may already be looking at (mirrors
+            # _handle_moondream_install's "already installing" branch).
+            return web.json_response(_gdrive_connect_state)
+
+        info = await self._gdrive_client.start_device_flow()
+        if info is None:
+            raise web.HTTPBadGateway(text="Could not start Google sign-in")
+
+        _gdrive_connect_state = {
+            "phase": "pending",
+            "user_code": info.user_code,
+            "verification_url": info.verification_url,
+            "expires_in": info.expires_in,
+        }
+
+        async def _poll() -> None:
+            global _gdrive_connect_state  # noqa: PLW0603
+            assert self._gdrive_client is not None
+            deadline = time.monotonic() + info.expires_in
+            interval = max(1, info.interval)
+            while time.monotonic() < deadline:
+                await asyncio.sleep(interval)
+                result = await self._gdrive_client.poll_once_for_token(info.device_code)
+                if result.status == "success":
+                    _gdrive_connect_state = {
+                        "phase": "connected",
+                        "account_email": self._gdrive_client.account_email,
+                    }
+                    return
+                if result.status == "slow_down":
+                    interval += 5
+                    continue
+                if result.status == "expired":
+                    _gdrive_connect_state = {"phase": "expired"}
+                    return
+                if result.status == "denied":
+                    _gdrive_connect_state = {
+                        "phase": "error",
+                        "message": "Sign-in was denied",
+                    }
+                    return
+                if result.status == "error":
+                    _gdrive_connect_state = {
+                        "phase": "error",
+                        "message": result.message or "Sign-in failed",
+                    }
+                    return
+                # "pending" — keep polling until the deadline above.
+            _gdrive_connect_state = {"phase": "expired"}
+
+        self._gdrive_connect_task = asyncio.create_task(_poll())
+        return web.json_response(_gdrive_connect_state)
+
+    async def _handle_gdrive_connect_status(
+        self, _request: web.Request
+    ) -> web.Response:
+        return web.json_response(_gdrive_connect_state)
+
+    async def _handle_gdrive_disconnect(self, _request: web.Request) -> web.Response:
+        global _gdrive_connect_state  # noqa: PLW0603
+        if self._gdrive_client is None:
+            raise web.HTTPServiceUnavailable(
+                text="Google Drive backup is not available"
+            )
+        await self._gdrive_client.disconnect()
+        _gdrive_connect_state = {"phase": "idle"}
+        return web.json_response({"disconnected": True})
+
+    async def _handle_gdrive_quota(self, _request: web.Request) -> web.Response:
+        if self._gdrive_client is None or not self._gdrive_client.connected:
+            return web.json_response({"available": False})
+        quota = await self._gdrive_client.get_quota()
+        if quota is None:
+            return web.json_response({"available": False})
+        return web.json_response(
+            {
+                "available": True,
+                "limit": quota.limit,
+                "usage": quota.usage,
+                "usage_in_drive": quota.usage_in_drive,
+            }
+        )
+
+    async def _handle_gdrive_queue(self, _request: web.Request) -> web.Response:
+        if self._gdrive_queue is None:
+            return web.json_response(
+                {
+                    "connected": False,
+                    "pending": 0,
+                    "processing": 0,
+                    "completed": 0,
+                    "failed": 0,
+                }
+            )
+        return web.json_response(await self._gdrive_queue.get_queue_status())
+
+    async def _handle_gdrive_folders(self, request: web.Request) -> web.Response:
+        """List folders directly inside ?parent_id= (default: Drive root).
+
+        Only ever returns folders, never files of any type — the folder
+        browser this powers is navigation for choosing a backup destination,
+        not a general file browser, so there's nothing here a user could
+        interact with beyond picking/creating a folder.
+        """
+        if self._gdrive_client is None:
+            return web.json_response({"folders": []})
+        parent_id = request.rel_url.query.get("parent_id") or "root"
+        folders = await self._gdrive_client.list_folders(parent_id)
+        return web.json_response(
+            {
+                "folders": [
+                    {"id": f.id, "name": f.name, "modified_time": f.modified_time}
+                    for f in folders
+                ]
+            }
+        )
+
+    async def _handle_gdrive_create_folder(self, request: web.Request) -> web.Response:
+        if self._gdrive_client is None:
+            raise web.HTTPServiceUnavailable(
+                text="Google Drive backup is not available"
+            )
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+        name = str(body.get("name", "") or "").strip()
+        if not name:
+            raise web.HTTPBadRequest(text="Folder name is required")
+        parent_id = str(body.get("parent_id") or "root")
+
+        folder = await self._gdrive_client.create_folder(name, parent_id)
+        if folder is None:
+            raise web.HTTPBadGateway(text="Could not create Google Drive folder")
+        return web.json_response(
+            {
+                "id": folder.id,
+                "name": folder.name,
+                "modified_time": folder.modified_time,
+            }
+        )
+
+    async def _handle_gdrive_select_folder(self, request: web.Request) -> web.Response:
+        """Set the default folder used for automatic archived/all_clips backups."""
+        if self._gdrive_client is None:
+            raise web.HTTPServiceUnavailable(
+                text="Google Drive backup is not available"
+            )
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+        folder_id = str(body.get("folder_id", "") or "")
+        if not folder_id:
+            raise web.HTTPBadRequest(text="folder_id is required")
+        folder_name = str(body.get("folder_name", "") or "")
+        self._gdrive_client.select_folder(folder_id, folder_name)
+        return web.json_response({"saved": True})
+
+    async def _handle_gdrive_backup_now(self, _request: web.Request) -> web.Response:
+        """Enqueue every not-yet-backed-up eligible clip.
+
+        Without this, connecting Drive for the first time would silently
+        only cover clips downloaded/archived from that moment forward.
+        """
+        if self._gdrive_client is None or self._gdrive_queue is None:
+            raise web.HTTPServiceUnavailable(
+                text="Google Drive backup is not available"
+            )
+        include_unarchived = self._gdrive_client.backup_policy == "all_clips"
+        pending = await self._db.get_clips_pending_gdrive_backup(include_unarchived)
+        for clip in pending:
+            await self._gdrive_queue.enqueue(clip)
+        return web.json_response({"enqueued": len(pending)})
+
+    async def _handle_gdrive_upload(self, request: web.Request) -> web.Response:
+        """Manual upload of specific clips (Library's "Upload to Drive" bulk
+        action), optionally targeting a folder other than the default."""
+        if self._gdrive_client is None or self._gdrive_queue is None:
+            raise web.HTTPServiceUnavailable(
+                text="Google Drive backup is not available"
+            )
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+        clip_ids = body.get("clip_ids")
+        if not isinstance(clip_ids, list) or not clip_ids:
+            raise web.HTTPBadRequest(text="clip_ids must be a non-empty list")
+        folder_id = str(body.get("folder_id") or "")
+
+        enqueued = 0
+        for clip_id in clip_ids:
+            clip = await self._db.get_clip(str(clip_id))
+            if clip:
+                await self._gdrive_queue.enqueue(clip, folder_id=folder_id)
+                enqueued += 1
+        return web.json_response({"enqueued": enqueued})
 
     # ------------------------------------------------------------------
     # Adaptive learning (human feedback on AI verdicts)

@@ -155,6 +155,14 @@ configuration:
     description: >-
       Clips older than this many days are compressed into a ZIP archive (only
       when archiving is enabled).
+  gdrive_batch_size:
+    name: Google Drive Upload Batch Size
+    description: >-
+      Maximum clips uploaded to Google Drive per check cycle.
+  gdrive_check_interval:
+    name: Google Drive Check Interval (seconds)
+    description: >-
+      How often the upload queue checks for pending clips to back up.
   download_local_storage:
     name: Download Sync Module Local Storage
     description: >-

@@ -157,7 +157,13 @@ async def test_poll_cycle_retention_removes_orphaned_db_rows(app):
 
 
 async def test_poll_cycle_logs_when_archiver_compresses_clips(app):
-    app._archiver.run = AsyncMock(return_value=3)
+    app._archiver.run = AsyncMock(
+        return_value=[
+            {"id": "c1", "camera": "Cam", "path": "/share/blink-clips/c1.mp4"},
+            {"id": "c2", "camera": "Cam", "path": "/share/blink-clips/c2.mp4"},
+            {"id": "c3", "camera": "Cam", "path": "/share/blink-clips/c3.mp4"},
+        ]
+    )
     await app._poll_cycle()
     app._archiver.run.assert_awaited_once()
 
