@@ -81,9 +81,13 @@ jobs:
             BUILD_ARCH=${{ matrix.arch }}
             BUILD_VERSION=${{ steps.tags.outputs.version }}
 
-          # GitHub Actions BuildKit cache
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # GitHub Actions BuildKit cache — scoped per architecture since
+          # both matrix legs run in parallel and would otherwise share the
+          # same default scope, letting one job's cache-to contend with
+          # (and undermine) the other's, which defeats the point for the
+          # slow, emulated aarch64 leg specifically.
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
   manifest:
     name: Create multi-arch manifest
