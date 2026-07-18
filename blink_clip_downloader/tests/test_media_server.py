@@ -1300,7 +1300,10 @@ async def test_ai_usage_daily_totals_for_today(
 
     assert len(data["daily"]) == 1
     row = data["daily"][0]
-    assert row["day"] == datetime.now(timezone.utc).date().isoformat()
+    # Bucketed by local calendar day (see database._local_utc_offset_sql),
+    # not the UTC date — this host's real UTC offset makes the two diverge
+    # for part of each day, which is exactly the bug this asserts against.
+    assert row["day"] == datetime.now(timezone.utc).astimezone().date().isoformat()
     assert row["analyses"] == 1
     assert row["tokens_total"] == 2_000_000
     assert row["cost"] == pytest.approx(0.15 + 0.60)
