@@ -83,7 +83,7 @@ watch(() => refresh.tick, load)
       </div>
       <div v-if="stats?.last_download" class="status-row">
         <span class="lbl">Last download</span>
-        <span class="val">{{ fmtTs(stats.last_download) }}</span>
+        <span class="val wrap">{{ fmtTs(stats.last_download) }}</span>
       </div>
     </div>
 

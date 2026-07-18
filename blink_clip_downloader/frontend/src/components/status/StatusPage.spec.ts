@@ -89,6 +89,13 @@ describe('StatusPage', () => {
     expect(wrapper.text()).toContain('Online')
   })
 
+  it('lets the Last download value wrap instead of truncating it with an ellipsis', async () => {
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    const lastDownloadRow = wrapper.findAll('.status-row').find((r) => r.text().startsWith('Last download'))!
+    expect(lastDownloadRow.find('.val').classes()).toContain('wrap')
+  })
+
   it('reports connectivity to the shared connection store', async () => {
     const wrapper = mount(StatusPage)
     await flushPromises()
