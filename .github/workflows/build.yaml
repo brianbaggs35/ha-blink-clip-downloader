@@ -57,12 +57,12 @@ jobs:
           VERSION=$(grep '^version:' \
             blink_clip_downloader/config.yaml | \
             awk '{print $2}' | tr -d '"')
-          # Docker/OCI image names must be all-lowercase; github.repository_owner
-          # preserves the account's actual casing (e.g. "BrianBaggs"), which
-          # docker/build-push-action's tag validation rejects outright.
+
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+
           TAG_VER="${{ env.REGISTRY }}/${OWNER}/${{ env.IMAGE_NAME }}"
           TAG_VER="${TAG_VER}:${VERSION}-${{ matrix.arch }}"
+
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag_version=${TAG_VER}" >> $GITHUB_OUTPUT
 
@@ -73,11 +73,17 @@ jobs:
           file: blink_clip_downloader/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
+
           tags: |
             ${{ steps.tags.outputs.tag_version }}
+
           build-args: |
             BUILD_ARCH=${{ matrix.arch }}
             BUILD_VERSION=${{ steps.tags.outputs.version }}
+
+          # GitHub Actions BuildKit cache
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   manifest:
     name: Create multi-arch manifest
@@ -100,21 +106,20 @@ jobs:
       - name: Create and push multi-arch manifest
         run: |
           VERSION=${{ needs.build.outputs.version }}
+
           REGISTRY=${{ env.REGISTRY }}
-          # Must match the lowercasing done in the build job's "Set image
-          # tags" step above — this job references the same tags that job
-          # pushed, so both need the identical lowercased owner.
+
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+
           IMAGE=${{ env.IMAGE_NAME }}
+
           IMAGE_BASE="${REGISTRY}/${OWNER}/${IMAGE}"
 
-          # Create versioned manifest (combining amd64 and aarch64)
           docker buildx imagetools create \
             -t ${IMAGE_BASE}:${VERSION} \
             ${IMAGE_BASE}:${VERSION}-amd64 \
             ${IMAGE_BASE}:${VERSION}-aarch64
 
-          # Create latest manifest pointing to current version
           docker buildx imagetools create \
             -t ${IMAGE_BASE}:latest \
             ${IMAGE_BASE}:${VERSION}-amd64 \
