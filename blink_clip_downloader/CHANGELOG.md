@@ -1,5 +1,85 @@
 # Changelog
 
+## 5.0.2
+
+### Bug fixes
+
+- **The suspicious-feedback checkbox always proposed "should have been
+  flagged suspicious," even for a clip that was already flagged
+  suspicious.** Marking a suspicious clip's verdict incorrect and checking
+  the corrected-verdict box submitted `corrected_suspicious: true` — i.e.
+  "yes, still suspicious," which isn't a correction at all. The checkbox's
+  label and the value it submits now flip with the clip's current verdict:
+  "Should not have been flagged suspicious" when it currently is, "Should
+  have been flagged suspicious instead" when it currently isn't.
+- **"Today"/daily stats used the UTC calendar day instead of the
+  household's actual timezone.** `get_stats()`, `get_camera_stats()`,
+  `get_analysis_stats()`, `get_activity_data()`, and `get_daily_usage_stats()`
+  all bucketed by comparing UTC-stored clip timestamps against a UTC
+  calendar date — since the bundled PostgreSQL session is deliberately
+  pinned to UTC, evenings in any timezone behind UTC (and mornings in any
+  timezone ahead of it) got attributed to the wrong day. Most visibly, the
+  Status tab's Activity chart and Clip Library "Today" count could roll
+  over to "tomorrow" hours before local midnight. Both now resolve "today"
+  against the system's actual configured timezone (the same one HA
+  Supervisor gives the container), matching how clip timestamps already
+  display correctly elsewhere in the UI.
+- **Clicking "Send test notification" for the mobile app (or any of the
+  other three test-notification buttons) surfaced a generic, unhelpful
+  "check the add-on logs" error instead of the actual reason.** The
+  `/api/notifications/test-*` endpoints returned HTTP 400 on a failed
+  send, but the frontend's fetch wrapper throws on any non-2xx response
+  before it ever reads the response body — so the specific message the
+  backend went to the trouble of returning (e.g. "Mobile app target is not
+  configured") never reached the toast. These are UI-only "try it and
+  report the outcome" actions, not request-validation boundaries, so they
+  now always return 200 and let the existing `success`/`message` body
+  fields carry the result.
+- **The Status tab's Blink Connection card truncated the Last download
+  date/time with an ellipsis** even though there was room to wrap it onto
+  a second line. Fixed for that row specifically, without changing the
+  truncation behavior of other, shorter status values.
+- **AI Usage tab stat tiles were in a confusing order** (Total Tokens
+  ahead of the Prompt/Completion tokens that sum to it) **and left two
+  tiles' worth of empty space** in the row Estimated Cost was stranded
+  alone in. Reordered to a more sensible top row (Clips Analyzed / Total
+  Tokens / Estimated Cost) and filled the previously-empty slots with two
+  new derived stats — Avg. Cost / Clip and Models Used — computed from
+  data the usage payload already includes, no new tracking added.
+- **Several places still referenced raw config option keys** (e.g. a
+  Biometrics tab banner reading "...set via `ai_face_recognition_enabled`
+  in the add-on's Configuration tab...") **instead of the human-readable
+  names those options actually show as in that tab.** Swept the Biometrics,
+  Models, AI, and AI Usage tabs and replaced every such reference with its
+  proper name from the add-on's own translations (e.g.
+  `ai_face_recognition_enabled` → "Enable Local Face Recognition").
+
+### Added
+
+- **A clip's AI-verdict feedback (Correct/Incorrect) can now be cleared**,
+  not just changed to the other verdict — a "Clear" button next to
+  "Change" fully retracts it via the DELETE feedback endpoint that already
+  existed but had no UI hooked up to it.
+- **"Report a missed face match" now asks who was missed** when more than
+  one person is enrolled (auto-attaching the name when there's exactly
+  one), and "Wrong match" now records who the bad bypass actually matched.
+  Stored alongside the existing report and shown on the Biometrics
+  activity card — still a pure audit trail for a person to review and act
+  on (e.g. re-enrolling someone with clearer photos), deliberately **not**
+  fed into automatic face-match threshold adjustments, for the same safety
+  reasons the suspicious-flag bypass itself is all-or-nothing (see
+  `CLAUDE.md`/`database.py`'s `face_recognition_feedback` schema comment).
+- **Tag entry now offers a typeahead dropdown of every tag already in
+  use** instead of requiring the exact spelling to be retyped on every
+  clip — click the "Add tag" box to see the full list, keep typing to
+  filter it, and either pick a suggestion or finish typing a new tag. The
+  list is the same one the Library filter dropdown already keeps fresh,
+  so it stays current as tags are added or removed anywhere in the app.
+- **The Models tab now links to a pricing page for each paid/cloud
+  provider** (OpenAI, Anthropic, Moondream Cloud, Ollama Cloud) **and a
+  documentation page for each free local one** (Ollama, Moondream Local),
+  alongside each provider's existing reference link.
+
 ## 5.0.1
 
 ### Bug fixes
