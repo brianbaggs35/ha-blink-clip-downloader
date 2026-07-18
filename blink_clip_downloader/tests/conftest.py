@@ -27,6 +27,7 @@ TEST_DB_DSN = os.environ.get(
 # deterministic; CASCADE follows FK references (e.g. clips -> analysis_results).
 _ALL_TABLES = (
     "clips, analysis_results, ai_usage_reset, analysis_queue, "
+    "gdrive_upload_queue, "
     "camera_baselines, camera_duration_stats, camera_scene_baselines, "
     "analysis_feedback, face_enrollments"
 )

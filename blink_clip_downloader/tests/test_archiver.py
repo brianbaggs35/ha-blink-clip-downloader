@@ -41,7 +41,7 @@ def _old_ts(days: int = 60) -> str:
 async def test_run_disabled_returns_zero(tmp_path: Path) -> None:
     archiver, db = _make_archiver(tmp_path, clips=[{"id": "c1"}], enabled=False)
     result = await archiver.run()
-    assert result == 0
+    assert result == []
     db.get_clips_to_archive.assert_not_awaited()
 
 
@@ -53,7 +53,7 @@ async def test_run_disabled_returns_zero(tmp_path: Path) -> None:
 async def test_run_no_clips_returns_zero(tmp_path: Path) -> None:
     archiver, _ = _make_archiver(tmp_path, clips=[])
     result = await archiver.run()
-    assert result == 0
+    assert result == []
 
 
 # ------------------------------------------------------------------
@@ -74,7 +74,8 @@ async def test_run_archives_clip_into_zip(tmp_path: Path) -> None:
     archiver, _db = _make_archiver(tmp_path, clips=[clip])
     result = await archiver.run()
 
-    assert result == 1
+    assert len(result) == 1
+    assert result[0]["id"] == "c1"
     zip_path = tmp_path / "archives" / "blink_archive_2024-06.zip"
     assert zip_path.exists()
     with zipfile.ZipFile(zip_path) as zf:
@@ -121,7 +122,8 @@ async def test_run_archives_multiple_months(tmp_path: Path) -> None:
     archiver, _ = _make_archiver(tmp_path, clips=clips)
     result = await archiver.run()
 
-    assert result == 2
+    assert len(result) == 2
+    assert {c["id"] for c in result} == {"c1", "c2"}
     assert (tmp_path / "archives" / "blink_archive_2024-05.zip").exists()
     assert (tmp_path / "archives" / "blink_archive_2024-06.zip").exists()
 
@@ -136,7 +138,7 @@ async def test_run_missing_file_still_marks_archived(tmp_path: Path) -> None:
     archiver, db = _make_archiver(tmp_path, clips=[clip])
     result = await archiver.run()
 
-    assert result == 1
+    assert len(result) == 1
     db.mark_archived.assert_awaited_once()
 
 
@@ -175,7 +177,7 @@ async def test_run_unknown_timestamp_uses_unknown_bucket(tmp_path: Path) -> None
     archiver, _ = _make_archiver(tmp_path, clips=[clip])
     result = await archiver.run()
 
-    assert result == 1
+    assert len(result) == 1
     assert (tmp_path / "archives" / "blink_archive_unknown.zip").exists()
 
 
@@ -204,7 +206,7 @@ async def test_archive_month_bad_zip_file_is_logged(tmp_path: Path) -> None:
     ):
         result = await archiver.run()
 
-    assert result == 0  # nothing archived because zip open failed
+    assert result == []  # nothing archived because zip open failed
 
 
 async def test_archive_month_write_oserror_is_logged(tmp_path: Path) -> None:
@@ -224,7 +226,7 @@ async def test_archive_month_write_oserror_is_logged(tmp_path: Path) -> None:
     with patch("zipfile.ZipFile.write", side_effect=OSError("write failed")):
         result = await archiver.run()
 
-    assert result == 0  # write failed, not marked as archived
+    assert result == []  # write failed, not marked as archived
     db.mark_archived.assert_not_awaited()
 
 
@@ -248,7 +250,7 @@ async def test_archive_month_unlink_failure_is_logged(tmp_path: Path) -> None:
     with patch("pathlib.Path.unlink", side_effect=OSError("permission denied")):
         result = await archiver.run()
 
-    assert result == 0
+    assert result == []
     db.mark_archived.assert_awaited_once()
 
 
@@ -285,7 +287,8 @@ async def test_archive_month_mark_archived_failure_does_not_abort_batch(
 
     result = await archiver.run()
 
-    assert result == 1  # only c2 fully archived
+    assert len(result) == 1  # only c2 fully archived
+    assert result[0]["id"] == "c2"
     assert src1.exists()  # c1 left in place so it's retried next run
     assert not src2.exists()  # c2 successfully archived and removed
 
@@ -312,4 +315,4 @@ async def test_archive_month_missing_file_mark_archived_failure_is_logged(
 
     result = await archiver.run()
 
-    assert result == 0
+    assert result == []

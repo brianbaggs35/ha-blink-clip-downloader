@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS clips (
     tags          TEXT    DEFAULT '[]',
     downloaded_at TEXT    NOT NULL,
     archived      BOOLEAN DEFAULT FALSE,
-    archive_path  TEXT    DEFAULT ''
+    archive_path  TEXT    DEFAULT '',
+    gdrive_backed_up   BOOLEAN DEFAULT FALSE,
+    gdrive_file_id     TEXT    DEFAULT '',
+    gdrive_uploaded_at TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_clips_camera    ON clips (camera);
 CREATE INDEX IF NOT EXISTS idx_clips_timestamp ON clips (timestamp);
@@ -96,6 +99,27 @@ CREATE TABLE IF NOT EXISTS analysis_queue (
     error_message TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_queue_status ON analysis_queue (status);
+
+-- Background upload queue for the optional Google Drive backup feature
+-- (see gdrive_client.py/gdrive_queue.py, gdrive_enabled). Structurally
+-- identical to analysis_queue above — same ON DELETE CASCADE reasoning
+-- (a clip deleted locally shouldn't leave an orphaned upload row behind).
+CREATE TABLE IF NOT EXISTS gdrive_upload_queue (
+    id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    clip_id       TEXT    NOT NULL UNIQUE REFERENCES clips(id) ON DELETE CASCADE,
+    camera        TEXT    NOT NULL,
+    clip_path     TEXT    NOT NULL,
+    status        TEXT    DEFAULT 'pending',
+    queued_at     TEXT    NOT NULL,
+    completed_at  TEXT    DEFAULT '',
+    error_message TEXT    DEFAULT '',
+    -- Empty means "use the client's default connected folder" (automatic
+    -- archived/all_clips backups); set for a manual one-off upload (e.g.
+    -- Library's "Upload to Drive" bulk action) that targets a different
+    -- folder without changing that default.
+    folder_id     TEXT    DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_gdrive_queue_status ON gdrive_upload_queue (status);
 
 CREATE TABLE IF NOT EXISTS camera_baselines (
     camera TEXT    NOT NULL,
@@ -186,12 +210,20 @@ CREATE INDEX IF NOT EXISTS idx_face_feedback_clip ON face_recognition_feedback (
 # with the column already, per _SCHEMA above) and an older one missing it.
 # This is the first such migration since the SQLite-to-PostgreSQL switch —
 # extend this string for any future column addition to an existing table.
+# Any index on such a column must also live here, not in _SCHEMA: _SCHEMA
+# runs first, in one multi-statement execute(), so a CREATE INDEX there on
+# a column that only _MIGRATIONS (below) adds would fail on every
+# already-existing database the moment it reached that statement.
 _MIGRATIONS = """
 ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_applied BOOLEAN DEFAULT FALSE;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_names TEXT DEFAULT '';
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS approved_faces_seen BOOLEAN DEFAULT FALSE;
 ALTER TABLE face_recognition_feedback ADD COLUMN IF NOT EXISTS person_name TEXT DEFAULT '';
+ALTER TABLE clips ADD COLUMN IF NOT EXISTS gdrive_backed_up BOOLEAN DEFAULT FALSE;
+ALTER TABLE clips ADD COLUMN IF NOT EXISTS gdrive_file_id TEXT DEFAULT '';
+ALTER TABLE clips ADD COLUMN IF NOT EXISTS gdrive_uploaded_at TEXT DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_clips_gdrive_backed_up ON clips (gdrive_backed_up);
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -414,19 +446,26 @@ class ClipDatabase:
         """Reset any items stuck in 'processing' back to 'pending'.
 
         Items land in 'processing' when the app crashes or is restarted
-        mid-analysis. They are never retried otherwise because the queue
-        only fetches status='pending'.
+        mid-analysis/mid-upload. They are never retried otherwise because
+        each queue only fetches status='pending'. Covers both background
+        queue tables (analysis_queue, gdrive_upload_queue) — table names
+        are hardcoded literals from this tuple, not user input, so an
+        f-string is safe here (asyncpg placeholders can't parameterize
+        identifiers).
         """
         assert self._pool is not None
-        count = await self._pool.fetchval(
-            "SELECT COUNT(*) FROM analysis_queue WHERE status='processing'"
-        )
-        if count:
-            await self._pool.execute(
-                "UPDATE analysis_queue SET status='pending', completed_at='', "
-                "error_message='' WHERE status='processing'"
+        for table in ("analysis_queue", "gdrive_upload_queue"):
+            count = await self._pool.fetchval(
+                f"SELECT COUNT(*) FROM {table} WHERE status='processing'"
             )
-            _LOGGER.info("Reset %d stale processing item(s) to pending", count)
+            if count:
+                await self._pool.execute(
+                    f"UPDATE {table} SET status='pending', completed_at='', "
+                    "error_message='' WHERE status='processing'"
+                )
+                _LOGGER.info(
+                    "Reset %d stale processing item(s) to pending in %s", count, table
+                )
 
     async def close(self) -> None:
         if self._pool:
@@ -611,6 +650,19 @@ class ClipDatabase:
         await self._pool.execute(
             _qm("UPDATE clips SET archived=TRUE, archive_path=? WHERE id=?"),
             archive_path,
+            clip_id,
+        )
+
+    async def mark_gdrive_uploaded(self, clip_id: str, file_id: str) -> None:
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm(
+                "UPDATE clips SET gdrive_backed_up=TRUE, gdrive_file_id=?, "
+                "gdrive_uploaded_at=? WHERE id=?"
+            ),
+            file_id,
+            datetime.now(timezone.utc).isoformat(),
             clip_id,
         )
 
@@ -805,6 +857,25 @@ class ClipDatabase:
                 "ORDER BY timestamp"
             ),
             cutoff,
+        )
+        return [_row_to_dict(r) for r in rows]
+
+    async def get_clips_pending_gdrive_backup(
+        self, include_unarchived: bool
+    ) -> list[dict[str, Any]]:
+        """Clips not yet backed up to Google Drive, for the "Back Up Existing
+        Clips Now" action. Always includes archived clips (both backup
+        policies cover them); *include_unarchived* additionally includes
+        regular clips too, matching the "all_clips" policy.
+        """
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm(
+                "SELECT * FROM clips WHERE gdrive_backed_up=FALSE "
+                "AND (archived=TRUE OR ?=TRUE) ORDER BY timestamp"
+            ),
+            include_unarchived,
         )
         return [_row_to_dict(r) for r in rows]
 
@@ -1942,6 +2013,78 @@ class ClipDatabase:
             return {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
         rows = await self._pool.fetch(
             "SELECT status, COUNT(*) AS cnt FROM analysis_queue GROUP BY status"
+        )
+        counts = {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+        for r in rows:
+            counts[r["status"]] = r["cnt"]
+        return counts
+
+    # ------------------------------------------------------------------
+    # Google Drive Upload Queue (see gdrive_client.py/gdrive_queue.py)
+    # ------------------------------------------------------------------
+
+    async def enqueue_for_gdrive_upload(
+        self, clip_id: str, camera: str, clip_path: str, folder_id: str = ""
+    ) -> None:
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm(
+                """
+                INSERT INTO gdrive_upload_queue
+                  (clip_id, camera, clip_path, status, queued_at, folder_id)
+                VALUES (?, ?, ?, 'pending', ?, ?)
+                ON CONFLICT (clip_id) DO NOTHING
+                """
+            ),
+            clip_id,
+            camera,
+            clip_path,
+            datetime.now(timezone.utc).isoformat(),
+            folder_id,
+        )
+
+    async def get_pending_gdrive_uploads(self, limit: int = 10) -> list[dict[str, Any]]:
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm(
+                "SELECT * FROM gdrive_upload_queue WHERE status='pending' "
+                "ORDER BY queued_at LIMIT ?"
+            ),
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+    async def update_gdrive_queue_status(
+        self, clip_id: str, status: str, error: str = ""
+    ) -> None:
+        if self._pool is None:
+            return
+        completed = (
+            datetime.now(timezone.utc).isoformat()
+            if status in ("completed", "failed")
+            else ""
+        )
+        await self._pool.execute(
+            _qm(
+                """
+                UPDATE gdrive_upload_queue
+                SET status=?, completed_at=?, error_message=?
+                WHERE clip_id=?
+                """
+            ),
+            status,
+            completed,
+            error,
+            clip_id,
+        )
+
+    async def get_gdrive_queue_counts(self) -> dict[str, int]:
+        if self._pool is None:
+            return {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+        rows = await self._pool.fetch(
+            "SELECT status, COUNT(*) AS cnt FROM gdrive_upload_queue GROUP BY status"
         )
         counts = {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
         for r in rows:

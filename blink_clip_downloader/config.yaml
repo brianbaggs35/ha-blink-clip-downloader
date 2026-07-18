@@ -137,6 +137,16 @@ options:
   # Archive clips that are older than this many days.
   archive_after_days: 60
 
+  # --- Google Drive backup ---
+  # Everything about this feature (connect an account, OAuth client setup,
+  # backup policy, folder choice) is configured from the web UI's Storage
+  # tab, not here — see DOCS.md. These two are just background-queue tuning,
+  # matching ai_batch_size/ai_check_interval below.
+  # Clips uploaded to Drive per check cycle.
+  gdrive_batch_size: 5
+  # Seconds between upload-queue checks.
+  gdrive_check_interval: 300
+
   # --- Sync Module local storage (USB drive clips) ---
   # When enabled, each poll cycle also downloads clips stored on the physical
   # USB drive plugged into the Blink Sync Module.  These clips do not appear
@@ -450,6 +460,8 @@ schema:
   digest_time: "str"
   archive_enabled: "bool"
   archive_after_days: "int(1,365)"
+  gdrive_batch_size: "int(1,50)"
+  gdrive_check_interval: "int(30,3600)"
   download_local_storage: "bool"
   ai_analysis_enabled: "bool"
   ai_provider: "list(ollama|ollama_cloud|moondream_cloud|moondream_local|anthropic|openai)"
