@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import ClipAiPanel from './ClipAiPanel.vue'
 import { usePromptOverlayStore } from '../../stores/promptOverlay'
 import { useRefreshStore } from '../../stores/refresh'
+import { useToastStore } from '../../stores/toast'
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -302,7 +303,97 @@ describe('ClipAiPanel', () => {
     expect(wrapper.text()).toContain('Was this verdict correct?')
   })
 
-  it('opens the note form on "Incorrect", submits it with the corrected-suspicious checkbox, and reloads', async () => {
+  it('"Clear" deletes the stored feedback, bumps refresh, and shows the quick-feedback prompt again', async () => {
+    let deleteCalled = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'DELETE') {
+          deleteCalled = true
+          return Promise.resolve(jsonResponse({ deleted: true }))
+        }
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+        if (url === '/api/ai/feedback/c1') {
+          return Promise.resolve(
+            jsonResponse({
+              id: 1,
+              clip_id: 'c1',
+              camera: 'front',
+              analysis_result_id: 1,
+              original_suspicious: true,
+              original_confidence: 0.87,
+              correct: true,
+              correction_note: '',
+              corrected_suspicious: null,
+              created_at: '',
+              trained_at: '',
+            }),
+          )
+        }
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    const tickBefore = useRefreshStore().tick
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Marked correct')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Clear')!
+      .trigger('click')
+    await flushPromises()
+    expect(deleteCalled).toBe(true)
+    expect(wrapper.text()).toContain('Was this verdict correct?')
+    expect(useToastStore().message).toBe('Feedback cleared')
+    expect(useRefreshStore().tick).toBeGreaterThan(tickBefore)
+  })
+
+  it('shows a toast and keeps the existing feedback when clearing fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'DELETE') return Promise.reject(new Error('down'))
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+        if (url === '/api/ai/feedback/c1') {
+          return Promise.resolve(
+            jsonResponse({
+              id: 1,
+              clip_id: 'c1',
+              camera: 'front',
+              analysis_result_id: 1,
+              original_suspicious: true,
+              original_confidence: 0.87,
+              correct: true,
+              correction_note: '',
+              corrected_suspicious: null,
+              created_at: '',
+              trained_at: '',
+            }),
+          )
+        }
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Clear')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Marked correct')
+    expect(useToastStore().message).toBe('Failed to clear feedback')
+    expect(useToastStore().isError).toBe(true)
+  })
+
+  it('opens the note form on "Incorrect" with a checkbox proposing the opposite verdict, and submits it', async () => {
+    // RESULT.is_suspicious is true, so the one valid correction is "should
+    // NOT have been flagged suspicious" — checking the box must send
+    // corrected_suspicious: false here, not true (regression test for the
+    // bug where the checkbox always proposed "suspicious" regardless of
+    // the clip's current verdict).
     let submittedBody: unknown
     vi.stubGlobal(
       'fetch',
@@ -324,6 +415,8 @@ describe('ClipAiPanel', () => {
       .find((b) => b.text().includes('👎 Incorrect'))!
       .trigger('click')
     expect(wrapper.find('input.tag-input').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Should not have been flagged suspicious')
+    expect(wrapper.text()).not.toContain('Should have been flagged suspicious instead')
     await wrapper.find('input.tag-input').setValue('it was just the mail carrier')
     await wrapper.find('input[type="checkbox"]').setValue(true)
     await wrapper
@@ -334,6 +427,43 @@ describe('ClipAiPanel', () => {
     expect(submittedBody).toEqual({
       correct: false,
       correction_note: 'it was just the mail carrier',
+      corrected_suspicious: false,
+    })
+  })
+
+  it('proposes "should have been flagged suspicious instead" when the clip is currently clear', async () => {
+    const clean = { ...RESULT, is_suspicious: false }
+    let submittedBody: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST') {
+          submittedBody = JSON.parse(opts.body as string)
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(clean))
+        if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('👎 Incorrect'))!
+      .trigger('click')
+    expect(wrapper.text()).toContain('Should have been flagged suspicious instead')
+    expect(wrapper.text()).not.toContain('Should not have been flagged suspicious')
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Submit')!
+      .trigger('click')
+    await flushPromises()
+    expect(submittedBody).toEqual({
+      correct: false,
+      correction_note: '',
       corrected_suspicious: true,
     })
   })
@@ -497,7 +627,7 @@ describe('ClipAiPanel', () => {
       expect(wrapper.text()).not.toContain('Report a missed face match')
     })
 
-    it('submits a false_negative report and shows a confirmation', async () => {
+    it('submits a false_negative report with no person_name when nobody is enrolled', async () => {
       let posted: unknown
       vi.stubGlobal(
         'fetch',
@@ -508,6 +638,7 @@ describe('ClipAiPanel', () => {
           }
           if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
           if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+          if (url === '/api/ai/faces') return Promise.resolve(jsonResponse({ available: true, faces: [] }))
           return Promise.reject(new Error(`unexpected ${url}`))
         }),
       )
@@ -519,13 +650,120 @@ describe('ClipAiPanel', () => {
         .find((b) => b.text().includes('Report a missed face match'))!
         .trigger('click')
       await flushPromises()
-      expect(posted).toEqual({ report_type: 'false_negative', note: '' })
+      expect(posted).toEqual({ report_type: 'false_negative', note: '', person_name: '' })
       expect(wrapper.text()).toContain('Reported')
       // The report button is replaced by the confirmation, not left clickable.
       expect(wrapper.text()).not.toContain('Report a missed face match')
     })
 
-    it('submits a false_positive report for a bypassed clip', async () => {
+    it('auto-attaches the sole enrolled name when reporting a missed match with only one person on file', async () => {
+      let posted: unknown
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string, opts?: RequestInit) => {
+          if (url === '/api/ai/faces/feedback/c1' && opts?.method === 'POST') {
+            posted = JSON.parse(opts.body as string)
+            return Promise.resolve(jsonResponse({ saved: true }))
+          }
+          if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+          if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+          if (url === '/api/ai/faces')
+            return Promise.resolve(
+              jsonResponse({ available: true, faces: [{ id: 1, name: 'Brian', created_at: '', approved: true }] }),
+            )
+          return Promise.reject(new Error(`unexpected ${url}`))
+        }),
+      )
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Report a missed face match'))!
+        .trigger('click')
+      await flushPromises()
+      expect(posted).toEqual({ report_type: 'false_negative', note: '', person_name: 'Brian' })
+      expect(wrapper.text()).toContain('Reported')
+    })
+
+    it('lets the reporter pick who was missed when more than one person is enrolled', async () => {
+      let posted: unknown
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string, opts?: RequestInit) => {
+          if (url === '/api/ai/faces/feedback/c1' && opts?.method === 'POST') {
+            posted = JSON.parse(opts.body as string)
+            return Promise.resolve(jsonResponse({ saved: true }))
+          }
+          if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+          if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+          if (url === '/api/ai/faces')
+            return Promise.resolve(
+              jsonResponse({
+                available: true,
+                faces: [
+                  { id: 1, name: 'Brian', created_at: '', approved: true },
+                  { id: 2, name: 'Casey', created_at: '', approved: true },
+                ],
+              }),
+            )
+          return Promise.reject(new Error(`unexpected ${url}`))
+        }),
+      )
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Report a missed face match'))!
+        .trigger('click')
+      await flushPromises()
+      // Not submitted yet — a picker with both names should be showing instead.
+      expect(posted).toBeUndefined()
+      const select = wrapper.find('select#clip-ai-face-report-name')
+      expect(select.exists()).toBe(true)
+      expect(select.text()).toContain('Brian')
+      expect(select.text()).toContain('Casey')
+      await select.setValue('Casey')
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Submit report'))!
+        .trigger('click')
+      await flushPromises()
+      expect(posted).toEqual({ report_type: 'false_negative', note: '', person_name: 'Casey' })
+      expect(wrapper.text()).toContain('Reported')
+    })
+
+    it('cancels the missed-match person picker without submitting', async () => {
+      mockFetch({
+        '/api/ai/results/c1': RESULT,
+        '/api/ai/feedback/c1': null,
+        '/api/ai/faces': {
+          available: true,
+          faces: [
+            { id: 1, name: 'Brian', created_at: '', approved: true },
+            { id: 2, name: 'Casey', created_at: '', approved: true },
+          ],
+        },
+      })
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Report a missed face match'))!
+        .trigger('click')
+      await flushPromises()
+      expect(wrapper.find('select#clip-ai-face-report-name').exists()).toBe(true)
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Cancel')!
+        .trigger('click')
+      expect(wrapper.find('select#clip-ai-face-report-name').exists()).toBe(false)
+      expect(wrapper.text()).toContain('Report a missed face match')
+    })
+
+    it('submits a false_positive report for a bypassed clip, naming the matched person', async () => {
       let posted: unknown
       const bypassed = { ...RESULT, face_bypass_applied: true, face_bypass_names: 'Brian' }
       vi.stubGlobal(
@@ -548,7 +786,7 @@ describe('ClipAiPanel', () => {
         .find((b) => b.text().includes('Wrong match'))!
         .trigger('click')
       await flushPromises()
-      expect(posted).toEqual({ report_type: 'false_positive', note: '' })
+      expect(posted).toEqual({ report_type: 'false_positive', note: '', person_name: 'Brian' })
       expect(wrapper.text()).toContain('Reported')
     })
 

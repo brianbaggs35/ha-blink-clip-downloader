@@ -1714,11 +1714,15 @@ class MediaServer:
     ) -> web.Response:
         """Record a human report that face recognition got a clip wrong.
 
-        Body: ``{"report_type": "false_positive"|"false_negative", "note": ""}``.
-        Requires the clip to exist, but deliberately does not require an
-        analysis result — a false negative (an enrolled person present but
-        never recognized) can be reported on any clip, not just ones the
-        bypass already fired on.
+        Body: ``{"report_type": "false_positive"|"false_negative", "note": "",
+        "person_name": ""}``. Requires the clip to exist, but deliberately
+        does not require an analysis result — a false negative (an enrolled
+        person present but never recognized) can be reported on any clip,
+        not just ones the bypass already fired on. *person_name* is
+        optional/free-form on the wire (the frontend sources it from the
+        enrolled-faces list when there's more than one person to
+        disambiguate) — see add_face_recognition_feedback for why it's
+        stored but never fed back into matching automatically.
         """
         clip_id = request.match_info["clip_id"]
         clip = await self._db.get_clip(clip_id)
@@ -1729,6 +1733,7 @@ class MediaServer:
             body = await request.json()
             report_type = str(body.get("report_type", ""))
             note = str(body.get("note", "") or "")
+            person_name = str(body.get("person_name", "") or "")
         except Exception:  # noqa: BLE001
             raise web.HTTPBadRequest(text="Invalid JSON body")
 
@@ -1742,6 +1747,7 @@ class MediaServer:
             camera=clip["camera"],
             report_type=report_type,
             note=note,
+            person_name=person_name,
         )
         return web.json_response({"saved": True})
 

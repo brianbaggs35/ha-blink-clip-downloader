@@ -2,8 +2,10 @@
 import { ref } from 'vue'
 import {
   analyzeClipNow,
+  deleteFeedback,
   getClipAiResult,
   getFeedbackForClip,
+  listFaces,
   submitFaceRecognitionFeedback,
   submitFeedback,
 } from '../../api/ai'
@@ -24,6 +26,7 @@ const loadError = ref(false)
 const result = ref<AnalysisResultDict | null>(null)
 const loaded = ref(false)
 const feedback = ref<Feedback | null>(null)
+const feedbackClearing = ref(false)
 const showRawResponse = ref(false)
 const showFeedbackForm = ref(false)
 const feedbackNote = ref('')
@@ -31,6 +34,9 @@ const feedbackCorrectedSuspicious = ref(false)
 const analyzing = ref(false)
 const faceReportSubmitting = ref(false)
 const faceReportSubmitted = ref<FaceFeedbackReportType | null>(null)
+const enrolledNames = ref<string[]>([])
+const showFaceReportPicker = ref(false)
+const faceReportPersonName = ref('')
 
 async function load() {
   loading.value = true
@@ -38,12 +44,23 @@ async function load() {
   try {
     result.value = await getClipAiResult(props.clipId)
     feedback.value = result.value ? await getFeedbackForClip(props.clipId).catch(() => null) : null
+    enrolledNames.value = result.value ? await loadEnrolledNames() : []
     faceReportSubmitted.value = null
+    showFaceReportPicker.value = false
     loaded.value = true
   } catch {
     loadError.value = true
   } finally {
     loading.value = false
+  }
+}
+
+async function loadEnrolledNames(): Promise<string[]> {
+  try {
+    const { faces } = await listFaces()
+    return [...new Set(faces.map((f) => f.name))]
+  } catch {
+    return []
   }
 }
 
@@ -83,10 +100,15 @@ function openFeedbackNoteForm() {
 }
 
 async function submitFeedbackFormClick() {
+  // The checkbox always proposes the opposite of the clip's current
+  // verdict — "incorrect" only ever has one valid correction (see
+  // media_server.py's _handle_ai_feedback_submit) — so which boolean it
+  // sends flips with is_suspicious rather than always being true.
+  const proposedSuspicious = !(result.value?.is_suspicious ?? false)
   const ok = await trySubmitFeedback({
     correct: false,
     correction_note: feedbackNote.value,
-    corrected_suspicious: feedbackCorrectedSuspicious.value ? true : undefined,
+    corrected_suspicious: feedbackCorrectedSuspicious.value ? proposedSuspicious : undefined,
   })
   if (ok) {
     showFeedbackForm.value = false
@@ -121,11 +143,39 @@ function changeFeedback() {
   feedback.value = null
 }
 
-async function reportFaceIssue(reportType: FaceFeedbackReportType) {
+async function clearFeedback() {
+  feedbackClearing.value = true
+  try {
+    await deleteFeedback(props.clipId)
+    toast.show('Feedback cleared')
+    refresh.bump()
+    feedback.value = null
+  } catch {
+    toast.show('Failed to clear feedback', true)
+  } finally {
+    feedbackClearing.value = false
+  }
+}
+
+function startFaceReport() {
+  // No ambiguity to resolve unless there's more than one enrolled person —
+  // with 0 or 1 names on file, submit immediately (auto-attaching the sole
+  // name when there is one) instead of making the user pick from a list of
+  // one.
+  if (enrolledNames.value.length > 1) {
+    faceReportPersonName.value = ''
+    showFaceReportPicker.value = true
+    return
+  }
+  void reportFaceIssue('false_negative', enrolledNames.value[0] ?? '')
+}
+
+async function reportFaceIssue(reportType: FaceFeedbackReportType, personName = '') {
   faceReportSubmitting.value = true
   try {
-    await submitFaceRecognitionFeedback(props.clipId, reportType)
+    await submitFaceRecognitionFeedback(props.clipId, reportType, '', personName)
     faceReportSubmitted.value = reportType
+    showFaceReportPicker.value = false
     toast.show('Thanks, reported — visible on the Biometrics activity card')
   } catch {
     toast.show('Failed to save the report', true)
@@ -218,6 +268,7 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
                 ></span
               >
               <button class="btn sm ghost" @click="changeFeedback">Change</button>
+              <button class="btn sm ghost" :disabled="feedbackClearing" @click="clearFeedback">Clear</button>
             </div>
             <div v-else style="font-size: 0.78rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap">
               <span style="color: var(--muted)">Was this verdict correct?</span>
@@ -237,8 +288,12 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
                 placeholder="What actually happened? (optional)"
               />
               <label style="font-size: 0.75rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem">
-                <input v-model="feedbackCorrectedSuspicious" type="checkbox" /> Should have been flagged suspicious
-                instead
+                <input v-model="feedbackCorrectedSuspicious" type="checkbox" />
+                {{
+                  result.is_suspicious
+                    ? 'Should not have been flagged suspicious'
+                    : 'Should have been flagged suspicious instead'
+                }}
               </label>
               <div style="display: flex; gap: 0.4rem">
                 <button class="btn sm" @click="submitFeedbackFormClick">Submit</button>
@@ -253,16 +308,38 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
               style="font-size: 0.76rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap"
             >
               <span style="color: var(--muted)">👤 Face match ({{ result.face_bypass_names }}) — correct?</span>
-              <button class="btn sm ghost" :disabled="faceReportSubmitting" @click="reportFaceIssue('false_positive')">
+              <button
+                class="btn sm ghost"
+                :disabled="faceReportSubmitting"
+                @click="reportFaceIssue('false_positive', result.face_bypass_names)"
+              >
                 👎 Wrong match
               </button>
+            </div>
+            <div
+              v-else-if="showFaceReportPicker"
+              style="font-size: 0.76rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap"
+            >
+              <label for="clip-ai-face-report-name" class="sr-only">Who was missed?</label>
+              <select id="clip-ai-face-report-name" v-model="faceReportPersonName" class="tag-input">
+                <option value="">Not sure / someone else</option>
+                <option v-for="n in enrolledNames" :key="n" :value="n">{{ n }}</option>
+              </select>
+              <button
+                class="btn sm ghost"
+                :disabled="faceReportSubmitting"
+                @click="reportFaceIssue('false_negative', faceReportPersonName)"
+              >
+                🚩 Submit report
+              </button>
+              <button class="btn sm ghost" @click="showFaceReportPicker = false">Cancel</button>
             </div>
             <button
               v-else
               class="btn sm ghost"
               style="font-size: 0.72rem"
               :disabled="faceReportSubmitting"
-              @click="reportFaceIssue('false_negative')"
+              @click="startFaceReport"
             >
               🚩 Report a missed face match
             </button>
