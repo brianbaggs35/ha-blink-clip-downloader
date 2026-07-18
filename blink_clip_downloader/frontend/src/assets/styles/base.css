@@ -1285,6 +1285,15 @@ h3 {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* For values too long to make sense truncated (e.g. a full "Last
+   download" date+time) — wraps within the row's existing 58% column
+   instead of clipping with an ellipsis. */
+.status-row .val.wrap {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
+}
 .val.ok {
   color: var(--success);
 }
