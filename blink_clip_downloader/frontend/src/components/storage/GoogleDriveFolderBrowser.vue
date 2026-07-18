@@ -117,7 +117,7 @@ async function createFolder() {
       </Column>
       <Column header="">
         <template #body="{ data }">
-          <Button size="small" text label="Select" @click="selectFolder(data)" />
+          <Button size="small" text label="Select" @click="selectFolder({ id: data.id, name: data.name })" />
         </template>
       </Column>
     </DataTable>

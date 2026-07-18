@@ -71,6 +71,20 @@ describe('clips api', () => {
     expect(url).toContain('starred=0')
   })
 
+  it('listClips(): archived=true appends archived=1', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse([]))
+    await listClips({ archived: true })
+    const url = vi.mocked(fetch).mock.calls[0][0] as string
+    expect(url).toContain('archived=1')
+  })
+
+  it('listClips(): archived omitted when not set', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse([]))
+    await listClips()
+    const url = vi.mocked(fetch).mock.calls[0][0] as string
+    expect(url).not.toContain('archived')
+  })
+
   it('getClip() / deleteClip() / starClip() / setClipTags()', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({}))
     await getClip('c1')
