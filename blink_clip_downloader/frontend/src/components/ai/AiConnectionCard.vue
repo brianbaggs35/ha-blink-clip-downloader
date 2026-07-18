@@ -99,7 +99,7 @@ async function copyEscalationModelId() {
   }
   try {
     await navigator.clipboard.writeText(selectedEscalationModel.value)
-    toast.show(`Copied "${selectedEscalationModel.value}" — paste into ai_escalation_model`)
+    toast.show(`Copied "${selectedEscalationModel.value}" — paste into the AI Escalation Model field`)
   } catch {
     toast.show(selectedEscalationModel.value, true)
   }
@@ -232,7 +232,7 @@ function confPct(r: AnalysisResultDict): number {
       </select>
       <button
         class="btn sm ghost"
-        title="Copy the selected model id, then paste it into this add-on's configuration (openai_model / anthropic_model / ollama_model)"
+        title="Copy the selected model id, then paste it into this add-on's configuration (OpenAI Model / Anthropic Model / Ollama Vision Model)"
         @click="copyModelId"
       >
         📋 Copy
@@ -340,7 +340,7 @@ function confPct(r: AnalysisResultDict): number {
           </select>
           <button
             class="btn sm ghost"
-            title="Copy the selected model id, then paste it into this add-on's configuration (ai_escalation_model)"
+            title="Copy the selected model id, then paste it into this add-on's configuration (AI Escalation Model)"
             @click="copyEscalationModelId"
           >
             📋 Copy

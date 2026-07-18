@@ -129,7 +129,7 @@ describe('AiConnectionCard', () => {
 
     const copyBtn = wrapper
       .findAll('button')
-      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('ai_escalation_model'))!
+      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('AI Escalation Model'))!
     await copyBtn.trigger('click')
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('claude-opus-4-8')
   })
@@ -163,7 +163,7 @@ describe('AiConnectionCard', () => {
     await flushPromises()
     const copyBtn = wrapper
       .findAll('button')
-      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('ai_escalation_model'))!
+      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('AI Escalation Model'))!
     await copyBtn.trigger('click')
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('claude-haiku-4-5')
   })
@@ -182,7 +182,7 @@ describe('AiConnectionCard', () => {
     await flushPromises()
     const copyBtn = wrapper
       .findAll('button')
-      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('ai_escalation_model'))!
+      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('AI Escalation Model'))!
     await copyBtn.trigger('click')
     await flushPromises()
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('claude-haiku-4-5')
@@ -194,7 +194,7 @@ describe('AiConnectionCard', () => {
     })
     const copyBtn = wrapper
       .findAll('button')
-      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('ai_escalation_model'))!
+      .find((b) => b.text().includes('Copy') && b.attributes('title')?.includes('AI Escalation Model'))!
     await copyBtn.trigger('click')
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
   })

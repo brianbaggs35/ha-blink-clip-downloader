@@ -104,6 +104,14 @@ describe('BiometricsPage', () => {
     expect(wrapper.text()).toContain('everything works exactly as it does without it')
   })
 
+  it('describes the face-recognition toggle by its human name, not the raw config key', async () => {
+    stubFaces([])
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Enable Local Face Recognition')
+    expect(wrapper.text()).not.toContain('ai_face_recognition_enabled')
+  })
+
   it('groups multiple enrolled photos of the same person into one card', async () => {
     stubFaces([
       faceEnrollment({ id: 1, name: 'Brian', approved: true, created_at: '2026-01-02T00:00:00Z' }),

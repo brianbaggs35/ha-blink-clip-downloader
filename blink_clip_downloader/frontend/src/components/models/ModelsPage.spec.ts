@@ -53,18 +53,21 @@ describe('ModelsPage', () => {
     expect(wrapper.text()).toContain('NVIDIA CUDA or Apple Silicon GPU')
   })
 
-  it('explains two-tier escalation', () => {
+  it("explains two-tier escalation by the options' human names, not their raw config keys", () => {
     const wrapper = mount(ModelsPage)
-    expect(wrapper.text()).toContain('ai_escalation_provider')
+    expect(wrapper.text()).toContain('AI Escalation Provider')
     expect(wrapper.text()).toContain('AI Usage')
+    expect(wrapper.text()).not.toContain('ai_escalation_provider')
   })
 
-  it('documents the CV pipeline/face recognition CPU requirement', () => {
+  it('documents the CV pipeline/face recognition CPU requirement by human option names', () => {
     const wrapper = mount(ModelsPage)
     expect(wrapper.text()).toContain('ARMv8.1+ LSE atomic instructions')
     expect(wrapper.text()).toContain('Raspberry Pi 5')
     expect(wrapper.text()).toContain('Raspberry Pi 4')
-    expect(wrapper.text()).toContain('ai_enhanced_detection_enabled')
-    expect(wrapper.text()).toContain('ai_face_recognition_enabled')
+    expect(wrapper.text()).toContain('Enable Enhanced Detection & Tracking')
+    expect(wrapper.text()).toContain('Enable Local Face Recognition')
+    expect(wrapper.text()).not.toContain('ai_enhanced_detection_enabled')
+    expect(wrapper.text()).not.toContain('ai_face_recognition_enabled')
   })
 })
