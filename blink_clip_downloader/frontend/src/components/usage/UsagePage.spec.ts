@@ -167,6 +167,90 @@ describe('UsagePage', () => {
     wrapper.unmount()
   })
 
+  it('shows the average cost per clip and a distinct models-used count', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage()))),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Avg. Cost / Clip')
+    // total_estimated_cost 0.01 / total_analyses 10 = 0.001
+    expect(wrapper.text()).toContain('$0.0010')
+    expect(wrapper.text()).toContain('Models Used')
+    wrapper.unmount()
+  })
+
+  it('counts models used by distinct model name, not by row (tier-1 + escalated rows for the same model)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse(
+            baseUsage({
+              by_model: [
+                {
+                  model: 'gpt-4o-mini',
+                  analyses: 8,
+                  tokens_prompt: 800,
+                  tokens_completion: 400,
+                  escalated: false,
+                  cost: 0.005,
+                },
+                {
+                  model: 'gpt-4o-mini',
+                  analyses: 2,
+                  tokens_prompt: 200,
+                  tokens_completion: 100,
+                  escalated: true,
+                  cost: 0.005,
+                },
+              ],
+            }),
+          ),
+        ),
+      ),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    const modelsUsedTile = wrapper.findAll('.usage-stat').find((t) => t.text().includes('Models Used'))!
+    expect(modelsUsedTile.text()).toContain('1')
+    wrapper.unmount()
+  })
+
+  it('hides the average-cost-per-clip stat when there is no priced data', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ total_estimated_cost: null })))),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Avg. Cost / Clip')
+    wrapper.unmount()
+  })
+
+  it('hides the average-cost-per-clip stat when there have been zero analyses', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ total_analyses: 0, total_tokens: 100 })))),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Avg. Cost / Clip')
+    wrapper.unmount()
+  })
+
+  it('hides the models-used stat when there is no per-model data', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ by_model: [] })))),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Models Used')
+    wrapper.unmount()
+  })
+
   it('hides the cost stat when there is no priced data', async () => {
     vi.stubGlobal(
       'fetch',
