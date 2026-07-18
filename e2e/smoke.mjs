@@ -79,6 +79,10 @@ const TAB_CHECKS = {
     // behavior there, not a failure, so this tab is allowed to not exist.
     optional: true,
   },
+  storage: {
+    loadedText: "No archived clips yet",
+    loadingSelector: ".loading-indicator",
+  },
 };
 
 // Order matches the TABS array in frontend/src/components/layout/AppSidebar.vue.

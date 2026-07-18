@@ -73,6 +73,9 @@ function clip(overrides: Partial<Record<string, unknown>> = {}) {
     downloaded_at: '2026-01-05T10:01:00Z',
     archived: false,
     archive_path: '',
+    gdrive_backed_up: false,
+    gdrive_file_id: '',
+    gdrive_uploaded_at: '',
     notified: false,
     ...overrides,
   }
@@ -136,6 +139,10 @@ function mockFetch(overrides: Record<string, unknown> = {}, clips = [clip()]) {
       if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
       if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
       if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+      if (url.startsWith('/api/storage/gdrive/status'))
+        return Promise.resolve(
+          jsonResponse({ configured: false, connected: false, account_email: '', folder_id: '', folder_name: '' }),
+        )
       return Promise.reject(new Error(`unexpected fetch ${url} ${opts?.method}`))
     }),
   )
@@ -363,6 +370,55 @@ describe('LibraryPage', () => {
     await wrapper.find('.clip-card').trigger('click')
     // base AI_STATUS has enabled: false, so the button shouldn't even render.
     expect(wrapper.findAll('button').some((b) => b.text().includes('Analyze selected'))).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('is not offered when Google Drive is not connected', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    expect(wrapper.findAll('button').some((b) => b.text().includes('Upload to Drive'))).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('bulk uploads selected clips to Drive once connected, then exits select mode', async () => {
+    mockFetch({
+      '/api/storage/gdrive/status': {
+        configured: true,
+        connected: true,
+        account_email: 'me@example.com',
+        folder_id: 'f1',
+        folder_name: 'Blink Clips',
+      },
+      '/api/storage/gdrive/folders': { folders: [{ id: 'f1', name: 'Blink Clips', modified_time: '' }] },
+      '/api/storage/gdrive/upload': { enqueued: 1 },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+
+    const uploadBtn = wrapper.findAll('button').find((b) => b.text().includes('Upload to Drive'))
+    expect(uploadBtn).toBeTruthy()
+    await uploadBtn!.trigger('click')
+    await flushPromises()
+
+    const dialogBody = body()
+    const selectBtn = dialogBody.findAll('button').find((b) => b.text() === 'Select')
+    await selectBtn!.trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+      '/api/storage/gdrive/upload',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ clip_ids: ['c1'], folder_id: 'f1' }),
+      }),
+    )
+    // Bulk bar/select mode is exited once the upload is queued.
+    expect(wrapper.findAll('button').some((b) => b.text().includes('Upload to Drive'))).toBe(false)
     wrapper.unmount()
   })
 
