@@ -22,6 +22,17 @@ const showEscalationNote = computed(() => (usage.value?.total_escalations || 0) 
 const showCost = computed(() => usage.value?.total_estimated_cost != null && (usage.value?.total_tokens || 0) > 0)
 const showDisabledMsg = computed(() => !usage.value?.enabled && (usage.value?.total_analyses || 0) === 0)
 
+// Two derived stats filling out the row the "Estimated Cost" tile vacated
+// (moved up next to Total Tokens) — both computed client-side from fields
+// the usage payload already carries, no new backend data needed.
+const avgCostPerClip = computed(() => {
+  const total = usage.value?.total_estimated_cost
+  const count = usage.value?.total_analyses || 0
+  if (!showCost.value || total == null || count <= 0) return null
+  return total / count
+})
+const modelsUsedCount = computed(() => new Set((usage.value?.by_model || []).map((m) => m.model).filter(Boolean)).size)
+
 async function load() {
   try {
     usage.value = await getAiUsage()
@@ -76,20 +87,18 @@ async function clearUsage() {
             <div class="num">{{ fmtNum(usage.total_analyses) }}</div>
             <div class="lbl">Clips Analyzed</div>
           </div>
-          <template v-if="showTokens">
-            <div class="usage-stat">
-              <div class="num">{{ fmtNum(usage.total_tokens) }}</div>
-              <div class="lbl">Total Tokens</div>
-            </div>
-            <div class="usage-stat">
-              <div class="num">{{ fmtNum(usage.total_tokens_prompt) }}</div>
-              <div class="lbl">Prompt Tokens</div>
-            </div>
-            <div class="usage-stat">
-              <div class="num">{{ fmtNum(usage.total_tokens_completion) }}</div>
-              <div class="lbl">Completion Tokens</div>
-            </div>
-          </template>
+          <div v-if="showTokens" class="usage-stat">
+            <div class="num">{{ fmtNum(usage.total_tokens) }}</div>
+            <div class="lbl">Total Tokens</div>
+          </div>
+          <div v-if="showCost" class="usage-stat">
+            <div class="num">{{ fmtCost(usage.total_estimated_cost) }}</div>
+            <div class="lbl">Estimated Cost</div>
+          </div>
+          <div v-if="showTokens" class="usage-stat">
+            <div class="num">{{ fmtNum(usage.total_tokens_completion) }}</div>
+            <div class="lbl">Completion Tokens</div>
+          </div>
           <div v-if="usage.total_escalations > 0" class="usage-stat">
             <div class="num">{{ fmtNum(usage.total_escalations) }}</div>
             <div class="lbl">Escalations</div>
@@ -98,9 +107,17 @@ async function clearUsage() {
             <div class="num">{{ fmtNum(usage.total_escalation_tokens) }}</div>
             <div class="lbl">Escalation Tokens</div>
           </div>
-          <div v-if="showCost" class="usage-stat">
-            <div class="num">{{ fmtCost(usage.total_estimated_cost) }}</div>
-            <div class="lbl">Estimated Cost</div>
+          <div v-if="showTokens" class="usage-stat">
+            <div class="num">{{ fmtNum(usage.total_tokens_prompt) }}</div>
+            <div class="lbl">Prompt Tokens</div>
+          </div>
+          <div v-if="avgCostPerClip != null" class="usage-stat">
+            <div class="num">{{ fmtCost(avgCostPerClip) }}</div>
+            <div class="lbl">Avg. Cost / Clip</div>
+          </div>
+          <div v-if="modelsUsedCount > 0" class="usage-stat">
+            <div class="num">{{ fmtNum(modelsUsedCount) }}</div>
+            <div class="lbl">Models Used</div>
           </div>
         </div>
 
