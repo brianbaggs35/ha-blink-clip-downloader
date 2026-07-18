@@ -169,9 +169,9 @@ function buildFilters(page: number): ClipFilters {
 // still the most recently fired request by the time it resolves.
 let requestSeq = 0
 
-async function loadClips(page: number) {
+async function loadClips(page: number, silent = false) {
   const seq = ++requestSeq
-  if (page === 0) {
+  if (page === 0 && !silent) {
     loadingInitial.value = true
     clips.value = []
   }
@@ -182,7 +182,7 @@ async function loadClips(page: number) {
     hasMore.value = result.length === PAGE_SIZE
     currentPage.value = page
   } catch {
-    if (seq === requestSeq) toast.show('Failed to load clips', true)
+    if (seq === requestSeq && !silent) toast.show('Failed to load clips', true)
   } finally {
     if (seq === requestSeq) loadingInitial.value = false
   }
@@ -262,8 +262,8 @@ async function loadAiStatus() {
   }
 }
 
-async function loadAll() {
-  await Promise.all([loadStats(), loadCameras(), loadClips(0), loadAiStatus(), loadTags()])
+async function loadAll(silent = false) {
+  await Promise.all([loadStats(), loadCameras(), loadClips(0, silent), loadAiStatus(), loadTags()])
 }
 
 let debounceTimer: ReturnType<typeof setTimeout>
@@ -285,7 +285,20 @@ watch(
   () => library.currentCamera,
   () => loadClips(0),
 )
-watch(() => refresh.tick, loadAll)
+// silent: true — refresh.tick fires for reasons that never change which
+// clips exist or how they're ordered (e.g. AI feedback submitted from a
+// clip's own panel, elsewhere in the app bumping this same shared signal —
+// see ClipAiPanel.vue). Clearing the grid to empty and repopulating it, as
+// a foreground reload does, collapses the page's scroll height and back to
+// the top the instant clips.value is emptied — jarring and pointless when
+// nothing the grid displays actually changed. A silent reload fetches in
+// the background and swaps the list in place once ready, so browsing
+// (including scroll position) is never interrupted — the same reasoning
+// the 60s auto-refresh below already applies by skipping loadClips entirely.
+watch(
+  () => refresh.tick,
+  () => loadAll(true),
+)
 watch(
   () => dateFilter.seq,
   () => {

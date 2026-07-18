@@ -1,5 +1,32 @@
 # Changelog
 
+## 5.0.4
+
+### Bug fixes
+
+- **Marking a clip's AI verdict Correct/Incorrect scrolled the Library tab
+  back to the top**, even when the clip was far down a scrolled list.
+  Feedback submission bumps a shared refresh signal so the AI tab's
+  Adaptive Learning/Suspicious Activity views stay current — but the
+  Library page's own reaction to that same signal unconditionally cleared
+  its clip grid to empty before refetching, collapsing the page's
+  scrollable height (and with it, the scroll position) an instant before
+  repopulating it. That signal fires for reasons that never change which
+  clips exist or how they're ordered, so this reload is now silent: it
+  fetches in the background and swaps the list in place once ready,
+  without ever clearing what's already on screen — the same reasoning
+  already applied to the existing 60-second auto-refresh, just extended to
+  this trigger too.
+- **Hovering the clip player modal's previous/next buttons made them jump
+  before settling into their slightly-larger hover state**, instead of
+  just growing in place. Their `:hover` style carried a `translateY(-50%)`
+  copied from the *wrapper* that actually needs it (an absolutely
+  positioned element centering itself); the buttons themselves are plain
+  flex children with no such offset to begin with, so hovering yanked each
+  one up by half its own height on top of the intended scale. Removed the
+  errant translate — hovering now only scales the button slightly, with no
+  jump.
+
 ## 5.0.3
 
 ### Bug fixes
