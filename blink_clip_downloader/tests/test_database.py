@@ -1262,6 +1262,146 @@ async def test_analysis_operations_without_init() -> None:
 
 
 # ------------------------------------------------------------------
+# Google Drive Upload Queue
+# ------------------------------------------------------------------
+
+
+async def test_gdrive_enqueue_and_get_pending(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/clips/c1.mp4")
+    pending = await db.get_pending_gdrive_uploads()
+    assert len(pending) == 1
+    assert pending[0]["clip_id"] == "c1"
+    assert pending[0]["status"] == "pending"
+    assert pending[0]["folder_id"] == ""
+
+
+async def test_gdrive_enqueue_with_folder_id(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload(
+        "c1", "Front Door", "/clips/c1.mp4", folder_id="f1"
+    )
+    pending = await db.get_pending_gdrive_uploads()
+    assert pending[0]["folder_id"] == "f1"
+
+
+async def test_gdrive_enqueue_duplicate_ignored(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/clips/c1.mp4")
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/clips/c1.mp4")
+    pending = await db.get_pending_gdrive_uploads()
+    assert len(pending) == 1
+
+
+async def test_gdrive_update_queue_status(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/clips/c1.mp4")
+    await db.update_gdrive_queue_status("c1", "completed")
+    assert await db.get_pending_gdrive_uploads() == []
+
+
+async def test_gdrive_update_queue_status_failed(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/clips/c1.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="upload timed out")
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["failed"] == 1
+    assert counts["pending"] == 0
+
+
+async def test_gdrive_get_queue_counts(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_clip(_make_clip("c3"))
+    await db.enqueue_for_gdrive_upload("c1", "A", "/c1.mp4")
+    await db.enqueue_for_gdrive_upload("c2", "B", "/c2.mp4")
+    await db.enqueue_for_gdrive_upload("c3", "C", "/c3.mp4")
+    await db.update_gdrive_queue_status("c2", "completed")
+    await db.update_gdrive_queue_status("c3", "failed", error="err")
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["pending"] == 1
+    assert counts["completed"] == 1
+    assert counts["failed"] == 1
+
+
+async def test_mark_gdrive_uploaded(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.mark_gdrive_uploaded("c1", "drive-file-id-1")
+    clip = await db.get_clip("c1")
+    assert clip is not None
+    assert clip["gdrive_backed_up"] is True
+    assert clip["gdrive_file_id"] == "drive-file-id-1"
+    assert clip["gdrive_uploaded_at"]
+
+
+async def test_get_clips_pending_gdrive_backup_archived_only_excludes_unarchived(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("archived-1"))
+    await db.mark_archived("archived-1", "/archives/2024-06.zip")
+    await db.add_clip(_make_clip("regular-1"))
+
+    pending = await db.get_clips_pending_gdrive_backup(include_unarchived=False)
+    assert [c["id"] for c in pending] == ["archived-1"]
+
+
+async def test_get_clips_pending_gdrive_backup_all_clips_includes_unarchived(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("archived-1"))
+    await db.mark_archived("archived-1", "/archives/2024-06.zip")
+    await db.add_clip(_make_clip("regular-1"))
+
+    pending = await db.get_clips_pending_gdrive_backup(include_unarchived=True)
+    assert {c["id"] for c in pending} == {"archived-1", "regular-1"}
+
+
+async def test_get_clips_pending_gdrive_backup_excludes_already_backed_up(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("archived-1"))
+    await db.mark_archived("archived-1", "/archives/2024-06.zip")
+    await db.mark_gdrive_uploaded("archived-1", "already-uploaded-id")
+
+    pending = await db.get_clips_pending_gdrive_backup(include_unarchived=True)
+    assert pending == []
+
+
+async def test_reset_stale_processing_resets_both_queue_tables(
+    db: ClipDatabase,
+) -> None:
+    """_reset_stale_processing (called from init()) must reset a row stuck
+    at 'processing' — from a crash mid-analysis/mid-upload — back to
+    'pending' in *both* background queue tables, not just analysis_queue."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/c1.mp4")
+    await db.enqueue_for_gdrive_upload("c2", "Front Door", "/c2.mp4")
+    await db.update_queue_status("c1", "processing")
+    await db.update_gdrive_queue_status("c2", "processing")
+
+    await db._reset_stale_processing()  # noqa: SLF001
+
+    analysis_counts = await db.get_queue_counts()
+    gdrive_counts = await db.get_gdrive_queue_counts()
+    assert analysis_counts["pending"] == 1
+    assert analysis_counts["processing"] == 0
+    assert gdrive_counts["pending"] == 1
+    assert gdrive_counts["processing"] == 0
+
+
+async def test_gdrive_queue_operations_without_init() -> None:
+    d = ClipDatabase()
+    await d.enqueue_for_gdrive_upload("c1", "Cam", "/c1.mp4")  # must not raise
+    await d.update_gdrive_queue_status("c1", "completed")  # must not raise
+    await d.mark_gdrive_uploaded("c1", "file-id")  # must not raise
+    assert await d.get_pending_gdrive_uploads() == []
+    counts = await d.get_gdrive_queue_counts()
+    assert counts == {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+    assert await d.get_clips_pending_gdrive_backup(include_unarchived=True) == []
+
+
+# ------------------------------------------------------------------
 # Coverage gap tests
 # ------------------------------------------------------------------
 

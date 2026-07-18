@@ -168,6 +168,34 @@ async def test_poll_cycle_logs_when_archiver_compresses_clips(app):
     app._archiver.run.assert_awaited_once()
 
 
+async def test_poll_cycle_enqueues_archived_clips_for_gdrive_backup(app):
+    """Every archived clip is enqueued for Drive backup regardless of
+    backup_policy — both "archived_only" and "all_clips" cover archived
+    clips; the policy only affects *regular* clips (see
+    _handle_downloaded_clip)."""
+    archived = [
+        {"id": "c1", "camera": "Cam", "file_path": "/share/blink-clips/c1.mp4"},
+        {"id": "c2", "camera": "Cam", "file_path": "/share/blink-clips/c2.mp4"},
+    ]
+    app._archiver.run = AsyncMock(return_value=archived)
+    app._gdrive_queue.enqueue = AsyncMock()
+
+    await app._poll_cycle()
+
+    assert app._gdrive_queue.enqueue.await_count == 2
+    enqueued_ids = {c[0][0]["id"] for c in app._gdrive_queue.enqueue.call_args_list}
+    assert enqueued_ids == {"c1", "c2"}
+
+
+async def test_poll_cycle_no_gdrive_enqueue_when_nothing_archived(app):
+    app._archiver.run = AsyncMock(return_value=[])
+    app._gdrive_queue.enqueue = AsyncMock()
+
+    await app._poll_cycle()
+
+    app._gdrive_queue.enqueue.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # _on_clips_downloaded
 # ---------------------------------------------------------------------------
@@ -256,6 +284,57 @@ async def test_on_clips_downloaded_enqueues_for_analysis_when_configured(app):
     await app._on_clips_downloaded(clips)
 
     app._analysis_queue.enqueue.assert_awaited_once_with(clips[0])
+
+
+async def test_on_clips_downloaded_enqueues_for_gdrive_under_all_clips_policy(app):
+    """Regular (not-yet-archived) clips only get backed up under the
+    "all_clips" policy — the base test config's client defaults to
+    "archived_only", where regular clips are NOT enqueued here (they're
+    enqueued later, once archived — see _poll_cycle)."""
+    app._gdrive_client.backup_policy = "all_clips"
+    app._gdrive_queue.enqueue = AsyncMock()
+    clips = [
+        {"id": "1", "camera": "C", "path": "/p", "timestamp": "t", "size_bytes": 5}
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._gdrive_queue.enqueue.assert_awaited_once_with(clips[0])
+
+
+async def test_on_clips_downloaded_skips_gdrive_under_archived_only_policy(app):
+    assert app._gdrive_client.backup_policy == "archived_only"
+    app._gdrive_queue.enqueue = AsyncMock()
+    clips = [
+        {"id": "1", "camera": "C", "path": "/p", "timestamp": "t", "size_bytes": 5}
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._gdrive_queue.enqueue.assert_not_awaited()
+
+
+async def test_on_clips_downloaded_gdrive_enqueue_not_gated_on_analyze_flag(app):
+    """Unlike the AI analysis queue, Drive backup isn't gated on the
+    burst-analyze limiter — a backlog of more than _MAX_AUTO_ANALYZE_BURST
+    clips still enqueues *every* clip for Drive backup, not just the newest
+    few, since Drive uploads aren't billed per-token like AI analysis is."""
+    app._gdrive_client.backup_policy = "all_clips"
+    app._gdrive_queue.enqueue = AsyncMock()
+    clips = [
+        {
+            "id": str(i),
+            "camera": "C",
+            "path": f"/p{i}",
+            "timestamp": "t",
+            "size_bytes": 5,
+        }
+        for i in range(10)
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    assert app._gdrive_queue.enqueue.await_count == 10
 
 
 async def test_on_clips_downloaded_analyzes_every_clip_at_the_burst_cap(app):
@@ -516,6 +595,20 @@ async def test_shutdown_disconnects_and_saves_tracker(app):
     app._downloader.disconnect.assert_awaited_once()
     app._notifier.close.assert_awaited_once()
     app._tracker.save.assert_called_once()
+
+
+async def test_shutdown_stops_gdrive_queue_and_closes_client(app):
+    """GDriveClient/GDriveUploadQueue are constructed unconditionally (no
+    config-level enable flag — see app.py), so unlike the analysis queue
+    these must always be stopped/closed, not just "when present"."""
+    app._tracker.save = MagicMock()
+    app._gdrive_queue.stop = MagicMock()
+    app._gdrive_client.close = AsyncMock()
+
+    await app._shutdown()
+
+    app._gdrive_queue.stop.assert_called_once()
+    app._gdrive_client.close.assert_awaited_once()
 
 
 async def test_shutdown_isolates_step_failures(app):
@@ -1375,6 +1468,37 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
     assert str(clip_path) in paths
 
 
+async def test_run_starts_gdrive_queue_task_when_library_db_enabled(app, tmp_path):
+    """The Drive upload queue's background task starts in the same
+    unconditional block as library_reimport/duration_backfill — not gated
+    behind Blink auth like the AI analysis queue (_finish_startup), since
+    Drive backup only needs already-downloaded clips and the DB."""
+    import dataclasses
+
+    from blink_downloader.database import ClipDatabase
+    from blink_downloader.tracker import ClipTracker
+    from tests.conftest import TEST_DB_DSN
+
+    app._config = dataclasses.replace(app._config, enable_library_db=True)
+    app._db = ClipDatabase(TEST_DB_DSN)
+    app._storage.ensure_directory = MagicMock()
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+    app._gdrive_queue.start = AsyncMock()
+    app._gdrive_queue.stop = MagicMock()
+
+    async def _fake_poll():
+        await asyncio.sleep(0)
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    app._gdrive_queue.start.assert_awaited_once()
+    assert any(t.get_name() == "gdrive_queue" for t in app._bg_tasks)
+
+
 async def test_run_skips_import_when_library_db_disabled(app, tmp_path):
     """When enable_library_db is False, no DB is created or scanned."""
     app._storage.ensure_directory = MagicMock()
@@ -2082,3 +2206,16 @@ def test_init_analyzer_disabled_skips_queue_creation(base_config, tmp_path):
     assert app._analyzer is None
     assert app._analysis_queue is None
     assert app._alert_dispatcher is not None
+
+
+def test_init_constructs_gdrive_client_and_queue_unconditionally(base_config):
+    """Unlike AI analysis (gated on ai_analysis_enabled), Google Drive backup
+    has no config-level enable flag — client_id/secret/backup_policy are all
+    set later from the Storage tab, so GDriveClient/GDriveUploadQueue must
+    always exist (just inert/disconnected until the user configures/connects
+    them), the same way _alert_dispatcher is unconditional above."""
+    app = BlinkClipDownloaderApp(base_config)
+
+    assert app._gdrive_client is not None
+    assert app._gdrive_queue is not None
+    assert app._gdrive_client.connected is False
