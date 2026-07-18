@@ -355,6 +355,45 @@ def test_ai_analysis_full_config():
     assert cfg.ai_schedule_end == "06:00"
 
 
+def test_gdrive_defaults():
+    """Client id/secret/backup_policy are NOT config.yaml options — they're
+    edited from the Storage tab and live in google_drive_settings.json (see
+    gdrive_client.py). Only batch_size/check_interval remain here, matching
+    ai_batch_size/ai_check_interval's precedent for queue tuning."""
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.gdrive_batch_size == 5
+    assert cfg.gdrive_check_interval == 300
+
+
+def test_gdrive_explicit_values():
+    cfg = _parse_config(
+        {
+            "username": "u",
+            "password": "p",
+            "gdrive_batch_size": 20,
+            "gdrive_check_interval": 900,
+        }
+    )
+    assert cfg.gdrive_batch_size == 20
+    assert cfg.gdrive_check_interval == 900
+
+
+def test_gdrive_batch_size_clamped_to_range():
+    low = _parse_config({"username": "u", "password": "p", "gdrive_batch_size": 0})
+    high = _parse_config({"username": "u", "password": "p", "gdrive_batch_size": 500})
+    assert low.gdrive_batch_size == 1
+    assert high.gdrive_batch_size == 50
+
+
+def test_gdrive_check_interval_clamped_to_range():
+    low = _parse_config({"username": "u", "password": "p", "gdrive_check_interval": 1})
+    high = _parse_config(
+        {"username": "u", "password": "p", "gdrive_check_interval": 999999}
+    )
+    assert low.gdrive_check_interval == 30
+    assert high.gdrive_check_interval == 3600
+
+
 def test_openai_escalation_model_defaults_empty():
     """Empty means escalation is disabled — unlike openai_model, there is no
     fallback default."""

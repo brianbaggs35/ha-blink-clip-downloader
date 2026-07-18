@@ -15,6 +15,14 @@ from aiohttp.test_utils import TestClient, TestServer
 from blink_downloader import media_server
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.database import ClipDatabase
+from blink_downloader.gdrive_client import (
+    DeviceFlowInfo,
+    DriveFolder,
+    DriveQuota,
+    GDriveClient,
+    TokenPollResult,
+)
+from blink_downloader.gdrive_queue import GDriveUploadQueue
 from blink_downloader.media_server import MediaServer
 
 # ---------------------------------------------------------------------------
@@ -255,6 +263,21 @@ async def test_list_clips_starred_filter(client: TestClient, db: ClipDatabase) -
     assert data[0]["id"] == "s1"
 
 
+async def test_list_clips_archived_filter(client: TestClient, db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("regular1"))
+    await db.add_clip(_make_clip("archived1"))
+    await db.mark_archived("archived1", "/archives/2024-06.zip")
+
+    resp = await client.get("/api/clips?archived=1")
+    data = await resp.json()
+    assert len(data) == 1
+    assert data[0]["id"] == "archived1"
+
+    resp_default = await client.get("/api/clips")
+    data_default = await resp_default.json()
+    assert [c["id"] for c in data_default] == ["regular1"]
+
+
 async def test_list_clips_notified_filter(db: ClipDatabase, tmp_path: Path) -> None:
     await db.add_clip(_make_clip("n1"))
     await db.add_clip(_make_clip("n2"))
@@ -399,6 +422,50 @@ async def test_delete_clip_no_file(client: TestClient, db: ClipDatabase) -> None
     resp = await client.delete("/api/clips/del1")
     assert resp.status == 200
     assert await db.get_clip("del1") is None
+    assert (await resp.json())["gdrive_deleted"] is None
+
+
+async def test_delete_clip_with_gdrive_backup_trashes_on_drive(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("del-gd1", path="/nonexistent/del-gd1.mp4"))
+    await db.mark_gdrive_uploaded("del-gd1", "drive-file-1")
+    gdrive_client = MagicMock()
+    gdrive_client.delete_file = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.delete("/api/clips/del-gd1")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["gdrive_deleted"] is True
+        gdrive_client.delete_file.assert_awaited_once_with("drive-file-1")
+        assert await db.get_clip("del-gd1") is None
+    finally:
+        await tc.close()
+
+
+async def test_delete_clip_gdrive_trash_failure_still_deletes_locally(
+    db: ClipDatabase,
+) -> None:
+    """A Drive-side failure must not block the local/DB delete — matches
+    archiver.py's per-step resilience philosophy (log-and-continue)."""
+    await db.add_clip(_make_clip("del-gd2", path="/nonexistent/del-gd2.mp4"))
+    await db.mark_gdrive_uploaded("del-gd2", "drive-file-2")
+    gdrive_client = MagicMock()
+    gdrive_client.delete_file = AsyncMock(side_effect=RuntimeError("Drive is down"))
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.delete("/api/clips/del-gd2")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["gdrive_deleted"] is False
+        assert await db.get_clip("del-gd2") is None
+    finally:
+        await tc.close()
 
 
 async def test_delete_clip_with_file(
@@ -5539,5 +5606,740 @@ async def test_feedback_untrained_count_reflects_pending_rows(
         resp = await tc.get("/api/ai/feedback/untrained-count")
         data = await resp.json()
         assert data["count"] == 2
+    finally:
+        await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# Storage tab: Google Drive backup
+# ---------------------------------------------------------------------------
+
+
+def _make_gdrive_client_mock(**kwargs) -> MagicMock:
+    m = MagicMock(spec=GDriveClient)
+    m.client_id = kwargs.get("client_id", "")
+    m.has_client_secret = kwargs.get("has_client_secret", False)
+    m.backup_policy = kwargs.get("backup_policy", "archived_only")
+    m.is_configured = kwargs.get("is_configured", False)
+    m.connected = kwargs.get("connected", False)
+    m.account_email = kwargs.get("account_email", "")
+    m.folder_id = kwargs.get("folder_id", "")
+    m.folder_name = kwargs.get("folder_name", "")
+    m.set_settings = MagicMock()
+    m.select_folder = MagicMock()
+    m.start_device_flow = AsyncMock(return_value=kwargs.get("device_flow_info"))
+    m.disconnect = AsyncMock()
+    m.get_quota = AsyncMock(return_value=kwargs.get("quota"))
+    m.list_folders = AsyncMock(return_value=kwargs.get("folders", []))
+    m.create_folder = AsyncMock(return_value=kwargs.get("created_folder"))
+    return m
+
+
+async def _start_server(server: MediaServer) -> TestClient:
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    return tc
+
+
+async def test_gdrive_settings_get_not_configured(client: TestClient) -> None:
+    resp = await client.get("/api/storage/gdrive/settings")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data == {
+        "client_id": "",
+        "has_client_secret": False,
+        "backup_policy": "archived_only",
+    }
+
+
+async def test_gdrive_settings_get_reflects_client_state(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(
+        client_id="cid", has_client_secret=True, backup_policy="all_clips"
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/storage/gdrive/settings")
+        data = await resp.json()
+        assert data == {
+            "client_id": "cid",
+            "has_client_secret": True,
+            "backup_policy": "all_clips",
+        }
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_settings_put_not_configured_returns_503(
+    client: TestClient,
+) -> None:
+    resp = await client.put("/api/storage/gdrive/settings", json={"client_id": "x"})
+    assert resp.status == 503
+
+
+async def test_gdrive_settings_put_invalid_json_returns_400(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.put("/api/storage/gdrive/settings", data="not json")
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_settings_put_saves(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.put(
+            "/api/storage/gdrive/settings",
+            json={
+                "client_id": "cid",
+                "client_secret": "csecret",
+                "backup_policy": "all_clips",
+            },
+        )
+        assert resp.status == 200
+        assert (await resp.json())["saved"] is True
+        gdrive_client.set_settings.assert_called_once_with(
+            "cid", "csecret", "all_clips"
+        )
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_status_not_configured(client: TestClient) -> None:
+    resp = await client.get("/api/storage/gdrive/status")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["configured"] is False
+    assert data["connected"] is False
+
+
+async def test_gdrive_status_reflects_client(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(
+        is_configured=True,
+        connected=True,
+        account_email="me@example.com",
+        folder_id="f1",
+        folder_name="Blink Clips",
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/storage/gdrive/status")
+        data = await resp.json()
+        assert data == {
+            "configured": True,
+            "connected": True,
+            "account_email": "me@example.com",
+            "folder_id": "f1",
+            "folder_name": "Blink Clips",
+        }
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_connect_not_configured_returns_503(client: TestClient) -> None:
+    resp = await client.post("/api/storage/gdrive/connect")
+    assert resp.status == 503
+
+
+async def test_gdrive_connect_missing_credentials_returns_400(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(is_configured=False)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/connect")
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_connect_device_flow_failure_returns_502(db: ClipDatabase) -> None:
+    media_server._gdrive_connect_state = {"phase": "idle"}
+    gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=None)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/connect")
+        assert resp.status == 502
+    finally:
+        await tc.close()
+        media_server._gdrive_connect_state = {"phase": "idle"}
+
+
+async def test_gdrive_connect_starts_device_flow(db: ClipDatabase) -> None:
+    media_server._gdrive_connect_state = {"phase": "idle"}
+    info = DeviceFlowInfo(
+        device_code="dc1",
+        user_code="ABCD-1234",
+        verification_url="https://google.com/device",
+        expires_in=1800,
+        interval=5,
+    )
+    gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=info)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    captured: list = []
+    try:
+        with patch(
+            "asyncio.create_task",
+            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
+        ):
+            resp = await tc.post("/api/storage/gdrive/connect")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["phase"] == "pending"
+        assert data["user_code"] == "ABCD-1234"
+        assert data["verification_url"] == "https://google.com/device"
+
+        # Drain the captured background poll coroutine so it doesn't leak
+        # as an unawaited coroutine warning past this test.
+        gdrive_client.poll_once_for_token = AsyncMock(
+            return_value=TokenPollResult(status="expired")
+        )
+        with patch("asyncio.sleep", AsyncMock()):
+            await captured[0]
+        assert media_server._gdrive_connect_state["phase"] == "expired"
+    finally:
+        await tc.close()
+        media_server._gdrive_connect_state = {"phase": "idle"}
+
+
+async def test_gdrive_connect_returns_existing_state_when_already_pending(
+    db: ClipDatabase,
+) -> None:
+    media_server._gdrive_connect_state = {
+        "phase": "pending",
+        "user_code": "EXISTING-CODE",
+        "verification_url": "https://google.com/device",
+        "expires_in": 1800,
+    }
+    gdrive_client = _make_gdrive_client_mock(is_configured=True)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/connect")
+        data = await resp.json()
+        assert data["user_code"] == "EXISTING-CODE"
+        gdrive_client.start_device_flow.assert_not_awaited()
+    finally:
+        await tc.close()
+        media_server._gdrive_connect_state = {"phase": "idle"}
+
+
+async def test_gdrive_connect_poll_success_sets_connected_state(
+    db: ClipDatabase,
+) -> None:
+    media_server._gdrive_connect_state = {"phase": "idle"}
+    info = DeviceFlowInfo(
+        device_code="dc1",
+        user_code="ABCD-1234",
+        verification_url="https://google.com/device",
+        expires_in=1800,
+        interval=5,
+    )
+    gdrive_client = _make_gdrive_client_mock(
+        is_configured=True, device_flow_info=info, account_email="me@example.com"
+    )
+    gdrive_client.poll_once_for_token = AsyncMock(
+        return_value=TokenPollResult(status="success")
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    captured: list = []
+    try:
+        with patch(
+            "asyncio.create_task",
+            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
+        ):
+            await tc.post("/api/storage/gdrive/connect")
+        with patch("asyncio.sleep", AsyncMock()):
+            await captured[0]
+        assert media_server._gdrive_connect_state == {
+            "phase": "connected",
+            "account_email": "me@example.com",
+        }
+    finally:
+        await tc.close()
+        media_server._gdrive_connect_state = {"phase": "idle"}
+
+
+async def test_gdrive_connect_poll_denied_sets_error_state(db: ClipDatabase) -> None:
+    media_server._gdrive_connect_state = {"phase": "idle"}
+    info = DeviceFlowInfo(
+        device_code="dc1",
+        user_code="ABCD-1234",
+        verification_url="https://google.com/device",
+        expires_in=1800,
+        interval=5,
+    )
+    gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=info)
+    gdrive_client.poll_once_for_token = AsyncMock(
+        return_value=TokenPollResult(status="denied")
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    captured: list = []
+    try:
+        with patch(
+            "asyncio.create_task",
+            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
+        ):
+            await tc.post("/api/storage/gdrive/connect")
+        with patch("asyncio.sleep", AsyncMock()):
+            await captured[0]
+        assert media_server._gdrive_connect_state["phase"] == "error"
+    finally:
+        await tc.close()
+        media_server._gdrive_connect_state = {"phase": "idle"}
+
+
+async def test_gdrive_connect_poll_generic_error_sets_error_state(
+    db: ClipDatabase,
+) -> None:
+    media_server._gdrive_connect_state = {"phase": "idle"}
+    info = DeviceFlowInfo(
+        device_code="dc1",
+        user_code="ABCD-1234",
+        verification_url="https://google.com/device",
+        expires_in=1800,
+        interval=5,
+    )
+    gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=info)
+    gdrive_client.poll_once_for_token = AsyncMock(
+        return_value=TokenPollResult(status="error", message="invalid_client")
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    captured: list = []
+    try:
+        with patch(
+            "asyncio.create_task",
+            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
+        ):
+            await tc.post("/api/storage/gdrive/connect")
+        with patch("asyncio.sleep", AsyncMock()):
+            await captured[0]
+        assert media_server._gdrive_connect_state == {
+            "phase": "error",
+            "message": "invalid_client",
+        }
+    finally:
+        await tc.close()
+        media_server._gdrive_connect_state = {"phase": "idle"}
+
+
+async def test_gdrive_connect_poll_slow_down_then_success(db: ClipDatabase) -> None:
+    """A slow_down response must not end the poll loop — it keeps polling
+    (at a backed-off interval) until a terminal outcome."""
+    media_server._gdrive_connect_state = {"phase": "idle"}
+    info = DeviceFlowInfo(
+        device_code="dc1",
+        user_code="ABCD-1234",
+        verification_url="https://google.com/device",
+        expires_in=1800,
+        interval=5,
+    )
+    gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=info)
+    gdrive_client.poll_once_for_token = AsyncMock(
+        side_effect=[
+            TokenPollResult(status="slow_down"),
+            TokenPollResult(status="success"),
+        ]
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    captured: list = []
+    try:
+        with patch(
+            "asyncio.create_task",
+            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
+        ):
+            await tc.post("/api/storage/gdrive/connect")
+        with patch("asyncio.sleep", AsyncMock()):
+            await captured[0]
+        assert gdrive_client.poll_once_for_token.await_count == 2
+        assert media_server._gdrive_connect_state["phase"] == "connected"
+    finally:
+        await tc.close()
+        media_server._gdrive_connect_state = {"phase": "idle"}
+
+
+async def test_gdrive_connect_poll_gives_up_after_deadline_with_no_terminal_result(
+    db: ClipDatabase,
+) -> None:
+    """If the deadline is already passed before the loop's first check (a
+    code_code that expired faster than expected, or a slow first tick), the
+    poll loop must still terminate into "expired" rather than spin forever."""
+    media_server._gdrive_connect_state = {"phase": "idle"}
+    info = DeviceFlowInfo(
+        device_code="dc1",
+        user_code="ABCD-1234",
+        verification_url="https://google.com/device",
+        expires_in=1800,
+        interval=5,
+    )
+    gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=info)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    captured: list = []
+    try:
+        with patch(
+            "asyncio.create_task",
+            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
+        ):
+            await tc.post("/api/storage/gdrive/connect")
+        # First call computes deadline = 0 + 1800; second call (the while
+        # condition) sees 99999, which is already past it — the loop body
+        # (and its asyncio.sleep/poll call) never runs at all.
+        with patch("time.monotonic", side_effect=[0, 99999]):
+            await captured[0]
+        assert media_server._gdrive_connect_state == {"phase": "expired"}
+        gdrive_client.poll_once_for_token.assert_not_awaited()
+    finally:
+        await tc.close()
+        media_server._gdrive_connect_state = {"phase": "idle"}
+
+
+async def test_gdrive_connect_status_returns_shared_state(db: ClipDatabase) -> None:
+    media_server._gdrive_connect_state = {
+        "phase": "connected",
+        "account_email": "me@example.com",
+    }
+    server = MediaServer(db=db, port=0)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/storage/gdrive/connect-status")
+        data = await resp.json()
+        assert data["phase"] == "connected"
+    finally:
+        await tc.close()
+        media_server._gdrive_connect_state = {"phase": "idle"}
+
+
+async def test_gdrive_disconnect_not_configured_returns_503(client: TestClient) -> None:
+    resp = await client.post("/api/storage/gdrive/disconnect")
+    assert resp.status == 503
+
+
+async def test_gdrive_disconnect_clears_state(db: ClipDatabase) -> None:
+    media_server._gdrive_connect_state = {
+        "phase": "connected",
+        "account_email": "me@example.com",
+    }
+    gdrive_client = _make_gdrive_client_mock(connected=True)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/disconnect")
+        assert resp.status == 200
+        assert (await resp.json())["disconnected"] is True
+        gdrive_client.disconnect.assert_awaited_once()
+        assert media_server._gdrive_connect_state == {"phase": "idle"}
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_quota_not_connected(client: TestClient) -> None:
+    resp = await client.get("/api/storage/gdrive/quota")
+    data = await resp.json()
+    assert data["available"] is False
+
+
+async def test_gdrive_quota_available(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(
+        connected=True, quota=DriveQuota(limit=1000, usage=250, usage_in_drive=200)
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/storage/gdrive/quota")
+        data = await resp.json()
+        assert data == {
+            "available": True,
+            "limit": 1000,
+            "usage": 250,
+            "usage_in_drive": 200,
+        }
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_quota_none_from_client_returns_unavailable(
+    db: ClipDatabase,
+) -> None:
+    gdrive_client = _make_gdrive_client_mock(connected=True, quota=None)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/storage/gdrive/quota")
+        assert (await resp.json())["available"] is False
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_queue_status_no_queue_configured(client: TestClient) -> None:
+    resp = await client.get("/api/storage/gdrive/queue")
+    data = await resp.json()
+    assert data == {
+        "connected": False,
+        "pending": 0,
+        "processing": 0,
+        "completed": 0,
+        "failed": 0,
+    }
+
+
+async def test_gdrive_queue_status_reflects_queue(db: ClipDatabase) -> None:
+    gdrive_queue = MagicMock(spec=GDriveUploadQueue)
+    gdrive_queue.get_queue_status = AsyncMock(
+        return_value={
+            "connected": True,
+            "pending": 2,
+            "processing": 0,
+            "completed": 5,
+            "failed": 1,
+        }
+    )
+    server = MediaServer(db=db, port=0, gdrive_queue=gdrive_queue)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/storage/gdrive/queue")
+        data = await resp.json()
+        assert data["pending"] == 2
+        assert data["completed"] == 5
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_folders_no_client_returns_empty(client: TestClient) -> None:
+    resp = await client.get("/api/storage/gdrive/folders")
+    assert (await resp.json()) == {"folders": []}
+
+
+async def test_gdrive_folders_lists_and_defaults_to_root(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(
+        folders=[
+            DriveFolder(
+                id="f1", name="Blink Clips", modified_time="2026-01-01T00:00:00Z"
+            )
+        ]
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/storage/gdrive/folders")
+        data = await resp.json()
+        assert data["folders"] == [
+            {"id": "f1", "name": "Blink Clips", "modified_time": "2026-01-01T00:00:00Z"}
+        ]
+        gdrive_client.list_folders.assert_awaited_once_with("root")
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_folders_passes_parent_id(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(folders=[])
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        await tc.get("/api/storage/gdrive/folders?parent_id=parent-xyz")
+        gdrive_client.list_folders.assert_awaited_once_with("parent-xyz")
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_create_folder_not_configured_returns_503(
+    client: TestClient,
+) -> None:
+    resp = await client.post("/api/storage/gdrive/folders", json={"name": "New Folder"})
+    assert resp.status == 503
+
+
+async def test_gdrive_create_folder_missing_name_returns_400(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/folders", json={"name": "  "})
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_create_folder_invalid_json_returns_400(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/folders", data="not json")
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_create_folder_success(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(
+        created_folder=DriveFolder(
+            id="f-new", name="New Folder", modified_time="2026-01-01T00:00:00Z"
+        )
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/storage/gdrive/folders",
+            json={"name": "New Folder", "parent_id": "parent-1"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["id"] == "f-new"
+        gdrive_client.create_folder.assert_awaited_once_with("New Folder", "parent-1")
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_create_folder_failure_returns_502(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(created_folder=None)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/folders", json={"name": "New Folder"})
+        assert resp.status == 502
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_select_folder_not_configured_returns_503(
+    client: TestClient,
+) -> None:
+    resp = await client.put("/api/storage/gdrive/folder", json={"folder_id": "f1"})
+    assert resp.status == 503
+
+
+async def test_gdrive_select_folder_missing_folder_id_returns_400(
+    db: ClipDatabase,
+) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.put("/api/storage/gdrive/folder", json={})
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_select_folder_invalid_json_returns_400(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.put("/api/storage/gdrive/folder", data="not json")
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_select_folder_saves(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.put(
+            "/api/storage/gdrive/folder",
+            json={"folder_id": "f1", "folder_name": "Blink Clips"},
+        )
+        assert resp.status == 200
+        gdrive_client.select_folder.assert_called_once_with("f1", "Blink Clips")
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_backup_now_not_configured_returns_503(client: TestClient) -> None:
+    resp = await client.post("/api/storage/gdrive/backup-now")
+    assert resp.status == 503
+
+
+async def test_gdrive_backup_now_enqueues_pending_clips(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("archived-bn1"))
+    await db.mark_archived("archived-bn1", "/archives/2024-06.zip")
+    gdrive_client = _make_gdrive_client_mock(backup_policy="archived_only")
+    gdrive_queue = MagicMock(spec=GDriveUploadQueue)
+    gdrive_queue.enqueue = AsyncMock()
+    server = MediaServer(
+        db=db, port=0, gdrive_client=gdrive_client, gdrive_queue=gdrive_queue
+    )
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/backup-now")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["enqueued"] == 1
+        gdrive_queue.enqueue.assert_awaited_once()
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_upload_not_configured_returns_503(client: TestClient) -> None:
+    resp = await client.post("/api/storage/gdrive/upload", json={"clip_ids": ["c1"]})
+    assert resp.status == 503
+
+
+async def test_gdrive_upload_invalid_json_returns_400(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    gdrive_queue = MagicMock(spec=GDriveUploadQueue)
+    server = MediaServer(
+        db=db, port=0, gdrive_client=gdrive_client, gdrive_queue=gdrive_queue
+    )
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/upload", data="not json")
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_upload_missing_clip_ids_returns_400(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    gdrive_queue = MagicMock(spec=GDriveUploadQueue)
+    server = MediaServer(
+        db=db, port=0, gdrive_client=gdrive_client, gdrive_queue=gdrive_queue
+    )
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/upload", json={"clip_ids": []})
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_upload_enqueues_existing_clips_with_folder(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("up1"))
+    await db.add_clip(_make_clip("up2"))
+    gdrive_client = _make_gdrive_client_mock()
+    gdrive_queue = MagicMock(spec=GDriveUploadQueue)
+    gdrive_queue.enqueue = AsyncMock()
+    server = MediaServer(
+        db=db, port=0, gdrive_client=gdrive_client, gdrive_queue=gdrive_queue
+    )
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/storage/gdrive/upload",
+            json={"clip_ids": ["up1", "up2", "ghost"], "folder_id": "f1"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["enqueued"] == 2  # "ghost" doesn't exist, skipped
+        assert gdrive_queue.enqueue.await_count == 2
+        for call in gdrive_queue.enqueue.call_args_list:
+            assert call.kwargs["folder_id"] == "f1"
     finally:
         await tc.close()
