@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from blink_downloader.database import ClipDatabase, _affected, _row_to_dict
+from blink_downloader.database import (
+    ClipDatabase,
+    _affected,
+    _local_day_bounds,
+    _row_to_dict,
+)
 from tests.conftest import TEST_DB_DSN
 
 
@@ -872,6 +877,93 @@ async def test_get_suspicious_clips(db: ClipDatabase) -> None:
     assert suspicious[0]["is_suspicious"] is True
 
 
+async def test_count_suspicious_clips(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_analysis_result(
+        _make_analysis("c1", is_suspicious=True, confidence=0.9)
+    )
+    await db.add_analysis_result(
+        _make_analysis("c2", is_suspicious=False, confidence=0.1)
+    )
+    assert await db.count_suspicious_clips() == 1
+
+
+@pytest.mark.parametrize("period", ["today", "week", "month"])
+async def test_get_suspicious_clips_period_includes_current(
+    db: ClipDatabase, period: str
+) -> None:
+    """A suspicious clip analyzed right now falls inside every rolling
+    period bucket (today/week/month all start at or before local midnight
+    today and are open-ended through now)."""
+    now = datetime.now(timezone.utc).isoformat()
+    await db.add_clip(_make_clip("recent"))
+    await db.add_analysis_result(
+        _make_analysis("recent", is_suspicious=True, analyzed_at=now)
+    )
+    await db.add_clip(_make_clip("ancient"))
+    await db.add_analysis_result(
+        _make_analysis(
+            "ancient", is_suspicious=True, analyzed_at="2020-01-01T00:00:00+00:00"
+        )
+    )
+
+    filtered = await db.get_suspicious_clips(period=period)
+    assert [c["clip_id"] for c in filtered] == ["recent"]
+    assert await db.count_suspicious_clips(period=period) == 1
+
+    unfiltered = await db.get_suspicious_clips()
+    assert len(unfiltered) == 2
+    assert await db.count_suspicious_clips() == 2
+
+
+async def test_get_suspicious_clips_period_yesterday(db: ClipDatabase) -> None:
+    yesterday_start, yesterday_end = _local_day_bounds(1)
+    # Midpoint of yesterday's local calendar day, safely away from either
+    # edge of the [start, end) bucket regardless of the host's timezone.
+    mid_yesterday = (
+        datetime.fromisoformat(yesterday_start)
+        + (
+            datetime.fromisoformat(yesterday_end)
+            - datetime.fromisoformat(yesterday_start)
+        )
+        / 2
+    ).isoformat()
+
+    await db.add_clip(_make_clip("yday"))
+    await db.add_analysis_result(
+        _make_analysis("yday", is_suspicious=True, analyzed_at=mid_yesterday)
+    )
+    await db.add_clip(_make_clip("today"))
+    await db.add_analysis_result(
+        _make_analysis(
+            "today",
+            is_suspicious=True,
+            analyzed_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+
+    filtered = await db.get_suspicious_clips(period="yesterday")
+    assert [c["clip_id"] for c in filtered] == ["yday"]
+    assert await db.count_suspicious_clips(period="yesterday") == 1
+
+
+async def test_get_suspicious_clips_unknown_period_is_unfiltered(
+    db: ClipDatabase,
+) -> None:
+    """An unrecognized period string (defensive — the HTTP layer already
+    validates this) must fall back to "all time" rather than matching
+    nothing."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        _make_analysis(
+            "c1", is_suspicious=True, analyzed_at="2020-01-01T00:00:00+00:00"
+        )
+    )
+    assert len(await db.get_suspicious_clips(period="decade")) == 1
+    assert await db.count_suspicious_clips(period="decade") == 1
+
+
 async def test_get_analysis_stats(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_clip(_make_clip("c2"))
@@ -1135,6 +1227,7 @@ async def test_analysis_operations_without_init() -> None:
     d = ClipDatabase()
     assert await d.get_analysis_for_clip("x") is None
     assert await d.get_suspicious_clips() == []
+    assert await d.count_suspicious_clips() == 0
     assert await d.get_analysis_stats() == {}
     assert await d.get_pending_analysis() == []
     counts = await d.get_queue_counts()

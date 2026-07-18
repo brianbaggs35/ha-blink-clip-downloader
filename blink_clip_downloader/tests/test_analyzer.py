@@ -22,6 +22,8 @@ from blink_downloader.analyzer import (
     OpenAIAnalyzer,
     _ANTHROPIC_FALLBACK_MODELS,
     _OPENAI_FALLBACK_MODELS,
+    _OPENAI_MODEL_DISPLAY_ORDER,
+    _openai_model_rank,
     _vision_model_score,
     create_analyzer,
     is_openai_vision_model,
@@ -429,6 +431,48 @@ async def test_fetch_models_offline(analyzer: ClipAnalyzer) -> None:
     )
     models = await analyzer.fetch_models()
     assert models == []
+
+
+async def test_fetch_models_uses_the_configured_ollama_url() -> None:
+    """Regression test: fetch_models() must hit *this instance's* configured
+    ollama_url (e.g. a LAN server the user set in the add-on's Configuration
+    tab), not a hardcoded default — the "Fetch Models" button on the AI tab
+    would silently talk to the wrong server otherwise."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"models": []})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    mock_get = MagicMock(return_value=mock_resp)
+
+    custom_url = "http://192.168.1.50:11434"
+    a = ClipAnalyzer(ollama_url=custom_url, model="llava:7b", prompt="p")
+    a._session = _mock_session(get=mock_get)
+
+    await a.fetch_models()
+
+    requested_url = mock_get.call_args.args[0]
+    assert requested_url == f"{custom_url}/api/tags"
+
+
+async def test_fetch_models_strips_trailing_slash_from_configured_url() -> None:
+    """ollama_url is stored with a trailing slash stripped (see __init__),
+    so a URL saved with one (e.g. "http://host:11434/") doesn't produce a
+    malformed "http://host:11434//api/tags" request."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"models": []})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    mock_get = MagicMock(return_value=mock_resp)
+
+    a = ClipAnalyzer(ollama_url="http://host:11434/", model="llava:7b", prompt="p")
+    a._session = _mock_session(get=mock_get)
+
+    await a.fetch_models()
+
+    requested_url = mock_get.call_args.args[0]
+    assert requested_url == "http://host:11434/api/tags"
 
 
 # ------------------------------------------------------------------
@@ -1877,6 +1921,38 @@ async def test_anthropic_fetch_models_from_api(monkeypatch: pytest.MonkeyPatch) 
     assert "display_name" in models[0]
 
 
+async def test_anthropic_fetch_models_strips_dated_snapshot_and_dedupes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: Anthropic's real API can return a dated snapshot id
+    (e.g. "claude-sonnet-5-20250929") rather than the bare alias. Two
+    snapshots of the same model must collapse into a single bare-alias
+    entry — otherwise the picker lists the same model twice with ids a user
+    shouldn't copy into config (a snapshot pins forever instead of
+    following improvements to the alias)."""
+    import sys
+
+    old_snapshot = MagicMock()
+    old_snapshot.id = "claude-sonnet-5-20250601"
+    new_snapshot = MagicMock()
+    new_snapshot.id = "claude-sonnet-5-20250929"
+    bare = MagicMock()
+    bare.id = "claude-haiku-4-5"
+
+    mock_mod = _make_anthropic_module(models_data=[new_snapshot, old_snapshot, bare])
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        models = await a.fetch_models()
+
+    names = [m["name"] for m in models]
+    assert names == ["claude-sonnet-5", "claude-haiku-4-5"]
+    for m in models:
+        assert m["name"] == m["id"] == m["display_name"] == m["description"]
+
+
 async def test_anthropic_fetch_models_fallback_on_auth_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2690,6 +2766,16 @@ def test_is_openai_vision_model_excludes_pro_suffix() -> None:
     assert is_openai_vision_model("gpt-5.5-pro") is False
 
 
+def test_is_openai_vision_model_excludes_non_vision_variants() -> None:
+    """gpt-4o-mini-transcribe etc. match a vision prefix but aren't vision models."""
+    assert is_openai_vision_model("gpt-4o-mini-transcribe") is False
+    assert is_openai_vision_model("gpt-4o-transcribe") is False
+    assert is_openai_vision_model("gpt-4o-mini-search-preview") is False
+    assert is_openai_vision_model("gpt-4o-mini-realtime-preview") is False
+    assert is_openai_vision_model("gpt-4o-mini-tts") is False
+    assert is_openai_vision_model("gpt-4o-audio-preview") is False
+
+
 # ------------------------------------------------------------------
 # OpenAIAnalyzer — health_check
 # ------------------------------------------------------------------
@@ -2841,6 +2927,105 @@ async def test_openai_fetch_models_from_api(monkeypatch: pytest.MonkeyPatch) -> 
     assert "gpt-4o-mini" in names
     assert "whisper-1" not in names
     assert len(models) == 2
+
+
+async def test_openai_fetch_models_sorted_newest_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: models used to be sorted alphabetically, which put
+    "gpt-4-turbo" first (since '-' sorts before '.' in ASCII) ahead of every
+    newer, undated model — looking like a recommendation for the oldest,
+    most expensive model in the lineup instead of the newest one."""
+    import sys
+
+    ids = ["gpt-4-turbo", "gpt-4.1", "gpt-4o", "gpt-5.4-nano", "gpt-5.5"]
+    mocks = []
+    for model_id in ids:
+        m = MagicMock()
+        m.id = model_id
+        mocks.append(m)
+
+    mock_mod = _make_openai_module(models_data=mocks)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        models = await a.fetch_models()
+
+    names = [m["name"] for m in models]
+    assert names == ["gpt-5.5", "gpt-5.4-nano", "gpt-4.1", "gpt-4o", "gpt-4-turbo"]
+
+
+def test_openai_model_rank_unknown_model_sorts_last() -> None:
+    """A model id this add-on doesn't recognize yet must rank after every
+    known model rather than raising or sorting first."""
+    assert _openai_model_rank("gpt-5.6") == len(_OPENAI_MODEL_DISPLAY_ORDER)
+    assert _openai_model_rank("gpt-4-turbo") < _openai_model_rank("gpt-5.6")
+
+
+async def test_openai_fetch_models_unknown_model_sorts_after_known_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    known = MagicMock()
+    known.id = "gpt-4-turbo"
+    unknown = MagicMock()
+    unknown.id = "gpt-5.6"  # not yet in _OPENAI_MODEL_DISPLAY_ORDER
+
+    mock_mod = _make_openai_module(models_data=[unknown, known])
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        models = await a.fetch_models()
+
+    assert [m["name"] for m in models] == ["gpt-4-turbo", "gpt-5.6"]
+
+
+async def test_openai_fetch_models_excludes_dated_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: fetch_models used to return every dated snapshot
+    alongside the bare alias (e.g. both "gpt-4o" and "gpt-4o-2024-08-06"),
+    cluttering the picker with ids nobody should paste into config."""
+    import sys
+
+    bare = MagicMock()
+    bare.id = "gpt-4o-mini"
+    dated = MagicMock()
+    dated.id = "gpt-4o-mini-2024-07-18"
+
+    mock_mod = _make_openai_module(models_data=[bare, dated])
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        models = await a.fetch_models()
+
+    names = [m["name"] for m in models]
+    assert names == ["gpt-4o-mini"]
+
+
+async def test_openai_fetch_models_entries_are_bare_ids() -> None:
+    """Every field on a fetch_models() entry must be exactly the copy-paste
+    model id — no pricing, no dates, no JSON-only fields to leak into a UI
+    that (mis)renders the whole object instead of just `.name`."""
+    a = OpenAIAnalyzer(api_key="", model="gpt-4o-mini", prompt="test")
+    models = await a.fetch_models()
+    for m in models:
+        assert m["name"] == m["id"] == m["display_name"] == m["description"]
+        assert "$" not in m["display_name"]
+
+
+def test_openai_fallback_models_newest_first() -> None:
+    """gpt-4-turbo (oldest) must be last, not first — see
+    test_openai_fetch_models_sorted_newest_first for the live-API version."""
+    assert _OPENAI_FALLBACK_MODELS[0] == "gpt-5.5"
+    assert _OPENAI_FALLBACK_MODELS[-1] == "gpt-4-turbo"
 
 
 async def test_openai_fetch_models_fallback_no_key() -> None:

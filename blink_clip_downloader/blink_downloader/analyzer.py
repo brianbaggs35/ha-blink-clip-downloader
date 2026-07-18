@@ -252,6 +252,16 @@ _OPENAI_VISION_PREFIXES: frozenset[str] = frozenset(
     }
 )
 
+# Model-id substrings that mean "not a vision chat model" even though the id
+# also matches one of the prefixes above — e.g. "gpt-4o-mini-transcribe" and
+# "gpt-4o-mini-search-preview" both contain "gpt-4o" but are an audio
+# transcription model and a web-search-tool model respectively, neither of
+# which takes image input via Chat Completions. Checked before the prefix
+# match so these never leak into fetch_models()'s picker list.
+_OPENAI_NON_VISION_SUBSTRINGS: frozenset[str] = frozenset(
+    {"transcribe", "search-preview", "audio", "realtime", "tts"}
+)
+
 # Structured Outputs (response_format=json_schema, strict=True) guarantees the
 # response matches this schema exactly — unlike json_object mode, which only
 # guarantees *some* valid JSON — so parsing never has to fall back to
@@ -273,49 +283,66 @@ _OPENAI_STRUCTURED_OUTPUT_SCHEMA: dict[str, Any] = {
     },
 }
 
-# Fallback model list when the OpenAI API cannot be reached.
-_OPENAI_FALLBACK_MODELS: list[dict] = [
-    {
-        "name": "gpt-5.4-mini",
-        "display_name": "GPT-5.4 mini — Best Value ($0.75/$4.50 per 1M tokens)",
-    },
-    {
-        "name": "gpt-5.4-nano",
-        "display_name": "GPT-5.4 nano — Lowest Cost ($0.20/$1.25 per 1M tokens)",
-    },
-    {
-        "name": "gpt-5.4",
-        "display_name": "GPT-5.4 ($2.50/$15 per 1M tokens)",
-    },
-    {
-        "name": "gpt-5.5",
-        "display_name": "GPT-5.5 — Highest Intelligence ($5/$30 per 1M tokens)",
-    },
-    {
-        "name": "gpt-4o",
-        "display_name": "GPT-4o ($2.50/$10 per 1M tokens)",
-    },
-    {
-        "name": "gpt-4o-mini",
-        "display_name": "GPT-4o mini ($0.15/$0.60 per 1M tokens)",
-    },
-    {
-        "name": "gpt-4.1",
-        "display_name": "GPT-4.1 ($2/$8 per 1M tokens)",
-    },
-    {
-        "name": "gpt-4.1-mini",
-        "display_name": "GPT-4.1 mini ($0.40/$1.60 per 1M tokens)",
-    },
-    {
-        "name": "gpt-4.1-nano",
-        "display_name": "GPT-4.1 nano ($0.10/$0.40 per 1M tokens)",
-    },
-    {
-        "name": "gpt-4-turbo",
-        "display_name": "GPT-4 Turbo ($10/$30 per 1M tokens)",
-    },
+# Newest-to-oldest OpenAI model family order. Used both to sort
+# fetch_models()'s live-API results and to order the fallback list below —
+# plain alphabetical order (the previous behavior) put "gpt-4-turbo" first
+# purely because '-' sorts before '.' in ASCII, which looked like a
+# recommendation for the oldest, most expensive model in the lineup.
+_OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.2",
+    "gpt-5.1",
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "o4-mini",
+    "o3",
+    "o3-mini",
+    "o1",
+    "o1-mini",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4-turbo",
 ]
+
+# Fallback model list when the OpenAI API cannot be reached — just the bare
+# model ids a user needs to paste into the add-on's Configuration tab, in
+# the same newest-to-oldest order as _OPENAI_MODEL_DISPLAY_ORDER above.
+_OPENAI_FALLBACK_MODELS: list[str] = [
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4-turbo",
+]
+
+# Matches a trailing dated-snapshot suffix on an OpenAI model id, e.g. the
+# "-2024-07-18" in "gpt-4o-mini-2024-07-18". fetch_models() skips these and
+# keeps only the bare alias: a dated snapshot is a perfectly valid model id
+# to run with, but pins to one snapshot forever instead of following
+# improvements to the alias, and cluttering the picker with every snapshot
+# of every model buries the ids someone would actually want to copy.
+_OPENAI_DATED_SNAPSHOT_RE = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+
+def _openai_model_rank(model_id: str) -> int:
+    """Sort key for fetch_models(): position in _OPENAI_MODEL_DISPLAY_ORDER,
+    or last place for a model this add-on doesn't recognize yet."""
+    try:
+        return _OPENAI_MODEL_DISPLAY_ORDER.index(model_id.lower())
+    except ValueError:
+        return len(_OPENAI_MODEL_DISPLAY_ORDER)
 
 
 def is_openai_vision_model(model_id: str) -> bool:
@@ -328,6 +355,8 @@ def is_openai_vision_model(model_id: str) -> bool:
     """
     lower = model_id.lower()
     if lower.endswith("-pro"):
+        return False
+    if any(s in lower for s in _OPENAI_NON_VISION_SUBSTRINGS):
         return False
     return any(p in lower for p in _OPENAI_VISION_PREFIXES)
 
@@ -349,29 +378,23 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5": (1.00, 5.00),
 }
 
-# Fallback model list when the Anthropic API cannot be reached.
-_ANTHROPIC_FALLBACK_MODELS: list[dict] = [
-    {
-        "name": "claude-opus-4-8",
-        "display_name": "Claude Opus 4.8 ($5/$25 per 1M tokens)",
-    },
-    {
-        "name": "claude-sonnet-5",
-        "display_name": "Claude Sonnet 5 ($2/$10 per 1M tokens through Aug 2026)",
-    },
-    {
-        "name": "claude-sonnet-4-6",
-        "display_name": "Claude Sonnet 4.6 ($3/$15 per 1M tokens)",
-    },
-    {
-        "name": "claude-sonnet-4-5",
-        "display_name": "Claude Sonnet 4.5 ($3/$15 per 1M tokens)",
-    },
-    {
-        "name": "claude-haiku-4-5",
-        "display_name": "Claude Haiku 4.5 — Best Value ($1/$5 per 1M tokens)",
-    },
+# Fallback model list when the Anthropic API cannot be reached — just the
+# bare model ids a user needs to paste into the add-on's Configuration tab.
+_ANTHROPIC_FALLBACK_MODELS: list[str] = [
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
 ]
+
+# Matches a trailing dated-snapshot suffix on an Anthropic model id, e.g. the
+# "-20250929" in "claude-sonnet-5-20250929" (Anthropic's real API can return
+# either form). Anthropic accepts both the dated snapshot and the bare alias
+# as a valid ``model`` value, and the alias is what a user should paste into
+# the add-on's Configuration tab since it keeps resolving to the latest
+# snapshot rather than pinning to one forever.
+_ANTHROPIC_DATED_SNAPSHOT_RE = re.compile(r"-\d{8}$")
 
 
 def lookup_model_pricing(model: str) -> tuple[float, float] | None:
@@ -4555,7 +4578,14 @@ class AnthropicAnalyzer(BaseAnalyzer):
             return self._store_health_check_result(False)
 
     async def fetch_models(self) -> list[dict[str, Any]]:
-        """Fetch available models from the Anthropic API; falls back to a hardcoded list."""
+        """Fetch available models from the Anthropic API; falls back to a hardcoded list.
+
+        Strips a dated-snapshot suffix down to its bare alias (deduping any
+        resulting repeats) so every entry's ``name`` is exactly the id a
+        user should paste into this add-on's ``anthropic_model``
+        configuration option, the same as the OpenAI analyzer's
+        fetch_models() — see _ANTHROPIC_DATED_SNAPSHOT_RE.
+        """
         if self._api_key:
             try:
                 import anthropic as _anthropic  # noqa: PLC0415
@@ -4566,17 +4596,18 @@ class AnthropicAnalyzer(BaseAnalyzer):
                     client = self._get_client()
                     page = await client.models.list()
                     result = []
+                    seen: set[str] = set()
                     for m in page.data:
-                        # Prefix match (not exact dict lookup) in case the API
-                        # returns a dated snapshot id rather than the bare alias.
-                        inp, out = lookup_model_pricing(m.id) or (3.00, 15.00)
-                        display = getattr(m, "display_name", m.id)
+                        name = _ANTHROPIC_DATED_SNAPSHOT_RE.sub("", m.id)
+                        if name in seen:
+                            continue
+                        seen.add(name)
                         result.append(
                             {
-                                "name": m.id,
-                                "id": m.id,
-                                "display_name": display,
-                                "description": f"{display} (${inp:.0f}/${out:.0f} per 1M tokens)",
+                                "name": name,
+                                "id": name,
+                                "display_name": name,
+                                "description": name,
                             }
                         )
                     return result
@@ -4589,13 +4620,8 @@ class AnthropicAnalyzer(BaseAnalyzer):
                     _LOGGER.debug("Failed to fetch Anthropic models from API: %s", exc)
 
         return [
-            {
-                "name": m["name"],
-                "id": m["name"],
-                "display_name": m["display_name"],
-                "description": m["display_name"],
-            }
-            for m in _ANTHROPIC_FALLBACK_MODELS
+            {"name": name, "id": name, "display_name": name, "description": name}
+            for name in _ANTHROPIC_FALLBACK_MODELS
         ]
 
     @staticmethod
@@ -4835,7 +4861,13 @@ class OpenAIAnalyzer(BaseAnalyzer):
             return self._store_health_check_result(False)
 
     async def fetch_models(self) -> list[dict[str, Any]]:
-        """Fetch vision-capable models from the OpenAI API; falls back to a hardcoded list."""
+        """Fetch vision-capable models from the OpenAI API; falls back to a hardcoded list.
+
+        Excludes dated snapshot ids (keeping only the bare alias) and sorts
+        newest-to-oldest via _openai_model_rank, so every entry's ``name`` is
+        exactly the id a user should paste into this add-on's
+        ``openai_model`` configuration option — see _OPENAI_MODEL_DISPLAY_ORDER.
+        """
         if self._api_key:
             try:
                 import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
@@ -4849,22 +4881,21 @@ class OpenAIAnalyzer(BaseAnalyzer):
                     for m in pages.data:
                         if not is_openai_vision_model(m.id):
                             continue
-                        # Prefix match (not exact dict lookup) since the API
-                        # often returns dated snapshot ids like
-                        # "gpt-4o-mini-2024-07-18" rather than the bare alias.
-                        inp, out = lookup_model_pricing(m.id) or (2.50, 10.00)
-                        # Use a friendly pricing suffix only for known models
-                        suffix = f" (${inp:.2f}/${out:.2f} per 1M tokens)"
+                        if _OPENAI_DATED_SNAPSHOT_RE.search(m.id):
+                            continue
                         result.append(
                             {
                                 "name": m.id,
                                 "id": m.id,
-                                "display_name": m.id + suffix,
-                                "description": m.id + suffix,
+                                "display_name": m.id,
+                                "description": m.id,
                             }
                         )
                     if result:
-                        return sorted(result, key=lambda m: m["name"])
+                        return sorted(
+                            result,
+                            key=lambda m: (_openai_model_rank(m["name"]), m["name"]),
+                        )
                 except _openai.AuthenticationError:
                     _LOGGER.error(
                         "OpenAI: invalid API key — "
@@ -4874,13 +4905,8 @@ class OpenAIAnalyzer(BaseAnalyzer):
                     _LOGGER.debug("Failed to fetch OpenAI models from API: %s", exc)
 
         return [
-            {
-                "name": m["name"],
-                "id": m["name"],
-                "display_name": m["display_name"],
-                "description": m["display_name"],
-            }
-            for m in _OPENAI_FALLBACK_MODELS
+            {"name": name, "id": name, "display_name": name, "description": name}
+            for name in _OPENAI_FALLBACK_MODELS
         ]
 
     @staticmethod

@@ -19,7 +19,31 @@ const toast = useToastStore()
 const MODEL_PICKER_PROVIDERS = new Set(['ollama', 'ollama_cloud', 'anthropic', 'openai'])
 const showModelPicker = () => MODEL_PICKER_PROVIDERS.has(props.status.provider || '')
 
-// ── Model picker ──────────────────────────────────────────
+// OpenAI's picker is sorted newest-to-oldest (see analyzer.py's
+// _OPENAI_MODEL_DISPLAY_ORDER), not cheapest/best-first, so "index 0 is
+// best" doesn't hold for it the way it does for Ollama (sorted by vision
+// score) — these are the two models this add-on actually recommends: nano
+// for tier 1 since it runs on every clip, mini for tier 2 since it only
+// runs on clips tier 1 already flagged and can afford to be a bit stronger.
+const OPENAI_BEST_PRIMARY_MODEL = 'gpt-5.4-nano'
+const OPENAI_BEST_ESCALATION_MODEL = 'gpt-5.4-mini'
+
+type ModelTier = 'primary' | 'escalation'
+
+function isBestModel(m: AiModelEntry, index: number, provider: string | undefined, tier: ModelTier): boolean {
+  if (provider === 'openai') {
+    return m.name === (tier === 'primary' ? OPENAI_BEST_PRIMARY_MODEL : OPENAI_BEST_ESCALATION_MODEL)
+  }
+  return index === 0
+}
+
+function modelLabel(m: AiModelEntry, index: number, provider: string | undefined, tier: ModelTier): string {
+  const gb = m.size ? ` · ${(m.size / 1e9).toFixed(1)} GB` : ''
+  const star = isBestModel(m, index, provider, tier) ? ' ⭐ Best' : ''
+  return `${m.name}${gb}${star}`
+}
+
+// ── Model picker (tier 1) ──────────────────────────────────
 const models = ref<AiModelEntry[]>([])
 const selectedModel = ref('')
 const fetchingModels = ref(false)
@@ -32,7 +56,7 @@ async function fetchModels() {
     if (models.value.length && !selectedModel.value) selectedModel.value = models.value[0].name
     toast.show(
       models.value.length
-        ? `Found ${models.value.length} vision model(s) — best shown first`
+        ? `Found ${models.value.length} vision model(s)`
         : 'No vision models found on this Ollama server',
     )
   } catch {
@@ -55,19 +79,13 @@ async function copyModelId() {
   }
 }
 
-function modelLabel(m: AiModelEntry, index: number): string {
-  const gb = m.size ? ` · ${(m.size / 1e9).toFixed(1)} GB` : ''
-  const star = index === 0 ? ' ⭐ Best' : ''
-  return `${m.name}${gb}${star}`
-}
-
 // ── Escalation (tier 2) model picker — mirrors the tier-1 picker above,
 // but targets whichever provider is configured as ai_escalation_provider.
 // Same limitation as tier 1: only works once escalation is actually
 // attached/configured, and only copies the id for pasting into the add-on's
 // Configuration tab rather than writing it live (config.yaml options aren't
 // live-writable from this UI).
-const escalationModels = ref<string[]>([])
+const escalationModels = ref<AiModelEntry[]>([])
 const selectedEscalationModel = ref('')
 const fetchingEscalationModels = ref(false)
 
@@ -77,7 +95,7 @@ async function fetchEscalationModelsList() {
     const d = await fetchEscalationModels()
     escalationModels.value = d.models || []
     if (escalationModels.value.length && !selectedEscalationModel.value) {
-      selectedEscalationModel.value = escalationModels.value[0]
+      selectedEscalationModel.value = escalationModels.value[0].name
     }
     toast.show(
       escalationModels.value.length
@@ -221,22 +239,26 @@ function confPct(r: AnalysisResultDict): number {
       Model: <strong>{{ status.model || '—' }}</strong>
     </div>
 
-    <div v-if="showModelPicker()" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">
-      <button class="btn sm" :disabled="fetchingModels" @click="fetchModels">
+    <div v-if="showModelPicker()" class="model-picker">
+      <button class="btn sm model-picker__fetch" :disabled="fetchingModels" @click="fetchModels">
         {{ fetchingModels ? '⏳ Loading…' : '⟳ Fetch Models' }}
       </button>
-      <label for="ai-model-picker" class="sr-only">Vision model</label>
-      <select id="ai-model-picker" v-model="selectedModel" class="sel" style="min-width: 175px">
-        <option value="">Select a model…</option>
-        <option v-for="(m, i) in models" :key="m.name" :value="m.name">{{ modelLabel(m, i) }}</option>
-      </select>
-      <button
-        class="btn sm ghost"
-        title="Copy the selected model id, then paste it into this add-on's configuration (OpenAI Model / Anthropic Model / Ollama Vision Model)"
-        @click="copyModelId"
-      >
-        📋 Copy
-      </button>
+      <div class="model-picker__row">
+        <label for="ai-model-picker" class="sr-only">Vision model</label>
+        <select id="ai-model-picker" v-model="selectedModel" class="sel model-picker__select">
+          <option value="">Select a model…</option>
+          <option v-for="(m, i) in models" :key="m.name" :value="m.name">
+            {{ modelLabel(m, i, status.provider, 'primary') }}
+          </option>
+        </select>
+        <button
+          class="btn sm ghost model-picker__copy"
+          title="Copy the selected model id, then paste it into this add-on's configuration (OpenAI Model / Anthropic Model / Ollama Vision Model)"
+          @click="copyModelId"
+        >
+          📋 Copy
+        </button>
+      </div>
     </div>
     <p v-if="showModelPicker()" style="font-size: 0.72rem; color: var(--muted); margin-top: 0.35rem">
       Selecting a model here does not change the running configuration — copy the id and paste it into the add-on's
@@ -307,39 +329,34 @@ function confPct(r: AnalysisResultDict): number {
 
     <template v-if="status.escalation_provider">
       <div class="ai-tier-label" style="margin-top: 0.9rem">🪜 Tier 2 · Escalation Model</div>
-      <div
-        style="
-          font-size: 0.78rem;
-          color: var(--muted);
-          margin-bottom: 0.6rem;
-          padding: 0.4rem 0.6rem;
-          background: var(--card2);
-          border-radius: var(--radius);
-        "
-      >
-        <strong
-          >{{ PROVIDER_LABELS[status.escalation_provider] || status.escalation_provider }} —
-          {{ status.escalation_model || '—' }}</strong
-        >
+      <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.4rem">
+        Provider: <strong>{{ PROVIDER_LABELS[status.escalation_provider] || status.escalation_provider }}</strong>
+      </div>
+      <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.6rem">
+        Model: <strong>{{ status.escalation_model || '—' }}</strong>
         <span :style="{ color: status.escalation_online ? 'var(--success)' : 'var(--danger)' }">
           {{ status.escalation_online ? ' 🟢 online' : ' 🔴 unreachable — falling back to tier 1' }}
         </span>
-        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.5rem">
-          <button class="btn sm" :disabled="fetchingEscalationModels" @click="fetchEscalationModelsList">
-            {{ fetchingEscalationModels ? '⏳ Loading…' : '⟳ Fetch Escalation Models' }}
-          </button>
+      </div>
+
+      <div class="model-picker">
+        <button
+          class="btn sm model-picker__fetch"
+          :disabled="fetchingEscalationModels"
+          @click="fetchEscalationModelsList"
+        >
+          {{ fetchingEscalationModels ? '⏳ Loading…' : '⟳ Fetch Escalation Models' }}
+        </button>
+        <div class="model-picker__row">
           <label for="ai-escalation-model-picker" class="sr-only">Escalation model</label>
-          <select
-            id="ai-escalation-model-picker"
-            v-model="selectedEscalationModel"
-            class="sel"
-            style="min-width: 175px"
-          >
+          <select id="ai-escalation-model-picker" v-model="selectedEscalationModel" class="sel model-picker__select">
             <option value="">Select a model…</option>
-            <option v-for="m in escalationModels" :key="m" :value="m">{{ m }}</option>
+            <option v-for="(m, i) in escalationModels" :key="m.name" :value="m.name">
+              {{ modelLabel(m, i, status.escalation_provider, 'escalation') }}
+            </option>
           </select>
           <button
-            class="btn sm ghost"
+            class="btn sm ghost model-picker__copy"
             title="Copy the selected model id, then paste it into this add-on's configuration (AI Escalation Model)"
             @click="copyEscalationModelId"
           >
@@ -409,5 +426,32 @@ function confPct(r: AnalysisResultDict): number {
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.3rem;
   margin-bottom: 0.5rem;
+}
+
+/* Shared by the tier-1 and tier-2 model pickers so both look and behave
+   identically: the fetch button always sits on its own line, with the
+   select + copy button always on the row below it. Previously the fetch
+   button, select, and copy button shared one flex-wrap row, so the select
+   (whose width followed its longest fetched option) started out beside the
+   fetch button but reflowed onto its own line the moment real options
+   arrived — the layout jumped around every time models were fetched. */
+.model-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.model-picker__row {
+  display: flex;
+  width: 100%;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.model-picker__select {
+  flex: 1 1 175px;
+  min-width: 175px;
 }
 </style>

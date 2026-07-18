@@ -17,7 +17,8 @@ import type {
   FinetuneListResponse,
   MoondreamFinetune,
   MoondreamInstallStatusResponse,
-  SuspiciousClip,
+  SuspiciousClipsResponse,
+  SuspiciousPeriod,
   TestEmailResult,
 } from './types'
 
@@ -41,8 +42,16 @@ export function getClipAiResult(clipId: string): Promise<AnalysisResultDict | nu
   return apiGet(`/api/ai/results/${clipId}`)
 }
 
-export function getSuspiciousClips(limit = 20): Promise<SuspiciousClip[]> {
-  return apiGet(`/api/ai/suspicious?limit=${limit}`)
+export interface SuspiciousClipsParams {
+  limit?: number
+  offset?: number
+  period?: SuspiciousPeriod
+}
+
+export function getSuspiciousClips(params: SuspiciousClipsParams = {}): Promise<SuspiciousClipsResponse> {
+  const { limit = 20, offset = 0, period } = params
+  const periodQuery = period ? `&period=${period}` : ''
+  return apiGet(`/api/ai/suspicious?limit=${limit}&offset=${offset}${periodQuery}`)
 }
 
 export function analyzeClipNow(clipId: string): Promise<AnalysisResultDict> {

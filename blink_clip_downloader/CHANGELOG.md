@@ -1,5 +1,47 @@
 # Changelog
 
+## 5.0.3
+
+### Bug fixes
+
+- **Fetching escalation (tier-2) models on the AI tab showed each model as
+  raw JSON instead of its name.** The escalation picker's `models` field was
+  typed as `string[]`, but the backend always returns objects
+  (`{name, id, display_name, description}`) — so Vue's default text
+  interpolation JSON-stringified the whole object into the dropdown. The
+  escalation picker now renders exactly like the primary picker: just the
+  model's plain id.
+- **The OpenAI model list (both tiers) had no real organization.**
+  Alphabetical sorting put the oldest, most expensive model (`gpt-4-turbo`)
+  first purely because `-` sorts before `.`, dated snapshots
+  (`gpt-4o-mini-2024-07-18`) were listed right alongside their bare alias,
+  and a few non-vision variants (`gpt-4o-mini-transcribe`,
+  `gpt-4o-mini-search-preview`) slipped through the vision filter. Every
+  provider's model list (OpenAI, Anthropic, Ollama, Ollama Cloud, Moondream
+  Cloud, Moondream Local) now returns exactly the bare id a user needs to
+  paste into the Configuration tab — no pricing, no dates, no JSON — and
+  OpenAI's list sorts newest-to-oldest instead of alphabetically.
+- **The primary model picker's dropdown started out beside the "Fetch
+  Models" button, then jumped underneath it the moment real models were
+  fetched**, since the button and dropdown shared one wrapping row and the
+  dropdown's width grew with its longest option. The dropdown and its Copy
+  button now always sit on their own row below the fetch button, for both
+  the primary and escalation pickers.
+- **The primary and escalation model pickers had inconsistent layouts** —
+  the escalation picker's provider/model summary and its controls were
+  nested inside a shaded box the primary picker didn't have. Both now share
+  the same structure (Provider/Model lines, then the fetch button, then the
+  select+Copy row) and the same "best" convention: for OpenAI, `gpt-5.4-nano`
+  is marked best for the primary model and `gpt-5.4-mini` for the
+  escalation model, rather than whichever entry happens to sort first.
+
+### Added
+
+- **The Suspicious Activity Feed now paginates** instead of rendering every
+  match at once. A Today/Yesterday/This week/This month filter (PrimeVue
+  `Select`) narrows the results, and a PrimeVue `Paginator` (20 per page by
+  default, with 10/20/50/100 options) replaces the old fixed 20-item cap.
+
 ## 5.0.2
 
 ### Bug fixes

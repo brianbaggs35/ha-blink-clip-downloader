@@ -310,6 +310,51 @@ def _local_day_bounds(days_ago: int = 0) -> tuple[str, str]:
     ).isoformat()
 
 
+# Suspicious-feed period filter keywords accepted by get_suspicious_clips()/
+# count_suspicious_clips() — see _suspicious_period_bounds().
+SUSPICIOUS_PERIODS: frozenset[str] = frozenset({"today", "yesterday", "week", "month"})
+
+
+def _suspicious_period_bounds(period: str | None) -> tuple[str | None, str | None]:
+    """Resolve a suspicious-feed filter keyword to UTC ``[start, end)`` bounds.
+
+    ``today``/``yesterday`` are single local calendar days (see
+    _local_day_bounds). ``week``/``month`` are rolling windows anchored at
+    local midnight and open-ended through now — the same "rolling, not
+    calendar-boundary" convention get_stats()'s ``week_count`` already uses
+    (``timestamp >= week_start`` with no upper bound). Returns (None, None)
+    for an unrecognized or missing period, meaning "no filter, all time".
+    """
+    if period == "today":
+        return _local_day_bounds(0)
+    if period == "yesterday":
+        return _local_day_bounds(1)
+    if period == "week":
+        return _local_day_bounds(7)[0], None
+    if period == "month":
+        return _local_day_bounds(30)[0], None
+    return None, None
+
+
+def _suspicious_clips_where(
+    period: str | None, table_alias: str = "ar"
+) -> tuple[str, list[str]]:
+    """Shared ``WHERE`` clause + bind params for get_suspicious_clips() and
+    count_suspicious_clips(), so the two queries can never drift out of
+    sync on which rows count as "suspicious for this period"."""
+    prefix = f"{table_alias}." if table_alias else ""
+    start, end = _suspicious_period_bounds(period)
+    where = f"WHERE {prefix}is_suspicious"
+    params: list[str] = []
+    if start is not None:
+        where += f" AND {prefix}analyzed_at >= ?"
+        params.append(start)
+    if end is not None:
+        where += f" AND {prefix}analyzed_at < ?"
+        params.append(end)
+    return where, params
+
+
 def _local_utc_offset_sql() -> str:
     """SQL ``INTERVAL`` literal (e.g. ``"-03:00"``) for the system's current
     UTC offset — see :func:`_local_day_bounds`. For GROUP BY queries that
@@ -960,26 +1005,42 @@ class ClipDatabase:
         return dict(row) if row else None
 
     async def get_suspicious_clips(
-        self, limit: int = 50, offset: int = 0
+        self, limit: int = 50, offset: int = 0, period: str | None = None
     ) -> list[dict[str, Any]]:
         if self._pool is None:
             return []
+        where, params = _suspicious_clips_where(period)
         rows = await self._pool.fetch(
             _qm(
-                """
+                f"""
                 SELECT ar.*, c.file_path, c.timestamp AS clip_timestamp,
                        c.duration, c.size_bytes
                 FROM analysis_results ar
                 JOIN clips c ON c.id = ar.clip_id
-                WHERE ar.is_suspicious
+                {where}
                 ORDER BY ar.analyzed_at DESC
                 LIMIT ? OFFSET ?
                 """
             ),
+            *params,
             limit,
             offset,
         )
         return [dict(r) for r in rows]
+
+    async def count_suspicious_clips(self, period: str | None = None) -> int:
+        """Total suspicious-clip count for *period* — paired with
+        get_suspicious_clips() so the AI tab's activity feed can show a
+        real page count instead of guessing from a single page's length."""
+        if self._pool is None:
+            return 0
+        where, params = _suspicious_clips_where(period, table_alias="")
+        return (
+            await self._pool.fetchval(
+                _qm(f"SELECT COUNT(*) FROM analysis_results {where}"), *params
+            )
+            or 0
+        )
 
     async def get_analysis_stats(self) -> dict[str, Any]:
         if self._pool is None:

@@ -158,6 +158,13 @@ export type SuspiciousClip = AnalysisResultDict & {
   size_bytes: number
 }
 
+export type SuspiciousPeriod = 'today' | 'yesterday' | 'week' | 'month'
+
+export interface SuspiciousClipsResponse {
+  items: SuspiciousClip[]
+  total: number
+}
+
 export interface AiTestResult {
   success: true
   clip_id: string
@@ -355,7 +362,7 @@ export interface VehicleSettings {
 
 export interface EscalationModelsResponse {
   enabled: boolean
-  models: string[]
+  models: AiModelEntry[]
   error?: string
 }
 

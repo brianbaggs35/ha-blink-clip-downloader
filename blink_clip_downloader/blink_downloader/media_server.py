@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from aiohttp import web
 
-from .database import ClipDatabase
+from .database import SUSPICIOUS_PERIODS, ClipDatabase
 from .vision import FaceEmbedder, is_face_recognition_available, torch_cpu_compatible
 
 if TYPE_CHECKING:
@@ -900,12 +900,18 @@ class MediaServer:
     async def _handle_ai_suspicious(self, request: web.Request) -> web.Response:
         q = request.rel_url.query
         try:
-            limit = max(0, min(int(q.get("limit", 50)), 200))
+            limit = max(0, min(int(q.get("limit", 20)), 200))
             offset = max(0, int(q.get("offset", 0)))
         except ValueError:
-            limit, offset = 50, 0
-        results = await self._db.get_suspicious_clips(limit=limit, offset=offset)
-        return web.json_response(results)
+            limit, offset = 20, 0
+        period = q.get("period")
+        if period not in SUSPICIOUS_PERIODS:
+            period = None
+        items = await self._db.get_suspicious_clips(
+            limit=limit, offset=offset, period=period
+        )
+        total = await self._db.count_suspicious_clips(period=period)
+        return web.json_response({"items": items, "total": total})
 
     async def _handle_ai_analyze_now(self, request: web.Request) -> web.Response:
         if not self._analyzer:
