@@ -617,6 +617,7 @@ onUnmounted(() => {
       :clip-id="activeClipId"
       :ai-enabled="aiEnabled"
       :prompt-debug-enabled="promptDebugEnabled"
+      :available-tags="tags"
       @close="closeModal"
       @nav="onNav"
       @deleted="onDeleted"

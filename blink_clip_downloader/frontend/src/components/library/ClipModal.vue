@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import videojs from 'video.js'
 import type Player from 'video.js/dist/types/player'
 import 'video.js/dist/video-js.css'
@@ -18,6 +18,7 @@ const props = defineProps<{
   clipId: string | null
   aiEnabled: boolean
   promptDebugEnabled: boolean
+  availableTags?: string[]
 }>()
 const emit = defineEmits<{
   close: []
@@ -39,6 +40,19 @@ const clip = ref<ClipDetail | null>(null)
 const starred = ref(false)
 const currentTags = ref<string[]>([])
 const tagInput = ref('')
+const tagInputFocused = ref(false)
+// Typeahead suggestions for the "Add tag" box: existing tags from other
+// clips (passed down from LibraryPage, which already keeps its own copy
+// fresh via the shared refresh signal — see saveTags() below) that aren't
+// already on this clip, narrowed by whatever's been typed so far.
+const tagSuggestions = computed(() => {
+  const q = tagInput.value.trim().toLowerCase()
+  return (props.availableTags ?? [])
+    .filter((t) => !currentTags.value.includes(t))
+    .filter((t) => !q || t.toLowerCase().includes(q))
+    .slice(0, 8)
+})
+const showTagSuggestions = computed(() => tagInputFocused.value && tagSuggestions.value.length > 0)
 const theater = ref(false)
 const autoplayNext = ref(false)
 const loopClip = ref(false)
@@ -163,18 +177,28 @@ async function saveTags() {
   refresh.bump()
 }
 
-async function onTagInputKeydown(e: KeyboardEvent) {
-  if (e.key !== 'Enter') return
-  const v = tagInput.value
+async function addTag(raw: string) {
+  const v = raw
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9_-]/g, '')
-  tagInput.value = ''
   if (v && !currentTags.value.includes(v)) {
     currentTags.value.push(v)
     await saveTags()
   }
+}
+
+async function onTagInputKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Enter') return
+  const v = tagInput.value
+  tagInput.value = ''
+  await addTag(v)
+}
+
+async function selectTagSuggestion(tag: string) {
+  tagInput.value = ''
+  await addTag(tag)
 }
 
 async function removeTag(tag: string) {
@@ -316,14 +340,24 @@ onUnmounted(() => {
         </div>
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem">
-            <label for="clip-tag-input" class="sr-only">Add tag</label>
-            <input
-              id="clip-tag-input"
-              v-model="tagInput"
-              class="tag-input"
-              placeholder="Add tag + Enter"
-              @keydown="onTagInputKeydown"
-            />
+            <div style="position: relative">
+              <label for="clip-tag-input" class="sr-only">Add tag</label>
+              <input
+                id="clip-tag-input"
+                v-model="tagInput"
+                class="tag-input"
+                placeholder="Add tag + Enter"
+                autocomplete="off"
+                @keydown="onTagInputKeydown"
+                @focus="tagInputFocused = true"
+                @blur="tagInputFocused = false"
+              />
+              <ul v-if="showTagSuggestions" class="tag-suggestions">
+                <li v-for="s in tagSuggestions" :key="s" @mousedown.prevent="selectTagSuggestion(s)">
+                  {{ s }}
+                </li>
+              </ul>
+            </div>
             <span style="font-size: 0.72rem; color: var(--muted)">
               <span class="kbd">Space</span> play &nbsp; <span class="kbd">←→</span> ±10s &nbsp;
               <span class="kbd">F</span> full &nbsp; <span class="kbd">M</span> mute &nbsp;
