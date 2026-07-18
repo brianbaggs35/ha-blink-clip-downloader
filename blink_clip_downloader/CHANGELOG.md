@@ -1,6 +1,11 @@
 # Changelog
 
-## 5.0.4
+## 5.0.4 (unreleased — skipped)
+
+_Not published. More fixes/enhancements are landing on top of this before
+anything ships, so this version number is being folded into whatever
+release follows rather than going out on its own — kept here for the
+record of what changed._
 
 ### Bug fixes
 
