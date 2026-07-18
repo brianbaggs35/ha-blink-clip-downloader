@@ -31,6 +31,9 @@ export interface ClipListItem {
   downloaded_at: string
   archived: boolean
   archive_path: string
+  gdrive_backed_up: boolean
+  gdrive_file_id: string
+  gdrive_uploaded_at: string
   notified: boolean
   face_recognized: boolean
 }
@@ -416,4 +419,60 @@ export interface CheckpointsResponse {
 export interface TestEmailResult {
   success: boolean
   message: string
+}
+
+// ---------------------------------------------------------------------
+// Storage tab: Google Drive backup
+// ---------------------------------------------------------------------
+
+export type GDriveBackupPolicy = 'archived_only' | 'all_clips'
+
+export interface GDriveSettings {
+  client_id: string
+  has_client_secret: boolean
+  backup_policy: GDriveBackupPolicy
+}
+
+export interface GDriveStatus {
+  configured: boolean
+  connected: boolean
+  account_email: string
+  folder_id: string
+  folder_name: string
+}
+
+export type GDriveConnectPhase = 'idle' | 'pending' | 'connected' | 'expired' | 'error'
+
+export interface GDriveConnectState {
+  phase: GDriveConnectPhase
+  user_code?: string
+  verification_url?: string
+  expires_in?: number
+  account_email?: string
+  message?: string
+}
+
+export interface GDriveQuota {
+  available: boolean
+  limit?: number | null
+  usage?: number
+  usage_in_drive?: number
+}
+
+export interface GDriveQueueStatus {
+  connected: boolean
+  pending: number
+  processing: number
+  completed: number
+  failed: number
+}
+
+export interface GDriveFolder {
+  id: string
+  name: string
+  modified_time: string
+}
+
+export interface GDriveFoldersResponse {
+  folders: GDriveFolder[]
 }

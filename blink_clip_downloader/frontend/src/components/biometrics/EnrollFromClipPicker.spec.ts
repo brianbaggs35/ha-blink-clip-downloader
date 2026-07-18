@@ -35,6 +35,9 @@ function makeClip(id: string): ClipListItem {
     downloaded_at: '2026-01-05T10:01:00Z',
     archived: false,
     archive_path: '',
+    gdrive_backed_up: false,
+    gdrive_file_id: '',
+    gdrive_uploaded_at: '',
     notified: false,
     face_recognized: false,
   }

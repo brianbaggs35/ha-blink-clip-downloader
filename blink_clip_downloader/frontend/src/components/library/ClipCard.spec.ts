@@ -17,6 +17,9 @@ const CLIP: ClipListItem = {
   downloaded_at: '2026-01-05T10:01:00Z',
   archived: false,
   archive_path: '',
+  gdrive_backed_up: false,
+  gdrive_file_id: '',
+  gdrive_uploaded_at: '',
   notified: true,
   face_recognized: false,
 }

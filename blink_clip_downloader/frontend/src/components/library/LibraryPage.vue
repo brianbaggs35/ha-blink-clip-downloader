@@ -19,6 +19,7 @@ import {
   type ClipFilters,
 } from '../../api/clips'
 import { analyzeClipNow, getAiStatus } from '../../api/ai'
+import { getGDriveStatus } from '../../api/gdrive'
 import type { ClipListItem, LibraryStats } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useCapabilitiesStore } from '../../stores/capabilities'
@@ -29,6 +30,7 @@ import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import AppIcon from '../icons/AppIcon.vue'
+import GDriveUploadModal from '../storage/GDriveUploadModal.vue'
 import BulkBar from './BulkBar.vue'
 import ClipCard from './ClipCard.vue'
 import ClipModal from './ClipModal.vue'
@@ -90,6 +92,8 @@ const selectMode = ref(false)
 const selectedIds = ref<Set<string>>(new Set())
 const zipping = ref(false)
 const bulkAnalyzing = ref(false)
+const gdriveConnected = ref(false)
+const showUploadModal = ref(false)
 // Bulk-analyze runs each clip through the same synchronous analyze-now
 // endpoint the per-clip "Analyze Now"/"Re-analyze" buttons use, one at a
 // time — not in parallel like bulkStar/bulkDelete/bulkZip. Firing many of
@@ -262,8 +266,17 @@ async function loadAiStatus() {
   }
 }
 
+async function loadGDriveStatus() {
+  try {
+    const s = await getGDriveStatus()
+    gdriveConnected.value = s.connected ?? false
+  } catch {
+    /* non-fatal */
+  }
+}
+
 async function loadAll(silent = false) {
-  await Promise.all([loadStats(), loadCameras(), loadClips(0, silent), loadAiStatus(), loadTags()])
+  await Promise.all([loadStats(), loadCameras(), loadClips(0, silent), loadAiStatus(), loadGDriveStatus(), loadTags()])
 }
 
 let debounceTimer: ReturnType<typeof setTimeout>
@@ -405,6 +418,16 @@ async function bulkAnalyze() {
     toggleSelectMode(false)
     void loadClips(0)
   }
+}
+
+function bulkUploadToDrive() {
+  if (!selectedIds.value.size) return
+  showUploadModal.value = true
+}
+
+function onUploadComplete() {
+  showUploadModal.value = false
+  toggleSelectMode(false)
 }
 
 function openModal(id: string) {
@@ -567,6 +590,13 @@ onUnmounted(() => {
       </Button>
     </div>
 
+    <GDriveUploadModal
+      v-if="showUploadModal"
+      :clip-ids="[...selectedIds]"
+      @close="showUploadModal = false"
+      @uploaded="onUploadComplete"
+    />
+
     <BulkBar
       v-if="selectMode"
       :count="selectedIds.size"
@@ -574,10 +604,12 @@ onUnmounted(() => {
       :zipping="zipping"
       :analyzing="bulkAnalyzing"
       :ai-enabled="aiEnabled"
+      :gdrive-enabled="gdriveConnected"
       @star="bulkStar"
       @delete="bulkDelete"
       @zip="bulkZip"
       @analyze="bulkAnalyze"
+      @upload="bulkUploadToDrive"
       @cancel="toggleSelectMode(false)"
       @select-all="selectAllVisible"
     />

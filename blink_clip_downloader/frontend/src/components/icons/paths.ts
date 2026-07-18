@@ -79,6 +79,13 @@ export const ICONS = {
     paths: ['M17 10l5-3v10l-5-3z'],
     rects: [{ x: 2, y: 5, width: 15, height: 14, rx: 2 }],
   },
+  'tab-storage': {
+    paths: ['M3 8h18', 'M10 12h4'],
+    rects: [
+      { x: 3, y: 4, width: 18, height: 4, rx: 1 },
+      { x: 4, y: 8, width: 16, height: 12, rx: 1 },
+    ],
+  },
   'empty-box': {
     paths: [
       'M22 12h-6l-2 3h-4l-2-3H2',

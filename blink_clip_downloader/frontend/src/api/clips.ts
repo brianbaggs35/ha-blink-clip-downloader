@@ -15,6 +15,7 @@ export interface ClipFilters {
   offset?: number
   notified?: boolean
   recognized?: boolean
+  archived?: boolean
 }
 
 function buildQuery(filters: ClipFilters): string {
@@ -31,6 +32,7 @@ function buildQuery(filters: ClipFilters): string {
   if (filters.offset !== undefined) params.set('offset', String(filters.offset))
   if (filters.notified) params.set('notified', '1')
   if (filters.recognized) params.set('recognized', '1')
+  if (filters.archived) params.set('archived', '1')
   const qs = params.toString()
   return qs ? `?${qs}` : ''
 }
@@ -43,7 +45,7 @@ export function getClip(id: string): Promise<ClipDetail> {
   return apiGet(`/api/clips/${id}`)
 }
 
-export function deleteClip(id: string): Promise<{ deleted: boolean }> {
+export function deleteClip(id: string): Promise<{ deleted: boolean; gdrive_deleted: boolean | null }> {
   return apiDelete(`/api/clips/${id}`)
 }
 
