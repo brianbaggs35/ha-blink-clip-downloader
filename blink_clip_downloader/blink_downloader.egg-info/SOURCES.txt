@@ -10,6 +10,8 @@ blink_downloader/database.py
 blink_downloader/digest.py
 blink_downloader/downloader.py
 blink_downloader/event_watcher.py
+blink_downloader/gdrive_client.py
+blink_downloader/gdrive_queue.py
 blink_downloader/library_scanner.py
 blink_downloader/manifest.py
 blink_downloader/media_server.py
@@ -112,6 +114,8 @@ tests/test_database.py
 tests/test_digest.py
 tests/test_downloader.py
 tests/test_event_watcher.py
+tests/test_gdrive_client.py
+tests/test_gdrive_queue.py
 tests/test_library_scanner.py
 tests/test_manifest.py
 tests/test_media_server.py
