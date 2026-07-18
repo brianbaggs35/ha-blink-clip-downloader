@@ -14,6 +14,7 @@ import UsagePage from './components/usage/UsagePage.vue'
 import ModelsPage from './components/models/ModelsPage.vue'
 import VehiclesPage from './components/vehicles/VehiclesPage.vue'
 import BiometricsPage from './components/biometrics/BiometricsPage.vue'
+import StoragePage from './components/storage/StoragePage.vue'
 import PromptOverlay from './components/layout/PromptOverlay.vue'
 import { useThemeStore } from './stores/theme'
 import { useAuthStore } from './stores/auth'
@@ -76,6 +77,9 @@ onUnmounted(() => auth.stopPolling())
   </div>
   <div id="page-biometrics" class="page" :class="{ active: activeTab === 'biometrics' }">
     <BiometricsPage v-if="activeTab === 'biometrics'" />
+  </div>
+  <div id="page-storage" class="page" :class="{ active: activeTab === 'storage' }">
+    <StoragePage v-if="activeTab === 'storage'" />
   </div>
 
   <HelpOverlay v-model="helpOpen" />

@@ -15,7 +15,8 @@ import { apiPost } from '../../api/client'
 import { getStats } from '../../api/clips'
 import { listFaces } from '../../api/ai'
 
-export type TabName = 'library' | 'automations' | 'status' | 'ai' | 'usage' | 'models' | 'vehicles' | 'biometrics'
+export type TabName =
+  'library' | 'automations' | 'status' | 'ai' | 'usage' | 'models' | 'vehicles' | 'biometrics' | 'storage'
 
 const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'library', label: 'Library', icon: 'tab-library' },
@@ -26,6 +27,7 @@ const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'models', label: 'Models', icon: 'tab-models' },
   { name: 'vehicles', label: 'Vehicles', icon: 'tab-vehicles' },
   { name: 'biometrics', label: 'Biometrics', icon: 'tab-biometrics' },
+  { name: 'storage', label: 'Storage', icon: 'tab-storage' },
 ]
 
 const activeTab = defineModel<TabName>({ required: true })

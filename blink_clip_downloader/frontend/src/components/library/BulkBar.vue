@@ -1,6 +1,13 @@
 <script setup lang="ts">
-defineProps<{ count: number; total: number; zipping: boolean; analyzing: boolean; aiEnabled: boolean }>()
-defineEmits<{ star: []; delete: []; zip: []; analyze: []; cancel: []; selectAll: [] }>()
+defineProps<{
+  count: number
+  total: number
+  zipping: boolean
+  analyzing: boolean
+  aiEnabled: boolean
+  gdriveEnabled: boolean
+}>()
+defineEmits<{ star: []; delete: []; zip: []; analyze: []; upload: []; cancel: []; selectAll: [] }>()
 </script>
 
 <template>
@@ -20,6 +27,7 @@ defineEmits<{ star: []; delete: []; zip: []; analyze: []; cancel: []; selectAll:
     <button v-if="aiEnabled" class="btn sm" :disabled="analyzing" @click="$emit('analyze')">
       {{ analyzing ? '⏳ Analyzing…' : '🔬 Analyze selected' }}
     </button>
+    <button v-if="gdriveEnabled" class="btn sm" @click="$emit('upload')">☁ Upload to Drive</button>
     <button class="btn sm" style="margin-left: auto" @click="$emit('cancel')">✕ Cancel</button>
   </div>
 </template>

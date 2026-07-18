@@ -157,7 +157,7 @@ removed in 5.0.0.
   `components/icons/paths.ts`'s `ICONS` map (add a `tab-X` entry; icons are
   plain path/rect/circle data, not separate `.vue` files — see `AppIcon.vue`).
   Current nav order: Library, Automations, Status, AI, AI Usage, Models,
-  Vehicles, Biometrics.
+  Vehicles, Biometrics, Storage.
 - **API client**: every backend call goes through `api/<area>.ts` modules
   built on `api/client.ts`'s `apiGet`/`apiPost`/`apiPut`/`apiPatch`/`apiDelete`
   helpers (thin `fetch` wrappers, ingress-path-aware via `env.ts`). Add new
