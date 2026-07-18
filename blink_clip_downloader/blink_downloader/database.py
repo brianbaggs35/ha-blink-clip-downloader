@@ -171,6 +171,7 @@ CREATE TABLE IF NOT EXISTS face_recognition_feedback (
     camera      TEXT    NOT NULL,
     report_type TEXT    NOT NULL,
     note        TEXT    DEFAULT '',
+    person_name TEXT    DEFAULT '',
     created_at  TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_face_feedback_clip ON face_recognition_feedback (clip_id);
@@ -190,6 +191,7 @@ ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL 
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_applied BOOLEAN DEFAULT FALSE;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_names TEXT DEFAULT '';
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS approved_faces_seen BOOLEAN DEFAULT FALSE;
+ALTER TABLE face_recognition_feedback ADD COLUMN IF NOT EXISTS person_name TEXT DEFAULT '';
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -1007,15 +1009,26 @@ class ClipDatabase:
         }
 
     async def add_face_recognition_feedback(
-        self, clip_id: str, camera: str, report_type: str, note: str = ""
+        self,
+        clip_id: str,
+        camera: str,
+        report_type: str,
+        note: str = "",
+        person_name: str = "",
     ) -> None:
         """Record a human report that face recognition got a clip wrong.
 
         *report_type* is ``"false_positive"`` (a face was matched/bypassed
         that shouldn't have been) or ``"false_negative"`` (an enrolled
-        person was present but not recognized/bypassed). Pure audit trail —
-        see face_recognition_feedback's own schema comment for why this
-        deliberately doesn't feed any automatic adjustment.
+        person was present but not recognized/bypassed). *person_name*
+        identifies who the report is about — for a false positive it's
+        whoever the (wrong) bypass matched, for a false negative it's
+        whichever enrolled person the reporter says was missed, or '' if
+        unknown/not selected. Pure audit trail — see
+        face_recognition_feedback's own schema comment for why this
+        deliberately doesn't feed any automatic adjustment; person_name
+        only makes the trail more actionable for a human reviewing it
+        (e.g. "re-enroll this person with clearer photos").
         """
         if self._pool is None:
             return
@@ -1023,14 +1036,15 @@ class ClipDatabase:
             _qm(
                 """
                 INSERT INTO face_recognition_feedback
-                  (clip_id, camera, report_type, note, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                  (clip_id, camera, report_type, note, person_name, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """
             ),
             clip_id,
             camera,
             report_type,
             note,
+            person_name,
             datetime.now(timezone.utc).isoformat(),
         )
 
@@ -1044,7 +1058,7 @@ class ClipDatabase:
         rows = await self._pool.fetch(
             _qm(
                 """
-                SELECT clip_id, camera, report_type, note, created_at
+                SELECT clip_id, camera, report_type, note, person_name, created_at
                 FROM face_recognition_feedback
                 ORDER BY created_at DESC
                 LIMIT ?

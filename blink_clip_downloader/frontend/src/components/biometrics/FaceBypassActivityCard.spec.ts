@@ -110,6 +110,7 @@ describe('FaceBypassActivityCard', () => {
             camera: 'Front Door',
             report_type: 'false_positive',
             note: 'That was the neighbor',
+            person_name: '',
             created_at: '2026-01-06T08:00:00Z',
           },
           {
@@ -117,6 +118,7 @@ describe('FaceBypassActivityCard', () => {
             camera: 'Driveway',
             report_type: 'false_negative',
             note: '',
+            person_name: '',
             created_at: '2026-01-06T09:00:00Z',
           },
         ],
@@ -128,6 +130,25 @@ describe('FaceBypassActivityCard', () => {
       expect(wrapper.text()).toContain('Front Door')
       expect(wrapper.text()).toContain('Driveway')
       expect(wrapper.text()).toContain('That was the neighbor')
+    })
+
+    it('shows the reported person name when the report identifies one', async () => {
+      mockFetch({
+        '/api/ai/faces/bypass-stats': { total_bypassed: 0, by_name: [], recent: [] },
+        '/api/ai/faces/feedback': [
+          {
+            clip_id: 'c1',
+            camera: 'Driveway',
+            report_type: 'false_negative',
+            note: '',
+            person_name: 'Brian',
+            created_at: '2026-01-06T09:00:00Z',
+          },
+        ],
+      })
+      const wrapper = mountCard()
+      await flushPromises()
+      expect(wrapper.text()).toContain('Brian')
     })
 
     it('still shows the feedback section even when no bypass has fired yet', async () => {

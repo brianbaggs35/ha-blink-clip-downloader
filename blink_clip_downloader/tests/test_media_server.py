@@ -4559,7 +4559,11 @@ async def test_face_recognition_feedback_submit_false_positive(
     await db.add_clip(_make_clip("c1", camera="Front Door"))
     resp = await client.post(
         "/api/ai/faces/feedback/c1",
-        json={"report_type": "false_positive", "note": "Not me."},
+        json={
+            "report_type": "false_positive",
+            "note": "Not me.",
+            "person_name": "Brian",
+        },
     )
     assert resp.status == 200
     assert await resp.json() == {"saved": True}
@@ -4571,6 +4575,7 @@ async def test_face_recognition_feedback_submit_false_positive(
     assert data[0]["camera"] == "Front Door"
     assert data[0]["report_type"] == "false_positive"
     assert data[0]["note"] == "Not me."
+    assert data[0]["person_name"] == "Brian"
 
 
 async def test_face_recognition_feedback_submit_false_negative_no_analysis_needed(
@@ -4583,6 +4588,23 @@ async def test_face_recognition_feedback_submit_false_negative_no_analysis_neede
         "/api/ai/faces/feedback/c1", json={"report_type": "false_negative"}
     )
     assert resp.status == 200
+
+
+async def test_face_recognition_feedback_submit_person_name_defaults_empty(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """person_name is optional on the wire — omitting it (older frontend
+    build, or a report with no enrolled people to disambiguate) must not
+    error, and should be stored as ''."""
+    await db.add_clip(_make_clip("c1"))
+    resp = await client.post(
+        "/api/ai/faces/feedback/c1", json={"report_type": "false_negative"}
+    )
+    assert resp.status == 200
+
+    listing = await client.get("/api/ai/faces/feedback")
+    data = await listing.json()
+    assert data[0]["person_name"] == ""
 
 
 async def test_face_recognition_feedback_submit_missing_clip(

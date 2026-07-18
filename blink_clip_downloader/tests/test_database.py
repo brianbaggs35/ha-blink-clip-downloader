@@ -916,6 +916,7 @@ async def test_add_and_get_face_recognition_feedback(db: ClipDatabase) -> None:
         camera="Front Door",
         report_type="false_positive",
         note="That's not me, wrong person matched.",
+        person_name="Brian",
     )
 
     feedback = await db.get_face_recognition_feedback()
@@ -924,6 +925,19 @@ async def test_add_and_get_face_recognition_feedback(db: ClipDatabase) -> None:
     assert feedback[0]["camera"] == "Front Door"
     assert feedback[0]["report_type"] == "false_positive"
     assert feedback[0]["note"] == "That's not me, wrong person matched."
+    assert feedback[0]["person_name"] == "Brian"
+
+
+async def test_add_face_recognition_feedback_person_name_defaults_empty(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_face_recognition_feedback(
+        clip_id="c1", camera="Front Door", report_type="false_negative"
+    )
+
+    feedback = await db.get_face_recognition_feedback()
+    assert feedback[0]["person_name"] == ""
 
 
 async def test_get_face_recognition_feedback_orders_newest_first_and_respects_limit(

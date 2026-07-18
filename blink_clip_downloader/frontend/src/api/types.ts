@@ -341,6 +341,7 @@ export interface FaceRecognitionFeedback {
   camera: string
   report_type: FaceFeedbackReportType
   note: string
+  person_name: string
   created_at: string
 }
 

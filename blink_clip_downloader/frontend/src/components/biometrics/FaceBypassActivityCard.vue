@@ -90,6 +90,7 @@ function fmtTs(iso: string): string {
                 :severity="row.report_type === 'false_positive' ? 'danger' : 'warn'"
                 :value="row.report_type === 'false_positive' ? 'Wrong match' : 'Missed match'"
               />
+              <strong v-if="row.person_name">{{ row.person_name }}</strong>
               on <em>{{ row.camera }}</em>
               <span class="muted-note">— {{ fmtTs(row.created_at) }}</span>
               <span v-if="row.note" class="muted-note">— "{{ row.note }}"</span>

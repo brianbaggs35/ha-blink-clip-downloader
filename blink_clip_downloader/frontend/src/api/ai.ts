@@ -142,8 +142,9 @@ export function submitFaceRecognitionFeedback(
   clipId: string,
   reportType: FaceFeedbackReportType,
   note = '',
+  personName = '',
 ): Promise<{ saved: boolean } | { error: string }> {
-  return apiPost(`/api/ai/faces/feedback/${clipId}`, { report_type: reportType, note })
+  return apiPost(`/api/ai/faces/feedback/${clipId}`, { report_type: reportType, note, person_name: personName })
 }
 
 export function fetchEscalationModels(): Promise<EscalationModelsResponse> {
