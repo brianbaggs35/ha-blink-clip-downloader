@@ -287,6 +287,52 @@ def _row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
     return d
 
 
+def _local_day_bounds(days_ago: int = 0) -> tuple[str, str]:
+    """UTC ISO-8601 ``[start, end)`` instants bounding the local calendar
+    day that was *days_ago* days before today, in the system's configured
+    timezone — the same TZ HA Supervisor gives the container that
+    analyzer.py's ``_time_of_day_segment`` already relies on via
+    ``astimezone()``. Every timestamp in this schema is stored as UTC text
+    (see ``init()``'s ``server_settings`` comment), so "today" must be
+    resolved via local midnight and converted back to UTC here rather than
+    compared as a bare UTC calendar-date string — otherwise evenings in any
+    timezone behind UTC roll over into "tomorrow" hours early.
+    """
+    local_midnight = (
+        datetime.now(timezone.utc)
+        .astimezone()
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+    )
+    start = local_midnight - timedelta(days=days_ago)
+    end = start + timedelta(days=1)
+    return start.astimezone(timezone.utc).isoformat(), end.astimezone(
+        timezone.utc
+    ).isoformat()
+
+
+def _local_utc_offset_sql() -> str:
+    """SQL ``INTERVAL`` literal (e.g. ``"-03:00"``) for the system's current
+    UTC offset — see :func:`_local_day_bounds`. For GROUP BY queries that
+    need ``to_char()``/``EXTRACT()`` to read local calendar fields instead
+    of the UTC ones the pinned-UTC session (see ``init()``) would otherwise
+    produce.
+
+    Always interpolated directly into query text, never bound as a ``?``
+    parameter: asyncpg encodes a bound interval from a Python ``timedelta``
+    with a nonzero ``days`` field whenever the offset is negative (that's
+    just how a negative ``timedelta`` under 24h normalizes), and Postgres's
+    ``AT TIME ZONE interval`` rejects that outright ("time zone interval
+    must not contain months or days") — a literal ``HH:MM`` string
+    sidesteps the whole problem. Always machine-computed from the system
+    clock, never user input, so interpolating it directly is safe.
+    """
+    offset = datetime.now().astimezone().utcoffset() or timedelta(0)
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = "-" if total_minutes < 0 else "+"
+    total_minutes = abs(total_minutes)
+    return f"{sign}{total_minutes // 60:02d}:{total_minutes % 60:02d}"
+
+
 class ClipDatabase:
     """Async wrapper around the PostgreSQL clip library."""
 
@@ -726,10 +772,9 @@ class ClipDatabase:
         if self._pool is None:
             return {}
 
-        _now_utc = datetime.now(timezone.utc)
-        today = _now_utc.date().isoformat()
-        yesterday = (_now_utc - timedelta(days=1)).date().isoformat()
-        week_ago = (_now_utc - timedelta(days=7)).date().isoformat()
+        today_start, today_end = _local_day_bounds(0)
+        yesterday_start, yesterday_end = _local_day_bounds(1)
+        week_start, _week_end = _local_day_bounds(7)
 
         queries: dict[str, tuple[str, tuple[Any, ...]]] = {
             "total_count": ("SELECT COUNT(*) FROM clips WHERE archived=FALSE", ()),
@@ -740,16 +785,16 @@ class ClipDatabase:
                 (),
             ),
             "today_count": (
-                "SELECT COUNT(*) FROM clips WHERE timestamp LIKE ?",
-                (f"{today}%",),
+                "SELECT COUNT(*) FROM clips WHERE timestamp >= ? AND timestamp < ?",
+                (today_start, today_end),
             ),
             "yesterday_count": (
-                "SELECT COUNT(*) FROM clips WHERE timestamp LIKE ?",
-                (f"{yesterday}%",),
+                "SELECT COUNT(*) FROM clips WHERE timestamp >= ? AND timestamp < ?",
+                (yesterday_start, yesterday_end),
             ),
             "week_count": (
                 "SELECT COUNT(*) FROM clips WHERE timestamp >= ?",
-                (week_ago,),
+                (week_start,),
             ),
             # Same "latest analysis row wins" + approved_faces_seen semantics
             # as get_clips()'s face_recognized column (see its docstring) —
@@ -776,9 +821,8 @@ class ClipDatabase:
         if self._pool is None:
             return []
 
-        _now_utc = datetime.now(timezone.utc)
-        today = _now_utc.date().isoformat()
-        week_ago = (_now_utc - timedelta(days=7)).date().isoformat()
+        today_start, today_end = _local_day_bounds(0)
+        week_start, _week_end = _local_day_bounds(7)
 
         rows = await self._pool.fetch(
             _qm(
@@ -787,7 +831,7 @@ class ClipDatabase:
                     MIN(camera) AS camera,
                     COUNT(*) AS total,
                     COALESCE(SUM(size_bytes), 0) AS size_bytes,
-                    SUM(CASE WHEN timestamp LIKE ? THEN 1 ELSE 0 END) AS today,
+                    SUM(CASE WHEN timestamp >= ? AND timestamp < ? THEN 1 ELSE 0 END) AS today,
                     SUM(CASE WHEN timestamp >= ? THEN 1 ELSE 0 END) AS this_week,
                     MAX(timestamp) AS last_seen
                 FROM clips
@@ -796,8 +840,9 @@ class ClipDatabase:
                 ORDER BY total DESC
                 """
             ),
-            f"{today}%",
-            week_ago,
+            today_start,
+            today_end,
+            week_start,
         )
         return [dict(r) for r in rows]
 
@@ -819,18 +864,23 @@ class ClipDatabase:
     async def get_activity_data(self, days: int = 7) -> list[dict[str, Any]]:
         """Return per-hour clip counts for the last *days* days.
 
-        Each row: ``{"date": "YYYY-MM-DD", "hour": 0-23, "count": n}``.
-        Useful for rendering an activity heat-map in the UI.
+        Each row: ``{"date": "YYYY-MM-DD", "hour": 0-23, "count": n}``, both
+        in the household's local calendar day/hour (see
+        :func:`_local_utc_offset_sql`) rather than the UTC ones the
+        pinned-UTC session (see ``init()``) would otherwise read back —
+        without this, evenings in any timezone behind UTC show up as the
+        next day. Useful for rendering an activity heat-map in the UI.
         """
         if self._pool is None:
             return []
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        tz = _local_utc_offset_sql()
         rows = await self._pool.fetch(
             _qm(
-                """
+                f"""
                 SELECT
-                    to_char(timestamp::timestamptz, 'YYYY-MM-DD') AS date,
-                    EXTRACT(HOUR FROM timestamp::timestamptz)::int AS hour,
+                    to_char(timestamp::timestamptz AT TIME ZONE INTERVAL '{tz}', 'YYYY-MM-DD') AS date,
+                    EXTRACT(HOUR FROM timestamp::timestamptz AT TIME ZONE INTERVAL '{tz}')::int AS hour,
                     COUNT(*) AS count
                 FROM clips
                 WHERE timestamp >= ?
@@ -934,7 +984,7 @@ class ClipDatabase:
     async def get_analysis_stats(self) -> dict[str, Any]:
         if self._pool is None:
             return {}
-        today = datetime.now(timezone.utc).date().isoformat()
+        today_start, today_end = _local_day_bounds(0)
         queries: dict[str, tuple[str, tuple[Any, ...]]] = {
             "total_analyzed": ("SELECT COUNT(*) FROM analysis_results", ()),
             "suspicious_count": (
@@ -947,8 +997,8 @@ class ClipDatabase:
             ),
             "frames_analyzed_today": (
                 "SELECT COALESCE(SUM(frame_count),0) FROM analysis_results "
-                "WHERE analyzed_at LIKE ?",
-                (f"{today}%",),
+                "WHERE analyzed_at >= ? AND analyzed_at < ?",
+                (today_start, today_end),
             ),
         }
         results: dict[str, Any] = {}
@@ -1201,9 +1251,10 @@ class ClipDatabase:
     async def get_daily_usage_stats(self, days: int = 14) -> list[dict[str, Any]]:
         """Return per-day, per-model token totals for the AI Usage tab's daily history.
 
-        Buckets ``analysis_results`` by calendar day (UTC, from ``analyzed_at``)
-        over the trailing *days* days, respecting the same "Clear Stats" cutoff
-        as :meth:`get_token_usage_stats`. One row per ``(day, model)`` pair —
+        Buckets ``analysis_results`` by local calendar day (see
+        :func:`_local_utc_offset_sql`), from ``analyzed_at``, over the
+        trailing *days* days, respecting the same "Clear Stats" cutoff as
+        :meth:`get_token_usage_stats`. One row per ``(day, model)`` pair —
         tier-1 and escalation usage are kept as separate rows (tagged via
         ``"escalated"``) rather than merged, so callers can price each
         model's tokens at that model's own rate before summing to a per-day
@@ -1215,15 +1266,20 @@ class ClipDatabase:
             return []
 
         reset_at = await self._get_ai_usage_reset_at()
+        tz = _local_utc_offset_sql()
         cutoff = (
-            (datetime.now(timezone.utc) - timedelta(days=days - 1)).date().isoformat()
+            (datetime.now(timezone.utc).astimezone() - timedelta(days=days - 1))
+            .date()
+            .isoformat()
         )
 
         # Compared as text (to_char output), not cast to ::date — casting the
         # column to a typed date makes PostgreSQL's parameter-type inference
         # expect a native `date` object for `?` too, rejecting the plain ISO
         # date *string* `cutoff` actually passed in.
-        conditions = ["to_char(analyzed_at::timestamptz, 'YYYY-MM-DD') >= ?"]
+        conditions = [
+            f"to_char(analyzed_at::timestamptz AT TIME ZONE INTERVAL '{tz}', 'YYYY-MM-DD') >= ?"
+        ]
         params: list[str] = [cutoff]
         if reset_at:
             conditions.append("analyzed_at > ?")
@@ -1233,7 +1289,7 @@ class ClipDatabase:
         primary_rows = await self._pool.fetch(
             _qm(
                 f"""
-                SELECT to_char(analyzed_at::timestamptz, 'YYYY-MM-DD') AS day, model,
+                SELECT to_char(analyzed_at::timestamptz AT TIME ZONE INTERVAL '{tz}', 'YYYY-MM-DD') AS day, model,
                        COUNT(*)                            AS analyses,
                        COALESCE(SUM(tokens_prompt), 0)      AS tokens_prompt,
                        COALESCE(SUM(tokens_completion), 0)  AS tokens_completion
@@ -1248,7 +1304,7 @@ class ClipDatabase:
         escalation_rows = await self._pool.fetch(
             _qm(
                 f"""
-                SELECT to_char(analyzed_at::timestamptz, 'YYYY-MM-DD') AS day,
+                SELECT to_char(analyzed_at::timestamptz AT TIME ZONE INTERVAL '{tz}', 'YYYY-MM-DD') AS day,
                        escalation_model AS model,
                        COUNT(*)                                       AS analyses,
                        COALESCE(SUM(escalation_tokens_prompt), 0)     AS tokens_prompt,
