@@ -22,6 +22,24 @@ describe('ModelsPage', () => {
     expect(wrapper.text()).not.toMatch(/\$\d/)
   })
 
+  it('links to a pricing page for each paid/cloud provider', () => {
+    const wrapper = mount(ModelsPage)
+    const hrefs = wrapper.findAll('a').map((a) => a.attributes('href'))
+    expect(hrefs).toContain('https://developers.openai.com/api/docs/pricing')
+    expect(hrefs).toContain('https://platform.claude.com/docs/en/about-claude/pricing')
+    expect(hrefs).toContain('https://docs.moondream.ai/pricing/')
+    expect(hrefs).toContain('https://ollama.com/pricing')
+    expect(wrapper.text()).toContain('💲 Pricing')
+  })
+
+  it('links to documentation instead of pricing for the local (free) providers', () => {
+    const wrapper = mount(ModelsPage)
+    const hrefs = wrapper.findAll('a').map((a) => a.attributes('href'))
+    expect(hrefs).toContain('https://docs.ollama.com/')
+    expect(hrefs).toContain('https://docs.moondream.ai/running-locally/')
+    expect(wrapper.text()).toContain('📖 Documentation')
+  })
+
   it('every external link opens in a new tab safely', () => {
     const wrapper = mount(ModelsPage)
     for (const a of wrapper.findAll('a')) {
