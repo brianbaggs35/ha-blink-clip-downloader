@@ -1076,7 +1076,13 @@ h3 {
 }
 .vid-nav-btn:hover {
   background: rgba(0, 0, 0, 0.8);
-  transform: translateY(-50%) scale(1.06);
+  /* No translateY here: unlike the .vid-nav wrapper (absolutely
+     positioned, needs translateY(-50%) to center itself), this button is
+     just a flex child already centered by its parent — inheriting that
+     same translateY on :hover had nothing to offset against, so it just
+     yanked the button up by half its own height on every hover, on top of
+     the scale, producing a visible jump/bounce. */
+  transform: scale(1.06);
 }
 
 .modal-body {

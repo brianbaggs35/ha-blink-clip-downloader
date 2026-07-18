@@ -531,6 +531,79 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('keeps existing clips visible while a refresh.tick reload is in flight (no scroll-reset)', async () => {
+    // Regression test: refresh.tick fires for reasons unrelated to which
+    // clips exist (e.g. AI feedback submitted from a clip's own panel — see
+    // ClipAiPanel.vue). loadClips(0) used to unconditionally clear
+    // clips.value to [] before refetching, which collapsed the grid (and
+    // the page's scroll height) to nothing and back — scrolling a user back
+    // to the top mid-browse for a reload they never asked for. A silent
+    // reload must never let the grid go empty.
+    let resolveSecondFetch: (() => void) | undefined
+    const secondFetchGate = new Promise<void>((resolve) => {
+      resolveSecondFetch = resolve
+    })
+    let clipsCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/clips')) {
+          clipsCalls++
+          const body = [clip({ id: 'c1', camera: 'front' })]
+          if (clipsCalls === 1) return Promise.resolve(jsonResponse(body))
+          return secondFetchGate.then(() => jsonResponse(body))
+        }
+        if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
+        if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
+        if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
+        if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mountLibrary()
+    await flushPromises()
+    expect(wrapper.text()).toContain('front')
+
+    useRefreshStore().bump()
+    await flushPromises()
+    // The second /api/clips request is now in flight, gated on
+    // secondFetchGate — clips.value must still hold the original clip.
+    expect(clipsCalls).toBe(2)
+    expect(wrapper.text()).toContain('front')
+    expect(wrapper.text()).not.toContain('No clips found')
+
+    resolveSecondFetch?.()
+    await flushPromises()
+    expect(wrapper.text()).toContain('front')
+    wrapper.unmount()
+  })
+
+  it('suppresses the error toast when a silent refresh.tick reload fails', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/clips')) return Promise.reject(new Error('down'))
+        if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
+        if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
+        if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
+        if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Failed to load clips')
+    // The clip from the original successful load must still be showing —
+    // a failed silent refresh is a no-op, not a blank-out.
+    expect(wrapper.text()).toContain('front')
+    wrapper.unmount()
+  })
+
   it('responds to a cross-tab date filter request from the Status tab', async () => {
     mockFetch()
     const wrapper = mountLibrary()
