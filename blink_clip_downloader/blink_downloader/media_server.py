@@ -966,49 +966,37 @@ class MediaServer:
         """Send a one-off test email using the configured SMTP settings."""
         if not self._notification_dispatcher:
             return web.json_response(
-                {"success": False, "message": "Notifications not configured"},
-                status=400,
+                {"success": False, "message": "Notifications not configured"}
             )
         ok, message = await self._notification_dispatcher.send_test_email()
-        return web.json_response(
-            {"success": ok, "message": message}, status=200 if ok else 400
-        )
+        return web.json_response({"success": ok, "message": message})
 
     async def _handle_test_discord(self, _request: web.Request) -> web.Response:
         """Send a one-off test message to the configured Discord webhook."""
         if not self._notification_dispatcher:
             return web.json_response(
-                {"success": False, "message": "Notifications not configured"},
-                status=400,
+                {"success": False, "message": "Notifications not configured"}
             )
         ok, message = await self._notification_dispatcher.send_test_discord()
-        return web.json_response(
-            {"success": ok, "message": message}, status=200 if ok else 400
-        )
+        return web.json_response({"success": ok, "message": message})
 
     async def _handle_test_mobile(self, _request: web.Request) -> web.Response:
         """Send a one-off test mobile_app push notification."""
         if not self._notification_dispatcher:
             return web.json_response(
-                {"success": False, "message": "Notifications not configured"},
-                status=400,
+                {"success": False, "message": "Notifications not configured"}
             )
         ok, message = await self._notification_dispatcher.send_test_mobile()
-        return web.json_response(
-            {"success": ok, "message": message}, status=200 if ok else 400
-        )
+        return web.json_response({"success": ok, "message": message})
 
     async def _handle_test_ha_notification(self, _request: web.Request) -> web.Response:
         """Send a one-off test Home Assistant persistent notification."""
         if not self._notification_dispatcher:
             return web.json_response(
-                {"success": False, "message": "Notifications not configured"},
-                status=400,
+                {"success": False, "message": "Notifications not configured"}
             )
         ok, message = await self._notification_dispatcher.send_test_ha_notification()
-        return web.json_response(
-            {"success": ok, "message": message}, status=200 if ok else 400
-        )
+        return web.json_response({"success": ok, "message": message})
 
     async def _handle_moondream_install_status(  # NOSONAR
         self, _request: web.Request

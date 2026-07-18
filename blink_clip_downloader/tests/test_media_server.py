@@ -2747,8 +2747,14 @@ async def test_ai_test_analyze_exception_returns_500(
 
 
 async def test_test_email_no_dispatcher(client: TestClient) -> None:
+    # Always 200 — this is a UI-facing "try it and report the outcome"
+    # action, not a malformed request; a non-2xx status makes apiPost()
+    # (frontend/src/api/client.ts) throw before the frontend ever sees the
+    # success/message body, discarding the whole reason for the failure
+    # behind a generic "check the add-on logs" toast (see
+    # NotificationChannelsCard.vue's runTest()).
     resp = await client.post("/api/notifications/test-email")
-    assert resp.status == 400
+    assert resp.status == 200
     data = await resp.json()
     assert data["success"] is False
 
@@ -2784,7 +2790,7 @@ async def test_test_email_failure(db: ClipDatabase, tmp_path: Path) -> None:
     await tc.start_server()
     try:
         resp = await tc.post("/api/notifications/test-email")
-        assert resp.status == 400
+        assert resp.status == 200
         data = await resp.json()
         assert data["success"] is False
     finally:
@@ -4392,14 +4398,15 @@ async def test_ai_models_escalation_returns_models(
 
 
 async def test_test_discord_without_dispatcher(client: TestClient) -> None:
+    # Always 200 — see test_test_email_no_dispatcher for why.
     resp = await client.post("/api/notifications/test-discord")
-    assert resp.status == 400
+    assert resp.status == 200
     assert (await resp.json())["success"] is False
 
 
 async def test_test_mobile_without_dispatcher(client: TestClient) -> None:
     resp = await client.post("/api/notifications/test-mobile")
-    assert resp.status == 400
+    assert resp.status == 200
     assert (await resp.json())["success"] is False
 
 
@@ -4427,7 +4434,12 @@ async def test_test_discord_failure_status(db: ClipDatabase, tmp_path: Path) -> 
     await tc.start_server()
     try:
         resp = await tc.post("/api/notifications/test-discord")
-        assert resp.status == 400
+        # 200 even on failure — the reason lives in the body, not the status
+        # (see test_test_email_no_dispatcher).
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is False
+        assert data["message"] == "Webhook not set."
     finally:
         await tc.close()
 
@@ -4447,9 +4459,29 @@ async def test_test_mobile_success(db: ClipDatabase, tmp_path: Path) -> None:
         await tc.close()
 
 
+async def test_test_mobile_failure_status(db: ClipDatabase, tmp_path: Path) -> None:
+    dispatcher = MagicMock()
+    dispatcher.send_test_mobile = AsyncMock(
+        return_value=(False, "Mobile app target is not configured.")
+    )
+    server = MediaServer(db=db, port=0, notification_dispatcher=dispatcher)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/notifications/test-mobile")
+        # 200 even on failure — see test_test_email_no_dispatcher for why a
+        # non-2xx status here breaks the frontend's error reporting.
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is False
+        assert data["message"] == "Mobile app target is not configured."
+    finally:
+        await tc.close()
+
+
 async def test_test_ha_notification_without_dispatcher(client: TestClient) -> None:
     resp = await client.post("/api/notifications/test-ha")
-    assert resp.status == 400
+    assert resp.status == 200
     assert (await resp.json())["success"] is False
 
 
@@ -4483,7 +4515,10 @@ async def test_test_ha_notification_failure_status(
     await tc.start_server()
     try:
         resp = await tc.post("/api/notifications/test-ha")
-        assert resp.status == 400
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is False
+        assert data["message"] == "No Supervisor token available."
     finally:
         await tc.close()
 
