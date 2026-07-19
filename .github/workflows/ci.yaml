@@ -31,7 +31,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
@@ -106,7 +106,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
@@ -163,17 +163,19 @@ jobs:
         # causing "Invalid token specified: missing part #2"). `act` sets
         # ACT=true for every job, so skip this step there — the artifact
         # isn't needed for a local `act` run anyway.
-        if: ${{ !env.ACT }}
+        if: ${{ !env.ACT && matrix.python-version == '3.12' }}
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage.xml
 
       - name: Upload coverage reports to Codecov
+        if: ${{ !env.ACT && matrix.python-version == '3.12' }}
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
+          flags: backend
           fail_ci_if_error: false
 
       # Frontend tests don't depend on the Python matrix leg, so they only
@@ -195,6 +197,22 @@ jobs:
         if: matrix.python-version == '3.12'
         working-directory: blink_clip_downloader/frontend
         run: npm run test:coverage
+
+      - name: Upload Vitest coverage to Codecov
+        if: ${{ !env.ACT && matrix.python-version == '3.12' }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: blink_clip_downloader/frontend/coverage/cobertura-coverage.xml
+          flags: frontend
+          fail_ci_if_error: false
+
+      - name: Upload frontend coverage artifact
+        if: ${{ !env.ACT && matrix.python-version == '3.12' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-coverage-report
+          path: blink_clip_downloader/frontend/coverage/cobertura-coverage.xml
 
   build:
     name: Build Add-on Image (${{ matrix.arch }})

@@ -306,12 +306,17 @@ Run, in this order, and fix everything before reporting completion:
 3. `pyright --project pyrightconfig.json` (from repo root)
 4. `python -m pytest --cov=blink_downloader --cov-report=term-missing -q`
    (from `blink_clip_downloader/`)
+5. `npm run lint` and `npm run format:check` (from `frontend/`) — ESLint and
+   Prettier
+6. `npm run type-check` (from `frontend/`)
+7. `npm run test:coverage` (from `frontend/`) — Vitest; `npm test` is only a
+   substitute for a quicker pass without coverage, not a replacement for this
+   step
 
-If `frontend/` changed, also run (from `frontend/`):
-
-5. `npm run lint` and `npm run format:check`
-6. `npm run type-check`
-7. `npm run test:coverage` (or `npm test` for a quicker pass without coverage)
+Always run all seven, not just the ones for whichever side you touched —
+cheap enough to run every time, and it catches cross-side breakage (e.g. a
+backend API shape change breaking a frontend type) that a "only run if X
+changed" rule would miss.
 
 This mirrors the `lint` and `test` jobs in `.github/workflows/ci.yaml` — if
 these are clean locally, CI's lint/test jobs will pass. (CI also has `build`
