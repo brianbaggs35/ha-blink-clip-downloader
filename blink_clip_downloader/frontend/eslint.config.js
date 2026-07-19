@@ -6,7 +6,7 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 import globals from 'globals'
 
 export default defineConfigWithVueTs(
-  { ignores: ['dist/**', '../blink_downloader/static/**'] },
+  { ignores: ['dist/**', '../blink_downloader/static/**', 'coverage/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...pluginVue.configs['flat/recommended'],

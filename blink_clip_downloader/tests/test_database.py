@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
@@ -29,19 +32,49 @@ def _make_clip(clip_id: str = "clip1", camera: str = "Front Door", **kwargs) -> 
     }
 
 
-def _local_boundary_case() -> tuple[str, bool] | None:
+# Two IANA zones with clean, DST-irrelevant nonzero offsets in opposite
+# directions — used to force the process's ambient local timezone (see
+# _local_timezone) so the local/UTC calendar-day-mismatch regression tests
+# below run deterministically on every host, including UTC-configured CI
+# runners, instead of skipping themselves the way they used to when the
+# *actual* host timezone happened to be UTC.
+_WEST_OF_UTC_TZ = "America/New_York"
+_EAST_OF_UTC_TZ = "Asia/Tokyo"
+
+
+@contextlib.contextmanager
+def _local_timezone(tz_name: str):
+    """Force the process's local timezone for the duration of the block.
+
+    database._local_day_bounds and _local_utc_offset_sql both derive
+    "local" purely from ``datetime.now().astimezone()``, which reads this
+    process's TZ — the same mechanism HA Supervisor uses to set the
+    container's zone. Forcing it here exercises the real local/UTC
+    mismatch code path deterministically rather than depending on
+    whatever zone the test host itself happens to be configured with.
+    """
+    original = os.environ.get("TZ")
+    os.environ["TZ"] = tz_name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if original is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
+
+
+def _local_boundary_case() -> tuple[str, bool]:
     """A UTC timestamp straddling the local/UTC calendar-day boundary,
     paired with whether it falls on local-*today* (True) or
     local-*yesterday* (False) — for regression-testing "today" bucketing
-    against the actual system timezone rather than UTC (see
-    database._local_day_bounds). Returns None when the host itself is
-    configured for UTC, where local and UTC calendar days never diverge
-    and there's no mismatch to construct.
+    against the process's local timezone (see database._local_day_bounds).
+    Must be called inside a :func:`_local_timezone` block.
     """
     local_now = datetime.now(timezone.utc).astimezone()
     offset = local_now.utcoffset() or timedelta(0)
-    if offset == timedelta(0):
-        return None
     local_midnight_today = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     if offset < timedelta(0):
         # West of UTC: local "yesterday, 5 minutes before midnight" is
@@ -574,8 +607,10 @@ async def test_get_stats_counts(db: ClipDatabase) -> None:
     assert stats["total_size_bytes"] >= 2_000_000
 
 
+@pytest.mark.parametrize("tz_name", [_WEST_OF_UTC_TZ, _EAST_OF_UTC_TZ])
 async def test_get_stats_today_count_uses_local_calendar_day(
     db: ClipDatabase,
+    tz_name: str,
 ) -> None:
     """Regression test: "today"/"yesterday" used to be computed from the
     UTC calendar date compared against UTC-stored timestamps — a clip
@@ -583,14 +618,10 @@ async def test_get_stats_today_count_uses_local_calendar_day(
     evening in any timezone behind UTC, which is already "tomorrow" in
     UTC) must be bucketed by the household's actual local day, not roll
     over to the wrong one hours early."""
-    case = _local_boundary_case()
-    if case is None:
-        pytest.skip(
-            "host is configured for UTC — no local/UTC day mismatch to reproduce"
-        )
-    ts, is_local_today = case
-    await db.add_clip(_make_clip("boundary", timestamp=ts))
-    stats = await db.get_stats()
+    with _local_timezone(tz_name):
+        ts, is_local_today = _local_boundary_case()
+        await db.add_clip(_make_clip("boundary", timestamp=ts))
+        stats = await db.get_stats()
     assert stats["today_count"] == (1 if is_local_today else 0)
     assert stats["yesterday_count"] == (0 if is_local_today else 1)
 
@@ -644,17 +675,15 @@ async def test_get_camera_stats_merges_case_insensitively(db: ClipDatabase) -> N
     assert cam_stats[0]["total"] == 3
 
 
+@pytest.mark.parametrize("tz_name", [_WEST_OF_UTC_TZ, _EAST_OF_UTC_TZ])
 async def test_get_camera_stats_today_uses_local_calendar_day(
     db: ClipDatabase,
+    tz_name: str,
 ) -> None:
-    case = _local_boundary_case()
-    if case is None:
-        pytest.skip(
-            "host is configured for UTC — no local/UTC day mismatch to reproduce"
-        )
-    ts, is_local_today = case
-    await db.add_clip(_make_clip("boundary", camera="Front Door", timestamp=ts))
-    cam_stats = await db.get_camera_stats()
+    with _local_timezone(tz_name):
+        ts, is_local_today = _local_boundary_case()
+        await db.add_clip(_make_clip("boundary", camera="Front Door", timestamp=ts))
+        cam_stats = await db.get_camera_stats()
     today = next(s["today"] for s in cam_stats if s["camera"] == "Front Door")
     assert today == (1 if is_local_today else 0)
 
@@ -773,28 +802,26 @@ async def test_get_activity_data_counts_correctly(db: ClipDatabase) -> None:
     assert matching[0]["count"] == 4
 
 
+@pytest.mark.parametrize("tz_name", [_WEST_OF_UTC_TZ, _EAST_OF_UTC_TZ])
 async def test_get_activity_data_buckets_by_local_calendar_day(
     db: ClipDatabase,
+    tz_name: str,
 ) -> None:
     """Regression test for the Status tab's "Activity — last 7 days" chart
     showing evening clips under tomorrow's date — see
     test_get_stats_today_count_uses_local_calendar_day for the mechanism."""
-    case = _local_boundary_case()
-    if case is None:
-        pytest.skip(
-            "host is configured for UTC — no local/UTC day mismatch to reproduce"
-        )
-    ts, is_local_today = case
-    await db.add_clip(_make_clip("boundary", timestamp=ts))
-    local_date = datetime.fromisoformat(ts).astimezone().date().isoformat()
-    data = await db.get_activity_data(days=2)
+    with _local_timezone(tz_name):
+        ts, is_local_today = _local_boundary_case()
+        await db.add_clip(_make_clip("boundary", timestamp=ts))
+        local_date = datetime.fromisoformat(ts).astimezone().date().isoformat()
+        data = await db.get_activity_data(days=2)
+        # Sanity check the fixture actually landed on the day it claims to —
+        # if this ever drifted the test below would trivially pass for the
+        # wrong reason.
+        today_local = datetime.now(timezone.utc).astimezone().date().isoformat()
     matching = [r for r in data if r["date"] == local_date]
     assert len(matching) == 1
     assert matching[0]["count"] == 1
-    # Sanity check the fixture actually landed on the day it claims to —
-    # if this ever drifted the test above would trivially pass for the
-    # wrong reason.
-    today_local = datetime.now(timezone.utc).astimezone().date().isoformat()
     assert (local_date == today_local) == is_local_today
 
 
@@ -995,18 +1022,18 @@ async def test_get_analysis_stats_frames_analyzed_today(db: ClipDatabase) -> Non
     assert stats["frames_analyzed_today"] == 4
 
 
+@pytest.mark.parametrize("tz_name", [_WEST_OF_UTC_TZ, _EAST_OF_UTC_TZ])
 async def test_get_analysis_stats_frames_analyzed_today_uses_local_calendar_day(
     db: ClipDatabase,
+    tz_name: str,
 ) -> None:
-    case = _local_boundary_case()
-    if case is None:
-        pytest.skip(
-            "host is configured for UTC — no local/UTC day mismatch to reproduce"
+    with _local_timezone(tz_name):
+        ts, is_local_today = _local_boundary_case()
+        await db.add_clip(_make_clip("c1"))
+        await db.add_analysis_result(
+            _make_analysis("c1", frame_count=7, analyzed_at=ts)
         )
-    ts, is_local_today = case
-    await db.add_clip(_make_clip("c1"))
-    await db.add_analysis_result(_make_analysis("c1", frame_count=7, analyzed_at=ts))
-    stats = await db.get_analysis_stats()
+        stats = await db.get_analysis_stats()
     assert stats["frames_analyzed_today"] == (7 if is_local_today else 0)
 
 

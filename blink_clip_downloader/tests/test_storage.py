@@ -343,18 +343,28 @@ def test_used_bytes_ignores_stat_error(tmp_path):
     s.ensure_directory()
     (tmp_path / "clips" / "a.mp4").write_bytes(b"x" * 100)
 
-    stat_calls: dict[str, int] = {}
+    original_is_file = Path.is_file
     original_stat = Path.stat
 
+    # is_file() and the explicit `.stat().st_size` call are patched
+    # independently (rather than gating a shared stat() patch by call
+    # count) so the test doesn't depend on whether is_file() happens to
+    # route through Path.stat() internally — it stopped doing so in Python
+    # 3.14, which routes it through os.path.isfile() instead.
+    def fake_is_file(self: Path, **kwargs):  # type: ignore[override]
+        if self.name == "a.mp4":
+            return True
+        return original_is_file(self, **kwargs)
+
     def flaky_stat(self: Path, **kwargs):  # type: ignore[override]
-        key = str(self)
-        stat_calls[key] = stat_calls.get(key, 0) + 1
-        # is_file() calls stat() first; the second call for st_size should raise
-        if self.name == "a.mp4" and stat_calls[key] >= 2:
+        if self.name == "a.mp4":
             raise OSError("permission denied")
         return original_stat(self, **kwargs)
 
-    with patch.object(Path, "stat", flaky_stat):
+    with (
+        patch.object(Path, "is_file", fake_is_file),
+        patch.object(Path, "stat", flaky_stat),
+    ):
         total = s.used_bytes()
     assert total == 0  # the only file errored, so nothing summed
 
