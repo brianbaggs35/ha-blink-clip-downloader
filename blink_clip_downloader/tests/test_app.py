@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
 
 from blink_downloader.app import BlinkClipDownloaderApp
 from blink_downloader.downloader import AuthenticationError, TwoFARequired
@@ -858,6 +859,70 @@ async def test_connect_with_retry_stops_on_authentication_error(app):
 
 
 # ---------------------------------------------------------------------------
+# _reconnect_after_auth_failure() unit tests (v5.0.5)
+# ---------------------------------------------------------------------------
+
+
+async def test_reconnect_after_auth_failure_succeeds(app):
+    """A successful reconnect restores extra_status to reflect the
+    now-working connection."""
+    app._running = True
+    app._media_server.extra_status = {"connected": True, "account_id": "old"}
+    app._downloader._blink = MagicMock(account_id="new-account")
+
+    result = await app._reconnect_after_auth_failure(TokenRefreshFailed("broken"))
+
+    assert result is True
+    app._downloader.connect.assert_awaited_once()
+    assert app._media_server.extra_status["connected"] is True
+    assert app._media_server.extra_status["account_id"] == "new-account"
+
+
+async def test_reconnect_after_auth_failure_marks_disconnected_during_retry(app):
+    """extra_status must reflect the broken state while reconnecting is in
+    progress, not just after it succeeds -- otherwise the Status tab keeps
+    showing "Connected" throughout an outage the add-on already knows
+    about."""
+    app._running = True
+    app._reconnect_interval = 0
+    observed_connected_during_retry = None
+    attempt = 0
+
+    async def _connect():
+        nonlocal attempt, observed_connected_during_retry
+        attempt += 1
+        if attempt == 1:
+            observed_connected_during_retry = app._media_server.extra_status.get(
+                "connected"
+            )
+            raise RuntimeError("still broken")
+
+    app._downloader.connect = _connect
+
+    result = await app._reconnect_after_auth_failure(LoginError("broken"))
+
+    assert result is True
+    assert observed_connected_during_retry is False
+
+
+async def test_reconnect_after_auth_failure_returns_false_on_sigterm(app):
+    """When the retry loop is interrupted by shutdown, propagate False so
+    the poll loop stops instead of looping forever with a broken session."""
+    app._running = True
+    app._reconnect_interval = 0
+
+    async def _connect():
+        app._running = False
+        raise RuntimeError("still broken")
+
+    app._downloader.connect = _connect
+
+    result = await app._reconnect_after_auth_failure(UnauthorizedError("broken"))
+
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
 # run() – single successful iteration
 # ---------------------------------------------------------------------------
 
@@ -912,6 +977,106 @@ async def test_run_poll_cycle_exception_is_caught_and_loop_continues(app, tmp_pa
 
     assert call_count == 1
     app._downloader.disconnect.assert_awaited_once()
+
+
+async def test_run_reconnects_after_auth_fatal_exception(app, tmp_path):
+    """An AUTH_FATAL_EXCEPTIONS error from _poll_cycle must trigger a
+    reconnect and keep polling afterwards -- unlike a generic exception,
+    this means Blink's session itself is broken and would otherwise fail
+    identically forever (see CHANGELOG 5.0.5: an 11.5-hour stuck session
+    that only recovered via a manual restart)."""
+    from blink_downloader.tracker import ClipTracker
+
+    app._storage.ensure_directory = MagicMock()
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+
+    call_count = 0
+
+    async def _fake_poll():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise TokenRefreshFailed("broken")
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    assert call_count == 2  # polled again after reconnecting
+    assert app._downloader.connect.await_count == 2  # startup + reconnect
+    app._downloader.disconnect.assert_awaited_once()
+
+
+async def test_run_stops_cleanly_when_reconnect_fails_after_auth_fatal_exception(
+    app, tmp_path
+):
+    """If reconnecting after an auth-fatal failure can't succeed before
+    shutdown (e.g. SIGTERM during the retry wait), the poll loop must stop
+    instead of spinning on a broken session."""
+    from blink_downloader.tracker import ClipTracker
+
+    app._storage.ensure_directory = MagicMock()
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+    app._reconnect_interval = 0
+
+    poll_calls = 0
+
+    async def _fake_poll():
+        nonlocal poll_calls
+        poll_calls += 1
+        raise LoginError("broken")
+
+    connect_attempts = 0
+
+    async def _fake_connect():
+        nonlocal connect_attempts
+        connect_attempts += 1
+        if connect_attempts == 1:
+            return  # initial startup connect succeeds
+        # Every reconnect attempt after the poll failure fails, and
+        # _running is cleared during the retry wait (simulating SIGTERM).
+        app._running = False
+        raise RuntimeError("still down")
+
+    app._downloader.connect = _fake_connect
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    assert poll_calls == 1  # loop broke before polling again
+    assert connect_attempts == 2  # startup + one failed reconnect attempt
+    app._downloader.disconnect.assert_awaited_once()
+
+
+async def test_run_does_not_reconnect_on_non_auth_fatal_exception(app, tmp_path):
+    """A generic/unrelated exception from _poll_cycle must NOT trigger a
+    reconnect -- only AUTH_FATAL_EXCEPTIONS should (regression guard for
+    the original log-and-continue behavior covered by
+    test_run_poll_cycle_exception_is_caught_and_loop_continues above)."""
+    from blink_downloader.tracker import ClipTracker
+
+    app._storage.ensure_directory = MagicMock()
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+
+    call_count = 0
+
+    async def _fake_poll():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("unrelated bug")
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    assert call_count == 2
+    app._downloader.connect.assert_awaited_once()  # only the initial startup connect
 
 
 async def test_run_starts_media_server_event_watcher_and_analysis_queue(app, tmp_path):

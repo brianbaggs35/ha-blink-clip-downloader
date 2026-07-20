@@ -14,10 +14,21 @@ from typing import Any
 import aiofiles
 import aiohttp
 from blinkpy import api as blink_api
-from blinkpy.auth import Auth, BlinkTwoFARequiredError, UnauthorizedError
+from blinkpy.auth import (
+    Auth,
+    BlinkTwoFARequiredError,
+    LoginError,
+    TokenRefreshFailed,
+    UnauthorizedError,
+)
 from blinkpy.blinkpy import Blink
 
-from .blinkpy_compat import patch_oauth_signin_2fa_status
+from .blinkpy_compat import (
+    patch_auth_hardware_id_validation,
+    patch_oauth_refresh_token_logging,
+    patch_oauth_signin_2fa_status,
+    patch_request_login_hardware_id,
+)
 from .config import AppConfig
 from .database import ClipDatabase
 from .storage import StorageManager
@@ -30,9 +41,29 @@ _LOGGER = logging.getLogger(__name__)
 # recognise). See blinkpy_compat.py for details.
 patch_oauth_signin_2fa_status()
 
+# Work around blinkpy sending a non-UUID "hardware_id" header on every
+# mid-session token refresh (~90 min into a run), which Blink's OAuth
+# endpoint now rejects with HTTP 406 -- breaking the connection until the
+# add-on restarts. Also hardens hardware_id validation, fixes a related
+# crash when a stale 2fa_code of None survives into a refresh call, and
+# logs previously-silent refresh failures. See blinkpy_compat.py and
+# https://github.com/fronzbot/blinkpy/pull/1268 /
+# https://github.com/fronzbot/blinkpy/pull/1269 for details.
+patch_auth_hardware_id_validation()
+patch_request_login_hardware_id()
+patch_oauth_refresh_token_logging()
+
 AUTH_FILE = Path("/data/auth_credentials.json")
 TWO_FA_FILE = Path("/data/two_fa_code.txt")
 HARDWARE_ID_FILE = Path("/data/blink_hardware_id.txt")
+
+# Exceptions meaning Blink's session/token machinery itself is broken -- no
+# amount of retrying the same call will help, only a fresh connect() can.
+# _fetch_clip_list()/_refresh_local_storage_manifest() below deliberately
+# re-raise these instead of swallowing them (unlike other, transient
+# failures) so app.py's poll loop can detect the failure and reconnect,
+# rather than silently retrying the same broken token refresh forever.
+AUTH_FATAL_EXCEPTIONS = (TokenRefreshFailed, LoginError, UnauthorizedError)
 
 # Blink returns up to 25 clips per page by default.
 _PAGE_SIZE = 25
@@ -413,6 +444,11 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             _LOGGER.warning(
                 "Could not refresh local-storage manifest for %r: %s", sync_name, exc
             )
+            if isinstance(exc, AUTH_FATAL_EXCEPTIONS):
+                # See AUTH_FATAL_EXCEPTIONS: propagate so the poll loop can
+                # reconnect instead of quietly skipping every sync module,
+                # every cycle, until the add-on is restarted.
+                raise
             return None
 
         manifest = getattr(sync, "_local_storage", {}).get("manifest") or set()
@@ -571,6 +607,13 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 )
             except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
                 _LOGGER.warning("request_videos failed (page %d): %s", page, exc)
+                if isinstance(exc, AUTH_FATAL_EXCEPTIONS):
+                    # Not a transient/page-specific problem -- every other
+                    # Blink call this cycle (and every future cycle) will
+                    # fail the same way until a fresh connect(). Propagate
+                    # so app.py's poll loop can reconnect instead of
+                    # silently retrying the same broken refresh forever.
+                    raise
                 break
 
             if not isinstance(data, dict):

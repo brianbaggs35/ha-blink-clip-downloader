@@ -12,7 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from blinkpy.auth import BlinkTwoFARequiredError, UnauthorizedError
+from blinkpy.auth import (
+    BlinkTwoFARequiredError,
+    LoginError,
+    TokenRefreshFailed,
+    UnauthorizedError,
+)
 
 from blink_downloader.downloader import (
     AuthenticationError,
@@ -1878,6 +1883,55 @@ async def test_fetch_clip_list_handles_api_error(dl):
 
 
 # ---------------------------------------------------------------------------
+# _fetch_clip_list — AUTH_FATAL_EXCEPTIONS propagation (v5.0.5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TokenRefreshFailed("refresh failed"),
+        LoginError("login failed"),
+        UnauthorizedError("unauthorized"),
+    ],
+    ids=["TokenRefreshFailed", "LoginError", "UnauthorizedError"],
+)
+async def test_fetch_clip_list_reraises_auth_fatal_exceptions(dl, caplog, exc):
+    """Unlike a generic/transient failure, an AUTH_FATAL_EXCEPTIONS error means
+    the whole session is broken -- every call this cycle and every future
+    cycle would fail the same way. It must propagate (not be swallowed) so
+    app.py's poll loop can reconnect, instead of silently retrying the same
+    broken token refresh forever (see CHANGELOG 5.0.5)."""
+    dl._blink = MagicMock()
+    with (
+        patch(
+            "blink_downloader.downloader.blink_api.request_videos",
+            side_effect=exc,
+        ),
+        caplog.at_level("WARNING"),
+        pytest.raises(type(exc)),
+    ):
+        await dl._fetch_clip_list(datetime.now(timezone.utc))
+
+    # Still logged for operator visibility, same as any other failed page.
+    assert "request_videos failed (page 0)" in caplog.text
+
+
+async def test_fetch_clip_list_still_swallows_non_auth_fatal_exceptions(dl):
+    """Regression guard: only AUTH_FATAL_EXCEPTIONS should propagate --
+    everything else (network blips, bad responses, etc.) must keep being
+    swallowed so a single bad page doesn't kill the whole poll cycle."""
+    dl._blink = MagicMock()
+    with patch(
+        "blink_downloader.downloader.blink_api.request_videos",
+        side_effect=ConnectionResetError("connection reset"),
+    ):
+        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
 # _persist_auth
 # ---------------------------------------------------------------------------
 
@@ -1970,6 +2024,29 @@ async def test_download_local_storage_handles_manifest_error(dl):
     dl._blink = MagicMock()
     dl._blink.sync = {"Network": mock_sync}
     assert await dl.download_local_storage_clips() == []
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TokenRefreshFailed("refresh failed"),
+        LoginError("login failed"),
+        UnauthorizedError("unauthorized"),
+    ],
+    ids=["TokenRefreshFailed", "LoginError", "UnauthorizedError"],
+)
+async def test_download_local_storage_reraises_auth_fatal_exceptions(dl, exc):
+    """AUTH_FATAL_EXCEPTIONS from a sync module's manifest refresh must
+    propagate (not be caught, unlike test_download_local_storage_handles_manifest_error
+    above) so app.py's poll loop can reconnect -- see CHANGELOG 5.0.5."""
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock(side_effect=exc)
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+
+    with pytest.raises(type(exc)):
+        await dl.download_local_storage_clips()
 
 
 async def test_download_local_storage_skips_already_tracked(dl):

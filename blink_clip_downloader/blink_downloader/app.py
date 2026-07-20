@@ -20,6 +20,7 @@ from .database import ClipDatabase
 from .vision import VisionConfig, VisionPipeline
 from .digest import DailyDigest
 from .downloader import (
+    AUTH_FATAL_EXCEPTIONS,
     AuthenticationError,
     BlinkDownloader,
     TwoFARequired,
@@ -452,6 +453,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         while self._running:
             try:
                 await self._poll_cycle()
+            except AUTH_FATAL_EXCEPTIONS as exc:
+                if not await self._reconnect_after_auth_failure(exc):
+                    break
             except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
                 _LOGGER.exception("Unhandled error in poll cycle: %s", exc)
 
@@ -576,6 +580,38 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 return False
 
         return False
+
+    async def _reconnect_after_auth_failure(self, exc: Exception) -> bool:
+        """Reconnect to Blink after a poll cycle raised an AUTH_FATAL_EXCEPTIONS error.
+
+        Blink's session/token machinery is broken at this point (e.g. the
+        blinkpy token-refresh bug worked around in blinkpy_compat.py) — every
+        Blink API call this cycle and every future cycle would keep failing
+        the exact same way, forever, since nothing about retrying the same
+        broken refresh changes the outcome. Unlike the *startup* connection
+        (_connect_with_retry, called once before the poll loop begins), the
+        poll loop otherwise never calls connect() again — so without this,
+        a mid-run auth failure silently strands the add-on until someone
+        notices and restarts it (this happened in practice: ~11.5 hours of
+        identical "Login endpoint failed" retries with no recovery).
+
+        Reuses _connect_with_retry() so 2FA/invalid-credentials/backoff
+        behavior stays identical to the startup path. Returns False only
+        when _running was cleared (SIGTERM) during the retry wait — the
+        caller should stop the poll loop in that case, same as
+        _connect_with_retry()'s own contract.
+        """
+        _LOGGER.warning(
+            "Blink session broke mid-run (%s: %s) — reconnecting",
+            type(exc).__name__,
+            exc,
+        )
+        self._media_server.extra_status["connected"] = False
+        if not await self._connect_with_retry():
+            return False
+        self._media_server.extra_status["connected"] = True
+        self._media_server.extra_status["account_id"] = self._downloader.account_id
+        return True
 
     async def _handle_invalid_credentials(self, exc: AuthenticationError) -> None:
         # Invalid credentials — retrying with the same credentials

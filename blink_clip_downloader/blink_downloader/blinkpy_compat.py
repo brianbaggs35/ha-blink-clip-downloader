@@ -33,12 +33,18 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
+from urllib.parse import urlencode
 
 from blinkpy import api as blink_api
+from blinkpy.auth import Auth
 
 _LOGGER = logging.getLogger(__name__)
 
 _PATCH_MARKER = "_blink_clip_downloader_patched_2fa_status"
+_HARDWARE_ID_PATCH_MARKER = "_blink_clip_downloader_patched_hardware_id"
+_REQUEST_LOGIN_PATCH_MARKER = "_blink_clip_downloader_patched_request_login"
+_REFRESH_LOGGING_PATCH_MARKER = "_blink_clip_downloader_patched_refresh_logging"
 
 
 def patch_oauth_signin_2fa_status() -> None:
@@ -105,4 +111,162 @@ def patch_oauth_signin_2fa_status() -> None:
     _LOGGER.debug(
         "Patched blinkpy.api.oauth_signin to treat HTTP 202 as 2FA_REQUIRED "
         "(see https://github.com/fronzbot/blinkpy/issues/1233)"
+    )
+
+
+def patch_auth_hardware_id_validation() -> None:
+    """Make ``blinkpy.auth.Auth`` regenerate an invalid ``hardware_id``.
+
+    ``Auth.__init__`` only regenerated ``hardware_id`` when the value from
+    ``login_data`` was falsy (``None``/``""``) -- a *non-empty* but
+    non-UUID value (e.g. a string like ``"Home Assistant"`` carried over
+    from an old migrated config) passed through unchanged. Blink's OAuth
+    endpoints now reject non-UUID ``hardware_id`` values with HTTP 406.
+
+    This add-on always supplies a valid UUID via
+    ``BlinkDownloader._get_or_create_hardware_id()`` (see downloader.py),
+    so in practice this patch is belt-and-suspenders for stale/imported
+    state rather than the fix that restores a broken login --  see
+    ``patch_request_login_hardware_id()`` below for that.
+
+    Reported upstream: https://github.com/fronzbot/blinkpy/pull/1268
+
+    Idempotent: safe to call multiple times, including across repeated
+    imports within the same process.
+    """
+    if getattr(Auth.__init__, _HARDWARE_ID_PATCH_MARKER, False):
+        return
+
+    _original_init = Auth.__init__
+
+    def patched_init(self, login_data=None, *args, **kwargs):
+        _original_init(self, login_data, *args, **kwargs)
+        try:
+            uuid.UUID(self.hardware_id)
+        except (TypeError, ValueError):
+            self.hardware_id = str(uuid.uuid4()).upper()
+
+    setattr(patched_init, _HARDWARE_ID_PATCH_MARKER, True)
+    Auth.__init__ = patched_init
+    _LOGGER.debug(
+        "Patched blinkpy.auth.Auth.__init__ to regenerate a non-UUID "
+        "hardware_id (see https://github.com/fronzbot/blinkpy/pull/1268)"
+    )
+
+
+def patch_request_login_hardware_id() -> None:
+    """Make ``blinkpy.api.request_login`` send a valid ``hardware_id`` header.
+
+    ``request_login()`` is called on every mid-session token refresh (via
+    ``Auth.query() -> Auth.refresh_tokens() -> Auth.login()``, once the
+    ~90-minute access token nears expiry) as well as on full password
+    logins. It built its ``hardware_id`` header from
+    ``login_data.get("device_id", "Blinkpy")`` -- but neither this add-on
+    nor blinkpy's own OAuth v2 login flow ever populate a ``device_id``
+    key (only ``hardware_id``), so that lookup always fell through to the
+    literal string ``"Blinkpy"``. Blink's OAuth endpoint now rejects
+    non-UUID ``hardware_id`` values with HTTP 406, so every refresh after
+    the first ~90 minutes of a session failed this way -- surfacing as
+    "unable to log in" even though the *initial* login (``Auth.startup()``,
+    a separate code path that already uses ``auth.hardware_id`` correctly)
+    succeeded fine.
+
+    This also folds in a fix for a second bug in the same function: a
+    ``2fa_code`` of ``None`` in ``login_data`` produced a
+    ``2fa-code: None`` header, which aiohttp raises a ``TypeError`` trying
+    to serialize.
+
+    Reported upstream:
+    https://github.com/fronzbot/blinkpy/pull/1268
+    https://github.com/fronzbot/blinkpy/pull/1269
+
+    Idempotent: safe to call multiple times, including across repeated
+    imports within the same process.
+    """
+    if getattr(blink_api.request_login, _REQUEST_LOGIN_PATCH_MARKER, False):
+        return
+
+    async def patched_request_login(
+        auth,
+        url,
+        login_data,
+        is_refresh=False,
+        is_retry=False,
+    ):
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": blink_api.DEFAULT_USER_AGENT,
+            "hardware_id": auth.hardware_id,
+            "2fa-code": login_data.get("2fa_code") or "",
+        }
+
+        form_data = {
+            "username": login_data["username"],
+            "client_id": blink_api.OAUTH_CLIENT_ID,
+            "scope": blink_api.OAUTH_SCOPE,
+        }
+
+        if is_refresh:
+            form_data["grant_type"] = blink_api.OAUTH_GRANT_TYPE_REFRESH_TOKEN
+            form_data["refresh_token"] = auth.refresh_token
+        else:
+            form_data["grant_type"] = blink_api.OAUTH_GRANT_TYPE_PASSWORD
+            form_data["password"] = login_data["password"]
+
+        data = urlencode(form_data)
+
+        return await auth.query(
+            url=url,
+            headers=headers,
+            data=data,
+            json_resp=False,
+            reqtype="post",
+            is_retry=is_retry,
+            skip_refresh_check=True,
+        )
+
+    setattr(patched_request_login, _REQUEST_LOGIN_PATCH_MARKER, True)
+    blink_api.request_login = patched_request_login
+    _LOGGER.debug(
+        "Patched blinkpy.api.request_login to send auth.hardware_id "
+        "(see https://github.com/fronzbot/blinkpy/pull/1269)"
+    )
+
+
+def patch_oauth_refresh_token_logging() -> None:
+    """Log the HTTP status when ``blinkpy.api.oauth_refresh_token`` fails.
+
+    ``oauth_refresh_token()`` returned ``None`` on any non-200 response
+    with no logging at all, so a rejected OAuth v2 refresh (e.g. an
+    expired refresh token, or the HTTP 406 described in
+    ``patch_request_login_hardware_id()``) surfaced only as a generic
+    downstream login failure with no indication of what actually went
+    wrong.
+
+    Reported upstream: https://github.com/fronzbot/blinkpy/pull/1268
+
+    Idempotent: safe to call multiple times, including across repeated
+    imports within the same process.
+    """
+    if getattr(blink_api.oauth_refresh_token, _REFRESH_LOGGING_PATCH_MARKER, False):
+        return
+
+    _original_oauth_refresh_token = blink_api.oauth_refresh_token
+
+    async def patched_oauth_refresh_token(auth, refresh_token, hardware_id):
+        token_data = await _original_oauth_refresh_token(
+            auth, refresh_token, hardware_id
+        )
+        if token_data is None:
+            _LOGGER.warning(
+                "Blink OAuth v2 token refresh was rejected (non-200 "
+                "response); falling back to full login"
+            )
+        return token_data
+
+    setattr(patched_oauth_refresh_token, _REFRESH_LOGGING_PATCH_MARKER, True)
+    blink_api.oauth_refresh_token = patched_oauth_refresh_token
+    _LOGGER.debug(
+        "Patched blinkpy.api.oauth_refresh_token to log refresh failures "
+        "(see https://github.com/fronzbot/blinkpy/pull/1268)"
     )
