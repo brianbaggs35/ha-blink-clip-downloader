@@ -1,5 +1,39 @@
 # Changelog
 
+## 5.0.5
+
+### Bug fixes
+
+- **The add-on stopped being able to reach Blink roughly 90 minutes into a
+  run**, surfacing as an inability to log in even though credentials were
+  correct. Root cause was upstream: blinkpy's mid-session token refresh
+  (triggered automatically once the short-lived access token is close to
+  expiring) sent a `hardware_id` header built from a login field that's
+  never populated (`device_id`) instead of the add-on's actual per-install
+  hardware ID, so it always sent the literal string `"Blinkpy"`. Blink's
+  OAuth endpoint now rejects any non-UUID `hardware_id` with HTTP 406, so
+  every refresh after the first one failed the same way until the add-on
+  was restarted. Patched at runtime (the same way an existing 2FA-detection
+  bug already is, in `blinkpy_compat.py`) ahead of the upstream fix
+  landing — see [blinkpy#1268](https://github.com/fronzbot/blinkpy/pull/1268)
+  and [blinkpy#1269](https://github.com/fronzbot/blinkpy/pull/1269). Also
+  fixes a related crash when a stale, explicitly-`None` 2FA code survives
+  into a refresh call, hardens hardware ID validation against non-UUID
+  cached values, and adds logging for previously-silent token refresh
+  failures.
+- **The poll loop never recovered from a broken Blink session on its own.**
+  Once a mid-session token refresh failed (the bug above, or any other
+  auth-fatal blinkpy error), every future poll kept hitting the exact same
+  failure forever — the add-on only reconnects once, at startup, so nothing
+  short of a manual restart could recover. In one observed case this ran for
+  11.5 hours straight before it was noticed. `download_new_clips()` and
+  `download_local_storage_clips()` now let session-fatal errors
+  (`TokenRefreshFailed`, `LoginError`, `UnauthorizedError`) propagate
+  instead of silently swallowing them, and the poll loop reconnects
+  (reusing the same bounded/interruptible retry logic already used at
+  startup) when it sees one, rather than logging and repeating the same
+  broken refresh next cycle.
+
 ## 5.0.4
 
 ### Bug fixes
