@@ -45,6 +45,21 @@
   to arbitrary Home Assistant installs, so staying on the last MIT-licensed
   `4.5.5` release for now. (`@primeuix/themes` 3.0.0 above is unaffected —
   confirmed compatible with `primevue@4.5.5`.)
+- **Updated `vue` to 3.5.40** (a single patch release on Vue core itself).
+  `typescript` (6.0.3 → 7.0.2 available) and `primevue` (see above) are
+  intentionally staying put.
+- **Raised the vision extra's `opencv-python-headless` cap from `<5` to
+  `<6`**, allowing the current 5.0.0 release line. Verified by hand in
+  isolated venvs (not just "installs without error") that both cv2 call
+  sites this add-on actually uses — `FramePreprocessor.enhance`'s
+  imdecode/cvtColor/CLAHE/fastNlMeansDenoisingColored/imencode chain, and
+  `ContactDetector`'s `cv2.dilate` — produce identical shapes/dtypes and
+  identical behaviorally-significant output versus the previous 4.10.0
+  floor; no known CVEs in either line. `ultralytics` (cap already `<9`,
+  covers the current 8.4.104) and `transformers` (cap already `<6`, covers
+  the current 5.14.1, and already hand-verified against this add-on's
+  depth-estimation model — see the Dockerfile comment above it) needed no
+  changes; their existing ranges already track the latest releases.
 
 ## 5.0.6
 
