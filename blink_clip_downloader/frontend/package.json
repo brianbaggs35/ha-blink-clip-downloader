@@ -18,7 +18,7 @@
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
     "@primeuix/themes": "^3.0.0",
-    "pinia": "^3.0.4",
+    "pinia": "^4.0.2",
     "primeicons": "^7.0.0",
     "primevue": "^4.5.5",
     "video.js": "^8.23.9",
