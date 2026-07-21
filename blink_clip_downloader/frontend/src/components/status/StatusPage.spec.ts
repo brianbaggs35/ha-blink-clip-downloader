@@ -244,6 +244,30 @@ describe('StatusPage', () => {
     wrapper.unmount()
   })
 
+  it('flags disk usage above 90% as danger on both the value and the progress bar', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/stats'))
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ ...STATS, disk: { ...STATS.disk, used_bytes: 950, used_mb: 950 } }),
+          })
+        if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve(CAMERAS) })
+        if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve(ACTIVITY) })
+        if (url.startsWith('/api/ai/status'))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(AI_STATUS) })
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    const usedRow = wrapper.findAll('.status-row').find((r) => r.text().startsWith('Used'))!
+    expect(usedRow.find('.val').classes()).toContain('danger')
+    expect(wrapper.find('.prog-fill').classes()).toContain('danger')
+    wrapper.unmount()
+  })
+
   it('shows an AI Analysis card without queue/analyzed/suspicious rows when absent', async () => {
     vi.stubGlobal(
       'fetch',

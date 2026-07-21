@@ -83,6 +83,24 @@ describe('EnrollFromClipPicker', () => {
     expect(wrapper.text()).toContain('No cameras found yet')
   })
 
+  it('changing the lookback with no camera selected does not fetch clips', async () => {
+    // The lookback Select isn't gated on cameras existing (only the camera
+    // Select is disabled then), so a user can still change it while the "No
+    // cameras found yet" warning is showing — loadClips()'s own
+    // !selectedCamera.value guard must make that a no-op rather than
+    // fetching clips for an empty camera name.
+    stubRoutedFetch({ cameras: [] })
+    const wrapper = mount(EnrollFromClipPicker, {
+      props: { selectedFrames: [], 'onUpdate:selectedFrames': () => {} },
+      global: { plugins: [PrimeVue] },
+    })
+    await flushPromises()
+    await wrapper.findAllComponents(Select)[1]!.vm.$emit('update:modelValue', 24 * 7)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/clips'))).toBe(false)
+    expect(wrapper.text()).toContain('No cameras found yet')
+  })
+
   it('loads clips for the first camera and shows a thumbnail strip', async () => {
     stubRoutedFetch({ cameras: [makeCamera('Front Door')], clips: [makeClip('c1'), makeClip('c2')] })
     const wrapper = mountPicker()
@@ -208,6 +226,49 @@ describe('EnrollFromClipPicker', () => {
     const frameImgs = wrapper.findAll('.frame-item img')
     expect(frameImgs).toHaveLength(1)
     expect(frameImgs[0].attributes('src')).toContain('TWO')
+  })
+
+  it('does not show a stale frames error after a newer clip selection already succeeded', async () => {
+    let rejectClip1: (() => void) | undefined
+    let resolveClip2: (() => void) | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/cameras')) return Promise.resolve(jsonResponse([makeCamera('Front Door')]))
+        if (url.includes('/clips/clip1/frames')) {
+          return new Promise((_resolve, reject) => {
+            rejectClip1 = () => reject(new Error('fetch failed'))
+          })
+        }
+        if (url.includes('/clips/clip2/frames')) {
+          return new Promise((resolve) => {
+            resolveClip2 = () => resolve(jsonResponse({ frames: ['data:image/jpeg;base64,TWO'] }))
+          })
+        }
+        if (url.includes('/api/clips')) return Promise.resolve(jsonResponse([makeClip('clip1'), makeClip('clip2')]))
+        return Promise.reject(new Error(`unexpected fetch: ${url}`))
+      }),
+    )
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const thumbs = wrapper.findAll('.thumb-strip-item')
+    await thumbs[0].trigger('click') // clip1 (auto-selected on load already fired clip1's request too)
+    await flushPromises()
+    await thumbs[1].trigger('click') // clip2, before clip1's frames request settles
+    await flushPromises()
+
+    expect(rejectClip1).toBeDefined()
+    expect(resolveClip2).toBeDefined()
+
+    // Resolve the newer (clip2) request first, then let the stale (clip1) one fail.
+    resolveClip2?.()
+    await flushPromises()
+    rejectClip1?.()
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Failed to extract frames')
+    expect(wrapper.findAll('.frame-item img')).toHaveLength(1)
   })
 
   it('shows a warning when the selected camera has no clips', async () => {

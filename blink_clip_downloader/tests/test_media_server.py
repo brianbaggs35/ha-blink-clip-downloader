@@ -2126,6 +2126,22 @@ def test_is_moondream_installed_true_when_importable(
     assert ms._is_moondream_installed() is True
 
 
+def test_is_moondream_installed_false_when_not_importable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """moondream happens to be a real, installed package in this dev/CI
+    environment (unlike e.g. facenet_pytorch), so the two tests above never
+    actually exercise the ImportError branch below — a `None` entry in
+    sys.modules is the standard way to force the import system to raise
+    ModuleNotFoundError for a name regardless of what's really installed.
+    """
+    import blink_downloader.media_server as ms
+
+    monkeypatch.setattr(ms, "_MOONDREAM_PACKAGES_DIR", tmp_path / "does_not_exist")
+    monkeypatch.setitem(sys.modules, "moondream", None)
+    assert ms._is_moondream_installed() is False
+
+
 # ---------------------------------------------------------------------------
 # Server lifecycle
 # ---------------------------------------------------------------------------

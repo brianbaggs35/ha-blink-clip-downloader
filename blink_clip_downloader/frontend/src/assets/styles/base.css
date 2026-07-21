@@ -1306,7 +1306,8 @@ h3 {
 .val.warn {
   color: var(--warn);
 }
-.val.err {
+.val.err,
+.val.danger {
   color: var(--danger);
 }
 .prog-bar {

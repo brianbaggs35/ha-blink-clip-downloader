@@ -78,6 +78,20 @@ describe('App', () => {
     wrapper.unmount()
   })
 
+  it('does not switch tabs for a non-positive dateFilter.seq', async () => {
+    // seq only ever increments from 0 via requestDate(), so seq > 0 is
+    // always true in real usage — this pins down the guard itself in case
+    // that invariant ever changes (e.g. a future reset action).
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="automations"]').trigger('click')
+    useDateFilterStore().seq = -1
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('#page-automations').classes()).toContain('active')
+    expect(wrapper.find('#page-library').classes()).not.toContain('active')
+    wrapper.unmount()
+  })
+
   it('switches to the AI tab', async () => {
     mockArrayAwareFetch()
     const wrapper = mountApp()

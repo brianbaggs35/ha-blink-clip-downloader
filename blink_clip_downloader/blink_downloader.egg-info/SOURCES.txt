@@ -26,8 +26,8 @@ blink_downloader.egg-info/requires.txt
 blink_downloader.egg-info/top_level.txt
 blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
-blink_downloader/static/assets/index--5a5MYoB.css
-blink_downloader/static/assets/index-BfNxnzCm.js
+blink_downloader/static/assets/index-BwhOfqiB.js
+blink_downloader/static/assets/index-JKcOciyd.css
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2

@@ -124,6 +124,15 @@ describe('AppSidebar', () => {
     expect(library.currentCamera).toBe('front')
   })
 
+  it('selecting "All Cameras" switches back from a specific camera', async () => {
+    const library = useLibraryStore()
+    library.setCameras([{ camera: 'front', total: 3, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }])
+    library.selectCamera('front')
+    const wrapper = mountSidebar('library')
+    await wrapper.find('[data-camera="all"]').trigger('click')
+    expect(library.currentCamera).toBe('all')
+  })
+
   it('selecting a camera from a non-Library tab switches to Library too', async () => {
     const library = useLibraryStore()
     library.setCameras([{ camera: 'front', total: 3, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }])

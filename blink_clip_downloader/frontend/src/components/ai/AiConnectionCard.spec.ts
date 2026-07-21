@@ -375,6 +375,11 @@ describe('AiConnectionCard', () => {
     expect(wrapper.find('select.sel').exists()).toBe(false)
   })
 
+  it('hides the model picker when provider is not set', () => {
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: undefined }) } })
+    expect(wrapper.find('select.sel').exists()).toBe(false)
+  })
+
   it('moondream_local: shows the install prompt when not installed', async () => {
     vi.stubGlobal(
       'fetch',
@@ -654,7 +659,7 @@ describe('AiConnectionCard', () => {
               model: '',
               response_text: '',
               is_suspicious: true,
-              confidence: 0.4,
+              confidence: 0,
               summary: '',
               frame_count: 0,
               analysis_duration: 0,
@@ -677,6 +682,7 @@ describe('AiConnectionCard', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Suspicious')
     expect(wrapper.text()).toContain('Model: —')
+    expect(wrapper.text()).toContain('0% confidence')
   })
 
   it('test analysis: shows a warning when there are no clips yet', async () => {
