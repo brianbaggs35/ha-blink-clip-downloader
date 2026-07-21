@@ -232,7 +232,17 @@ RUN ( \
             # output warns the *current* process may need restarting for
             # the newly installed package to actually take effect.
             "lap>=0.5.12" \
-            "opencv-python-headless>=4.10,<5" \
+            "opencv-python-headless>=4.10,<6" \
+            # Cap raised from <5 to <6: verified by hand in isolated venvs
+            # that both cv2 call sites this add-on actually uses
+            # (FramePreprocessor.enhance's imdecode/cvtColor/CLAHE/
+            # fastNlMeansDenoisingColored/imencode chain, and
+            # ContactDetector's cv2.dilate) produce identical shapes/dtypes
+            # and identical behaviorally-significant output under
+            # opencv-python-headless 5.0.0 versus the previous 4.10.0 floor.
+            # No known CVEs in either line at the time of this bump (checked
+            # via pip-audit) — this one's just staying current, unlike the
+            # transformers bump below.
             # Floor raised from 4.56 to 5.5 to clear two HIGH-severity CVEs
             # (2026-4372 RCE, 2026-5241 arbitrary code execution via
             # trust_remote_code) that the 4.x line never fixed — found via a

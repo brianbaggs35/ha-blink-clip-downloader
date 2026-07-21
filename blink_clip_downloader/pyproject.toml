@@ -51,7 +51,15 @@ test = [
 #      Pillow, only the stale pin is broken).
 vision = [
     "ultralytics>=8.3,<9",
-    "opencv-python-headless>=4.10,<5",
+    # Cap raised from <5 to <6 after verifying both cv2 call sites this add-on
+    # actually uses (FramePreprocessor.enhance's imdecode/cvtColor/CLAHE/
+    # fastNlMeansDenoisingColored/imencode chain, and ContactDetector's
+    # cv2.dilate) produce identical shapes/dtypes and identical
+    # behaviorally-significant output under opencv-python-headless 5.0.0
+    # versus the previous 4.10.0 floor — checked by hand in isolated venvs,
+    # not just "no import error." No known CVEs in either line at the time
+    # of this bump (checked via pip-audit).
+    "opencv-python-headless>=4.10,<6",
     "transformers>=5.5,<6",
     "facenet-pytorch>=2.6,<3",
 ]
