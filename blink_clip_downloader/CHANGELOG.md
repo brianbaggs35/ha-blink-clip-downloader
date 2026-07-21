@@ -18,6 +18,34 @@
   while `base.css` only had a color rule for `.val.err` — both now share
   the same rule.
 
+### Dependencies
+
+- **Upgraded `blinkpy` to `>=0.25.9`.** A dependency-only release — no
+  functional code changes from 0.25.8, just a relaxed `aiofiles`
+  requirement (`>=25.1.0` down to `>=23.1.0`). This add-on already
+  requires `aiofiles>=25.1.0` itself, so the change has no practical
+  effect here; bumped to stay current.
+- **Updated other Python dependencies:** `aiohttp` to 3.14.2, `anthropic`
+  to 0.117.1, `openai` to 2.46.0, `PyYAML` (test extra) to 6.0.3.
+- **Updated frontend dependencies.** Runtime: `pinia` to 4.0.2,
+  `@primeuix/themes` to 3.0.0, `primeicons` to 8.0.0, `@fontsource/inter`
+  to 5.3.0. Build/lint/test tooling only, no runtime impact (never
+  shipped in the built frontend or Docker image): `typescript` to 6.0.3,
+  `vue-tsc` to 3.3.7, `vite` to 8.1.5, `@vitejs/plugin-vue` to 6.0.8,
+  `eslint` to 10.7.0, `eslint-plugin-vue` to 10.10.0, `typescript-eslint`
+  to 8.65.0, `prettier` to 3.9.6, `@types/node` to 26.1.1, and `playwright`
+  (`e2e/`) to 1.61.1.
+- **`primevue` was briefly updated to `5.0.0`, then reverted back to
+  `4.5.5`.** PrimeVue 5.0.0 moved off MIT to a source-available license
+  requiring a registered key even for the free community tier — an
+  unconfigured key makes `@primevue/core`'s own setup code inject a
+  fixed-position "Invalid PrimeUI License" banner into the live app on
+  every page load (rendered in a closed shadow root specifically to
+  resist being hidden via CSS). Incompatible with distributing this add-on
+  to arbitrary Home Assistant installs, so staying on the last MIT-licensed
+  `4.5.5` release for now. (`@primeuix/themes` 3.0.0 above is unaffected —
+  confirmed compatible with `primevue@4.5.5`.)
+
 ## 5.0.6
 
 ### Bug fixes
