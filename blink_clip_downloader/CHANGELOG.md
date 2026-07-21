@@ -1,5 +1,31 @@
 # Changelog
 
+## 5.0.6
+
+### Bug fixes
+
+- **Enrolling a face from a photo/frame with no clear face logged a
+  spurious network error to the browser console** (`POST .../api/ai/faces
+  400 (Bad Request)`), even though the UI already reported the failure via
+  a toast. "No face detected" and "multiple faces detected" are expected,
+  recoverable outcomes of a normal enrollment attempt, not malformed
+  requests — the enroll endpoint now answers those with HTTP 200 and an
+  `error` field instead of a 400, which browsers don't log as a network
+  error.
+
+### Dependencies
+
+- **Upgraded `blinkpy` to `>=0.25.8`** and removed the runtime monkey
+  patches added in 5.0.5 (`blinkpy_compat.py`). blinkpy 0.25.8 now natively
+  does everything those patches did: `Auth.__init__` validates
+  `hardware_id` as a UUID and regenerates it otherwise, `request_login()`
+  sends `auth.hardware_id` (not the never-populated `device_id` field) and
+  normalizes a `None` 2FA code to `""`, and `oauth_refresh_token()` logs a
+  failed refresh instead of failing silently — see
+  [blinkpy#1268](https://github.com/fronzbot/blinkpy/pull/1268) and
+  [blinkpy#1269](https://github.com/fronzbot/blinkpy/pull/1269), both now
+  merged and released.
+
 ## 5.0.5
 
 ### Bug fixes

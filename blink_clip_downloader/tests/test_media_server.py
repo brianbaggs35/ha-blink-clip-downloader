@@ -3429,7 +3429,13 @@ async def test_faces_enroll_no_face_detected(client: TestClient) -> None:
             "/api/ai/faces",
             json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
         )
-    assert resp.status == 400
+    # 200, not 400: "no face detected" is an expected outcome of a normal
+    # enrollment attempt (a bad frame), not a malformed request -- a 400
+    # here would make the browser log a spurious network error to the
+    # console for something the UI already reports via a toast.
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["error"] == "No face detected in the provided photo"
 
 
 async def test_faces_enroll_multiple_faces_rejected(client: TestClient) -> None:
@@ -3447,7 +3453,9 @@ async def test_faces_enroll_multiple_faces_rejected(client: TestClient) -> None:
             "/api/ai/faces",
             json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
         )
-    assert resp.status == 400
+    assert resp.status == 200
+    body = await resp.json()
+    assert "Detected 2 faces" in body["error"]
 
 
 async def test_faces_enroll_success_then_list_then_delete(client: TestClient) -> None:

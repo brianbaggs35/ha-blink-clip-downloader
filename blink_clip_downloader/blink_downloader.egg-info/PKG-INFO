@@ -1,10 +1,10 @@
 Metadata-Version: 2.4
 Name: blink-downloader
-Version: 5.0.5
+Version: 5.0.6
 Summary: Home Assistant add-on: Blink Clip Downloader
 Author-email: Brian Baggs <brianbaggs@hotmail.com>
 Requires-Python: >=3.12
-Requires-Dist: blinkpy>=0.25.7
+Requires-Dist: blinkpy>=0.25.8
 Requires-Dist: aiohttp>=3.14.1
 Requires-Dist: aiofiles>=25.1.0
 Requires-Dist: asyncpg>=0.31.0
