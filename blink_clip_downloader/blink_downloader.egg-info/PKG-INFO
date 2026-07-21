@@ -4,23 +4,23 @@ Version: 5.0.7
 Summary: Home Assistant add-on: Blink Clip Downloader
 Author-email: Brian Baggs <brianbaggs@hotmail.com>
 Requires-Python: >=3.12
-Requires-Dist: blinkpy>=0.25.8
-Requires-Dist: aiohttp>=3.14.1
+Requires-Dist: blinkpy>=0.25.9
+Requires-Dist: aiohttp>=3.14.2
 Requires-Dist: aiofiles>=25.1.0
 Requires-Dist: asyncpg>=0.31.0
 Requires-Dist: python-slugify>=8.0.4
 Requires-Dist: python-dateutil>=2.9.0
 Requires-Dist: aiosmtplib>=5.1.2
 Requires-Dist: Pillow>=12.3.0
-Requires-Dist: anthropic>=0.116.0
-Requires-Dist: openai>=2.45.0
+Requires-Dist: anthropic>=0.117.1
+Requires-Dist: openai>=2.46.0
 Requires-Dist: numpy>=2.5.1
 Provides-Extra: test
 Requires-Dist: pytest>=9.1.1; extra == "test"
 Requires-Dist: pytest-asyncio>=1.4.0; extra == "test"
 Requires-Dist: pytest-cov>=7.1.0; extra == "test"
 Requires-Dist: aioresponses>=0.7.9; extra == "test"
-Requires-Dist: PyYAML>=6.0.1; extra == "test"
+Requires-Dist: PyYAML>=6.0.3; extra == "test"
 Provides-Extra: vision
 Requires-Dist: ultralytics<9,>=8.3; extra == "vision"
 Requires-Dist: opencv-python-headless<5,>=4.10; extra == "vision"
