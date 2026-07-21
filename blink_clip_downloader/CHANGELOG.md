@@ -1,5 +1,23 @@
 # Changelog
 
+## 5.0.7
+
+### Bug fixes
+
+- **The AI tab's Suspicious Activity Feed pagination bar stayed
+  permanently light-themed** (a white bar with a pale lavender "current
+  page" circle) regardless of the active dark/light theme. Same root cause
+  as the Card/Select/Dialog/etc. fixes already in `theme.ts`: PrimeVue's
+  Aura preset defines Paginator's `root`/`navButton` colors as a single
+  un-split token object, so they never re-evaluate under `.dark` — fixed
+  by giving Paginator the same explicit `colorScheme.light`/`dark`
+  override already used for those other components. Tracking this down
+  also surfaced a related, previously-invisible bug: the Status page's
+  disk-usage value text never turned red past 90% usage the way its
+  progress bar already did, because that computed state returns `'danger'`
+  while `base.css` only had a color rule for `.val.err` — both now share
+  the same rule.
+
 ## 5.0.6
 
 ### Bug fixes

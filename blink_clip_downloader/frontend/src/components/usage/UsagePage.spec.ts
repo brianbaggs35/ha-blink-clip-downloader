@@ -83,14 +83,19 @@ describe('UsagePage', () => {
   })
 
   it('still shows historical data when AI is disabled but has past usage', async () => {
+    // The real backend (_handle_ai_usage) only ever sets "provider" inside
+    // its `if enabled:` branch — disabled means that key is entirely absent
+    // from the response, not just falsy, so the fixture clears it too
+    // rather than keeping baseUsage()'s default 'anthropic'.
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ enabled: false })))),
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ enabled: false, provider: undefined })))),
     )
     const wrapper = mount(UsagePage)
     await flushPromises()
     expect(wrapper.text()).not.toContain('No AI Usage Data')
     expect(wrapper.text()).toContain('Clips Analyzed')
+    expect(wrapper.find('.usage-grid').text()).not.toContain('Total Tokens')
     wrapper.unmount()
   })
 

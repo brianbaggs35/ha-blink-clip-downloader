@@ -29,6 +29,18 @@ describe('TwoFAOverlay', () => {
     expect(wrapper.classes()).toContain('open')
   })
 
+  it('closes when the auth store no longer needs 2FA', async () => {
+    const wrapper = mount(TwoFAOverlay)
+    const auth = useAuthStore()
+    auth.state = 'needs_2fa'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.classes()).toContain('open')
+
+    auth.state = 'connected'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.classes()).not.toContain('open')
+  })
+
   it('submits the entered code via the auth store', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ seq: 1 }))
     const wrapper = mount(TwoFAOverlay)

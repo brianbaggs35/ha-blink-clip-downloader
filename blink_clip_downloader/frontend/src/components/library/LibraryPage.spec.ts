@@ -303,6 +303,19 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('"Select all N" selects every visible clip', async () => {
+    mockFetch({}, [clip({ id: 'c1' }), clip({ id: 'c2' })])
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper.findAll('.clip-card')[0]!.trigger('click')
+    expect(wrapper.text()).toContain('1 selected')
+    const selectAllBtn = wrapper.findAll('button').find((b) => b.text().includes('Select all'))!
+    await selectAllBtn.trigger('click')
+    expect(wrapper.text()).toContain('2 selected')
+    wrapper.unmount()
+  })
+
   it('bulk delete requires confirmation before deleting', async () => {
     mockFetch()
     const wrapper = mountLibrary()

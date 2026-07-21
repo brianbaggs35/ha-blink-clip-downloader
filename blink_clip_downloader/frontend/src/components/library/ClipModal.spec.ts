@@ -232,6 +232,29 @@ describe('ClipModal', () => {
     expect(wrapper.findAll('.tag-item').map((el) => el.text())).toContain('new-tag×')
   })
 
+  it('adding a tag that is already on the clip is a no-op', async () => {
+    // CLIP already carries 'delivery' (see the fixture above).
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    const input = wrapper.find('.tag-input')
+    await input.setValue('delivery')
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(wrapper.findAll('.tag-item')).toHaveLength(1)
+    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+  })
+
+  it('other keys in the tag input do not add a tag', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const input = wrapper.find('.tag-input')
+    await input.setValue('New Tag')
+    await input.trigger('keydown', { key: 'Tab' })
+    await flushPromises()
+    expect(wrapper.findAll('.tag-item').map((el) => el.text())).not.toContain('new-tag×')
+  })
+
   it('bumps the shared refresh signal after saving a tag, so the Library filter picks it up', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
@@ -474,7 +497,26 @@ describe('ClipModal', () => {
     expect(fakePlayer.requestFullscreen).toHaveBeenCalled()
     fakePlayer.muted.mockReturnValue(false)
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }))
-    expect(fakePlayer.muted).toHaveBeenCalledWith(true)
+    expect(fakePlayer.muted).toHaveBeenLastCalledWith(true)
+    wrapper.unmount()
+  })
+
+  it('keyboard: lowercase f also toggles fullscreen, and uppercase M also toggles mute', async () => {
+    // Other tests in this file mount a ClipModal without unmounting it
+    // afterward, leaking its document-level keydown listener — every
+    // leaked instance's handler fires on top of this test's own, so
+    // fullscreen is asserted as "the call count increased at all" rather
+    // than an absolute count, and mute via toHaveBeenLastCalledWith
+    // (unaffected by how many total calls came before it).
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const before = fakePlayer.requestFullscreen.mock.calls.length
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', bubbles: true }))
+    expect(fakePlayer.requestFullscreen.mock.calls.length).toBeGreaterThan(before)
+
+    fakePlayer.muted.mockReturnValue(true)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'M', bubbles: true }))
+    expect(fakePlayer.muted).toHaveBeenLastCalledWith(false)
     wrapper.unmount()
   })
 
@@ -519,6 +561,15 @@ describe('ClipModal', () => {
     const endedHandler = fakePlayer.on.mock.calls.find((c) => c[0] === 'ended')![1] as () => void
     endedHandler()
     expect(wrapper.emitted('nav')).toEqual([[1]])
+    wrapper.unmount()
+  })
+
+  it('does not auto-play the next clip when the video ends and autoplay is left unchecked', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const endedHandler = fakePlayer.on.mock.calls.find((c) => c[0] === 'ended')![1] as () => void
+    endedHandler()
+    expect(wrapper.emitted('nav')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -573,11 +624,61 @@ describe('ClipModal', () => {
     wrapper.unmount()
   })
 
+  it('closing before the clip even finishes loading is a no-op (no player was ever created)', async () => {
+    // ensurePlayer() only runs after getClip() resolves — closing while
+    // that fetch is still in flight means there's no player yet to pause
+    // or clear a source on.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await wrapper.setProps({ clipId: null })
+    expect(fakePlayer.pause).not.toHaveBeenCalled()
+    expect(fakePlayer.src).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('cleans up the player and listener on unmount', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
     wrapper.unmount()
     expect(fakePlayer.dispose).toHaveBeenCalled()
+  })
+
+  it('shows a toast when the clip fails to load', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('down'))),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const toast = useToastStore()
+    expect(toast.visible).toBe(true)
+    expect(toast.isError).toBe(true)
+    expect(toast.message).toBe('Failed to load clip')
+    wrapper.unmount()
+  })
+
+  it('suppresses the load-failure toast for a since-abandoned clip', async () => {
+    let rejectC1: (e: Error) => void = () => {}
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1') return new Promise((_resolve, reject) => (rejectC1 = reject))
+        if (url === '/api/clips/c2') return Promise.resolve(jsonResponse({ ...CLIP, id: 'c2', camera: 'backyard' }))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    await wrapper.setProps({ clipId: 'c2' })
+    await flushPromises()
+
+    rejectC1(new Error('down'))
+    await flushPromises()
+    expect(useToastStore().visible).toBe(false)
+    wrapper.unmount()
   })
 
   it('a slow response for a since-abandoned clip must not clobber a faster, more recent one', async () => {

@@ -68,6 +68,20 @@ describe('ClipAiPanel', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('does not re-fetch when collapsed and re-expanded', async () => {
+    mockFetch({ '/api/ai/results/c1': RESULT })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click') // expand: first load
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledWith('/api/ai/results/c1', expect.anything())
+    vi.mocked(fetch).mockClear()
+
+    await wrapper.find('.ai-panel-hdr').trigger('click') // collapse
+    await wrapper.find('.ai-panel-hdr').trigger('click') // re-expand: already loaded
+    await flushPromises()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('shows "Not analyzed yet" and an Analyze Now button when there is no result', async () => {
     mockFetch({ '/api/ai/results/c1': null })
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
@@ -134,6 +148,24 @@ describe('ClipAiPanel', () => {
     expect(promptBtn).toBeTruthy()
     await promptBtn!.trigger('click')
     expect(usePromptOverlayStore().promptText).toBe('the actual prompt')
+  })
+
+  it('shows an empty prompt overlay for a clip analyzed before prompt debug was ever recorded', async () => {
+    mockFetch({ '/api/ai/results/c1': { ...RESULT, prompt_text: undefined }, '/api/ai/feedback/c1': null })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1', promptDebugEnabled: true } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    const promptBtn = wrapper.findAll('button').find((b) => b.text().includes('Prompt'))
+    await promptBtn!.trigger('click')
+    expect(usePromptOverlayStore().promptText).toBe('')
+  })
+
+  it('shows 0% (not blank) confidence for a zero-confidence result', async () => {
+    mockFetch({ '/api/ai/results/c1': { ...RESULT, confidence: 0 }, '/api/ai/feedback/c1': null })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('0% confidence')
   })
 
   it('re-analyzes and reloads the result', async () => {
@@ -495,6 +527,35 @@ describe('ClipAiPanel', () => {
       .trigger('click')
     await flushPromises()
     expect(submittedBody).toEqual({ correct: false, correction_note: '', corrected_suspicious: undefined })
+  })
+
+  it('keeps the feedback note form open and shows a toast when submitting it fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST') return Promise.reject(new Error('down'))
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+        if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('👎 Incorrect'))!
+      .trigger('click')
+    await wrapper.find('input.tag-input').setValue('it was just the mail carrier')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Submit')!
+      .trigger('click')
+    await flushPromises()
+    expect(useToastStore().message).toBe('Failed to save feedback')
+    expect(useToastStore().isError).toBe(true)
+    expect(wrapper.find('input.tag-input').exists()).toBe(true)
+    expect((wrapper.find('input.tag-input').element as HTMLInputElement).value).toBe('it was just the mail carrier')
   })
 
   it('falls back to placeholders when model and response text are missing', async () => {

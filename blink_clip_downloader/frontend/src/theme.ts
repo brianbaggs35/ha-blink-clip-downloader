@@ -70,6 +70,21 @@ const selectOptionColorScheme = {
   selectedColor: '{list.option.selected.color}',
   selectedFocusColor: '{list.option.selected.focus.color}',
 }
+// Same bug, same fix, for Paginator's navButton (muted text.muted.color,
+// plus the selected-page circle's highlight.* tokens) — root itself just
+// reuses contentColorScheme below. See node_modules/@primeuix/themes/aura/
+// paginator: root/navButton/currentPageReport are a third flat, unsplit
+// token group in Aura's own preset. The only <Paginator> in the app today
+// (SuspiciousFeed.vue's Suspicious Activity Feed) rendered a permanently
+// light/white bar under body.dark as a result — its RowsPerPageDropdown
+// segment looked correct already since that's a Select internally,
+// already covered by overlaySelectColorScheme above.
+const paginatorNavButtonColorScheme = {
+  color: '{text.muted.color}',
+  hoverColor: '{text.hover.muted.color}',
+  selectedBackground: '{highlight.background}',
+  selectedColor: '{highlight.color}',
+}
 
 // Custom PrimeVue theme for the redesigned UI: a vivid violet accent on a
 // refined near-black (dark) / soft neutral (light) surface scale, replacing
@@ -191,6 +206,20 @@ export const AppTheme = definePreset(Aura, {
       colorScheme: {
         light: { root: formFieldColorScheme },
         dark: { root: formFieldColorScheme },
+      },
+    },
+    paginator: {
+      colorScheme: {
+        light: {
+          root: contentColorScheme,
+          navButton: paginatorNavButtonColorScheme,
+          currentPageReport: { color: '{text.muted.color}' },
+        },
+        dark: {
+          root: contentColorScheme,
+          navButton: paginatorNavButtonColorScheme,
+          currentPageReport: { color: '{text.muted.color}' },
+        },
       },
     },
     // Aura's default ProgressSpinner cycles its stroke through 4 unrelated
