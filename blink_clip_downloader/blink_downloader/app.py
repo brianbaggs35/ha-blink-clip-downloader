@@ -584,9 +584,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
     async def _reconnect_after_auth_failure(self, exc: Exception) -> bool:
         """Reconnect to Blink after a poll cycle raised an AUTH_FATAL_EXCEPTIONS error.
 
-        Blink's session/token machinery is broken at this point (e.g. the
-        blinkpy token-refresh bug worked around in blinkpy_compat.py) — every
-        Blink API call this cycle and every future cycle would keep failing
+        Blink's session/token machinery is broken at this point (e.g. an
+        expired or rejected refresh token) — every Blink API call this
+        cycle and every future cycle would keep failing
         the exact same way, forever, since nothing about retrying the same
         broken refresh changes the outcome. Unlike the *startup* connection
         (_connect_with_retry, called once before the poll loop begins), the

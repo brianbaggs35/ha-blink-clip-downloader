@@ -5,7 +5,6 @@ blink_downloader/analysis_queue.py
 blink_downloader/analyzer.py
 blink_downloader/app.py
 blink_downloader/archiver.py
-blink_downloader/blinkpy_compat.py
 blink_downloader/config.py
 blink_downloader/database.py
 blink_downloader/digest.py
@@ -108,7 +107,6 @@ tests/test_analysis_queue.py
 tests/test_analyzer.py
 tests/test_app.py
 tests/test_archiver.py
-tests/test_blinkpy_compat.py
 tests/test_config.py
 tests/test_database.py
 tests/test_digest.py

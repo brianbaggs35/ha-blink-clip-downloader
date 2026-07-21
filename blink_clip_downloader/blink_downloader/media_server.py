@@ -1565,6 +1565,13 @@ class MediaServer:
         enrollment. ``approved`` defaults to ``True`` (bypass trust granted
         immediately) — pass ``False`` to enroll someone for recognition
         labeling only, without granting suspicious-flag bypass trust.
+
+        "No face detected" and "multiple faces detected" come back as HTTP
+        200 with an ``error`` field, not 400 — those are expected outcomes
+        of a normal attempt (a bad frame), unlike the malformed-request
+        cases below which stay 400. Keeping them off 400 avoids the browser
+        logging a spurious network error to the console for something the
+        UI already reports via a toast.
         """
         try:
             body = await request.json()
@@ -1599,8 +1606,16 @@ class MediaServer:
 
         embeddings = await self._face_embedder.embed(image_bytes)
         if not embeddings:
+            # Not detecting a face is an expected, recoverable outcome of a
+            # normal enrollment attempt (a blurry frame, bad angle, etc.) --
+            # not a malformed request. Returning it as an HTTP error status
+            # would make every browser log a "POST .../api/ai/faces 400"
+            # network error to the console even though the UI already
+            # surfaces this via a toast; a 200 with an error field avoids
+            # that noise while still letting the frontend distinguish it
+            # from success.
             return web.json_response(
-                {"error": "No face detected in the provided photo"}, status=400
+                {"error": "No face detected in the provided photo"}
             )
         if len(embeddings) > 1:
             return web.json_response(
@@ -1609,8 +1624,7 @@ class MediaServer:
                         f"Detected {len(embeddings)} faces in the provided photo — "
                         "use a photo with only the person being enrolled visible"
                     )
-                },
-                status=400,
+                }
             )
 
         enrollment_id = await self._db.add_face_enrollment(

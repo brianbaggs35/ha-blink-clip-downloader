@@ -300,11 +300,31 @@ describe('BiometricsPage', () => {
     expect((addBtn.element as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('shows an error toast-worthy message when photo enrollment fails', async () => {
+  it('shows an error toast-worthy message when photo enrollment finds no face (200 + error body)', async () => {
     vi.stubGlobal(
       'fetch',
       routedFetch((_url, init) => {
-        if (init?.method === 'POST') return Promise.resolve(jsonResponse({ error: 'No face detected' }, false))
+        if (init?.method === 'POST') return Promise.resolve(jsonResponse({ error: 'No face detected' }))
+        return Promise.resolve(jsonResponse({ available: true, faces: [] }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    await wrapper.find('#biometrics-name').setValue('Brian')
+    const fileUpload = wrapper.findComponent(FileUpload)
+    await fileUpload.vm.$emit('select', { files: [new File(['x'], 'brian.jpg', { type: 'image/jpeg' })] })
+    const enrollBtn = wrapper.findAll('button').find((b) => b.text().includes('Enroll'))!
+    await enrollBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.exists()).toBe(true) // did not throw
+  })
+
+  it('shows an error toast-worthy message when photo enrollment throws (network/server error)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch((_url, init) => {
+        if (init?.method === 'POST') return Promise.resolve(jsonResponse({ error: 'Server error' }, false))
         return Promise.resolve(jsonResponse({ available: true, faces: [] }))
       }),
     )
@@ -595,7 +615,7 @@ describe('BiometricsPage', () => {
         }
         if (init?.method === 'POST') {
           posted.push(JSON.parse(init.body as string).image_base64)
-          if (posted.length === 1) return Promise.resolve(jsonResponse({ error: 'No face detected' }, false))
+          if (posted.length === 1) return Promise.resolve(jsonResponse({ error: 'No face detected' }))
           return Promise.resolve(jsonResponse({ id: 2, name: 'Brian', approved: true }))
         }
         return Promise.resolve(jsonResponse({ available: true, faces: posted.length ? [faceEnrollment()] : [] }))
@@ -667,7 +687,66 @@ describe('BiometricsPage', () => {
           return Promise.resolve(jsonResponse({ total_bypassed: 0, by_name: [], recent: [] }))
         }
         if (init?.method === 'POST') {
-          return Promise.resolve(jsonResponse({ error: 'No face detected' }, false))
+          return Promise.resolve(jsonResponse({ error: 'No face detected' }))
+        }
+        return Promise.resolve(jsonResponse({ available: true, faces: [] }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.find('#biometrics-name').setValue('Brian')
+    await flushPromises()
+
+    const frameItems = wrapper.findAll('.frame-item')
+    await frameItems[0].trigger('click')
+    await flushPromises()
+
+    const enrollBtn = wrapper.findAll('button').find((b) => b.text().includes('Enroll'))!
+    await enrollBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.exists()).toBe(true) // did not throw; toast reports the total failure
+  })
+
+  it('counts a thrown network/server error the same as a rejected clip frame', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (url.includes('/api/cameras')) {
+          return Promise.resolve(
+            jsonResponse([{ camera: 'Front Door', total: 1, size_bytes: 1, today: 0, this_week: 1, last_seen: '' }]),
+          )
+        }
+        if (url.includes('/frames')) {
+          return Promise.resolve(jsonResponse({ frames: ['data:image/jpeg;base64,AAA'] }))
+        }
+        if (url.includes('/api/clips')) {
+          return Promise.resolve(
+            jsonResponse([
+              {
+                id: 'c1',
+                camera: 'Front Door',
+                file_path: '/data/c1.mp4',
+                timestamp: '2026-01-05T10:00:00Z',
+                size_bytes: 1000,
+                duration: 5,
+                source: 'pir',
+                network_id: 1,
+                starred: false,
+                tags: [],
+                downloaded_at: '2026-01-05T10:01:00Z',
+                archived: false,
+                archive_path: '',
+                notified: false,
+              },
+            ]),
+          )
+        }
+        if (url.includes('/api/ai/faces/bypass-stats')) {
+          return Promise.resolve(jsonResponse({ total_bypassed: 0, by_name: [], recent: [] }))
+        }
+        if (init?.method === 'POST') {
+          return Promise.resolve(jsonResponse({ error: 'Server error' }, false))
         }
         return Promise.resolve(jsonResponse({ available: true, faces: [] }))
       }),

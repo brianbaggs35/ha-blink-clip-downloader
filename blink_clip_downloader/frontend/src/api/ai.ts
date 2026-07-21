@@ -8,6 +8,7 @@ import type {
   CheckpointsResponse,
   EscalationModelsResponse,
   FaceBypassStats,
+  FaceEnrollResult,
   FaceFeedbackReportType,
   FaceRecognitionFeedback,
   FacesResponse,
@@ -102,11 +103,7 @@ export function listFaces(): Promise<FacesResponse> {
   return apiGet('/api/ai/faces')
 }
 
-export function enrollFace(
-  name: string,
-  imageBase64: string,
-  approved = true,
-): Promise<{ id: number; name: string; approved: boolean }> {
+export function enrollFace(name: string, imageBase64: string, approved = true): Promise<FaceEnrollResult> {
   return apiPost('/api/ai/faces', { name, image_base64: imageBase64, approved })
 }
 

@@ -121,7 +121,11 @@ async function enrollFromPhoto() {
   enrolling.value = true
   try {
     const imageBase64 = await fileToBase64(selectedFile.value)
-    await enrollFace(trimmedName, imageBase64, approvedOnEnroll.value)
+    const result = await enrollFace(trimmedName, imageBase64, approvedOnEnroll.value)
+    if ('error' in result) {
+      toast.show(`Enrollment failed: ${result.error}`, true)
+      return
+    }
     toast.show(`Enrolled ${trimmedName}`)
     resetEnrollForm()
     await load()
@@ -147,8 +151,12 @@ async function enrollFromClipFrames() {
   let failed = 0
   for (const frame of selectedClipFrames.value) {
     try {
-      await enrollFace(trimmedName, frame, approvedOnEnroll.value)
-      succeeded++
+      const result = await enrollFace(trimmedName, frame, approvedOnEnroll.value)
+      if ('error' in result) {
+        failed++
+      } else {
+        succeeded++
+      }
     } catch {
       failed++
     }

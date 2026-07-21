@@ -23,35 +23,12 @@ from blinkpy.auth import (
 )
 from blinkpy.blinkpy import Blink
 
-from .blinkpy_compat import (
-    patch_auth_hardware_id_validation,
-    patch_oauth_refresh_token_logging,
-    patch_oauth_signin_2fa_status,
-    patch_request_login_hardware_id,
-)
 from .config import AppConfig
 from .database import ClipDatabase
 from .storage import StorageManager
 from .tracker import ClipTracker
 
 _LOGGER = logging.getLogger(__name__)
-
-# Work around blinkpy issues #1233/#1230 (Blink's OAuth signin endpoint now
-# returns HTTP 202 for accounts that need 2FA, which blinkpy doesn't yet
-# recognise). See blinkpy_compat.py for details.
-patch_oauth_signin_2fa_status()
-
-# Work around blinkpy sending a non-UUID "hardware_id" header on every
-# mid-session token refresh (~90 min into a run), which Blink's OAuth
-# endpoint now rejects with HTTP 406 -- breaking the connection until the
-# add-on restarts. Also hardens hardware_id validation, fixes a related
-# crash when a stale 2fa_code of None survives into a refresh call, and
-# logs previously-silent refresh failures. See blinkpy_compat.py and
-# https://github.com/fronzbot/blinkpy/pull/1268 /
-# https://github.com/fronzbot/blinkpy/pull/1269 for details.
-patch_auth_hardware_id_validation()
-patch_request_login_hardware_id()
-patch_oauth_refresh_token_logging()
 
 AUTH_FILE = Path("/data/auth_credentials.json")
 TWO_FA_FILE = Path("/data/two_fa_code.txt")

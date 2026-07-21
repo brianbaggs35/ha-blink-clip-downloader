@@ -59,11 +59,10 @@ architecture.
     — the frontend itself lives in `frontend/`, a sibling of `blink_downloader/`.
   - `event_watcher.py`, `notifier.py`, `notification_channels.py`,
     `digest.py`, `archiver.py`, `storage.py`, `library_scanner.py`,
-    `tracker.py`, `manifest.py`, `blinkpy_compat.py` — supporting modules
-    (event-driven fast-poll, HA/mobile/email/Discord notifications, daily
-    digest, cold storage archiving, storage quota enforcement, filesystem
-    library scan/reconcile, download-session tracking, clip manifest export,
-    blinkpy version-compat shims).
+    `tracker.py`, `manifest.py` — supporting modules (event-driven
+    fast-poll, HA/mobile/email/Discord notifications, daily digest, cold
+    storage archiving, storage quota enforcement, filesystem library
+    scan/reconcile, download-session tracking, clip manifest export).
 - `frontend/` — the Vue 3 + PrimeVue + Pinia web UI, a separate npm project
   (its own `package.json`/`node_modules`/toolchain). See **Web UI** below.
 - `tests/` — pytest test suite, one `test_<module>.py` per module above, plus

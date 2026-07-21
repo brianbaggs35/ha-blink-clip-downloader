@@ -328,6 +328,23 @@ export interface FacesResponse {
   faces: FaceEnrollment[]
 }
 
+export interface FaceEnrollSuccess {
+  id: number
+  name: string
+  approved: boolean
+}
+
+export interface FaceEnrollFailure {
+  error: string
+}
+
+// The backend answers "no face detected" / "multiple faces detected" with
+// HTTP 200 and this failure shape rather than a 400 — those are expected,
+// recoverable outcomes of a normal enrollment attempt (a bad frame), not a
+// malformed request, so callers must check for `error` rather than relying
+// on the promise rejecting.
+export type FaceEnrollResult = FaceEnrollSuccess | FaceEnrollFailure
+
 export interface FaceBypassEvent {
   clip_id: string
   camera: string
