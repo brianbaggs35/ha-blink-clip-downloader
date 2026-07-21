@@ -28,7 +28,7 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.1",
     "@types/video.js": "^7.3.58",
-    "@vitejs/plugin-vue": "^6.0.7",
+    "@vitejs/plugin-vue": "^6.0.8",
     "@vitest/coverage-v8": "^4.1.10",
     "@vue/eslint-config-typescript": "^14.9.0",
     "@vue/test-utils": "^2.4.11",
