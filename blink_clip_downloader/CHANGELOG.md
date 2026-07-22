@@ -60,6 +60,14 @@
   the current 5.14.1, and already hand-verified against this add-on's
   depth-estimation model — see the Dockerfile comment above it) needed no
   changes; their existing ranges already track the latest releases.
+- **Bumped the frontend-builder Docker stage from `node:22-bookworm-slim`
+  to `node:24-bookworm-slim`.** Node itself never ships in the final
+  image (only the static Vite build output does), and `ci.yaml`'s
+  lint/test/smoke-test jobs already run everything else — eslint,
+  vue-tsc, vitest, the e2e Playwright suite — under Node 24; only the
+  actual `npm run build` step (this Docker stage) had never run under it.
+  Verified by hand with `docker build --target frontend-builder`: builds
+  cleanly, same asset output shape/sizes as Node 22.
 
 ## 5.0.6
 

@@ -1,9 +1,15 @@
 # Separate build stage so the Node toolchain (and its node_modules) never
 # lands in the final image — only the static build output (frontend/dist,
 # written to blink_downloader/static/ per vite.config.ts) is copied over
-# below. Pinned to the Node LTS matching this repo's engines; bumping this
-# needs no coordination with the base image below.
-FROM node:22-bookworm-slim AS frontend-builder
+# below. Pinned to the same Node LTS already used everywhere else in CI
+# (ci.yaml's lint/test/smoke-test jobs all set node-version: "24"); bumping
+# this needs no coordination with the base image below. Those CI jobs run
+# eslint/vue-tsc/vitest/playwright directly on the runner under Node 24,
+# but never `npm run build` itself (the actual Vite production bundle,
+# which only ever runs inside this Docker stage) — verified separately by
+# hand via `docker build --target frontend-builder`: type-checks and
+# bundles identically to Node 22, same asset output shape/sizes.
+FROM node:24-bookworm-slim AS frontend-builder
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
