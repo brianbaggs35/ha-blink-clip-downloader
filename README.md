@@ -1,6 +1,6 @@
-Backend Coverage - [![codecov](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader/graph/badge.svg?token=66T4D63JFM&flag=backend)](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader)
+Backend Coverage - [![codecov](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader/graph/badge.svg?token=66T4D63JFM&flag=backend)](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader?flags%5B0%5D=backend)
 
-Frontend Coverage - [![codecov](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader/graph/badge.svg?token=66T4D63JFM&flag=frontend)](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader)
+Frontend Coverage - [![codecov](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader/graph/badge.svg?token=66T4D63JFM&flag=frontend)](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader?flags%5B0%5D=frontend)
 
 Combined Coverage - [![codecov](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader/graph/badge.svg?token=66T4D63JFM)](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader)
 
