@@ -257,6 +257,25 @@ jobs:
             -t ${{ env.ADDON_IMAGE }}:${{ env.TAG }} \
             blink_clip_downloader
 
+      # Scans the image just built on this matrix leg, so both amd64 and
+      # aarch64 get their own native scan. Gates only on vulnerabilities a
+      # rebuild could actually remove: HIGH/CRITICAL with a fix available —
+      # Debian-stable's long tail of no-fix-yet CVEs is excluded
+      # (ignore-unfixed), since no change to this repo can address those.
+      - name: Scan image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+        env:
+          # Fall back to the ECR mirror when ghcr's trivy-db pull quota
+          # throttles shared GitHub runners.
+          TRIVY_DB_REPOSITORY: >-
+            ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+
       - name: Save built Docker image
         run: |
           docker save \

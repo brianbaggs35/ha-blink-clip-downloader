@@ -119,12 +119,25 @@ jobs:
 
           IMAGE_BASE="${REGISTRY}/${OWNER}/${IMAGE}"
 
+          # ghcr's package page reads the description of a multi-arch image
+          # from the manifest *index* annotations, not from the per-arch
+          # image config labels — without these, the page shows
+          # "No description provided" even though the Dockerfile sets
+          # org.opencontainers.image.description.
+          DESC="Home Assistant add-on for saving and viewing Blink camera clips,"
+          DESC="${DESC} with AI analysis and facial recognition"
+          SRC="https://github.com/${{ github.repository }}"
+
           docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.description=${DESC}" \
+            --annotation "index:org.opencontainers.image.source=${SRC}" \
             -t ${IMAGE_BASE}:${VERSION} \
             ${IMAGE_BASE}:${VERSION}-amd64 \
             ${IMAGE_BASE}:${VERSION}-aarch64
 
           docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.description=${DESC}" \
+            --annotation "index:org.opencontainers.image.source=${SRC}" \
             -t ${IMAGE_BASE}:latest \
             ${IMAGE_BASE}:${VERSION}-amd64 \
             ${IMAGE_BASE}:${VERSION}-aarch64
