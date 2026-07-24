@@ -265,6 +265,9 @@ jobs:
       - name: Scan image for vulnerabilities (Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          # Scanner version, pinned independently of the action version —
+          # the action's bundled default lags behind Trivy releases.
+          version: v0.72.0
           image-ref: ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
           scanners: vuln
           severity: HIGH,CRITICAL
