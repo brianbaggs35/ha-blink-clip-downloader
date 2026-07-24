@@ -19,8 +19,10 @@
   description (and `image.source`) onto the `:X.Y.Z` and `:latest`
   manifest indexes via `docker buildx imagetools create --annotation`,
   and the Dockerfile label was updated to matching wording.
-- **CI now scans the built container image with Trivy** on both
-  architectures (each on its native runner, right after the image build).
+- **CI now scans the built container image with Trivy** (pinned to
+  v0.72.0, the current release, rather than the older version bundled
+  with the GitHub action) on both architectures (each on its native
+  runner, right after the image build).
   The gate is deliberately scoped to vulnerabilities a rebuild can actually
   fix: HIGH/CRITICAL severity with a fix available (`ignore-unfixed`) —
   Debian stable's long tail of not-yet-patched CVEs is reported by every
