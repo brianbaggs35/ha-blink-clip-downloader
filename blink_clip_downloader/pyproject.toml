@@ -120,3 +120,24 @@ reportUnusedVariable = "warning"
 reportOptionalMemberAccess = "warning"
 reportOptionalOperand = "warning"
 reportGeneralTypeIssues = "warning"
+
+[tool.bandit]
+# Run as: bandit -c blink_clip_downloader/pyproject.toml -r blink_clip_downloader
+# (requires bandit[toml]).
+#
+# tests/ is pytest code — its thousands of asserts (B101) and fixture
+# credentials like "hunter2" (B105/B106) are the whole point of a test suite,
+# not security findings. frontend/ and local-test/ hold no shipped Python
+# (and local-test/data may contain an unreadable postgres dir that would
+# abort the scan).
+exclude_dirs = ["tests", "frontend", "local-test"]
+# B101: production asserts here are `assert x is not None` type-narrowing for
+#   pyright; the add-on always runs plain python3 (never -O), so they are not
+#   stripped at runtime.
+# B608: every query in database.py is ?-parameterized via _qm() — the pieces
+#   interpolated into SQL f-strings are internal constants (fixed sort maps,
+#   computed UTC offsets, "?" placeholder lists), never user input. Bandit
+#   can't see through the assembly, and `# nosec` cannot suppress findings it
+#   reports on the opening line of a multiline f-string, so the check is
+#   skipped globally — keep new SQL parameterized.
+skips = ["B101", "B608"]

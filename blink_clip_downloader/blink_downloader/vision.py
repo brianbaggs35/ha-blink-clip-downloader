@@ -782,8 +782,11 @@ class ContactSegmenter:
             )
 
             _LOGGER.info("Loading SAM2 segmentation model '%s'", self._MODEL_ID)
-            self._model = Sam2Model.from_pretrained(self._MODEL_ID)
-            self._processor = Sam2Processor.from_pretrained(self._MODEL_ID)
+            # _MODEL_ID is a fixed constant for an official facebook/ repo;
+            # this optional pipeline trusts the HF hub the same way the rest
+            # of the CV stack trusts PyPI (B615).
+            self._model = Sam2Model.from_pretrained(self._MODEL_ID)  # nosec B615
+            self._processor = Sam2Processor.from_pretrained(self._MODEL_ID)  # nosec B615
             _LOGGER.info("SAM2 segmentation model ready")
 
     async def ensure_ready(self) -> bool:

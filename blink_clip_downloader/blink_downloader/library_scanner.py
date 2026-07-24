@@ -91,7 +91,10 @@ def _build_clip_record(download_path: Path, file_path: Path) -> dict:
     except OSError:
         size = 0
 
-    clip_id = "import-" + hashlib.sha1(str(file_path).encode()).hexdigest()[:16]
+    clip_id = (
+        "import-"
+        + hashlib.sha1(str(file_path).encode(), usedforsecurity=False).hexdigest()[:16]
+    )
 
     return {
         "id": clip_id,

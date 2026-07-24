@@ -186,7 +186,9 @@ class MediaServer:
         app = self._build_app()
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
-        site = web.TCPSite(self._runner, "0.0.0.0", self._port)
+        # Binding all interfaces is required: HA ingress reaches this server
+        # from outside the container's network namespace.
+        site = web.TCPSite(self._runner, "0.0.0.0", self._port)  # nosec B104
         await site.start()
         _LOGGER.info("Media server listening on port %d", self._port)
 
