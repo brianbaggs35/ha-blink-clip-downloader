@@ -5,9 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from blink_downloader.event_watcher import HAEventWatcher
-
 
 # ------------------------------------------------------------------
 # extract_blink_camera (pure static, no I/O)
@@ -131,7 +129,7 @@ def test_camera_whitelist_blocks_non_matching() -> None:
 
 
 def test_camera_whitelist_also_applies_to_cleared() -> None:
-    w, cb, cb_cleared = _make_watcher(cameras=["back yard"], with_cleared=True)
+    w, _cb, cb_cleared = _make_watcher(cameras=["back yard"], with_cleared=True)
     w._handle_state_changed(
         _motion_event("binary_sensor.blink_front_door_motion", "off")
     )

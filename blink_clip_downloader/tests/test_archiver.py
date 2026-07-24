@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-
 from blink_downloader.archiver import ClipArchiver
 
 
@@ -72,7 +71,7 @@ async def test_run_archives_clip_into_zip(tmp_path: Path) -> None:
         "file_path": str(src),
         "timestamp": "2024-06-01T08:00:00+00:00",
     }
-    archiver, db = _make_archiver(tmp_path, clips=[clip])
+    archiver, _db = _make_archiver(tmp_path, clips=[clip])
     result = await archiver.run()
 
     assert result == 1
@@ -197,7 +196,7 @@ async def test_archive_month_bad_zip_file_is_logged(tmp_path: Path) -> None:
         "file_path": str(src),
         "timestamp": "2024-06-01T00:00:00+00:00",
     }
-    archiver, db = _make_archiver(tmp_path, clips=[clip])
+    archiver, _db = _make_archiver(tmp_path, clips=[clip])
 
     # Make ZipFile constructor raise OSError to trigger the outer handler
     with patch(

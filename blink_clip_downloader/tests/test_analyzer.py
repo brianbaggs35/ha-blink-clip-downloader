@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from blink_downloader.analyzer import (
+    _ANTHROPIC_FALLBACK_MODELS,
+    _OPENAI_FALLBACK_MODELS,
+    _OPENAI_MODEL_DISPLAY_ORDER,
     AnalysisResult,
     AnthropicAnalyzer,
     BaseAnalyzer,
@@ -20,9 +23,6 @@ from blink_downloader.analyzer import (
     MoondreamLocalAnalyzer,
     OllamaCloudAnalyzer,
     OpenAIAnalyzer,
-    _ANTHROPIC_FALLBACK_MODELS,
-    _OPENAI_FALLBACK_MODELS,
-    _OPENAI_MODEL_DISPLAY_ORDER,
     _openai_model_rank,
     _vision_model_score,
     create_analyzer,
@@ -235,21 +235,21 @@ def test_parse_response_json_embedded_in_text(analyzer: ClipAnalyzer) -> None:
         '{"suspicious": true, "confidence": 0.7, "description": "Unknown person"}\n'
         "That is my conclusion."
     )
-    is_suspicious, confidence, summary = analyzer.parse_response(response)
+    is_suspicious, confidence, _summary = analyzer.parse_response(response)
     assert is_suspicious is True
     assert confidence == 0.7
 
 
 def test_parse_response_keyword_fallback(analyzer: ClipAnalyzer) -> None:
     response = "I see a suspicious person lurking near the vehicle. Possible intruder."
-    is_suspicious, confidence, summary = analyzer.parse_response(response)
+    is_suspicious, confidence, _summary = analyzer.parse_response(response)
     assert is_suspicious is True
     assert confidence > 0
 
 
 def test_parse_response_no_keywords(analyzer: ClipAnalyzer) -> None:
     response = "The driveway is empty. A car is parked. Nothing unusual."
-    is_suspicious, confidence, summary = analyzer.parse_response(response)
+    is_suspicious, _confidence, _summary = analyzer.parse_response(response)
     assert is_suspicious is False
 
 
@@ -537,9 +537,11 @@ async def test_analyze_clip_raises_when_call_model_returns_empty(
 
     analyzer._call_model = AsyncMock(return_value="")  # type: ignore[method-assign]
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        with pytest.raises(RuntimeError, match="empty response"):
-            await analyzer.analyze_clip("/clips/test.mp4", "clip1", "Front Door")
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+        pytest.raises(RuntimeError, match="empty response"),
+    ):
+        await analyzer.analyze_clip("/clips/test.mp4", "clip1", "Front Door")
 
 
 # ------------------------------------------------------------------
@@ -2000,11 +2002,11 @@ async def test_anthropic_full_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="Analyze.")
     a._client = mock_mod.AsyncAnthropic.return_value
 
-    with patch.dict(sys.modules, {"anthropic": mock_mod}):
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await a.analyze_clip(
-                "/clips/test.mp4", "clip-anthr-1", "Front Door"
-            )
+    with (
+        patch.dict(sys.modules, {"anthropic": mock_mod}),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        result = await a.analyze_clip("/clips/test.mp4", "clip-anthr-1", "Front Door")
 
     assert result.clip_id == "clip-anthr-1"
     assert result.is_suspicious is True
@@ -2072,10 +2074,12 @@ async def test_anthropic_tokens_reset_between_calls(
     a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="Analyze.")
     a._client = mock_mod.AsyncAnthropic.return_value
 
-    with patch.dict(sys.modules, {"anthropic": mock_mod}):
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            r1 = await a.analyze_clip("/clips/a.mp4", "c1", "Cam1")
-            r2 = await a.analyze_clip("/clips/b.mp4", "c2", "Cam2")
+    with (
+        patch.dict(sys.modules, {"anthropic": mock_mod}),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        r1 = await a.analyze_clip("/clips/a.mp4", "c1", "Cam1")
+        r2 = await a.analyze_clip("/clips/b.mp4", "c2", "Cam2")
 
     assert r1.tokens_prompt == 500
     assert r1.tokens_completion == 100
@@ -2097,9 +2101,11 @@ async def test_moondream_cloud_tokens_are_zero(monkeypatch: pytest.MonkeyPatch) 
     a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
     a._session = _mock_session(post=MagicMock(return_value=mock_resp))
 
-    with patch("asyncio.sleep", new_callable=AsyncMock):
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await a.analyze_clip("/clips/test.mp4", "c1", "Camera")
+    with (
+        patch("asyncio.sleep", new_callable=AsyncMock),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Camera")
 
     assert result.tokens_prompt == 0
     assert result.tokens_completion == 0
@@ -4008,9 +4014,11 @@ async def test_openai_full_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="Analyze.")
     a._client = mock_mod.AsyncOpenAI.return_value
 
-    with patch.dict(sys.modules, {"openai": mock_mod}):
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await a.analyze_clip("/clips/test.mp4", "clip-oai-1", "Front Door")
+    with (
+        patch.dict(sys.modules, {"openai": mock_mod}),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        result = await a.analyze_clip("/clips/test.mp4", "clip-oai-1", "Front Door")
 
     assert result.clip_id == "clip-oai-1"
     assert result.is_suspicious is True
@@ -4042,10 +4050,12 @@ async def test_openai_tokens_reset_between_calls(
     a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="Analyze.")
     a._client = mock_mod.AsyncOpenAI.return_value
 
-    with patch.dict(sys.modules, {"openai": mock_mod}):
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            r1 = await a.analyze_clip("/clips/a.mp4", "c1", "Cam1")
-            r2 = await a.analyze_clip("/clips/b.mp4", "c2", "Cam2")
+    with (
+        patch.dict(sys.modules, {"openai": mock_mod}),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        r1 = await a.analyze_clip("/clips/a.mp4", "c1", "Cam1")
+        r2 = await a.analyze_clip("/clips/b.mp4", "c2", "Cam2")
 
     assert r1.tokens_prompt == 500
     assert r1.tokens_completion == 100
@@ -4217,7 +4227,7 @@ def test_parse_response_suspicious_zero_confidence_uses_keyword_fallback(
 ) -> None:
     """When JSON returns suspicious=true but confidence=0.0, keyword fallback applies."""
     response = '{"suspicious": true, "confidence": 0.0, "description": "suspicious person near car"}'
-    is_suspicious, confidence, summary = analyzer.parse_response(response)
+    is_suspicious, confidence, _summary = analyzer.parse_response(response)
     assert is_suspicious is True
     assert confidence > 0.0  # must not be 0.0
 
@@ -5523,11 +5533,13 @@ async def test_analyze_clip_uses_sequential_mode() -> None:
     mock_resp.__aexit__ = AsyncMock(return_value=False)
     analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
 
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        with patch.object(
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+        patch.object(
             analyzer, "_analyze_sequentially", wraps=analyzer._analyze_sequentially
-        ) as seq_spy:
-            await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+        ) as seq_spy,
+    ):
+        await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
     seq_spy.assert_called_once()
 
 
@@ -6212,9 +6224,11 @@ async def test_detect_protected_vehicle_disambiguates_ambiguous_case() -> None:
         return [car_boxes[0]]
 
     a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
-    with patch.object(a, "_detect_objects", side_effect=fake_detect):
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
+    with (
+        patch.object(a, "_detect_objects", side_effect=fake_detect),
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
 
     assert protected == [car_boxes[0]]
     assert other == [car_boxes[1]]
@@ -6231,9 +6245,11 @@ async def test_detect_protected_vehicle_falls_back_when_nothing_found() -> None:
     ]
 
     a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
-    with patch.object(a, "_detect_objects", new=AsyncMock(return_value=[])):
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
+    with (
+        patch.object(a, "_detect_objects", new=AsyncMock(return_value=[])),
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
 
     assert protected == car_boxes
     assert other == []
@@ -6274,9 +6290,11 @@ async def test_detect_protected_vehicle_still_finds_genuinely_separate_car() -> 
         return [same_car_a]
 
     a = MoondreamCloudAnalyzer(api_key="key", prompt="p", car_description="Silver Kia")
-    with patch.object(a, "_detect_objects", side_effect=fake_detect):
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            protected, other = await a._detect_protected_vehicle(b"frame", all_boxes)
+    with (
+        patch.object(a, "_detect_objects", side_effect=fake_detect),
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        protected, other = await a._detect_protected_vehicle(b"frame", all_boxes)
 
     assert protected == [same_car_a]
     assert other == [separate_car]
@@ -6303,9 +6321,11 @@ async def test_detect_protected_vehicle_uses_stripped_query_for_detect_call() ->
         prompt="p",
         car_description="Grey Kia Forte, plate ABC1234",
     )
-    with patch.object(a, "_detect_objects", side_effect=fake_detect):
-        with patch("asyncio.sleep", new_callable=AsyncMock):
-            protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
+    with (
+        patch.object(a, "_detect_objects", side_effect=fake_detect),
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        protected, other = await a._detect_protected_vehicle(b"frame", car_boxes)
 
     assert protected == [car_boxes[0]]
     assert other == [car_boxes[1]]
@@ -8361,7 +8381,7 @@ def test_select_best_frames_spreads_extra_picks_across_timeline() -> None:
     indices = sorted(frames.index(f) for f in result)
     assert indices[0] == 0
     assert indices[-1] == 19
-    gaps = [b - a for a, b in zip(indices, indices[1:])]
+    gaps = [b - a for a, b in itertools.pairwise(indices)]
     assert min(gaps) >= 3
 
 

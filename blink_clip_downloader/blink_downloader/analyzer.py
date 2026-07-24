@@ -1292,7 +1292,7 @@ class BaseAnalyzer(abc.ABC):
         # rules (Moondream cloud/local) would then silently evaluate
         # car_applies for the wrong (or no) camera on every escalated call —
         # propagate it explicitly so tier-2 sees the same camera tier-1 did.
-        tier2._current_camera = camera  # noqa: SLF001
+        tier2._current_camera = camera
         escalated = await tier2.run_tier_call(frames, prompt)
         if not escalated or not self._is_well_formed_json_object(escalated):
             if escalated:
@@ -1432,9 +1432,9 @@ class BaseAnalyzer(abc.ABC):
         clip" rather than an error.
         """
         try:
-            import io as _io  # noqa: PLC0415
+            import io as _io
 
-            from PIL import Image as _Image  # noqa: PLC0415
+            from PIL import Image as _Image
 
             with _Image.open(_io.BytesIO(frame)) as img:
                 gray = img.convert("L").resize(
@@ -1475,9 +1475,9 @@ class BaseAnalyzer(abc.ABC):
     @staticmethod
     def _frame_motion_diffs(frames: list[bytes]) -> list[float]:
         """Per-pixel inter-frame absolute difference for each consecutive pair."""
-        import io as _io  # noqa: PLC0415
+        import io as _io
 
-        from PIL import Image as _Image  # noqa: PLC0415
+        from PIL import Image as _Image
 
         _THUMB = (64, 64)
         # tobytes() returns raw pixel bytes (L mode = 1 byte/pixel)
@@ -1597,9 +1597,9 @@ class BaseAnalyzer(abc.ABC):
         frames: list[bytes],
     ) -> tuple[list[float], list[float]]:
         """Per-frame-pair diff magnitude and weighted-x centroid of the diff mask."""
-        import io as _io  # noqa: PLC0415
+        import io as _io
 
-        from PIL import Image as _Image  # noqa: PLC0415
+        from PIL import Image as _Image
 
         width, height = _MOTION_TRAJECTORY_THUMB_SIZE
         thumbs: list[bytes] = [
@@ -1704,9 +1704,9 @@ class BaseAnalyzer(abc.ABC):
             return None
 
         try:
-            import io as _io  # noqa: PLC0415
+            import io as _io
 
-            from PIL import Image as _Image  # noqa: PLC0415
+            from PIL import Image as _Image
 
             width, height = _MOTION_TRAJECTORY_THUMB_SIZE
             thumbs: list[bytes] = [
@@ -1961,7 +1961,7 @@ class BaseAnalyzer(abc.ABC):
         if not clip_timestamp:
             return None
         try:
-            from datetime import datetime as _dt  # noqa: PLC0415
+            from datetime import datetime as _dt
 
             dt = _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00")).astimezone()
             hour = dt.hour
@@ -3726,7 +3726,7 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         silently degrading into a cloud leak, and ``_ensure_model`` reports
         the provider as unavailable rather than a false "ready".
         """
-        import moondream as md  # noqa: PLC0415  # type: ignore[import-not-found]
+        import moondream as md  # type: ignore[import-not-found]
 
         _LOGGER.info("Loading Moondream local model '%s'", self._MODEL_ID)
         self._md_model = md.vl(model=self._MODEL_ID, local=True)
@@ -3745,21 +3745,19 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._load_model_sync)
                 return True
-            except ImportError as exc:
+            except ImportError:
                 _LOGGER.exception(
                     "moondream package (or a local-inference dependency it "
-                    "requires, such as kestrel or torch) is not installed: %s. "
-                    "Install it with: pip install moondream",
-                    exc,
+                    "requires, such as kestrel or torch) is not installed. "
+                    "Install it with: pip install moondream"
                 )
                 return False
-            except Exception as exc:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception(
-                    "Failed to load Moondream local model: %s. On-device "
+                    "Failed to load Moondream local model. On-device "
                     "Moondream inference requires a CUDA or Apple Silicon GPU — "
                     "if this host doesn't have one, use moondream_cloud or "
-                    "ollama instead.",
-                    exc,
+                    "ollama instead."
                 )
                 return False
 
@@ -3841,9 +3839,9 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         pipeline; see that method's docstring for the phase-by-phase
         rationale.
         """
-        import io  # noqa: PLC0415
+        import io
 
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
 
         image = Image.open(io.BytesIO(frame_bytes))
         encoded = self._md_model.encode_image(image)
@@ -4039,8 +4037,8 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             return await loop.run_in_executor(
                 None, self._analyze_frame_sync, frame, prompt, car_applies
             )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.exception("Moondream local inference failed: %s", exc)
+        except Exception:
+            _LOGGER.exception("Moondream local inference failed")
             return ""
 
     @staticmethod
@@ -4131,8 +4129,8 @@ class MoondreamFineTuneManager:
                 data = await resp.json()
                 fid = str(data.get("finetune_id", ""))
                 return fid or None
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
-            _LOGGER.exception("Moondream create_finetune failed: %s", exc)
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            _LOGGER.exception("Moondream create_finetune failed")
             return None
 
     async def list_finetunes(
@@ -4528,7 +4526,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
 
     def _get_client(self) -> Any:
         if self._client is None:
-            import anthropic as _anthropic  # noqa: PLC0415
+            import anthropic as _anthropic
 
             self._client = _anthropic.AsyncAnthropic(api_key=self._api_key)
         return self._client
@@ -4551,7 +4549,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
             _LOGGER.warning("Anthropic: no API key configured")
             return self._store_health_check_result(False)
         try:
-            import anthropic as _anthropic  # noqa: PLC0415
+            import anthropic as _anthropic
         except ImportError:
             _LOGGER.error(
                 "anthropic package is not installed. "
@@ -4588,7 +4586,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
         """
         if self._api_key:
             try:
-                import anthropic as _anthropic  # noqa: PLC0415
+                import anthropic as _anthropic
             except ImportError:
                 pass
             else:
@@ -4632,9 +4630,9 @@ class AnthropicAnalyzer(BaseAnalyzer):
         reduces upload bandwidth for high-resolution security cameras.
         Returns the original bytes unchanged if the image cannot be opened.
         """
-        import io  # noqa: PLC0415
+        import io
 
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
 
         try:
             img = Image.open(io.BytesIO(frame_bytes))
@@ -4643,8 +4641,8 @@ class AnthropicAnalyzer(BaseAnalyzer):
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=85)
                 return buf.getvalue()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Frame resize failed, sending original: %s", exc)
         return frame_bytes
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
@@ -4653,7 +4651,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
             return ""
 
         try:
-            import anthropic as _anthropic  # noqa: PLC0415
+            import anthropic as _anthropic
         except ImportError:
             _LOGGER.error(
                 "anthropic package is not installed. "
@@ -4812,7 +4810,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
 
     def _get_client(self) -> Any:
         if self._client is None:
-            import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
+            import openai as _openai  # type: ignore[import-not-found]
 
             self._client = _openai.AsyncOpenAI(api_key=self._api_key)
         return self._client
@@ -4835,7 +4833,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
             _LOGGER.warning("OpenAI: no API key configured")
             return self._store_health_check_result(False)
         try:
-            import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
+            import openai as _openai  # type: ignore[import-not-found]
         except ImportError:
             _LOGGER.error(
                 "openai package is not installed. Install it with: pip install openai"
@@ -4870,7 +4868,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
         """
         if self._api_key:
             try:
-                import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
+                import openai as _openai  # type: ignore[import-not-found]
             except ImportError:
                 pass
             else:
@@ -4917,9 +4915,9 @@ class OpenAIAnalyzer(BaseAnalyzer):
         upload bandwidth for high-resolution security cameras.
         Returns the original bytes unchanged if the image cannot be opened.
         """
-        import io  # noqa: PLC0415
+        import io
 
-        from PIL import Image  # noqa: PLC0415
+        from PIL import Image
 
         try:
             img = Image.open(io.BytesIO(frame_bytes))
@@ -4928,8 +4926,8 @@ class OpenAIAnalyzer(BaseAnalyzer):
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=85)
                 return buf.getvalue()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Frame resize failed, sending original: %s", exc)
         return frame_bytes
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
@@ -4943,7 +4941,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
             return ""
 
         try:
-            import openai as _openai  # noqa: PLC0415  # type: ignore[import-not-found]
+            import openai as _openai  # type: ignore[import-not-found]
         except ImportError:
             _LOGGER.error(
                 "openai package is not installed. Install it with: pip install openai"

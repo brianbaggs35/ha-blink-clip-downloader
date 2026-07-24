@@ -12,8 +12,9 @@ import platform
 import re
 import sys
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -80,7 +81,7 @@ def _is_moondream_installed() -> bool:
     if _MOONDREAM_PACKAGES_DIR.exists() and pkg not in sys.path:
         sys.path.insert(0, pkg)
     try:
-        import moondream  # noqa: PLC0415, F401  # type: ignore[import-not-found]
+        import moondream  # noqa: F401  # type: ignore[import-not-found]
 
         return True
     except ImportError:
@@ -754,7 +755,7 @@ class MediaServer:
         return web.json_response(data)
 
     async def _handle_ai_usage(self, _request: web.Request) -> web.Response:
-        from .analyzer import lookup_model_pricing  # noqa: PLC0415
+        from .analyzer import lookup_model_pricing
 
         enabled = self._analyzer is not None
         data: dict = {"enabled": enabled}
@@ -1018,7 +1019,7 @@ class MediaServer:
     async def _handle_moondream_install(  # NOSONAR
         self, _request: web.Request
     ) -> web.Response:
-        global _moondream_install_state  # noqa: PLW0603
+        global _moondream_install_state
 
         if not _moondream_arch_supported():
             return web.json_response(
@@ -1054,7 +1055,7 @@ class MediaServer:
         }
 
         async def _run_install() -> None:
-            global _moondream_install_state  # noqa: PLW0603
+            global _moondream_install_state
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "pip3",
@@ -1261,8 +1262,8 @@ class MediaServer:
                 return web.json_response(
                     {"car_description": str(data.get("car_description", ""))}
                 )
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("Could not read vehicle settings file: %s", exc)
         # File doesn't exist (or is unreadable) yet — fall back to whatever
         # the live analyzer was started with (ai_car_description).
         fallback = self._analyzer.car_description if self._analyzer else ""
@@ -1715,7 +1716,7 @@ class MediaServer:
         stats = await self._db.get_face_bypass_stats()
         return web.json_response(stats)
 
-    _FACE_FEEDBACK_TYPES = {"false_positive", "false_negative"}
+    _FACE_FEEDBACK_TYPES = frozenset({"false_positive", "false_negative"})
 
     async def _handle_face_recognition_feedback_submit(
         self, request: web.Request
@@ -1783,7 +1784,7 @@ class MediaServer:
             or not self._moondream_api_key
         ):
             return None
-        from .analyzer import MoondreamFineTuneManager  # noqa: PLC0415
+        from .analyzer import MoondreamFineTuneManager
 
         return MoondreamFineTuneManager(api_key=self._moondream_api_key)
 
@@ -1884,7 +1885,10 @@ class MediaServer:
         silently reverting to whatever moondream_finetune_model was last
         saved in options.json (see App._load_finetune_model_from_ui()).
         """
-        from .analyzer import MoondreamCloudAnalyzer, MoondreamFineTuneManager  # noqa: PLC0415
+        from .analyzer import (
+            MoondreamCloudAnalyzer,
+            MoondreamFineTuneManager,
+        )
 
         if self._analyzer is None or not isinstance(
             self._analyzer, MoondreamCloudAnalyzer

@@ -217,10 +217,10 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             # credentials (start() returns False instead) but handle it the
             # same way in case an older/newer blinkpy raises it directly.
             started = False
-        except Exception as e:  # noqa: BLE001 pylint: disable=broad-exception-caught
+        except Exception:
             self.auth_state = "error"
             self.auth_message = "Authentication failed. Check your Blink credentials."
-            _LOGGER.exception("Authentication error: %s", str(e))
+            _LOGGER.exception("Authentication error")
             # Delete cached auth to force fresh login on next retry
             AUTH_FILE.unlink(missing_ok=True)
             raise
@@ -417,7 +417,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
 
         try:
             await sync.update_local_storage_manifest()
-        except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
+        except Exception as exc:
             _LOGGER.warning(
                 "Could not refresh local-storage manifest for %r: %s", sync_name, exc
             )
@@ -509,10 +509,8 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 str(tmp_dest),
                 max_retries=self._config.retry_attempts,
             )
-        except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
-            _LOGGER.exception(
-                "Error downloading local-storage clip %s: %s", item.id, exc
-            )
+        except Exception:
+            _LOGGER.exception("Error downloading local-storage clip %s", item.id)
             if tmp_dest.exists():
                 tmp_dest.unlink(missing_ok=True)
             return None
@@ -582,7 +580,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 data = await blink_api.request_videos(
                     self._blink, time=since_epoch, page=page
                 )
-            except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
+            except Exception as exc:
                 _LOGGER.warning("request_videos failed (page %d): %s", page, exc)
                 if isinstance(exc, AUTH_FATAL_EXCEPTIONS):
                     # Not a transient/page-specific problem -- every other

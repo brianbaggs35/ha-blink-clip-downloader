@@ -9,7 +9,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from blink_downloader.analysis_queue import AnalysisQueue
 from blink_downloader.analyzer import AnalysisResult, ClipAnalyzer
 from blink_downloader.database import ClipDatabase

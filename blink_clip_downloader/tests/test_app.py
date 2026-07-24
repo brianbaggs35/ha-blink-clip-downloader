@@ -9,11 +9,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
-
 from blink_downloader.app import BlinkClipDownloaderApp
 from blink_downloader.downloader import AuthenticationError, TwoFARequired
-
+from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1323,6 +1321,7 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
+
     from tests.conftest import _ALL_TABLES, TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)
@@ -1331,8 +1330,8 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
     # new connection — unlike SQLite's per-file isolation, this suite's
     # Postgres database is shared, so start this test from a clean slate.
     await app._db.init()
-    assert app._db._pool is not None  # noqa: SLF001
-    await app._db._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")  # noqa: SLF001
+    assert app._db._pool is not None
+    await app._db._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")
     app._storage.ensure_directory = MagicMock()
     app._tracker = ClipTracker(tmp_path / "tracker.json")
 
@@ -1393,7 +1392,7 @@ async def test_run_skips_import_when_library_db_disabled(app, tmp_path):
 
     await app.run()
 
-    assert app._db._pool is None  # never initialised  # noqa: SLF001
+    assert app._db._pool is None  # never initialised
 
 
 async def test_poll_cycle_local_storage_clips_trigger_notification(app):
@@ -1558,7 +1557,7 @@ def test_init_wires_vision_pipeline_from_config(base_config, tmp_path) -> None:
     mock_analyzer.attach_vision_pipeline.assert_called_once()
     pipeline = mock_analyzer.attach_vision_pipeline.call_args.args[0]
     assert isinstance(pipeline, VisionPipeline)
-    config = pipeline._config  # noqa: SLF001
+    config = pipeline._config
     assert config.enhanced_detection_enabled is True
     assert config.object_detection_model == "yolo11s.pt"
     assert config.face_recognition_enabled is True

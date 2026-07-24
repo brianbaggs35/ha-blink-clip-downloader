@@ -17,7 +17,6 @@ from .analyzer import BaseAnalyzer, create_analyzer
 from .archiver import ClipArchiver
 from .config import AppConfig
 from .database import ClipDatabase
-from .vision import VisionConfig, VisionPipeline
 from .digest import DailyDigest
 from .downloader import (
     AUTH_FATAL_EXCEPTIONS,
@@ -35,6 +34,7 @@ from .notifier import HANotifier
 from .sqlite_migration import migrate_legacy_sqlite
 from .storage import StorageManager
 from .tracker import ClipTracker
+from .vision import VisionConfig, VisionPipeline
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -456,8 +456,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             except AUTH_FATAL_EXCEPTIONS as exc:
                 if not await self._reconnect_after_auth_failure(exc):
                     break
-            except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
-                _LOGGER.exception("Unhandled error in poll cycle: %s", exc)
+            except Exception:
+                _LOGGER.exception("Unhandled error in poll cycle")
 
             if self._running:
                 await self._wait_with_trigger_check()
@@ -566,11 +566,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             except AuthenticationError as exc:
                 await self._handle_invalid_credentials(exc)
                 return False
-            except Exception as exc:  # noqa: BLE001 pylint: disable=broad-exception-caught
+            except Exception:
                 _LOGGER.exception(
-                    "Failed to connect to Blink (attempt %d): %s — retrying in %d s",
+                    "Failed to connect to Blink (attempt %d) — retrying in %d s",
                     attempt,
-                    exc,
                     self._reconnect_interval,
                 )
 

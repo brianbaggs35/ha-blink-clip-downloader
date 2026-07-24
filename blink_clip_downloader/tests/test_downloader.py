@@ -11,14 +11,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from blinkpy.auth import (
-    BlinkTwoFARequiredError,
-    LoginError,
-    TokenRefreshFailed,
-    UnauthorizedError,
-)
-
 from blink_downloader.downloader import (
     AuthenticationError,
     BlinkDownloader,
@@ -27,7 +19,12 @@ from blink_downloader.downloader import (
 )
 from blink_downloader.storage import StorageManager
 from blink_downloader.tracker import ClipTracker
-
+from blinkpy.auth import (
+    BlinkTwoFARequiredError,
+    LoginError,
+    TokenRefreshFailed,
+    UnauthorizedError,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1167,9 +1164,11 @@ async def test_handle_2fa_times_out(dl, tmp_path):
     dl._blink = AsyncMock()
     dl._config.two_fa_timeout = 0.1  # extremely short timeout
 
-    with patch("blink_downloader.downloader.TWO_FA_FILE", missing_file):
-        with pytest.raises(TwoFARequired):
-            await dl._handle_2fa()
+    with (
+        patch("blink_downloader.downloader.TWO_FA_FILE", missing_file),
+        pytest.raises(TwoFARequired),
+    ):
+        await dl._handle_2fa()
 
 
 async def test_handle_2fa_web_ui_code(dl, tmp_path):
@@ -1227,9 +1226,11 @@ async def test_handle_2fa_sets_error_state_on_timeout(dl, tmp_path):
     dl._blink = AsyncMock()
     dl._config.two_fa_timeout = 0.05
 
-    with patch("blink_downloader.downloader.TWO_FA_FILE", missing_file):
-        with pytest.raises(TwoFARequired):
-            await dl._handle_2fa()
+    with (
+        patch("blink_downloader.downloader.TWO_FA_FILE", missing_file),
+        pytest.raises(TwoFARequired),
+    ):
+        await dl._handle_2fa()
 
     assert dl.auth_state == "error"
 
@@ -1288,9 +1289,11 @@ async def test_handle_2fa_wrong_code_does_not_raise_and_keeps_waiting(dl, tmp_pa
             await asyncio.sleep(0)
         dl.submit_two_fa_code("000000")
 
-    with patch("blink_downloader.downloader.TWO_FA_FILE", missing_file):
-        with pytest.raises(TwoFARequired):
-            await asyncio.gather(dl._handle_2fa(), _submit_concurrently())
+    with (
+        patch("blink_downloader.downloader.TWO_FA_FILE", missing_file),
+        pytest.raises(TwoFARequired),
+    ):
+        await asyncio.gather(dl._handle_2fa(), _submit_concurrently())
 
     # The wrong-code attempt was recorded …
     assert dl.two_fa_result_ok is False
@@ -1315,9 +1318,11 @@ async def test_handle_2fa_wrong_code_returns_false_does_not_raise(dl, tmp_path):
             await asyncio.sleep(0)
         dl.submit_two_fa_code("000000")
 
-    with patch("blink_downloader.downloader.TWO_FA_FILE", missing_file):
-        with pytest.raises(TwoFARequired):
-            await asyncio.gather(dl._handle_2fa(), _submit_concurrently())
+    with (
+        patch("blink_downloader.downloader.TWO_FA_FILE", missing_file),
+        pytest.raises(TwoFARequired),
+    ):
+        await asyncio.gather(dl._handle_2fa(), _submit_concurrently())
 
     assert dl.two_fa_result_ok is False
     assert dl.two_fa_result_seq == 1
@@ -1412,9 +1417,9 @@ async def test_connect_generic_exception_sets_error_and_deletes_cache(dl, tmp_pa
         patch("blink_downloader.downloader.AUTH_FILE", auth_file),
         patch("blink_downloader.downloader.Blink", return_value=mock_blink),
         patch("blink_downloader.downloader.Auth"),
+        pytest.raises(RuntimeError),
     ):
-        with pytest.raises(RuntimeError):
-            await dl.connect()
+        await dl.connect()
 
     assert dl.auth_state == "error"
     assert not auth_file.exists()
@@ -1557,9 +1562,9 @@ async def test_connect_unauthorized_without_cache_raises_authentication_error(
         patch("blink_downloader.downloader.AUTH_FILE", missing_auth),
         patch("blink_downloader.downloader.Blink", return_value=mock_blink),
         patch("blink_downloader.downloader.Auth"),
+        pytest.raises(AuthenticationError) as excinfo,
     ):
-        with pytest.raises(AuthenticationError) as excinfo:
-            await dl.connect()
+        await dl.connect()
 
     assert str(excinfo.value)  # non-empty, actionable message
     assert dl.auth_state == "error"
@@ -1583,9 +1588,9 @@ async def test_connect_start_returns_false_without_cache_raises_authentication_e
         patch("blink_downloader.downloader.AUTH_FILE", missing_auth),
         patch("blink_downloader.downloader.Blink", return_value=mock_blink),
         patch("blink_downloader.downloader.Auth"),
+        pytest.raises(AuthenticationError) as excinfo,
     ):
-        with pytest.raises(AuthenticationError) as excinfo:
-            await dl.connect()
+        await dl.connect()
 
     assert str(excinfo.value)
     assert dl.auth_state == "error"

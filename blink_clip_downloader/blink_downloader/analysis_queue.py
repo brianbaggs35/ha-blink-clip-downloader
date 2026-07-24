@@ -194,7 +194,8 @@ class AnalysisQueue:
     ) -> float:
         """Compute anomaly score before analysis so the prompt can reference it."""
         try:
-            from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+            from datetime import datetime as _dt
+            from datetime import timezone as _tz
 
             hour = (
                 _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00")).hour
@@ -261,7 +262,7 @@ class AnalysisQueue:
         # ai_schedule_start/end are documented as local HH:MM (matching
         # digest_time elsewhere in the app) — use local wall-clock time, not
         # UTC, or the analysis window silently runs on the wrong hours.
-        now = datetime.now().time()
+        now = datetime.now().time()  # noqa: DTZ005
         start = self._schedule_start
         end = self._schedule_end
 

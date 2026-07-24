@@ -20,8 +20,6 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-from PIL import Image
-
 from blink_downloader.database import ClipDatabase
 from blink_downloader.vision import (
     ContactResult,
@@ -49,6 +47,7 @@ from blink_downloader.vision import (
     is_face_recognition_available,
     torch_cpu_compatible,
 )
+from PIL import Image
 
 
 @pytest.fixture(autouse=True)
@@ -1257,7 +1256,7 @@ class _FakeFaceTensor:
     def dim(self) -> int:
         return self._ndim
 
-    def unsqueeze(self, _axis: int) -> "_FakeFaceTensor":
+    def unsqueeze(self, _axis: int) -> _FakeFaceTensor:
         return _FakeFaceTensor(self._arr, ndim=self._ndim + 1)
 
     def __iter__(self):
@@ -1897,13 +1896,13 @@ async def test_vision_pipeline_face_recognition_without_db_is_noop() -> None:
 
 def test_vision_pipeline_update_config_reuses_detector_when_model_unchanged() -> None:
     pipeline = VisionPipeline(VisionConfig(object_detection_model="yolo11n.pt"))
-    original_detector = pipeline._detector  # noqa: SLF001
+    original_detector = pipeline._detector
     pipeline.update_config(VisionConfig(object_detection_model="yolo11n.pt"))
-    assert pipeline._detector is original_detector  # noqa: SLF001
+    assert pipeline._detector is original_detector
 
 
 def test_vision_pipeline_update_config_reloads_detector_on_model_change() -> None:
     pipeline = VisionPipeline(VisionConfig(object_detection_model="yolo11n.pt"))
-    original_detector = pipeline._detector  # noqa: SLF001
+    original_detector = pipeline._detector
     pipeline.update_config(VisionConfig(object_detection_model="yolo11s.pt"))
-    assert pipeline._detector is not original_detector  # noqa: SLF001
+    assert pipeline._detector is not original_detector
