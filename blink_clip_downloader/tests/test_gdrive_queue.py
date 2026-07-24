@@ -445,6 +445,32 @@ async def test_process_pending_stops_batch_on_rate_limit(
     assert counts["pending"] == 2
 
 
+async def test_process_pending_stops_batch_on_quota_exceeded(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A full Drive quota is just as sticky within a batch as a rate limit —
+    every remaining clip would fail identically, so the batch must stop
+    early here too instead of re-attempting (and re-notifying) per clip."""
+    client = _make_client_mock(quota_exceeded=True)
+    queue = _make_queue(client, db, batch_size=3)
+    queue._running = True
+
+    for clip_id in ("c1", "c2", "c3"):
+        src = tmp_path / f"{clip_id}.mp4"
+        src.write_bytes(b"data")
+        clip = _add_clip(clip_id)
+        clip["path"] = str(src)
+        await db.add_clip(clip)
+        await queue.enqueue(clip)
+
+    await queue._process_pending()
+
+    client.upload_file.assert_awaited_once()
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["completed"] == 1
+    assert counts["pending"] == 2
+
+
 async def test_process_pending_continues_batch_without_rate_limit(
     db: ClipDatabase, tmp_path: Path
 ) -> None:

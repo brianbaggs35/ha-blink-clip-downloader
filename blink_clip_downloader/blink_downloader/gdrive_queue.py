@@ -121,15 +121,17 @@ class GDriveUploadQueue:
             if not self._running:
                 break
             await self._process_one(item)
-            if self._client.rate_limited:
+            if self._client.rate_limited or self._client.quota_exceeded:
                 # Every remaining clip in this batch would hit the exact same
-                # limit immediately — stop now and let the next
-                # check_interval cycle retry with a cooled-down quota
-                # instead of burning through the whole batch (same reasoning
-                # as AnalysisQueue._process_pending).
+                # rate limit or full-quota error immediately — stop now and
+                # let the next check_interval cycle retry (rate limit) or
+                # wait for the user to free up space (quota) instead of
+                # burning through the whole batch and spamming a duplicate
+                # "Drive full" notification per remaining clip (same
+                # reasoning as AnalysisQueue._process_pending).
                 _LOGGER.info(
-                    "Pausing this batch after a rate limit — %d clip(s) remain "
-                    "pending and will be retried next cycle",
+                    "Pausing this batch after a rate limit or quota error — %d "
+                    "clip(s) remain pending and will be retried next cycle",
                     len(pending) - (i + 1),
                 )
                 break
