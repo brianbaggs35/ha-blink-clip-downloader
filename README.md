@@ -202,6 +202,33 @@ The following providers/models have been tested and are working or were fixed:
 | Ollama models   | :x:                |
 | Moondream local | :x:                |
 
+## Google Drive Backup Setup
+
+The add-on can optionally back up clips to Google Drive as an extra copy,
+alongside local storage. It's fully optional and, unlike the options above,
+configured entirely from the **Storage** tab in the web UI rather than
+`config.yaml`.
+
+Google requires every application to register its own OAuth client, so
+there's a one-time setup step in [Google Cloud
+Console](https://console.cloud.google.com/):
+
+1. Create a project (or reuse one), enable the **Google Drive API**, and
+   configure the OAuth consent screen (External is fine for personal use).
+2. Create an **OAuth client ID** of type **"TVs and Limited Input devices"**
+   — this add-on signs in via Google's device-flow (a short code you enter
+   at `google.com/device`), since it runs behind Home Assistant ingress with
+   no fixed redirect URL for a standard sign-in button.
+3. Copy the **Client ID** and **Client Secret** into the Storage tab's
+   **Google Drive Setup** card, click **Save Setup**, then **Connect Google
+   Drive** and follow the on-screen code.
+
+See [Storage Tab — Google Drive
+Backup](blink_clip_downloader/DOCS.md#storage-tab--google-drive-backup) for
+the full walkthrough — including moving the OAuth consent screen to
+production (recommended; otherwise Google expires the connection weekly),
+choosing a backup policy, and exactly what does and doesn't get uploaded.
+
 ## Support
 
 Open an issue at <https://github.com/brianbaggs35/ha-blink-clip-downloader/issues>.
