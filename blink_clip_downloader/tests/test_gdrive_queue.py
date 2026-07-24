@@ -9,7 +9,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from blink_downloader.database import ClipDatabase
 from blink_downloader.gdrive_client import GDriveClient
 from blink_downloader.gdrive_queue import GDriveUploadQueue

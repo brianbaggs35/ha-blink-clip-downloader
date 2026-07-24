@@ -28,6 +28,17 @@
   them to a chosen Drive folder without waiting for the automatic backup
   policy.
 
+### Bug fixes
+
+- **Per-architecture image tags on ghcr (`:vX.Y.Z-amd64`/`-aarch64`) now
+  show a description too.** 5.0.8 fixed the multi-arch `:vX.Y.Z`/`:latest`
+  pages via manifest-index annotations, but the per-arch tag pages still
+  said "No description provided": `docker/build-push-action`'s default
+  provenance attestation wraps even a single-arch push in an OCI index,
+  hiding the Dockerfile's description label. Nothing consumes those
+  attestations, so the release workflow now disables provenance and the
+  label shows through.
+
 ## 5.0.8
 
 ### Container security & packaging

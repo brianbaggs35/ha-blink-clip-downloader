@@ -222,12 +222,15 @@ class GDriveUploadQueue:
         arcname = f"{clip.get('camera', 'unknown')}/{original_name}"
 
         try:
-            with zipfile.ZipFile(archive_path) as zf, zf.open(arcname) as member:
-                with NamedTemporaryFile(
+            with (
+                zipfile.ZipFile(archive_path) as zf,
+                zf.open(arcname) as member,
+                NamedTemporaryFile(
                     suffix=Path(original_name).suffix or ".mp4", delete=False
-                ) as tmp:
-                    tmp.write(member.read())
-                    return Path(tmp.name)
+                ) as tmp,
+            ):
+                tmp.write(member.read())
+                return Path(tmp.name)
         except (zipfile.BadZipFile, KeyError, OSError) as exc:
             _LOGGER.warning(
                 "Could not extract %s from %s: %s", arcname, archive_path, exc

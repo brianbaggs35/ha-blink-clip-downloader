@@ -1380,7 +1380,7 @@ async def test_reset_stale_processing_resets_both_queue_tables(
     await db.update_queue_status("c1", "processing")
     await db.update_gdrive_queue_status("c2", "processing")
 
-    await db._reset_stale_processing()  # noqa: SLF001
+    await db._reset_stale_processing()
 
     analysis_counts = await db.get_queue_counts()
     gdrive_counts = await db.get_gdrive_queue_counts()

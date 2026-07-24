@@ -1477,6 +1477,7 @@ async def test_run_starts_gdrive_queue_task_when_library_db_enabled(app, tmp_pat
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
+
     from tests.conftest import TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)

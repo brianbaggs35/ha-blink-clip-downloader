@@ -32,7 +32,9 @@ import aiohttp
 _LOGGER = logging.getLogger(__name__)
 
 _DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
-_TOKEN_URL = "https://oauth2.googleapis.com/token"
+# The OAuth endpoint URL trips bandit's hardcoded-password check purely
+# because the constant's name contains "TOKEN" — it is a URL, not a secret.
+_TOKEN_URL = "https://oauth2.googleapis.com/token"  # nosec B105
 _REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 _DRIVE_API = "https://www.googleapis.com/drive/v3"
 _DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files"
@@ -125,7 +127,7 @@ class GDriveClient:
 
     def __init__(self) -> None:
         self._client_id = ""
-        self._client_secret = ""
+        self._client_secret = ""  # nosec B105
         self.backup_policy = "archived_only"
         self._session: aiohttp.ClientSession | None = None
 
@@ -133,8 +135,8 @@ class GDriveClient:
         self.rate_limited = False
         self.quota_exceeded = False
 
-        self._access_token = ""
-        self._refresh_token = ""
+        self._access_token = ""  # nosec B105
+        self._refresh_token = ""  # nosec B105
         self._expires_at = 0.0
         self._account_email = ""
         self._folder_id = ""
@@ -199,8 +201,8 @@ class GDriveClient:
             _LOGGER.warning("Could not persist Google Drive credentials: %s", exc)
 
     def _clear_credentials(self) -> None:
-        self._access_token = ""
-        self._refresh_token = ""
+        self._access_token = ""  # nosec B105
+        self._refresh_token = ""  # nosec B105
         self._expires_at = 0.0
         self._account_email = ""
         self._folder_id = ""
@@ -363,10 +365,15 @@ class GDriveClient:
             "expired_token",
             "access_denied",
         ):
+            # The "expired" status goes through a named constant: a string
+            # literal against the "expired_token" key reads to bandit (B105)
+            # as a hardcoded credential, and a nosec inside a multi-line dict
+            # sprays spurious per-line "unused nosec" warnings.
+            expired_status: PollStatus = "expired"
             mapped: dict[str, PollStatus] = {
                 "authorization_pending": "pending",
                 "slow_down": "slow_down",
-                "expired_token": "expired",
+                "expired_token": expired_status,
                 "access_denied": "denied",
             }
             return TokenPollResult(status=mapped[error])

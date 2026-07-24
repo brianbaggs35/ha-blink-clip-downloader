@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
-
 from blink_downloader.gdrive_client import GDriveClient
 
 
