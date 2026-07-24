@@ -1,5 +1,33 @@
 # Changelog
 
+## 5.0.8
+
+### Container security & packaging
+
+- **Removed the unused `tempio` binary from the image.** The Home Assistant
+  base image ships `/usr/bin/tempio` (HA's config-templating helper), which
+  this add-on never uses. Its statically-linked Go runtime carried every
+  fixable HIGH/CRITICAL finding a Trivy scan reported against the container
+  (27 per architecture, including one CRITICAL in the Go standard library) —
+  deleting the binary removes that attack surface outright rather than
+  waiting on upstream base-image rebuilds.
+- **The GitHub Container Registry package page now shows a description.**
+  The Dockerfile always set `org.opencontainers.image.description`, but
+  ghcr reads a *multi-arch* image's description from the manifest index's
+  annotations, not from the per-arch image labels — so the package page
+  showed "No description provided". The release workflow now stamps the
+  description (and `image.source`) onto the `:X.Y.Z` and `:latest`
+  manifest indexes via `docker buildx imagetools create --annotation`,
+  and the Dockerfile label was updated to matching wording.
+- **CI now scans the built container image with Trivy** on both
+  architectures (each on its native runner, right after the image build).
+  The gate is deliberately scoped to vulnerabilities a rebuild can actually
+  fix: HIGH/CRITICAL severity with a fix available (`ignore-unfixed`) —
+  Debian stable's long tail of not-yet-patched CVEs is reported by every
+  scanner against every Debian-based image and is not actionable from this
+  repository. As of this release both images scan clean under that gate;
+  the Python dependency tree scans clean at every severity.
+
 ## 5.0.7
 
 ### Bug fixes

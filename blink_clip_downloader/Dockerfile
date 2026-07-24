@@ -119,6 +119,11 @@ RUN apt-get update \
         libffi-dev libssl-dev ffmpeg libjpeg-dev zlib1g-dev cmake \
         libgl1 libglib2.0-0 ca-certificates postgresql-17 \
     && rm -rf /var/lib/apt/lists/* \
+    # The base image ships /usr/bin/tempio (HA's config-templating helper).
+    # Nothing in this add-on uses it, and its statically-linked Go runtime
+    # accumulates CVEs (Go stdlib + golang.org/x/crypto) that a container
+    # scan flags — remove it rather than carry unused attack surface.
+    && rm -f /usr/bin/tempio \
     # postgresql-17's postinst auto-creates a default "17 main" cluster under
     # /var/lib/postgresql via Debian's own pg_createcluster/postgresql-common
     # machinery. This add-on manages its own data directory under /data
@@ -329,7 +334,7 @@ RUN chmod a+x /etc/services.d/blink-downloader/run \
 
 LABEL \
     org.opencontainers.image.title="Blink Clip Downloader" \
-    org.opencontainers.image.description="Continuously downloads Blink camera clips to local HA storage" \
+    org.opencontainers.image.description="Home Assistant add-on for saving and viewing Blink camera clips, with AI analysis and facial recognition" \
     org.opencontainers.image.source="https://github.com/brianbaggs35/ha-blink-clip-downloader" \
     org.opencontainers.image.authors="Brian Baggs <brianbaggs@hotmail.com>" \
     org.opencontainers.image.licenses="MIT" \

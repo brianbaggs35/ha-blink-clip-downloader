@@ -341,7 +341,10 @@ and `smoke-test` jobs that build/run the actual Docker image — including the
 frontend build — and a Playwright e2e smoke check in `e2e/`; those aren't
 practical to run per-change but are worth being aware of if a change touches
 `Dockerfile`, `rootfs/run.sh`, `frontend/vite.config.ts`, or add-on startup
-behavior.)
+behavior. The `build` job also Trivy-scans the built image on both arches,
+gated to HIGH/CRITICAL vulnerabilities **with a fix available** — if it
+fails, a rebuild usually picks up the fixed Debian package; only add a
+`.trivyignore` entry as a last resort with a dated justification comment.)
 
 ## Versioning
 
