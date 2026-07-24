@@ -74,6 +74,15 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
 
+          # Provenance attestations (on by default) wrap even a single-arch
+          # push in an OCI index, so the per-arch tag pages on ghcr read the
+          # (empty) index annotations instead of the Dockerfile's
+          # org.opencontainers.image.description label — that's why
+          # ":vX.Y.Z-amd64"-style pages showed "No description provided".
+          # Nothing consumes the attestations, so disable them and let the
+          # label show through.
+          provenance: false
+
           tags: |
             ${{ steps.tags.outputs.tag_version }}
 
