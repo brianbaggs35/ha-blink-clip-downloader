@@ -387,8 +387,8 @@ async def test_merges_into_a_clip_already_reconstructed_by_library_scanner(
 
     # Both the pre-upgrade (imported, remapped) and post-upgrade (already
     # real) analyses are present under the one preserved id.
-    assert db._pool is not None  # noqa: SLF001
-    history = await db._pool.fetch(  # noqa: SLF001
+    assert db._pool is not None
+    history = await db._pool.fetch(
         "SELECT model FROM analysis_results WHERE clip_id = $1 ORDER BY analyzed_at",
         "import-abc123",
     )
@@ -464,7 +464,7 @@ async def test_ai_usage_reset_marker_imported(db: ClipDatabase, tmp_path: Path) 
     conn.close()
 
     assert await migrate_legacy_sqlite(db, legacy_path) == 1
-    reset_at = await db._get_ai_usage_reset_at()  # noqa: SLF001
+    reset_at = await db._get_ai_usage_reset_at()
     assert reset_at == "2026-02-01T00:00:00+00:00"
 
 

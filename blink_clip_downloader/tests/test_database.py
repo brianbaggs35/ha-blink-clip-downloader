@@ -9,13 +9,13 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import pytest
-
 from blink_downloader.database import (
     ClipDatabase,
     _affected,
     _local_day_bounds,
     _row_to_dict,
 )
+
 from tests.conftest import TEST_DB_DSN
 
 
@@ -93,7 +93,7 @@ def _local_boundary_case() -> tuple[str, bool]:
 
 
 async def test_init_creates_tables(db: ClipDatabase) -> None:
-    assert db._pool is not None  # noqa: SLF001
+    assert db._pool is not None
     # A functional check, not just an attribute check: querying a freshly
     # created (and truncated, via the `db` fixture) table succeeds and is
     # empty, proving init() actually created the schema.
@@ -331,12 +331,12 @@ async def test_delete_clip_cascades_to_analysis_tables(db: ClipDatabase) -> None
 
     assert await db.delete_clip("clip1") is True
 
-    assert db._pool is not None  # noqa: SLF001
-    remaining_results = await db._pool.fetchval(  # noqa: SLF001
+    assert db._pool is not None
+    remaining_results = await db._pool.fetchval(
         "SELECT COUNT(*) FROM analysis_results WHERE clip_id='clip1'"
     )
     assert remaining_results == 0
-    remaining_queue = await db._pool.fetchval(  # noqa: SLF001
+    remaining_queue = await db._pool.fetchval(
         "SELECT COUNT(*) FROM analysis_queue WHERE clip_id='clip1'"
     )
     assert remaining_queue == 0
@@ -1354,8 +1354,8 @@ async def test_get_distinct_tags_bad_json_skipped(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.set_tags("c1", ["good"])
     # Inject bad JSON directly via raw SQL
-    assert db._pool is not None  # noqa: SLF001
-    await db._pool.execute("UPDATE clips SET tags='bad-json!!!' WHERE id='c1'")  # noqa: SLF001
+    assert db._pool is not None
+    await db._pool.execute("UPDATE clips SET tags='bad-json!!!' WHERE id='c1'")
     tags = await db.get_distinct_tags()
     assert isinstance(tags, list)
     assert "good" not in tags  # bad JSON skipped entirely
@@ -1854,8 +1854,8 @@ async def test_score_duration_anomaly_zero_average_returns_zero(
     which only ever writes a positive duration, but defensive against any
     other origin for this row) must not raise a divide-by-zero computing
     the ratio."""
-    assert db._pool is not None  # noqa: SLF001
-    await db._pool.execute(  # noqa: SLF001
+    assert db._pool is not None
+    await db._pool.execute(
         "INSERT INTO camera_duration_stats (camera, avg_duration, sample_count) "
         "VALUES ($1, $2, $3)",
         "Zero Avg Camera",
@@ -2005,8 +2005,8 @@ async def test_get_scene_deviation_corrupt_thumbnail_returns_none(
     """A row whose stored ``thumbnail`` isn't valid JSON (e.g. from a prior
     schema/format change) should be treated as no usable baseline rather than
     raising."""
-    assert db._pool is not None  # noqa: SLF001
-    await db._pool.execute(  # noqa: SLF001
+    assert db._pool is not None
+    await db._pool.execute(
         "INSERT INTO camera_scene_baselines (camera, thumbnail, sample_count, "
         "updated_at) VALUES ($1, $2, $3, $4)",
         "Corrupt",
@@ -2022,8 +2022,8 @@ async def test_record_scene_baseline_recovers_from_corrupt_existing_data(
 ) -> None:
     """If the stored thumbnail is corrupt JSON, recording a new sample should
     restart the baseline from scratch instead of raising."""
-    assert db._pool is not None  # noqa: SLF001
-    await db._pool.execute(  # noqa: SLF001
+    assert db._pool is not None
+    await db._pool.execute(
         "INSERT INTO camera_scene_baselines (camera, thumbnail, sample_count, "
         "updated_at) VALUES ($1, $2, $3, $4)",
         "Corrupt2",
@@ -2052,8 +2052,8 @@ async def test_record_scene_baseline_uninitialised_db() -> None:
 
 
 async def _scene_streak(db: ClipDatabase, camera: str) -> int:
-    assert db._pool is not None  # noqa: SLF001
-    value = await db._pool.fetchval(  # noqa: SLF001
+    assert db._pool is not None
+    value = await db._pool.fetchval(
         "SELECT consecutive_deviation_count FROM camera_scene_baselines WHERE camera=$1",
         camera,
     )
@@ -2415,7 +2415,7 @@ async def test_get_feedback_stats_returns_empty_when_fetchrow_returns_none(
     class _FetchrowNonePool:
         fetchrow = AsyncMock(return_value=None)
 
-    monkeypatch.setattr(db, "_pool", _FetchrowNonePool())  # noqa: SLF001
+    monkeypatch.setattr(db, "_pool", _FetchrowNonePool())
     stats = await db.get_feedback_stats()
     assert stats["total"] == 0
 

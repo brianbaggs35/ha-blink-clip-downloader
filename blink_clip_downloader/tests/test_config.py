@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
-
 from blink_downloader.config import AppConfig, _parse_config, load_config
 
 # ---------------------------------------------------------------------------
@@ -225,7 +225,7 @@ def test_load_config_missing_file():
 def test_load_config_invalid_json(tmp_path):
     bad_file = tmp_path / "options.json"
     bad_file.write_text("{not valid json}")
-    with pytest.raises(Exception):
+    with pytest.raises(json.JSONDecodeError):
         load_config(bad_file)
 
 

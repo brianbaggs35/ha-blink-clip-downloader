@@ -210,8 +210,8 @@ class FrameEnhancer:
         """
         try:
             with _native_import_lock:
-                import cv2  # noqa: PLC0415  # type: ignore[import-not-found]
-                import numpy as np  # noqa: PLC0415
+                import cv2  # type: ignore[import-not-found]
+                import numpy as np
         except ImportError:
             return frames
 
@@ -308,7 +308,7 @@ class ObjectDetector:
         # if another stage's first load is in flight at the same moment -
         # see _native_import_lock's own comment for why that's necessary.
         with _native_import_lock:
-            from ultralytics import YOLO  # noqa: PLC0415  # type: ignore[import-not-found]
+            from ultralytics import YOLO  # type: ignore[import-not-found]
 
             # A bare filename (the default "yolo11n.pt", or any custom
             # ai_object_detection_model naming a standard pretrained
@@ -347,8 +347,8 @@ class ObjectDetector:
             except CPUIncompatibleError as exc:
                 _LOGGER.warning("Object detection unavailable: %s", exc)
                 return False
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.exception("Failed to load YOLO model: %s", exc)
+            except Exception:
+                _LOGGER.exception("Failed to load YOLO model")
                 return False
 
     def _detect_in_frame(self, img: Any, idx: int) -> list[DetectedObject]:
@@ -382,8 +382,8 @@ class ObjectDetector:
         return detections
 
     def _detect_sync(self, frames: list[bytes]) -> list[DetectedObject]:
-        import cv2  # noqa: PLC0415  # type: ignore[import-not-found]
-        import numpy as np  # noqa: PLC0415
+        import cv2  # type: ignore[import-not-found]
+        import numpy as np
 
         detections: list[DetectedObject] = []
         for idx, frame in enumerate(frames):
@@ -617,7 +617,7 @@ class DepthEstimator:
         # _native_import_lock's comment and ObjectDetector._load_sync above
         # for why (this method also only ever runs once per process).
         with _native_import_lock:
-            from transformers import pipeline  # noqa: PLC0415  # type: ignore[import-not-found]
+            from transformers import pipeline  # type: ignore[import-not-found]
 
             _LOGGER.info("Loading depth-estimation model '%s'", self._MODEL_ID)
             self._pipe = pipeline(
@@ -645,8 +645,8 @@ class DepthEstimator:
             except CPUIncompatibleError as exc:
                 _LOGGER.warning("Depth estimation unavailable: %s", exc)
                 return False
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.exception("Failed to load depth-estimation model: %s", exc)
+            except Exception:
+                _LOGGER.exception("Failed to load depth-estimation model")
                 return False
 
     def _compare_sync(
@@ -655,8 +655,8 @@ class DepthEstimator:
         subject_box: tuple[float, float, float, float],
         vehicle_box: tuple[float, float, float, float],
     ) -> DepthComparison | None:
-        import numpy as np  # noqa: PLC0415
-        from PIL import Image  # noqa: PLC0415
+        import numpy as np
+        from PIL import Image
 
         image = Image.open(io.BytesIO(frame)).convert("RGB")
         result = self._pipe(image)
@@ -776,7 +776,7 @@ class ContactSegmenter:
         # _native_import_lock's comment and ObjectDetector._load_sync above
         # for why (this method also only ever runs once per process).
         with _native_import_lock:
-            from transformers import (  # noqa: PLC0415  # type: ignore[import-not-found]
+            from transformers import (  # type: ignore[import-not-found]
                 Sam2Model,
                 Sam2Processor,
             )
@@ -807,8 +807,8 @@ class ContactSegmenter:
             except CPUIncompatibleError as exc:
                 _LOGGER.warning("Contact segmentation unavailable: %s", exc)
                 return False
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.exception("Failed to load SAM2 model: %s", exc)
+            except Exception:
+                _LOGGER.exception("Failed to load SAM2 model")
                 return False
 
     def _check_sync(
@@ -817,10 +817,10 @@ class ContactSegmenter:
         subject_box: tuple[float, float, float, float],
         vehicle_box: tuple[float, float, float, float],
     ) -> ContactResult | None:
-        import cv2  # noqa: PLC0415  # type: ignore[import-not-found]
-        import numpy as np  # noqa: PLC0415
-        import torch  # noqa: PLC0415  # type: ignore[import-not-found]
-        from PIL import Image  # noqa: PLC0415
+        import cv2  # type: ignore[import-not-found]
+        import numpy as np
+        import torch  # type: ignore[import-not-found]
+        from PIL import Image
 
         image = Image.open(io.BytesIO(frame)).convert("RGB")
         input_boxes = [[list(subject_box), list(vehicle_box)]]
@@ -963,7 +963,7 @@ class FaceEmbedder:
         # _native_import_lock's comment and ObjectDetector._load_sync above
         # for why (this method also only ever runs once per process).
         with _native_import_lock:
-            from facenet_pytorch import (  # noqa: PLC0415  # type: ignore[import-not-found]
+            from facenet_pytorch import (  # type: ignore[import-not-found]
                 MTCNN,
                 InceptionResnetV1,
             )
@@ -994,13 +994,13 @@ class FaceEmbedder:
             except CPUIncompatibleError as exc:
                 _LOGGER.warning("Face recognition unavailable: %s", exc)
                 return False
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.exception("Failed to load face-recognition models: %s", exc)
+            except Exception:
+                _LOGGER.exception("Failed to load face-recognition models")
                 return False
 
     def _embed_sync(self, frame: bytes) -> list[list[float]]:
-        import torch  # noqa: PLC0415  # type: ignore[import-not-found]
-        from PIL import Image  # noqa: PLC0415
+        import torch  # type: ignore[import-not-found]
+        from PIL import Image
 
         image = Image.open(io.BytesIO(frame)).convert("RGB")
         faces = self._mtcnn(image)

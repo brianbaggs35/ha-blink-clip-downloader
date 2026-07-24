@@ -8,7 +8,6 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
-
 from blink_downloader.config import AppConfig
 from blink_downloader.database import ClipDatabase
 
@@ -37,8 +36,8 @@ _ALL_TABLES = (
 async def db() -> AsyncGenerator[ClipDatabase, None]:
     d = ClipDatabase(TEST_DB_DSN)
     await d.init()
-    assert d._pool is not None  # noqa: SLF001
-    await d._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")  # noqa: SLF001
+    assert d._pool is not None
+    await d._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")
     yield d
     await d.close()
 

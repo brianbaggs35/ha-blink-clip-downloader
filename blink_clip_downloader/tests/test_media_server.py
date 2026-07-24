@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from blink_downloader import media_server
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.database import ClipDatabase
@@ -1464,14 +1463,16 @@ async def test_moondream_install_returns_installing_or_already_installed(
     # Reset state
     ms._moondream_install_state = {"status": "idle", "log": ""}
 
-    with patch(
-        "blink_downloader.media_server._moondream_arch_supported", return_value=True
-    ):
-        with patch(
+    with (
+        patch(
+            "blink_downloader.media_server._moondream_arch_supported", return_value=True
+        ),
+        patch(
             "blink_downloader.media_server._is_moondream_installed", return_value=False
-        ):
-            with patch("asyncio.create_task", side_effect=lambda coro: coro.close()):
-                resp = await client.post("/api/ai/moondream/install")
+        ),
+        patch("asyncio.create_task", side_effect=lambda coro: coro.close()),
+    ):
+        resp = await client.post("/api/ai/moondream/install")
 
     assert resp.status == 200
     data = await resp.json()
@@ -2948,21 +2949,23 @@ async def test_moondream_run_install_success(
         return_value=(b"Successfully installed moondream\n", None)
     )
 
-    with patch(
-        "blink_downloader.media_server._is_moondream_installed", return_value=False
+    with (
+        patch(
+            "blink_downloader.media_server._is_moondream_installed", return_value=False
+        ),
+        patch("asyncio.create_task", side_effect=_capture),
     ):
-        with patch("asyncio.create_task", side_effect=_capture):
-            resp = await client.post("/api/ai/moondream/install")
+        resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
 
     try:
-        with patch(
-            "blink_downloader.media_server._MOONDREAM_PACKAGES_DIR", fake_pkg_dir
+        with (
+            patch(
+                "blink_downloader.media_server._MOONDREAM_PACKAGES_DIR", fake_pkg_dir
+            ),
+            patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
         ):
-            with patch(
-                "asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)
-            ):
-                await captured[0]
+            await captured[0]
         assert ms._moondream_install_state["status"] == "installed"
     finally:
         if str(fake_pkg_dir) in sys.path:
@@ -2986,11 +2989,13 @@ async def test_moondream_run_install_failure_nonzero_returncode(
     mock_proc.returncode = 1
     mock_proc.communicate = AsyncMock(return_value=(b"error: no wheel found\n", None))
 
-    with patch(
-        "blink_downloader.media_server._is_moondream_installed", return_value=False
+    with (
+        patch(
+            "blink_downloader.media_server._is_moondream_installed", return_value=False
+        ),
+        patch("asyncio.create_task", side_effect=_capture),
     ):
-        with patch("asyncio.create_task", side_effect=_capture):
-            resp = await client.post("/api/ai/moondream/install")
+        resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
@@ -3010,11 +3015,13 @@ async def test_moondream_run_install_timeout(client: TestClient) -> None:
         captured.append(coro)
         return MagicMock()
 
-    with patch(
-        "blink_downloader.media_server._is_moondream_installed", return_value=False
+    with (
+        patch(
+            "blink_downloader.media_server._is_moondream_installed", return_value=False
+        ),
+        patch("asyncio.create_task", side_effect=_capture),
     ):
-        with patch("asyncio.create_task", side_effect=_capture):
-            resp = await client.post("/api/ai/moondream/install")
+        resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
 
     # A sync (non-coroutine-returning) side_effect raises before wait_for's
@@ -3039,11 +3046,13 @@ async def test_moondream_run_install_generic_exception(client: TestClient) -> No
         captured.append(coro)
         return MagicMock()
 
-    with patch(
-        "blink_downloader.media_server._is_moondream_installed", return_value=False
+    with (
+        patch(
+            "blink_downloader.media_server._is_moondream_installed", return_value=False
+        ),
+        patch("asyncio.create_task", side_effect=_capture),
     ):
-        with patch("asyncio.create_task", side_effect=_capture):
-            resp = await client.post("/api/ai/moondream/install")
+        resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
 
     with patch(

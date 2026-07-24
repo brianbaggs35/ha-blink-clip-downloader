@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from blink_downloader.digest import DailyDigest
 
 
@@ -60,7 +59,7 @@ async def test_check_and_send_disabled_does_nothing(tmp_path: Path) -> None:
 
 async def test_check_and_send_already_sent_today(tmp_path: Path) -> None:
     digest, notifier, _ = _make_digest(tmp_path)
-    digest._last_sent = date.today()
+    digest._last_sent = date.today()  # noqa: DTZ011
     await digest.check_and_send()
     notifier.notify.assert_not_awaited()
 
@@ -69,7 +68,7 @@ async def test_check_and_send_not_yet_time(tmp_path: Path) -> None:
     # Use 23:59 so it's never time during tests
     digest, notifier, _ = _make_digest(tmp_path, digest_time="23:59")
     # Patch datetime.now to return midnight
-    fake_now = datetime.now().replace(hour=0, minute=0)
+    fake_now = datetime.now().replace(hour=0, minute=0)  # noqa: DTZ005
     with patch("blink_downloader.digest.datetime") as mock_dt:
         mock_dt.now.return_value = fake_now
         mock_dt.today = datetime.today
@@ -79,7 +78,7 @@ async def test_check_and_send_not_yet_time(tmp_path: Path) -> None:
 
 async def test_check_and_send_fires_when_due(tmp_path: Path) -> None:
     digest, notifier, _ = _make_digest(tmp_path, digest_time="08:00")
-    fake_now = datetime.now().replace(hour=9, minute=0)
+    fake_now = datetime.now().replace(hour=9, minute=0)  # noqa: DTZ005
     with patch("blink_downloader.digest.datetime") as mock_dt:
         mock_dt.now.return_value = fake_now
         mock_dt.today = datetime.today
@@ -89,15 +88,15 @@ async def test_check_and_send_fires_when_due(tmp_path: Path) -> None:
 
 async def test_check_and_send_persists_last_sent(tmp_path: Path) -> None:
     state_file = tmp_path / "last_digest.json"
-    digest, notifier, _ = _make_digest(tmp_path, digest_time="08:00")
-    fake_now = datetime.now().replace(hour=9, minute=0)
+    digest, _notifier, _ = _make_digest(tmp_path, digest_time="08:00")
+    fake_now = datetime.now().replace(hour=9, minute=0)  # noqa: DTZ005
     with patch("blink_downloader.digest.datetime") as mock_dt:
         mock_dt.now.return_value = fake_now
         mock_dt.today = datetime.today
         await digest.check_and_send()
     assert state_file.exists()
     data = json.loads(state_file.read_text())
-    assert data["last_sent"] == date.today().isoformat()
+    assert data["last_sent"] == date.today().isoformat()  # noqa: DTZ011
 
 
 async def test_check_and_send_invalid_time_skips(tmp_path: Path) -> None:
@@ -204,7 +203,7 @@ def test_save_last_sent_oserror_is_logged(tmp_path: Path) -> None:
     from unittest.mock import patch
 
     digest, _, _ = _make_digest(tmp_path)
-    digest._last_sent = date.today()
+    digest._last_sent = date.today()  # noqa: DTZ011
 
     with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
         digest._save_last_sent()  # must not raise

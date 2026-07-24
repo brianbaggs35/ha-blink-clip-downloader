@@ -98,7 +98,7 @@ async def migrate_legacy_sqlite(
                 exc,
             )
         return imported
-    except Exception:  # noqa: BLE001
+    except Exception:
         _LOGGER.exception(
             "Failed to import legacy SQLite library at %s — continuing "
             "with the existing (empty or partial) library; this will be "

@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from blink_downloader.database import ClipDatabase
 from blink_downloader.library_scanner import (
     _timestamp_from_filename,
@@ -190,6 +189,7 @@ async def test_import_skips_directory_entries(db: ClipDatabase, tmp_path: Path) 
 def test_build_clip_record_handles_stat_error(tmp_path: Path) -> None:
     """If stat() raises OSError while measuring size, size defaults to 0 (lines 76-77)."""
     import unittest.mock
+
     from blink_downloader.library_scanner import _build_clip_record
 
     download_path = tmp_path / "clips"

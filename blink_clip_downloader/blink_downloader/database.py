@@ -846,11 +846,13 @@ class ClipDatabase:
             # a clip that no longer matches after a later re-analysis isn't
             # counted here either.
             "recognized_count": (
-                "SELECT COUNT(*) FROM clips WHERE archived=FALSE AND EXISTS ("
-                "SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
-                "AND ar.approved_faces_seen "
-                "AND ar.analyzed_at = (SELECT MAX(ar2.analyzed_at) "
-                "FROM analysis_results ar2 WHERE ar2.clip_id = clips.id))",
+                (
+                    "SELECT COUNT(*) FROM clips WHERE archived=FALSE AND EXISTS ("
+                    "SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
+                    "AND ar.approved_faces_seen "
+                    "AND ar.analyzed_at = (SELECT MAX(ar2.analyzed_at) "
+                    "FROM analysis_results ar2 WHERE ar2.clip_id = clips.id))"
+                ),
                 (),
             ),
         }
@@ -1057,8 +1059,10 @@ class ClipDatabase:
                 (),
             ),
             "frames_analyzed_today": (
-                "SELECT COALESCE(SUM(frame_count),0) FROM analysis_results "
-                "WHERE analyzed_at >= ? AND analyzed_at < ?",
+                (
+                    "SELECT COALESCE(SUM(frame_count),0) FROM analysis_results "
+                    "WHERE analyzed_at >= ? AND analyzed_at < ?"
+                ),
                 (today_start, today_end),
             ),
         }
