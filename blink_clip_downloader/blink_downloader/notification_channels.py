@@ -23,7 +23,9 @@ _TIMEOUT = aiohttp.ClientTimeout(total=15)
 class NotificationDispatcher:
     """Sends suspicious-activity alerts via mobile, email, and Discord."""
 
-    def __init__(
+    # Empty-string defaults below mean "channel not configured" — they are
+    # placeholders, not credentials (B107).
+    def __init__(  # nosec B107
         self,
         supervisor_token: str = "",
         mobile_app_target: str = "",

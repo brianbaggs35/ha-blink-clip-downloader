@@ -296,6 +296,22 @@ cd /home/brian/ha-blink-clip-downloader
 yamllint .
 ```
 
+### Security scan (bandit)
+
+Config lives in `[tool.bandit]` in `blink_clip_downloader/pyproject.toml`
+(tests excluded; B101/B608 skipped with rationale documented there). Run from
+the repo root, mirroring CI:
+
+```bash
+cd /home/brian/ha-blink-clip-downloader
+bandit -c blink_clip_downloader/pyproject.toml -r blink_clip_downloader
+```
+
+Needs `pip install "bandit[toml]"`. For a genuinely-false-positive finding,
+prefer a per-line `# nosec B<id>` with a brief comment; a config-level skip
+is only for rules that can't be suppressed per-line (B608 on multiline SQL
+f-strings) or are wrong for this project wholesale (B101 asserts).
+
 ### Before declaring any task done
 
 Run, in this order, and fix everything before reporting completion:
@@ -303,16 +319,18 @@ Run, in this order, and fix everything before reporting completion:
 1. `ruff format --check .` and `ruff check .` (from `blink_clip_downloader/`)
 2. `yamllint .` (from repo root) — only relevant if YAML files changed
 3. `pyright --project pyrightconfig.json` (from repo root)
-4. `python -m pytest --cov=blink_downloader --cov-report=term-missing -q`
+4. `bandit -c blink_clip_downloader/pyproject.toml -r blink_clip_downloader`
+   (from repo root)
+5. `python -m pytest --cov=blink_downloader --cov-report=term-missing -q`
    (from `blink_clip_downloader/`)
-5. `npm run lint` and `npm run format:check` (from `frontend/`) — ESLint and
+6. `npm run lint` and `npm run format:check` (from `frontend/`) — ESLint and
    Prettier
-6. `npm run type-check` (from `frontend/`)
-7. `npm run test:coverage` (from `frontend/`) — Vitest; `npm test` is only a
+7. `npm run type-check` (from `frontend/`)
+8. `npm run test:coverage` (from `frontend/`) — Vitest; `npm test` is only a
    substitute for a quicker pass without coverage, not a replacement for this
    step
 
-Always run all seven, not just the ones for whichever side you touched —
+Always run all eight, not just the ones for whichever side you touched —
 cheap enough to run every time, and it catches cross-side breakage (e.g. a
 backend API shape change breaking a frontend type) that a "only run if X
 changed" rule would miss.

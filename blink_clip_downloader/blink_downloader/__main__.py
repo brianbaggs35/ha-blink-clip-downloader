@@ -72,7 +72,12 @@ def main() -> None:
         # server can start and HA ingress remains reachable.  The app will run
         # in web-only mode and display the error on the Status tab.
         _logger.exception("Configuration error — starting in web-only mode")
-        config = AppConfig(username="", password="", startup_error=str(exc))
+        # Empty-string placeholders, not credentials (web-only fallback).
+        # (str(exc) hoisted off the nosec line: bandit checks nosec comments
+        # per AST node, and a second call node on the same line triggers a
+        # spurious "nosec unused" warning.)
+        startup_error = str(exc)
+        config = AppConfig(username="", password="", startup_error=startup_error)  # nosec B106
 
     app = BlinkClipDownloaderApp(config)
     try:

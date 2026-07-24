@@ -50,7 +50,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e "blink_clip_downloader[test]"
-          pip install pyright yamllint ruff
+          pip install pyright yamllint ruff "bandit[toml]"
 
       - name: Run Home Assistant add-on linter
         uses: frenck/action-addon-linter@v2
@@ -69,6 +69,12 @@ jobs:
 
       - name: Run Pyright
         run: pyright --project pyrightconfig.json
+
+      # Bandit's findings don't vary by Python version, so scan once on the
+      # 3.12 leg (same pattern as the frontend checks below).
+      - name: Run Bandit security scan
+        if: matrix.python-version == '3.12'
+        run: bandit -c blink_clip_downloader/pyproject.toml -r blink_clip_downloader
 
       # Frontend checks don't depend on the Python matrix leg, so they only
       # need to run once — pinned to the 3.12 leg to avoid running twice.
