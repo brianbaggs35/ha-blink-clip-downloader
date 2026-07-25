@@ -151,13 +151,20 @@ removed in 5.0.0.
   children). Static/reference-only tabs (`ModelsPage.vue`,
   `AutomationsPage.vue`'s doc content) don't fetch anything and are simpler,
   but aren't the pattern to copy for a data-driven tab.
-- **Nav wiring**: adding/removing a tab touches three places —
+- **Nav wiring**: adding/removing a tab touches four places —
   `components/layout/AppSidebar.vue`'s `TabName` type + `TABS` array,
-  `App.vue`'s imports + `<div id="page-X">` blocks, and
+  `App.vue`'s imports + `<div id="page-X">` blocks,
   `components/icons/paths.ts`'s `ICONS` map (add a `tab-X` entry; icons are
-  plain path/rect/circle data, not separate `.vue` files — see `AppIcon.vue`).
-  Current nav order: Library, Automations, Status, AI, AI Usage, Models,
-  Vehicles, Biometrics, Storage.
+  plain path/rect/circle data, not separate `.vue` files — see `AppIcon.vue`),
+  and an `#page-X { overflow-y: auto; }` override in `assets/styles/base.css`
+  (grouped with `#page-vehicles`/`#page-biometrics`/`#page-storage`) unless
+  the page's content is certain to always fit within the viewport — `.page`
+  defaults to `overflow: hidden` (the fixed-height sidebar/content shell),
+  so a page that doesn't opt in just clips its content with no scrollbar.
+  The Storage tab shipped without this once; it only surfaced via live
+  browser testing under a real Home Assistant OS install, not any automated
+  test. Current nav order: Library, Automations, Status, AI, AI Usage,
+  Models, Vehicles, Biometrics, Storage.
 - **API client**: every backend call goes through `api/<area>.ts` modules
   built on `api/client.ts`'s `apiGet`/`apiPost`/`apiPut`/`apiPatch`/`apiDelete`
   helpers (thin `fetch` wrappers, ingress-path-aware via `env.ts`). Add new
