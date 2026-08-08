@@ -611,6 +611,20 @@ async def test_shutdown_stops_gdrive_queue_and_closes_client(app):
     app._gdrive_client.close.assert_awaited_once()
 
 
+async def test_shutdown_stops_live_view_and_closes_session(app):
+    """LiveViewManager is constructed unconditionally (no config-level
+    enable flag — see app.py), like GDriveClient/GDriveUploadQueue, so it
+    must always be stopped/closed, not just "when present"."""
+    app._tracker.save = MagicMock()
+    app._live_view.stop = MagicMock()
+    app._live_view.close = AsyncMock()
+
+    await app._shutdown()
+
+    app._live_view.stop.assert_called_once()
+    app._live_view.close.assert_awaited_once()
+
+
 async def test_shutdown_isolates_step_failures(app):
     """A failing cleanup step must not skip the remaining ones (esp. db.close/tracker.save)."""
     app._media_server.stop = AsyncMock(side_effect=RuntimeError("boom"))
@@ -1498,6 +1512,39 @@ async def test_run_starts_gdrive_queue_task_when_library_db_enabled(app, tmp_pat
 
     app._gdrive_queue.start.assert_awaited_once()
     assert any(t.get_name() == "gdrive_queue" for t in app._bg_tasks)
+
+
+async def test_run_starts_live_view_sweep_task_when_media_server_enabled(app):
+    """Live View is only reachable through the media server's HTTP routes,
+    so its idle/hard-cap sweep loop is started in the same
+    enable_media_server-gated block as the media_server task itself."""
+    import dataclasses
+
+    app._config = dataclasses.replace(app._config, enable_media_server=True)
+    app._media_server.start = AsyncMock()
+    app._live_view.start = AsyncMock()
+
+    async def _fake_poll():
+        await asyncio.sleep(0)
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    app._live_view.start.assert_awaited_once()
+    assert any(t.get_name() == "live_view_sweep" for t in app._bg_tasks)
+
+
+def test_live_view_wired_to_downloader_camera_accessors(app):
+    from requests.structures import CaseInsensitiveDict
+
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": MagicMock()})
+    app._downloader._blink = fake_blink
+
+    assert app._live_view.list_cameras() == ["Front Door"]
 
 
 async def test_run_skips_import_when_library_db_disabled(app, tmp_path):

@@ -16,6 +16,15 @@ export const ICONS = {
   'tab-library': {
     paths: ['M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z'],
   },
+  'tab-liveview': {
+    // Video-camera body + lens flap (same shape family as the `no-thumb`
+    // placeholder icon below), plus a small dot standing in for a live/rec
+    // indicator light — kept as an outline, matching the icon set's
+    // majority style rather than switching to `filled`.
+    paths: ['M17 10l5-3v10l-5-3z'],
+    rects: [{ x: 2, y: 5, width: 15, height: 14, rx: 2 }],
+    circles: [{ cx: 6.2, cy: 9.2, r: 1.5 }],
+  },
   'tab-status': { paths: ['M3 12h4l2 7 4-14 2 7h6'] },
   'tab-usage': { paths: ['M5 20V11M12 20V4M19 20v-7'] },
   'tab-models': {

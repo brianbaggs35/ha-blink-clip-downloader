@@ -29,6 +29,7 @@ from .event_watcher import HAEventWatcher
 from .gdrive_client import GDriveClient
 from .gdrive_queue import GDriveUploadQueue
 from .library_scanner import import_existing_clips
+from .live_view import LiveViewManager
 from .manifest import ClipManifest
 from .media_server import MediaServer
 from .notification_channels import NotificationDispatcher
@@ -93,6 +94,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         )
         self._downloader = BlinkDownloader(
             config, self._storage, self._tracker, self._db
+        )
+        self._live_view = LiveViewManager(
+            get_camera=self._downloader.get_camera,
+            list_camera_names=self._downloader.list_camera_names,
         )
         self._digest = DailyDigest(
             notifier=self._notifier,
@@ -169,6 +174,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             gdrive_queue=self._gdrive_queue,
             moondream_api_key=config.moondream_api_key,
             prompt_debug_enabled=config.ai_prompt_debug_enabled,
+            live_view=self._live_view,
         )
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,
@@ -428,6 +434,12 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         if self._config.enable_media_server:
             self._bg_tasks.append(
                 asyncio.create_task(self._media_server.start(), name="media_server")
+            )
+            # Live View is only reachable through the media server's HTTP
+            # routes, so its idle/hard-cap sweep loop is gated the same way
+            # to avoid an idle background task when the whole web UI is off.
+            self._bg_tasks.append(
+                asyncio.create_task(self._live_view.start(), name="live_view_sweep")
             )
             # Yield once so the server task begins binding before we continue.
             await asyncio.sleep(0)
@@ -1040,6 +1052,12 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         await self._shutdown_step("gdrive_client.close", self._gdrive_client.close())
         if self._analysis_queue:
             self._analysis_queue.stop()
+        # Must run before downloader.disconnect() below: a session's
+        # teardown makes one more API call (blinkpy's BlinkLiveStream.poll()
+        # finally block) over the *shared* aiohttp session that disconnect()
+        # closes — closing live_view first means that call still succeeds.
+        self._live_view.stop()
+        await self._shutdown_step("live_view.close", self._live_view.close())
         if self._analyzer:
             await self._shutdown_step("analyzer.close", self._analyzer.close())
             if self._analyzer.escalation_analyzer is not None:

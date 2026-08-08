@@ -22,6 +22,7 @@ from blinkpy.auth import (
     UnauthorizedError,
 )
 from blinkpy.blinkpy import Blink
+from blinkpy.camera import BlinkCamera
 
 from .config import AppConfig
 from .database import ClipDatabase
@@ -289,6 +290,41 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
     def account_id(self) -> str | None:
         """Return the currently authenticated Blink account ID, if any."""
         return getattr(self._blink, "account_id", None)
+
+    # ------------------------------------------------------------------
+    # Public: Live View camera access
+    # ------------------------------------------------------------------
+
+    def get_camera(self, name: str) -> BlinkCamera | None:
+        """Return the live blinkpy BlinkCamera object for *name*, or None.
+
+        Reads self._blink fresh on every call (never cached) so callers
+        always see the current Blink instance even across a reconnect that
+        swaps self._blink out for a new one (see connect()). Returns None
+        both when nothing has connected yet (self._blink is None) and when
+        *name* doesn't match any camera on the account — callers that need
+        to tell those two cases apart should cross-check list_camera_names()
+        first. Lookup is case-insensitive (self._blink.cameras is a
+        CaseInsensitiveDict).
+        """
+        if self._blink is None:
+            return None
+        return self._blink.cameras.get(name)
+
+    def list_camera_names(self) -> list[str]:
+        """Return every camera name on the currently authenticated account.
+
+        Unlike media_server.py's /api/cameras (sourced from
+        ClipDatabase.get_camera_stats(), which only lists cameras that have
+        produced at least one downloaded clip), this reflects every camera
+        Blink currently reports, including one that has never been
+        triggered — needed so the Live View camera picker can select a
+        brand-new camera immediately. Returns [] before the first
+        successful connect().
+        """
+        if self._blink is None:
+            return []
+        return list(self._blink.cameras.keys())
 
     # ------------------------------------------------------------------
     # Downloading

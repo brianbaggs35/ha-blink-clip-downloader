@@ -14,12 +14,15 @@ import sys
 import time
 import zipfile
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
 from .database import SUSPICIOUS_PERIODS, ClipDatabase
+from .downloader import AUTH_FATAL_EXCEPTIONS
+from .live_view import CameraNotFoundError, LiveViewError
 from .vision import FaceEmbedder, is_face_recognition_available, torch_cpu_compatible
 
 if TYPE_CHECKING:
@@ -27,11 +30,19 @@ if TYPE_CHECKING:
     from .analyzer import BaseAnalyzer, MoondreamFineTuneManager
     from .gdrive_client import GDriveClient
     from .gdrive_queue import GDriveUploadQueue
+    from .live_view import LiveViewManager
     from .notification_channels import NotificationDispatcher
 
 _LOGGER = logging.getLogger(__name__)
 
 _CLIP_NOT_FOUND = "Clip not found"
+
+# Strict allowlist for the Live View HLS file-serving route — the real
+# defense against path traversal: this structurally rejects anything with a
+# "/", "..", or an unexpected extension before the filesystem is ever
+# touched (see _handle_liveview_hls_file). Must match live_view.py's own
+# _HLS_PLAYLIST_NAME/_HLS_SEGMENT_PATTERN naming.
+_LIVEVIEW_FILENAME_RE = re.compile(r"^(stream\.m3u8|seg_\d{5}\.ts)$")
 
 # Upper bound on how many frames _handle_clip_frames will ever extract from
 # one clip, whether derived from duration (the ~1fps default) or requested
@@ -162,6 +173,7 @@ class MediaServer:
         gdrive_queue: GDriveUploadQueue | None = None,
         moondream_api_key: str = "",
         prompt_debug_enabled: bool = False,
+        live_view: LiveViewManager | None = None,
     ) -> None:
         self._db = db
         self._port = port
@@ -173,6 +185,7 @@ class MediaServer:
         self._notification_dispatcher = notification_dispatcher
         self._gdrive_client = gdrive_client
         self._gdrive_queue = gdrive_queue
+        self._live_view = live_view
         # Used only to stand up a MoondreamFineTuneManager for the Fine-Tuning
         # API/panel when provider == "moondream_cloud" — see _handle_finetune_*.
         self._moondream_api_key = moondream_api_key
@@ -252,6 +265,16 @@ class MediaServer:
         app.router.add_post("/api/download-now", self._handle_download_now)
         app.router.add_get("/api/auth/status", self._handle_auth_status)
         app.router.add_post("/api/auth/2fa", self._handle_two_fa)
+        # Live View endpoints
+        app.router.add_get("/api/liveview/cameras", self._handle_liveview_cameras)
+        app.router.add_get("/api/liveview/status", self._handle_liveview_status)
+        app.router.add_post("/api/liveview/start", self._handle_liveview_start)
+        app.router.add_post("/api/liveview/stop", self._handle_liveview_stop)
+        app.router.add_post("/api/liveview/heartbeat", self._handle_liveview_heartbeat)
+        app.router.add_get(
+            "/api/liveview/hls/{session_id}/{filename}",
+            self._handle_liveview_hls_file,
+        )
         # AI Analysis endpoints
         app.router.add_get("/api/ai/status", self._handle_ai_status)
         app.router.add_get("/api/ai/usage", self._handle_ai_usage)
@@ -784,6 +807,106 @@ class MediaServer:
         except OSError:
             pass
         return web.json_response({"triggered": True})
+
+    # ------------------------------------------------------------------
+    # Live View handlers
+    # ------------------------------------------------------------------
+
+    async def _handle_liveview_cameras(self, _request: web.Request) -> web.Response:
+        if self._live_view is None:
+            raise web.HTTPServiceUnavailable(text="Live View is not available")
+        return web.json_response({"cameras": self._live_view.list_cameras()})
+
+    async def _handle_liveview_status(self, _request: web.Request) -> web.Response:
+        if self._live_view is None:
+            raise web.HTTPServiceUnavailable(text="Live View is not available")
+        return web.json_response(asdict(self._live_view.get_status()))
+
+    async def _handle_liveview_start(self, request: web.Request) -> web.Response:
+        if self._live_view is None:
+            raise web.HTTPServiceUnavailable(text="Live View is not available")
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid request body")
+        camera = str(body.get("camera", "")).strip()
+        if not camera:
+            raise web.HTTPBadRequest(text="Missing camera")
+        try:
+            status = await self._live_view.start_session(camera)
+        except AUTH_FATAL_EXCEPTIONS:
+            raise web.HTTPServiceUnavailable(
+                text="Blink session is reconnecting — try again shortly"
+            )
+        except CameraNotFoundError:
+            raise web.HTTPNotFound(text="Camera not found")
+        except LiveViewError as exc:
+            raise web.HTTPBadGateway(text=str(exc))
+        return web.json_response(asdict(status))
+
+    async def _handle_liveview_stop(self, request: web.Request) -> web.Response:
+        # Lenient body parsing, unlike /start above: a missing/garbage body
+        # just means "stop whatever's active" (session_id=None), since stop
+        # is meant to be safe to call defensively (e.g. on tab unload).
+        if self._live_view is None:
+            raise web.HTTPServiceUnavailable(text="Live View is not available")
+        session_id = None
+        try:
+            body = await request.json()
+            session_id = body.get("session_id") or None
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Live view stop: no/invalid request body: %s", exc)
+        stopped = await self._live_view.stop_session(session_id)
+        return web.json_response({"stopped": stopped})
+
+    async def _handle_liveview_heartbeat(self, request: web.Request) -> web.Response:
+        if self._live_view is None:
+            raise web.HTTPServiceUnavailable(text="Live View is not available")
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid request body")
+        session_id = str(body.get("session_id", "")).strip()
+        if not session_id:
+            raise web.HTTPBadRequest(text="Missing session_id")
+        # A stale/unknown session_id is a routine race (the session may have
+        # just ended via idle timeout) — reflected in "ok", not an error.
+        return web.json_response({"ok": self._live_view.heartbeat(session_id)})
+
+    async def _handle_liveview_hls_file(
+        self, request: web.Request
+    ) -> web.StreamResponse:
+        if self._live_view is None:
+            raise web.HTTPServiceUnavailable(text="Live View is not available")
+        filename = request.match_info["filename"]
+        if not _LIVEVIEW_FILENAME_RE.fullmatch(filename):
+            raise web.HTTPNotFound()
+        hls_dir = self._live_view.get_hls_dir(request.match_info["session_id"])
+        if hls_dir is None:
+            raise web.HTTPNotFound()
+        file_path = hls_dir / filename
+        try:
+            file_path.resolve().relative_to(hls_dir.resolve())
+        except ValueError:
+            # Belt-and-suspenders on top of the filename allowlist above.
+            raise web.HTTPNotFound()
+        if not file_path.is_file():
+            raise web.HTTPNotFound()
+        content_type = (
+            "application/vnd.apple.mpegurl"
+            if filename.endswith(".m3u8")
+            else "video/mp2t"
+        )
+        # Explicit Content-Type is required, not optional: Python's
+        # mimetypes (aiohttp FileResponse's fallback) has no mapping for
+        # .m3u8 and is ambiguous for .ts — without this override the file
+        # would likely serve as application/octet-stream and risk breaking
+        # Safari's native HLS handling. no-store: this is live content, must
+        # never be cached.
+        return web.FileResponse(
+            file_path,
+            headers={"Cache-Control": "no-store", "Content-Type": content_type},
+        )
 
     # ------------------------------------------------------------------
     # AI Analysis handlers

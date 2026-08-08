@@ -476,3 +476,21 @@ export interface GDriveFolder {
 export interface GDriveFoldersResponse {
   folders: GDriveFolder[]
 }
+
+// ---------------------------------------------------------------------------
+// Live View
+// ---------------------------------------------------------------------------
+
+export type LiveViewState = 'starting' | 'live' | 'error'
+
+export interface LiveViewStatus {
+  active: boolean
+  session_id?: string | null
+  camera?: string | null
+  state?: LiveViewState | null
+  error?: string | null
+}
+
+export interface LiveViewCamerasResponse {
+  cameras: string[]
+}
