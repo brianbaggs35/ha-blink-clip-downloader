@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from blinkpy.auth import TokenRefreshFailed
+
 from blink_downloader import media_server
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.database import ClipDatabase
@@ -23,6 +25,11 @@ from blink_downloader.gdrive_client import (
     TokenPollResult,
 )
 from blink_downloader.gdrive_queue import GDriveUploadQueue
+from blink_downloader.live_view import (
+    CameraNotFoundError,
+    LiveViewError,
+    LiveViewStatus,
+)
 from blink_downloader.media_server import MediaServer
 
 # ---------------------------------------------------------------------------
@@ -6341,5 +6348,379 @@ async def test_gdrive_upload_enqueues_existing_clips_with_folder(
         assert gdrive_queue.enqueue.await_count == 2
         for call in gdrive_queue.enqueue.call_args_list:
             assert call.kwargs["folder_id"] == "f1"
+    finally:
+        await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# Live View — /api/liveview/*
+# ---------------------------------------------------------------------------
+
+
+def _make_live_view(**kwargs) -> MagicMock:
+    """A MagicMock standing in for a LiveViewManager instance.
+
+    live_view.py's own internals are already covered end-to-end by
+    tests/test_live_view.py — these tests only exercise the HTTP layer
+    (routing, status codes, request/response shapes), matching how
+    analyzer/gdrive_client are already mocked rather than real elsewhere in
+    this file.
+    """
+    lv = MagicMock()
+    lv.list_cameras.return_value = kwargs.get("cameras", [])
+    lv.get_status.return_value = kwargs.get("status", LiveViewStatus(active=False))
+    lv.start_session = AsyncMock(
+        return_value=kwargs.get("start_result", LiveViewStatus(active=False)),
+        side_effect=kwargs.get("start_side_effect"),
+    )
+    lv.stop_session = AsyncMock(return_value=kwargs.get("stopped", True))
+    lv.heartbeat.return_value = kwargs.get("heartbeat_ok", True)
+    lv.get_hls_dir.return_value = kwargs.get("hls_dir")
+    return lv
+
+
+async def test_liveview_cameras_unavailable_without_manager(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/api/liveview/cameras")
+    assert resp.status == 503
+
+
+async def test_liveview_status_unavailable_without_manager(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/api/liveview/status")
+    assert resp.status == 503
+
+
+async def test_liveview_start_unavailable_without_manager(
+    client: TestClient,
+) -> None:
+    resp = await client.post("/api/liveview/start", json={"camera": "Front Door"})
+    assert resp.status == 503
+
+
+async def test_liveview_stop_unavailable_without_manager(client: TestClient) -> None:
+    resp = await client.post("/api/liveview/stop", json={})
+    assert resp.status == 503
+
+
+async def test_liveview_heartbeat_unavailable_without_manager(
+    client: TestClient,
+) -> None:
+    resp = await client.post("/api/liveview/heartbeat", json={"session_id": "abc"})
+    assert resp.status == 503
+
+
+async def test_liveview_hls_file_unavailable_without_manager(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/api/liveview/hls/abc/stream.m3u8")
+    assert resp.status == 503
+
+
+async def test_liveview_cameras_returns_list(db: ClipDatabase) -> None:
+    live_view = _make_live_view(cameras=["Front Door", "Backyard"])
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/liveview/cameras")
+        assert resp.status == 200
+        assert (await resp.json())["cameras"] == ["Front Door", "Backyard"]
+    finally:
+        await tc.close()
+
+
+async def test_liveview_status_returns_snapshot(db: ClipDatabase) -> None:
+    status = LiveViewStatus(
+        active=True, session_id="s1", camera="Front Door", state="live"
+    )
+    live_view = _make_live_view(status=status)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/liveview/status")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["active"] is True
+        assert data["session_id"] == "s1"
+        assert data["camera"] == "Front Door"
+        assert data["state"] == "live"
+    finally:
+        await tc.close()
+
+
+async def test_liveview_start_missing_camera_field(db: ClipDatabase) -> None:
+    live_view = _make_live_view()
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/start", json={"camera": ""})
+        assert resp.status == 400
+        resp2 = await tc.post("/api/liveview/start", json={})
+        assert resp2.status == 400
+        live_view.start_session.assert_not_awaited()
+    finally:
+        await tc.close()
+
+
+async def test_liveview_start_invalid_json(db: ClipDatabase) -> None:
+    live_view = _make_live_view()
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/liveview/start",
+            data="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_liveview_start_happy_path(db: ClipDatabase) -> None:
+    result = LiveViewStatus(
+        active=True, session_id="s1", camera="Front Door", state="starting"
+    )
+    live_view = _make_live_view(start_result=result)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/start", json={"camera": "Front Door"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["session_id"] == "s1"
+        assert data["state"] == "starting"
+        live_view.start_session.assert_awaited_once_with("Front Door")
+    finally:
+        await tc.close()
+
+
+async def test_liveview_start_camera_not_found(db: ClipDatabase) -> None:
+    live_view = _make_live_view(start_side_effect=CameraNotFoundError("Nonexistent"))
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/start", json={"camera": "Nonexistent"})
+        assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+async def test_liveview_start_blink_reconnecting(db: ClipDatabase) -> None:
+    live_view = _make_live_view(start_side_effect=TokenRefreshFailed("expired"))
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/start", json={"camera": "Front Door"})
+        assert resp.status == 503
+        assert "reconnecting" in (await resp.text()).lower()
+    finally:
+        await tc.close()
+
+
+async def test_liveview_start_generic_live_view_error(db: ClipDatabase) -> None:
+    live_view = _make_live_view(
+        start_side_effect=LiveViewError("ffmpeg is not available on this system.")
+    )
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/start", json={"camera": "Front Door"})
+        assert resp.status == 502
+        assert "ffmpeg" in (await resp.text()).lower()
+    finally:
+        await tc.close()
+
+
+async def test_liveview_stop_returns_stopped_true(db: ClipDatabase) -> None:
+    live_view = _make_live_view(stopped=True)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/stop", json={"session_id": "s1"})
+        assert resp.status == 200
+        assert (await resp.json())["stopped"] is True
+        live_view.stop_session.assert_awaited_once_with("s1")
+    finally:
+        await tc.close()
+
+
+async def test_liveview_stop_returns_stopped_false(db: ClipDatabase) -> None:
+    live_view = _make_live_view(stopped=False)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/stop", json={})
+        assert resp.status == 200
+        assert (await resp.json())["stopped"] is False
+        live_view.stop_session.assert_awaited_once_with(None)
+    finally:
+        await tc.close()
+
+
+async def test_liveview_stop_lenient_on_missing_body(db: ClipDatabase) -> None:
+    live_view = _make_live_view(stopped=True)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/stop")
+        assert resp.status == 200
+        assert (await resp.json())["stopped"] is True
+        live_view.stop_session.assert_awaited_once_with(None)
+    finally:
+        await tc.close()
+
+
+async def test_liveview_heartbeat_missing_session_id(db: ClipDatabase) -> None:
+    live_view = _make_live_view()
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/heartbeat", json={})
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_liveview_heartbeat_invalid_json_body(db: ClipDatabase) -> None:
+    live_view = _make_live_view()
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/liveview/heartbeat",
+            data="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_liveview_heartbeat_ok_true(db: ClipDatabase) -> None:
+    live_view = _make_live_view(heartbeat_ok=True)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/heartbeat", json={"session_id": "s1"})
+        assert resp.status == 200
+        assert (await resp.json())["ok"] is True
+        live_view.heartbeat.assert_called_once_with("s1")
+    finally:
+        await tc.close()
+
+
+async def test_liveview_heartbeat_ok_false_for_stale(db: ClipDatabase) -> None:
+    live_view = _make_live_view(heartbeat_ok=False)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/liveview/heartbeat", json={"session_id": "stale"})
+        assert resp.status == 200
+        assert (await resp.json())["ok"] is False
+    finally:
+        await tc.close()
+
+
+async def test_liveview_hls_serves_playlist_with_correct_headers(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    (tmp_path / "stream.m3u8").write_text("#EXTM3U\n")
+    live_view = _make_live_view(hls_dir=tmp_path)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/liveview/hls/s1/stream.m3u8")
+        assert resp.status == 200
+        assert resp.headers["Content-Type"] == "application/vnd.apple.mpegurl"
+        assert resp.headers["Cache-Control"] == "no-store"
+        assert await resp.text() == "#EXTM3U\n"
+    finally:
+        await tc.close()
+
+
+async def test_liveview_hls_serves_segment_with_correct_content_type(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    (tmp_path / "seg_00001.ts").write_bytes(b"\x47fake-ts-data")
+    live_view = _make_live_view(hls_dir=tmp_path)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/liveview/hls/s1/seg_00001.ts")
+        assert resp.status == 200
+        assert resp.headers["Content-Type"] == "video/mp2t"
+        assert resp.headers["Cache-Control"] == "no-store"
+    finally:
+        await tc.close()
+
+
+async def test_liveview_hls_unknown_session_returns_404(db: ClipDatabase) -> None:
+    live_view = _make_live_view(hls_dir=None)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/liveview/hls/unknown/stream.m3u8")
+        assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "..%2Fsecret.txt",
+        "seg_1.ts",  # wrong digit count
+        "stream.m3u9",  # wrong extension
+        "stream.m3u8.bak",
+        "seg_00001.ts.bak",
+    ],
+)
+async def test_liveview_hls_rejects_non_allowlisted_filenames(
+    db: ClipDatabase, tmp_path: Path, filename: str
+) -> None:
+    (tmp_path / "stream.m3u8").write_text("#EXTM3U\n")
+    live_view = _make_live_view(hls_dir=tmp_path)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get(f"/api/liveview/hls/s1/{filename}")
+        assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+async def test_liveview_hls_file_missing_on_disk_returns_404(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    # hls_dir exists but stream.m3u8 hasn't been written yet (still "starting").
+    live_view = _make_live_view(hls_dir=tmp_path)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/liveview/hls/s1/stream.m3u8")
+        assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+async def test_liveview_hls_resolve_outside_hls_dir_returns_404(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Covers the resolve()/relative_to() belt-and-suspenders check
+    (_handle_liveview_hls_file) directly. It's structurally unreachable via
+    a real request — the filename allowlist regex already rejects any '/'
+    or '..' before this runs — so this forces the ValueError path to
+    confirm the fallback still 404s rather than assuming it does."""
+    (tmp_path / "stream.m3u8").write_text("#EXTM3U\n")
+    live_view = _make_live_view(hls_dir=tmp_path)
+    server = MediaServer(db=db, port=0, live_view=live_view)
+    tc = await _start_server(server)
+    try:
+        with patch.object(Path, "relative_to", side_effect=ValueError("boom")):
+            resp = await tc.get("/api/liveview/hls/s1/stream.m3u8")
+        assert resp.status == 404
     finally:
         await tc.close()

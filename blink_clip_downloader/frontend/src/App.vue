@@ -9,6 +9,7 @@ import AuthErrorBanner from './components/layout/AuthErrorBanner.vue'
 import AutomationsPage from './components/automations/AutomationsPage.vue'
 import StatusPage from './components/status/StatusPage.vue'
 import LibraryPage from './components/library/LibraryPage.vue'
+import LiveViewPage from './components/liveview/LiveViewPage.vue'
 import AiPage from './components/ai/AiPage.vue'
 import UsagePage from './components/usage/UsagePage.vue'
 import ModelsPage from './components/models/ModelsPage.vue'
@@ -56,6 +57,9 @@ onUnmounted(() => auth.stopPolling())
 
   <div id="page-library" class="page" :class="{ active: activeTab === 'library' }">
     <LibraryPage />
+  </div>
+  <div id="page-liveview" class="page" :class="{ active: activeTab === 'liveview' }">
+    <LiveViewPage v-if="activeTab === 'liveview'" />
   </div>
   <div id="page-automations" class="page" :class="{ active: activeTab === 'automations' }">
     <AutomationsPage />

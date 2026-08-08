@@ -11,6 +11,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from blinkpy.auth import (
+    BlinkTwoFARequiredError,
+    LoginError,
+    TokenRefreshFailed,
+    UnauthorizedError,
+)
+from requests.structures import CaseInsensitiveDict
+
 from blink_downloader.downloader import (
     AuthenticationError,
     BlinkDownloader,
@@ -19,12 +27,6 @@ from blink_downloader.downloader import (
 )
 from blink_downloader.storage import StorageManager
 from blink_downloader.tracker import ClipTracker
-from blinkpy.auth import (
-    BlinkTwoFARequiredError,
-    LoginError,
-    TokenRefreshFailed,
-    UnauthorizedError,
-)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -2612,3 +2614,53 @@ async def test_probe_clip_duration_parses_and_truncates(tmp_path: Path) -> None:
         AsyncMock(return_value=mock_proc),
     ):
         assert await probe_clip_duration(video) == 12
+
+
+# ---------------------------------------------------------------------------
+# get_camera / list_camera_names (Live View)
+# ---------------------------------------------------------------------------
+
+
+def test_get_camera_returns_none_before_connect(dl: BlinkDownloader) -> None:
+    assert dl.get_camera("Front Door") is None
+
+
+def test_list_camera_names_empty_before_connect(dl: BlinkDownloader) -> None:
+    assert dl.list_camera_names() == []
+
+
+def test_get_camera_returns_matching_camera(dl: BlinkDownloader) -> None:
+    camera = MagicMock()
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    assert dl.get_camera("Front Door") is camera
+
+
+def test_get_camera_is_case_insensitive(dl: BlinkDownloader) -> None:
+    camera = MagicMock()
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    assert dl.get_camera("front door") is camera
+    assert dl.get_camera("FRONT DOOR") is camera
+
+
+def test_get_camera_returns_none_for_unknown_name(dl: BlinkDownloader) -> None:
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": MagicMock()})
+    dl._blink = fake_blink
+
+    assert dl.get_camera("Backyard") is None
+
+
+def test_list_camera_names_returns_all_connected_cameras(dl: BlinkDownloader) -> None:
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict(
+        {"Front Door": MagicMock(), "Backyard": MagicMock()}
+    )
+    dl._blink = fake_blink
+
+    assert set(dl.list_camera_names()) == {"Front Door", "Backyard"}
