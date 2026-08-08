@@ -13,7 +13,7 @@ analysis engine that automatically flags suspicious activity.
 ## Installation
 
 1. In Home Assistant go to **Settings → Add-ons → Add-on Store**.
-2. Click **⋮** (top-right) → **Repositories** → add  
+2. Click **⋮** (top-right) → **Repositories** → add
    `https://github.com/brianbaggs35/ha-blink-clip-downloader`
 3. Refresh the page; find **Blink Clip Downloader** and click **Install**.
 4. Open the **Configuration** tab, fill in your Blink credentials, and save.
@@ -866,7 +866,7 @@ needed once.
    "Testing" to "In production" once you've confirmed it works. Google
    commonly expires refresh tokens after about a week for apps left in
    Testing status, which would otherwise force you to reconnect weekly. For
-   the narrow `drive.file`/`drive.readonly` scopes this add-on requests,
+   the narrow `drive.file` scope this add-on requests,
    moving to production doesn't require Google's full verification review.
 
 ### Connecting from the Storage tab

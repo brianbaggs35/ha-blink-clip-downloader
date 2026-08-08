@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.1.1
+
+- **Fixed scopes for Google Drive** - Google Drive was using a scope that was
+  not applicable for TVs and Limited Devices (`drive.readonly`) so it was
+  removed and the one remaining is applicable (`drive.file`)
+
 ## 5.1.0
 
 ### Added
@@ -4963,7 +4969,7 @@ to roll back to the prior dependency floors.
   produced log lines with nothing after the colon, e.g.:
 
   ```
-  ERROR  blink_downloader.downloader: Authentication failed with provided credentials: 
+  ERROR  blink_downloader.downloader: Authentication failed with provided credentials:
   ERROR  blink_downloader.app: Failed to connect to Blink (attempt 1):  — retrying in 60 s
   ```
 
