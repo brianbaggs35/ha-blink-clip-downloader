@@ -42,7 +42,7 @@ FROM ghcr.io/home-assistant/base-debian:trixie
 # isn't load-bearing, just avoids a wildly stale value in that image's
 # OCI labels.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=5.0.0
+ARG BUILD_VERSION=5.1.1
 
 # Base image switched from Alpine to Debian (trixie, glibc) in 4.1.0 — the
 # optional computer-vision pipeline (ai_object_detection_enabled and friends,
