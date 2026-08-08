@@ -44,10 +44,7 @@ _DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files"
 # folders too — drive.file alone can't see anything the app didn't create.
 # Space-separated per OAuth2's standard multi-scope syntax; both are still
 # requested in a single device-flow token.
-_SCOPE = (
-    "https://www.googleapis.com/auth/drive.file "
-    "https://www.googleapis.com/auth/drive.readonly"
-)
+_SCOPE = "https://www.googleapis.com/auth/drive.file"
 
 _FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
