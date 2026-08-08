@@ -21,6 +21,7 @@
 - **Updated backend dependencies** - Updated the following backend
   dependencies:
   Update aiohttp to 3.14.3
+  Update anthropic to 0.121.0
 
 ## 5.1.0
 
