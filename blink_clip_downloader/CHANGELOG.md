@@ -5,6 +5,22 @@
 - **Fixed scopes for Google Drive** - Google Drive was using a scope that was
   not applicable for TVs and Limited Devices (`drive.readonly`) so it was
   removed and the one remaining is applicable (`drive.file`)
+- **Updated frontend dependencies** - Updated the following frontend
+  dependencies:
+  Update brace-expansion and nanoid to fix vulnerabilities
+  Update vue-tsc to 3.3.9
+  Update vite to 8.2.1
+  Update typescript-eslint to 8.66.0
+  Update jsdom to 30.0.1
+  Update globals to 17.9.0
+  Update eslint to 10.8.1
+  Update @types/node to 26.2.0
+  Update vue to 3.5.41
+- **Fixed vitest.config.ts issue** - Fixed an issue with future config
+  changes to vitest to remain future-proof.
+- **Updated backend dependencies** - Updated the following backend
+  dependencies:
+  Update aiohttp to 3.14.3
 
 ## 5.1.0
 
