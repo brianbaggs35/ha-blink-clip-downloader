@@ -28,8 +28,8 @@ blink_downloader.egg-info/requires.txt
 blink_downloader.egg-info/top_level.txt
 blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
-blink_downloader/static/assets/index-BwhOfqiB.js
-blink_downloader/static/assets/index-JKcOciyd.css
+blink_downloader/static/assets/index-BK04xcjp.css
+blink_downloader/static/assets/index-EkMK7dsn.js
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2
@@ -100,11 +100,11 @@ blink_downloader/static/assets/inter-vietnamese-700-normal-BZaoP0fm.woff
 blink_downloader/static/assets/inter-vietnamese-700-normal-DlLaEgI2.woff2
 blink_downloader/static/assets/inter-vietnamese-800-normal-Cm7tD1pz.woff2
 blink_downloader/static/assets/inter-vietnamese-800-normal-DDlpr_Ee.woff
-blink_downloader/static/assets/primeicons-C6QP2o4f.woff2
-blink_downloader/static/assets/primeicons-DMOk5skT.eot
-blink_downloader/static/assets/primeicons-Dr5RGzOO.svg
-blink_downloader/static/assets/primeicons-MpK4pl85.ttf
-blink_downloader/static/assets/primeicons-WjwUDZjB.woff
+blink_downloader/static/assets/primeicons-C1oiW3xv.eot
+blink_downloader/static/assets/primeicons-Cw7jw2u3.woff2
+blink_downloader/static/assets/primeicons-DFbS0HxT.woff
+blink_downloader/static/assets/primeicons-DI7WxhAS.svg
+blink_downloader/static/assets/primeicons-MNyB0pWW.ttf
 tests/test_analysis_queue.py
 tests/test_analyzer.py
 tests/test_app.py
