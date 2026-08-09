@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import asyncpg
@@ -332,15 +332,13 @@ def _local_day_bounds(days_ago: int = 0) -> tuple[str, str]:
     timezone behind UTC roll over into "tomorrow" hours early.
     """
     local_midnight = (
-        datetime.now(timezone.utc)
+        datetime.now(UTC)
         .astimezone()
         .replace(hour=0, minute=0, second=0, microsecond=0)
     )
     start = local_midnight - timedelta(days=days_ago)
     end = start + timedelta(days=1)
-    return start.astimezone(timezone.utc).isoformat(), end.astimezone(
-        timezone.utc
-    ).isoformat()
+    return start.astimezone(UTC).isoformat(), end.astimezone(UTC).isoformat()
 
 
 # Suspicious-feed period filter keywords accepted by get_suspicious_clips()/
@@ -502,7 +500,7 @@ class ClipDatabase:
             int(clip.get("duration") or 0),
             str(clip.get("source") or ""),
             int(clip.get("network_id") or 0),
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
         )
 
     async def import_legacy_sqlite_data(
@@ -663,7 +661,7 @@ class ClipDatabase:
                 "gdrive_uploaded_at=? WHERE id=?"
             ),
             file_id,
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
             clip_id,
         )
 
@@ -726,6 +724,7 @@ class ClipDatabase:
         tag: str | None = None,
         search: str | None = None,
         archived: bool = False,
+        archive_path: str | None = None,
         sort: str = "newest",
         limit: int = 50,
         offset: int = 0,
@@ -796,6 +795,9 @@ class ClipDatabase:
         if camera and camera != "all":
             where.append("LOWER(camera) = LOWER(?)")
             params.append(camera)
+        if archive_path:
+            where.append("archive_path = ?")
+            params.append(archive_path)
         if since:
             where.append("timestamp >= ?")
             params.append(since)
@@ -839,6 +841,65 @@ class ClipDatabase:
         rows = await self._pool.fetch(_qm(sql), *params)
         return [_row_to_dict(r) for r in rows]
 
+    async def get_archive_groups(
+        self,
+        camera: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return one row per distinct ZIP archive: path, clip count, total
+        size, and the most recent clip timestamp in it (for sort order).
+
+        The Storage tab's Archived Clips list is grouped by archive rather
+        than shown as a flat per-clip list — a large library can have
+        thousands of archived clips but only a few dozen distinct monthly
+        ZIPs, so this is cheap to fetch in full (no pagination needed here;
+        the frontend paginates over this already-small result) and gives an
+        accurate page count, unlike paginating the flat clip list itself.
+        *since*/*until* filter by each archive's most recent clip
+        (``latest_timestamp``) — an archive with even one matching clip
+        would otherwise be hard to reason about with an exact-membership
+        filter, since a single ZIP can span clips from anywhere in that
+        calendar month.
+        """
+        if self._pool is None:
+            return []
+
+        where = ["archived = TRUE", "archive_path != ''"]
+        params: list[Any] = []
+        if camera and camera != "all":
+            where.append("LOWER(camera) = LOWER(?)")
+            params.append(camera)
+
+        having: list[str] = []
+        having_params: list[Any] = []
+        if since:
+            having.append("MAX(timestamp) >= ?")
+            having_params.append(since)
+        if until:
+            having.append("MAX(timestamp) <= ?")
+            having_params.append(until)
+        having_clause = f" HAVING {' AND '.join(having)}" if having else ""
+
+        rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT
+                    archive_path,
+                    COUNT(*) AS clip_count,
+                    COALESCE(SUM(size_bytes), 0) AS total_size,
+                    MAX(timestamp) AS latest_timestamp
+                FROM clips
+                WHERE {" AND ".join(where)}
+                GROUP BY archive_path{having_clause}
+                ORDER BY latest_timestamp DESC
+                """
+            ),
+            *params,
+            *having_params,
+        )
+        return [dict(r) for r in rows]
+
     async def get_all_file_paths(self) -> set[str]:
         """Return the set of all ``file_path`` values currently indexed."""
         if self._pool is None:
@@ -849,15 +910,29 @@ class ClipDatabase:
     async def get_clips_to_archive(self, older_than_days: int) -> list[dict[str, Any]]:
         if self._pool is None:
             return []
-        cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=older_than_days)
-        ).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
         rows = await self._pool.fetch(
             _qm(
                 "SELECT * FROM clips WHERE archived=FALSE AND timestamp < ? "
                 "ORDER BY timestamp"
             ),
             cutoff,
+        )
+        return [_row_to_dict(r) for r in rows]
+
+    async def get_archived_clip_records(self) -> list[dict[str, Any]]:
+        """Return ``{id, archive_path}`` for every clip marked archived.
+
+        Used by :meth:`ClipArchiver.prune_orphaned_archives` to find rows
+        whose ZIP no longer exists on disk (or, for clips archived before
+        that bug was fixed, never existed in the first place) — a lean
+        query since a large library can have thousands of archived clips
+        and the caller only needs these two columns to check each one.
+        """
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm("SELECT id, archive_path FROM clips WHERE archived=TRUE")
         )
         return [_row_to_dict(r) for r in rows]
 
@@ -992,7 +1067,7 @@ class ClipDatabase:
         """
         if self._pool is None:
             return []
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         tz = _local_utc_offset_sql()
         rows = await self._pool.fetch(
             _qm(
@@ -1232,7 +1307,7 @@ class ClipDatabase:
             report_type,
             note,
             person_name,
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
         )
 
     async def get_face_recognition_feedback(
@@ -1273,7 +1348,7 @@ class ClipDatabase:
         """
         if self._pool is None:
             return
-        reset_at = datetime.now(timezone.utc).isoformat()
+        reset_at = datetime.now(UTC).isoformat()
         await self._pool.execute(
             _qm(
                 "INSERT INTO ai_usage_reset (id, reset_at) VALUES (1, ?) "
@@ -1405,7 +1480,7 @@ class ClipDatabase:
         reset_at = await self._get_ai_usage_reset_at()
         tz = _local_utc_offset_sql()
         cutoff = (
-            (datetime.now(timezone.utc).astimezone() - timedelta(days=days - 1))
+            (datetime.now(UTC).astimezone() - timedelta(days=days - 1))
             .date()
             .isoformat()
         )
@@ -1514,7 +1589,7 @@ class ClipDatabase:
                 bool(correct),
                 correction_note or "",
                 None if corrected_suspicious is None else bool(corrected_suspicious),
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
             )
 
     async def delete_feedback(self, clip_id: str) -> bool:
@@ -1587,7 +1662,7 @@ class ClipDatabase:
             _qm(
                 f"UPDATE analysis_feedback SET trained_at=? WHERE id IN ({placeholders})"
             ),
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
             *feedback_ids,
         )
 
@@ -1887,7 +1962,7 @@ class ClipDatabase:
             camera,
         )
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         if row is None:
             await self._pool.execute(
                 _qm(
@@ -1970,7 +2045,7 @@ class ClipDatabase:
             clip_id,
             camera,
             clip_path,
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
         )
 
     async def get_pending_analysis(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -1991,9 +2066,7 @@ class ClipDatabase:
         if self._pool is None:
             return
         completed = (
-            datetime.now(timezone.utc).isoformat()
-            if status in ("completed", "failed")
-            else ""
+            datetime.now(UTC).isoformat() if status in ("completed", "failed") else ""
         )
         await self._pool.execute(
             _qm(
@@ -2041,7 +2114,7 @@ class ClipDatabase:
             clip_id,
             camera,
             clip_path,
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
             folder_id,
         )
 
@@ -2063,9 +2136,7 @@ class ClipDatabase:
         if self._pool is None:
             return
         completed = (
-            datetime.now(timezone.utc).isoformat()
-            if status in ("completed", "failed")
-            else ""
+            datetime.now(UTC).isoformat() if status in ("completed", "failed") else ""
         )
         await self._pool.execute(
             _qm(
@@ -2117,7 +2188,7 @@ class ClipDatabase:
             ),
             name,
             json.dumps(embedding),
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
             approved,
         )
         return new_id or 0

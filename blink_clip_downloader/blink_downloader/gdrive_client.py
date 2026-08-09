@@ -39,11 +39,19 @@ _REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 _DRIVE_API = "https://www.googleapis.com/drive/v3"
 _DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files"
 
-# drive.file: per-file access to files/folders this app itself creates.
-# drive.readonly: lets the folder picker list the user's *existing* Drive
-# folders too — drive.file alone can't see anything the app didn't create.
-# Space-separated per OAuth2's standard multi-scope syntax; both are still
-# requested in a single device-flow token.
+# drive.file only: per-file access to files/folders this app itself creates
+# or that the user opens through the app. A broader scope like
+# drive.readonly was tried once (to let the folder picker list *all* of the
+# user's existing Drive folders, not just ones the app created) and had to
+# be reverted — Google's device-flow/limited-input-device OAuth consent
+# screen (what this add-on uses, being a TV-like non-browser client) blocks
+# sensitive/restricted scopes such as drive.readonly outright, so it broke
+# the ability to connect at all. Do not add any scope back without
+# confirming it's allowed on that consent flow first, not just doable in a
+# browser-based OAuth flow. Everything in this module (browsing folders,
+# creating date/camera subfolders, uploads) works within drive.file alone
+# because it only ever touches folders the app itself created or that were
+# explicitly selected via this app's own folder browser.
 _SCOPE = "https://www.googleapis.com/auth/drive.file"
 
 _FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
@@ -141,6 +149,13 @@ class GDriveClient:
 
         self._quota_cache: DriveQuota | None = None
         self._quota_cached_at = 0.0
+
+        # get_or_create_folder_path()'s memo: "<parent_id>/<child name>" ->
+        # child folder id. Uploading many clips that share the same date/
+        # camera subfolder (the common case — a whole batch from one day)
+        # would otherwise re-list-or-create the same folders on every
+        # single upload; this makes every one after the first a cache hit.
+        self._subfolder_cache: dict[str, str] = {}
 
         self._load_settings()
         self._load_credentials()
@@ -550,6 +565,51 @@ class GDriveClient:
         self._folder_id = folder_id
         self._folder_name = folder_name
         self._persist_credentials()
+
+    async def get_or_create_folder_path(
+        self, path_parts: list[str], root_id: str | None = None
+    ) -> str | None:
+        """Resolve a nested folder path under *root_id*, creating any
+        folder along the way that doesn't already exist.
+
+        E.g. ``["2026-06-05", "Driveway"]`` under the connected backup
+        folder resolves to (creating first if needed)
+        ``<backup folder>/2026-06-05/Driveway``, returning that innermost
+        folder's id — this is what gives clip backups their
+        date-then-camera structure in Drive (see ``GDriveUploadQueue``)
+        instead of dumping everything flat into one folder. Generic over
+        *any* nested path, not clip-specific, so it's reusable for other
+        folder-organizing needs. Returns None (logged by the underlying
+        list/create calls) if no root is available or any step fails —
+        callers should treat that as "could not resolve, don't upload
+        into an unknown location" rather than falling back to the root.
+        """
+        parent = root_id or self._folder_id
+        if not parent:
+            return None
+        cache_prefix = parent
+        for part in path_parts:
+            cache_key = f"{cache_prefix}/{part}"
+            cached = self._subfolder_cache.get(cache_key)
+            if cached:
+                parent = cached
+                cache_prefix = cache_key
+                continue
+
+            existing = next(
+                (f for f in await self.list_folders(parent) if f.name == part), None
+            )
+            if existing is not None:
+                parent = existing.id
+            else:
+                created = await self.create_folder(part, parent_id=parent)
+                if created is None:
+                    return None
+                parent = created.id
+
+            self._subfolder_cache[cache_key] = parent
+            cache_prefix = cache_key
+        return parent
 
     # ------------------------------------------------------------------
     # Upload / delete / quota

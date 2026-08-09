@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 from blink_downloader.archiver import ClipArchiver
 
@@ -19,6 +19,8 @@ def _make_archiver(
     db = MagicMock()
     db.get_clips_to_archive = AsyncMock(return_value=clips)
     db.mark_archived = AsyncMock()
+    db.delete_clip = AsyncMock(return_value=True)
+    db.get_archived_clip_records = AsyncMock(return_value=[])
 
     archiver = ClipArchiver(
         db=db,
@@ -30,7 +32,7 @@ def _make_archiver(
 
 
 def _old_ts(days: int = 60) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
 
 # ------------------------------------------------------------------
@@ -128,7 +130,15 @@ async def test_run_archives_multiple_months(tmp_path: Path) -> None:
     assert (tmp_path / "archives" / "blink_archive_2024-06.zip").exists()
 
 
-async def test_run_missing_file_still_marks_archived(tmp_path: Path) -> None:
+async def test_run_missing_file_deletes_the_orphaned_row(tmp_path: Path) -> None:
+    """A clip whose source file is already gone before archiving has
+    nothing left to write into a ZIP — marking it archived anyway (the old
+    behavior) produced a row pointing at a ZIP that might never actually be
+    created, surfacing later as "Archive ... is missing" Google Drive
+    upload failures. The fix: remove the row instead, and never claim it
+    was archived (not included in run()'s returned list, so callers like
+    app.py's gdrive enqueue loop don't try to back up something just
+    deleted)."""
     clip = {
         "id": "c1",
         "camera": "Cam",
@@ -138,8 +148,11 @@ async def test_run_missing_file_still_marks_archived(tmp_path: Path) -> None:
     archiver, db = _make_archiver(tmp_path, clips=[clip])
     result = await archiver.run()
 
-    assert len(result) == 1
-    db.mark_archived.assert_awaited_once()
+    assert result == []
+    db.delete_clip.assert_awaited_once_with("c1")
+    db.mark_archived.assert_not_awaited()
+    # Nothing to write for a file that was never there -- no ZIP created.
+    assert not (tmp_path / "archives" / "blink_archive_2024-06.zip").exists()
 
 
 async def test_run_appends_to_existing_zip(tmp_path: Path) -> None:
@@ -299,11 +312,12 @@ async def test_archive_month_mark_archived_failure_does_not_abort_batch(
     assert any("clip2.mp4" in n for n in names)
 
 
-async def test_archive_month_missing_file_mark_archived_failure_is_logged(
+async def test_archive_month_missing_file_delete_failure_is_logged(
     tmp_path: Path,
 ) -> None:
-    """A DB failure marking an already-missing-file clip as archived must be
-    caught and logged rather than propagating out of the archive run."""
+    """A DB failure deleting an already-missing-file clip's orphaned row
+    must be caught and logged rather than propagating out of the archive
+    run."""
     clip = {
         "id": "c1",
         "camera": "Cam",
@@ -311,8 +325,151 @@ async def test_archive_month_missing_file_mark_archived_failure_is_logged(
         "timestamp": "2024-06-01T00:00:00+00:00",
     }
     archiver, db = _make_archiver(tmp_path, clips=[clip])
-    db.mark_archived = AsyncMock(side_effect=RuntimeError("connection dropped"))
+    db.delete_clip = AsyncMock(side_effect=RuntimeError("connection dropped"))
 
     result = await archiver.run()
 
     assert result == []
+
+
+# ------------------------------------------------------------------
+# prune_orphaned_archives — one-time cleanup of rows the now-fixed bug
+# above already produced (or any other cause of a since-deleted ZIP).
+# ------------------------------------------------------------------
+
+
+async def test_prune_orphaned_archives_no_records(tmp_path: Path) -> None:
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    db.get_archived_clip_records = AsyncMock(return_value=[])
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 0
+    db.delete_clip.assert_not_awaited()
+
+
+async def test_prune_orphaned_archives_leaves_valid_archives_alone(
+    tmp_path: Path,
+) -> None:
+    zip_path = tmp_path / "archives" / "blink_archive_2026-05.zip"
+    zip_path.parent.mkdir(parents=True)
+    zip_path.write_bytes(b"real zip data")
+
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    db.get_archived_clip_records = AsyncMock(
+        return_value=[{"id": "c1", "archive_path": str(zip_path)}]
+    )
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 0
+    db.delete_clip.assert_not_awaited()
+
+
+async def test_prune_orphaned_archives_removes_missing_zip_rows(
+    tmp_path: Path,
+) -> None:
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    missing_zip = tmp_path / "archives" / "blink_archive_2026-05.zip"
+    db.get_archived_clip_records = AsyncMock(
+        return_value=[{"id": "c1", "archive_path": str(missing_zip)}]
+    )
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 1
+    db.delete_clip.assert_awaited_once_with("c1")
+
+
+async def test_prune_orphaned_archives_removes_empty_archive_path_rows(
+    tmp_path: Path,
+) -> None:
+    """A clip somehow marked archived with no archive_path at all (the
+    emptiest possible orphan) must be treated as unrecoverable too, not
+    skipped for lack of a path to check."""
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    db.get_archived_clip_records = AsyncMock(
+        return_value=[{"id": "c1", "archive_path": ""}]
+    )
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 1
+    db.delete_clip.assert_awaited_once_with("c1")
+
+
+async def test_prune_orphaned_archives_counts_only_actually_deleted_rows(
+    tmp_path: Path,
+) -> None:
+    """delete_clip returning False (e.g. a row already gone by the time this
+    runs — ON DELETE CASCADE beat it there, or a concurrent delete) must not
+    be counted as removed by this run."""
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    missing_zip = tmp_path / "archives" / "blink_archive_2026-05.zip"
+    db.get_archived_clip_records = AsyncMock(
+        return_value=[{"id": "c1", "archive_path": str(missing_zip)}]
+    )
+    db.delete_clip = AsyncMock(return_value=False)
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 0
+
+
+async def test_prune_orphaned_archives_mixed_valid_and_orphaned(
+    tmp_path: Path,
+) -> None:
+    valid_zip = tmp_path / "archives" / "blink_archive_2026-04.zip"
+    valid_zip.parent.mkdir(parents=True)
+    valid_zip.write_bytes(b"real zip data")
+    missing_zip = tmp_path / "archives" / "blink_archive_2026-05.zip"
+
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    db.get_archived_clip_records = AsyncMock(
+        return_value=[
+            {"id": "valid-1", "archive_path": str(valid_zip)},
+            {"id": "orphan-1", "archive_path": str(missing_zip)},
+            {"id": "orphan-2", "archive_path": str(missing_zip)},
+        ]
+    )
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 2
+    assert db.delete_clip.await_args_list == [call("orphan-1"), call("orphan-2")]
+
+
+async def test_prune_orphaned_archives_delete_failure_is_logged(
+    tmp_path: Path,
+) -> None:
+    """A DB failure removing one orphaned row must be caught and logged,
+    not propagate and abort the rest of the cleanup pass."""
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    missing_zip = tmp_path / "archives" / "blink_archive_2026-05.zip"
+    db.get_archived_clip_records = AsyncMock(
+        return_value=[
+            {"id": "c1", "archive_path": str(missing_zip)},
+            {"id": "c2", "archive_path": str(missing_zip)},
+        ]
+    )
+    db.delete_clip = AsyncMock(side_effect=[RuntimeError("connection dropped"), True])
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 1
+
+
+async def test_prune_orphaned_archives_runs_regardless_of_enabled(
+    tmp_path: Path,
+) -> None:
+    """Repairs existing bad data even when archiving itself is currently
+    disabled — this is cleanup, not a feature of ongoing archiving."""
+    archiver, db = _make_archiver(tmp_path, clips=[], enabled=False)
+    missing_zip = tmp_path / "archives" / "blink_archive_2026-05.zip"
+    db.get_archived_clip_records = AsyncMock(
+        return_value=[{"id": "c1", "archive_path": str(missing_zip)}]
+    )
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 1
