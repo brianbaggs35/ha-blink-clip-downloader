@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
 from blink_downloader.tracker import _MAX_TRACKED_IDS, ClipTracker
 
 
@@ -52,9 +53,9 @@ def test_mark_multiple(tmp_path):
 
 def test_last_download_time_set_after_mark(tmp_path):
     t = make_tracker(tmp_path)
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     t.mark_downloaded("clip_x")
-    after = datetime.now(timezone.utc)
+    after = datetime.now(UTC)
     assert t.last_download_time is not None
     assert before <= t.last_download_time <= after
 

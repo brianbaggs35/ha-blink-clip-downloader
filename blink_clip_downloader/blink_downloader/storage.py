@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _LOGGER = logging.getLogger(__name__)
@@ -122,7 +122,7 @@ class StorageManager:
         if self._retention_days == 0 or not self._base.exists():
             return 0, []
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=self._retention_days)
+        cutoff = datetime.now(UTC) - timedelta(days=self._retention_days)
         cutoff_ts = cutoff.timestamp()
         deleted_clips: list[Path] = []
         deleted_count = 0

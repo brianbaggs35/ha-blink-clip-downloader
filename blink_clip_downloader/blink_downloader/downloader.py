@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -91,7 +91,7 @@ async def probe_clip_duration(video_path: Path) -> int:
 
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_PROBE_TIMEOUT)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _LOGGER.warning("ffprobe timed out probing duration for %s", video_path)
         proc.kill()
         await proc.wait()
@@ -349,7 +349,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         # reachable manually via Analyze Now once downloaded.
         since = self._tracker.last_download_time
         if since is None:
-            since = datetime.now(timezone.utc) - timedelta(hours=6)
+            since = datetime.now(UTC) - timedelta(hours=6)
 
         clips = await self._fetch_clip_list(since)
         if not clips:
@@ -512,9 +512,9 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         ts = item.created_at
         if isinstance(ts, str):
             try:
-                ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                ts = datetime.fromisoformat(ts)
             except (ValueError, AttributeError):
-                ts = datetime.now(timezone.utc)
+                ts = datetime.now(UTC)
 
         dest = self._storage.resolve_path(camera_name, ts, clip_id)
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -687,7 +687,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         """
         raw = clip.get("created_at", "")
         try:
-            ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            ts = datetime.fromisoformat(raw)
             # time_window_start/end are documented as local HH:MM; the Blink
             # API returns created_at in UTC, so convert before comparing or
             # the window silently anchors to UTC instead of local wall-clock.
@@ -723,9 +723,9 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             created_str = clip.get("created_at", "")
 
             try:
-                timestamp = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                timestamp = datetime.fromisoformat(created_str)
             except (ValueError, AttributeError):
-                timestamp = datetime.now(timezone.utc)
+                timestamp = datetime.now(UTC)
 
             if not url:
                 _LOGGER.warning("Clip %s has no media URL, skipping", clip_id)
@@ -828,7 +828,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 if size is not None:
                     return size
 
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            except (TimeoutError, aiohttp.ClientError, OSError) as exc:
                 # aiohttp raises asyncio.TimeoutError (not a ClientError
                 # subclass) when the ClientTimeout(total=...) above expires,
                 # so it must be caught alongside ClientError or a slow/hung
@@ -933,7 +933,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
 
         try:
             await asyncio.wait_for(proc.wait(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.warning("ffmpeg timed out generating thumbnail for %s", video_path)
             # Timing out leaves the child process running; kill it and reap
             # it so it doesn't linger as a zombie/orphan.
@@ -1034,7 +1034,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     self._two_fa_event.wait(),
                     timeout=min(2.0, max(0.01, remaining)),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
         self.auth_state = "error"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ class ClipTracker:
     def mark_downloaded(self, clip_id: str, size_bytes: int = 0) -> None:
         """Record that *clip_id* was successfully downloaded."""
         self._downloaded[clip_id] = None
-        self._last_download_time = datetime.now(timezone.utc)
+        self._last_download_time = datetime.now(UTC)
         self._stats["total_downloaded"] += 1
         self._stats["total_bytes"] += size_bytes
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.mime.text import MIMEText
 from typing import TYPE_CHECKING, Any
 
@@ -195,9 +195,7 @@ class NotificationDispatcher:
             msg["Subject"] = subject
             msg["From"] = self._smtp_sender or self._smtp_user
             msg["To"] = ", ".join(self._smtp_recipients)
-            msg["Date"] = datetime.now(timezone.utc).strftime(
-                "%a, %d %b %Y %H:%M:%S +0000"
-            )
+            msg["Date"] = datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S +0000")
 
             # Port 465 is implicit TLS (the connection is TLS from the first
             # byte); STARTTLS is a different, incompatible negotiation used
@@ -274,7 +272,7 @@ class NotificationDispatcher:
                             "inline": True,
                         },
                     ],
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 }
             ]
         }

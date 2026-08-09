@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, time
+from datetime import UTC, datetime, time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -195,12 +195,11 @@ class AnalysisQueue:
         """Compute anomaly score before analysis so the prompt can reference it."""
         try:
             from datetime import datetime as _dt
-            from datetime import timezone as _tz
 
             hour = (
-                _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00")).hour
+                _dt.fromisoformat(clip_timestamp).hour
                 if clip_timestamp
-                else _dt.now(_tz.utc).hour
+                else _dt.now(UTC).hour
             )
             return await self._db.get_anomaly_score(
                 camera=camera, hour=hour, duration=clip_duration

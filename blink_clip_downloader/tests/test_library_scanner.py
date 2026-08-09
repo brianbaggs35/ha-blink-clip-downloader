@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
 from blink_downloader.database import ClipDatabase
 from blink_downloader.library_scanner import (
     _timestamp_from_filename,
@@ -66,10 +67,7 @@ async def test_imports_clip_from_camera_date_layout(
     assert len(clips) == 1
     clip = clips[0]
     assert clip["camera"] == "Front Door"
-    assert (
-        clip["timestamp"]
-        == datetime(2024, 6, 1, 8, 0, 0, tzinfo=timezone.utc).isoformat()
-    )
+    assert clip["timestamp"] == datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC).isoformat()
     assert clip["size_bytes"] == len(b"fake-mp4")
 
 
@@ -127,8 +125,7 @@ async def test_derives_camera_from_filename_when_not_organized(
     clips = await db.get_clips()
     assert clips[0]["camera"] == "Back Yard"
     assert (
-        clips[0]["timestamp"]
-        == datetime(2024, 6, 1, 8, 0, 0, tzinfo=timezone.utc).isoformat()
+        clips[0]["timestamp"] == datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC).isoformat()
     )
 
 
@@ -138,10 +135,10 @@ async def test_falls_back_to_mtime_when_no_timestamp_in_filename(
     download_path = tmp_path / "clips"
     clip_path = download_path / "Garage" / "clip.mp4"
 
-    before = datetime.now(timezone.utc)
+    before = datetime.now(UTC)
     _touch(clip_path)
     added = await import_existing_clips(db, download_path)
-    after = datetime.now(timezone.utc)
+    after = datetime.now(UTC)
     assert added == 1
 
     clips = await db.get_clips()
