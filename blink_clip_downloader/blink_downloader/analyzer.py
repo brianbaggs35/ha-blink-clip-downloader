@@ -22,6 +22,7 @@ import math
 import re
 import time
 from dataclasses import dataclass
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -913,7 +914,7 @@ class BaseAnalyzer(abc.ABC):
         clip_duration: float = 0.0,
         recent_corrections: list[dict[str, Any]] | None = None,
     ) -> AnalysisResult:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         self._reset_analysis_state(camera)
         start = time.monotonic()
@@ -930,7 +931,7 @@ class BaseAnalyzer(abc.ABC):
                 summary="No frames could be extracted",
                 frame_count=0,
                 analysis_duration=time.monotonic() - start,
-                analyzed_at=datetime.now(timezone.utc).isoformat(),
+                analyzed_at=datetime.now(UTC).isoformat(),
                 anomaly_score=anomaly_score,
             )
 
@@ -1068,7 +1069,7 @@ class BaseAnalyzer(abc.ABC):
             summary=summary,
             frame_count=len(frames),
             analysis_duration=time.monotonic() - start,
-            analyzed_at=datetime.now(timezone.utc).isoformat(),
+            analyzed_at=datetime.now(UTC).isoformat(),
             tokens_prompt=self._last_prompt_tokens,
             tokens_completion=self._last_completion_tokens,
             anomaly_score=anomaly_score,
@@ -1373,7 +1374,7 @@ class BaseAnalyzer(abc.ABC):
 
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.warning("ffmpeg timed out for %s", clip_path)
             # communicate() timing out leaves the child process running;
             # kill it and reap it so it doesn't linger as a zombie/orphan.
@@ -1963,7 +1964,7 @@ class BaseAnalyzer(abc.ABC):
         try:
             from datetime import datetime as _dt
 
-            dt = _dt.fromisoformat(clip_timestamp.replace("Z", "+00:00")).astimezone()
+            dt = _dt.fromisoformat(clip_timestamp).astimezone()
             hour = dt.hour
             if hour < 5:
                 tod = "late night"
@@ -2509,7 +2510,7 @@ class ClipAnalyzer(BaseAnalyzer):
                 f"{self._ollama_url}/api/tags", timeout=_HEALTH_TIMEOUT
             ) as resp:
                 return resp.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        except (TimeoutError, aiohttp.ClientError, OSError):
             return False
 
     async def fetch_models(self) -> list[dict[str, Any]]:
@@ -2527,12 +2528,7 @@ class ClipAnalyzer(BaseAnalyzer):
                 for m in vision:
                     m["score"] = _vision_model_score(m.get("name", ""))
                 return sorted(vision, key=lambda m: m.get("score", 0), reverse=True)
-        except (
-            aiohttp.ClientError,
-            asyncio.TimeoutError,
-            OSError,
-            json.JSONDecodeError,
-        ):
+        except (TimeoutError, aiohttp.ClientError, OSError, json.JSONDecodeError):
             return []
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
@@ -2565,7 +2561,7 @@ class ClipAnalyzer(BaseAnalyzer):
                 self._last_prompt_tokens = int(data.get("prompt_eval_count") or 0)
                 self._last_completion_tokens = int(data.get("eval_count") or 0)
                 return str(data.get("response", ""))
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.warning("Ollama request timed out")
             return ""
         except (aiohttp.ClientError, OSError) as exc:
@@ -3149,7 +3145,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 allow_redirects=True,
             ) as resp:
                 return self._store_health_check_result(resp.status < 500)
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream Cloud health check failed: %s", exc)
             return self._store_health_check_result(False)
 
@@ -3220,7 +3216,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 data = await resp.json()
                 objects = data.get("objects", [])
                 return [o for o in objects if isinstance(o, dict)]
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream /detect failed for %r: %s", object_name, exc)
             return []
 
@@ -3270,7 +3266,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 self._last_prompt_tokens += self._IMAGE_TOKENS_PER_FRAME
                 self._last_completion_tokens += max(1, len(caption) // 4)
                 return caption
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.debug("Moondream /caption request timed out")
             return ""
         except (aiohttp.ClientError, OSError) as exc:
@@ -3362,7 +3358,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 # Completion: output text tokens.
                 self._last_completion_tokens += max(1, len(answer) // 4)
                 return answer
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.warning("Moondream Cloud request timed out")
             return ""
         except (aiohttp.ClientError, OSError) as exc:
@@ -4129,7 +4125,7 @@ class MoondreamFineTuneManager:
                 data = await resp.json()
                 fid = str(data.get("finetune_id", ""))
                 return fid or None
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        except (TimeoutError, aiohttp.ClientError, OSError):
             _LOGGER.exception("Moondream create_finetune failed")
             return None
 
@@ -4152,7 +4148,7 @@ class MoondreamFineTuneManager:
                     return []
                 data = await resp.json()
                 return list(data.get("finetunes", []))
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream list_finetunes failed: %s", exc)
             return []
 
@@ -4170,7 +4166,7 @@ class MoondreamFineTuneManager:
                 if resp.status != 200:
                     return None
                 return dict(await resp.json())
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream get_finetune failed: %s", exc)
             return None
 
@@ -4184,7 +4180,7 @@ class MoondreamFineTuneManager:
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
                 return resp.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream delete_finetune failed: %s", exc)
             return False
 
@@ -4249,7 +4245,7 @@ class MoondreamFineTuneManager:
                     )
                     return {}
                 return dict(await resp.json())
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.warning("Moondream generate_rollouts failed: %s", exc)
             return {}
 
@@ -4308,7 +4304,7 @@ class MoondreamFineTuneManager:
                     )
                     return {}
                 return dict(await resp.json())
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.warning("Moondream train_step failed: %s", exc)
             return {}
 
@@ -4390,7 +4386,7 @@ class MoondreamFineTuneManager:
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
                 return resp.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream save_checkpoint failed: %s", exc)
             return False
 
@@ -4413,7 +4409,7 @@ class MoondreamFineTuneManager:
                     return []
                 data = await resp.json()
                 return list(data.get("checkpoints", []))
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream list_checkpoints failed: %s", exc)
             return []
 
@@ -4427,7 +4423,7 @@ class MoondreamFineTuneManager:
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
                 return resp.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream delete_checkpoint failed: %s", exc)
             return False
 
@@ -4445,7 +4441,7 @@ class MoondreamFineTuneManager:
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
                 return resp.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream log_metrics failed: %s", exc)
             return False
 
