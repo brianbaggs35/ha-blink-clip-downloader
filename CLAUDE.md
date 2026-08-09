@@ -11,9 +11,11 @@ Add-ons → Repositories*). It currently contains a single add-on:
   (via [blinkpy](https://github.com/fronzbot/blinkpy)) and downloads camera
   clips to local storage, with retention/quota management, HA notifications,
   a bundled-PostgreSQL clip library, a Vue 3 + PrimeVue web UI (Video.js
-  player), and optional AI-based suspicious-activity analysis of clips,
-  including local-only face recognition that can auto-clear a clip's
-  suspicious flag for approved household members.
+  player) including a one-camera-at-a-time Live View tab (blinkpy's
+  live-view session, bridged through ffmpeg into HLS — see `live_view.py`),
+  and optional AI-based suspicious-activity analysis of clips, including
+  local-only face recognition that can auto-clear a clip's suspicious flag
+  for approved household members.
 
 Almost all work happens inside `blink_clip_downloader/`. **Run all commands
 below from that directory unless noted otherwise** (pyright is the exception —
@@ -57,6 +59,18 @@ architecture.
   - `media_server.py` — aiohttp HTTP server: REST API + serves the built Vue
     app as static files (`_STATIC_DIR`/`_handle_index`). See **Web UI** below
     — the frontend itself lives in `frontend/`, a sibling of `blink_downloader/`.
+  - `live_view.py` — `LiveViewManager`, backing the Live View tab. Bridges
+    blinkpy's live-view session (a proprietary binary protocol relayed onto
+    a local raw-TCP socket — not RTSP) through an ffmpeg subprocess into a
+    short rolling HLS playlist, served through `media_server.py`'s existing
+    routes/port rather than a new one (HA ingress only proxies HTTP/
+    WebSocket, so the raw TCP socket itself is unreachable from a browser
+    regardless). Exactly one session is active at a time; starting a
+    different camera stops whichever was active first. A background sweep
+    loop enforces an idle timeout and a hard cap per session, on top of the
+    frontend stopping its session on unmount (navigating away) — see the
+    module's own docstring and `tests/test_live_view.py` for the session
+    lifecycle/crash-handling details.
   - `event_watcher.py`, `notifier.py`, `notification_channels.py`,
     `digest.py`, `archiver.py`, `storage.py`, `library_scanner.py`,
     `tracker.py`, `manifest.py` — supporting modules (event-driven
@@ -157,14 +171,15 @@ removed in 5.0.0.
   `components/icons/paths.ts`'s `ICONS` map (add a `tab-X` entry; icons are
   plain path/rect/circle data, not separate `.vue` files — see `AppIcon.vue`),
   and an `#page-X { overflow-y: auto; }` override in `assets/styles/base.css`
-  (grouped with `#page-vehicles`/`#page-biometrics`/`#page-storage`) unless
-  the page's content is certain to always fit within the viewport — `.page`
-  defaults to `overflow: hidden` (the fixed-height sidebar/content shell),
-  so a page that doesn't opt in just clips its content with no scrollbar.
-  The Storage tab shipped without this once; it only surfaced via live
-  browser testing under a real Home Assistant OS install, not any automated
-  test. Current nav order: Library, Automations, Status, AI, AI Usage,
-  Models, Vehicles, Biometrics, Storage.
+  (grouped with `#page-vehicles`/`#page-biometrics`/`#page-storage`/
+  `#page-liveview`) unless the page's content is certain to always fit
+  within the viewport — `.page` defaults to `overflow: hidden` (the
+  fixed-height sidebar/content shell), so a page that doesn't opt in just
+  clips its content with no scrollbar. The Storage tab shipped without this
+  once; it only surfaced via live browser testing under a real Home
+  Assistant OS install, not any automated test. Current nav order: Library,
+  Live View, Automations, Status, AI, AI Usage, Models, Vehicles,
+  Biometrics, Storage.
 - **API client**: every backend call goes through `api/<area>.ts` modules
   built on `api/client.ts`'s `apiGet`/`apiPost`/`apiPut`/`apiPatch`/`apiDelete`
   helpers (thin `fetch` wrappers, ingress-path-aware via `env.ts`). Add new
@@ -253,6 +268,17 @@ afterward, entirely locally, to personalize the human-facing summary text
 banner promises, and the promise and the implementation must stay in sync.
 `face_enrollments.approved` (per-enrollment, defaults `TRUE`) gates whether
 a match counts toward the bypass at all; enrolling ≠ approving forever.
+
+Personalization and bypass-eligibility are **deliberately different
+widths**, both computed in `_analyze_clip_locked`: `_face_bypass_applies`
+(approved-only, all-or-nothing) still gates the safety-critical suspicious-
+flag clear, unchanged. `_personalization_names` is wider — approved *and*
+recognized-but-not-approved names both count, as long as no genuinely
+unrecognized face also appears — because rewriting "A person" to someone's
+actual name is a cosmetic text rewrite, not a safety decision, so a
+household member whose per-enrollment "Approved for bypass" is off (e.g. a
+nanny) still gets named in their own routine clips. Do not collapse these
+two into one condition again — that's the bug this distinction fixes.
 
 ## Development workflow
 

@@ -4667,6 +4667,91 @@ def test_face_bypass_does_not_apply_vision_hints_without_face_recognition() -> N
     assert ClipAnalyzer._face_bypass_applies(VisionHints()) is False
 
 
+def test_personalization_names_approved_only() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Brian"])
+    )
+    assert ClipAnalyzer._personalization_names(hints) == ["Brian"]
+
+
+def test_personalization_names_unapproved_only() -> None:
+    """The key behavior difference from _face_bypass_applies: a
+    recognized-but-not-approved person alone still yields a name."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(face_recognition=FaceRecognitionResult(other_names=["Nanny"]))
+    assert ClipAnalyzer._personalization_names(hints) == ["Nanny"]
+
+
+def test_personalization_names_merges_and_sorts_approved_and_unapproved() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Zoe"], other_names=["Amy"]
+        )
+    )
+    assert ClipAnalyzer._personalization_names(hints) == ["Amy", "Zoe"]
+
+
+def test_personalization_names_deduplicates_a_name_in_both_lists() -> None:
+    """Defensive: the same name should never realistically land in both
+    approved_names and other_names (they come from disjoint per-enrollment
+    approved flags in vision.py), but the union must not double it up if it
+    ever did."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Brian"], other_names=["Brian"]
+        )
+    )
+    assert ClipAnalyzer._personalization_names(hints) == ["Brian"]
+
+
+def test_personalization_names_empty_when_nothing_matched() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(face_recognition=FaceRecognitionResult())
+    assert ClipAnalyzer._personalization_names(hints) == []
+
+
+def test_personalization_names_empty_when_stranger_also_present() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Brian"],
+            other_names=["Nanny"],
+            unrecognized_present=True,
+        )
+    )
+    assert ClipAnalyzer._personalization_names(hints) == []
+
+
+def test_personalization_names_empty_when_unrecognized_only() -> None:
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(unrecognized_present=True)
+    )
+    assert ClipAnalyzer._personalization_names(hints) == []
+
+
+def test_personalization_names_empty_when_no_vision_hints() -> None:
+    assert ClipAnalyzer._personalization_names(None) == []
+
+
+def test_personalization_names_empty_when_vision_hints_without_face_recognition() -> (
+    None
+):
+    from blink_downloader.vision import VisionHints
+
+    assert ClipAnalyzer._personalization_names(VisionHints()) == []
+
+
 def test_personalize_summary_rewrites_leading_generic_subject() -> None:
     summary = ClipAnalyzer._personalize_summary(
         "A person walked up the driveway toward the front door.", ["Brian"]
@@ -4825,7 +4910,11 @@ async def test_analyze_clip_stays_suspicious_when_stranger_also_present() -> Non
 
 
 async def test_analyze_clip_stays_suspicious_when_only_unapproved_match() -> None:
-    """A recognized-but-not-approved enrollment must not bypass either."""
+    """A recognized-but-not-approved enrollment must not bypass either — but
+    per _personalization_names, the summary is still personalized with their
+    name, since that's a cosmetic rewrite decoupled from bypass eligibility
+    (see test_analyze_clip_personalizes_summary_for_unapproved_person_alone
+    for the case this docstring used to only partially cover)."""
     from blink_downloader.vision import FaceRecognitionResult, VisionHints
 
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
@@ -4848,6 +4937,122 @@ async def test_analyze_clip_stays_suspicious_when_only_unapproved_match() -> Non
         result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
 
     assert result.is_suspicious is True
+    assert result.approved_faces_seen is False
+    assert result.face_bypass_applied is False
+    assert result.summary == "Nanny is near the door."
+
+
+async def test_analyze_clip_personalizes_summary_for_unapproved_person_alone() -> None:
+    """The behavior this feature is actually about: a person enrolled with
+    "Approved for bypass" turned off is still positively recognized, so a
+    routine, non-suspicious visit should read with their name — the bypass
+    being disabled for them must not silently disable recognition too."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(other_names=["Nanny"])
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": false, "confidence": 0.2, '
+            '"description": "A person is watering the plants."}'
+        )
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Front Door")
+
+    assert result.is_suspicious is False
+    assert result.summary == "Nanny is watering the plants."
+    # Recognition worked, but this is *not* the safety bypass — Nanny was
+    # never approved for it, and approved_faces_seen must not claim she was.
+    assert result.face_bypass_applied is False
+    assert result.approved_faces_seen is False
+
+
+async def test_analyze_clip_personalizes_summary_for_mixed_approved_and_unapproved() -> (
+    None
+):
+    """Approved (Brian) and recognized-but-not-approved (Nanny) together,
+    no stranger: both get named in the summary, but the bypass still does
+    not fire — other_names being non-empty still blocks it, exactly as
+    before this feature."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(
+                approved_names=["Brian"], other_names=["Nanny"]
+            )
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.6, '
+            '"description": "A car door slammed near the driveway."}'
+        )
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.summary == "Brian and Nanny: A car door slammed near the driveway."
+    assert result.is_suspicious is True
+    assert result.face_bypass_applied is False
+    assert result.approved_faces_seen is False
+
+
+async def test_analyze_clip_does_not_personalize_when_stranger_also_present() -> None:
+    """A recognized-but-not-approved person AND a genuine unidentified
+    stranger together: personalization must not fire either — attributing
+    the AI's summary to the one identified person would be misleading when
+    an unknown person is also in frame and could be who the summary is
+    actually describing."""
+    from blink_downloader.vision import FaceRecognitionResult, VisionHints
+
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(
+                other_names=["Nanny"], unrecognized_present=True
+            )
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.8, '
+            '"description": "A person is tampering with the gate."}'
+        )
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.summary == "A person is tampering with the gate."
+    assert result.is_suspicious is True
+    assert result.face_bypass_applied is False
     assert result.approved_faces_seen is False
 
 
