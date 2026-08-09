@@ -12,8 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-from blinkpy.auth import TokenRefreshFailed
-
 from blink_downloader import media_server
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.database import ClipDatabase
@@ -31,6 +29,7 @@ from blink_downloader.live_view import (
     LiveViewStatus,
 )
 from blink_downloader.media_server import MediaServer
+from blinkpy.auth import TokenRefreshFailed
 
 # ---------------------------------------------------------------------------
 # Fixtures
