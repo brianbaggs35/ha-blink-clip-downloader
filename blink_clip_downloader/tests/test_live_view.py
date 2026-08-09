@@ -7,12 +7,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
+
 from blink_downloader.live_view import (
     CameraNotFoundError,
     LiveViewError,
     LiveViewManager,
 )
-from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -631,13 +632,28 @@ async def test_sweep_never_went_live_grace_window_then_teardown(
     assert first.state == "error"
     assert status.session_id == first.session_id
 
+    # One full extra tick of grace before teardown (see
+    # test_ffmpeg_crash_error_survives_one_full_sweep_tick_before_teardown
+    # for why) — the session must still be visible, error and all, right
+    # after the tick that first notices the timeout.
+    await mgr._sweep_once()
+    still_visible = mgr.get_status()
+    assert still_visible.active is True
+    assert still_visible.state == "error"
+
     await mgr._sweep_once()
     assert mgr.get_status().active is False
 
 
-async def test_ffmpeg_crash_sets_error_then_next_tick_tears_down(
+async def test_ffmpeg_crash_error_survives_one_full_sweep_tick_before_teardown(
     camera_registry: dict[str, Any],
 ) -> None:
+    """Regression test: a session whose error was set by _watch_ffmpeg (not
+    by _sweep_once itself) must still survive the *next* sweep tick with its
+    error intact, not disappear on it — otherwise a status poll unlucky
+    enough to land between that tick and the frontend's next check never
+    sees why live view stopped, and the UI just looks like it's stuck
+    loading forever. Regression coverage for that exact bug."""
     camera_registry["Front Door"] = _make_camera()
     proc = _FakeProcess()
     mgr = LiveViewManager(
@@ -661,6 +677,15 @@ async def test_ffmpeg_crash_sets_error_then_next_tick_tears_down(
     assert first.state == "error"
     assert "code 137" in (first.error or "")
 
+    # First sweep tick to see the error: must NOT tear down yet.
+    await mgr._sweep_once()
+    still_visible = mgr.get_status()
+    assert still_visible.active is True
+    assert still_visible.state == "error"
+    assert "code 137" in (still_visible.error or "")
+    assert hls_dir.exists()
+
+    # Second tick: now it's had its one full tick of visibility.
     await mgr._sweep_once()
     assert mgr.get_status().active is False
     assert not hls_dir.exists()

@@ -99,6 +99,10 @@ class _LiveViewSession:
     # / camera switch) so _watch_ffmpeg can tell that apart from a genuine
     # crash instead of recording a spurious error during a clean shutdown.
     stopping: bool = False
+    # True once one _sweep_once tick has already observed `error` set —
+    # see _sweep_once for why a session isn't torn down the very first tick
+    # that notices its error.
+    error_seen_by_sweep: bool = False
 
 
 class LiveViewManager:
@@ -444,9 +448,17 @@ class LiveViewManager:
                 return
 
             if session.error is not None:
-                # One-tick grace already given (the error was set on a
-                # previous tick, or by _watch_ffmpeg between ticks) — status
-                # polls have had a window to see *why* before it disappears.
+                # Give the frontend's status poll (every 4s, see
+                # LiveViewPage.vue's STATUS_POLL_INTERVAL_MS) at least one
+                # full sweep_interval to observe the error via
+                # /api/liveview/status before the session disappears out
+                # from under it — tearing down on the very same tick that
+                # first notices the error is a race a slow/unlucky poll can
+                # lose outright, showing nothing but "Starting live view…"
+                # forever instead of the actual error.
+                if not session.error_seen_by_sweep:
+                    session.error_seen_by_sweep = True
+                    return
                 await self._teardown_locked(session)
                 return
 
