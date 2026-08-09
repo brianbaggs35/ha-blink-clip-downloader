@@ -779,6 +779,9 @@ from any browser without leaving Home Assistant.
   and a **Test Analysis** button that runs a full analysis on the most recently
   downloaded clip to confirm the AI backend is working end-to-end.
 - **Models tab** — reference info on each AI provider's capabilities.
+- **Live View tab** — watch a live stream from any camera on your Blink account,
+  one camera at a time, directly in the browser — see [Live
+  View](#live-view) below.
 - **Vehicles tab** — protected-vehicle description, per-camera "sees the vehicle"
   flag, and a visual rectangle-or-freeform zone picker drawn over an actual recent
   frame from that camera, with a persisted reference snapshot — see
@@ -833,12 +836,52 @@ from any browser without leaving Home Assistant.
 
 ---
 
+## Live View
+
+Watch a live stream from any camera on your Blink account, one camera at a
+time, directly in the web UI — no separate app or RTSP client needed.
+
+### How it works
+
+- Open the **Live View** tab and pick a camera; the stream starts within a
+  few seconds.
+- Uses blinkpy's live-view session API against your existing, already
+  logged-in Blink account — no second sign-in, no extra port, and nothing
+  about the normal clip-download/AI-analysis pipeline is affected.
+- Only one camera streams at a time across the whole install — picking a
+  different camera (from any browser tab) stops the previous stream first.
+  A second tab watching the *same* camera joins the existing stream instead
+  of starting a new one.
+- A session stops automatically after a period of inactivity, always after
+  a 30-minute safety cap, and immediately when you navigate away from the
+  tab — there's also a **Stop** button for stopping it manually at any
+  time.
+
+### Limitations
+
+- Some latency is inherent to how Blink's live-view protocol works —
+  expect a real but modest delay versus true real time, not a
+  video-call-grade connection.
+- There is currently no way to save/record a clip from a live view session
+  — it's watch-only. Clips are still captured normally by the regular
+  motion-triggered download pipeline in parallel.
+- A camera generally can't stream live view and produce a motion-triggered
+  recording at the exact same instant — this is a limitation of the Blink
+  camera hardware/cloud service itself (the same is true of the official
+  Blink app), not something this add-on can control.
+
+---
+
 ## Storage Tab — Google Drive Backup
 
 The Storage tab has two parts: an **Archived Clips** list (view/delete clips
 `archive_enabled` has already compressed into ZIP files), and a **Google
 Drive Backup** card that connects a Google account and uploads clips there
 as an extra copy.
+
+The steps below are also available in-app — click the ⓘ button next to
+**Google Drive Setup** on the Storage tab for the same walkthrough without
+leaving the page.
 
 ### Why a one-time Google Cloud Console step is needed
 
