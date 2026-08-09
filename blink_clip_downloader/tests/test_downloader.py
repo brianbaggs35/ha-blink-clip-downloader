@@ -11,6 +11,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from blinkpy.auth import (
+    BlinkTwoFARequiredError,
+    LoginError,
+    TokenRefreshFailed,
+    UnauthorizedError,
+)
+from requests.structures import CaseInsensitiveDict
+
 from blink_downloader.downloader import (
     AuthenticationError,
     BlinkDownloader,
@@ -19,13 +27,6 @@ from blink_downloader.downloader import (
 )
 from blink_downloader.storage import StorageManager
 from blink_downloader.tracker import ClipTracker
-from blinkpy.auth import (
-    BlinkTwoFARequiredError,
-    LoginError,
-    TokenRefreshFailed,
-    UnauthorizedError,
-)
-from requests.structures import CaseInsensitiveDict
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -2663,3 +2664,94 @@ def test_list_camera_names_returns_all_connected_cameras(dl: BlinkDownloader) ->
     dl._blink = fake_blink
 
     assert set(dl.list_camera_names()) == {"Front Door", "Backyard"}
+
+
+# ---------------------------------------------------------------------------
+# get_camera_snapshot (Security Feed)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_camera_snapshot_returns_none_for_unknown_camera(
+    dl: BlinkDownloader,
+) -> None:
+    assert await dl.get_camera_snapshot("Front Door") is None
+
+
+async def test_get_camera_snapshot_prefers_cached_image(dl: BlinkDownloader) -> None:
+    """No network call at all when a cached image is already available —
+    the whole point of not calling snap_picture()."""
+    camera = MagicMock()
+    camera.image_from_cache = b"cached-jpeg-bytes"
+    camera.get_thumbnail = AsyncMock()
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    result = await dl.get_camera_snapshot("Front Door")
+
+    assert result == b"cached-jpeg-bytes"
+    camera.get_thumbnail.assert_not_awaited()
+
+
+async def test_get_camera_snapshot_falls_back_to_downloading_thumbnail(
+    dl: BlinkDownloader,
+) -> None:
+    camera = MagicMock()
+    camera.image_from_cache = None
+    response = MagicMock()
+    response.status = 200
+    response.read = AsyncMock(return_value=b"downloaded-jpeg-bytes")
+    camera.get_thumbnail = AsyncMock(return_value=response)
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    result = await dl.get_camera_snapshot("Front Door")
+
+    assert result == b"downloaded-jpeg-bytes"
+    camera.get_thumbnail.assert_awaited_once()
+
+
+async def test_get_camera_snapshot_no_thumbnail_url_available(
+    dl: BlinkDownloader,
+) -> None:
+    """camera.get_thumbnail() itself returns None when self.thumbnail is
+    unset (blinkpy logs a warning and returns early)."""
+    camera = MagicMock()
+    camera.image_from_cache = None
+    camera.get_thumbnail = AsyncMock(return_value=None)
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    assert await dl.get_camera_snapshot("Front Door") is None
+
+
+async def test_get_camera_snapshot_download_http_error(dl: BlinkDownloader) -> None:
+    camera = MagicMock()
+    camera.image_from_cache = None
+    response = MagicMock()
+    response.status = 404
+    camera.get_thumbnail = AsyncMock(return_value=response)
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    assert await dl.get_camera_snapshot("Front Door") is None
+
+
+async def test_get_camera_snapshot_download_exception_is_caught(
+    dl: BlinkDownloader, caplog: pytest.LogCaptureFixture
+) -> None:
+    camera = MagicMock()
+    camera.image_from_cache = None
+    camera.get_thumbnail = AsyncMock(side_effect=RuntimeError("network exploded"))
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    with caplog.at_level("WARNING"):
+        result = await dl.get_camera_snapshot("Front Door")
+
+    assert result is None
+    assert "network exploded" in caplog.text
