@@ -725,6 +725,35 @@ class BaseAnalyzer(abc.ABC):
             and not fr.unrecognized_present
         )
 
+    @staticmethod
+    def _personalization_names(vision_hints: VisionHints | None) -> list[str]:
+        """Names to use when personalizing the AI's summary text — a purely
+        cosmetic rewrite, safe regardless of ``is_suspicious`` (see
+        ``_personalize_summary``'s docstring), and deliberately **not** the
+        same eligibility test as :meth:`_face_bypass_applies`.
+
+        A person whose *per-enrollment* "Approved for bypass" toggle is off
+        (``face_enrollments.approved=False``, see the Biometrics tab) still
+        counts here — they were positively recognized, so their clips should
+        still read "Brian walked up the driveway" instead of the generic "A
+        person...", even though that recognition alone must never clear a
+        suspicious flag. That safety gate stays exactly as strict as
+        ``_face_bypass_applies`` already requires; only the cosmetic
+        rewrite widens from *approved-only* to *every confidently recognized
+        enrollment, approved or not*.
+
+        Still returns no names at all if a genuinely unrecognized face
+        (``unrecognized_present``) also appears — an unidentified stranger
+        sharing the frame means it's not safe to attribute the AI's summary
+        to the person(s) who *were* identified.
+        """
+        if vision_hints is None or vision_hints.face_recognition is None:
+            return []
+        fr = vision_hints.face_recognition
+        if fr.unrecognized_present:
+            return []
+        return sorted({*fr.approved_names, *fr.other_names})
+
     # Leading generic-subject phrases a vision model commonly opens a
     # description with — matched case-insensitively, anchored to the start
     # of the summary, so a confident, natural rewrite ("Brian walked up the
@@ -1015,28 +1044,32 @@ class BaseAnalyzer(abc.ABC):
         # found across this clip's sampled frames belongs to an approved
         # household member (same all-or-nothing condition the safety
         # bypass below requires). Reused for the bypass gate (only when the
-        # clip is also suspicious), approved_faces_seen (always — see its
-        # field docstring for why that has to be unconditional), and
-        # personalizing the summary text below (also unconditional — a
-        # recognized household member's own routine, non-suspicious visit
-        # should still read "Brian walked up the driveway", not "A person
-        # walked up the driveway").
+        # clip is also suspicious) and approved_faces_seen (always — see its
+        # field docstring for why that has to be unconditional). Summary
+        # personalization below uses the deliberately *wider*
+        # _personalization_names instead — see its docstring for why a
+        # recognized-but-not-bypass-approved person (e.g. a nanny) still
+        # gets named in the summary even though they can never clear a
+        # suspicious flag.
         bypass_condition_met = self._face_bypass_applies(vision_hints)
+        personalization_names = self._personalization_names(vision_hints)
 
         face_bypass_applied = False
         face_bypass_names = ""
+        # Personalizing the summary text is safe regardless of is_suspicious
+        # or bypass eligibility — it only ever rewrites text the AI already
+        # generated, entirely locally, and never feeds back into the AI
+        # prompt (see _personalize_summary's docstring). Clearing the
+        # suspicious flag itself must stay gated on bypass_condition_met and
+        # is_suspicious below: that's the actual safety bypass, not just a
+        # text rewrite.
+        if personalization_names:
+            summary = self._personalize_summary(summary, personalization_names)
         if bypass_condition_met:
             assert (
                 vision_hints is not None and vision_hints.face_recognition is not None
             )
             approved_names = vision_hints.face_recognition.approved_names
-            # Personalizing the summary text is safe regardless of
-            # is_suspicious — it only ever rewrites text the AI already
-            # generated, entirely locally, and never feeds back into the
-            # AI prompt (see _personalize_summary's docstring). Clearing
-            # the suspicious flag itself must stay gated on is_suspicious:
-            # that's the actual safety bypass, not just a text rewrite.
-            summary = self._personalize_summary(summary, approved_names)
             if is_suspicious:
                 is_suspicious = False
                 face_bypass_applied = True
