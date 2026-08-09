@@ -25,6 +25,16 @@ export const ICONS = {
     rects: [{ x: 2, y: 5, width: 15, height: 14, rx: 2 }],
     circles: [{ cx: 6.2, cy: 9.2, r: 1.5 }],
   },
+  'tab-securityfeed': {
+    // A 2x2 grid of tiles, standing in for a wall of simultaneous camera
+    // views — distinct from tab-liveview's single-camera icon.
+    rects: [
+      { x: 3, y: 3, width: 8, height: 8, rx: 1.5 },
+      { x: 13, y: 3, width: 8, height: 8, rx: 1.5 },
+      { x: 3, y: 13, width: 8, height: 8, rx: 1.5 },
+      { x: 13, y: 13, width: 8, height: 8, rx: 1.5 },
+    ],
+  },
   'tab-status': { paths: ['M3 12h4l2 7 4-14 2 7h6'] },
   'tab-usage': { paths: ['M5 20V11M12 20V4M19 20v-7'] },
   'tab-models': {

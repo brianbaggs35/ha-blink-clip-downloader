@@ -939,10 +939,17 @@ class MediaServer:
 
     _SECURITY_FEED_SETTINGS_FILE = Path("/data/security_feed_settings.json")
     _SECURITY_FEED_MIN_COLUMNS = 1
-    _SECURITY_FEED_MAX_COLUMNS = 6
+    # Past 3 per row, a tile shrinks too small to make out what a snapshot
+    # actually shows — 3 itself is already a "fits, but not ideal" upper
+    # bound, not a comfortably-recommended default (see
+    # _SECURITY_FEED_DEFAULT_COLUMNS below).
+    _SECURITY_FEED_MAX_COLUMNS = 3
     _SECURITY_FEED_MIN_REFRESH_SECONDS = 5
     _SECURITY_FEED_MAX_REFRESH_SECONDS = 300
-    _SECURITY_FEED_DEFAULT_COLUMNS = 3
+    # 2, not the 3-tile max, so a fresh install defaults to the
+    # comfortably-readable end of the range rather than the "fits, but
+    # cramped" end.
+    _SECURITY_FEED_DEFAULT_COLUMNS = 2
     _SECURITY_FEED_DEFAULT_REFRESH_SECONDS = 15
 
     async def _handle_security_feed_cameras(

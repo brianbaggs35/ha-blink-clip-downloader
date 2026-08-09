@@ -50,6 +50,12 @@ const TAB_CHECKS = {
     loadedText: "No cameras found",
     loadingSelector: ".loading-indicator",
   },
+  securityfeed: {
+    // Same empty-state text as liveview, deliberately - no real Blink
+    // connection in this container means no cameras either way.
+    loadedText: "No cameras found",
+    loadingSelector: ".loading-indicator",
+  },
   automations: {
     // Purely static reference content - no fetch, nothing to wait on, but
     // still confirms the component actually rendered its real template
