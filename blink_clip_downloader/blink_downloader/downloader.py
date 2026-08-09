@@ -326,6 +326,40 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             return []
         return list(self._blink.cameras.keys())
 
+    async def get_camera_snapshot(self, name: str) -> bytes | None:
+        """Return the most recent snapshot image for *name*, if available.
+
+        For the Security Feed tab's "as close to live as possible" tiles.
+        Deliberately reads only what Blink's own periodic sync already
+        fetched — never calls camera.snap_picture(), which issues Blink a
+        "take a new picture right now" *command*, the same class of
+        rate-limited API call that live_view.py's session polling has
+        already shown can fail under throttling (see its module docstring).
+        Prefers camera.image_from_cache (populated by the normal sync
+        cycle's update_images(), zero additional network calls) and only
+        falls back to downloading camera.thumbnail's URL fresh when nothing
+        is cached yet — e.g. right after startup, before the first sync has
+        completed. This means the Security Feed tab adds no Blink API load
+        beyond what this add-on's existing poll cycle already does; camera
+        images only actually change on whatever cadence that cycle (and
+        event_watcher.py's faster motion-triggered poll) already refreshes
+        them.
+        """
+        camera = self.get_camera(name)
+        if camera is None:
+            return None
+        cached = camera.image_from_cache
+        if cached:
+            return cached
+        try:
+            response = await camera.get_thumbnail()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Could not fetch snapshot for camera %r: %s", name, exc)
+            return None
+        if response is None or response.status != 200:
+            return None
+        return await response.read()
+
     # ------------------------------------------------------------------
     # Downloading
     # ------------------------------------------------------------------
