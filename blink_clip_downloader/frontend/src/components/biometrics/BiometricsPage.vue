@@ -544,15 +544,23 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
+  /* Without this, the Save/Cancel buttons get pushed out of the card and
+     their text clips — a flex item's default min-width is auto (bounded by
+     its content), so .rename-input's flex:1 alone can't shrink it below
+     the "Brian"-length text, no matter how little room is left. Wrap as a
+     second line of defense on very narrow cards instead of overflowing. */
+  flex-wrap: wrap;
 }
 
 .person-name {
   font-size: 1rem;
   flex: 1;
+  min-width: 0;
 }
 
 .rename-input {
   flex: 1;
+  min-width: 0;
 }
 
 .person-card-meta {
