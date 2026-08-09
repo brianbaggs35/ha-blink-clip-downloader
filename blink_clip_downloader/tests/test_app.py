@@ -9,9 +9,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
+
 from blink_downloader.app import BlinkClipDownloaderApp
 from blink_downloader.downloader import AuthenticationError, TwoFARequired
-from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1434,7 +1435,6 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
-
     from tests.conftest import _ALL_TABLES, TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)
@@ -1491,7 +1491,6 @@ async def test_run_starts_gdrive_queue_task_when_library_db_enabled(app, tmp_pat
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
-
     from tests.conftest import TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)
@@ -1512,6 +1511,40 @@ async def test_run_starts_gdrive_queue_task_when_library_db_enabled(app, tmp_pat
 
     app._gdrive_queue.start.assert_awaited_once()
     assert any(t.get_name() == "gdrive_queue" for t in app._bg_tasks)
+
+
+async def test_run_starts_archive_prune_task_when_library_db_enabled(app, tmp_path):
+    """The one-time orphaned-archive cleanup (ClipArchiver.prune_orphaned_archives)
+    starts in the same unconditional block as library_reimport/gdrive_queue,
+    ahead of gdrive_queue so it doesn't spend a cycle attempting uploads for
+    rows it's about to remove — see app.py's archive_prune wiring comment."""
+    import dataclasses
+
+    from blink_downloader.database import ClipDatabase
+    from blink_downloader.tracker import ClipTracker
+    from tests.conftest import TEST_DB_DSN
+
+    app._config = dataclasses.replace(app._config, enable_library_db=True)
+    app._db = ClipDatabase(TEST_DB_DSN)
+    app._storage.ensure_directory = MagicMock()
+    app._tracker = ClipTracker(tmp_path / "tracker.json")
+    app._gdrive_queue.start = AsyncMock()
+    app._gdrive_queue.stop = MagicMock()
+    app._archiver.prune_orphaned_archives = AsyncMock(return_value=0)
+
+    async def _fake_poll():
+        for t in app._bg_tasks:
+            if t.get_name() == "archive_prune":
+                await t
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+
+    await app.run()
+
+    app._archiver.prune_orphaned_archives.assert_awaited_once()
+    assert any(t.get_name() == "archive_prune" for t in app._bg_tasks)
 
 
 async def test_run_starts_live_view_sweep_task_when_media_server_enabled(app):

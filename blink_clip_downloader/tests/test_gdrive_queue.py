@@ -3,15 +3,38 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
+import time
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from blink_downloader.database import ClipDatabase
 from blink_downloader.gdrive_client import GDriveClient
-from blink_downloader.gdrive_queue import GDriveUploadQueue
+from blink_downloader.gdrive_queue import GDriveUploadQueue, _local_date_str
+
+
+@contextlib.contextmanager
+def _local_timezone(tz_name: str):
+    """Force the process's local timezone for the duration of the block —
+    see test_database.py's identical helper for why this beats depending on
+    whatever zone the test host happens to be configured with."""
+    original = os.environ.get("TZ")
+    os.environ["TZ"] = tz_name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if original is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
 
 
 def _make_client_mock(**kwargs: Any) -> MagicMock:
@@ -24,7 +47,15 @@ def _make_client_mock(**kwargs: Any) -> MagicMock:
     # test_analysis_queue.py's identical concern for ClipAnalyzer.rate_limited.
     m.rate_limited = kwargs.get("rate_limited", False)
     m.quota_exceeded = kwargs.get("quota_exceeded", False)
+    # Empty by default (matches a real, unconnected GDriveClient's own
+    # _folder_id default) so tests that don't care about the date/camera
+    # folder hierarchy skip that branch entirely instead of following
+    # get_or_create_folder_path's auto-mocked (truthy, non-None) return.
+    m.folder_id = kwargs.get("folder_id", "")
     m.upload_file = AsyncMock(return_value=kwargs.get("file_id", "drive-file-123"))
+    m.get_or_create_folder_path = AsyncMock(
+        return_value=kwargs.get("dest_folder_id", "dest-folder-id")
+    )
     return m
 
 
@@ -270,6 +301,107 @@ async def test_process_one_exception_during_upload_is_caught(
     counts = await db.get_gdrive_queue_counts()
     assert counts["failed"] == 1
     assert "network exploded" in caplog.text
+
+
+# ------------------------------------------------------------------
+# Processing — date/camera folder hierarchy
+# ------------------------------------------------------------------
+
+
+async def test_process_one_builds_date_camera_folder_structure(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """When the client has a connected backup folder, uploads are organized
+    as <date>/<camera>/<file> rather than dropped flat into that folder."""
+    src = tmp_path / "c1.mp4"
+    src.write_bytes(b"video data")
+    client = _make_client_mock(folder_id="root-folder", dest_folder_id="leaf-folder")
+    queue = _make_queue(client, db)
+    queue._running = True
+
+    clip = _add_clip("c1")
+    clip["path"] = str(src)
+    clip["timestamp"] = "2024-06-01T08:00:00+00:00"
+    await db.add_clip(clip)
+    await queue.enqueue(clip)
+
+    await queue._process_pending()
+
+    client.get_or_create_folder_path.assert_awaited_once()
+    call = client.get_or_create_folder_path.call_args
+    path_parts, root_id = call[0][0], call.kwargs["root_id"]
+    assert path_parts[1] == "Front Door"
+    assert root_id == "root-folder"
+
+    client.upload_file.assert_awaited_once()
+    assert client.upload_file.call_args.kwargs["folder_id"] == "leaf-folder"
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["completed"] == 1
+
+
+async def test_process_one_manual_folder_id_overrides_client_default(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A manual, one-off upload (Library's "Upload to Drive") targets its
+    own root folder rather than the client's connected default."""
+    src = tmp_path / "c1.mp4"
+    src.write_bytes(b"video data")
+    client = _make_client_mock(folder_id="default-root", dest_folder_id="leaf-folder")
+    queue = _make_queue(client, db)
+    queue._running = True
+
+    clip = _add_clip("c1")
+    clip["path"] = str(src)
+    await db.add_clip(clip)
+    await queue.enqueue(clip, folder_id="manual-root")
+
+    await queue._process_pending()
+
+    assert client.get_or_create_folder_path.call_args.kwargs["root_id"] == "manual-root"
+
+
+async def test_process_one_folder_structure_creation_fails_marks_failed(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    src = tmp_path / "c1.mp4"
+    src.write_bytes(b"video data")
+    client = _make_client_mock(folder_id="root-folder")
+    client.get_or_create_folder_path = AsyncMock(return_value=None)
+    queue = _make_queue(client, db)
+    queue._running = True
+
+    clip = _add_clip("c1")
+    clip["path"] = str(src)
+    await db.add_clip(clip)
+    await queue.enqueue(clip)
+
+    await queue._process_pending()
+
+    client.upload_file.assert_not_awaited()
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["failed"] == 1
+
+
+async def test_process_one_no_root_folder_skips_folder_resolution(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """No connected/override folder at all (client.folder_id == "") — upload
+    proceeds straight to the account root, same as before this feature."""
+    src = tmp_path / "c1.mp4"
+    src.write_bytes(b"video data")
+    client = _make_client_mock(folder_id="")
+    queue = _make_queue(client, db)
+    queue._running = True
+
+    clip = _add_clip("c1")
+    clip["path"] = str(src)
+    await db.add_clip(clip)
+    await queue.enqueue(clip)
+
+    await queue._process_pending()
+
+    client.get_or_create_folder_path.assert_not_awaited()
+    assert client.upload_file.call_args.kwargs["folder_id"] is None
 
 
 # ------------------------------------------------------------------
@@ -649,3 +781,47 @@ async def test_get_queue_status(db: ClipDatabase) -> None:
     status = await queue.get_queue_status()
     assert status["pending"] == 1
     assert status["connected"] is True
+
+
+# ------------------------------------------------------------------
+# _local_date_str
+# ------------------------------------------------------------------
+
+
+def test_local_date_str_uses_local_calendar_day_not_utc() -> None:
+    """A UTC timestamp that's already "tomorrow" in an east-of-UTC zone must
+    resolve to that later local date, not the earlier UTC one — this is the
+    whole reason the helper exists instead of just slicing the ISO string."""
+    with _local_timezone("Asia/Tokyo"):  # UTC+9
+        assert _local_date_str("2024-06-01T20:00:00+00:00") == "2024-06-02"
+
+
+def test_local_date_str_uses_local_calendar_day_west_of_utc() -> None:
+    with _local_timezone("America/New_York"):  # UTC-4/-5
+        assert _local_date_str("2024-06-02T02:00:00+00:00") == "2024-06-01"
+
+
+def test_local_date_str_naive_timestamp_treated_as_utc() -> None:
+    """No tzinfo on the stored timestamp (legacy rows) must not raise or
+    silently be treated as already-local — it's assumed UTC first, matching
+    how every timestamp in this codebase is written."""
+    with _local_timezone("Asia/Tokyo"):
+        assert _local_date_str("2024-06-01T20:00:00") == "2024-06-02"
+
+
+def test_local_date_str_unparseable_falls_back_to_today() -> None:
+    expected = datetime.now().astimezone().strftime("%Y-%m-%d")
+    assert _local_date_str("not-a-timestamp") == expected
+
+
+def test_local_date_str_empty_falls_back_to_today() -> None:
+    expected = datetime.now().astimezone().strftime("%Y-%m-%d")
+    assert _local_date_str("") == expected
+
+
+def test_local_date_str_recent_real_timestamp_roundtrips() -> None:
+    """Sanity check against a real "now" value end-to-end, not just the
+    synthetic boundary cases above."""
+    now_utc = datetime.now(UTC)
+    result = _local_date_str(now_utc.isoformat())
+    assert result == now_utc.astimezone().strftime("%Y-%m-%d")

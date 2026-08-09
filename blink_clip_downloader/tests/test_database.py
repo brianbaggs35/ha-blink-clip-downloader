@@ -5,17 +5,17 @@ from __future__ import annotations
 import contextlib
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
+
 from blink_downloader.database import (
     ClipDatabase,
     _affected,
     _local_day_bounds,
     _row_to_dict,
 )
-
 from tests.conftest import TEST_DB_DSN
 
 
@@ -73,18 +73,18 @@ def _local_boundary_case() -> tuple[str, bool]:
     against the process's local timezone (see database._local_day_bounds).
     Must be called inside a :func:`_local_timezone` block.
     """
-    local_now = datetime.now(timezone.utc).astimezone()
+    local_now = datetime.now(UTC).astimezone()
     offset = local_now.utcoffset() or timedelta(0)
     local_midnight_today = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     if offset < timedelta(0):
         # West of UTC: local "yesterday, 5 minutes before midnight" is
         # already far enough into UTC's next day to read as UTC-*today*.
         local_ts = local_midnight_today - timedelta(minutes=5)
-        return local_ts.astimezone(timezone.utc).isoformat(), False
+        return local_ts.astimezone(UTC).isoformat(), False
     # East of UTC: local "today, 5 minutes after midnight" hasn't caught up
     # to UTC's calendar yet and still reads as UTC-*yesterday*.
     local_ts = local_midnight_today + timedelta(minutes=5)
-    return local_ts.astimezone(timezone.utc).isoformat(), True
+    return local_ts.astimezone(UTC).isoformat(), True
 
 
 # ------------------------------------------------------------------
@@ -573,14 +573,142 @@ async def test_get_all_file_paths_empty(db: ClipDatabase) -> None:
 
 
 async def test_get_clips_to_archive(db: ClipDatabase) -> None:
-    old_ts = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
-    new_ts = datetime.now(timezone.utc).isoformat()
+    old_ts = (datetime.now(UTC) - timedelta(days=100)).isoformat()
+    new_ts = datetime.now(UTC).isoformat()
     await db.add_clip(_make_clip("old", timestamp=old_ts))
     await db.add_clip(_make_clip("new", timestamp=new_ts))
     to_archive = await db.get_clips_to_archive(older_than_days=30)
     ids = [c["id"] for c in to_archive]
     assert "old" in ids
     assert "new" not in ids
+
+
+async def test_get_clips_archive_path_filter(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.mark_archived("c1", "/archives/2024-06.zip")
+    await db.mark_archived("c2", "/archives/2024-07.zip")
+    clips = await db.get_clips(archived=True, archive_path="/archives/2024-06.zip")
+    assert [c["id"] for c in clips] == ["c1"]
+
+
+async def test_get_clips_archive_path_filter_no_match(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.mark_archived("c1", "/archives/2024-06.zip")
+    clips = await db.get_clips(archived=True, archive_path="/archives/nope.zip")
+    assert clips == []
+
+
+# ------------------------------------------------------------------
+# get_archived_clip_records / get_archive_groups
+# ------------------------------------------------------------------
+
+
+async def test_get_archived_clip_records_empty(db: ClipDatabase) -> None:
+    assert await db.get_archived_clip_records() == []
+
+
+async def test_get_archived_clip_records_excludes_unarchived(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("archived-1"))
+    await db.add_clip(_make_clip("plain-1"))
+    await db.mark_archived("archived-1", "/archives/2024-06.zip")
+    records = await db.get_archived_clip_records()
+    assert [r["id"] for r in records] == ["archived-1"]
+    assert records[0]["archive_path"] == "/archives/2024-06.zip"
+
+
+async def test_get_archived_clip_records_without_init() -> None:
+    d = ClipDatabase()
+    assert await d.get_archived_clip_records() == []
+
+
+async def test_get_archive_groups_empty(db: ClipDatabase) -> None:
+    assert await db.get_archive_groups() == []
+
+
+async def test_get_archive_groups_without_init() -> None:
+    d = ClipDatabase()
+    assert await d.get_archive_groups() == []
+
+
+async def test_get_archive_groups_excludes_unarchived_clips(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("plain-1"))
+    assert await db.get_archive_groups() == []
+
+
+async def test_get_archive_groups_aggregates_by_archive_path(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(
+        _make_clip("c1", timestamp="2024-06-01T08:00:00+00:00", size_bytes=1000)
+    )
+    await db.add_clip(
+        _make_clip("c2", timestamp="2024-06-15T08:00:00+00:00", size_bytes=2000)
+    )
+    await db.add_clip(
+        _make_clip("c3", timestamp="2024-07-01T08:00:00+00:00", size_bytes=5000)
+    )
+    await db.mark_archived("c1", "/archives/2024-06.zip")
+    await db.mark_archived("c2", "/archives/2024-06.zip")
+    await db.mark_archived("c3", "/archives/2024-07.zip")
+
+    groups = await db.get_archive_groups()
+
+    assert len(groups) == 2
+    # Newest archive (by latest_timestamp) first.
+    assert groups[0]["archive_path"] == "/archives/2024-07.zip"
+    assert groups[0]["clip_count"] == 1
+    assert groups[0]["total_size"] == 5000
+    june = next(g for g in groups if g["archive_path"] == "/archives/2024-06.zip")
+    assert june["clip_count"] == 2
+    assert june["total_size"] == 3000
+    assert june["latest_timestamp"] == "2024-06-15T08:00:00+00:00"
+
+
+async def test_get_archive_groups_camera_filter(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_clip(_make_clip("c2", camera="Driveway"))
+    await db.mark_archived("c1", "/archives/2024-06.zip")
+    await db.mark_archived("c2", "/archives/2024-06.zip")
+
+    groups = await db.get_archive_groups(camera="Front Door")
+
+    assert len(groups) == 1
+    assert groups[0]["clip_count"] == 1
+
+
+async def test_get_archive_groups_camera_filter_all_is_noop(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.add_clip(_make_clip("c2", camera="Driveway"))
+    await db.mark_archived("c1", "/archives/2024-06.zip")
+    await db.mark_archived("c2", "/archives/2024-06.zip")
+
+    groups = await db.get_archive_groups(camera="all")
+
+    assert groups[0]["clip_count"] == 2
+
+
+async def test_get_archive_groups_since_until_filter_by_latest_timestamp(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1", timestamp="2024-06-01T00:00:00+00:00"))
+    await db.add_clip(_make_clip("c2", timestamp="2024-07-01T00:00:00+00:00"))
+    await db.mark_archived("c1", "/archives/2024-06.zip")
+    await db.mark_archived("c2", "/archives/2024-07.zip")
+
+    only_june = await db.get_archive_groups(
+        since="2024-06-01T00:00:00+00:00", until="2024-06-30T23:59:59+00:00"
+    )
+    assert [g["archive_path"] for g in only_june] == ["/archives/2024-06.zip"]
+
+    from_july = await db.get_archive_groups(since="2024-07-01T00:00:00+00:00")
+    assert [g["archive_path"] for g in from_july] == ["/archives/2024-07.zip"]
 
 
 # ------------------------------------------------------------------
@@ -596,7 +724,7 @@ async def test_get_stats_empty(db: ClipDatabase) -> None:
 
 
 async def test_get_stats_counts(db: ClipDatabase) -> None:
-    today = datetime.now(timezone.utc).isoformat()
+    today = datetime.now(UTC).isoformat()
     await db.add_clip(_make_clip("c1", timestamp=today, size_bytes=2_000_000))
     await db.add_clip(_make_clip("c2", timestamp=today))
     await db.star_clip("c1", True)
@@ -651,7 +779,7 @@ async def test_get_stats_recognized_count(db: ClipDatabase) -> None:
 
 
 async def test_get_camera_stats(db: ClipDatabase) -> None:
-    today = datetime.now(timezone.utc).isoformat()
+    today = datetime.now(UTC).isoformat()
     await db.add_clip(_make_clip("c1", camera="Front Door", timestamp=today))
     await db.add_clip(_make_clip("c2", camera="Front Door", timestamp=today))
     await db.add_clip(_make_clip("c3", camera="Back Yard", timestamp=today))
@@ -666,7 +794,7 @@ async def test_get_camera_stats_merges_case_insensitively(db: ClipDatabase) -> N
     different casing (e.g. a Blink camera renamed/retyped over time) must
     fold into a single stats row, matching how get_clips already matches
     camera names case-insensitively elsewhere in this file."""
-    today = datetime.now(timezone.utc).isoformat()
+    today = datetime.now(UTC).isoformat()
     await db.add_clip(_make_clip("c1", camera="Front Door", timestamp=today))
     await db.add_clip(_make_clip("c2", camera="front door", timestamp=today))
     await db.add_clip(_make_clip("c3", camera="FRONT DOOR", timestamp=today))
@@ -762,7 +890,7 @@ async def test_get_activity_data_empty(db: ClipDatabase) -> None:
 
 
 async def test_get_activity_data_returns_rows(db: ClipDatabase) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for i in range(3):
         ts = (now - timedelta(hours=i)).isoformat()
         await db.add_clip(_make_clip(f"act{i}", timestamp=ts))
@@ -777,7 +905,7 @@ async def test_get_activity_data_returns_rows(db: ClipDatabase) -> None:
 
 
 async def test_get_activity_data_excludes_old_clips(db: ClipDatabase) -> None:
-    old_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    old_ts = (datetime.now(UTC) - timedelta(days=30)).isoformat()
     await db.add_clip(_make_clip("old_clip", timestamp=old_ts))
     data = await db.get_activity_data(days=7)
     assert data == []
@@ -789,7 +917,7 @@ async def test_get_activity_data_counts_correctly(db: ClipDatabase) -> None:
     # pinned-UTC session — so the expected bucket must be derived from the
     # local wall clock too, not base's own UTC hour/date, or this test would
     # only pass by coincidence in a UTC-local test environment.
-    base = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     local_base = base.astimezone()
     today_str = local_base.date().isoformat()
     hour = local_base.hour
@@ -818,7 +946,7 @@ async def test_get_activity_data_buckets_by_local_calendar_day(
         # Sanity check the fixture actually landed on the day it claims to —
         # if this ever drifted the test below would trivially pass for the
         # wrong reason.
-        today_local = datetime.now(timezone.utc).astimezone().date().isoformat()
+        today_local = datetime.now(UTC).astimezone().date().isoformat()
     matching = [r for r in data if r["date"] == local_date]
     assert len(matching) == 1
     assert matching[0]["count"] == 1
@@ -923,7 +1051,7 @@ async def test_get_suspicious_clips_period_includes_current(
     """A suspicious clip analyzed right now falls inside every rolling
     period bucket (today/week/month all start at or before local midnight
     today and are open-ended through now)."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.add_clip(_make_clip("recent"))
     await db.add_analysis_result(
         _make_analysis("recent", is_suspicious=True, analyzed_at=now)
@@ -966,7 +1094,7 @@ async def test_get_suspicious_clips_period_yesterday(db: ClipDatabase) -> None:
         _make_analysis(
             "today",
             is_suspicious=True,
-            analyzed_at=datetime.now(timezone.utc).isoformat(),
+            analyzed_at=datetime.now(UTC).isoformat(),
         )
     )
 
@@ -1010,7 +1138,7 @@ async def test_get_analysis_stats(db: ClipDatabase) -> None:
 
 
 async def test_get_analysis_stats_frames_analyzed_today(db: ClipDatabase) -> None:
-    today = datetime.now(timezone.utc).isoformat()
+    today = datetime.now(UTC).isoformat()
     await db.add_clip(_make_clip("c1"))
     await db.add_clip(_make_clip("c2"))
     await db.add_analysis_result(_make_analysis("c1", frame_count=4, analyzed_at=today))
@@ -1530,7 +1658,7 @@ def _make_analysis_tokens(
     tokens_prompt: int = 0,
     tokens_completion: int = 0,
 ) -> dict:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     return {
         "clip_id": clip_id,
@@ -1542,7 +1670,7 @@ def _make_analysis_tokens(
         "summary": "ok",
         "frame_count": 1,
         "analysis_duration": 0.5,
-        "analyzed_at": datetime.now(timezone.utc).isoformat(),
+        "analyzed_at": datetime.now(UTC).isoformat(),
         "tokens_prompt": tokens_prompt,
         "tokens_completion": tokens_completion,
     }
@@ -1786,7 +1914,7 @@ async def test_get_daily_usage_stats_separates_different_days(
 ) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_clip(_make_clip("c2"))
-    today = datetime.now(timezone.utc)
+    today = datetime.now(UTC)
     row_today = _make_analysis_tokens("c1", "llava:7b", 100, 20)
     row_today["analyzed_at"] = today.isoformat()
     row_yesterday = _make_analysis_tokens("c2", "llava:7b", 50, 10)
@@ -1812,9 +1940,7 @@ async def test_get_daily_usage_stats_excludes_data_outside_window(
 ) -> None:
     await db.add_clip(_make_clip("c1"))
     old_row = _make_analysis_tokens("c1", "llava:7b", 100, 20)
-    old_row["analyzed_at"] = (
-        datetime.now(timezone.utc) - timedelta(days=30)
-    ).isoformat()
+    old_row["analyzed_at"] = (datetime.now(UTC) - timedelta(days=30)).isoformat()
     await db.add_analysis_result(old_row)
 
     assert await db.get_daily_usage_stats(days=14) == []

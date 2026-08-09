@@ -6,11 +6,12 @@ import json
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import aiohttp
 import pytest
-from blink_downloader.gdrive_client import GDriveClient
+
+from blink_downloader.gdrive_client import DriveFolder, GDriveClient
 
 
 def _mock_response(
@@ -688,6 +689,180 @@ def test_select_folder_persists(client: GDriveClient) -> None:
     saved = json.loads(CREDENTIALS_FILE.read_text())
     assert saved["folder_id"] == "f1"
     assert saved["folder_name"] == "Blink Clips"
+
+
+# ------------------------------------------------------------------
+# get_or_create_folder_path
+#
+# list_folders/create_folder are exercised at the HTTP level above — these
+# tests mock the client's own already-tested methods instead, to isolate
+# what's actually new here: the path-walking/caching orchestration.
+# ------------------------------------------------------------------
+
+
+async def test_get_or_create_folder_path_no_root_returns_none(
+    client: GDriveClient,
+) -> None:
+    """No root_id argument and no connected default folder — nothing to
+    resolve under."""
+    assert await client.get_or_create_folder_path(["2026-06-05"]) is None
+
+
+async def test_get_or_create_folder_path_uses_connected_folder_as_default_root(
+    client: GDriveClient,
+) -> None:
+    client.select_folder("connected-root", "Blink Clips")
+    client.list_folders = AsyncMock(return_value=[])
+    client.create_folder = AsyncMock(
+        return_value=DriveFolder(id="new-id", name="2026-06-05", modified_time="")
+    )
+
+    result = await client.get_or_create_folder_path(["2026-06-05"])
+
+    assert result == "new-id"
+    client.list_folders.assert_awaited_once_with("connected-root")
+    client.create_folder.assert_awaited_once_with(
+        "2026-06-05", parent_id="connected-root"
+    )
+
+
+async def test_get_or_create_folder_path_explicit_root_overrides_connected(
+    client: GDriveClient,
+) -> None:
+    client.select_folder("connected-root", "Blink Clips")
+    client.list_folders = AsyncMock(return_value=[])
+    client.create_folder = AsyncMock(
+        return_value=DriveFolder(id="new-id", name="2026-06-05", modified_time="")
+    )
+
+    await client.get_or_create_folder_path(["2026-06-05"], root_id="explicit-root")
+
+    client.list_folders.assert_awaited_once_with("explicit-root")
+
+
+async def test_get_or_create_folder_path_reuses_existing_folder(
+    client: GDriveClient,
+) -> None:
+    """A folder with the target name already exists under the parent — must
+    not create a duplicate."""
+    client.list_folders = AsyncMock(
+        return_value=[
+            DriveFolder(id="other-id", name="Not It", modified_time=""),
+            DriveFolder(id="existing-id", name="Driveway", modified_time=""),
+        ]
+    )
+    client.create_folder = AsyncMock()
+
+    result = await client.get_or_create_folder_path(["Driveway"], root_id="root")
+
+    assert result == "existing-id"
+    client.create_folder.assert_not_awaited()
+
+
+async def test_get_or_create_folder_path_creates_nested_path_in_order(
+    client: GDriveClient,
+) -> None:
+    """A multi-part path (date/camera) walks one level at a time, each new
+    folder created under the previous level's freshly-created id."""
+    client.list_folders = AsyncMock(return_value=[])
+    client.create_folder = AsyncMock(
+        side_effect=[
+            DriveFolder(id="date-id", name="2026-06-05", modified_time=""),
+            DriveFolder(id="camera-id", name="Driveway", modified_time=""),
+        ]
+    )
+
+    result = await client.get_or_create_folder_path(
+        ["2026-06-05", "Driveway"], root_id="root"
+    )
+
+    assert result == "camera-id"
+    assert client.create_folder.call_args_list == [
+        call("2026-06-05", parent_id="root"),
+        call("Driveway", parent_id="date-id"),
+    ]
+
+
+async def test_get_or_create_folder_path_create_failure_returns_none(
+    client: GDriveClient,
+) -> None:
+    client.list_folders = AsyncMock(return_value=[])
+    client.create_folder = AsyncMock(return_value=None)
+
+    result = await client.get_or_create_folder_path(["2026-06-05"], root_id="root")
+
+    assert result is None
+
+
+async def test_get_or_create_folder_path_create_failure_on_second_level_returns_none(
+    client: GDriveClient,
+) -> None:
+    """The first level resolves fine; the second (camera) level fails to
+    create — the whole call must fail rather than return a partial path."""
+    client.list_folders = AsyncMock(return_value=[])
+    client.create_folder = AsyncMock(
+        side_effect=[
+            DriveFolder(id="date-id", name="2026-06-05", modified_time=""),
+            None,
+        ]
+    )
+
+    result = await client.get_or_create_folder_path(
+        ["2026-06-05", "Driveway"], root_id="root"
+    )
+
+    assert result is None
+
+
+async def test_get_or_create_folder_path_caches_repeat_lookups(
+    client: GDriveClient,
+) -> None:
+    """The same date/camera pair resolved twice (two clips backed up the
+    same day) must hit the cache on the second call, not Drive again."""
+    client.list_folders = AsyncMock(return_value=[])
+    client.create_folder = AsyncMock(
+        side_effect=[
+            DriveFolder(id="date-id", name="2026-06-05", modified_time=""),
+            DriveFolder(id="camera-id", name="Driveway", modified_time=""),
+        ]
+    )
+
+    first = await client.get_or_create_folder_path(
+        ["2026-06-05", "Driveway"], root_id="root"
+    )
+    second = await client.get_or_create_folder_path(
+        ["2026-06-05", "Driveway"], root_id="root"
+    )
+
+    assert first == second == "camera-id"
+    assert client.list_folders.await_count == 2  # only the first call's two levels
+    assert client.create_folder.await_count == 2
+
+
+async def test_get_or_create_folder_path_cache_scoped_per_parent(
+    client: GDriveClient,
+) -> None:
+    """Same camera name under two different dates must not collide in the
+    cache — each date's "Driveway" subfolder is a distinct Drive folder."""
+    client.list_folders = AsyncMock(return_value=[])
+    client.create_folder = AsyncMock(
+        side_effect=[
+            DriveFolder(id="date1-id", name="2026-06-05", modified_time=""),
+            DriveFolder(id="cam1-id", name="Driveway", modified_time=""),
+            DriveFolder(id="date2-id", name="2026-06-06", modified_time=""),
+            DriveFolder(id="cam2-id", name="Driveway", modified_time=""),
+        ]
+    )
+
+    first = await client.get_or_create_folder_path(
+        ["2026-06-05", "Driveway"], root_id="root"
+    )
+    second = await client.get_or_create_folder_path(
+        ["2026-06-06", "Driveway"], root_id="root"
+    )
+
+    assert first == "cam1-id"
+    assert second == "cam2-id"
 
 
 # ------------------------------------------------------------------

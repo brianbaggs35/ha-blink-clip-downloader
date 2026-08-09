@@ -6,7 +6,7 @@ import asyncio
 import json
 import sys
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -537,9 +537,9 @@ async def test_activity_empty(client: TestClient) -> None:
 
 
 async def test_activity_default_days(client: TestClient, db: ClipDatabase) -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     await db.add_clip(_make_clip("act1", timestamp=ts))
     resp = await client.get("/api/activity?days=1")
     data = await resp.json()
@@ -559,9 +559,9 @@ async def test_activity_zero_or_negative_days_clamped_to_one(
     today/the future and silently return nothing — it should be clamped up
     to 1 (today), matching how limit/offset are clamped elsewhere in this
     file, so a clip recorded today still shows up."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     await db.add_clip(_make_clip("act-clamped", timestamp=ts))
 
     resp_zero = await client.get("/api/activity?days=0")
@@ -1350,7 +1350,7 @@ async def test_ai_usage_daily_totals_for_today(
     client: TestClient, db: ClipDatabase
 ) -> None:
     await db.add_clip(_make_clip("u1"))
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.add_analysis_result(
         {
             "clip_id": "u1",
@@ -1376,7 +1376,7 @@ async def test_ai_usage_daily_totals_for_today(
     # Bucketed by local calendar day (see database._local_utc_offset_sql),
     # not the UTC date — this host's real UTC offset makes the two diverge
     # for part of each day, which is exactly the bug this asserts against.
-    assert row["day"] == datetime.now(timezone.utc).astimezone().date().isoformat()
+    assert row["day"] == datetime.now(UTC).astimezone().date().isoformat()
     assert row["analyses"] == 1
     assert row["tokens_total"] == 2_000_000
     assert row["cost"] == pytest.approx(0.15 + 0.60)
@@ -1387,7 +1387,7 @@ async def test_ai_usage_daily_sums_multiple_models_same_day(
 ) -> None:
     await db.add_clip(_make_clip("u1"))
     await db.add_clip(_make_clip("u2"))
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     for clip_id, model in (("u1", "gpt-4o-mini"), ("u2", "llava:7b")):
         await db.add_analysis_result(
             {
@@ -5615,6 +5615,70 @@ async def test_feedback_untrained_count_reflects_pending_rows(
         assert data["count"] == 2
     finally:
         await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# Storage tab: archived clip groups
+# ---------------------------------------------------------------------------
+
+
+async def test_storage_archives_empty(client: TestClient) -> None:
+    resp = await client.get("/api/storage/archives")
+    assert resp.status == 200
+    assert await resp.json() == []
+
+
+async def test_storage_archives_returns_groups(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("a1", timestamp="2024-06-01T08:00:00+00:00"))
+    await db.add_clip(_make_clip("a2", timestamp="2024-06-15T08:00:00+00:00"))
+    await db.mark_archived("a1", "/archives/2024-06.zip")
+    await db.mark_archived("a2", "/archives/2024-06.zip")
+
+    resp = await client.get("/api/storage/archives")
+    data = await resp.json()
+
+    assert len(data) == 1
+    assert data[0]["archive_path"] == "/archives/2024-06.zip"
+    assert data[0]["clip_count"] == 2
+
+
+async def test_storage_archives_excludes_unarchived_clips(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("plain"))
+    resp = await client.get("/api/storage/archives")
+    assert await resp.json() == []
+
+
+async def test_storage_archives_camera_filter(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("a1", camera="Front Door"))
+    await db.add_clip(_make_clip("a2", camera="Driveway"))
+    await db.mark_archived("a1", "/archives/2024-06.zip")
+    await db.mark_archived("a2", "/archives/2024-06.zip")
+
+    resp = await client.get("/api/storage/archives?camera=Front+Door")
+    data = await resp.json()
+
+    assert len(data) == 1
+    assert data[0]["clip_count"] == 1
+
+
+async def test_storage_archives_since_until_filter(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("june", timestamp="2024-06-01T00:00:00+00:00"))
+    await db.add_clip(_make_clip("july", timestamp="2024-07-01T00:00:00+00:00"))
+    await db.mark_archived("june", "/archives/2024-06.zip")
+    await db.mark_archived("july", "/archives/2024-07.zip")
+
+    resp = await client.get("/api/storage/archives?since=2024-07-01T00:00:00%2B00:00")
+    data = await resp.json()
+
+    assert [g["archive_path"] for g in data] == ["/archives/2024-07.zip"]
 
 
 # ---------------------------------------------------------------------------

@@ -362,6 +362,7 @@ class MediaServer:
         )
 
         # Storage tab: archived clips + Google Drive backup
+        app.router.add_get("/api/storage/archives", self._handle_storage_archives)
         app.router.add_get(
             "/api/storage/gdrive/settings", self._handle_gdrive_settings_get
         )
@@ -478,6 +479,7 @@ class MediaServer:
             tag=q.get("tag") or None,
             search=q.get("search") or None,
             archived=archived,
+            archive_path=q.get("archive_path") or None,
             sort=q.get("sort") or "newest",
             limit=limit,
             offset=offset,
@@ -665,7 +667,7 @@ class MediaServer:
 
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.warning("ffmpeg timed out extracting frames for %s", clip_id)
             proc.kill()
             await proc.wait()
@@ -1275,7 +1277,7 @@ class MediaServer:
                 else:
                     _moondream_install_state = {"status": "failed", "log": log}
                     _LOGGER.warning("moondream install failed (rc=%d)", proc.returncode)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _moondream_install_state = {
                     "status": "failed",
                     "log": "Installation timed out after 15 minutes",
@@ -1628,6 +1630,24 @@ class MediaServer:
         # stable per camera, so a stale browser cache would otherwise keep
         # showing the previous zone's frame after a new save overwrites it.
         return web.FileResponse(snapshot_path, headers={"Cache-Control": "no-cache"})
+
+    async def _handle_storage_archives(self, request: web.Request) -> web.Response:
+        """List distinct ZIP archives (Storage tab's Archived Clips list).
+
+        Grouped server-side rather than left to the frontend to derive from
+        a flat clip list — a library can have thousands of archived clips
+        but only a few dozen distinct monthly ZIPs, so this is both cheaper
+        to fetch and the only way to give the frontend an accurate total
+        for real numbered pagination (``/api/clips`` has no total-count
+        response at all).
+        """
+        q = request.rel_url.query
+        groups = await self._db.get_archive_groups(
+            camera=q.get("camera") or None,
+            since=q.get("since") or None,
+            until=q.get("until") or None,
+        )
+        return web.json_response(groups)
 
     # ------------------------------------------------------------------
     # Storage tab: Google Drive backup

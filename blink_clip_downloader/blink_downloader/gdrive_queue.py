@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,27 @@ if TYPE_CHECKING:
     from .notifier import HANotifier
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _local_date_str(timestamp: str) -> str:
+    """Best-effort local calendar date (``YYYY-MM-DD``) for a clip's stored
+    (UTC) timestamp — the Drive backup folder structure
+    (``<date>/<camera>/<file>``, see ``_process_one`` below) uses the date a
+    person would actually call "today", not the UTC date, which can differ
+    by a day right around midnight (same reasoning as database.py's
+    ``_local_day_bounds``). Falls back to today's local date for a
+    missing/unparseable timestamp rather than failing the upload outright —
+    an approximately-right folder beats no backup at all.
+    """
+    if timestamp:
+        try:
+            dt = datetime.fromisoformat(timestamp)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+            return dt.astimezone().strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return datetime.now().astimezone().strftime("%Y-%m-%d")
 
 
 class GDriveUploadQueue:
@@ -171,9 +193,35 @@ class GDriveUploadQueue:
                     )
                     return
 
-            remote_name = f"{clip.get('camera', 'unknown')}_{upload_path.name}"
+            # Organize backups as <date>/<camera>/<file> instead of dumping
+            # everything flat into one folder — otherwise unnavigable once
+            # a library has more than a handful of clips in Drive. Root is
+            # a manual one-off target if this was queued via Library's
+            # "Upload to Drive" bulk action (item["folder_id"]), else the
+            # connected default backup folder — same precedence upload_file
+            # itself already uses, just resolved a level earlier so the
+            # date/camera subfolders land under the *right* root either way.
+            root_folder = item.get("folder_id") or self._client.folder_id
+            dest_folder_id: str | None = None
+            if root_folder:
+                camera = str(clip.get("camera") or "unknown")
+                date_str = _local_date_str(str(clip.get("timestamp", "")))
+                dest_folder_id = await self._client.get_or_create_folder_path(
+                    [date_str, camera], root_id=root_folder
+                )
+                if dest_folder_id is None:
+                    await self._db.update_gdrive_queue_status(
+                        clip_id,
+                        "failed",
+                        error="Could not create Google Drive folder structure",
+                    )
+                    return
+
+            # The camera prefix on the filename itself is redundant now that
+            # the camera is already its own folder level — drop it.
+            remote_name = upload_path.name
             file_id = await self._client.upload_file(
-                upload_path, remote_name, folder_id=item.get("folder_id") or None
+                upload_path, remote_name, folder_id=dest_folder_id
             )
 
             if not file_id:

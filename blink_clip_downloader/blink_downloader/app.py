@@ -8,7 +8,7 @@ import logging
 import os
 import signal
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -464,6 +464,17 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     self._backfill_clip_durations(), name="duration_backfill"
                 )
             )
+            # One-time cleanup of clip rows left orphaned by a since-fixed
+            # archiver.py bug (see ClipArchiver.prune_orphaned_archives) —
+            # runs before gdrive_queue starts below so it doesn't spend a
+            # cycle attempting uploads for rows this removes. Unconditional
+            # regardless of archive_enabled: this repairs existing bad data
+            # rather than depending on archiving being on right now.
+            self._bg_tasks.append(
+                asyncio.create_task(
+                    self._archiver.prune_orphaned_archives(), name="archive_prune"
+                )
+            )
             # Started unconditionally alongside the tasks above, not gated
             # behind Blink auth like AnalysisQueue (_finish_startup below) —
             # Drive backup only needs already-downloaded clips and the DB,
@@ -798,7 +809,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         tracker_stats = self._tracker.stats
         disk = self._storage.disk_stats()
-        last_dl = datetime.now(timezone.utc).isoformat()
+        last_dl = datetime.now(UTC).isoformat()
         self._media_server.extra_status["last_download"] = last_dl
         # Keep disk stats fresh so the Storage card in the web UI is accurate.
         self._media_server.extra_status["disk"] = disk
@@ -812,7 +823,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 "session_downloads": self._session_downloads,
                 "used_mb": disk.get("used_mb", 0),
                 "free_gb": disk.get("free_gb", 0),
-                "last_download": datetime.now(timezone.utc).isoformat(),
+                "last_download": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -857,11 +868,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         if self._config.enable_library_db:
             try:
                 ts = str(clip.get("timestamp") or "")
-                hour = (
-                    datetime.fromisoformat(ts.replace("Z", "+00:00")).hour
-                    if ts
-                    else datetime.now(timezone.utc).hour
-                )
+                hour = datetime.fromisoformat(ts).hour if ts else datetime.now(UTC).hour
                 await self._db.record_clip_baseline(
                     camera=str(clip.get("camera") or ""),
                     hour=hour,
@@ -957,7 +964,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
     def _write_stats(self) -> None:
         payload: dict[str, Any] = {
-            "last_poll": datetime.now(timezone.utc).isoformat(),
+            "last_poll": datetime.now(UTC).isoformat(),
             "session_downloads": self._session_downloads,
             **self._tracker.stats,
             "disk": self._storage.disk_stats(),

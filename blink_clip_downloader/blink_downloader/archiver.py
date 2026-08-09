@@ -59,6 +59,46 @@ class ClipArchiver:
         _LOGGER.info("Archive run complete: %d file(s) archived", len(archived))
         return archived
 
+    async def prune_orphaned_archives(self) -> int:
+        """Remove clip rows left orphaned by a since-fixed archiving bug.
+
+        Before this fix, a clip whose source file was already gone by the
+        time ``_archive_month`` reached it got marked ``archived=True``
+        with an ``archive_path`` pointing at a ZIP that was never actually
+        created (see the comment in ``_archive_month`` above) — invisible
+        until something later tried to read that ZIP and failed, most
+        visibly as "Archive ... is missing" Google Drive upload failures.
+        Run once at startup (see app.py) regardless of whether archiving is
+        currently enabled — this cleans up existing bad rows rather than
+        preventing new ones, which the ``_archive_month`` fix already does.
+        The clip's data is confirmed unrecoverable at this point (no file,
+        no ZIP), so the row is deleted rather than left around as a phantom
+        entry the Storage tab and Drive backup would keep failing on.
+        Returns the number of rows removed.
+        """
+        records = await self._db.get_archived_clip_records()
+        removed = 0
+        for record in records:
+            archive_path = str(record.get("archive_path") or "")
+            if archive_path and Path(archive_path).exists():
+                continue
+            try:
+                if await self._db.delete_clip(str(record["id"])):
+                    removed += 1
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Could not remove orphaned archived clip %s: %s",
+                    record.get("id"),
+                    exc,
+                )
+        if removed:
+            _LOGGER.warning(
+                "Removed %d archived clip record(s) whose ZIP archive no "
+                "longer exists on disk — their data was unrecoverable",
+                removed,
+            )
+        return removed
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -72,16 +112,28 @@ class ClipArchiver:
         for clip in clips:
             src = Path(str(clip.get("file_path", "")))
             if not src.exists():
-                # File already gone — just mark DB record as archived. A DB
-                # failure here must not abort the rest of the batch (see the
-                # matching comment below) — skip this clip and let the next
-                # archive run retry it.
+                # File already gone before we ever got to compress it —
+                # there's nothing left to write into the ZIP. Marking this
+                # clip archived with zip_path here (the old behavior) was a
+                # data-integrity bug: zip_path is only ever actually created
+                # a few lines below, inside the branch that requires a real
+                # source file, so a month whose clips *all* hit this branch
+                # left every one of them pointing at a ZIP that was never
+                # created — surfacing later as "Archive ... is missing"
+                # Google Drive upload failures (see
+                # GDriveUploadQueue._extract_archived_clip). The clip's data
+                # is unrecoverable at this point, so remove the row entirely
+                # rather than keep a phantom archive reference around —
+                # matches how retention/gdrive_queue.py already treat a
+                # confirmed-gone source file elsewhere in this codebase
+                # (delete the record, don't invent a fake success state).
+                # See ClipArchiver.prune_orphaned_archives() for the
+                # one-time cleanup of rows this bug already produced.
                 try:
-                    await self._db.mark_archived(str(clip["id"]), str(zip_path))
-                    archived.append(clip)
+                    await self._db.delete_clip(str(clip["id"]))
                 except Exception as exc:  # noqa: BLE001
                     _LOGGER.warning(
-                        "Could not mark already-missing clip %s as archived: %s",
+                        "Could not remove already-missing clip %s: %s",
                         clip.get("id"),
                         exc,
                     )
