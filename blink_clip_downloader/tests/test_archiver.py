@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call
 
+import pytest
+
 from blink_downloader.archiver import ClipArchiver
 
 
@@ -197,6 +199,125 @@ async def test_run_unknown_timestamp_uses_unknown_bucket(tmp_path: Path) -> None
 # ------------------------------------------------------------------
 # Coverage gap tests
 # ------------------------------------------------------------------
+
+
+async def test_quarantine_if_corrupted_noop_when_file_does_not_exist(
+    tmp_path: Path,
+) -> None:
+    """The normal case for a brand-new month's archive — nothing to do,
+    must not raise just because there's nothing there yet."""
+    from blink_downloader.archiver import ClipArchiver
+
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    ClipArchiver._quarantine_if_corrupted(zip_path, "2024-06")
+    assert not zip_path.exists()
+
+
+async def test_quarantine_if_corrupted_leaves_valid_zip_alone(tmp_path: Path) -> None:
+    from blink_downloader.archiver import ClipArchiver
+
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Cam/clip1.mp4", b"data")
+
+    ClipArchiver._quarantine_if_corrupted(zip_path, "2024-06")
+
+    assert zip_path.exists()
+    with zipfile.ZipFile(zip_path) as zf:
+        assert zf.namelist() == ["Cam/clip1.mp4"]
+    assert list(tmp_path.glob("*.corrupted-*")) == []
+
+
+async def test_quarantine_if_corrupted_moves_aside_unreadable_zip(
+    tmp_path: Path,
+) -> None:
+    """The actual bug this guards against: zipfile.ZipFile(path, "a") does
+    not reliably raise on a truncated/corrupted file — it can silently
+    treat it as empty and discard every entry already inside on the very
+    next successful-looking write. Catching this proactively, before any
+    write is attempted, is the only reliable way to avoid that."""
+    from blink_downloader.archiver import ClipArchiver
+
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Cam/clip1.mp4", b"x" * 10_000)
+    # Truncate well past the point a real crash-mid-write would - this is
+    # confirmed (via direct testing against CPython's zipfile module) to
+    # NOT raise BadZipFile on a subsequent append, only to silently drop
+    # the existing entry - exactly the failure mode being guarded against.
+    size = zip_path.stat().st_size
+    with zip_path.open("r+b") as f:
+        f.truncate(size // 2)
+    assert not zipfile.is_zipfile(zip_path)
+
+    ClipArchiver._quarantine_if_corrupted(zip_path, "2024-06")
+
+    assert not zip_path.exists()
+    quarantined = list(tmp_path.glob("blink_archive_2024-06.zip.corrupted-*"))
+    assert len(quarantined) == 1
+
+
+async def test_quarantine_if_corrupted_rename_failure_is_logged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from unittest.mock import patch
+
+    from blink_downloader.archiver import ClipArchiver
+
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    zip_path.write_bytes(b"not a zip")
+
+    with (
+        patch("pathlib.Path.rename", side_effect=OSError("permission denied")),
+        caplog.at_level("WARNING"),
+    ):
+        ClipArchiver._quarantine_if_corrupted(zip_path, "2024-06")
+
+    assert zip_path.exists()  # rename failed, original left in place
+    assert "could not be quarantined" in caplog.text
+
+
+async def test_run_recovers_from_corrupted_archive_for_remaining_clips(
+    tmp_path: Path,
+) -> None:
+    """Integration test for the actual reported bug: a corrupted month's
+    archive must not silently block every clip for that month forever -
+    it gets quarantined and a fresh archive picks up where a healthy one
+    would have."""
+    archives_dir = tmp_path / "archives"
+    archives_dir.mkdir()
+    zip_path = archives_dir / "blink_archive_2024-06.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Cam/already-archived.mp4", b"x" * 10_000)
+    size = zip_path.stat().st_size
+    with zip_path.open("r+b") as f:
+        f.truncate(size // 2)
+
+    clips = []
+    for i in range(3):
+        src = tmp_path / f"clip{i}.mp4"
+        src.write_bytes(f"data{i}".encode())
+        clips.append(
+            {
+                "id": f"c{i}",
+                "camera": "Cam",
+                "file_path": str(src),
+                "timestamp": "2024-06-01T00:00:00+00:00",
+            }
+        )
+    archiver, db = _make_archiver(tmp_path, clips=clips)
+
+    result = await archiver.run()
+
+    assert len(result) == 3
+    assert db.mark_archived.await_count == 3
+    assert zipfile.is_zipfile(zip_path)
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+    assert len(names) == 3
+    assert all(f"clip{i}.mp4" in " ".join(names) for i in range(3))
+    quarantined = list(archives_dir.glob("blink_archive_2024-06.zip.corrupted-*"))
+    assert len(quarantined) == 1
 
 
 async def test_archive_month_bad_zip_file_is_logged(tmp_path: Path) -> None:

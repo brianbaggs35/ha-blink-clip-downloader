@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import zipfile
 from collections import defaultdict
 from pathlib import Path
@@ -107,6 +108,7 @@ class ClipArchiver:
         self, month: str, clips: list[dict]
     ) -> list[dict[str, Any]]:
         zip_path = self._archive_dir / f"blink_archive_{month}.zip"
+        self._quarantine_if_corrupted(zip_path, month)
         archived: list[dict[str, Any]] = []
 
         for clip in clips:
@@ -139,6 +141,7 @@ class ClipArchiver:
                     )
                 continue
 
+            arcname = f"{clip.get('camera', 'unknown')}/{src.name}"
             try:
                 # Open/close the archive once per clip instead of keeping one
                 # ZipFile open across the whole month's batch: the central
@@ -147,9 +150,15 @@ class ClipArchiver:
                 # and its already-unlinked source clips unrecoverable. Closing
                 # after every file finalizes the central directory each time,
                 # so a crash can lose at most the one clip in flight.
+                #
+                # Corruption itself is handled proactively, above, by
+                # _quarantine_if_corrupted rather than by catching
+                # BadZipFile here: appending to a corrupted file does *not*
+                # reliably raise it (see that method's docstring) — it can
+                # silently discard every previously-archived entry instead
+                # and report success, which no exception handler here could
+                # ever catch.
                 with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_DEFLATED) as zf:
-                    # Store relative name to avoid path collisions in the ZIP.
-                    arcname = f"{clip.get('camera', 'unknown')}/{src.name}"
                     zf.write(src, arcname)
             except (zipfile.BadZipFile, OSError) as exc:
                 _LOGGER.warning("Could not archive %s: %s", src, exc)
@@ -188,3 +197,53 @@ class ClipArchiver:
             _LOGGER.debug("Archived %s → %s", src.name, zip_path.name)
 
         return archived
+
+    @staticmethod
+    def _quarantine_if_corrupted(zip_path: Path, month: str) -> None:
+        """If *zip_path* already exists but isn't a readable ZIP, move it
+        aside so the next write starts a fresh archive instead of silently
+        losing every clip already inside it.
+
+        This is deliberately proactive, not a response to catching
+        ``zipfile.BadZipFile`` around the per-clip write below: Python's
+        ``zipfile.ZipFile(path, "a")`` does **not** reliably raise that (or
+        any) exception when *path* exists but is truncated/corrupted
+        (e.g. left mid-write by an ungraceful container stop, despite the
+        per-clip open/close elsewhere in this class minimizing that
+        window) — verified directly against CPython's zipfile module.
+        Instead it silently treats the unreadable file as having zero
+        existing entries and happily "succeeds", so the very next
+        successful-looking archive run overwrites the central directory
+        and permanently discards every clip archived before the
+        corruption — with no exception, no warning, nothing — since their
+        source files were already deleted from disk once
+        ``mark_archived`` recorded them. Only ``zipfile.is_zipfile()``
+        actually opens and validates the file's structure, so it's the
+        only reliable way to catch this before it causes silent data
+        loss rather than after.
+        """
+        if not zip_path.exists() or zipfile.is_zipfile(zip_path):
+            return
+        quarantine_path = zip_path.with_name(
+            f"{zip_path.name}.corrupted-{int(time.time())}"
+        )
+        try:
+            zip_path.rename(quarantine_path)
+        except OSError as exc:
+            _LOGGER.warning(
+                "%s is corrupted (unreadable as a ZIP) but could not be "
+                "quarantined: %s — archiving for %s will keep failing "
+                "until this is resolved manually",
+                zip_path,
+                exc,
+                month,
+            )
+            return
+        _LOGGER.warning(
+            "%s was corrupted and unreadable as a ZIP — quarantined to %s "
+            "(any clips already inside it are unrecoverable) and starting "
+            "a fresh archive for %s",
+            zip_path,
+            quarantine_path.name,
+            month,
+        )
