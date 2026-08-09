@@ -842,6 +842,51 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('shows used storage in GB (2 decimals) once it passes 1GB, instead of a large raw MB number', async () => {
+    mockFetch({
+      '/api/stats': {
+        ...STATS,
+        disk: {
+          used_bytes: 15_259_402_240,
+          used_mb: 14552.5,
+          free_bytes: 200,
+          free_gb: 1,
+          total_bytes: 300,
+          total_gb: 1,
+          quota_bytes: 171_798_691_840,
+          quota_gb: 160,
+        },
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    expect(wrapper.text()).toContain('14.21 GB / 160 GB')
+    expect(wrapper.text()).not.toContain('14552.5 MB')
+    wrapper.unmount()
+  })
+
+  it('keeps used storage in MB just under the 1GB boundary', async () => {
+    mockFetch({
+      '/api/stats': {
+        ...STATS,
+        disk: {
+          used_bytes: 1,
+          used_mb: 1023,
+          free_bytes: 200,
+          free_gb: 1,
+          total_bytes: 300,
+          total_gb: 1,
+          quota_bytes: 0,
+          quota_gb: 0,
+        },
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    expect(wrapper.text()).toContain('1023 MB')
+    wrapper.unmount()
+  })
+
   it('deselecting a card removes it from the selection', async () => {
     mockFetch()
     const wrapper = mountLibrary()

@@ -123,6 +123,15 @@ const diskClass = computed(() => {
   if (pct > 70) return 'warn'
   return ''
 })
+// Below 1GB used, `used_mb` (0 decimals from the backend, see storage.py)
+// reads fine as-is; past 1GB it grows into 4-5+ digit MB values (e.g.
+// "14552.5 MB") that are far harder to scan than "14.55 GB" — matches the
+// GB formatting already used for quota/free space right next to it.
+const usedStorageLabel = computed(() => {
+  const mb = stats.value?.disk?.used_mb ?? 0
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`
+  return `${mb} MB`
+})
 function sinceDate(range: string): string | null {
   const d = new Date()
   if (range === 'today') d.setHours(0, 0, 0, 0)
@@ -510,7 +519,7 @@ onUnmounted(() => {
       <div v-if="stats?.disk" class="lib-stat lib-stat-storage" :title="`${stats.disk.free_gb} GB free on disk`">
         <span class="lib-stat-label">💾 Storage</span>
         <span class="lib-stat-value lib-stat-storage-value">
-          {{ stats.disk.used_mb }} MB<template v-if="stats.disk.quota_bytes"> / {{ stats.disk.quota_gb }} GB</template>
+          {{ usedStorageLabel }}<template v-if="stats.disk.quota_bytes"> / {{ stats.disk.quota_gb }} GB</template>
         </span>
         <ProgressBar
           v-if="stats.disk.quota_bytes"
