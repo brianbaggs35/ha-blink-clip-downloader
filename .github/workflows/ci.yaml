@@ -218,7 +218,49 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage-report
-          path: blink_clip_downloader/frontend/coverage/cobertura-coverage.xml
+          # cobertura-coverage.xml is for Codecov (uploaded above); lcov.info
+          # is for the sonarqube job's JS/TS analyzer.
+          path: |
+            blink_clip_downloader/frontend/coverage/cobertura-coverage.xml
+            blink_clip_downloader/frontend/coverage/lcov.info
+
+  sonarqube:
+    name: SonarCloud Scan
+    runs-on: ubuntu-latest
+    needs: test
+    # A PR from a fork doesn't have access to repository secrets (including
+    # SONAR_TOKEN) - without this guard the scan would fail outright on
+    # every external contribution instead of just being skipped.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # Full history, not the default shallow clone - SonarCloud uses it
+          # for blame data (issue age/author) and new-code-since-baseline
+          # comparisons.
+          fetch-depth: 0
+
+      - name: Download backend coverage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-report
+
+      - name: Download frontend coverage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-coverage-report
+          path: blink_clip_downloader/frontend/coverage
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   build:
     name: Build Add-on Image (${{ matrix.arch }})

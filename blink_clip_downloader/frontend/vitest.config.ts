@@ -10,7 +10,9 @@ export default mergeConfig(
       setupFiles: ['./src/test-setup.ts'],
       coverage: {
         provider: 'v8',
-        reporter: ['text', 'text-summary', 'cobertura', 'html'],
+        // lcov is for SonarCloud's JS/TS analyzer (sonar.javascript.lcov.reportPaths
+        // in sonar-project.properties) - cobertura is what Codecov consumes.
+        reporter: ['text', 'text-summary', 'cobertura', 'lcov', 'html'],
         include: ['src/**/*.{ts,vue}'],
         exclude: ['src/main.ts', 'src/test-setup.ts', 'src/vite-env.d.ts', 'src/**/*.spec.ts'],
         // Mirrors the backend's pyproject.toml coverage gate (fail_under = 80)
