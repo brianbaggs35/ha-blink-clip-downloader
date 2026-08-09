@@ -530,6 +530,13 @@ h3 {
 /* ── Pages ────────────────────────────────────────────── */
 .page {
   flex: 1;
+  /* Without this, a flex item's default min-height:auto lets a page grow
+     to fit its full content instead of being clipped to the space it
+     actually has — defeating any overflow-y:auto scroll container inside
+     it (see #page-library's own comment for the concrete symptom this
+     caused). Blanket-applied here since every tab shares this same flex
+     chain, not just the one that surfaced it. */
+  min-height: 0;
   overflow: hidden;
   display: none;
 }
@@ -559,12 +566,23 @@ h3 {
 /* ── Library layout ───────────────────────────────────── */
 #page-library {
   flex-direction: column;
+  /* A flex item's default min-height is auto (sized to its content), which
+     can silently defeat .lib-main's overflow-y:auto below — instead of
+     being clipped to the space #page-library actually has and scrolling
+     internally, .lib-page (and in turn .lib-main) can grow to fit every
+     clip card, pushing the fixed stats/filters header off the top of the
+     viewport with nothing left able to scroll it back into view. Chrome
+     desktop is forgiving enough about this that it rarely surfaces there,
+     but the HA companion app's WebView is not — this is what made the
+     Library tab hard to scroll specifically inside that app on mobile. */
+  min-height: 0;
 }
 .lib-page {
   display: flex;
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  min-height: 0;
 }
 .lib-stats-row {
   display: flex;
@@ -648,7 +666,13 @@ h3 {
 }
 .lib-main {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  /* Momentum scrolling + not chaining an over-scroll into whatever
+     embeds this page (the HA companion app's WebView) once the grid
+     itself hits its top/bottom edge. */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
   padding: 0.5rem 1.5rem 1.5rem;
 }
 
@@ -1759,5 +1783,33 @@ h3 {
   }
   .app-nav-action-row .p-button-label {
     display: none;
+  }
+
+  /* Library: the stats row + filters row together ate over half the
+     viewport height on a phone (measured ~53% at 390x844) before any
+     clip was visible, leaving barely one card's worth of room to scroll
+     within — tightening both rows here gives .lib-main meaningfully more
+     of the screen without removing anything from either row. */
+  .lib-stats-row {
+    padding: 0.6rem 0.75rem 0;
+    gap: 0.5rem;
+  }
+  .lib-stat {
+    padding: 0.4rem 0.7rem;
+    min-width: 76px;
+  }
+  .lib-stat-value {
+    font-size: 1.05rem;
+  }
+  .lib-filters {
+    padding: 0.6rem 0.75rem;
+    gap: 0.4rem;
+  }
+  .lib-search {
+    /* Desktop's 220px min-width alone exceeds half a phone's width,
+       forcing search onto its own row before anything else gets a
+       chance to share it. */
+    min-width: 140px;
+    flex-basis: 140px;
   }
 }
