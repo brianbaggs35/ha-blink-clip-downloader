@@ -8,6 +8,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
+
 from blink_downloader.config import AppConfig
 from blink_downloader.database import ClipDatabase
 

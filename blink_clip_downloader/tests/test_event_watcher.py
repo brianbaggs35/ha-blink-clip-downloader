@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from blink_downloader.event_watcher import HAEventWatcher
 
 # ------------------------------------------------------------------
