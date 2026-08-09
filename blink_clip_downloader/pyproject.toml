@@ -75,6 +75,19 @@ include = ["blink_downloader*"]
 # _handle_index (media_server.py) 500s at runtime with no build-time signal.
 blink_downloader = ["static/**/*"]
 
+[tool.ruff.lint.isort]
+# Without this, ruff's first-party/third-party import grouping is decided
+# by an auto-detection heuristic that depends on the CWD/path ruff is
+# invoked with — `ruff check .` from blink_clip_downloader/ (this
+# project's documented local convention) and `ruff check
+# blink_clip_downloader` from the repo root (CI's actual invocation, see
+# ci.yaml) disagreed on whether blink_downloader.* belongs in the same
+# import group as third-party packages like pytest, so a file could pass
+# locally and fail in CI (or vice versa) with no code difference at all.
+# Pinning this explicitly makes the grouping deterministic regardless of
+# invocation style.
+known-first-party = ["blink_downloader"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
