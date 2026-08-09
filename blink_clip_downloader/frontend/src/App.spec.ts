@@ -48,6 +48,8 @@ describe('App', () => {
         const arrayEndpoints = ['/api/cameras', '/api/activity', '/api/clips', '/api/tags', '/api/ai/camera-configs']
         let body: unknown = { state: 'connected', enabled: false }
         if (arrayEndpoints.some((p) => url.startsWith(p))) body = []
+        else if (url.startsWith('/api/liveview/cameras')) body = { cameras: [] }
+        else if (url.startsWith('/api/liveview/status')) body = { active: false }
         else if (url.startsWith('/api/vehicle/settings')) body = { car_description: '' }
         else if (url.startsWith('/api/ai/faces/bypass-stats')) {
           body = { total_bypassed: 0, by_name: [], recent: [] }
@@ -56,6 +58,16 @@ describe('App', () => {
       }),
     )
   }
+
+  it('switches to the Live View tab and mounts LiveViewPage', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="liveview"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-liveview').classes()).toContain('active')
+    expect(wrapper.text()).toContain('No cameras found')
+    wrapper.unmount()
+  })
 
   it('switches to the Status tab and mounts StatusPage', async () => {
     mockArrayAwareFetch()

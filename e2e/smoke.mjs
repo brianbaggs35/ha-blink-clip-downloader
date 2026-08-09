@@ -44,6 +44,12 @@ const TAB_CHECKS = {
     loadedText: "No clips found",
     loadingSelector: null,
   },
+  liveview: {
+    // No real Blink connection in this container, so the camera list comes
+    // back empty - same "no data yet" bar as every other data-driven tab.
+    loadedText: "No cameras found",
+    loadingSelector: ".loading-indicator",
+  },
   automations: {
     // Purely static reference content - no fetch, nothing to wait on, but
     // still confirms the component actually rendered its real template
