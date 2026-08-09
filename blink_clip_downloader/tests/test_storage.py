@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -30,7 +30,7 @@ def make_storage(
     )
 
 
-TS = datetime(2024, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+TS = datetime(2024, 6, 15, 10, 30, 0, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------

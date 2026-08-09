@@ -13,7 +13,7 @@ import asyncio
 import hashlib
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .database import ClipDatabase
@@ -84,7 +84,7 @@ def _build_clip_record(download_path: Path, file_path: Path) -> dict:
 
     timestamp = _timestamp_from_filename(file_path.stem)
     if timestamp is None:
-        timestamp = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+        timestamp = datetime.fromtimestamp(file_path.stat().st_mtime, tz=UTC)
 
     try:
         size = file_path.stat().st_size
@@ -113,9 +113,7 @@ def _timestamp_from_filename(stem: str) -> datetime | None:
     if not match:
         return None
     try:
-        return datetime.strptime(match.group(1), "%Y%m%d_%H%M%S").replace(
-            tzinfo=timezone.utc
-        )
+        return datetime.strptime(match.group(1), "%Y%m%d_%H%M%S").replace(tzinfo=UTC)
     except ValueError:
         return None
 

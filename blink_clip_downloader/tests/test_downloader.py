@@ -6,7 +6,7 @@ import asyncio
 import json
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -589,7 +589,7 @@ async def test_generate_thumbnail_kills_ffmpeg_process_on_timeout(dl, tmp_path):
     mock_proc = AsyncMock()
     # First call (inside wait_for) simulates the timeout expiring; the
     # second call is the kill-then-reap cleanup in the except branch.
-    mock_proc.wait = AsyncMock(side_effect=[asyncio.TimeoutError(), 0])
+    mock_proc.wait = AsyncMock(side_effect=[TimeoutError(), 0])
     mock_proc.kill = MagicMock()
 
     with patch(
@@ -719,10 +719,10 @@ async def test_download_new_clips_uses_six_hour_lookback_on_fresh_tracker(
         await dl.download_new_clips()
 
     since_arg = mock_fetch.call_args.args[0]
-    expected = datetime.now(timezone.utc) - timedelta(hours=6)
+    expected = datetime.now(UTC) - timedelta(hours=6)
     # Generous tolerance for test execution time, not for the window itself.
     assert abs((since_arg - expected).total_seconds()) < 5
-    assert since_arg > datetime.now(timezone.utc) - timedelta(hours=7)
+    assert since_arg > datetime.now(UTC) - timedelta(hours=7)
 
 
 async def test_download_new_clips_holds_cursor_when_backlog_remains(dl, sample_clip):
@@ -733,7 +733,7 @@ async def test_download_new_clips_holds_cursor_when_backlog_remains(dl, sample_c
     dl._blink = MagicMock()
     clips = [{**sample_clip, "id": i} for i in range(1, 6)]  # 5 new clips, limit 2
 
-    original_since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    original_since = datetime(2024, 1, 1, tzinfo=UTC)
     dl._tracker.set_last_download_time(original_since)
 
     async def _fake_download(clip, sem):
@@ -1805,7 +1805,7 @@ async def test_fetch_clip_list_paginates(dl, sample_clip):
         "blink_downloader.downloader.blink_api.request_videos",
         side_effect=[{"media": full_page}, {"media": []}],
     ):
-        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+        result = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert len(result) == 25
 
@@ -1823,7 +1823,7 @@ async def test_fetch_clip_list_stops_on_partial_page(dl, sample_clip):
         "blink_downloader.downloader.blink_api.request_videos",
         side_effect=[{"media": partial_page}],
     ) as mock_request:
-        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+        result = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert len(result) == 10
     assert mock_request.await_count == 1
@@ -1849,7 +1849,7 @@ async def test_fetch_clip_list_stops_at_max_pages_safety_cap(dl, sample_clip, ca
         ) as mock_request,
         caplog.at_level("WARNING"),
     ):
-        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+        result = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert mock_request.await_count == 400
     assert len(result) == 400 * 25
@@ -1867,7 +1867,7 @@ async def test_fetch_clip_list_handles_unexpected_response_type(dl):
         "blink_downloader.downloader.blink_api.request_videos",
         return_value=None,
     ):
-        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+        result = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert result == []
 
@@ -1884,7 +1884,7 @@ async def test_fetch_clip_list_handles_api_error(dl):
         "blink_downloader.downloader.blink_api.request_videos",
         side_effect=Exception("HTTP 500"),
     ):
-        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+        result = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert result == []
 
@@ -1918,7 +1918,7 @@ async def test_fetch_clip_list_reraises_auth_fatal_exceptions(dl, caplog, exc):
         caplog.at_level("WARNING"),
         pytest.raises(type(exc)),
     ):
-        await dl._fetch_clip_list(datetime.now(timezone.utc))
+        await dl._fetch_clip_list(datetime.now(UTC))
 
     # Still logged for operator visibility, same as any other failed page.
     assert "request_videos failed (page 0)" in caplog.text
@@ -1933,7 +1933,7 @@ async def test_fetch_clip_list_still_swallows_non_auth_fatal_exceptions(dl):
         "blink_downloader.downloader.blink_api.request_videos",
         side_effect=ConnectionResetError("connection reset"),
     ):
-        result = await dl._fetch_clip_list(datetime.now(timezone.utc))
+        result = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert result == []
 
@@ -2061,7 +2061,7 @@ async def test_download_local_storage_skips_already_tracked(dl):
     mock_item = MagicMock()
     mock_item.id = 7777
     mock_item.name = "Garage"
-    mock_item.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 1, tzinfo=UTC)
     mock_item.size = 1024
 
     mock_sync = MagicMock()
@@ -2169,7 +2169,7 @@ async def test_download_local_storage_already_on_disk_marks_downloaded(dl, tmp_p
     mock_item = MagicMock()
     mock_item.id = 4244
     mock_item.name = "Patio"
-    mock_item.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 1, tzinfo=UTC)
     mock_item.size = 1024
 
     mock_sync = MagicMock()
@@ -2204,7 +2204,7 @@ async def test_download_local_storage_dest_not_visible_until_write_completes(
     mock_item = MagicMock()
     mock_item.id = 7321
     mock_item.name = "Side Yard"
-    mock_item.created_at = datetime(2024, 6, 3, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 3, tzinfo=UTC)
     mock_item.size = 4096
     mock_item.prepare_download = AsyncMock(return_value=True)
 
@@ -2251,7 +2251,7 @@ async def test_download_local_storage_prepare_download_exception_cleans_up(
     mock_item = MagicMock()
     mock_item.id = 4245
     mock_item.name = "Patio"
-    mock_item.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 1, tzinfo=UTC)
     mock_item.size = 1024
 
     async def _failing_prepare(blink):
@@ -2293,7 +2293,7 @@ async def test_download_local_storage_prepare_download_exception_no_partial_file
     mock_item = MagicMock()
     mock_item.id = 4246
     mock_item.name = "Patio"
-    mock_item.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 1, tzinfo=UTC)
     mock_item.size = 1024
 
     async def _failing_prepare(blink):
@@ -2324,7 +2324,7 @@ async def test_download_local_storage_success_but_no_file_written(dl, tmp_path):
     mock_item = MagicMock()
     mock_item.id = 9911
     mock_item.name = "Garage"
-    mock_item.created_at = datetime(2024, 6, 4, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 4, tzinfo=UTC)
     mock_item.size = 2048
     mock_item.prepare_download = AsyncMock(return_value=True)
     mock_item.download_video = AsyncMock(return_value=True)
@@ -2357,7 +2357,7 @@ async def test_download_local_storage_writes_to_db_when_configured(dl, tmp_path)
     mock_item = MagicMock()
     mock_item.id = 4246
     mock_item.name = "Patio"
-    mock_item.created_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 1, tzinfo=UTC)
     mock_item.size = 1024
     mock_item.prepare_download = AsyncMock(return_value=True)
 
@@ -2390,7 +2390,7 @@ async def test_download_local_storage_downloads_new_clip(dl, tmp_path):
     mock_item = MagicMock()
     mock_item.id = 5555
     mock_item.name = "Front Door"
-    mock_item.created_at = datetime(2024, 6, 1, 8, 0, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 1, 8, 0, tzinfo=UTC)
     mock_item.size = 2_000_000
     mock_item.prepare_download = AsyncMock(return_value=True)
 
@@ -2432,7 +2432,7 @@ async def test_download_local_storage_persists_tracker(dl, tmp_path):
     mock_item = MagicMock()
     mock_item.id = 8888
     mock_item.name = "Driveway"
-    mock_item.created_at = datetime(2024, 6, 1, 8, 0, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 1, 8, 0, tzinfo=UTC)
     mock_item.size = 2_000_000
     mock_item.prepare_download = AsyncMock(return_value=True)
 
@@ -2467,7 +2467,7 @@ async def test_download_local_storage_over_quota_persists_tracker(dl, tmp_path):
     mock_item = MagicMock()
     mock_item.id = 9999
     mock_item.name = "Garage"
-    mock_item.created_at = datetime(2024, 6, 1, 8, 0, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 1, 8, 0, tzinfo=UTC)
     mock_item.size = 1024
 
     mock_sync = MagicMock()
@@ -2494,7 +2494,7 @@ async def test_download_local_storage_download_failure_skipped(dl, tmp_path):
     mock_item = MagicMock()
     mock_item.id = 6666
     mock_item.name = "Backyard"
-    mock_item.created_at = datetime(2024, 6, 2, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 2, tzinfo=UTC)
     mock_item.size = 500_000
     mock_item.prepare_download = AsyncMock(return_value=True)
     mock_item.download_video = AsyncMock(return_value=False)  # download fails
@@ -2522,7 +2522,7 @@ async def test_download_local_storage_download_failure_cleans_up_partial_file(
     mock_item = MagicMock()
     mock_item.id = 6667
     mock_item.name = "Backyard"
-    mock_item.created_at = datetime(2024, 6, 2, tzinfo=timezone.utc)
+    mock_item.created_at = datetime(2024, 6, 2, tzinfo=UTC)
     mock_item.size = 500_000
 
     dest = dl._storage.resolve_path(

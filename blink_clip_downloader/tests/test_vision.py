@@ -20,6 +20,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from PIL import Image
+
 from blink_downloader.database import ClipDatabase
 from blink_downloader.vision import (
     ContactResult,
@@ -47,7 +49,6 @@ from blink_downloader.vision import (
     is_face_recognition_available,
     torch_cpu_compatible,
 )
-from PIL import Image
 
 
 @pytest.fixture(autouse=True)
