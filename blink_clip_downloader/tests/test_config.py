@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from blink_downloader.config import AppConfig, _parse_config, load_config
 
 # ---------------------------------------------------------------------------

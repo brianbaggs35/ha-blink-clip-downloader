@@ -6,7 +6,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
-
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.notification_channels import NotificationDispatcher
 

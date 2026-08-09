@@ -7,13 +7,12 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
-
 from blink_downloader.live_view import (
     CameraNotFoundError,
     LiveViewError,
     LiveViewManager,
 )
+from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
 
 # ---------------------------------------------------------------------------
 # Fakes

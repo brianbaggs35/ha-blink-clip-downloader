@@ -310,6 +310,15 @@ ruff format --check .
 ruff check .
 ```
 
+CI installs `ruff==0.16.2` (`.github/workflows/ci.yaml`, pinned since 5.2.0 —
+it used to install unpinned and would periodically drift from whatever
+version was installed locally, causing CI-only lint failures on rules like
+import sorting that changed behavior between ruff releases with no config
+change on our side). Match that version locally
+(`pip install "ruff==0.16.2"`) rather than whatever `pip install ruff` pulls
+latest — if you do need to bump it (e.g. to pick up a new rule on purpose),
+bump both this pin and the CI workflow's in the same change, not just one.
+
 ### Type checking
 
 Pyright config (`pyrightconfig.json`) lives at the **repo root**, not inside

@@ -9,10 +9,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
-
 from blink_downloader.app import BlinkClipDownloaderApp
 from blink_downloader.downloader import AuthenticationError, TwoFARequired
+from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1435,6 +1434,7 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
+
     from tests.conftest import _ALL_TABLES, TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)
@@ -1491,6 +1491,7 @@ async def test_run_starts_gdrive_queue_task_when_library_db_enabled(app, tmp_pat
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
+
     from tests.conftest import TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)
@@ -1522,6 +1523,7 @@ async def test_run_starts_archive_prune_task_when_library_db_enabled(app, tmp_pa
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
+
     from tests.conftest import TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)

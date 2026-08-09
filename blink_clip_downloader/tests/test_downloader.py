@@ -11,14 +11,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from blinkpy.auth import (
-    BlinkTwoFARequiredError,
-    LoginError,
-    TokenRefreshFailed,
-    UnauthorizedError,
-)
-from requests.structures import CaseInsensitiveDict
-
 from blink_downloader.downloader import (
     AuthenticationError,
     BlinkDownloader,
@@ -27,6 +19,13 @@ from blink_downloader.downloader import (
 )
 from blink_downloader.storage import StorageManager
 from blink_downloader.tracker import ClipTracker
+from blinkpy.auth import (
+    BlinkTwoFARequiredError,
+    LoginError,
+    TokenRefreshFailed,
+    UnauthorizedError,
+)
+from requests.structures import CaseInsensitiveDict
 
 # ---------------------------------------------------------------------------
 # Fixtures

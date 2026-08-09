@@ -9,13 +9,13 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
-
 from blink_downloader.database import (
     ClipDatabase,
     _affected,
     _local_day_bounds,
     _row_to_dict,
 )
+
 from tests.conftest import TEST_DB_DSN
 
 
