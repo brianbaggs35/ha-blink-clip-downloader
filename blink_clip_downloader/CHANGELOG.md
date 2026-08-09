@@ -1,5 +1,56 @@
 # Changelog
 
+## 5.2.0
+
+### Added
+
+- **A new Live View tab** for watching a live stream from any Blink camera
+  directly in the web UI, one camera at a time. Uses blinkpy's live-view
+  session API — Blink's own proprietary streaming protocol, not RTSP —
+  bridged through ffmpeg (already bundled in the image) into a short
+  rolling HLS stream served through the existing web UI: no new ports, no
+  second Blink login, and it reuses the add-on's single already-
+  authenticated Blink session. Picking a different camera stops whichever
+  one was active first (only one camera streams at a time across the whole
+  install); a second browser tab watching the same camera joins the
+  existing stream instead of starting a new one. A session stops
+  automatically after a period of inactivity, always after a 30-minute
+  safety cap, and immediately when you navigate away from the tab — a
+  **Stop** button is also available to end it manually at any time.
+- **Storage tab: archived clips are now grouped by ZIP** instead of listed
+  one row per clip, with real numbered pagination over that much smaller
+  archive list, a camera filter, and since/until date-range filters.
+  Expanding an archive lazily loads its clips, grouped by camera to match
+  how the ZIP itself (and Google Drive backups, see below) are organized.
+- **Google Drive backups now mirror a date/camera folder structure**
+  (`<date>/<camera>/<file>`) instead of dropping every clip flat into one
+  folder, so a backed-up library is actually navigable from Drive itself.
+- **An in-app walkthrough for connecting Google Drive** — click the ⓘ next
+  to "Google Drive Setup" on the Storage tab for the full Google Cloud
+  Console setup steps without leaving the page or digging through the docs.
+
+### Bug fixes
+
+- **Google Drive uploads failing with "Archive ... is missing"** — a clip
+  whose source file was already gone by archive time could be marked
+  archived against a ZIP that was never actually created, so every later
+  upload attempt failed looking for a file that never existed. Fixed going
+  forward, plus a one-time startup cleanup that removes clip rows already
+  left in this bad state by the old code.
+- **Library tab: used storage now shows in GB (2 decimals) past 1GB**
+  instead of an unbroken multi-thousand MB number.
+- **Biometrics tab: fixed Save/Cancel text clipping** when renaming an
+  enrolled person on a narrower card.
+- **Recognized-but-not-bypass-approved people are now named in AI
+  summaries again** — personalizing a clip's summary text ("Brian walked
+  up the driveway" instead of "A person...") had accidentally become tied
+  to the same strict, approved-only condition as the suspicious-flag
+  bypass, so turning off a household member's "Approved for bypass" toggle
+  silently stopped them from being named at all. The two are decoupled
+  now: naming is cosmetic and works for anyone recognized, approved or
+  not; the suspicious-flag bypass itself is unchanged and still
+  approved-only.
+
 ## 5.1.1
 
 - **Fixed scopes for Google Drive** - Google Drive was using a scope that was
