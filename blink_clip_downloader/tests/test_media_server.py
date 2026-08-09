@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from blinkpy.auth import TokenRefreshFailed
+
 from blink_downloader import media_server
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.database import ClipDatabase
@@ -29,7 +31,6 @@ from blink_downloader.live_view import (
     LiveViewStatus,
 )
 from blink_downloader.media_server import MediaServer
-from blinkpy.auth import TokenRefreshFailed
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -6785,5 +6786,310 @@ async def test_liveview_hls_resolve_outside_hls_dir_returns_404(
         with patch.object(Path, "relative_to", side_effect=ValueError("boom")):
             resp = await tc.get("/api/liveview/hls/s1/stream.m3u8")
         assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# Security Feed — /api/security-feed/*
+# ---------------------------------------------------------------------------
+
+
+async def test_security_feed_cameras_unavailable_without_manager(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/api/security-feed/cameras")
+    assert resp.status == 503
+
+
+async def test_security_feed_snapshot_unavailable_without_manager(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/api/security-feed/snapshot/Front%20Door")
+    assert resp.status == 503
+
+
+async def test_security_feed_cameras_returns_list(db: ClipDatabase) -> None:
+    server = MediaServer(
+        db=db, port=0, list_camera_names=lambda: ["Front Door", "Backyard"]
+    )
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/security-feed/cameras")
+        assert resp.status == 200
+        assert (await resp.json())["cameras"] == ["Front Door", "Backyard"]
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_snapshot_returns_image(db: ClipDatabase) -> None:
+    server = MediaServer(
+        db=db,
+        port=0,
+        get_camera_snapshot=AsyncMock(return_value=b"\xff\xd8\xff fake jpeg bytes"),
+    )
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/security-feed/snapshot/Front%20Door")
+        assert resp.status == 200
+        assert resp.headers["Content-Type"] == "image/jpeg"
+        assert resp.headers["Cache-Control"] == "no-store"
+        assert await resp.read() == b"\xff\xd8\xff fake jpeg bytes"
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_snapshot_not_found_returns_404(db: ClipDatabase) -> None:
+    server = MediaServer(
+        db=db, port=0, get_camera_snapshot=AsyncMock(return_value=None)
+    )
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/security-feed/snapshot/Front%20Door")
+        assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_snapshot_passes_camera_name_from_url(
+    db: ClipDatabase,
+) -> None:
+    get_snapshot = AsyncMock(return_value=b"jpeg-bytes")
+    server = MediaServer(db=db, port=0, get_camera_snapshot=get_snapshot)
+    tc = await _start_server(server)
+    try:
+        await tc.get("/api/security-feed/snapshot/Front%20Door")
+        get_snapshot.assert_awaited_once_with("Front Door")
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_get_defaults_when_no_file(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=tmp_path / "no-such-file.json",
+        ):
+            resp = await tc.get("/api/security-feed/settings")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data == {"cameras": [], "columns": 3, "refresh_seconds": 15}
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_get_reads_existing_file(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    settings_file = tmp_path / "security_feed_settings.json"
+    settings_file.write_text(
+        json.dumps({"cameras": ["Front Door"], "columns": 2, "refresh_seconds": 30})
+    )
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=settings_file,
+        ):
+            resp = await tc.get("/api/security-feed/settings")
+        data = await resp.json()
+        assert data == {"cameras": ["Front Door"], "columns": 2, "refresh_seconds": 30}
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_get_unreadable_file_falls_back_to_defaults(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    settings_file = tmp_path / "security_feed_settings.json"
+    settings_file.write_text("{not valid json")
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=settings_file,
+        ):
+            resp = await tc.get("/api/security-feed/settings")
+        data = await resp.json()
+        assert data == {"cameras": [], "columns": 3, "refresh_seconds": 15}
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_get_clamps_out_of_range_values_from_file(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    settings_file = tmp_path / "security_feed_settings.json"
+    settings_file.write_text(
+        json.dumps({"cameras": [], "columns": 99, "refresh_seconds": 1})
+    )
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=settings_file,
+        ):
+            resp = await tc.get("/api/security-feed/settings")
+        data = await resp.json()
+        assert data["columns"] == 6  # clamped to max
+        assert data["refresh_seconds"] == 5  # clamped to min
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_put_then_get_round_trips(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    settings_file = tmp_path / "security_feed_settings.json"
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=settings_file,
+        ):
+            put_resp = await tc.put(
+                "/api/security-feed/settings",
+                json={
+                    "cameras": ["Driveway"],
+                    "columns": 4,
+                    "refresh_seconds": 20,
+                },
+            )
+            assert put_resp.status == 200
+            get_resp = await tc.get("/api/security-feed/settings")
+        assert (await get_resp.json()) == {
+            "cameras": ["Driveway"],
+            "columns": 4,
+            "refresh_seconds": 20,
+        }
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_put_rejects_non_list_cameras(
+    db: ClipDatabase,
+) -> None:
+    server = MediaServer(db=db, port=0)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.put("/api/security-feed/settings", json={"cameras": "oops"})
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_put_invalid_json(db: ClipDatabase) -> None:
+    server = MediaServer(db=db, port=0)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.put(
+            "/api/security-feed/settings",
+            data="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_put_clamps_columns_and_refresh(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=tmp_path / "security_feed_settings.json",
+        ):
+            resp = await tc.put(
+                "/api/security-feed/settings",
+                json={"cameras": [], "columns": 0, "refresh_seconds": 100000},
+            )
+        data = await resp.json()
+        assert data["columns"] == 1  # clamped to min
+        assert data["refresh_seconds"] == 300  # clamped to max
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_put_defaults_missing_fields(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=tmp_path / "security_feed_settings.json",
+        ):
+            resp = await tc.put("/api/security-feed/settings", json={})
+        data = await resp.json()
+        assert data == {"cameras": [], "columns": 3, "refresh_seconds": 15}
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_put_write_failure_is_logged(
+    db: ClipDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+                new=tmp_path / "security_feed_settings.json",
+            ),
+            patch.object(Path, "write_text", side_effect=OSError("disk full")),
+            caplog.at_level("WARNING"),
+        ):
+            resp = await tc.put("/api/security-feed/settings", json={"cameras": []})
+        # Save failure is logged but not surfaced as an HTTP error - matches
+        # the vehicle_settings.json precedent this mirrors.
+        assert resp.status == 200
+        assert "Could not save Security Feed settings" in caplog.text
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_put_non_numeric_columns_falls_back_to_default(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=tmp_path / "security_feed_settings.json",
+        ):
+            resp = await tc.put(
+                "/api/security-feed/settings",
+                json={
+                    "cameras": [],
+                    "columns": "not-a-number",
+                    "refresh_seconds": "also-not",
+                },
+            )
+        data = await resp.json()
+        assert data["columns"] == 3
+        assert data["refresh_seconds"] == 15
     finally:
         await tc.close()

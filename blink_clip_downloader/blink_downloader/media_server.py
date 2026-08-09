@@ -13,7 +13,7 @@ import re
 import sys
 import time
 import zipfile
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -174,6 +174,8 @@ class MediaServer:
         moondream_api_key: str = "",
         prompt_debug_enabled: bool = False,
         live_view: LiveViewManager | None = None,
+        list_camera_names: Callable[[], list[str]] | None = None,
+        get_camera_snapshot: Callable[[str], Awaitable[bytes | None]] | None = None,
     ) -> None:
         self._db = db
         self._port = port
@@ -186,6 +188,13 @@ class MediaServer:
         self._gdrive_client = gdrive_client
         self._gdrive_queue = gdrive_queue
         self._live_view = live_view
+        # Narrow callables from BlinkDownloader (same DI idiom as
+        # trigger_download/two_fa_callback above, and as get_camera/
+        # list_camera_names passed into LiveViewManager itself) for the
+        # Security Feed tab — deliberately not routed through
+        # LiveViewManager, so Security Feed works independently of it.
+        self._list_camera_names = list_camera_names
+        self._get_camera_snapshot = get_camera_snapshot
         # Used only to stand up a MoondreamFineTuneManager for the Fine-Tuning
         # API/panel when provider == "moondream_cloud" — see _handle_finetune_*.
         self._moondream_api_key = moondream_api_key
@@ -274,6 +283,20 @@ class MediaServer:
         app.router.add_get(
             "/api/liveview/hls/{session_id}/{filename}",
             self._handle_liveview_hls_file,
+        )
+        # Security Feed endpoints
+        app.router.add_get(
+            "/api/security-feed/cameras", self._handle_security_feed_cameras
+        )
+        app.router.add_get(
+            "/api/security-feed/settings", self._handle_security_feed_settings_get
+        )
+        app.router.add_put(
+            "/api/security-feed/settings", self._handle_security_feed_settings_put
+        )
+        app.router.add_get(
+            "/api/security-feed/snapshot/{camera}",
+            self._handle_security_feed_snapshot,
         )
         # AI Analysis endpoints
         app.router.add_get("/api/ai/status", self._handle_ai_status)
@@ -908,6 +931,114 @@ class MediaServer:
         return web.FileResponse(
             file_path,
             headers={"Cache-Control": "no-store", "Content-Type": content_type},
+        )
+
+    # ------------------------------------------------------------------
+    # Security Feed handlers
+    # ------------------------------------------------------------------
+
+    _SECURITY_FEED_SETTINGS_FILE = Path("/data/security_feed_settings.json")
+    _SECURITY_FEED_MIN_COLUMNS = 1
+    _SECURITY_FEED_MAX_COLUMNS = 6
+    _SECURITY_FEED_MIN_REFRESH_SECONDS = 5
+    _SECURITY_FEED_MAX_REFRESH_SECONDS = 300
+    _SECURITY_FEED_DEFAULT_COLUMNS = 3
+    _SECURITY_FEED_DEFAULT_REFRESH_SECONDS = 15
+
+    async def _handle_security_feed_cameras(
+        self, _request: web.Request
+    ) -> web.Response:
+        if self._list_camera_names is None:
+            raise web.HTTPServiceUnavailable(text="Security Feed is not available")
+        return web.json_response({"cameras": self._list_camera_names()})
+
+    async def _handle_security_feed_settings_get(
+        self, _request: web.Request
+    ) -> web.Response:
+        settings = {
+            # Empty means "show every camera" — same convention as
+            # ai_car_cameras (see config.py), not a distinct sentinel.
+            "cameras": [],
+            "columns": self._SECURITY_FEED_DEFAULT_COLUMNS,
+            "refresh_seconds": self._SECURITY_FEED_DEFAULT_REFRESH_SECONDS,
+        }
+        if self._SECURITY_FEED_SETTINGS_FILE.exists():
+            try:
+                data = json.loads(self._SECURITY_FEED_SETTINGS_FILE.read_text())
+                settings["cameras"] = [str(c) for c in data.get("cameras", [])]
+                settings["columns"] = self._clamp_security_feed_columns(
+                    data.get("columns", self._SECURITY_FEED_DEFAULT_COLUMNS)
+                )
+                settings["refresh_seconds"] = self._clamp_security_feed_refresh(
+                    data.get(
+                        "refresh_seconds", self._SECURITY_FEED_DEFAULT_REFRESH_SECONDS
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.debug("Could not read Security Feed settings file: %s", exc)
+        return web.json_response(settings)
+
+    async def _handle_security_feed_settings_put(
+        self, request: web.Request
+    ) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text="Invalid JSON body")
+        cameras = body.get("cameras", [])
+        if not isinstance(cameras, list):
+            raise web.HTTPBadRequest(text="cameras must be a list")
+        settings = {
+            "cameras": [str(c) for c in cameras],
+            "columns": self._clamp_security_feed_columns(
+                body.get("columns", self._SECURITY_FEED_DEFAULT_COLUMNS)
+            ),
+            "refresh_seconds": self._clamp_security_feed_refresh(
+                body.get("refresh_seconds", self._SECURITY_FEED_DEFAULT_REFRESH_SECONDS)
+            ),
+        }
+        try:
+            self._SECURITY_FEED_SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
+        except OSError as exc:
+            _LOGGER.warning("Could not save Security Feed settings: %s", exc)
+        return web.json_response(settings)
+
+    @classmethod
+    def _clamp_security_feed_columns(cls, value: Any) -> int:
+        try:
+            columns = int(value)
+        except (TypeError, ValueError):
+            return cls._SECURITY_FEED_DEFAULT_COLUMNS
+        return max(
+            cls._SECURITY_FEED_MIN_COLUMNS, min(cls._SECURITY_FEED_MAX_COLUMNS, columns)
+        )
+
+    @classmethod
+    def _clamp_security_feed_refresh(cls, value: Any) -> int:
+        try:
+            seconds = int(value)
+        except (TypeError, ValueError):
+            return cls._SECURITY_FEED_DEFAULT_REFRESH_SECONDS
+        return max(
+            cls._SECURITY_FEED_MIN_REFRESH_SECONDS,
+            min(cls._SECURITY_FEED_MAX_REFRESH_SECONDS, seconds),
+        )
+
+    async def _handle_security_feed_snapshot(
+        self, request: web.Request
+    ) -> web.Response:
+        if self._get_camera_snapshot is None:
+            raise web.HTTPServiceUnavailable(text="Security Feed is not available")
+        camera = request.match_info["camera"]
+        image = await self._get_camera_snapshot(camera)
+        if image is None:
+            raise web.HTTPNotFound(text="No snapshot available for this camera")
+        # Live content — must never be cached, same reasoning as the Live
+        # View HLS route.
+        return web.Response(
+            body=image,
+            content_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
         )
 
     # ------------------------------------------------------------------

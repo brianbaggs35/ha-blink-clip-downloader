@@ -9,9 +9,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
+
 from blink_downloader.app import BlinkClipDownloaderApp
 from blink_downloader.downloader import AuthenticationError, TwoFARequired
-from blinkpy.auth import LoginError, TokenRefreshFailed, UnauthorizedError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1434,7 +1435,6 @@ async def test_run_imports_existing_clips_with_library_db_enabled(app, tmp_path)
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
-
     from tests.conftest import _ALL_TABLES, TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)
@@ -1491,7 +1491,6 @@ async def test_run_starts_gdrive_queue_task_when_library_db_enabled(app, tmp_pat
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
-
     from tests.conftest import TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)
@@ -1523,7 +1522,6 @@ async def test_run_starts_archive_prune_task_when_library_db_enabled(app, tmp_pa
 
     from blink_downloader.database import ClipDatabase
     from blink_downloader.tracker import ClipTracker
-
     from tests.conftest import TEST_DB_DSN
 
     app._config = dataclasses.replace(app._config, enable_library_db=True)
@@ -1580,6 +1578,38 @@ def test_live_view_wired_to_downloader_camera_accessors(app):
     app._downloader._blink = fake_blink
 
     assert app._live_view.list_cameras() == ["Front Door"]
+
+
+def test_media_server_wired_to_downloader_camera_accessors(app):
+    """Security Feed's list_camera_names/get_camera_snapshot are injected
+    directly from the downloader (not routed through LiveViewManager) so
+    Security Feed works independently of it — see media_server.py's
+    MediaServer.__init__ comment."""
+    from requests.structures import CaseInsensitiveDict
+
+    camera = MagicMock()
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    app._downloader._blink = fake_blink
+
+    assert app._media_server._list_camera_names() == ["Front Door"]
+    # Bound methods aren't `is`-identical across separate attribute
+    # accesses even for the same underlying function+instance - compare by
+    # equality (which bound methods do support) instead.
+    assert app._media_server._get_camera_snapshot == app._downloader.get_camera_snapshot
+
+
+async def test_media_server_get_camera_snapshot_reaches_real_camera(app):
+    from requests.structures import CaseInsensitiveDict
+
+    camera = MagicMock()
+    camera.image_from_cache = b"snapshot-bytes"
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    app._downloader._blink = fake_blink
+
+    result = await app._media_server._get_camera_snapshot("Front Door")
+    assert result == b"snapshot-bytes"
 
 
 async def test_run_skips_import_when_library_db_disabled(app, tmp_path):
