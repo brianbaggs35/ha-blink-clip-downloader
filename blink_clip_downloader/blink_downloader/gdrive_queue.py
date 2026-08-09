@@ -217,9 +217,16 @@ class GDriveUploadQueue:
                     )
                     return
 
-            # The camera prefix on the filename itself is redundant now that
-            # the camera is already its own folder level — drop it.
-            remote_name = upload_path.name
+            # Derived from the clip's own recorded file_path, not
+            # upload_path.name — for an archived clip, upload_path is a
+            # NamedTemporaryFile's random OS-assigned path (see
+            # _extract_archived_clip), so upload_path.name would upload
+            # every archived clip as something like "tmpXXXXXX.mp4"
+            # instead of its real filename. file_path still holds the
+            # original name for both archived and non-archived clips. The
+            # camera prefix some clip filenames carry is dropped — the
+            # camera is already its own folder level above.
+            remote_name = Path(str(clip.get("file_path", ""))).name or upload_path.name
             file_id = await self._client.upload_file(
                 upload_path, remote_name, folder_id=dest_folder_id
             )

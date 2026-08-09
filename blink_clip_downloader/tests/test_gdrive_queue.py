@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from blink_downloader.database import ClipDatabase
 from blink_downloader.gdrive_client import GDriveClient
 from blink_downloader.gdrive_queue import GDriveUploadQueue, _local_date_str
@@ -439,6 +440,35 @@ async def test_process_one_archived_clip_extracts_from_zip(
     assert not extracted_path.exists()  # temp file cleaned up after processing
     counts = await db.get_gdrive_queue_counts()
     assert counts["completed"] == 1
+
+
+async def test_process_one_archived_clip_uploads_under_its_real_filename(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Regression test: the remote filename must be the clip's own real
+    name (from its DB file_path), not upload_path.name - for an archived
+    clip, upload_path is a NamedTemporaryFile's random OS-assigned path
+    (e.g. tmpXXXXXX.mp4), which would otherwise upload every archived clip
+    under a meaningless random name instead of anything recognizable."""
+    zip_path = _make_archive(
+        tmp_path, "Front Door", "Front_Door_20240601_080000.mp4", b"archived video"
+    )
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+    queue._running = True
+
+    clip = _add_clip("c1")
+    clip["path"] = str(tmp_path / "Front_Door_20240601_080000.mp4")
+    await db.add_clip(clip)
+    await db.mark_archived("c1", str(zip_path))
+    await queue.enqueue(clip)
+
+    await queue._process_pending()
+
+    client.upload_file.assert_awaited_once()
+    remote_name = client.upload_file.call_args[0][1]
+    assert remote_name == "Front_Door_20240601_080000.mp4"
+    assert not remote_name.startswith("tmp")
 
 
 async def test_process_one_archived_mid_backlog_race(
