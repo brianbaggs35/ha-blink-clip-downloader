@@ -1,5 +1,42 @@
 # Changelog
 
+## 5.3.0
+
+### Added
+
+- **A new Security Feed tab** showing a customizable grid of near-live
+  snapshot tiles, one per camera, that refresh on their own on a timer you
+  control. Pick which cameras appear, how many tiles per row (1-3 — past
+  that a tile shrinks too small to make out what it's actually showing),
+  and how often tiles refresh (5-300 seconds) from a collapsible Customize
+  panel; the grid expands to use however much width is available. Tiles
+  show whatever image the add-on's own poll cycle already has cached, so
+  this adds no extra load on Blink's API beyond what the add-on already
+  does.
+
+### Bug fixes
+
+- **Live View: clicking a camera could spin forever with no error shown**,
+  most often on a fast failure (e.g. Blink's cloud rejecting the live-view
+  session almost immediately). The session's error was being torn down
+  before the frontend's status poll ever had a chance to see it — fixed by
+  giving an errored session one full sweep interval of grace before it
+  disappears.
+- **Archiving: a month's archive could silently end up with far fewer
+  clips than it should** if its ZIP was ever left corrupted (e.g. by an
+  ungraceful container stop) — Python's zipfile module doesn't reliably
+  raise an error on a corrupted-but-existing archive, so every later
+  archiving run was silently overwriting it and permanently losing
+  whatever was already inside. Corrupted archives are now detected and
+  quarantined before every write instead.
+- **Google Drive: archived clips were uploading under a meaningless random
+  filename** (e.g. `tmpXXXXXX.mp4`) instead of the clip's real name.
+- **Library tab: fixed scrolling on the Home Assistant companion app** —
+  the stats/filters area could take up more than half a phone-sized
+  screen and block scrolling to the clips below it entirely on stricter
+  mobile WebViews. Trimmed the header/filters area and fixed the
+  underlying scroll-container sizing bug so clips are reachable again.
+
 ## 5.2.0
 
 ### Added

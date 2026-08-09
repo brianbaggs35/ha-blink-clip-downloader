@@ -872,6 +872,37 @@ time, directly in the web UI — no separate app or RTSP client needed.
 
 ---
 
+## Security Feed
+
+A grid of near-live snapshot tiles, one per camera, that refresh on their
+own on a timer — a lighter-weight alternative to Live View for keeping an
+eye on multiple cameras at once rather than watching one at a time.
+
+### How it works
+
+- Open the **Security Feed** tab to see every camera as a tile, refreshing
+  automatically.
+- Each tile shows whatever image the add-on's own poll cycle most recently
+  cached — opening this tab (or leaving it open) doesn't ask Blink for
+  anything extra beyond what the add-on already does, and it stops making
+  any requests the moment you navigate away.
+- The **Customize** panel (collapsed by default) lets you pick which
+  cameras to show, how many tiles per row (1–3 — beyond 3 a tile shrinks
+  too small to make out what it's showing), and how often tiles refresh
+  (5–300 seconds). Changes apply once you click **Save**.
+- The grid uses however much width is available, so it fills more of the
+  screen if your browser or the Home Assistant sidebar gives it more room.
+
+### Limitations
+
+- Tiles are snapshots, not a live video stream — for an actual moving
+  picture from one camera, use the **Live View** tab instead.
+- A tile only updates as often as both its configured refresh interval
+  *and* the add-on's own Blink poll interval allow — lowering the refresh
+  interval here doesn't make the add-on poll Blink any faster.
+
+---
+
 ## Storage Tab — Google Drive Backup
 
 The Storage tab has two parts: an **Archived Clips** list (view/delete clips
