@@ -36,6 +36,11 @@ const starting = ref(false)
 
 const videoEl = ref<HTMLVideoElement | null>(null)
 let player: Player | null = null
+// Tracks which session_id the player's source was last set for — NOT the
+// same as "session_id changed since last status", since the common case is
+// the *same* session transitioning starting -> live with no id change at
+// all. Sourcing only on an id change would miss that transition entirely.
+let sourcedSessionId: string | null = null
 
 let statusTimer: ReturnType<typeof setInterval> | undefined
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined
@@ -92,18 +97,19 @@ function startTimers() {
 }
 
 function applyStatus(s: LiveViewStatus) {
-  const prevSessionId = status.value.session_id
   status.value = s
 
   if (s.active && s.camera) selectedCamera.value = s.camera
 
-  if (s.active && s.state === 'live' && s.session_id && s.session_id !== prevSessionId) {
+  if (s.active && s.state === 'live' && s.session_id && s.session_id !== sourcedSessionId) {
+    sourcedSessionId = s.session_id
     const p = ensurePlayer()
     p.src([{ src: liveViewPlaylistUrl(s.session_id), type: 'application/x-mpegURL' }])
     p.play()?.catch(() => {})
   }
 
   if (!s.active) {
+    sourcedSessionId = null
     stopTimers()
     player?.pause()
     starting.value = false
