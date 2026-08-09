@@ -16,6 +16,7 @@ export interface ClipFilters {
   notified?: boolean
   recognized?: boolean
   archived?: boolean
+  archivePath?: string
 }
 
 function buildQuery(filters: ClipFilters): string {
@@ -33,6 +34,7 @@ function buildQuery(filters: ClipFilters): string {
   if (filters.notified) params.set('notified', '1')
   if (filters.recognized) params.set('recognized', '1')
   if (filters.archived) params.set('archived', '1')
+  if (filters.archivePath) params.set('archive_path', filters.archivePath)
   const qs = params.toString()
   return qs ? `?${qs}` : ''
 }

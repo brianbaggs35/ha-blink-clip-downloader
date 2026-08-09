@@ -494,3 +494,14 @@ export interface LiveViewStatus {
 export interface LiveViewCamerasResponse {
   cameras: string[]
 }
+
+// ---------------------------------------------------------------------------
+// Storage — archived clip ZIP groups
+// ---------------------------------------------------------------------------
+
+export interface ArchiveGroup {
+  archive_path: string
+  clip_count: number
+  total_size: number
+  latest_timestamp: string
+}
