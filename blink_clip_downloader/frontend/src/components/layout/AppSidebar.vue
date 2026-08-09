@@ -16,11 +16,22 @@ import { getStats } from '../../api/clips'
 import { listFaces } from '../../api/ai'
 
 export type TabName =
-  'library' | 'liveview' | 'automations' | 'status' | 'ai' | 'usage' | 'models' | 'vehicles' | 'biometrics' | 'storage'
+  | 'library'
+  | 'liveview'
+  | 'securityfeed'
+  | 'automations'
+  | 'status'
+  | 'ai'
+  | 'usage'
+  | 'models'
+  | 'vehicles'
+  | 'biometrics'
+  | 'storage'
 
 const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'library', label: 'Library', icon: 'tab-library' },
   { name: 'liveview', label: 'Live View', icon: 'tab-liveview' },
+  { name: 'securityfeed', label: 'Security Feed', icon: 'tab-securityfeed' },
   { name: 'automations', label: 'Automations', icon: 'tab-automations' },
   { name: 'status', label: 'Status', icon: 'tab-status' },
   { name: 'ai', label: 'AI', icon: 'tab-ai' },

@@ -1409,15 +1409,16 @@ h3 {
   padding-bottom: 3rem;
 }
 
-/* Vehicles/Biometrics/Storage/Live View pad themselves (.vehicles-page/
-   .biometrics-page/.storage-page/.liveview-page) — .page's own
-   `overflow: hidden` still needs overriding per page or their content has no
-   way to scroll past the viewport, the same gap #page-models had before it
-   was added above. */
+/* Vehicles/Biometrics/Storage/Live View/Security Feed pad themselves
+   (.vehicles-page/.biometrics-page/.storage-page/.liveview-page/
+   .secfeed-page) — .page's own `overflow: hidden` still needs overriding
+   per page or their content has no way to scroll past the viewport, the
+   same gap #page-models had before it was added above. */
 #page-vehicles,
 #page-biometrics,
 #page-storage,
-#page-liveview {
+#page-liveview,
+#page-securityfeed {
   overflow-y: auto;
 }
 

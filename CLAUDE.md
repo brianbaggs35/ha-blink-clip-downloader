@@ -71,6 +71,15 @@ architecture.
     frontend stopping its session on unmount (navigating away) — see the
     module's own docstring and `tests/test_live_view.py` for the session
     lifecycle/crash-handling details.
+  - Security Feed tab (grid of near-live camera snapshot tiles) has no
+    dedicated module — it's a few methods on `BlinkDownloader`
+    (`get_camera_snapshot`, reading blinkpy's `camera.image_from_cache`/
+    `camera.thumbnail`, never `camera.snap_picture()` — see that method's
+    docstring for why) plus routes directly on `media_server.py`
+    (`/api/security-feed/*`), independent of `LiveViewManager`. Settings
+    (`cameras`/`columns`/`refresh_seconds`) persist to
+    `/data/security_feed_settings.json`, same convention as
+    `vehicle_settings.json`.
   - `event_watcher.py`, `notifier.py`, `notification_channels.py`,
     `digest.py`, `archiver.py`, `storage.py`, `library_scanner.py`,
     `tracker.py`, `manifest.py` — supporting modules (event-driven
@@ -178,8 +187,8 @@ removed in 5.0.0.
   clips its content with no scrollbar. The Storage tab shipped without this
   once; it only surfaced via live browser testing under a real Home
   Assistant OS install, not any automated test. Current nav order: Library,
-  Live View, Automations, Status, AI, AI Usage, Models, Vehicles,
-  Biometrics, Storage.
+  Live View, Security Feed, Automations, Status, AI, AI Usage, Models,
+  Vehicles, Biometrics, Storage.
 - **API client**: every backend call goes through `api/<area>.ts` modules
   built on `api/client.ts`'s `apiGet`/`apiPost`/`apiPut`/`apiPatch`/`apiDelete`
   helpers (thin `fetch` wrappers, ingress-path-aware via `env.ts`). Add new
@@ -386,7 +395,12 @@ practical to run per-change but are worth being aware of if a change touches
 behavior. The `build` job also Trivy-scans the built image on both arches,
 gated to HIGH/CRITICAL vulnerabilities **with a fix available** — if it
 fails, a rebuild usually picks up the fixed Debian package; only add a
-`.trivyignore` entry as a last resort with a dated justification comment.)
+`.trivyignore` entry as a last resort with a dated justification comment.
+CI also runs a `sonarqube` job (`SonarSource/sonarqube-scan-action`,
+config at the repo root's `sonar-project.properties`) against SonarCloud —
+informational only, doesn't gate merges, and isn't practical to run
+locally since it needs a `SONAR_TOKEN` and network access to sonarcloud.io;
+skipped automatically for PRs from forks, which don't have repo secrets.)
 
 ## Versioning
 

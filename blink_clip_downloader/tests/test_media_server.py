@@ -6878,7 +6878,7 @@ async def test_security_feed_settings_get_defaults_when_no_file(
             resp = await tc.get("/api/security-feed/settings")
         assert resp.status == 200
         data = await resp.json()
-        assert data == {"cameras": [], "columns": 3, "refresh_seconds": 15}
+        assert data == {"cameras": [], "columns": 2, "refresh_seconds": 15}
     finally:
         await tc.close()
 
@@ -6920,7 +6920,7 @@ async def test_security_feed_settings_get_unreadable_file_falls_back_to_defaults
         ):
             resp = await tc.get("/api/security-feed/settings")
         data = await resp.json()
-        assert data == {"cameras": [], "columns": 3, "refresh_seconds": 15}
+        assert data == {"cameras": [], "columns": 2, "refresh_seconds": 15}
     finally:
         await tc.close()
 
@@ -6942,7 +6942,7 @@ async def test_security_feed_settings_get_clamps_out_of_range_values_from_file(
         ):
             resp = await tc.get("/api/security-feed/settings")
         data = await resp.json()
-        assert data["columns"] == 6  # clamped to max
+        assert data["columns"] == 3  # clamped to max
         assert data["refresh_seconds"] == 5  # clamped to min
     finally:
         await tc.close()
@@ -6964,7 +6964,7 @@ async def test_security_feed_settings_put_then_get_round_trips(
                 "/api/security-feed/settings",
                 json={
                     "cameras": ["Driveway"],
-                    "columns": 4,
+                    "columns": 3,
                     "refresh_seconds": 20,
                 },
             )
@@ -6972,7 +6972,7 @@ async def test_security_feed_settings_put_then_get_round_trips(
             get_resp = await tc.get("/api/security-feed/settings")
         assert (await get_resp.json()) == {
             "cameras": ["Driveway"],
-            "columns": 4,
+            "columns": 3,
             "refresh_seconds": 20,
         }
     finally:
@@ -7040,7 +7040,7 @@ async def test_security_feed_settings_put_defaults_missing_fields(
         ):
             resp = await tc.put("/api/security-feed/settings", json={})
         data = await resp.json()
-        assert data == {"cameras": [], "columns": 3, "refresh_seconds": 15}
+        assert data == {"cameras": [], "columns": 2, "refresh_seconds": 15}
     finally:
         await tc.close()
 
@@ -7089,7 +7089,7 @@ async def test_security_feed_settings_put_non_numeric_columns_falls_back_to_defa
                 },
             )
         data = await resp.json()
-        assert data["columns"] == 3
+        assert data["columns"] == 2
         assert data["refresh_seconds"] == 15
     finally:
         await tc.close()

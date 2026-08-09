@@ -10,6 +10,7 @@ import AutomationsPage from './components/automations/AutomationsPage.vue'
 import StatusPage from './components/status/StatusPage.vue'
 import LibraryPage from './components/library/LibraryPage.vue'
 import LiveViewPage from './components/liveview/LiveViewPage.vue'
+import SecurityFeedPage from './components/securityfeed/SecurityFeedPage.vue'
 import AiPage from './components/ai/AiPage.vue'
 import UsagePage from './components/usage/UsagePage.vue'
 import ModelsPage from './components/models/ModelsPage.vue'
@@ -60,6 +61,9 @@ onUnmounted(() => auth.stopPolling())
   </div>
   <div id="page-liveview" class="page" :class="{ active: activeTab === 'liveview' }">
     <LiveViewPage v-if="activeTab === 'liveview'" />
+  </div>
+  <div id="page-securityfeed" class="page" :class="{ active: activeTab === 'securityfeed' }">
+    <SecurityFeedPage v-if="activeTab === 'securityfeed'" />
   </div>
   <div id="page-automations" class="page" :class="{ active: activeTab === 'automations' }">
     <AutomationsPage />

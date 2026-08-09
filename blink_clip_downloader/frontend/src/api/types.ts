@@ -496,6 +496,28 @@ export interface LiveViewCamerasResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Security Feed — grid of near-live camera snapshot tiles
+// ---------------------------------------------------------------------------
+
+export interface SecurityFeedCamerasResponse {
+  cameras: string[]
+}
+
+export interface SecurityFeedSettings {
+  /** Which cameras to show as tiles. Empty means "show every camera" —
+   * same convention as ai_car_cameras (see config.py). */
+  cameras: string[]
+  /** Tiles per row (1-3 — past 3, a tile shrinks too small to make out
+   * what a snapshot actually shows). */
+  columns: number
+  /** How often the frontend re-fetches each tile's snapshot, in seconds
+   * (5-300). This does not trigger a new Blink snapshot — it just re-reads
+   * whatever the add-on's own poll cycle already cached; see
+   * BlinkDownloader.get_camera_snapshot(). */
+  refresh_seconds: number
+}
+
+// ---------------------------------------------------------------------------
 // Storage — archived clip ZIP groups
 // ---------------------------------------------------------------------------
 
