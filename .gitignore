@@ -24,3 +24,6 @@ blink_clip_downloader/blink_downloader/static/
 node_modules/
 cobertura-coverage.xml
 coverage.xml
+lcov.info
+.scannerwork/
+.sonar/
