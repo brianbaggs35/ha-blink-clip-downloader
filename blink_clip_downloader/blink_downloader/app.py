@@ -175,6 +175,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             moondream_api_key=config.moondream_api_key,
             prompt_debug_enabled=config.ai_prompt_debug_enabled,
             live_view=self._live_view,
+            list_camera_names=self._downloader.list_camera_names,
+            get_camera_snapshot=self._downloader.get_camera_snapshot,
         )
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,
