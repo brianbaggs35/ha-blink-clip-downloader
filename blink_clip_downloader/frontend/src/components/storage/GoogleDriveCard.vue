@@ -33,6 +33,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import GoogleDriveFolderBrowser from './GoogleDriveFolderBrowser.vue'
+import GoogleDriveSetupHelp from './GoogleDriveSetupHelp.vue'
 
 const BACKUP_POLICY_OPTIONS: { label: string; value: GDriveBackupPolicy }[] = [
   { label: 'Archived clips only (recommended)', value: 'archived_only' },
@@ -240,6 +241,7 @@ onUnmounted(stopConnectPolling)
             />
           </svg>
           Google Drive Setup
+          <GoogleDriveSetupHelp />
         </span>
       </template>
       <template #subtitle>
