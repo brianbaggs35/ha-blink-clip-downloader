@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
 from blink_downloader.tracker import _MAX_TRACKED_IDS, ClipTracker
 
 

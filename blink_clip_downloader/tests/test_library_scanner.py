@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
 from blink_downloader.database import ClipDatabase
 from blink_downloader.library_scanner import (
     _timestamp_from_filename,
