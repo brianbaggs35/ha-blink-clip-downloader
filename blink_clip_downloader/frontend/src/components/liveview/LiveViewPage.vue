@@ -267,7 +267,12 @@ onUnmounted(() => {
   background: #000;
   border-radius: 8px;
   overflow: hidden;
-  min-height: 240px;
+  /* Stable box from first render, whether idle, starting, or live — Video.js
+     only computes its own fluid/aspect-ratio sizing once ensurePlayer()
+     initializes it, so without this the box visibly jumps size the moment
+     a camera is selected. Matches SecurityFeedPage.vue's tiles, the same
+     fix for the same class of problem. */
+  aspect-ratio: 16 / 9;
   display: flex;
   align-items: center;
   justify-content: center;
