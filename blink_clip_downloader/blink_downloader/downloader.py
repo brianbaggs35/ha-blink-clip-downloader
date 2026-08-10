@@ -99,7 +99,7 @@ async def probe_clip_duration(video_path: Path) -> int:
 
     try:
         return max(0, int(float(stdout.decode().strip())))
-    except (ValueError, UnicodeDecodeError):
+    except ValueError:
         _LOGGER.warning("ffprobe gave no usable duration for %s", video_path)
         return 0
 
@@ -892,7 +892,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 if size is not None:
                     return size
 
-            except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+            except (aiohttp.ClientError, OSError) as exc:
                 # aiohttp raises asyncio.TimeoutError (not a ClientError
                 # subclass) when the ClientTimeout(total=...) above expires,
                 # so it must be caught alongside ClientError or a slow/hung

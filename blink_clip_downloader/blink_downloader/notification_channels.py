@@ -18,6 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 # exposed externally and does not terminate TLS, so http:// is correct here.
 _HA_API = "http://supervisor/core/api"  # NOSONAR
 _TIMEOUT = aiohttp.ClientTimeout(total=15)
+_TEST_NOTIFICATION_TITLE = "Blink Clip Downloader — Test Notification"
 
 
 class NotificationDispatcher:
@@ -127,7 +128,7 @@ class NotificationDispatcher:
         if not self._token:
             return False, "No Supervisor token available."
         ok = await self._send_mobile_now(
-            "Blink Clip Downloader — Test Notification",
+            _TEST_NOTIFICATION_TITLE,
             "This is a test push notification from the Blink Clip Downloader "
             "add-on. If you received this, your mobile_app target is working "
             "correctly.",
@@ -244,7 +245,7 @@ class NotificationDispatcher:
         if not self._discord_url:
             return False, "Discord webhook URL is not configured."
         ok = await self._send_discord_now(
-            "Blink Clip Downloader — Test Notification",
+            _TEST_NOTIFICATION_TITLE,
             "This is a test message from the Blink Clip Downloader add-on. "
             "If you received this, your Discord webhook is working correctly.",
             camera="Test",
@@ -315,7 +316,7 @@ class NotificationDispatcher:
         if not self._token:
             return False, "No Supervisor token available."
         ok = await self._send_ha_notification_now(
-            "Blink Clip Downloader — Test Notification",
+            _TEST_NOTIFICATION_TITLE,
             "This is a test notification from the Blink Clip Downloader "
             "add-on. If you received this, Home Assistant suspicious-activity "
             "notifications are working correctly.",
