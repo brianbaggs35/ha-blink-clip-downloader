@@ -19,21 +19,28 @@ export interface ClipFilters {
   archivePath?: string
 }
 
+// Sent only when actually set (falsy/empty means "no filter"), verbatim
+// string value, same key name as the filter itself.
+const STRING_FILTER_FIELDS = ['camera', 'since', 'until', 'source', 'tag', 'search', 'sort'] as const
+
+// Sent only when true (there's no "explicitly false" state for these,
+// unlike `starred` below) as the literal string '1'.
+const TRUE_ONLY_FLAG_FIELDS = ['notified', 'recognized', 'archived'] as const
+
 function buildQuery(filters: ClipFilters): string {
   const params = new URLSearchParams()
-  if (filters.camera) params.set('camera', filters.camera)
-  if (filters.since) params.set('since', filters.since)
-  if (filters.until) params.set('until', filters.until)
+  for (const field of STRING_FILTER_FIELDS) {
+    const value = filters[field]
+    if (value) params.set(field, value)
+  }
+  for (const field of TRUE_ONLY_FLAG_FIELDS) {
+    if (filters[field]) params.set(field, '1')
+  }
+  // starred has a meaningful explicit-false state ("only unstarred
+  // clips"), so it's checked against undefined rather than truthiness.
   if (filters.starred !== undefined) params.set('starred', filters.starred ? '1' : '0')
-  if (filters.source) params.set('source', filters.source)
-  if (filters.tag) params.set('tag', filters.tag)
-  if (filters.search) params.set('search', filters.search)
-  if (filters.sort) params.set('sort', filters.sort)
   if (filters.limit !== undefined) params.set('limit', String(filters.limit))
   if (filters.offset !== undefined) params.set('offset', String(filters.offset))
-  if (filters.notified) params.set('notified', '1')
-  if (filters.recognized) params.set('recognized', '1')
-  if (filters.archived) params.set('archived', '1')
   if (filters.archivePath) params.set('archive_path', filters.archivePath)
   const qs = params.toString()
   return qs ? `?${qs}` : ''
