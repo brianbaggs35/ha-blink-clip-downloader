@@ -131,7 +131,7 @@ const POLYGON_POINT_MIN_DISTANCE = 4
 /** Appends `point` to `path`, skipping it if it's too close to the last
  * captured point to be worth keeping (see {@link POLYGON_POINT_MIN_DISTANCE}). */
 export function addFreeformPoint(path: Point[], point: Point): Point[] {
-  const last = path[path.length - 1]
+  const last = path.at(-1)
   if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) < POLYGON_POINT_MIN_DISTANCE) {
     return path
   }

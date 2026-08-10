@@ -1337,7 +1337,10 @@ h3 {
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
-  word-break: break-word;
+  /* overflow-wrap is the standard property for this — word-break:
+     break-word was only ever a non-standard value browsers happened to
+     treat the same way. */
+  overflow-wrap: break-word;
 }
 .val.ok {
   color: var(--success);

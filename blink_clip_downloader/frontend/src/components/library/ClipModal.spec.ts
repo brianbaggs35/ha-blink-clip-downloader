@@ -648,7 +648,7 @@ describe('ClipModal', () => {
     expect(fakePlayer.dispose).toHaveBeenCalled()
   })
 
-  it('shows a toast when the clip fails to load', async () => {
+  it('shows an error toast when the clip request itself rejects (network failure)', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.reject(new Error('down'))),

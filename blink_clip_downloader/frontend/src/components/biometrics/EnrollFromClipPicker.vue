@@ -67,7 +67,13 @@ async function loadCameras() {
     loadingCameras.value = false
   }
 }
-loadCameras()
+// Deliberately fire-and-forget, not top-level await (SonarQube's S7785
+// suggestion) -- a top-level await here would make this component's
+// setup async, requiring every parent that mounts it (BiometricsPage.vue
+// does so behind a plain v-if, no <Suspense>) to add a Suspense boundary
+// just to keep working. loadingCameras already drives its own in-place
+// loading state without that.
+loadCameras() // NOSONAR
 
 // Rapid camera/clip switching can fire loadClips/loadFrames again before an
 // earlier call's response has resolved, letting a stale, slower response
@@ -399,7 +405,11 @@ function toggleFrame(frame: string) {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--accent, #5b9cf6);
+  /* Fallback only applies if --accent is somehow unavailable (it's always
+     set at :root in practice) — darkened from the original #5b9cf6 so it
+     still clears WCAG AA contrast (4.5:1) against the white checkmark on
+     its own, standalone from --accent's own already-compliant value. */
+  background: var(--accent, #3465b3);
   color: #fff;
   display: flex;
   align-items: center;

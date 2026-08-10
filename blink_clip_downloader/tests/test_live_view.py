@@ -454,7 +454,8 @@ async def test_stop_session_active(
         status = await manager.start_session("Front Door")
     assert status.session_id
     hls_dir = manager.get_hls_dir(status.session_id)
-    assert hls_dir is not None and hls_dir.is_dir()
+    assert hls_dir is not None
+    assert hls_dir.is_dir()
 
     stopped = await manager.stop_session(status.session_id)
 

@@ -464,10 +464,14 @@ class GDriveClient:
         if token:
             try:
                 session = self._get_session()
+                # The response body is never needed -- this is a
+                # fire-and-forget revoke. `async with` (rather than a bare
+                # await) is what makes aiohttp release the connection
+                # properly; there's nothing else to do with the response.
                 async with session.post(
                     _REVOKE_URL, data={"token": token}, timeout=_HTTP_TIMEOUT
                 ):
-                    pass
+                    pass  # NOSONAR
             except _HTTP_ERRORS as exc:
                 _LOGGER.warning(
                     "Could not revoke Google Drive token (disconnecting locally anyway): %s",
