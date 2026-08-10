@@ -236,7 +236,8 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
         @update:collapsed="() => toggleArchive(group.archive_path)"
       >
         <template #header>
-          <!--
+          <!-- NOSONAR: prose explaining a deliberate design choice below,
+            not commented-out code.
             PrimeVue's own toggle button (rendered after this #header slot,
             as a sibling — see p-panel-header-actions) only wires *itself*
             up as clickable, not the rest of the header — clicking anywhere
@@ -244,7 +245,10 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
             role="button" + the click/keydown handlers here make the whole
             row toggle, which is what people actually expect to be able to
             click; the real toggle button still works independently since
-            it isn't nested inside this element.
+            it isn't nested inside this element. A real <button> can't be
+            used for the whole row without nesting an interactive element
+            inside another (invalid HTML) once PrimeVue's own toggle
+            button renders alongside it.
           -->
           <div
             class="archive-panel-header"
@@ -268,7 +272,7 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
         <Message v-else-if="archiveLoadError[group.archive_path]" severity="error" :closable="false">
           Failed to load clips in this archive.
         </Message>
-        <!--
+        <!-- NOSONAR: prose, not commented-out code.
           Grouped by camera (row-group-mode="subheader" needs its rows
           pre-sorted so same-camera rows are contiguous, hence
           sortedForGrouping rather than the raw fetched order) -- the

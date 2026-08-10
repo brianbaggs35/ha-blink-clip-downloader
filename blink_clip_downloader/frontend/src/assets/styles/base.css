@@ -763,27 +763,42 @@ h3 {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
 .sel-check {
+  /* A real <input type="checkbox"> (native keyboard/AT support) styled to
+     look like the custom indicator this used to be a plain div for —
+     appearance: none strips the browser's own checkbox rendering so the
+     ::after checkmark below can take over, same look as before. */
+  appearance: none;
+  -webkit-appearance: none;
   position: absolute;
   top: 0.4rem;
   right: 0.4rem;
   width: 19px;
   height: 19px;
+  margin: 0;
+  padding: 0;
   background: rgba(0, 0, 0, 0.5);
   border: 1.5px solid rgba(255, 255, 255, 0.4);
   border-radius: 6px;
+  cursor: pointer;
+  transition: 0.12s var(--ease);
+}
+.sel-check::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 11px;
   color: #fff;
-  transition: 0.12s var(--ease);
-}
-.sel-check .icon {
-  width: 11px;
-  height: 11px;
+  opacity: 0;
 }
 .clip-card.selected .sel-check {
   background: var(--accent);
   border-color: var(--accent);
+}
+.clip-card.selected .sel-check::after {
+  opacity: 1;
 }
 .clip-info {
   padding: 0.6rem 0.7rem;

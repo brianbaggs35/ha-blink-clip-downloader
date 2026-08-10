@@ -44,10 +44,10 @@ describe('ClipCard', () => {
     expect(withoutFace.find('.face-badge').exists()).toBe(false)
   })
 
-  it('shows a checkmark and the selected class when selected', () => {
+  it('shows a checked checkbox and the selected class when selected', () => {
     const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: true } })
     expect(wrapper.find('.clip-card').classes()).toContain('selected')
-    expect(wrapper.find('.sel-check').text()).toBe('✓')
+    expect((wrapper.find('.sel-check').element as HTMLInputElement).checked).toBe(true)
   })
 
   it('falls back to a placeholder icon when the thumbnail fails to load', async () => {
@@ -85,5 +85,13 @@ describe('ClipCard', () => {
     await wrapper.find('.sel-check').trigger('click')
     expect(wrapper.emitted('check')).toHaveLength(1)
     expect(wrapper.emitted('click')).toBeUndefined()
+  })
+
+  it('the selection checkbox is a real, labeled, keyboard-operable checkbox', () => {
+    const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false } })
+    const checkbox = wrapper.find('.sel-check')
+    expect(checkbox.element.tagName).toBe('INPUT')
+    expect(checkbox.attributes('type')).toBe('checkbox')
+    expect(checkbox.attributes('aria-label')).toBeTruthy()
   })
 })
