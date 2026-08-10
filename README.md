@@ -4,6 +4,8 @@ Frontend Coverage - [![codecov](https://codecov.io/github/brianbaggs35/ha-blink-
 
 Combined Coverage - [![codecov](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader/graph/badge.svg?token=66T4D63JFM)](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader)
 
+[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=brianbaggs35_ha-blink-clip-downloader&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=brianbaggs35_ha-blink-clip-downloader)
+
 [![CI/CD Pipeline](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/ci.yaml/badge.svg)](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/ci.yaml)
 
 [![CI/CD Pipeline](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/build.yaml/badge.svg?event=release)](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/build.yaml)
