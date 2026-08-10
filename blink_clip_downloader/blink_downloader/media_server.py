@@ -460,9 +460,9 @@ class MediaServer:
         html = index_file.read_text().replace("'__HAROOT__'", safe_literal)
         return web.Response(text=html, content_type="text/html")
 
-    async def _handle_favicon(
+    async def _handle_favicon(  # NOSONAR
         self, _request: web.Request
-    ) -> web.StreamResponse:  # NOSONAR
+    ) -> web.StreamResponse:
         favicon = _STATIC_DIR / "favicon.svg"
         if not favicon.exists():
             raise web.HTTPNotFound()
@@ -801,9 +801,9 @@ class MediaServer:
             headers={"Content-Disposition": 'attachment; filename="blink-clips.zip"'},
         )
 
-    async def _handle_auth_status(
+    async def _handle_auth_status(  # NOSONAR
         self, _request: web.Request
-    ) -> web.Response:  # NOSONAR
+    ) -> web.Response:
         if self._auth_state_getter:
             status = self._auth_state_getter()
         else:
@@ -823,7 +823,9 @@ class MediaServer:
         seq = self._two_fa_callback(code)
         return web.json_response({"submitted": True, "seq": seq})
 
-    async def _handle_download_now(self, _request: web.Request) -> web.Response:
+    async def _handle_download_now(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
         if self._trigger_download:
             self._trigger_download()
             return web.json_response({"triggered": True})
@@ -837,12 +839,16 @@ class MediaServer:
     # Live View handlers
     # ------------------------------------------------------------------
 
-    async def _handle_liveview_cameras(self, _request: web.Request) -> web.Response:
+    async def _handle_liveview_cameras(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
         if self._live_view is None:
             raise web.HTTPServiceUnavailable(text="Live View is not available")
         return web.json_response({"cameras": self._live_view.list_cameras()})
 
-    async def _handle_liveview_status(self, _request: web.Request) -> web.Response:
+    async def _handle_liveview_status(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
         if self._live_view is None:
             raise web.HTTPServiceUnavailable(text="Live View is not available")
         return web.json_response(asdict(self._live_view.get_status()))
@@ -898,7 +904,7 @@ class MediaServer:
         # just ended via idle timeout) — reflected in "ok", not an error.
         return web.json_response({"ok": self._live_view.heartbeat(session_id)})
 
-    async def _handle_liveview_hls_file(
+    async def _handle_liveview_hls_file(  # NOSONAR
         self, request: web.Request
     ) -> web.StreamResponse:
         if self._live_view is None:
@@ -952,14 +958,14 @@ class MediaServer:
     _SECURITY_FEED_DEFAULT_COLUMNS = 2
     _SECURITY_FEED_DEFAULT_REFRESH_SECONDS = 15
 
-    async def _handle_security_feed_cameras(
+    async def _handle_security_feed_cameras(  # NOSONAR
         self, _request: web.Request
     ) -> web.Response:
         if self._list_camera_names is None:
             raise web.HTTPServiceUnavailable(text="Security Feed is not available")
         return web.json_response({"cameras": self._list_camera_names()})
 
-    async def _handle_security_feed_settings_get(
+    async def _handle_security_feed_settings_get(  # NOSONAR
         self, _request: web.Request
     ) -> web.Response:
         settings = {
@@ -1589,7 +1595,9 @@ class MediaServer:
 
     _VEHICLE_SETTINGS_FILE = Path("/data/vehicle_settings.json")
 
-    async def _handle_vehicle_settings_get(self, _request: web.Request) -> web.Response:
+    async def _handle_vehicle_settings_get(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
         if self._VEHICLE_SETTINGS_FILE.exists():
             try:
                 data = json.loads(self._VEHICLE_SETTINGS_FILE.read_text())
@@ -1723,7 +1731,9 @@ class MediaServer:
 
         return web.json_response({"saved": True, "car_zone": zone})
 
-    async def _handle_vehicle_zone_delete(self, request: web.Request) -> web.Response:
+    async def _handle_vehicle_zone_delete(  # NOSONAR
+        self, request: web.Request
+    ) -> web.Response:
         camera = request.match_info["camera"]
         configs = self._read_camera_configs()
         entry = next((c for c in configs if c.get("camera") == camera), None)
@@ -1803,7 +1813,9 @@ class MediaServer:
     # config.yaml — see gdrive_client.py's SETTINGS_FILE/CREDENTIALS_FILE.
     # ------------------------------------------------------------------
 
-    async def _handle_gdrive_settings_get(self, _request: web.Request) -> web.Response:
+    async def _handle_gdrive_settings_get(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
         if self._gdrive_client is None:
             # A literal False against the "has_client_secret" key reads to
             # bandit (B105) as a hardcoded credential, and a nosec inside a
@@ -1848,7 +1860,9 @@ class MediaServer:
         )
         return web.json_response({"saved": True})
 
-    async def _handle_gdrive_status(self, _request: web.Request) -> web.Response:
+    async def _handle_gdrive_status(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
         if self._gdrive_client is None:
             return web.json_response(
                 {
@@ -1935,7 +1949,7 @@ class MediaServer:
         self._gdrive_connect_task = asyncio.create_task(_poll())
         return web.json_response(_gdrive_connect_state)
 
-    async def _handle_gdrive_connect_status(
+    async def _handle_gdrive_connect_status(  # NOSONAR
         self, _request: web.Request
     ) -> web.Response:
         return web.json_response(_gdrive_connect_state)

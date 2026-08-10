@@ -32,8 +32,9 @@ _LOGGER = logging.getLogger(__name__)
 # same trust boundary this process already reads from, so it would add
 # real complexity (generation, migration, breaking the BLINK_DB_DSN
 # override below) for no actual defense-in-depth.
-DEFAULT_DSN = os.environ.get(  # NOSONAR
-    "BLINK_DB_DSN", "postgresql://blink@/blink_clips?host=/var/run/postgresql"
+DEFAULT_DSN = os.environ.get(
+    "BLINK_DB_DSN",
+    "postgresql://blink@/blink_clips?host=/var/run/postgresql",  # NOSONAR
 )
 
 _SCHEMA = """

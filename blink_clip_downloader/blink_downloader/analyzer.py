@@ -2703,9 +2703,12 @@ class _MoondreamDetectionMixin:
     # separator can never overlap with its own mandatory alnum char, so
     # there's no legitimate alternate parse to backtrack into; this just
     # makes that non-ambiguity provable rather than merely true on
-    # inspection.
+    # inspection. SonarQube's S8786 still flags the line below regardless —
+    # its static check doesn't credit atomic groups as eliminating
+    # backtracking, so the suppression below is warranted on top of the
+    # atomic-group fix, not instead of it.
     _PLATE_MENTION_RE = re.compile(
-        r"(?:license\s+)?plate\s*[:#-]?\s*[A-Za-z0-9](?>[ -]?[A-Za-z0-9]){1,10}",
+        r"(?:license\s+)?plate\s*[:#-]?\s*[A-Za-z0-9](?>[ -]?[A-Za-z0-9]){1,10}",  # NOSONAR
         re.IGNORECASE,
     )
 
@@ -2728,7 +2731,8 @@ class _MoondreamDetectionMixin:
         stripped = re.sub(r"\s{2,}", " ", stripped)
         # Atomic for the same reason as _PLATE_MENTION_RE above — a comma
         # can't satisfy \s*, so there's nothing ambiguous to backtrack into.
-        stripped = re.sub(r"\s*(?>,\s*){2}", ", ", stripped).strip(" ,.-")
+        # Same SonarQube caveat as that pattern too (see its comment).
+        stripped = re.sub(r"\s*(?>,\s*){2}", ", ", stripped).strip(" ,.-")  # NOSONAR
         return stripped or car_description
 
     @staticmethod
