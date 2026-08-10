@@ -103,7 +103,7 @@ describe('FineTuneCard', () => {
       .find((b) => b.text().includes('New Fine-tune'))!
       .trigger('click')
     await flushPromises()
-    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBefore)
   })
 
   it('trains from feedback and reports the trained count', async () => {

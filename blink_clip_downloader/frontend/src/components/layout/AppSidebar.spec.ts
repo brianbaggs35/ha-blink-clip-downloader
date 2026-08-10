@@ -160,7 +160,7 @@ describe('AppSidebar', () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ connected: true })))
       mountSidebar('ai')
       const connection = useConnectionStore()
-      expect(connection.connected).toBe(null)
+      expect(connection.connected).toBeNull()
 
       await vi.advanceTimersByTimeAsync(0)
       expect(connection.connected).toBe(true)
@@ -186,7 +186,7 @@ describe('AppSidebar', () => {
       const connection = useConnectionStore()
 
       await vi.advanceTimersByTimeAsync(0)
-      expect(connection.connected).toBe(null)
+      expect(connection.connected).toBeNull()
     })
   })
 

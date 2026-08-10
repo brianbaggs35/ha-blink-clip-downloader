@@ -57,7 +57,7 @@ describe('ToastHost', () => {
     // .at(-1) targets the one this test just added, not whichever is first.
     const summaries = body().findAll('.p-toast-summary')
     expect(summaries.at(-1)!.text()).toBe('Camera configs saved')
-    expect(body().findAll('.p-toast-detail').length).toBe(0)
+    expect(body().findAll('.p-toast-detail')).toHaveLength(0)
   })
 
   it('does not add a toast when seq changes but visible is false', async () => {
@@ -72,6 +72,6 @@ describe('ToastHost', () => {
     toast.visible = false
     toast.seq++
     await flush()
-    expect(body().findAll('.p-toast-summary').length).toBe(countBefore)
+    expect(body().findAll('.p-toast-summary')).toHaveLength(countBefore)
   })
 })

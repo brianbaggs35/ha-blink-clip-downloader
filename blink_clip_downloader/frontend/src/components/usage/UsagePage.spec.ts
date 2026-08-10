@@ -355,7 +355,7 @@ describe('UsagePage', () => {
     wrapper.unmount()
     const callsAfterUnmount = vi.mocked(fetch).mock.calls.length
     await vi.advanceTimersByTimeAsync(30_000)
-    expect(vi.mocked(fetch).mock.calls.length).toBe(callsAfterUnmount)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsAfterUnmount)
   })
 
   it('falls back to placeholders for missing model/day/numeric fields', async () => {
