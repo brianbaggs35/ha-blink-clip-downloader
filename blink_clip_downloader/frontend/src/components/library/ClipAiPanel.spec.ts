@@ -668,13 +668,13 @@ describe('ClipAiPanel', () => {
   })
 
   describe('face recognition feedback', () => {
-    it('offers "Report a missed face match" when no bypass applied on this clip', async () => {
+    it('offers both "Report a missed face match" and "Wrong match" when no bypass applied on this clip', async () => {
       mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
       const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
       await wrapper.find('.ai-panel-hdr').trigger('click')
       await flushPromises()
       expect(wrapper.text()).toContain('Report a missed face match')
-      expect(wrapper.text()).not.toContain('Wrong match')
+      expect(wrapper.text()).toContain('Wrong match')
     })
 
     it('offers "Wrong match" instead, naming the recognized person, when a bypass applied', async () => {
@@ -792,6 +792,80 @@ describe('ClipAiPanel', () => {
         .trigger('click')
       await flushPromises()
       expect(posted).toEqual({ report_type: 'false_negative', note: '', person_name: 'Casey' })
+      expect(wrapper.text()).toContain('Reported')
+    })
+
+    it('submits a false_positive report from the non-bypass "Wrong match" button when nobody is enrolled', async () => {
+      let posted: unknown
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string, opts?: RequestInit) => {
+          if (url === '/api/ai/faces/feedback/c1' && opts?.method === 'POST') {
+            posted = JSON.parse(opts.body as string)
+            return Promise.resolve(jsonResponse({ saved: true }))
+          }
+          if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+          if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+          if (url === '/api/ai/faces') return Promise.resolve(jsonResponse({ available: true, faces: [] }))
+          return Promise.reject(new Error(`unexpected ${url}`))
+        }),
+      )
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Wrong match'))!
+        .trigger('click')
+      await flushPromises()
+      expect(posted).toEqual({ report_type: 'false_positive', note: '', person_name: '' })
+      expect(wrapper.text()).toContain('Reported')
+    })
+
+    it('lets the reporter pick who was wrongly matched when more than one person is enrolled', async () => {
+      let posted: unknown
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string, opts?: RequestInit) => {
+          if (url === '/api/ai/faces/feedback/c1' && opts?.method === 'POST') {
+            posted = JSON.parse(opts.body as string)
+            return Promise.resolve(jsonResponse({ saved: true }))
+          }
+          if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(RESULT))
+          if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+          if (url === '/api/ai/faces')
+            return Promise.resolve(
+              jsonResponse({
+                available: true,
+                faces: [
+                  { id: 1, name: 'Brian', created_at: '', approved: true },
+                  { id: 2, name: 'Casey', created_at: '', approved: true },
+                ],
+              }),
+            )
+          return Promise.reject(new Error(`unexpected ${url}`))
+        }),
+      )
+      const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+      await wrapper.find('.ai-panel-hdr').trigger('click')
+      await flushPromises()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Wrong match'))!
+        .trigger('click')
+      await flushPromises()
+      // Not submitted yet — a picker with both names should be showing instead.
+      expect(posted).toBeUndefined()
+      expect(wrapper.text()).toContain('Who was wrongly matched?')
+      const select = wrapper.find('select#clip-ai-face-report-name')
+      expect(select.exists()).toBe(true)
+      await select.setValue('Casey')
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Submit report'))!
+        .trigger('click')
+      await flushPromises()
+      expect(posted).toEqual({ report_type: 'false_positive', note: '', person_name: 'Casey' })
       expect(wrapper.text()).toContain('Reported')
     })
 
