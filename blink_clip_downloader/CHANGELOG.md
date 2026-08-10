@@ -1,5 +1,42 @@
 # Changelog
 
+## 5.3.1
+
+### Bug fixes
+
+- **Live View: sessions could crash within seconds with "ffmpeg exited
+  unexpectedly (code 0)"**, even against a perfectly healthy camera. The
+  underlying cause was in blinkpy's frame-reading loop, which could
+  misread an ordinary mid-stream buffering gap as a fatal end of the
+  stream — worked around locally without touching Blink's protocol
+  handling itself. Also fixed the player visibly changing size the moment
+  a camera is selected.
+- **Archiving: a month's archive could keep showing far fewer clips than
+  it should, growing only slowly**, even after the ZIP-corruption fix in
+  5.3.0 — rows archived before that fix could point at a ZIP that still
+  existed on disk but no longer actually contained that specific clip.
+  The startup cleanup pass now verifies each clip's exact entry is really
+  present in its archive, not just that some file exists at that path.
+- **Security Feed: images never actually refreshed**, regardless of the
+  configured refresh interval — nothing in the add-on was ever telling
+  Blink to check for updated camera images after the initial connection.
+  Camera state (including Security Feed snapshots) now refreshes every
+  poll cycle, and faster right after motion is detected.
+- **Security Feed: the Save button in Customize** now sits at the right
+  edge of the panel instead of bunched up against the last field.
+- **Library tab: added a manual refresh button** next to Select, for
+  reloading the list without the browser's own page refresh.
+- **Biometrics: reporting a wrong face match** ("Wrong match") is now
+  available on every clip, not only ones an approved-household-member
+  bypass had just fired on.
+
+### Security
+
+- Addressed a SonarCloud static-analysis pass: hardened log messages
+  against malformed configuration values, and reviewed/confirmed the
+  bundled database and one file-path helper as already safe against the
+  two other flagged issue classes.
+
 ## 5.3.0
 
 ### Added
