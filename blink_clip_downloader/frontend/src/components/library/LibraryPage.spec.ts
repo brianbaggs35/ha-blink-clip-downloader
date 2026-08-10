@@ -48,6 +48,7 @@ import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
 import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
+import { useToastStore } from '../../stores/toast'
 import { useClipViewerStore } from '../../stores/clipViewer'
 
 function mountLibrary() {
@@ -270,6 +271,22 @@ describe('LibraryPage', () => {
 
     expect(wrapper.text()).toContain('SearchResultCam')
     expect(wrapper.text()).not.toContain('CameraSwitchCam')
+    wrapper.unmount()
+  })
+
+  it('refresh button reloads the library and shows a confirmation toast', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    const fetchCallsBeforeRefresh = vi.mocked(fetch).mock.calls.length
+
+    await wrapper.find('button[aria-label="Refresh library"]').trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(fetchCallsBeforeRefresh)
+    const toast = useToastStore()
+    expect(toast.message).toBe('Library refreshed')
+    expect(toast.visible).toBe(true)
     wrapper.unmount()
   })
 
