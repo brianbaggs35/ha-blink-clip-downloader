@@ -593,7 +593,9 @@ describe('ClipModal', () => {
     const pathBtn = wrapper.findAll('button').find((b) => b.text().includes('Path'))!
     await pathBtn.trigger('click')
     await flushPromises()
-    // no assertion on toast content needed beyond not throwing — covers the catch branch
+    const toast = useToastStore()
+    expect(toast.message).toBe('/data/clips/front.mp4')
+    expect(toast.isError).toBe(true)
     wrapper.unmount()
   })
 

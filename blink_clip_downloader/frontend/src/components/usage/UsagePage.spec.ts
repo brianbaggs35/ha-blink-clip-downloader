@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import UsagePage from './UsagePage.vue'
 import { useConfirmStore } from '../../stores/confirm'
+import { useToastStore } from '../../stores/toast'
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -333,7 +334,9 @@ describe('UsagePage', () => {
     confirm.settle(true)
     await clickPromise
     await flushPromises()
-    // covers the clear-failure catch branch — no throw
+    const toast = useToastStore()
+    expect(toast.message).toBe('Failed to clear usage stats')
+    expect(toast.isError).toBe(true)
     wrapper.unmount()
   })
 

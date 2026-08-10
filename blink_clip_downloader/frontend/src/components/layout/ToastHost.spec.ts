@@ -63,10 +63,15 @@ describe('ToastHost', () => {
   it('does not add a toast when seq changes but visible is false', async () => {
     mountHost()
     const toast = useToastStore()
+    const countBefore = body().findAll('.p-toast-summary').length
+    // Both seq bumps (inside show() and the manual increment below) happen
+    // synchronously, before Vue's watcher gets a chance to run — so by the
+    // time it does, it must see the final visible===false and skip
+    // forwarding anything to PrimeVue at all, not just skip the second bump.
     toast.show('Will hide')
     toast.visible = false
     toast.seq++
     await flush()
-    // no assertion beyond not throwing — covers the early-return branch
+    expect(body().findAll('.p-toast-summary').length).toBe(countBefore)
   })
 })

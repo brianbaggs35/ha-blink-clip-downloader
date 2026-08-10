@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import CameraConfigsSection from './CameraConfigsSection.vue'
+import { useToastStore } from '../../stores/toast'
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -140,6 +141,8 @@ describe('CameraConfigsSection', () => {
       .find((b) => b.text().includes('Save Camera Configs'))!
       .trigger('click')
     await flushPromises()
-    // no throw — error path handled via toast
+    const toast = useToastStore()
+    expect(toast.message).toBe('Failed to save camera configs')
+    expect(toast.isError).toBe(true)
   })
 })
