@@ -619,6 +619,19 @@ async def test_get_archived_clip_records_excludes_unarchived(
     assert records[0]["archive_path"] == "/archives/2024-06.zip"
 
 
+async def test_get_archived_clip_records_includes_camera_and_file_path(
+    db: ClipDatabase,
+) -> None:
+    """archiver.py's orphan-pruning needs these to reconstruct the exact
+    archive member name (camera/filename) a row should point at."""
+    clip = _make_clip("archived-1")
+    await db.add_clip(clip)
+    await db.mark_archived("archived-1", "/archives/2024-06.zip")
+    records = await db.get_archived_clip_records()
+    assert records[0]["camera"] == clip["camera"]
+    assert records[0]["file_path"] == clip["path"]
+
+
 async def test_get_archived_clip_records_without_init() -> None:
     d = ClipDatabase()
     assert await d.get_archived_clip_records() == []

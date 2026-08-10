@@ -921,18 +921,26 @@ class ClipDatabase:
         return [_row_to_dict(r) for r in rows]
 
     async def get_archived_clip_records(self) -> list[dict[str, Any]]:
-        """Return ``{id, archive_path}`` for every clip marked archived.
+        """Return ``{id, archive_path, camera, file_path}`` for every clip
+        marked archived.
 
         Used by :meth:`ClipArchiver.prune_orphaned_archives` to find rows
-        whose ZIP no longer exists on disk (or, for clips archived before
-        that bug was fixed, never existed in the first place) — a lean
-        query since a large library can have thousands of archived clips
-        and the caller only needs these two columns to check each one.
+        whose ZIP no longer exists on disk, is unreadable, or (for clips
+        archived before a corrupted-ZIP bug was fixed) no longer actually
+        contains that clip's member even though the ZIP file itself is
+        still present — ``camera``/``file_path`` are what's needed to
+        reconstruct the exact archive member name (``_archive_month``'s
+        ``f"{camera}/{Path(file_path).name}"``) to check for. ``file_path``
+        still holds the pre-archive path even after the source file is
+        deleted — ``mark_archived`` never touches that column.
         """
         if self._pool is None:
             return []
         rows = await self._pool.fetch(
-            _qm("SELECT id, archive_path FROM clips WHERE archived=TRUE")
+            _qm(
+                "SELECT id, archive_path, camera, file_path FROM clips "
+                "WHERE archived=TRUE"
+            )
         )
         return [_row_to_dict(r) for r in rows]
 
