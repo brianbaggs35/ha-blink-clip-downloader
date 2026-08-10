@@ -246,6 +246,24 @@ jobs:
           # comparisons.
           fetch-depth: 0
 
+      # Without frontend/node_modules present, SonarCloud's TS analyzer
+      # can't resolve tsconfig.app.json's "extends": "@vue/tsconfig/..."
+      # (a package, not a relative path) and falls back to a degraded
+      # analysis with a "referenced/extended tsconfig.json was not found"
+      # warning in the scan log. This job is a fresh checkout (no other
+      # job's node_modules carries over), so it needs its own install --
+      # same version/cache convention as the test job's frontend steps.
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: blink_clip_downloader/frontend
+        run: npm ci
+
       - name: Download backend coverage artifact
         uses: actions/download-artifact@v8
         with:
