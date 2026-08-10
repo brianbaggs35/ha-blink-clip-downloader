@@ -37,6 +37,7 @@ const faceReportSubmitted = ref<FaceFeedbackReportType | null>(null)
 const enrolledNames = ref<string[]>([])
 const showFaceReportPicker = ref(false)
 const faceReportPersonName = ref('')
+const faceReportType = ref<FaceFeedbackReportType>('false_negative')
 
 async function load() {
   loading.value = true
@@ -47,6 +48,7 @@ async function load() {
     enrolledNames.value = result.value ? await loadEnrolledNames() : []
     faceReportSubmitted.value = null
     showFaceReportPicker.value = false
+    faceReportType.value = 'false_negative'
     loaded.value = true
   } catch {
     loadError.value = true
@@ -157,7 +159,8 @@ async function clearFeedback() {
   }
 }
 
-function startFaceReport() {
+function startFaceReport(reportType: FaceFeedbackReportType) {
+  faceReportType.value = reportType
   // No ambiguity to resolve unless there's more than one enrolled person —
   // with 0 or 1 names on file, submit immediately (auto-attaching the sole
   // name when there is one) instead of making the user pick from a list of
@@ -167,7 +170,7 @@ function startFaceReport() {
     showFaceReportPicker.value = true
     return
   }
-  void reportFaceIssue('false_negative', enrolledNames.value[0] ?? '')
+  void reportFaceIssue(reportType, enrolledNames.value[0] ?? '')
 }
 
 async function reportFaceIssue(reportType: FaceFeedbackReportType, personName = '') {
@@ -320,7 +323,9 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
               v-else-if="showFaceReportPicker"
               style="font-size: 0.76rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap"
             >
-              <label for="clip-ai-face-report-name" class="sr-only">Who was missed?</label>
+              <label for="clip-ai-face-report-name" class="sr-only">
+                {{ faceReportType === 'false_negative' ? 'Who was missed?' : 'Who was wrongly matched?' }}
+              </label>
               <select id="clip-ai-face-report-name" v-model="faceReportPersonName" class="tag-input">
                 <option value="">Not sure / someone else</option>
                 <option v-for="n in enrolledNames" :key="n" :value="n">{{ n }}</option>
@@ -328,21 +333,30 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
               <button
                 class="btn sm ghost"
                 :disabled="faceReportSubmitting"
-                @click="reportFaceIssue('false_negative', faceReportPersonName)"
+                @click="reportFaceIssue(faceReportType, faceReportPersonName)"
               >
-                🚩 Submit report
+                {{ faceReportType === 'false_negative' ? '🚩' : '👎' }} Submit report
               </button>
               <button class="btn sm ghost" @click="showFaceReportPicker = false">Cancel</button>
             </div>
-            <button
-              v-else
-              class="btn sm ghost"
-              style="font-size: 0.72rem"
-              :disabled="faceReportSubmitting"
-              @click="startFaceReport"
-            >
-              🚩 Report a missed face match
-            </button>
+            <div v-else style="font-size: 0.76rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap">
+              <button
+                class="btn sm ghost"
+                style="font-size: 0.72rem"
+                :disabled="faceReportSubmitting"
+                @click="startFaceReport('false_negative')"
+              >
+                🚩 Report a missed face match
+              </button>
+              <button
+                class="btn sm ghost"
+                style="font-size: 0.72rem"
+                :disabled="faceReportSubmitting"
+                @click="startFaceReport('false_positive')"
+              >
+                👎 Wrong match
+              </button>
+            </div>
           </div>
         </div>
       </div>
