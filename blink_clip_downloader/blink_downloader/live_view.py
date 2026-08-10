@@ -28,7 +28,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .downloader import AUTH_FATAL_EXCEPTIONS
 
@@ -45,6 +45,68 @@ _HLS_PLAYLIST_NAME = "stream.m3u8"
 # _drain_stderr) — folded into the error message a crashed session reports,
 # since real-hardware behavior here is otherwise unverifiable in tests.
 _STDERR_TAIL_LINES = 20
+
+
+class _AuthenticatingStream(Protocol):
+    """The minimal shape ``_patch_short_reads`` actually depends on.
+
+    Deliberately narrower than the full ``BlinkLiveStream`` surface — this
+    is the whole contract the patch touches, matched structurally by both
+    the real class and this module's tests' fakes, with neither needing to
+    nominally subtype the other.
+    """
+
+    target_reader: Any
+
+    async def auth(self) -> None: ...
+
+
+def _patch_short_reads(stream: _AuthenticatingStream) -> None:
+    """Work around a blinkpy bug where ``BlinkLiveStream.recv()`` misreads
+    an ordinary mid-stream buffering gap as a fatal protocol error.
+
+    ``recv()`` reads each frame as ``target_reader.read(payload_length)``
+    and treats any short read as "insufficient data" — logged, then the
+    whole session is torn down. But ``asyncio.StreamReader.read(n)`` is
+    documented to legitimately return *fewer* than ``n`` bytes whenever
+    anything is already buffered, with no EOF in sight; it is not
+    ``readexactly()``. Video payloads here are ~1316 bytes and routinely
+    arrive split across more than one TLS record, so this fires on
+    completely healthy streams within the first few seconds — the "ffmpeg
+    exited unexpectedly (code 0)" error users saw was this, not an
+    offline camera. (Verified against blinkpy 0.25.9, currently latest —
+    no upstream fix to pick up instead.)
+
+    Patched narrowly on this one stream's reader, once ``auth()`` creates
+    it, rather than touching any of ``recv()``'s own protocol-parsing
+    logic: giving ``.read()`` ``readexactly()``'s accumulate-until-n-or-EOF
+    semantics is exactly the contract ``recv()``'s own short-read check
+    already assumes, so this can't drift out of sync with blinkpy's actual
+    frame parsing on a future bump.
+    """
+    original_auth = stream.auth
+
+    async def _auth_then_patch_reader() -> None:
+        await original_auth()
+        # auth() always sets target_reader before returning without
+        # raising — see blinkpy's BlinkLiveStream.auth().
+        assert stream.target_reader is not None
+        original_read = stream.target_reader.read
+
+        async def _accumulated_read(n: int = -1) -> bytes:
+            if n <= 0:
+                return await original_read(n)
+            chunks = bytearray()
+            while len(chunks) < n:
+                chunk = await original_read(n - len(chunks))
+                if not chunk:
+                    break
+                chunks.extend(chunk)
+            return bytes(chunks)
+
+        stream.target_reader.read = _accumulated_read
+
+    stream.auth = _auth_then_patch_reader
 
 
 class LiveViewError(Exception):
@@ -296,6 +358,8 @@ class LiveViewManager:
                 "Live view: could not start live view for %r", camera_name
             )
             raise LiveViewError(f"Could not start live view: {exc}") from exc
+
+        _patch_short_reads(stream)
 
         try:
             await stream.start(port=0)

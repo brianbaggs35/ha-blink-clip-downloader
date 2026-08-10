@@ -13,6 +13,7 @@ from blink_downloader.live_view import (
     CameraNotFoundError,
     LiveViewError,
     LiveViewManager,
+    _patch_short_reads,
 )
 
 # ---------------------------------------------------------------------------
@@ -80,6 +81,25 @@ class _FakeProcess:
         self._exit(code)
 
 
+class _FakeTargetReader:
+    """Stand-in for the asyncio.StreamReader BlinkLiveStream.auth() creates.
+
+    Delivers each entry of *chunks* on successive read() calls regardless
+    of the requested size, matching the real short-read-prone behavior
+    _patch_short_reads works around — a caller must accumulate across
+    several of these to get a full frame.
+    """
+
+    def __init__(self, chunks: list[bytes] | None = None) -> None:
+        self._chunks = list(chunks or [])
+
+    async def read(self, n: int = -1) -> bytes:
+        del n  # a real short read ignores how much the caller asked for
+        if not self._chunks:
+            return b""
+        return self._chunks.pop(0)
+
+
 class _FakeStream:
     """Stand-in for blinkpy's BlinkLiveStream."""
 
@@ -88,11 +108,16 @@ class _FakeStream:
         self.started = False
         self.stopped = False
         self.start = AsyncMock(side_effect=self._do_start)
+        self.auth = AsyncMock(side_effect=self._do_auth)
+        self.target_reader: _FakeTargetReader | None = None
         self._feed_event = asyncio.Event()
 
     async def _do_start(self, port: int = 0) -> None:
         del port  # required to match BlinkLiveStream.start()'s signature
         self.started = True
+
+    async def _do_auth(self) -> None:
+        self.target_reader = _FakeTargetReader()
 
     def stop(self) -> None:
         self.stopped = True
@@ -147,6 +172,68 @@ def _mock_exec(proc: _FakeProcess | list[_FakeProcess]):
     if isinstance(proc, list):
         return patch(_SUBPROCESS_EXEC, AsyncMock(side_effect=proc))
     return patch(_SUBPROCESS_EXEC, AsyncMock(return_value=proc))
+
+
+# ---------------------------------------------------------------------------
+# _patch_short_reads — the blinkpy short-read workaround
+# ---------------------------------------------------------------------------
+
+
+async def test_patch_short_reads_accumulates_fragmented_delivery() -> None:
+    """A frame split across several short reads must still come back whole.
+
+    Mirrors the real bug: blinkpy's recv() asks for e.g. 9 header bytes or
+    a ~1316-byte payload in one read() call, but the underlying data can
+    legitimately arrive in smaller pieces with no EOF in sight.
+    """
+    stream = _FakeStream()
+    _patch_short_reads(stream)
+
+    await stream.auth()
+    assert stream.target_reader is not None
+    stream.target_reader._chunks = [b"AAA", b"BBB", b"CC"]
+
+    result = await stream.target_reader.read(8)
+
+    assert result == b"AAABBBCC"
+
+
+async def test_patch_short_reads_stops_at_genuine_eof() -> None:
+    """Fewer bytes than requested is fine once the source is truly done."""
+    stream = _FakeStream()
+    _patch_short_reads(stream)
+
+    await stream.auth()
+    assert stream.target_reader is not None
+    stream.target_reader._chunks = [b"AB"]  # then EOF (empty read)
+
+    result = await stream.target_reader.read(8)
+
+    assert result == b"AB"
+
+
+async def test_patch_short_reads_passes_through_non_positive_n() -> None:
+    """read() with no size (or 0) is passed straight through, unaccumulated."""
+    stream = _FakeStream()
+    _patch_short_reads(stream)
+
+    await stream.auth()
+    assert stream.target_reader is not None
+    stream.target_reader._chunks = [b"whatever"]
+
+    result = await stream.target_reader.read(-1)
+
+    assert result == b"whatever"
+
+
+async def test_patch_short_reads_leaves_original_auth_behavior_intact() -> None:
+    """The wrapper must still actually perform the real auth()."""
+    stream = _FakeStream()
+    _patch_short_reads(stream)
+
+    assert stream.target_reader is None
+    await stream.auth()
+    assert stream.target_reader is not None
 
 
 # ---------------------------------------------------------------------------
