@@ -23,7 +23,16 @@ _LOGGER = logging.getLogger(__name__)
 
 # Overridable via BLINK_DB_DSN for local dev/testing against a different
 # PostgreSQL instance; the container always uses the bundled server.
-DEFAULT_DSN = os.environ.get(
+#
+# SonarCloud flags this connection as unprotected by a password — but (see
+# the module docstring above, and rootfs/etc/cont-init.d/01-postgres-init.sh)
+# this server has no TCP listener at all (listen_addresses=''), only a Unix
+# socket reachable from inside this exact container, with
+# --auth-host=reject on top. A password here would have to live in the
+# same trust boundary this process already reads from, so it would add
+# real complexity (generation, migration, breaking the BLINK_DB_DSN
+# override below) for no actual defense-in-depth.
+DEFAULT_DSN = os.environ.get(  # NOSONAR
     "BLINK_DB_DSN", "postgresql://blink@/blink_clips?host=/var/run/postgresql"
 )
 

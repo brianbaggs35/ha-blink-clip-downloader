@@ -405,10 +405,20 @@ def _parse_poll_limits(data: dict) -> tuple[int, int, int]:
     return poll_interval, retention_days, max_clips
 
 
+def _sanitize_for_log(value: str) -> str:
+    """Strip characters that could forge fake log lines out of an
+    add-on-config-supplied string before it's interpolated into a log
+    message (CR/LF log injection, CWE-117)."""
+    return value.replace("\r", "").replace("\n", "")
+
+
 def _parse_log_level(data: dict) -> str:
     log_level = str(data.get("log_level", "info")).lower()
     if log_level not in _VALID_LOG_LEVELS:
-        _LOGGER.warning("Unknown log_level %r, falling back to 'info'", log_level)
+        _LOGGER.warning(
+            "Unknown log_level %r, falling back to 'info'",
+            _sanitize_for_log(log_level),
+        )
         log_level = "info"
     return log_level
 
@@ -447,7 +457,7 @@ def _resolve_ai_escalation(data: dict, ai_provider: str) -> tuple[bool, str, str
             "'Enable Tier-2 Escalation' toggle with ai_escalation_provider="
             "'openai' and ai_escalation_model=%r instead. Continuing to "
             "honor the legacy option for now.",
-            legacy_openai_escalation_model,
+            _sanitize_for_log(legacy_openai_escalation_model),
         )
         ai_escalation_enabled = True
         ai_escalation_provider = "openai"
@@ -455,7 +465,7 @@ def _resolve_ai_escalation(data: dict, ai_provider: str) -> tuple[bool, str, str
     if ai_escalation_provider and ai_escalation_provider not in _VALID_AI_PROVIDERS:
         _LOGGER.warning(
             "Unknown ai_escalation_provider %r, disabling escalation",
-            ai_escalation_provider,
+            _sanitize_for_log(ai_escalation_provider),
         )
         ai_escalation_enabled = False
         ai_escalation_provider = ""

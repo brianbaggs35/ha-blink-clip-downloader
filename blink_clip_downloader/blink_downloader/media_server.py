@@ -1700,7 +1700,15 @@ class MediaServer:
 
         try:
             self._VEHICLE_ZONE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-            self._vehicle_zone_snapshot_path(camera).write_bytes(thumb.read_bytes())
+            # SonarCloud flags this path as built from user-controlled data
+            # (camera comes straight off the URL) — but
+            # _vehicle_zone_snapshot_path slugifies it through
+            # re.sub(r"[^a-z0-9]+", "-", ...) first, so the result can only
+            # ever contain [a-z0-9-]: no "/" or ".." can reach the
+            # filesystem here regardless of what camera actually is.
+            self._vehicle_zone_snapshot_path(camera).write_bytes(  # NOSONAR
+                thumb.read_bytes()
+            )
         except OSError as exc:
             _LOGGER.warning(
                 "Could not save vehicle zone snapshot for %s: %s", camera, exc

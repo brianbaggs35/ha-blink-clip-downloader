@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from blink_downloader.config import AppConfig, _parse_config, load_config
+from blink_downloader.config import (
+    AppConfig,
+    _parse_config,
+    _sanitize_for_log,
+    load_config,
+)
 
 # ---------------------------------------------------------------------------
 # Default ai_prompt content
@@ -146,6 +151,51 @@ def test_max_clips_out_of_range():
 def test_unknown_log_level_defaults_to_info():
     cfg = _parse_config({"username": "u", "password": "p", "log_level": "verbose"})
     assert cfg.log_level == "info"
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_for_log — CR/LF log injection (CWE-117)
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_for_log_strips_newlines_and_carriage_returns():
+    assert _sanitize_for_log("evil\nfake log line\r\n") == "evilfake log line"
+
+
+def test_sanitize_for_log_leaves_ordinary_values_unchanged():
+    assert _sanitize_for_log("moondream_cloud") == "moondream_cloud"
+
+
+def test_unknown_log_level_with_embedded_newline_is_sanitized_in_the_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        cfg = _parse_config(
+            {"username": "u", "password": "p", "log_level": "verbose\nFAKE LINE"}
+        )
+    assert cfg.log_level == "info"
+    # The embedded newline must not have survived into the log record --
+    # otherwise it could forge what looks like a second, fake log line.
+    # (log_level is lowercased before this warning, hence "fake line".)
+    assert "'verbosefake line'" in caplog.text
+
+
+def test_unknown_ai_escalation_provider_with_embedded_newline_is_sanitized(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        cfg = _parse_config(
+            {
+                "username": "u",
+                "password": "p",
+                "ai_escalation_enabled": True,
+                "ai_escalation_provider": "not-real\nFAKE LINE",
+            }
+        )
+    assert cfg.ai_escalation_provider == ""
+    # (ai_escalation_provider is lowercased before this warning, hence
+    # "fake line".)
+    assert "'not-realfake line'" in caplog.text
 
 
 def test_camera_filter_strips_whitespace():
