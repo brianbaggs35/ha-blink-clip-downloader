@@ -956,36 +956,17 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
-  it('shows a danger-class quota bar above 90% usage', async () => {
+  it.each([
+    { usageBand: 'above 90% (danger)', usedBytes: 95, freeBytes: 5 },
+    { usageBand: 'between 70% and 90% (warn)', usedBytes: 80, freeBytes: 20 },
+  ])('shows a quota bar for usage $usageBand', async ({ usedBytes, freeBytes }) => {
     mockFetch({
       '/api/stats': {
         ...STATS,
         disk: {
-          used_bytes: 95,
-          used_mb: 95,
-          free_bytes: 5,
-          free_gb: 0,
-          total_bytes: 100,
-          total_gb: 0,
-          quota_bytes: 100,
-          quota_gb: 0,
-        },
-      },
-    })
-    const wrapper = mountLibrary()
-    await flushPromises()
-    expect(wrapper.findComponent({ name: 'ProgressBar' }).exists()).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('shows a warn-class quota bar between 70% and 90% usage', async () => {
-    mockFetch({
-      '/api/stats': {
-        ...STATS,
-        disk: {
-          used_bytes: 80,
-          used_mb: 80,
-          free_bytes: 20,
+          used_bytes: usedBytes,
+          used_mb: usedBytes,
+          free_bytes: freeBytes,
           free_gb: 0,
           total_bytes: 100,
           total_gb: 0,

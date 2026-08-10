@@ -1291,7 +1291,11 @@ async def test_handle_2fa_wrong_code_does_not_raise_and_keeps_waiting(dl, tmp_pa
             await asyncio.sleep(0)
         dl.submit_two_fa_code("000000")
 
-    with (
+    # SonarQube's S5778 wants only one call in this block that could raise
+    # -- not achievable here without breaking the test: the two coroutines
+    # below must run concurrently (one waits on the other's submission
+    # event), so gathering them together is the point, not an accident.
+    with (  # NOSONAR
         patch("blink_downloader.downloader.TWO_FA_FILE", missing_file),
         pytest.raises(TwoFARequired),
     ):
@@ -1320,7 +1324,9 @@ async def test_handle_2fa_wrong_code_returns_false_does_not_raise(dl, tmp_path):
             await asyncio.sleep(0)
         dl.submit_two_fa_code("000000")
 
-    with (
+    # Same SonarQube S5778 caveat as the test above -- the concurrent
+    # gather is the point, not something to narrow down to one call.
+    with (  # NOSONAR
         patch("blink_downloader.downloader.TWO_FA_FILE", missing_file),
         pytest.raises(TwoFARequired),
     ):
@@ -1910,7 +1916,12 @@ async def test_fetch_clip_list_reraises_auth_fatal_exceptions(dl, caplog, exc):
     app.py's poll loop can reconnect, instead of silently retrying the same
     broken token refresh forever (see CHANGELOG 5.0.5)."""
     dl._blink = MagicMock()
-    with (
+    # SonarQube's S5778 flags this block, but its body already awaits
+    # exactly one call (_fetch_clip_list below) -- the other two context
+    # managers (patch, caplog.at_level) don't invoke anything themselves,
+    # they only configure the mock/log capture pytest.raises' one real
+    # call runs against.
+    with (  # NOSONAR
         patch(
             "blink_downloader.downloader.blink_api.request_videos",
             side_effect=exc,

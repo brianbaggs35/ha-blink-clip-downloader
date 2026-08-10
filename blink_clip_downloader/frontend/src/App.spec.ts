@@ -59,7 +59,14 @@ describe('App', () => {
     )
   }
 
-  it('switches to the Live View tab and mounts LiveViewPage', async () => {
+  // SonarQube's S5976 groups the next 3 tests as "replace with a single
+  // parameterized test" -- the first two (Live View, Status) do share a
+  // shape, but the third (below) exercises a genuinely different scenario
+  // (a cross-tab date-filter redirect, not just "switch tab, check active
+  // class"). Forcing all three into one data-driven test via a callback
+  // parameter would trade three plainly-named, linear tests for one with
+  // an extra layer of indirection, for a two-case saving -- not a win.
+  it(/* NOSONAR */ 'switches to the Live View tab and mounts LiveViewPage', async () => {
     mockArrayAwareFetch()
     const wrapper = mountApp()
     await wrapper.find('[data-tab="liveview"]').trigger('click')
