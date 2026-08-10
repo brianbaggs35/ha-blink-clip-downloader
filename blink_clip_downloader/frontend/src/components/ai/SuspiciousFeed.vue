@@ -136,8 +136,12 @@ async function quickFeedback(clipId: string, correct: boolean) {
           <div style="display: flex; gap: 0.25rem" @click.stop>
             <span v-if="thanked.has(item.clip_id)" style="font-size: 0.72rem; color: var(--muted)">Thanks!</span>
             <template v-else>
-              <button class="btn sm ghost" title="Correct" @click="quickFeedback(item.clip_id, true)">👍</button>
-              <button class="btn sm ghost" title="Incorrect" @click="quickFeedback(item.clip_id, false)">👎</button>
+              <button type="button" class="btn sm ghost" title="Correct" @click="quickFeedback(item.clip_id, true)">
+                👍
+              </button>
+              <button type="button" class="btn sm ghost" title="Incorrect" @click="quickFeedback(item.clip_id, false)">
+                👎
+              </button>
             </template>
           </div>
         </div>

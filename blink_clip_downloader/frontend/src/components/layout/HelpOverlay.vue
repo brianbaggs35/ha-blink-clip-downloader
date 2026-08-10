@@ -24,7 +24,7 @@ const SHORTCUTS: [string, string][] = [
 <template>
   <div class="modal-bg nested-overlay" :class="{ open }" style="z-index: 150" @click.self="open = false">
     <div class="modal" style="max-width: 460px">
-      <button class="modal-close" title="Close (Esc)" @click="open = false">
+      <button type="button" class="modal-close" title="Close (Esc)" @click="open = false">
         <AppIcon name="close" />
       </button>
       <div class="modal-body">

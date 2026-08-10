@@ -18,16 +18,18 @@ defineEmits<{ star: []; delete: []; zip: []; analyze: []; upload: []; cancel: []
          [of what you individually checked]", which reads as broken when
          count is 0. This gives "all" something real to mean: every clip
          currently loaded in the grid (i.e. matching the active filters). -->
-    <button v-if="count < total" class="btn sm" @click="$emit('selectAll')">Select all {{ total }}</button>
-    <button class="btn sm" @click="$emit('star')">★ Star selected</button>
-    <button class="btn sm" @click="$emit('delete')">🗑 Delete selected</button>
-    <button class="btn sm" :disabled="zipping" @click="$emit('zip')">
+    <button v-if="count < total" type="button" class="btn sm" @click="$emit('selectAll')">
+      Select all {{ total }}
+    </button>
+    <button type="button" class="btn sm" @click="$emit('star')">★ Star selected</button>
+    <button type="button" class="btn sm" @click="$emit('delete')">🗑 Delete selected</button>
+    <button type="button" class="btn sm" :disabled="zipping" @click="$emit('zip')">
       {{ zipping ? '⏳ Zipping…' : '⬇ ZIP' }}
     </button>
-    <button v-if="aiEnabled" class="btn sm" :disabled="analyzing" @click="$emit('analyze')">
+    <button v-if="aiEnabled" type="button" class="btn sm" :disabled="analyzing" @click="$emit('analyze')">
       {{ analyzing ? '⏳ Analyzing…' : '🔬 Analyze selected' }}
     </button>
-    <button v-if="gdriveEnabled" class="btn sm" @click="$emit('upload')">☁ Upload to Drive</button>
-    <button class="btn sm" style="margin-left: auto" @click="$emit('cancel')">✕ Cancel</button>
+    <button v-if="gdriveEnabled" type="button" class="btn sm" @click="$emit('upload')">☁ Upload to Drive</button>
+    <button type="button" class="btn sm" style="margin-left: auto" @click="$emit('cancel')">✕ Cancel</button>
   </div>
 </template>

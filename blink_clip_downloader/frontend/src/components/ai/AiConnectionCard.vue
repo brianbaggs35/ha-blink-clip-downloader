@@ -240,7 +240,7 @@ function confPct(r: AnalysisResultDict): number {
     </div>
 
     <div v-if="showModelPicker()" class="model-picker">
-      <button class="btn sm model-picker__fetch" :disabled="fetchingModels" @click="fetchModels">
+      <button type="button" class="btn sm model-picker__fetch" :disabled="fetchingModels" @click="fetchModels">
         {{ fetchingModels ? '⏳ Loading…' : '⟳ Fetch Models' }}
       </button>
       <div class="model-picker__row">
@@ -252,6 +252,7 @@ function confPct(r: AnalysisResultDict): number {
           </option>
         </select>
         <button
+          type="button"
           class="btn sm ghost model-picker__copy"
           title="Copy the selected model id, then paste it into this add-on's configuration (OpenAI Model / Anthropic Model / Ollama Vision Model)"
           @click="copyModelId"
@@ -316,11 +317,11 @@ function confPct(r: AnalysisResultDict): number {
         >
           {{ installState.log || '' }}
         </div>
-        <button class="btn sm ghost" @click="startInstall">↺ Retry Install</button>
+        <button type="button" class="btn sm ghost" @click="startInstall">↺ Retry Install</button>
       </div>
       <div v-else>
         <p style="font-size: 0.8rem; color: var(--warn); margin-bottom: 0.45rem">⚠ moondream package not installed</p>
-        <button class="btn sm" @click="startInstall">⬇ Install Moondream 0.5B</button>
+        <button type="button" class="btn sm" @click="startInstall">⬇ Install Moondream 0.5B</button>
         <p style="font-size: 0.73rem; color: var(--muted); margin-top: 0.35rem">
           Package + model ~430 MB, may take several minutes
         </p>
@@ -341,6 +342,7 @@ function confPct(r: AnalysisResultDict): number {
 
       <div class="model-picker">
         <button
+          type="button"
           class="btn sm model-picker__fetch"
           :disabled="fetchingEscalationModels"
           @click="fetchEscalationModelsList"
@@ -356,6 +358,7 @@ function confPct(r: AnalysisResultDict): number {
             </option>
           </select>
           <button
+            type="button"
             class="btn sm ghost model-picker__copy"
             title="Copy the selected model id, then paste it into this add-on's configuration (AI Escalation Model)"
             @click="copyEscalationModelId"
@@ -367,7 +370,7 @@ function confPct(r: AnalysisResultDict): number {
     </template>
 
     <div style="margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.6rem">
-      <button class="btn sm ghost" :disabled="testing" @click="runTest">
+      <button type="button" class="btn sm ghost" :disabled="testing" @click="runTest">
         {{ testing ? '⏳ Testing…' : '🔬 Test Analysis' }}
       </button>
       <p style="font-size: 0.73rem; color: var(--muted); margin: 0.3rem 0 0">

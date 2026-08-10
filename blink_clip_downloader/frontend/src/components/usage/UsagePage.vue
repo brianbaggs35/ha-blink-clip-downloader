@@ -72,7 +72,7 @@ async function clearUsage() {
   <div class="auto-content">
     <h2 style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
       <span>AI Token Usage</span>
-      <button class="btn sm danger" @click="clearUsage">🗑 Clear Stats</button>
+      <button type="button" class="btn sm danger" @click="clearUsage">🗑 Clear Stats</button>
     </h2>
 
     <div v-if="loading" style="padding: 2rem"><LoadingIndicator /></div>

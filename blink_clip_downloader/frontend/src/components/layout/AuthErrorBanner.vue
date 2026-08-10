@@ -9,6 +9,6 @@ const auth = useAuthStore()
   <div class="auth-error-banner" :class="{ show: auth.bannerVisible }">
     <AppIcon name="error-circle" />
     <span>{{ auth.bannerMessage }}</span>
-    <button title="Dismiss" @click="auth.dismissBanner()"><AppIcon name="close" /></button>
+    <button type="button" title="Dismiss" @click="auth.dismissBanner()"><AppIcon name="close" /></button>
   </div>
 </template>
