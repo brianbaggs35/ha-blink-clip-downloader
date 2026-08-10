@@ -2641,32 +2641,29 @@ def test_openai_model_default() -> None:
     assert a.model_name() == "gpt-4o-mini"
 
 
-def test_openai_model_pricing_gpt4o_mini() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+@pytest.mark.parametrize(
+    ("model", "expected_input", "expected_output"),
+    [
+        ("gpt-4o-mini", 0.15, 0.60),
+        ("gpt-4o", 2.50, 10.00),
+        ("gpt-4-turbo", 10.00, 30.00),
+        ("gpt-4.1-mini", 0.40, 1.60),
+        ("gpt-5", 1.25, 10.00),
+        ("gpt-5-mini", 0.25, 2.00),
+        ("gpt-5-nano", 0.05, 0.40),
+        ("gpt-5.4", 2.50, 15.00),
+        ("gpt-5.4-mini", 0.75, 4.50),
+        ("gpt-5.4-nano", 0.20, 1.25),
+        ("gpt-5.5", 5.00, 30.00),
+    ],
+)
+def test_openai_model_pricing(
+    model: str, expected_input: float, expected_output: float
+) -> None:
+    a = OpenAIAnalyzer(api_key="key", model=model, prompt="test")
     inp, out = a.model_pricing()
-    assert inp == 0.15
-    assert out == 0.60
-
-
-def test_openai_model_pricing_gpt4o() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-4o", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 2.50
-    assert out == 10.00
-
-
-def test_openai_model_pricing_gpt4_turbo() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-4-turbo", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 10.00
-    assert out == 30.00
-
-
-def test_openai_model_pricing_gpt41_mini() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-4.1-mini", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 0.40
-    assert out == 1.60
+    assert inp == expected_input
+    assert out == expected_output
 
 
 def test_openai_model_pricing_unknown_falls_back_to_gpt4o() -> None:
@@ -2674,55 +2671,6 @@ def test_openai_model_pricing_unknown_falls_back_to_gpt4o() -> None:
     inp, out = a.model_pricing()
     assert inp == 2.50
     assert out == 10.00
-
-
-def test_openai_model_pricing_gpt5() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-5", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 1.25
-    assert out == 10.00
-
-
-def test_openai_model_pricing_gpt5_mini() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-5-mini", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 0.25
-    assert out == 2.00
-
-
-def test_openai_model_pricing_gpt5_nano() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-5-nano", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 0.05
-    assert out == 0.40
-
-
-def test_openai_model_pricing_gpt54() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-5.4", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 2.50
-    assert out == 15.00
-
-
-def test_openai_model_pricing_gpt54_mini() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-5.4-mini", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 0.75
-    assert out == 4.50
-
-
-def test_openai_model_pricing_gpt54_nano() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-5.4-nano", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 0.20
-    assert out == 1.25
-
-
-def test_openai_model_pricing_gpt55() -> None:
-    a = OpenAIAnalyzer(api_key="key", model="gpt-5.5", prompt="test")
-    inp, out = a.model_pricing()
-    assert inp == 5.00
-    assert out == 30.00
 
 
 # ------------------------------------------------------------------
