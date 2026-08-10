@@ -490,7 +490,12 @@ class MediaServer:
             limit, offset = 48, 0
 
         starred_raw = q.get("starred")
-        starred = True if starred_raw == "1" else False if starred_raw == "0" else None
+        if starred_raw == "1":
+            starred = True
+        elif starred_raw == "0":
+            starred = False
+        else:
+            starred = None
         notified_only = q.get("notified") == "1"
         recognized_only = q.get("recognized") == "1"
         archived = q.get("archived") == "1"

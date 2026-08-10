@@ -216,12 +216,12 @@ const hasDraft = computed(() => {
 
 async function saveZone() {
   const { width, height } = containerSize.value
-  const zone: CarZone | null =
-    drawShape.value === 'polygon'
-      ? polygonToFraction(freeformPath.value, width, height)
-      : rect.value
-        ? rectToFraction(rect.value, width, height)
-        : null
+  let zone: CarZone | null = null
+  if (drawShape.value === 'polygon') {
+    zone = polygonToFraction(freeformPath.value, width, height)
+  } else if (rect.value) {
+    zone = rectToFraction(rect.value, width, height)
+  }
   if (!zone || !selectedClipId.value) return
 
   saving.value = true
