@@ -288,6 +288,20 @@ async function loadAll(silent = false) {
   await Promise.all([loadStats(), loadCameras(), loadClips(0, silent), loadAiStatus(), loadGDriveStatus(), loadTags()])
 }
 
+const refreshing = ref(false)
+async function refreshLibrary() {
+  refreshing.value = true
+  try {
+    // silent: true — same reasoning as the 60s auto-refresh and the
+    // cross-tab refresh.tick watcher below: swap the list in place rather
+    // than clearing the grid and jumping scroll position back to the top.
+    await loadAll(true)
+    toast.show('Library refreshed')
+  } finally {
+    refreshing.value = false
+  }
+}
+
 let debounceTimer: ReturnType<typeof setTimeout>
 watch([search, dateRange, sourceFilter, tagFilter, sortOrder, starredOnly, notifiedOnly, recognizedOnly], () => {
   clearTimeout(debounceTimer)
@@ -596,6 +610,18 @@ onUnmounted(() => {
         @click="toggleSelectMode(!selectMode)"
       >
         {{ selectMode ? 'Selecting…' : 'Select' }}
+      </Button>
+      <Button
+        size="small"
+        severity="secondary"
+        outlined
+        :loading="refreshing"
+        :disabled="refreshing"
+        title="Refresh library"
+        aria-label="Refresh library"
+        @click="refreshLibrary"
+      >
+        <template #icon><AppIcon name="refresh" /></template>
       </Button>
     </div>
 
