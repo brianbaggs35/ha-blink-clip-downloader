@@ -35,6 +35,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _API_TIMEOUT = aiohttp.ClientTimeout(total=120)
 _HEALTH_TIMEOUT = aiohttp.ClientTimeout(total=10)
+_CONTENT_TYPE_JSON = "application/json"
 
 # Blink motion clips can run up to 60 seconds. Frame extraction must sample
 # candidates across the *entire* clip length regardless of frame_strategy or
@@ -214,24 +215,35 @@ def _vision_model_score(name: str) -> int:
 # listed before their shorter/bare prefix (e.g. "gpt-5.4-mini" before
 # "gpt-5.4" before "gpt-5") since model_pricing() below returns the first
 # matching entry in insertion order.
+#
+# SonarQube's S1192 flags several of these model-id strings as duplicated
+# literals (they also appear in _OPENAI_VISION_PREFIXES and the model-list
+# constants below) — deliberately left as plain strings rather than named
+# constants: these are independent reference tables (pricing vs.
+# vision-capability vs. UI model lists), each meant to read as a flat,
+# visually-scannable list matching OpenAI's own docs. Routing every entry
+# through a shared constant would trade that scannability for indirection
+# without preventing any real drift — a typo in a constant name fails
+# exactly as loudly (NameError) as a typo in the literal would look
+# different from OpenAI's docs.
 _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
-    "gpt-4.1-nano": (0.10, 0.40),
+    "gpt-4.1-nano": (0.10, 0.40),  # NOSONAR
     "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4.1-mini": (0.40, 1.60),
+    "gpt-4.1-mini": (0.40, 1.60),  # NOSONAR
     "o3-mini": (1.10, 4.40),
     "o4-mini": (1.10, 4.40),
     "gpt-4o": (2.50, 10.00),
-    "gpt-4.1": (2.00, 8.00),
+    "gpt-4.1": (2.00, 8.00),  # NOSONAR
     "o1-mini": (1.10, 4.40),
     "o1": (15.00, 60.00),
     "o3": (2.00, 8.00),
     "gpt-4-turbo": (10.00, 30.00),
-    "gpt-5.4-nano": (0.20, 1.25),
-    "gpt-5.4-mini": (0.75, 4.50),
+    "gpt-5.4-nano": (0.20, 1.25),  # NOSONAR
+    "gpt-5.4-mini": (0.75, 4.50),  # NOSONAR
     "gpt-5-nano": (0.05, 0.40),
     "gpt-5-mini": (0.25, 2.00),
-    "gpt-5.4": (2.50, 15.00),
-    "gpt-5.5": (5.00, 30.00),
+    "gpt-5.4": (2.50, 15.00),  # NOSONAR
+    "gpt-5.5": (5.00, 30.00),  # NOSONAR
     "gpt-5.2": (1.75, 14.00),
     "gpt-5.1": (1.25, 10.00),
     "gpt-5": (1.25, 10.00),
@@ -2543,7 +2555,7 @@ class ClipAnalyzer(BaseAnalyzer):
                 f"{self._ollama_url}/api/tags", timeout=_HEALTH_TIMEOUT
             ) as resp:
                 return resp.status == 200
-        except (TimeoutError, aiohttp.ClientError, OSError):
+        except (aiohttp.ClientError, OSError):
             return False
 
     async def fetch_models(self) -> list[dict[str, Any]]:
@@ -2698,17 +2710,20 @@ class _MoondreamDetectionMixin:
     # Matches a plate/license-plate mention and its adjacent token(s), e.g.
     # "plate ABC1234", "license plate: XYZ-999", "plate # 7GHK123" —
     # case-insensitive, tolerant of an optional "license" prefix and a
-    # colon/dash/# separator before the plate value itself. The repeated
-    # group is atomic ((?>...), not (?:...)) — each repetition's optional
-    # separator can never overlap with its own mandatory alnum char, so
-    # there's no legitimate alternate parse to backtrack into; this just
-    # makes that non-ambiguity provable rather than merely true on
-    # inspection. SonarQube's S8786 still flags the line below regardless —
-    # its static check doesn't credit atomic groups as eliminating
+    # colon/dash/# separator before the plate value itself. [A-Z] rather
+    # than [A-Za-z] — re.IGNORECASE below already matches lowercase, so
+    # spelling out both cases in the class is redundant (verified
+    # behaviorally identical). The repeated group is atomic ((?>...), not
+    # (?:...)) — each repetition's optional separator can never overlap
+    # with its own mandatory alnum char, so there's no legitimate
+    # alternate parse to backtrack into; this just makes that
+    # non-ambiguity provable rather than merely true on inspection.
+    # SonarQube's S8786 still flags the line below regardless — its
+    # static check doesn't credit atomic groups as eliminating
     # backtracking, so the suppression below is warranted on top of the
     # atomic-group fix, not instead of it.
     _PLATE_MENTION_RE = re.compile(
-        r"(?:license\s+)?plate\s*[:#-]?\s*[A-Za-z0-9](?>[ -]?[A-Za-z0-9]){1,10}",  # NOSONAR
+        r"(?:license\s+)?plate\s*[:#-]?\s*[A-Z0-9](?>[ -]?[A-Z0-9]){1,10}",  # NOSONAR
         re.IGNORECASE,
     )
 
@@ -3189,7 +3204,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 allow_redirects=True,
             ) as resp:
                 return self._store_health_check_result(resp.status < 500)
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream Cloud health check failed: %s", exc)
             return self._store_health_check_result(False)
 
@@ -3240,7 +3255,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             payload["model"] = self._finetune_model
         headers = {
             "X-Moondream-Auth": self._api_key,
-            "Content-Type": "application/json",
+            "Content-Type": _CONTENT_TYPE_JSON,
         }
         try:
             session = self._get_session()
@@ -3260,7 +3275,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                 data = await resp.json()
                 objects = data.get("objects", [])
                 return [o for o in objects if isinstance(o, dict)]
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream /detect failed for %r: %s", object_name, exc)
             return []
 
@@ -3292,7 +3307,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             payload["model"] = self._finetune_model
         headers = {
             "X-Moondream-Auth": self._api_key,
-            "Content-Type": "application/json",
+            "Content-Type": _CONTENT_TYPE_JSON,
         }
         try:
             session = self._get_session()
@@ -3372,7 +3387,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             payload["model"] = self._finetune_model
         headers = {
             "X-Moondream-Auth": self._api_key,
-            "Content-Type": "application/json",
+            "Content-Type": _CONTENT_TYPE_JSON,
         }
         try:
             session = self._get_session()
@@ -4122,7 +4137,7 @@ class MoondreamFineTuneManager:
     def _headers(self) -> dict[str, str]:
         return {
             "X-Moondream-Auth": self._api_key,
-            "Content-Type": "application/json",
+            "Content-Type": _CONTENT_TYPE_JSON,
         }
 
     def _get_session(self) -> aiohttp.ClientSession:
@@ -4169,7 +4184,7 @@ class MoondreamFineTuneManager:
                 data = await resp.json()
                 fid = str(data.get("finetune_id", ""))
                 return fid or None
-        except (TimeoutError, aiohttp.ClientError, OSError):
+        except (aiohttp.ClientError, OSError):
             _LOGGER.exception("Moondream create_finetune failed")
             return None
 
@@ -4192,7 +4207,7 @@ class MoondreamFineTuneManager:
                     return []
                 data = await resp.json()
                 return list(data.get("finetunes", []))
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream list_finetunes failed: %s", exc)
             return []
 
@@ -4210,7 +4225,7 @@ class MoondreamFineTuneManager:
                 if resp.status != 200:
                     return None
                 return dict(await resp.json())
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream get_finetune failed: %s", exc)
             return None
 
@@ -4224,7 +4239,7 @@ class MoondreamFineTuneManager:
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
                 return resp.status == 200
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream delete_finetune failed: %s", exc)
             return False
 
@@ -4289,7 +4304,7 @@ class MoondreamFineTuneManager:
                     )
                     return {}
                 return dict(await resp.json())
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.warning("Moondream generate_rollouts failed: %s", exc)
             return {}
 
@@ -4348,7 +4363,7 @@ class MoondreamFineTuneManager:
                     )
                     return {}
                 return dict(await resp.json())
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.warning("Moondream train_step failed: %s", exc)
             return {}
 
@@ -4430,7 +4445,7 @@ class MoondreamFineTuneManager:
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
                 return resp.status == 200
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream save_checkpoint failed: %s", exc)
             return False
 
@@ -4453,7 +4468,7 @@ class MoondreamFineTuneManager:
                     return []
                 data = await resp.json()
                 return list(data.get("checkpoints", []))
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream list_checkpoints failed: %s", exc)
             return []
 
@@ -4467,7 +4482,7 @@ class MoondreamFineTuneManager:
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
                 return resp.status == 200
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream delete_checkpoint failed: %s", exc)
             return False
 
@@ -4485,7 +4500,7 @@ class MoondreamFineTuneManager:
                 timeout=_HEALTH_TIMEOUT,
             ) as resp:
                 return resp.status == 200
-        except (TimeoutError, aiohttp.ClientError, OSError) as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.debug("Moondream log_metrics failed: %s", exc)
             return False
 

@@ -36,6 +36,14 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _CLIP_NOT_FOUND = "Clip not found"
+_INVALID_JSON_BODY = "Invalid JSON body"
+_INVALID_REQUEST_BODY = "Invalid request body"
+_LIVE_VIEW_NOT_AVAILABLE = "Live View is not available"
+_GDRIVE_NOT_AVAILABLE = "Google Drive backup is not available"
+_NOTIFICATIONS_NOT_CONFIGURED = "Notifications not configured"
+_FINETUNE_REQUIRES_MOONDREAM_CLOUD = "Fine-tuning requires ai_provider=moondream_cloud"
+_CAMERA_CONFIGS_SAVE_ERROR = "Could not save camera configs: %s"
+_AI_FEEDBACK_ROUTE = "/api/ai/feedback/{clip_id}"
 
 # Strict allowlist for the Live View HLS file-serving route — the real
 # defense against path traversal: this structurally rejects anything with a
@@ -329,13 +337,9 @@ class MediaServer:
         )
         # Adaptive learning (feedback) endpoints
         app.router.add_get("/api/ai/feedback/stats", self._handle_ai_feedback_stats)
-        app.router.add_get("/api/ai/feedback/{clip_id}", self._handle_ai_feedback_get)
-        app.router.add_post(
-            "/api/ai/feedback/{clip_id}", self._handle_ai_feedback_submit
-        )
-        app.router.add_delete(
-            "/api/ai/feedback/{clip_id}", self._handle_ai_feedback_delete
-        )
+        app.router.add_get(_AI_FEEDBACK_ROUTE, self._handle_ai_feedback_get)
+        app.router.add_post(_AI_FEEDBACK_ROUTE, self._handle_ai_feedback_submit)
+        app.router.add_delete(_AI_FEEDBACK_ROUTE, self._handle_ai_feedback_delete)
 
         # Local-only face-recognition enrollment (see vision.py)
         app.router.add_get("/api/ai/faces", self._handle_faces_list)
@@ -431,8 +435,9 @@ class MediaServer:
     # every handler registered with `app.router.add_*` must stay `async def`
     # even when its body happens not to await anything — making one `def`
     # breaks dispatch for that route. A few handlers below (flagged by
-    # SonarQube as "async without await") fall in that category; each is
-    # marked NOSONAR rather than de-asynced.
+    # SonarQube as "async without await") fall in that category; each
+    # carries a suppression comment for that specific rule rather than
+    # being de-asynced.
     # ------------------------------------------------------------------
 
     async def _handle_index(self, request: web.Request) -> web.Response:  # NOSONAR
@@ -561,7 +566,7 @@ class MediaServer:
             body = await request.json()
             starred = bool(body.get("starred", True))
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
         found = await self._db.star_clip(clip_id, starred)
         if not found:
             raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
@@ -573,7 +578,7 @@ class MediaServer:
             body = await request.json()
             tags = [str(t) for t in body.get("tags", [])]
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
         found = await self._db.set_tags(clip_id, tags)
         if not found:
             raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
@@ -774,7 +779,7 @@ class MediaServer:
             body = await request.json()
             clip_ids = [str(c) for c in body.get("ids", [])][:25]
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid request body")
+            raise web.HTTPBadRequest(text=_INVALID_REQUEST_BODY)
 
         if not clip_ids:
             raise web.HTTPBadRequest(text="No clip IDs provided")
@@ -817,7 +822,7 @@ class MediaServer:
             body = await request.json()
             code = str(body.get("code", "")).strip()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid request body")
+            raise web.HTTPBadRequest(text=_INVALID_REQUEST_BODY)
         if not code.isdigit() or len(code) != 6:
             raise web.HTTPBadRequest(text="Code must be exactly 6 digits")
         seq = self._two_fa_callback(code)
@@ -843,23 +848,23 @@ class MediaServer:
         self, _request: web.Request
     ) -> web.Response:
         if self._live_view is None:
-            raise web.HTTPServiceUnavailable(text="Live View is not available")
+            raise web.HTTPServiceUnavailable(text=_LIVE_VIEW_NOT_AVAILABLE)
         return web.json_response({"cameras": self._live_view.list_cameras()})
 
     async def _handle_liveview_status(  # NOSONAR
         self, _request: web.Request
     ) -> web.Response:
         if self._live_view is None:
-            raise web.HTTPServiceUnavailable(text="Live View is not available")
+            raise web.HTTPServiceUnavailable(text=_LIVE_VIEW_NOT_AVAILABLE)
         return web.json_response(asdict(self._live_view.get_status()))
 
     async def _handle_liveview_start(self, request: web.Request) -> web.Response:
         if self._live_view is None:
-            raise web.HTTPServiceUnavailable(text="Live View is not available")
+            raise web.HTTPServiceUnavailable(text=_LIVE_VIEW_NOT_AVAILABLE)
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid request body")
+            raise web.HTTPBadRequest(text=_INVALID_REQUEST_BODY)
         camera = str(body.get("camera", "")).strip()
         if not camera:
             raise web.HTTPBadRequest(text="Missing camera")
@@ -880,7 +885,7 @@ class MediaServer:
         # just means "stop whatever's active" (session_id=None), since stop
         # is meant to be safe to call defensively (e.g. on tab unload).
         if self._live_view is None:
-            raise web.HTTPServiceUnavailable(text="Live View is not available")
+            raise web.HTTPServiceUnavailable(text=_LIVE_VIEW_NOT_AVAILABLE)
         session_id = None
         try:
             body = await request.json()
@@ -892,11 +897,11 @@ class MediaServer:
 
     async def _handle_liveview_heartbeat(self, request: web.Request) -> web.Response:
         if self._live_view is None:
-            raise web.HTTPServiceUnavailable(text="Live View is not available")
+            raise web.HTTPServiceUnavailable(text=_LIVE_VIEW_NOT_AVAILABLE)
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid request body")
+            raise web.HTTPBadRequest(text=_INVALID_REQUEST_BODY)
         session_id = str(body.get("session_id", "")).strip()
         if not session_id:
             raise web.HTTPBadRequest(text="Missing session_id")
@@ -908,7 +913,7 @@ class MediaServer:
         self, request: web.Request
     ) -> web.StreamResponse:
         if self._live_view is None:
-            raise web.HTTPServiceUnavailable(text="Live View is not available")
+            raise web.HTTPServiceUnavailable(text=_LIVE_VIEW_NOT_AVAILABLE)
         filename = request.match_info["filename"]
         if not _LIVEVIEW_FILENAME_RE.fullmatch(filename):
             raise web.HTTPNotFound()
@@ -997,7 +1002,7 @@ class MediaServer:
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
         cameras = body.get("cameras", [])
         if not isinstance(cameras, list):
             raise web.HTTPBadRequest(text="cameras must be a list")
@@ -1313,7 +1318,7 @@ class MediaServer:
         """Send a one-off test email using the configured SMTP settings."""
         if not self._notification_dispatcher:
             return web.json_response(
-                {"success": False, "message": "Notifications not configured"}
+                {"success": False, "message": _NOTIFICATIONS_NOT_CONFIGURED}
             )
         ok, message = await self._notification_dispatcher.send_test_email()
         return web.json_response({"success": ok, "message": message})
@@ -1322,7 +1327,7 @@ class MediaServer:
         """Send a one-off test message to the configured Discord webhook."""
         if not self._notification_dispatcher:
             return web.json_response(
-                {"success": False, "message": "Notifications not configured"}
+                {"success": False, "message": _NOTIFICATIONS_NOT_CONFIGURED}
             )
         ok, message = await self._notification_dispatcher.send_test_discord()
         return web.json_response({"success": ok, "message": message})
@@ -1331,7 +1336,7 @@ class MediaServer:
         """Send a one-off test mobile_app push notification."""
         if not self._notification_dispatcher:
             return web.json_response(
-                {"success": False, "message": "Notifications not configured"}
+                {"success": False, "message": _NOTIFICATIONS_NOT_CONFIGURED}
             )
         ok, message = await self._notification_dispatcher.send_test_mobile()
         return web.json_response({"success": ok, "message": message})
@@ -1340,7 +1345,7 @@ class MediaServer:
         """Send a one-off test Home Assistant persistent notification."""
         if not self._notification_dispatcher:
             return web.json_response(
-                {"success": False, "message": "Notifications not configured"}
+                {"success": False, "message": _NOTIFICATIONS_NOT_CONFIGURED}
             )
         ok, message = await self._notification_dispatcher.send_test_ha_notification()
         return web.json_response({"success": ok, "message": message})
@@ -1533,7 +1538,7 @@ class MediaServer:
                 # yields nothing, no exception) — without this check that
                 # would write an empty array over camera_configs.json,
                 # wiping every camera's settings with no error surfaced.
-                raise web.HTTPBadRequest(text="Invalid JSON body")
+                raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
             configs = [
                 {
                     "camera": str(c["camera"]),
@@ -1548,12 +1553,12 @@ class MediaServer:
         except web.HTTPBadRequest:
             raise
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         try:
             self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
         except OSError as exc:
-            _LOGGER.warning("Could not save camera configs: %s", exc)
+            _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
 
         self._apply_camera_configs_to_analyzer(configs)
 
@@ -1616,7 +1621,7 @@ class MediaServer:
             body = await request.json()
             car_description = str(body.get("car_description", "") or "").strip()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         try:
             self._VEHICLE_SETTINGS_FILE.write_text(
@@ -1670,7 +1675,7 @@ class MediaServer:
             body = await request.json()
             clip_id = str(body.get("clip_id") or "")
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         zone = self._normalize_car_zone(
             body.get("zone") if isinstance(body, dict) else None
@@ -1725,7 +1730,7 @@ class MediaServer:
         try:
             self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
         except OSError as exc:
-            _LOGGER.warning("Could not save camera configs: %s", exc)
+            _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
 
         self._apply_camera_configs_to_analyzer(configs)
 
@@ -1742,7 +1747,7 @@ class MediaServer:
             try:
                 self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
             except OSError as exc:
-                _LOGGER.warning("Could not save camera configs: %s", exc)
+                _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
             self._apply_camera_configs_to_analyzer(configs)
 
         self._vehicle_zone_snapshot_path(camera).unlink(missing_ok=True)
@@ -1839,13 +1844,11 @@ class MediaServer:
 
     async def _handle_gdrive_settings_put(self, request: web.Request) -> web.Response:
         if self._gdrive_client is None:
-            raise web.HTTPServiceUnavailable(
-                text="Google Drive backup is not available"
-            )
+            raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         client_id = str(body.get("client_id", "") or "")
         # Omitted/empty client_secret means "keep the previously stored one"
@@ -1886,9 +1889,7 @@ class MediaServer:
     async def _handle_gdrive_connect(self, _request: web.Request) -> web.Response:
         global _gdrive_connect_state
         if self._gdrive_client is None:
-            raise web.HTTPServiceUnavailable(
-                text="Google Drive backup is not available"
-            )
+            raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
         if not self._gdrive_client.is_configured:
             raise web.HTTPBadRequest(
                 text="Set a Google OAuth client ID and secret first"
@@ -1957,9 +1958,7 @@ class MediaServer:
     async def _handle_gdrive_disconnect(self, _request: web.Request) -> web.Response:
         global _gdrive_connect_state
         if self._gdrive_client is None:
-            raise web.HTTPServiceUnavailable(
-                text="Google Drive backup is not available"
-            )
+            raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
         await self._gdrive_client.disconnect()
         _gdrive_connect_state = {"phase": "idle"}
         return web.json_response({"disconnected": True})
@@ -2015,13 +2014,11 @@ class MediaServer:
 
     async def _handle_gdrive_create_folder(self, request: web.Request) -> web.Response:
         if self._gdrive_client is None:
-            raise web.HTTPServiceUnavailable(
-                text="Google Drive backup is not available"
-            )
+            raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
         name = str(body.get("name", "") or "").strip()
         if not name:
             raise web.HTTPBadRequest(text="Folder name is required")
@@ -2041,13 +2038,11 @@ class MediaServer:
     async def _handle_gdrive_select_folder(self, request: web.Request) -> web.Response:
         """Set the default folder used for automatic archived/all_clips backups."""
         if self._gdrive_client is None:
-            raise web.HTTPServiceUnavailable(
-                text="Google Drive backup is not available"
-            )
+            raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
         folder_id = str(body.get("folder_id", "") or "")
         if not folder_id:
             raise web.HTTPBadRequest(text="folder_id is required")
@@ -2062,9 +2057,7 @@ class MediaServer:
         only cover clips downloaded/archived from that moment forward.
         """
         if self._gdrive_client is None or self._gdrive_queue is None:
-            raise web.HTTPServiceUnavailable(
-                text="Google Drive backup is not available"
-            )
+            raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
         include_unarchived = self._gdrive_client.backup_policy == "all_clips"
         pending = await self._db.get_clips_pending_gdrive_backup(include_unarchived)
         for clip in pending:
@@ -2075,13 +2068,11 @@ class MediaServer:
         """Manual upload of specific clips (Library's "Upload to Drive" bulk
         action), optionally targeting a folder other than the default."""
         if self._gdrive_client is None or self._gdrive_queue is None:
-            raise web.HTTPServiceUnavailable(
-                text="Google Drive backup is not available"
-            )
+            raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
         clip_ids = body.get("clip_ids")
         if not isinstance(clip_ids, list) or not clip_ids:
             raise web.HTTPBadRequest(text="clip_ids must be a non-empty list")
@@ -2126,7 +2117,7 @@ class MediaServer:
             if corrected_suspicious is not None:
                 corrected_suspicious = bool(corrected_suspicious)
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         result = await self._db.get_analysis_for_clip(clip_id)
         if not result:
@@ -2240,7 +2231,7 @@ class MediaServer:
             image_b64 = str(body.get("image_base64", "") or "")
             approved = bool(body.get("approved", True))
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         if not name:
             return web.json_response({"error": "name is required"}, status=400)
@@ -2317,7 +2308,7 @@ class MediaServer:
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         if "approved" not in body and "name" not in body:
             return web.json_response(
@@ -2348,7 +2339,7 @@ class MediaServer:
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         if "approved" not in body and "name" not in body:
             return web.json_response(
@@ -2404,7 +2395,7 @@ class MediaServer:
             note = str(body.get("note", "") or "")
             person_name = str(body.get("person_name", "") or "")
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         if report_type not in self._FACE_FEEDBACK_TYPES:
             raise web.HTTPBadRequest(
@@ -2462,7 +2453,7 @@ class MediaServer:
         manager = self._get_finetune_manager()
         if manager is None:
             return web.json_response(
-                {"error": "Fine-tuning requires ai_provider=moondream_cloud"},
+                {"error": _FINETUNE_REQUIRES_MOONDREAM_CLOUD},
                 status=400,
             )
         try:
@@ -2471,7 +2462,7 @@ class MediaServer:
                 name = str(body.get("name", "") or "").strip()
                 rank = int(body.get("rank", 16))
             except Exception:  # noqa: BLE001
-                raise web.HTTPBadRequest(text="Invalid JSON body")
+                raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
             if not name:
                 return web.json_response({"error": "name is required"}, status=400)
@@ -2554,7 +2545,7 @@ class MediaServer:
             self._analyzer, MoondreamCloudAnalyzer
         ):
             return web.json_response(
-                {"error": "Fine-tuning requires ai_provider=moondream_cloud"},
+                {"error": _FINETUNE_REQUIRES_MOONDREAM_CLOUD},
                 status=400,
             )
         finetune_id = request.match_info["finetune_id"]
@@ -2562,7 +2553,7 @@ class MediaServer:
             body = await request.json()
             step = int(body.get("step"))
         except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text="Invalid JSON body")
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
         model_id = MoondreamFineTuneManager.get_model_id(finetune_id, step)
         self._analyzer.set_finetune_model(model_id)
@@ -2644,7 +2635,7 @@ class MediaServer:
             # already confirmed self._analyzer is set, so there's nothing
             # to close here.
             return web.json_response(
-                {"error": "Fine-tuning requires ai_provider=moondream_cloud"},
+                {"error": _FINETUNE_REQUIRES_MOONDREAM_CLOUD},
                 status=400,
             )
         finetune_id = request.match_info["finetune_id"]
@@ -2702,7 +2693,7 @@ class MediaServer:
         manager = self._get_finetune_manager()
         if manager is None:
             return web.json_response(
-                {"error": "Fine-tuning requires ai_provider=moondream_cloud"},
+                {"error": _FINETUNE_REQUIRES_MOONDREAM_CLOUD},
                 status=400,
             )
         finetune_id = request.match_info["finetune_id"]

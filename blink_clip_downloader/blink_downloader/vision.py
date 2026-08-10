@@ -137,6 +137,13 @@ class CPUIncompatibleError(RuntimeError):
     existing generic-failure handling, traceback and all)."""
 
 
+_CPU_INCOMPATIBLE_MESSAGE = (
+    "this device's CPU is missing instructions PyTorch needs "
+    "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
+    "Pi 5 is not affected)"
+)
+
+
 def torch_cpu_compatible() -> bool:
     """Return True if this CPU can safely run PyTorch's official builds.
 
@@ -284,11 +291,7 @@ class ObjectDetector:
 
     def _load_sync(self) -> None:
         if not torch_cpu_compatible():
-            raise CPUIncompatibleError(
-                "this device's CPU is missing instructions PyTorch needs "
-                "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
-                "Pi 5 is not affected)"
-            )
+            raise CPUIncompatibleError(_CPU_INCOMPATIBLE_MESSAGE)
         # Must be set before the ultralytics import below: it probes
         # ~/.config/Ultralytics for a writable settings dir as a side effect
         # of import (not lazily), and this container's $HOME isn't writable
@@ -608,11 +611,7 @@ class DepthEstimator:
 
     def _load_sync(self) -> None:
         if not torch_cpu_compatible():
-            raise CPUIncompatibleError(
-                "this device's CPU is missing instructions PyTorch needs "
-                "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
-                "Pi 5 is not affected)"
-            )
+            raise CPUIncompatibleError(_CPU_INCOMPATIBLE_MESSAGE)
         # Whole body under the shared lock, not just the import - see
         # _native_import_lock's comment and ObjectDetector._load_sync above
         # for why (this method also only ever runs once per process).
@@ -767,11 +766,7 @@ class ContactSegmenter:
 
     def _load_sync(self) -> None:
         if not torch_cpu_compatible():
-            raise CPUIncompatibleError(
-                "this device's CPU is missing instructions PyTorch needs "
-                "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
-                "Pi 5 is not affected)"
-            )
+            raise CPUIncompatibleError(_CPU_INCOMPATIBLE_MESSAGE)
         # Whole body under the shared lock, not just the import - see
         # _native_import_lock's comment and ObjectDetector._load_sync above
         # for why (this method also only ever runs once per process).
@@ -957,11 +952,7 @@ class FaceEmbedder:
 
     def _load_sync(self) -> None:
         if not torch_cpu_compatible():
-            raise CPUIncompatibleError(
-                "this device's CPU is missing instructions PyTorch needs "
-                "(common on Raspberry Pi 4 and older ARM boards; Raspberry "
-                "Pi 5 is not affected)"
-            )
+            raise CPUIncompatibleError(_CPU_INCOMPATIBLE_MESSAGE)
         # Whole body under the shared lock, not just the import - see
         # _native_import_lock's comment and ObjectDetector._load_sync above
         # for why (this method also only ever runs once per process).
