@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v5.3.0"
+version: "v5.3.1"
 slug: blink_clip_downloader
 description: >-
   Downloads Blink camera clips locally with AI-powered suspicious activity
