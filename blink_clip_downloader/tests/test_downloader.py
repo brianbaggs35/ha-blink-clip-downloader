@@ -2755,3 +2755,76 @@ async def test_get_camera_snapshot_download_exception_is_caught(
 
     assert result is None
     assert "network exploded" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# refresh_camera_state
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_camera_state_returns_false_before_connect(
+    dl: BlinkDownloader,
+) -> None:
+    assert dl._blink is None
+    assert await dl.refresh_camera_state() is False
+
+
+async def test_refresh_camera_state_calls_blink_refresh(dl: BlinkDownloader) -> None:
+    fake_blink = MagicMock()
+    fake_blink.refresh = AsyncMock(return_value=True)
+    dl._blink = fake_blink
+
+    result = await dl.refresh_camera_state()
+
+    assert result is True
+    fake_blink.refresh.assert_awaited_once_with()
+
+
+async def test_refresh_camera_state_returns_false_when_blink_declines(
+    dl: BlinkDownloader,
+) -> None:
+    """blinkpy's own Throttle/refresh_rate can make refresh() a no-op that
+    returns False — not an error, just "too soon since the last one"."""
+    fake_blink = MagicMock()
+    fake_blink.refresh = AsyncMock(return_value=False)
+    dl._blink = fake_blink
+
+    assert await dl.refresh_camera_state() is False
+
+
+async def test_refresh_camera_state_swallows_non_auth_fatal_exceptions(
+    dl: BlinkDownloader, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A transient failure here must not block the rest of the poll cycle
+    (clip downloading, archiving, ...) — only report it and move on."""
+    fake_blink = MagicMock()
+    fake_blink.refresh = AsyncMock(side_effect=ConnectionResetError("reset"))
+    dl._blink = fake_blink
+
+    with caplog.at_level("WARNING"):
+        result = await dl.refresh_camera_state()
+
+    assert result is False
+    assert "reset" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        TokenRefreshFailed("refresh failed"),
+        LoginError("login failed"),
+        UnauthorizedError("unauthorized"),
+    ],
+    ids=["TokenRefreshFailed", "LoginError", "UnauthorizedError"],
+)
+async def test_refresh_camera_state_reraises_auth_fatal_exceptions(
+    dl: BlinkDownloader, caplog: pytest.LogCaptureFixture, exc: Exception
+) -> None:
+    """Unlike a generic/transient failure, this means the whole session is
+    broken and must propagate so app.py's poll loop can reconnect."""
+    fake_blink = MagicMock()
+    fake_blink.refresh = AsyncMock(side_effect=exc)
+    dl._blink = fake_blink
+
+    with caplog.at_level("WARNING"), pytest.raises(type(exc)):
+        await dl.refresh_camera_state()
