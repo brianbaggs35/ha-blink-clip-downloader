@@ -2181,14 +2181,14 @@ def test_is_moondream_installed_inserts_path_when_dir_exists(
     fake_dir.mkdir()
     monkeypatch.setattr(ms, "_MOONDREAM_PACKAGES_DIR", fake_dir)
     monkeypatch.delitem(sys.modules, "moondream", raising=False)
+    # A copy, so the in-place sys.path.insert() below mutates only this
+    # test's copy — monkeypatch restores the original list reference
+    # (discarding the copy) at teardown, regardless of what was inserted.
+    monkeypatch.setattr(sys, "path", list(sys.path))
 
     assert str(fake_dir) not in sys.path
-    try:
-        ms._is_moondream_installed()
-        assert str(fake_dir) in sys.path
-    finally:
-        if str(fake_dir) in sys.path:
-            sys.path.remove(str(fake_dir))
+    ms._is_moondream_installed()
+    assert str(fake_dir) in sys.path
 
 
 def test_is_moondream_installed_true_when_importable(
@@ -5829,8 +5829,10 @@ async def test_gdrive_connect_missing_credentials_returns_400(db: ClipDatabase) 
         await tc.close()
 
 
-async def test_gdrive_connect_device_flow_failure_returns_502(db: ClipDatabase) -> None:
-    media_server._gdrive_connect_state = {"phase": "idle"}
+async def test_gdrive_connect_device_flow_failure_returns_502(
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
     gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=None)
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
@@ -5839,11 +5841,12 @@ async def test_gdrive_connect_device_flow_failure_returns_502(db: ClipDatabase) 
         assert resp.status == 502
     finally:
         await tc.close()
-        media_server._gdrive_connect_state = {"phase": "idle"}
 
 
-async def test_gdrive_connect_starts_device_flow(db: ClipDatabase) -> None:
-    media_server._gdrive_connect_state = {"phase": "idle"}
+async def test_gdrive_connect_starts_device_flow(
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -5877,18 +5880,21 @@ async def test_gdrive_connect_starts_device_flow(db: ClipDatabase) -> None:
         assert media_server._gdrive_connect_state["phase"] == "expired"
     finally:
         await tc.close()
-        media_server._gdrive_connect_state = {"phase": "idle"}
 
 
 async def test_gdrive_connect_returns_existing_state_when_already_pending(
-    db: ClipDatabase,
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    media_server._gdrive_connect_state = {
-        "phase": "pending",
-        "user_code": "EXISTING-CODE",
-        "verification_url": "https://google.com/device",
-        "expires_in": 1800,
-    }
+    monkeypatch.setattr(
+        media_server,
+        "_gdrive_connect_state",
+        {
+            "phase": "pending",
+            "user_code": "EXISTING-CODE",
+            "verification_url": "https://google.com/device",
+            "expires_in": 1800,
+        },
+    )
     gdrive_client = _make_gdrive_client_mock(is_configured=True)
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
@@ -5899,13 +5905,12 @@ async def test_gdrive_connect_returns_existing_state_when_already_pending(
         gdrive_client.start_device_flow.assert_not_awaited()
     finally:
         await tc.close()
-        media_server._gdrive_connect_state = {"phase": "idle"}
 
 
 async def test_gdrive_connect_poll_success_sets_connected_state(
-    db: ClipDatabase,
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    media_server._gdrive_connect_state = {"phase": "idle"}
+    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -5936,11 +5941,12 @@ async def test_gdrive_connect_poll_success_sets_connected_state(
         }
     finally:
         await tc.close()
-        media_server._gdrive_connect_state = {"phase": "idle"}
 
 
-async def test_gdrive_connect_poll_denied_sets_error_state(db: ClipDatabase) -> None:
-    media_server._gdrive_connect_state = {"phase": "idle"}
+async def test_gdrive_connect_poll_denied_sets_error_state(
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -5966,13 +5972,12 @@ async def test_gdrive_connect_poll_denied_sets_error_state(db: ClipDatabase) -> 
         assert media_server._gdrive_connect_state["phase"] == "error"
     finally:
         await tc.close()
-        media_server._gdrive_connect_state = {"phase": "idle"}
 
 
 async def test_gdrive_connect_poll_generic_error_sets_error_state(
-    db: ClipDatabase,
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    media_server._gdrive_connect_state = {"phase": "idle"}
+    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -6001,13 +6006,14 @@ async def test_gdrive_connect_poll_generic_error_sets_error_state(
         }
     finally:
         await tc.close()
-        media_server._gdrive_connect_state = {"phase": "idle"}
 
 
-async def test_gdrive_connect_poll_slow_down_then_success(db: ClipDatabase) -> None:
+async def test_gdrive_connect_poll_slow_down_then_success(
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A slow_down response must not end the poll loop — it keeps polling
     (at a backed-off interval) until a terminal outcome."""
-    media_server._gdrive_connect_state = {"phase": "idle"}
+    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -6037,16 +6043,15 @@ async def test_gdrive_connect_poll_slow_down_then_success(db: ClipDatabase) -> N
         assert media_server._gdrive_connect_state["phase"] == "connected"
     finally:
         await tc.close()
-        media_server._gdrive_connect_state = {"phase": "idle"}
 
 
 async def test_gdrive_connect_poll_gives_up_after_deadline_with_no_terminal_result(
-    db: ClipDatabase,
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """If the deadline is already passed before the loop's first check (a
     code_code that expired faster than expected, or a slow first tick), the
     poll loop must still terminate into "expired" rather than spin forever."""
-    media_server._gdrive_connect_state = {"phase": "idle"}
+    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -6073,14 +6078,16 @@ async def test_gdrive_connect_poll_gives_up_after_deadline_with_no_terminal_resu
         gdrive_client.poll_once_for_token.assert_not_awaited()
     finally:
         await tc.close()
-        media_server._gdrive_connect_state = {"phase": "idle"}
 
 
-async def test_gdrive_connect_status_returns_shared_state(db: ClipDatabase) -> None:
-    media_server._gdrive_connect_state = {
-        "phase": "connected",
-        "account_email": "me@example.com",
-    }
+async def test_gdrive_connect_status_returns_shared_state(
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        media_server,
+        "_gdrive_connect_state",
+        {"phase": "connected", "account_email": "me@example.com"},
+    )
     server = MediaServer(db=db, port=0)
     tc = await _start_server(server)
     try:
@@ -6089,7 +6096,6 @@ async def test_gdrive_connect_status_returns_shared_state(db: ClipDatabase) -> N
         assert data["phase"] == "connected"
     finally:
         await tc.close()
-        media_server._gdrive_connect_state = {"phase": "idle"}
 
 
 async def test_gdrive_disconnect_not_configured_returns_503(client: TestClient) -> None:
@@ -6097,11 +6103,14 @@ async def test_gdrive_disconnect_not_configured_returns_503(client: TestClient) 
     assert resp.status == 503
 
 
-async def test_gdrive_disconnect_clears_state(db: ClipDatabase) -> None:
-    media_server._gdrive_connect_state = {
-        "phase": "connected",
-        "account_email": "me@example.com",
-    }
+async def test_gdrive_disconnect_clears_state(
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        media_server,
+        "_gdrive_connect_state",
+        {"phase": "connected", "account_email": "me@example.com"},
+    )
     gdrive_client = _make_gdrive_client_mock(connected=True)
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
