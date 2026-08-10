@@ -85,6 +85,23 @@ describe('clips api', () => {
     expect(url).not.toContain('archived')
   })
 
+  it('listClips(): forwards until/tag/search/recognized/archivePath', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse([]))
+    await listClips({
+      until: '2026-01-02',
+      tag: 'delivery',
+      search: 'box',
+      recognized: true,
+      archivePath: '/data/archives/2026-01.zip',
+    })
+    const url = vi.mocked(fetch).mock.calls[0][0] as string
+    expect(url).toContain('until=2026-01-02')
+    expect(url).toContain('tag=delivery')
+    expect(url).toContain('search=box')
+    expect(url).toContain('recognized=1')
+    expect(url).toContain(`archive_path=${encodeURIComponent('/data/archives/2026-01.zip')}`)
+  })
+
   it('getClip() / deleteClip() / starClip() / setClipTags()', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({}))
     await getClip('c1')
