@@ -61,27 +61,38 @@ class ClipArchiver:
         return archived
 
     async def prune_orphaned_archives(self) -> int:
-        """Remove clip rows left orphaned by a since-fixed archiving bug.
+        """Remove clip rows left orphaned by since-fixed archiving bugs.
 
-        Before this fix, a clip whose source file was already gone by the
-        time ``_archive_month`` reached it got marked ``archived=True``
-        with an ``archive_path`` pointing at a ZIP that was never actually
-        created (see the comment in ``_archive_month`` above) — invisible
-        until something later tried to read that ZIP and failed, most
-        visibly as "Archive ... is missing" Google Drive upload failures.
-        Run once at startup (see app.py) regardless of whether archiving is
-        currently enabled — this cleans up existing bad rows rather than
-        preventing new ones, which the ``_archive_month`` fix already does.
-        The clip's data is confirmed unrecoverable at this point (no file,
-        no ZIP), so the row is deleted rather than left around as a phantom
-        entry the Storage tab and Drive backup would keep failing on.
-        Returns the number of rows removed.
+        Two distinct ways a row can end up unrecoverable, both handled the
+        same way here:
+
+        - A clip whose source file was already gone by the time
+          ``_archive_month`` reached it used to get marked
+          ``archived=True`` with an ``archive_path`` pointing at a ZIP
+          that was never actually created (see the comment in
+          ``_archive_month`` above).
+        - Appending to a corrupted ZIP used to silently "succeed" while
+          discarding every entry already inside it (see
+          ``_quarantine_if_corrupted``) — the ZIP file stays present at
+          its normal path, so a plain existence check misses this, but
+          the specific member a row claims to be at is simply gone.
+
+        Both are invisible until something later tries to read that exact
+        clip and fails, most visibly as "Archive ... is missing" Google
+        Drive upload failures. Run once at startup (see app.py) regardless
+        of whether archiving is currently enabled — this cleans up
+        existing bad rows rather than preventing new ones, which the other
+        two fixes already do. The clip's data is confirmed unrecoverable
+        at this point (no source file, and no matching ZIP member), so the
+        row is deleted rather than left around as a phantom entry the
+        Storage tab and Drive backup would keep failing on. Returns the
+        number of rows removed.
         """
         records = await self._db.get_archived_clip_records()
         removed = 0
+        member_cache: dict[str, set[str]] = {}
         for record in records:
-            archive_path = str(record.get("archive_path") or "")
-            if archive_path and Path(archive_path).exists():
+            if self._archive_member_exists(record, member_cache):
                 continue
             try:
                 if await self._db.delete_clip(str(record["id"])):
@@ -95,10 +106,38 @@ class ClipArchiver:
         if removed:
             _LOGGER.warning(
                 "Removed %d archived clip record(s) whose ZIP archive no "
-                "longer exists on disk — their data was unrecoverable",
+                "longer contains their data — it was unrecoverable",
                 removed,
             )
         return removed
+
+    @staticmethod
+    def _archive_member_exists(
+        record: dict[str, Any], member_cache: dict[str, set[str]]
+    ) -> bool:
+        """Whether *record*'s specific clip is actually still inside its ZIP.
+
+        Checking that the ZIP file merely exists isn't enough — appending
+        to a corrupted ZIP can silently discard every entry already inside
+        it while leaving a valid-looking ZIP at the same path (see
+        ``_quarantine_if_corrupted``), so this opens the archive and
+        checks for the exact member name instead. Each unique archive is
+        only opened once per pruning pass (*member_cache*), since a large
+        library can have many rows pointing at the same monthly ZIP.
+        """
+        archive_path = str(record.get("archive_path") or "")
+        if not archive_path or not Path(archive_path).exists():
+            return False
+        if archive_path not in member_cache:
+            try:
+                with zipfile.ZipFile(archive_path) as zf:
+                    member_cache[archive_path] = set(zf.namelist())
+            except (zipfile.BadZipFile, OSError):
+                member_cache[archive_path] = set()
+        camera = str(record.get("camera") or "unknown")
+        filename = Path(str(record.get("file_path") or "")).name
+        arcname = f"{camera}/{filename}"
+        return arcname in member_cache[archive_path]
 
     # ------------------------------------------------------------------
     # Internal

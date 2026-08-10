@@ -37,6 +37,13 @@ def _old_ts(days: int = 60) -> str:
     return (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
 
+def _write_real_zip(path: Path, members: dict[str, bytes]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+
+
 # ------------------------------------------------------------------
 # Disabled
 # ------------------------------------------------------------------
@@ -473,18 +480,77 @@ async def test_prune_orphaned_archives_leaves_valid_archives_alone(
     tmp_path: Path,
 ) -> None:
     zip_path = tmp_path / "archives" / "blink_archive_2026-05.zip"
-    zip_path.parent.mkdir(parents=True)
-    zip_path.write_bytes(b"real zip data")
+    _write_real_zip(zip_path, {"Front Door/clip1.mp4": b"real clip data"})
 
     archiver, db = _make_archiver(tmp_path, clips=[])
     db.get_archived_clip_records = AsyncMock(
-        return_value=[{"id": "c1", "archive_path": str(zip_path)}]
+        return_value=[
+            {
+                "id": "c1",
+                "archive_path": str(zip_path),
+                "camera": "Front Door",
+                "file_path": "/share/blink-clips/clip1.mp4",
+            }
+        ]
     )
 
     removed = await archiver.prune_orphaned_archives()
 
     assert removed == 0
     db.delete_clip.assert_not_awaited()
+
+
+async def test_prune_orphaned_archives_removes_rows_whose_member_is_missing(
+    tmp_path: Path,
+) -> None:
+    """The ZIP exists and opens fine, but no longer actually contains this
+    clip — the corrupted-then-silently-overwritten scenario
+    _quarantine_if_corrupted's docstring describes. A plain
+    does-the-file-exist check would miss this entirely."""
+    zip_path = tmp_path / "archives" / "blink_archive_2026-05.zip"
+    _write_real_zip(zip_path, {"Front Door/someone-elses-clip.mp4": b"data"})
+
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    db.get_archived_clip_records = AsyncMock(
+        return_value=[
+            {
+                "id": "c1",
+                "archive_path": str(zip_path),
+                "camera": "Front Door",
+                "file_path": "/share/blink-clips/clip1.mp4",
+            }
+        ]
+    )
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 1
+    db.delete_clip.assert_awaited_once_with("c1")
+
+
+async def test_prune_orphaned_archives_removes_rows_in_unreadable_zip(
+    tmp_path: Path,
+) -> None:
+    zip_path = tmp_path / "archives" / "blink_archive_2026-05.zip"
+    zip_path.parent.mkdir(parents=True)
+    zip_path.write_bytes(b"not actually a zip file")
+
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    db.get_archived_clip_records = AsyncMock(
+        return_value=[
+            {
+                "id": "c1",
+                "archive_path": str(zip_path),
+                "camera": "Front Door",
+                "file_path": "/share/blink-clips/clip1.mp4",
+            }
+        ]
+    )
+
+    removed = await archiver.prune_orphaned_archives()
+
+    assert removed == 1
+    db.delete_clip.assert_awaited_once_with("c1")
 
 
 async def test_prune_orphaned_archives_removes_missing_zip_rows(
@@ -541,14 +607,32 @@ async def test_prune_orphaned_archives_mixed_valid_and_orphaned(
     tmp_path: Path,
 ) -> None:
     valid_zip = tmp_path / "archives" / "blink_archive_2026-04.zip"
-    valid_zip.parent.mkdir(parents=True)
-    valid_zip.write_bytes(b"real zip data")
+    _write_real_zip(
+        valid_zip,
+        {
+            "Front Door/clip1.mp4": b"real clip data",
+            "Front Door/clip2.mp4": b"more real clip data",
+        },
+    )
     missing_zip = tmp_path / "archives" / "blink_archive_2026-05.zip"
 
     archiver, db = _make_archiver(tmp_path, clips=[])
     db.get_archived_clip_records = AsyncMock(
         return_value=[
-            {"id": "valid-1", "archive_path": str(valid_zip)},
+            {
+                "id": "valid-1",
+                "archive_path": str(valid_zip),
+                "camera": "Front Door",
+                "file_path": "/share/blink-clips/clip1.mp4",
+            },
+            # Same ZIP as valid-1 — also exercises the per-pass member cache
+            # being reused instead of re-opening the archive for every row.
+            {
+                "id": "valid-2",
+                "archive_path": str(valid_zip),
+                "camera": "Front Door",
+                "file_path": "/share/blink-clips/clip2.mp4",
+            },
             {"id": "orphan-1", "archive_path": str(missing_zip)},
             {"id": "orphan-2", "archive_path": str(missing_zip)},
         ]
