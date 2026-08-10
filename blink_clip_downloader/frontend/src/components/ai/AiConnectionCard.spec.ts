@@ -493,7 +493,7 @@ describe('AiConnectionCard', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     await flushPromises()
 
-    expect(statusFetch.mock.calls.length).toBe(callsBeforeUnmount)
+    expect(statusFetch.mock.calls).toHaveLength(callsBeforeUnmount)
     vi.useRealTimers()
   })
 
@@ -747,7 +747,7 @@ describe('AiConnectionCard', () => {
     // pollMoondreamStatus again well within this window and call fetch.
     await vi.advanceTimersByTimeAsync(5000)
     await flushPromises()
-    expect(fetchMock.mock.calls.length).toBe(callsBeforeSwitch)
+    expect(fetchMock.mock.calls).toHaveLength(callsBeforeSwitch)
     vi.useRealTimers()
   })
 

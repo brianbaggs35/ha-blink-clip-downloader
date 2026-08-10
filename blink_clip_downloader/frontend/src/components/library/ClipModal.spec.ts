@@ -89,7 +89,7 @@ describe('ClipModal', () => {
     await wrapper.find('#clip-tag-input').setValue('x')
     await wrapper.find('#clip-tag-input').trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBefore)
     expect(wrapper.emitted('deleted')).toBeUndefined()
   })
 
@@ -242,7 +242,7 @@ describe('ClipModal', () => {
     await input.trigger('keydown', { key: 'Enter' })
     await flushPromises()
     expect(wrapper.findAll('.tag-item')).toHaveLength(1)
-    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBefore)
   })
 
   it('other keys in the tag input do not add a tag', async () => {

@@ -20,8 +20,14 @@ if (!window.matchMedia) {
 // every test that mounts one without this polyfill.
 if (!window.ResizeObserver) {
   window.ResizeObserver = class ResizeObserver {
-    observe() {}
-    unobserve() {}
-    disconnect() {}
+    observe() {
+      // Intentional no-op — this polyfill only needs to exist, not react.
+    }
+    unobserve() {
+      // Intentional no-op — this polyfill only needs to exist, not react.
+    }
+    disconnect() {
+      // Intentional no-op — this polyfill only needs to exist, not react.
+    }
   }
 }

@@ -185,7 +185,7 @@ describe('LibraryPage', () => {
     await flushPromises()
     const callsBefore = vi.mocked(fetch).mock.calls.length
     await wrapper.find('#search').setValue('front door')
-    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBefore)
     await vi.advanceTimersByTimeAsync(400)
     await flushPromises()
     expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(callsBefore)
@@ -935,7 +935,7 @@ describe('LibraryPage', () => {
       .find((b) => b.text().includes('ZIP'))!
       .trigger('click')
     await flushPromises()
-    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBefore)
     wrapper.unmount()
   })
 
@@ -1129,7 +1129,7 @@ describe('LibraryPage', () => {
     confirm.settle(false)
     await clickPromise
     await flushPromises()
-    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBefore)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBefore)
     expect(wrapper.find('.clip-card').exists()).toBe(true)
     wrapper.unmount()
   })
