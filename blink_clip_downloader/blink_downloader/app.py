@@ -702,6 +702,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
     async def _poll_cycle(self) -> None:
         _LOGGER.debug("Poll cycle started")
 
+        await self._downloader.refresh_camera_state()
+
         deleted_paths = self._storage.apply_retention_policy_paths()
         if deleted_paths:
             _LOGGER.info("Retention removed %d file(s)", len(deleted_paths))

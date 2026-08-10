@@ -326,6 +326,36 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             return []
         return list(self._blink.cameras.keys())
 
+    async def refresh_camera_state(self) -> bool:
+        """Refresh Blink's own per-camera state (images, motion, battery,
+        online status, ...) from the cloud.
+
+        This is what actually makes camera.image_from_cache (see
+        get_camera_snapshot below) — and every other per-camera attribute
+        blinkpy exposes — reflect anything beyond whatever was true at the
+        last connect()/reconnect(); nothing else in this add-on calls
+        blinkpy's refresh(). It's decorated upstream with a Throttle plus
+        its own refresh_rate (30s by default), both of which already cap
+        how often a call here actually does network work, so this is safe
+        to call every poll cycle regardless of how poll_interval is
+        configured — during a motion-triggered fast-poll window (see
+        app.py's _activate_fast_poll) that also means camera state,
+        including Security Feed images, refreshes at the faster cadence
+        for free.
+        """
+        if self._blink is None:
+            return False
+        try:
+            return bool(await self._blink.refresh())
+        except Exception as exc:
+            _LOGGER.warning("Could not refresh camera state from Blink: %s", exc)
+            if isinstance(exc, AUTH_FATAL_EXCEPTIONS):
+                # See AUTH_FATAL_EXCEPTIONS: propagate so the poll loop can
+                # reconnect instead of quietly leaving camera state stale,
+                # every cycle, until the add-on is restarted.
+                raise
+            return False
+
     async def get_camera_snapshot(self, name: str) -> bytes | None:
         """Return the most recent snapshot image for *name*, if available.
 

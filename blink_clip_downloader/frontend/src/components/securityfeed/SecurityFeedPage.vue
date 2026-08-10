@@ -181,7 +181,14 @@ onUnmounted(stopRefreshTimer)
               class="secfeed-refresh-input"
             />
           </div>
-          <Button size="small" :disabled="saving" :loading="saving" label="Save" @click="saveSettings" />
+          <Button
+            size="small"
+            class="secfeed-save-btn"
+            :disabled="saving"
+            :loading="saving"
+            label="Save"
+            @click="saveSettings"
+          />
         </div>
       </Panel>
 
@@ -249,6 +256,12 @@ onUnmounted(stopRefreshTimer)
 
 .secfeed-refresh-input {
   width: 11rem;
+}
+
+.secfeed-save-btn {
+  /* Pins Save to the panel's right edge instead of sitting bunched up
+     against whichever field happens to wrap onto the last line. */
+  margin-left: auto;
 }
 
 .secfeed-grid {

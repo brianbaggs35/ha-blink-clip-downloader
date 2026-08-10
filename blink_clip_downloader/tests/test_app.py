@@ -51,6 +51,18 @@ async def test_poll_cycle_no_new_clips(app):
     app._notifier.notify.assert_not_awaited()
 
 
+async def test_poll_cycle_refreshes_camera_state(app):
+    """Every poll cycle must refresh Blink's own camera state (images,
+    motion, battery, online status) — nothing else in the app does this,
+    and Security Feed images can otherwise never change (see
+    BlinkDownloader.refresh_camera_state)."""
+    app._downloader.refresh_camera_state = AsyncMock(return_value=True)
+
+    await app._poll_cycle()
+
+    app._downloader.refresh_camera_state.assert_awaited_once_with()
+
+
 async def test_poll_cycle_with_new_clips(app):
     clips = [
         {
