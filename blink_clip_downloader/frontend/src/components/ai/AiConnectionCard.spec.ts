@@ -728,22 +728,26 @@ describe('AiConnectionCard', () => {
 
   it('clears the moondream poll timer when the provider changes away from moondream_local', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() =>
-        Promise.resolve(
-          jsonResponse({ installed: false, arch_supported: true, install_state: { status: 'installing' } }),
-        ),
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        jsonResponse({ installed: false, arch_supported: true, install_state: { status: 'installing' } }),
       ),
     )
+    vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(AiConnectionCard, {
       props: {
         status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
       },
     })
     await flushPromises()
+    const callsBeforeSwitch = fetchMock.mock.calls.length
     await wrapper.setProps({ status: baseStatus({ provider: 'anthropic' }) })
     await flushPromises()
+    // install_state stayed "installing", so an uncleared timer would fire
+    // pollMoondreamStatus again well within this window and call fetch.
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeSwitch)
     vi.useRealTimers()
   })
 

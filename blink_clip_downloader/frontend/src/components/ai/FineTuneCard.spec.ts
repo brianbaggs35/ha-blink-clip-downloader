@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import FineTuneCard from './FineTuneCard.vue'
 import { useConfirmStore } from '../../stores/confirm'
+import { useToastStore } from '../../stores/toast'
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -208,7 +209,9 @@ describe('FineTuneCard', () => {
       .find((b) => b.text().includes('New Fine-tune'))!
       .trigger('click')
     await flushPromises()
-    // covers the create-failure catch branch — no throw
+    const toast = useToastStore()
+    expect(toast.message).toBe('Failed to create fine-tune')
+    expect(toast.isError).toBe(true)
   })
 
   it('does nothing when delete confirmation is declined', async () => {
@@ -255,7 +258,9 @@ describe('FineTuneCard', () => {
     confirm.settle(true)
     await clickPromise
     await flushPromises()
-    // covers the delete-failure catch branch — no throw
+    const toast = useToastStore()
+    expect(toast.message).toBe('Failed to delete fine-tune')
+    expect(toast.isError).toBe(true)
   })
 
   it('shows a toast when viewing checkpoints fails', async () => {
@@ -319,7 +324,10 @@ describe('FineTuneCard', () => {
       .find((b) => b.text().includes('Train from Feedback'))!
       .trigger('click')
     await flushPromises()
-    // '/api/ai/finetune/ft1/train' has no matching route -> rejects, covers the catch branch
+    // '/api/ai/finetune/ft1/train' has no matching route -> rejects
+    const toast = useToastStore()
+    expect(toast.message).toBe('Training failed')
+    expect(toast.isError).toBe(true)
   })
 
   it('shows a toast when saving a checkpoint fails', async () => {
@@ -334,7 +342,10 @@ describe('FineTuneCard', () => {
       .find((b) => b.text().includes('Save Checkpoint'))!
       .trigger('click')
     await flushPromises()
-    // '/api/ai/finetune/ft1/save-checkpoint' has no matching route -> rejects, covers the catch branch
+    // '/api/ai/finetune/ft1/save-checkpoint' has no matching route -> rejects
+    const toast = useToastStore()
+    expect(toast.message).toBe('Failed to save checkpoint')
+    expect(toast.isError).toBe(true)
   })
 
   it('shows the trained/no-new-feedback message when nothing was trained', async () => {
@@ -350,7 +361,9 @@ describe('FineTuneCard', () => {
       .find((b) => b.text().includes('Train from Feedback'))!
       .trigger('click')
     await flushPromises()
-    // covers the trained===0 branch — no throw, message path exercised
+    const toast = useToastStore()
+    expect(toast.message).toBe('No new feedback to train on')
+    expect(toast.isError).toBe(false)
   })
 
   it('falls back to id when finetune_id/name are missing', async () => {
@@ -396,7 +409,9 @@ describe('FineTuneCard', () => {
       .find((b) => b.text().includes('Train from Feedback'))!
       .trigger('click')
     await flushPromises()
-    // covers the r.message fallback branch — no throw
+    const toast = useToastStore()
+    expect(toast.message).toBe('No new feedback to train on')
+    expect(toast.isError).toBe(false)
   })
 
   it('shows a failure toast when the server reports saved: false', async () => {
@@ -412,7 +427,9 @@ describe('FineTuneCard', () => {
       .find((b) => b.text().includes('Save Checkpoint'))!
       .trigger('click')
     await flushPromises()
-    // covers the r.saved === false branch — no throw
+    const toast = useToastStore()
+    expect(toast.message).toBe('Failed to save checkpoint')
+    expect(toast.isError).toBe(true)
   })
 
   it('creates a fine-tune with a non-default rank', async () => {
