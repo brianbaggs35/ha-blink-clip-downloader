@@ -15,5 +15,5 @@ async function copy() {
 </script>
 
 <template>
-  <div class="code-block"><button class="copy-btn" @click="copy">Copy</button>{{ code }}</div>
+  <div class="code-block"><button type="button" class="copy-btn" @click="copy">Copy</button>{{ code }}</div>
 </template>

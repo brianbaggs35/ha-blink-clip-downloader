@@ -598,10 +598,14 @@ onUnmounted(() => {
         option-label="label"
         option-value="value"
       />
-      <label class="lib-check"><Checkbox v-model="starredOnly" binary /> ★ Starred</label>
-      <label class="lib-check"><Checkbox v-model="notifiedOnly" binary /> 🔔 Notified</label>
-      <label v-if="capabilities.faceRecognitionAvailable !== false" class="lib-check">
-        <Checkbox v-model="recognizedOnly" binary /> 👤 Recognized
+      <label for="lib-filter-starred" class="lib-check">
+        <Checkbox v-model="starredOnly" input-id="lib-filter-starred" binary /> ★ Starred
+      </label>
+      <label for="lib-filter-notified" class="lib-check">
+        <Checkbox v-model="notifiedOnly" input-id="lib-filter-notified" binary /> 🔔 Notified
+      </label>
+      <label v-if="capabilities.faceRecognitionAvailable !== false" for="lib-filter-recognized" class="lib-check">
+        <Checkbox v-model="recognizedOnly" input-id="lib-filter-recognized" binary /> 👤 Recognized
       </label>
       <Button
         size="small"

@@ -196,7 +196,7 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
 
 <template>
   <div class="ai-panel">
-    <button class="ai-panel-hdr" :class="{ open: expanded }" @click="toggle">
+    <button type="button" class="ai-panel-hdr" :class="{ open: expanded }" @click="toggle">
       🤖 <strong style="font-weight: 600">AI Analysis</strong>
       <span
         v-if="result"
@@ -213,7 +213,7 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
         <span v-else-if="loadError" style="color: var(--danger); font-size: 0.8rem">Failed to load analysis</span>
         <template v-else-if="loaded && !result">
           <div style="color: var(--muted); font-size: 0.8rem; margin-bottom: 0.45rem">Not analyzed yet</div>
-          <button class="btn sm" :disabled="analyzing" @click="analyzeNow">
+          <button type="button" class="btn sm" :disabled="analyzing" @click="analyzeNow">
             {{ analyzing ? '⏳ Analyzing…' : '🔬 Analyze Now' }}
           </button>
         </template>
@@ -236,11 +236,11 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
             <template v-if="result.frame_count"> &nbsp;·&nbsp; {{ result.frame_count }} frame(s) analyzed</template>
           </div>
           <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap">
-            <button class="btn sm ghost" :disabled="analyzing" @click="analyzeNow">↺ Re-analyze</button>
-            <button class="btn sm ghost" @click="showRawResponse = !showRawResponse">
+            <button type="button" class="btn sm ghost" :disabled="analyzing" @click="analyzeNow">↺ Re-analyze</button>
+            <button type="button" class="btn sm ghost" @click="showRawResponse = !showRawResponse">
               {{ showRawResponse ? '📄 Hide response' : '📄 Full response' }}
             </button>
-            <button v-if="promptDebugEnabled" class="btn sm ghost" @click="showPrompt">📝 Prompt</button>
+            <button v-if="promptDebugEnabled" type="button" class="btn sm ghost" @click="showPrompt">📝 Prompt</button>
           </div>
           <div
             v-if="showRawResponse"
@@ -270,13 +270,15 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
                   — "{{ feedback.correction_note }}"</template
                 ></span
               >
-              <button class="btn sm ghost" @click="changeFeedback">Change</button>
-              <button class="btn sm ghost" :disabled="feedbackClearing" @click="clearFeedback">Clear</button>
+              <button type="button" class="btn sm ghost" @click="changeFeedback">Change</button>
+              <button type="button" class="btn sm ghost" :disabled="feedbackClearing" @click="clearFeedback">
+                Clear
+              </button>
             </div>
             <div v-else style="font-size: 0.78rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap">
               <span style="color: var(--muted)">Was this verdict correct?</span>
-              <button class="btn sm ghost" @click="quickFeedback(true)">👍 Correct</button>
-              <button class="btn sm ghost" @click="openFeedbackNoteForm">👎 Incorrect</button>
+              <button type="button" class="btn sm ghost" @click="quickFeedback(true)">👍 Correct</button>
+              <button type="button" class="btn sm ghost" @click="openFeedbackNoteForm">👎 Incorrect</button>
             </div>
             <div
               v-if="showFeedbackForm"
@@ -299,8 +301,8 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
                 }}
               </label>
               <div style="display: flex; gap: 0.4rem">
-                <button class="btn sm" @click="submitFeedbackFormClick">Submit</button>
-                <button class="btn sm ghost" @click="showFeedbackForm = false">Cancel</button>
+                <button type="button" class="btn sm" @click="submitFeedbackFormClick">Submit</button>
+                <button type="button" class="btn sm ghost" @click="showFeedbackForm = false">Cancel</button>
               </div>
             </div>
           </div>
@@ -312,6 +314,7 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
             >
               <span style="color: var(--muted)">👤 Face match ({{ result.face_bypass_names }}) — correct?</span>
               <button
+                type="button"
                 class="btn sm ghost"
                 :disabled="faceReportSubmitting"
                 @click="reportFaceIssue('false_positive', result.face_bypass_names)"
@@ -331,16 +334,18 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
                 <option v-for="n in enrolledNames" :key="n" :value="n">{{ n }}</option>
               </select>
               <button
+                type="button"
                 class="btn sm ghost"
                 :disabled="faceReportSubmitting"
                 @click="reportFaceIssue(faceReportType, faceReportPersonName)"
               >
                 {{ faceReportType === 'false_negative' ? '🚩' : '👎' }} Submit report
               </button>
-              <button class="btn sm ghost" @click="showFaceReportPicker = false">Cancel</button>
+              <button type="button" class="btn sm ghost" @click="showFaceReportPicker = false">Cancel</button>
             </div>
             <div v-else style="font-size: 0.76rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap">
               <button
+                type="button"
                 class="btn sm ghost"
                 style="font-size: 0.72rem"
                 :disabled="faceReportSubmitting"
@@ -349,6 +354,7 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
                 🚩 Report a missed face match
               </button>
               <button
+                type="button"
                 class="btn sm ghost"
                 style="font-size: 0.72rem"
                 :disabled="faceReportSubmitting"

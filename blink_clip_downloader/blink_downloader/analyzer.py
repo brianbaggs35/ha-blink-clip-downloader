@@ -2698,9 +2698,14 @@ class _MoondreamDetectionMixin:
     # Matches a plate/license-plate mention and its adjacent token(s), e.g.
     # "plate ABC1234", "license plate: XYZ-999", "plate # 7GHK123" —
     # case-insensitive, tolerant of an optional "license" prefix and a
-    # colon/dash/# separator before the plate value itself.
+    # colon/dash/# separator before the plate value itself. The repeated
+    # group is atomic ((?>...), not (?:...)) — each repetition's optional
+    # separator can never overlap with its own mandatory alnum char, so
+    # there's no legitimate alternate parse to backtrack into; this just
+    # makes that non-ambiguity provable rather than merely true on
+    # inspection.
     _PLATE_MENTION_RE = re.compile(
-        r"(?:license\s+)?plate\s*[:#-]?\s*[A-Za-z0-9](?:[ -]?[A-Za-z0-9]){1,10}",
+        r"(?:license\s+)?plate\s*[:#-]?\s*[A-Za-z0-9](?>[ -]?[A-Za-z0-9]){1,10}",
         re.IGNORECASE,
     )
 
@@ -2721,7 +2726,9 @@ class _MoondreamDetectionMixin:
         """
         stripped = cls._PLATE_MENTION_RE.sub("", car_description)
         stripped = re.sub(r"\s{2,}", " ", stripped)
-        stripped = re.sub(r"\s*(?:,\s*){2}", ", ", stripped).strip(" ,.-")
+        # Atomic for the same reason as _PLATE_MENTION_RE above — a comma
+        # can't satisfy \s*, so there's nothing ambiguous to backtrack into.
+        stripped = re.sub(r"\s*(?>,\s*){2}", ", ", stripped).strip(" ,.-")
         return stripped or car_description
 
     @staticmethod

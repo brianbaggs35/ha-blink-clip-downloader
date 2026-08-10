@@ -125,7 +125,7 @@ async function save() {
       </div>
     </div>
     <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">
-      <button class="btn sm" :disabled="saving" @click="save">
+      <button type="button" class="btn sm" :disabled="saving" @click="save">
         {{ saving ? '⏳ Saving…' : '💾 Save Camera Configs' }}
       </button>
       <span style="font-size: 0.75rem; color: var(--muted)">Changes apply immediately — no restart needed</span>

@@ -16,7 +16,7 @@ const store = usePromptOverlayStore()
 <template>
   <div class="modal-bg nested-overlay" :class="{ open: store.open }" style="z-index: 150" @click.self="store.close()">
     <div class="modal" style="max-width: 700px">
-      <button class="modal-close" title="Close (Esc)" @click="store.close()">
+      <button type="button" class="modal-close" title="Close (Esc)" @click="store.close()">
         <AppIcon name="close" />
       </button>
       <div class="modal-body">

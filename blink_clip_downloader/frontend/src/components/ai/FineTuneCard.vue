@@ -151,9 +151,11 @@ function backToList() {
         "
       >
         <span style="font-size: 0.82rem">Step {{ cp.step }}</span>
-        <button class="btn sm" @click="activate(cp.step)">Activate</button>
+        <button type="button" class="btn sm" @click="activate(cp.step)">Activate</button>
       </div>
-      <button class="btn sm ghost" style="margin-top: 0.4rem" @click="backToList">← Back to fine-tunes</button>
+      <button type="button" class="btn sm ghost" style="margin-top: 0.4rem" @click="backToList">
+        ← Back to fine-tunes
+      </button>
     </div>
 
     <template v-else>
@@ -183,6 +185,7 @@ function backToList() {
             }}</span>
             <div style="display: flex; gap: 0.3rem; flex-shrink: 0; flex-wrap: wrap">
               <button
+                type="button"
                 class="btn sm ghost"
                 title="Train on corrections from clip feedback"
                 @click="train(finetuneId(ft))"
@@ -190,14 +193,15 @@ function backToList() {
                 🧠 Train from Feedback ({{ pendingCount }})
               </button>
               <button
+                type="button"
                 class="btn sm ghost"
                 title="Save current trained state as an activatable checkpoint"
                 @click="saveCkpt(finetuneId(ft))"
               >
                 💾 Save Checkpoint
               </button>
-              <button class="btn sm ghost" @click="viewCheckpoints(finetuneId(ft))">Checkpoints</button>
-              <button class="btn sm danger" @click="remove(finetuneId(ft))">🗑</button>
+              <button type="button" class="btn sm ghost" @click="viewCheckpoints(finetuneId(ft))">Checkpoints</button>
+              <button type="button" class="btn sm danger" @click="remove(finetuneId(ft))">🗑</button>
             </div>
           </div>
         </template>
@@ -212,7 +216,7 @@ function backToList() {
           <option :value="24">Rank 24</option>
           <option :value="32">Rank 32</option>
         </select>
-        <button class="btn sm" @click="create">+ New Fine-tune</button>
+        <button type="button" class="btn sm" @click="create">+ New Fine-tune</button>
       </div>
       <p style="font-size: 0.72rem; color: var(--muted); margin-top: 0.4rem">
         🧠 Train from Feedback turns your 👍/👎 clip corrections into real training steps against Moondream Cloud. 💾

@@ -194,6 +194,7 @@ onUnmounted(() => {
       <button
         v-for="tab in visibleTabs"
         :key="tab.name"
+        type="button"
         class="app-nav-tab"
         :class="{ active: activeTab === tab.name }"
         :data-tab="tab.name"
@@ -208,6 +209,7 @@ onUnmounted(() => {
       <div class="app-nav-section-label">Cameras</div>
       <div class="app-nav-cameras">
         <button
+          type="button"
           class="app-nav-cam"
           :class="{ active: activeTab === 'library' && library.currentCamera === 'all' }"
           data-camera="all"
@@ -219,6 +221,7 @@ onUnmounted(() => {
         <button
           v-for="cam in library.cameras"
           :key="cam.camera"
+          type="button"
           class="app-nav-cam"
           :class="{ active: activeTab === 'library' && library.currentCamera === cam.camera }"
           :data-camera="cam.camera"

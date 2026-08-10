@@ -281,7 +281,7 @@ onUnmounted(() => {
 <template>
   <div class="modal-bg" :class="{ open: !!clipId }" @click.self="emit('close')">
     <div class="modal" :class="{ theater }">
-      <button class="modal-close" title="Close (Esc)" @click="emit('close')">
+      <button type="button" class="modal-close" title="Close (Esc)" @click="emit('close')">
         <AppIcon name="close" />
       </button>
       <div class="video-wrap">
@@ -307,8 +307,8 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="vid-nav">
-          <button class="vid-nav-btn" title="Previous (↑)" @click="emit('nav', -1)">‹</button>
-          <button class="vid-nav-btn" title="Next (↓)" @click="emit('nav', 1)">›</button>
+          <button type="button" class="vid-nav-btn" title="Previous (↑)" @click="emit('nav', -1)">‹</button>
+          <button type="button" class="vid-nav-btn" title="Next (↓)" @click="emit('nav', 1)">›</button>
         </div>
       </div>
       <div class="modal-body">
@@ -328,15 +328,20 @@ onUnmounted(() => {
           <span>{{ fmtRelative(clip.downloaded_at) }}</span>
         </div>
         <div class="modal-actions">
-          <button class="btn sm outline" :style="starred ? 'color: var(--starred)' : ''" @click="toggleStar">
+          <button
+            type="button"
+            class="btn sm outline"
+            :style="starred ? 'color: var(--starred)' : ''"
+            @click="toggleStar"
+          >
             {{ starred ? '★ Starred' : '☆ Star' }}
           </button>
           <a v-if="clipId" class="btn sm ghost" :href="clipStreamUrl(clipId)" :download="downloadName()">⬇ Download</a>
-          <button class="btn sm ghost" @click="copyPath">📋 Path</button>
-          <button class="btn sm ghost" title="Theater mode" @click="toggleTheater">
+          <button type="button" class="btn sm ghost" @click="copyPath">📋 Path</button>
+          <button type="button" class="btn sm ghost" title="Theater mode" @click="toggleTheater">
             {{ theater ? '⊡ Normal' : '⊞ Theater' }}
           </button>
-          <button class="btn sm danger" style="margin-left: auto" @click="handleDelete">🗑 Delete</button>
+          <button type="button" class="btn sm danger" style="margin-left: auto" @click="handleDelete">🗑 Delete</button>
         </div>
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem">

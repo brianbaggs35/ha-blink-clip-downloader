@@ -72,6 +72,7 @@ function submit() {
             @keydown="onKeydown"
           />
           <button
+            type="button"
             class="btn"
             style="font-size: 0.9rem; padding: 0.6rem 1.1rem"
             :disabled="auth.twoFASubmitting"

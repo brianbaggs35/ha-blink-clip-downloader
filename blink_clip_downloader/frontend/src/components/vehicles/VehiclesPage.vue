@@ -91,7 +91,9 @@ const showInactiveWarning = computed(() => carCameras.value.length > 0 && !prote
         Describe the vehicle (make, model, color) so the AI can identify it in clips — e.g. "Silver Kia Forte sedan".
       </template>
       <template #content>
+        <label for="vehicle-description" class="sr-only">Protected vehicle description</label>
         <Textarea
+          id="vehicle-description"
           v-model="carDescription"
           rows="2"
           size="small"

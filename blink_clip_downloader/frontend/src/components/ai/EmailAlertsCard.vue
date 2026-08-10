@@ -33,7 +33,7 @@ async function sendTestEmail() {
       <strong>Configuration</strong> tab to enable email alerts.
     </div>
     <div v-else>
-      <button class="btn sm ghost" :disabled="sending" @click="sendTestEmail">
+      <button type="button" class="btn sm ghost" :disabled="sending" @click="sendTestEmail">
         {{ sending ? '⏳ Sending…' : '✉️ Send Test Email' }}
       </button>
       <p style="font-size: 0.73rem; color: var(--muted); margin: 0.3rem 0 0">

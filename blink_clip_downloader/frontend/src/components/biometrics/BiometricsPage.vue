@@ -369,7 +369,9 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
 
           <template v-if="groupedPeople.length">
             <span class="enroll-actions-or">or</span>
+            <label for="biometrics-add-to-existing" class="sr-only">Add to existing person</label>
             <Select
+              id="biometrics-add-to-existing"
               v-model="addToExistingName"
               size="small"
               :options="groupedPeople.map((g) => g.name)"
