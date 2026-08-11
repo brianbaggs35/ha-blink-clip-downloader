@@ -346,6 +346,12 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # opt-in noise some users want and others don't. This fires only for
     # clips actually marked suspicious, alongside mobile/email/Discord.
     notify_ha_suspicious: bool = False
+    # Master on/off switch for low-battery alerts, mirroring
+    # notify_ha_suspicious's role: the channels themselves (mobile/SMTP/
+    # Discord/HA-persistent, all above) are shared with suspicious-clip
+    # alerts and configured once, but a user may want one alert type
+    # without the other, so this gates battery alerts independently.
+    battery_alerts_enabled: bool = False
 
     # --- Logging ---
     log_level: str = "info"
@@ -699,6 +705,7 @@ def _parse_extended_notification_kwargs(data: dict) -> dict[str, Any]:
         "discord_webhook_url": str(data.get("discord_webhook_url", "") or "").strip(),
         "discord_enabled": bool(data.get("discord_enabled", False)),
         "notify_ha_suspicious": bool(data.get("notify_ha_suspicious", False)),
+        "battery_alerts_enabled": bool(data.get("battery_alerts_enabled", False)),
     }
 
 

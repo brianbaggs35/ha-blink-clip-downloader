@@ -209,6 +209,27 @@ CREATE TABLE IF NOT EXISTS face_recognition_feedback (
     created_at  TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_face_feedback_clip ON face_recognition_feedback (clip_id);
+
+-- Per-camera battery state history (see battery_monitor.py). A new row is
+-- only written when battery_state actually changes from that camera's most
+-- recently recorded row (see add_battery_reading) — battery_level/
+-- battery_voltage drift continuously even while the camera stays "ok", so
+-- deduping on the full reading instead of state alone would defeat the
+-- point of a change log. This makes "when did it go low / come back"
+-- directly queryable from consecutive rows rather than needing to scan a
+-- reading taken every poll cycle forever. Not clip-keyed (a battery
+-- reading isn't tied to any specific clip), so unlike face_recognition_feedback
+-- above this has no FK to clips and needs its own explicit TRUNCATE entry
+-- in tests/conftest.py and scripts/standalone_server.py.
+CREATE TABLE IF NOT EXISTS battery_history (
+    id              INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    camera          TEXT    NOT NULL,
+    battery_state   TEXT    NOT NULL,
+    battery_level   INTEGER,
+    battery_voltage INTEGER,
+    recorded_at     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_battery_history_camera ON battery_history (camera, id);
 """
 
 # Schema changes applied to *already-existing* tables, run every startup
@@ -1345,6 +1366,94 @@ class ClipDatabase:
                 """
             ),
             limit,
+        )
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Battery history (see battery_monitor.py)
+    # ------------------------------------------------------------------
+
+    async def add_battery_reading(
+        self,
+        camera: str,
+        battery_state: str,
+        battery_level: int | None,
+        battery_voltage: int | None,
+    ) -> bool:
+        """Record a battery reading if it differs from this camera's last one.
+
+        Dedupes on ``battery_state`` alone (not level/voltage — see the
+        column comment on ``battery_history`` in ``_SCHEMA``). Returns
+        ``True`` only when this is a genuine transition from a
+        *previously recorded, different* state — the very first reading
+        ever seen for a camera is still inserted (so the Status tab isn't
+        empty), but returns ``False``, since there is nothing to have
+        transitioned from. Callers use this return value to decide whether
+        to fire a low-battery alert, so a fresh install or a newly
+        discovered camera that already happens to be low must not alert on
+        its first-ever reading.
+        """
+        if self._pool is None:
+            return False
+        last_state = await self._pool.fetchval(
+            _qm(
+                "SELECT battery_state FROM battery_history "
+                "WHERE camera=? ORDER BY id DESC LIMIT 1"
+            ),
+            camera,
+        )
+        if last_state == battery_state:
+            return False
+        await self._pool.execute(
+            _qm(
+                """
+                INSERT INTO battery_history
+                  (camera, battery_state, battery_level, battery_voltage, recorded_at)
+                VALUES (?, ?, ?, ?, ?)
+                """
+            ),
+            camera,
+            battery_state,
+            battery_level,
+            battery_voltage,
+            datetime.now(UTC).isoformat(),
+        )
+        return last_state is not None
+
+    async def get_battery_history(
+        self, camera: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Most recent battery state-change rows for one camera, newest
+        first — powers the Status tab's battery history modal."""
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT camera, battery_state, battery_level, battery_voltage, recorded_at
+                FROM battery_history
+                WHERE LOWER(camera) = LOWER(?)
+                ORDER BY id DESC
+                LIMIT ?
+                """
+            ),
+            camera,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+    async def get_latest_battery_state(self) -> list[dict[str, Any]]:
+        """Current battery state for every camera with a recorded reading —
+        one row per camera — powers the Status tab's battery strip."""
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            """
+            SELECT DISTINCT ON (camera)
+                camera, battery_state, battery_level, battery_voltage, recorded_at
+            FROM battery_history
+            ORDER BY camera, id DESC
+            """
         )
         return [dict(r) for r in rows]
 

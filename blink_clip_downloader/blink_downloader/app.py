@@ -15,6 +15,7 @@ from typing import Any
 from .analysis_queue import AnalysisQueue
 from .analyzer import BaseAnalyzer, create_analyzer
 from .archiver import ClipArchiver
+from .battery_monitor import BatteryMonitor
 from .config import AppConfig
 from .database import ClipDatabase
 from .digest import DailyDigest
@@ -151,6 +152,12 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             discord_webhook_url=config.discord_webhook_url,
             discord_enabled=config.discord_enabled,
             ha_notify_enabled=config.notify_ha_suspicious,
+        )
+        self._battery_monitor = BatteryMonitor(
+            db=self._db,
+            dispatcher=self._alert_dispatcher,
+            get_battery_snapshot=self._downloader.get_battery_snapshot,
+            alerts_enabled=config.battery_alerts_enabled,
         )
 
         if config.ai_analysis_enabled:
@@ -703,6 +710,11 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         _LOGGER.debug("Poll cycle started")
 
         await self._downloader.refresh_camera_state()
+        # Runs before the quota early-return below (and everything else in
+        # this cycle) so battery monitoring never silently stops just
+        # because the library is full — it has nothing to do with download
+        # quota.
+        await self._battery_monitor.check_and_alert()
 
         deleted_paths = self._storage.apply_retention_policy_paths()
         if deleted_paths:

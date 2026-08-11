@@ -107,6 +107,41 @@ class NotificationDispatcher:
         if self._ha_notify_enabled:
             await self.send_ha_notification(title, body)
 
+    async def dispatch_battery_alert(
+        self, camera: str, battery_state: str, battery_voltage: int | None = None
+    ) -> None:
+        """Send a low-battery alert via every enabled channel.
+
+        Deliberately reuses the exact same mobile/SMTP/Discord/HA-persistent
+        channels (and their existing enabled flags) as :meth:`dispatch`
+        above, rather than introducing separate battery-specific channel
+        settings — so a Discord webhook already set up for suspicious-clip
+        alerts is used for battery alerts too, with no extra configuration.
+        Callers (battery_monitor.py) are expected to only call this for a
+        genuine ok-to-low transition, gated on the separate
+        battery_alerts_enabled master switch. battery_level is deliberately
+        never included in the message — Blink's battery_state ("ok"/"low")
+        is the one reliably meaningful signal; battery_level is a coarse,
+        non-percentage number that would misleadingly read as more precise
+        than it is.
+        """
+        title = f"Low Battery — {camera}"
+        body = f"Camera: {camera}\nBattery: {battery_state.strip().capitalize()}"
+        if battery_voltage is not None:
+            body += f"\nVoltage: {battery_voltage / 100:.2f}V"
+        body += f"\nTime: {datetime.now(UTC).isoformat()}"
+
+        if self._mobile_enabled:
+            await self.send_mobile(title, body)
+        if self._smtp_enabled:
+            await self.send_email(title, body)
+        if self._discord_enabled:
+            await self.send_discord(
+                title, f"{camera}'s battery is low.", camera, confidence=None
+            )
+        if self._ha_notify_enabled:
+            await self.send_ha_notification(title, body)
+
     # ------------------------------------------------------------------
     # Mobile App (HA Companion)
     # ------------------------------------------------------------------
@@ -229,7 +264,7 @@ class NotificationDispatcher:
         title: str,
         description: str,
         camera: str = "",
-        confidence: float = 0.0,
+        confidence: float | None = 0.0,
     ) -> bool:
         """Post an embed to a Discord webhook."""
         if not self._discord_enabled or not self._discord_url:
@@ -256,23 +291,25 @@ class NotificationDispatcher:
         return False, "Failed to send test message — check the add-on logs for details."
 
     async def _send_discord_now(
-        self, title: str, description: str, camera: str, confidence: float
+        self, title: str, description: str, camera: str, confidence: float | None
     ) -> bool:
-        color = 0xFF0000 if confidence > 0.7 else 0xFF8C00
+        # confidence=None (battery alerts — see dispatch_battery_alert) skips
+        # the Confidence field entirely rather than showing a meaningless
+        # "Confidence: 0%"/"100%" on an event that isn't a probabilistic AI
+        # verdict; it still counts as "high urgency" for the embed color.
+        color = 0xFF0000 if confidence is None or confidence > 0.7 else 0xFF8C00
+        fields = [{"name": "Camera", "value": camera, "inline": True}]
+        if confidence is not None:
+            fields.append(
+                {"name": "Confidence", "value": f"{confidence:.0%}", "inline": True}
+            )
         payload = {
             "embeds": [
                 {
                     "title": title,
                     "description": description,
                     "color": color,
-                    "fields": [
-                        {"name": "Camera", "value": camera, "inline": True},
-                        {
-                            "name": "Confidence",
-                            "value": f"{confidence:.0%}",
-                            "inline": True,
-                        },
-                    ],
+                    "fields": fields,
                     "timestamp": datetime.now(UTC).isoformat(),
                 }
             ]

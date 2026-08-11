@@ -326,6 +326,38 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             return []
         return list(self._blink.cameras.keys())
 
+    def get_battery_snapshot(self) -> list[dict[str, Any]]:
+        """Return each camera's current battery reading, as of the last
+        refresh_camera_state() call.
+
+        blinkpy populates ``battery_state``/``battery_level``/
+        ``battery_voltage`` on every ``BlinkCamera`` as part of the normal
+        per-camera refresh (see refresh_camera_state's docstring) — this
+        just reads what's already there, no extra Blink API calls. A
+        wired camera (e.g. a plugged-in Mini or Doorbell) reports no
+        battery at all (``battery_state`` stays ``None`` forever) and is
+        excluded here rather than shown as a fake third state.
+        ``battery_level``/``battery_voltage`` of ``0`` is a real reading
+        (not "missing"), so both are passed through as-is, ``None``
+        included. Returns [] before the first successful connect().
+        """
+        if self._blink is None:
+            return []
+        snapshot: list[dict[str, Any]] = []
+        for name, camera in self._blink.cameras.items():
+            state = camera.battery_state
+            if not state:
+                continue
+            snapshot.append(
+                {
+                    "camera": name,
+                    "battery_state": str(state).strip().lower(),
+                    "battery_level": camera.battery_level,
+                    "battery_voltage": camera.battery_voltage,
+                }
+            )
+        return snapshot
+
     async def refresh_camera_state(self) -> bool:
         """Refresh Blink's own per-camera state (images, motion, battery,
         online status, ...) from the cloud.
