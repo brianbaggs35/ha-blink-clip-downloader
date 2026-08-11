@@ -1,5 +1,48 @@
 # Changelog
 
+## 5.3.2
+
+### Bug fixes
+
+- **Live View: the first attempt to watch a camera could fail with "The
+  media could not be loaded…"**, recovering only after refreshing the
+  page and reopening the tab. The backend was reporting a session "live"
+  the instant ffmpeg created the HLS playlist file, before it had written
+  a single segment into it — the player was sourced against that empty
+  manifest and failed with no retry. Now waits for an actual segment
+  before reporting live, and the player self-heals on the next status
+  poll if it ever hits a similar transient race.
+- **Live View: the player could appear to show two things at once** — an
+  empty video box (or, when switching cameras, the *previous* camera's
+  still-playing stream) sitting next to the "Starting live view…"
+  spinner. The video now stays hidden for the whole duration a camera is
+  starting, not just before a session technically exists.
+- **Live View: navigating away without pressing Stop could leave a
+  session running well past when you actually left**, occasionally
+  producing a saved clip much longer than the real viewing time. An
+  in-flight start request that outlived the component (a tab switch, a
+  fast second camera pick, or Stop itself) could still spin up its own
+  status-poll/heartbeat timers afterward, with nothing left to ever stop
+  them. Starting, switching, and stopping a session are now all tracked
+  so only the most recent request can ever take effect, and an abandoned
+  one cleans up the session it just created instead of leaking it.
+
+### Housekeeping
+
+- Continued the SonarCloud cleanup from 5.3.1: closed out the remaining
+  security finding, all reliability findings, and the bulk of the
+  maintainability backlog (redundant exception handling, duplicated
+  string literals, test structure, an accessibility gap, and more), with
+  `# NOSONAR` reserved for the findings that are false positives or not
+  applicable to this add-on. A handful of cognitive-complexity and
+  too-many-parameters findings were reviewed and deliberately left as-is
+  where the complexity is intrinsic to what the code is doing (startup
+  sequencing, provider-specific error handling, OAuth polling) rather
+  than something a refactor could safely remove.
+- CI's SonarCloud scan now installs frontend dependencies first, fixing
+  an analysis warning about an unresolvable `tsconfig.json` reference.
+- Added a SonarCloud quality-gate badge to the repo README.
+
 ## 5.3.1
 
 ### Bug fixes
