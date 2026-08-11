@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import PrimeVue from 'primevue/config'
 import StatusPage from './StatusPage.vue'
 import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
@@ -28,6 +29,38 @@ const STATS = {
 }
 const CAMERAS = [{ camera: 'front', total: 10, size_bytes: 0, today: 2, this_week: 5, last_seen: '' }]
 const ACTIVITY = [{ date: '2026-01-05', hour: 8, count: 4 }]
+const BATTERY_STATUS = [
+  {
+    camera: 'Front Door',
+    battery_state: 'ok',
+    battery_level: 3,
+    battery_voltage: 165,
+    recorded_at: '2026-01-05T08:00:00Z',
+  },
+  {
+    camera: 'Backyard',
+    battery_state: 'low',
+    battery_level: 0,
+    battery_voltage: 105,
+    recorded_at: '2026-01-05T09:00:00Z',
+  },
+]
+const BATTERY_HISTORY = [
+  {
+    camera: 'Backyard',
+    battery_state: 'low',
+    battery_level: 0,
+    battery_voltage: 105,
+    recorded_at: '2026-01-05T09:00:00Z',
+  },
+  {
+    camera: 'Backyard',
+    battery_state: 'ok',
+    battery_level: 3,
+    battery_voltage: 170,
+    recorded_at: '2026-01-01T09:00:00Z',
+  },
+]
 const AI_STATUS = {
   enabled: true,
   prompt_debug_enabled: false,
@@ -62,6 +95,10 @@ function mockFetch() {
       if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve(CAMERAS) })
       if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve(ACTIVITY) })
       if (url.startsWith('/api/ai/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve(AI_STATUS) })
+      if (url.startsWith('/api/battery/history/'))
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(BATTERY_HISTORY) })
+      if (url.startsWith('/api/battery/status'))
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(BATTERY_STATUS) })
       return Promise.reject(new Error(`unexpected fetch ${url}`))
     }),
   )
@@ -151,6 +188,7 @@ describe('StatusPage', () => {
         if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         if (url.startsWith('/api/ai/status'))
           return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: false }) })
+        if (url.startsWith('/api/battery/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         return Promise.reject(new Error(`unexpected fetch ${url}`))
       }),
     )
@@ -195,6 +233,7 @@ describe('StatusPage', () => {
                 analysis_stats: { ...AI_STATUS.analysis_stats, frames_analyzed_today: 0 },
               }),
           })
+        if (url.startsWith('/api/battery/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         return Promise.reject(new Error(`unexpected fetch ${url}`))
       }),
     )
@@ -234,6 +273,7 @@ describe('StatusPage', () => {
         if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         if (url.startsWith('/api/ai/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve(null) })
+        if (url.startsWith('/api/battery/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         return Promise.reject(new Error(`unexpected fetch ${url}`))
       }),
     )
@@ -257,6 +297,7 @@ describe('StatusPage', () => {
         if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve(ACTIVITY) })
         if (url.startsWith('/api/ai/status'))
           return Promise.resolve({ ok: true, json: () => Promise.resolve(AI_STATUS) })
+        if (url.startsWith('/api/battery/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         return Promise.reject(new Error(`unexpected fetch ${url}`))
       }),
     )
@@ -305,6 +346,7 @@ describe('StatusPage', () => {
                 },
               }),
           })
+        if (url.startsWith('/api/battery/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
         return Promise.reject(new Error(`unexpected fetch ${url}`))
       }),
     )
@@ -316,6 +358,53 @@ describe('StatusPage', () => {
     expect(wrapper.text()).not.toContain('Pending')
     expect(wrapper.text()).not.toContain('Analyzed')
     expect(wrapper.text()).not.toContain('Suspicious')
+    wrapper.unmount()
+  })
+
+  it('renders a battery tile per camera, distinguishing low from normal', async () => {
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    const tiles = wrapper.findAll('.battery-tile')
+    expect(tiles).toHaveLength(2)
+    const front = tiles.find((t) => t.text().includes('Front Door'))!
+    const back = tiles.find((t) => t.text().includes('Backyard'))!
+    expect(front.classes()).not.toContain('low')
+    expect(front.text()).toContain('Normal')
+    expect(back.classes()).toContain('low')
+    expect(back.text()).toContain('Low')
+    wrapper.unmount()
+  })
+
+  it('omits the battery strip entirely when there is no battery data', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/stats')) return Promise.resolve({ ok: true, json: () => Promise.resolve(STATS) })
+        if (url.startsWith('/api/cameras')) return Promise.resolve({ ok: true, json: () => Promise.resolve(CAMERAS) })
+        if (url.startsWith('/api/activity')) return Promise.resolve({ ok: true, json: () => Promise.resolve(ACTIVITY) })
+        if (url.startsWith('/api/ai/status'))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(AI_STATUS) })
+        if (url.startsWith('/api/battery/status')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    expect(wrapper.find('#battery-strip').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('opens the battery history modal when a tile is clicked, showing its history', async () => {
+    const wrapper = mount(StatusPage, { global: { plugins: [PrimeVue] } })
+    await flushPromises()
+    const back = wrapper.findAll('.battery-tile').find((t) => t.text().includes('Backyard'))!
+    await back.trigger('click')
+    await flushPromises()
+
+    const body = new DOMWrapper(document.body)
+    expect(body.text()).toContain('Backyard — Battery History')
+    expect(body.text()).toContain('Went low')
+    expect(body.text()).toContain('Back to normal')
     wrapper.unmount()
   })
 })

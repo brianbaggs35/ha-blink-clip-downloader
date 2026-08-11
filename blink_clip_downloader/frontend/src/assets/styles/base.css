@@ -1272,6 +1272,63 @@ h3 {
   padding: 1.75rem;
   padding-bottom: 3rem;
 }
+.battery-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr));
+  gap: 0.7rem;
+  max-width: 1080px;
+  margin: 0 auto 1.1rem;
+  min-width: 0;
+}
+.battery-tile {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition:
+    border-color 0.18s var(--ease),
+    box-shadow 0.18s var(--ease);
+}
+.battery-tile:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+.battery-tile-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--success);
+}
+.battery-tile.low .battery-tile-icon {
+  color: var(--danger);
+}
+.battery-tile-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.battery-tile-camera {
+  font-size: 0.83rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.battery-tile-state {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.battery-tile.low .battery-tile-state {
+  color: var(--danger);
+}
 .status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
