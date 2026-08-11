@@ -239,18 +239,30 @@ removed in 5.0.0.
   "distribution" clips across 3 cameras/3 sources for filter/count
   assertions, plus 2 dedicated "Test Scratch" clips for star/tag mutation
   tests — see the script for the exact layout and why mutating tests use
-  their own clips). This is deliberately distinct from the root `e2e/`
-  directory, which smoke-tests that the packaged Docker container boots at
-  all with no real data (every tab lands on its empty state there) — this
-  suite instead proves specific web UI workflows (filtering, starring,
-  tagging, the clip modal) actually work end to end against a real
-  frontend+backend+DB round trip, the class of bug neither Vitest's mocked
-  `fetch` nor pytest's browser-less tests can catch. `vitest.config.ts`
-  excludes `e2e/**` from Vitest's own test discovery — the two runners
-  don't overlap. Requires a reachable Postgres and `npm run build` having
-  already produced `blink_downloader/static/` (see `playwright.config.ts`'s
-  `webServer`, which starts/stops the standalone server for you around the
-  whole run — `workers: 1`, since every test shares that one backend).
+  their own clips) and a real `ClipAnalyzer` pointed at an unreachable port
+  (fails fast, `ai_online: false`) so the AI/AI Usage tabs — both gated
+  server-side on `analyzer is not None` — have something real to render
+  instead of "AI Analysis Not Configured". This is deliberately distinct
+  from the root `e2e/` directory, which smoke-tests that the packaged
+  Docker container boots at all with no real data (every tab lands on its
+  empty state there) — this suite instead proves specific web UI workflows
+  actually work end to end against a real frontend+backend+DB round trip,
+  the class of bug neither Vitest's mocked `fetch` nor pytest's
+  browser-less tests can catch (it has already caught one: a settings-save
+  endpoint returned `{"saved": true}` even when the file write silently
+  failed — see `_redirect_data_files` in the script). Covers Library
+  (filter/star/tag/modal), Vehicles, Status, AI, AI Usage, Automations, and
+  Models — deliberately **not** Live View, Security Feed, or Biometrics,
+  which need a real camera/face-recognition dependency this environment
+  doesn't have; those stay covered by their own focused Vitest specs
+  instead. `vitest.config.ts` excludes `e2e/**` from Vitest's own test
+  discovery — the two runners don't overlap. Requires a reachable Postgres
+  and `npm run build` having already produced `blink_downloader/static/`
+  (see `playwright.config.ts`'s `webServer`, which starts/stops the
+  standalone server for you around the whole run — `workers: 1`, since
+  every test shares that one backend/database for the whole run, so a
+  mutating test must use its own dedicated data rather than touch anything
+  a different spec file's assertions depend on, regardless of run order).
   Shared overlay components (`HelpOverlay`/`PromptOverlay`/`TwoFAOverlay`/
   `ConfirmDialog`) reuse the same `.modal-bg`/`.modal-title`/`.modal-close`
   class names as `ClipModal` — scope locators to the specific open modal
@@ -435,11 +447,12 @@ skipped automatically for PRs from forks, which don't have repo secrets.
 
 CI's `frontend-e2e` job runs `npm run test:e2e` (Playwright, see **Web
 UI**'s E2E testing bullet) — unlike `build`/`smoke-test`, this one *is*
-practical to run locally (a few seconds, no Docker: just a reachable
+practical to run locally (tens of seconds, no Docker: just a reachable
 Postgres, the same prerequisite `pytest` already needs, plus `npm run
-build` having been run first) — worth doing whenever a change touches the
-Library tab, its API routes, or `ClipModal`/`ClipCard`, since that's this
-suite's coverage so far.
+build` having been run first) — worth doing whenever a change touches
+Library, Vehicles, Status, AI, AI Usage, Automations, or Models (their
+page components, their API routes, or `media_server.py`'s handlers for
+them), since that's this suite's coverage so far.
 
 ## Versioning
 
