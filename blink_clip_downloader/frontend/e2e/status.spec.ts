@@ -10,8 +10,13 @@ import { test, expect } from './coverage-fixtures'
 // that's real, order-dependent state, not a stale assumption; the exact
 // starred count is already covered in isolation by library-filters.spec.ts).
 // Assertions here stick to what's true regardless of when/in what order
-// this runs: Total clips and Archived (nothing in this suite archives a
-// clip) never change.
+// this runs: Total clips never changes (archived=FALSE-filtered, so the
+// 3 pre-archived clips standalone_server.py seeds for storage.spec.ts —
+// see _ARCHIVE_CLIPS — don't affect it). Archived does start at a fixed
+// seed count of 3, but storage.spec.ts's delete test removes one of
+// them later in the run — like "Starred" above, this only holds because
+// status.spec.ts alphabetically (and therefore chronologically, given
+// workers: 1) runs before storage.spec.ts.
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   await page.locator('.app-nav-tab[data-tab="status"]').click()
@@ -25,7 +30,7 @@ test('shows disconnected (no live Blink session) and the seeded library totals',
   const libraryCard = page.locator('.status-card', { hasText: 'Clip Library' })
   await expect(libraryCard).toContainText('Total clips')
   await expect(libraryCard.locator('.status-row', { hasText: 'Total clips' })).toContainText('14')
-  await expect(libraryCard.locator('.status-row', { hasText: 'Archived' })).toContainText('0')
+  await expect(libraryCard.locator('.status-row', { hasText: 'Archived' })).toContainText('3')
 })
 
 test('shows every seeded camera with its total clip count', async ({ page }) => {

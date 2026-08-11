@@ -122,6 +122,28 @@ def _distribution_clips(now: datetime) -> list[dict]:
 _SCRATCH_CAMERA = "Test Scratch"
 _SCRATCH_CLIP_IDS = ("e2e-scratch-star", "e2e-scratch-tag")
 
+# Archived clips for the Storage tab. Reusing real distribution cameras
+# (rather than a new camera name) is deliberate: get_camera_stats() and
+# get_stats()'s total_count both filter WHERE archived=FALSE, so these
+# are invisible to every existing Library/Vehicles/Status per-camera or
+# total-clips assertion regardless of which camera they're on — but
+# reusing real cameras (that also have non-archived clips) means they
+# still show up as options in the Archived Clips camera filter dropdown,
+# which only lists cameras from that same archived=FALSE-filtered query.
+# Two clips share one archive_path (exercises the per-camera-subheader
+# grouping within one expanded archive, and camera-filtering an archive
+# group down to a subset of its clips); a third has its own archive_path
+# with a single clip (its own archive group, dedicated to the delete
+# test so removing it doesn't shrink the count the other assertions
+# depend on — same isolation principle as _SCRATCH_CLIP_IDS above).
+_ARCHIVE_PATH_MULTI = "/archives/2024-01-e2e.zip"
+_ARCHIVE_PATH_SOLO = "/archives/2024-02-e2e.zip"
+_ARCHIVE_CLIPS = (
+    ("e2e-archive-front", "Front Door", _ARCHIVE_PATH_MULTI, 200),
+    ("e2e-archive-back", "Backyard", _ARCHIVE_PATH_MULTI, 202),
+    ("e2e-archive-solo", "Garage", _ARCHIVE_PATH_SOLO, 204),
+)
+
 
 async def _seed(db: ClipDatabase) -> None:
     now = datetime.now(UTC)
@@ -136,6 +158,10 @@ async def _seed(db: ClipDatabase) -> None:
 
     for i, clip_id in enumerate(_SCRATCH_CLIP_IDS):
         await db.add_clip(_clip(clip_id, _SCRATCH_CAMERA, "pir", 100 + i, now))
+
+    for clip_id, camera, archive_path, hours_ago in _ARCHIVE_CLIPS:
+        await db.add_clip(_clip(clip_id, camera, "pir", hours_ago, now))
+        await db.mark_archived(clip_id, archive_path)
 
 
 async def _main() -> None:
