@@ -1,7 +1,8 @@
 {
   "include": [
     "blink_clip_downloader/blink_downloader",
-    "blink_clip_downloader/tests"
+    "blink_clip_downloader/tests",
+    "blink_clip_downloader/scripts"
   ],
   "executionEnvironments": [
     {

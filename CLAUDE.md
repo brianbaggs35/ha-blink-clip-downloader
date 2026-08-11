@@ -87,10 +87,15 @@ architecture.
     storage archiving, storage quota enforcement, filesystem library
     scan/reconcile, download-session tracking, clip manifest export).
 - `frontend/` — the Vue 3 + PrimeVue + Pinia web UI, a separate npm project
-  (its own `package.json`/`node_modules`/toolchain). See **Web UI** below.
+  (its own `package.json`/`node_modules`/toolchain). See **Web UI** below,
+  including `frontend/e2e/`'s Playwright interaction tests.
 - `tests/` — pytest test suite, one `test_<module>.py` per module above, plus
   `conftest.py` with shared fixtures (`base_config`, `sample_clip`,
   `options_file`, `tmp_download_dir`).
+- `scripts/standalone_server.py` — boots a real `MediaServer` against a
+  seeded throwaway Postgres database with no Home Assistant, blinkpy, or
+  Docker involved; the backend `frontend/e2e/`'s Playwright tests run
+  against (see **Web UI** below). Not shipped in the Docker image.
 - `config.yaml` — HA add-on manifest (options schema, version, ports, maps).
 - `pyproject.toml` — package metadata, dependencies, pytest/coverage/pyright
   config.
@@ -227,6 +232,30 @@ removed in 5.0.0.
   needs a specific pointer position (see `VehicleZonePicker.spec.ts`).
   Coverage threshold is 80% (`vitest.config.ts`), mirroring the Python side's
   `fail_under = 80` — actual coverage on this codebase runs ~98-99%.
+- **E2E testing** (`frontend/e2e/`, Playwright's own test runner —
+  `@playwright/test`, not Vitest): real interaction tests against a real
+  backend — `scripts/standalone_server.py` boots an actual `MediaServer`
+  against a throwaway Postgres database seeded with fake clips (12
+  "distribution" clips across 3 cameras/3 sources for filter/count
+  assertions, plus 2 dedicated "Test Scratch" clips for star/tag mutation
+  tests — see the script for the exact layout and why mutating tests use
+  their own clips). This is deliberately distinct from the root `e2e/`
+  directory, which smoke-tests that the packaged Docker container boots at
+  all with no real data (every tab lands on its empty state there) — this
+  suite instead proves specific web UI workflows (filtering, starring,
+  tagging, the clip modal) actually work end to end against a real
+  frontend+backend+DB round trip, the class of bug neither Vitest's mocked
+  `fetch` nor pytest's browser-less tests can catch. `vitest.config.ts`
+  excludes `e2e/**` from Vitest's own test discovery — the two runners
+  don't overlap. Requires a reachable Postgres and `npm run build` having
+  already produced `blink_downloader/static/` (see `playwright.config.ts`'s
+  `webServer`, which starts/stops the standalone server for you around the
+  whole run — `workers: 1`, since every test shares that one backend).
+  Shared overlay components (`HelpOverlay`/`PromptOverlay`/`TwoFAOverlay`/
+  `ConfirmDialog`) reuse the same `.modal-bg`/`.modal-title`/`.modal-close`
+  class names as `ClipModal` — scope locators to the specific open modal
+  (`.modal-bg.open`) rather than querying those classes unscoped, or
+  Playwright's strict mode throws on the multiple matches.
 - Responsive/mobile conventions carried over from the pre-Vue UI still
   apply: grid layouts use `minmax(min(Npx,100%),1fr)` (not bare
   `minmax(Npx,1fr)`) so columns shrink instead of overflowing narrow
@@ -247,11 +276,13 @@ npm run format:check    # prettier --check .
 npm run type-check      # vue-tsc -b
 npm test                 # vitest run
 npm run test:coverage   # vitest run --coverage
+npm run test:e2e        # playwright test (needs Postgres + npm run build first)
 ```
 
-CI folds these into the existing Python `lint`/`test` jobs
+CI folds the first six into the existing Python `lint`/`test` jobs
 (`.github/workflows/ci.yaml`), gated to run once (the `python-version ==
-"3.12"` matrix leg) rather than as a separate job.
+"3.12"` matrix leg) rather than as a separate job. `test:e2e` runs in its
+own `frontend-e2e` job instead (own Postgres service, not matrixed).
 
 ## Face-recognition suspicious-flag bypass (safety-critical — read before touching)
 
@@ -400,7 +431,15 @@ CI also runs a `sonarqube` job (`SonarSource/sonarqube-scan-action`,
 config at the repo root's `sonar-project.properties`) against SonarCloud —
 informational only, doesn't gate merges, and isn't practical to run
 locally since it needs a `SONAR_TOKEN` and network access to sonarcloud.io;
-skipped automatically for PRs from forks, which don't have repo secrets.)
+skipped automatically for PRs from forks, which don't have repo secrets.
+
+CI's `frontend-e2e` job runs `npm run test:e2e` (Playwright, see **Web
+UI**'s E2E testing bullet) — unlike `build`/`smoke-test`, this one *is*
+practical to run locally (a few seconds, no Docker: just a reachable
+Postgres, the same prerequisite `pytest` already needs, plus `npm run
+build` having been run first) — worth doing whenever a change touches the
+Library tab, its API routes, or `ClipModal`/`ClipCard`, since that's this
+suite's coverage so far.
 
 ## Versioning
 

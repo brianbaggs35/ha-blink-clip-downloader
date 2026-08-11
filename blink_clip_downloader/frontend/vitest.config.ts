@@ -8,6 +8,10 @@ export default mergeConfig(
       environment: 'jsdom',
       globals: true,
       setupFiles: ['./src/test-setup.ts'],
+      // e2e/ holds @playwright/test specs (frontend/playwright.config.ts),
+      // a different test runner entirely — Vitest's default file glob
+      // would otherwise pick them up and try (and fail) to run them too.
+      exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
       coverage: {
         provider: 'v8',
         // lcov is for SonarCloud's JS/TS analyzer (sonar.javascript.lcov.reportPaths
