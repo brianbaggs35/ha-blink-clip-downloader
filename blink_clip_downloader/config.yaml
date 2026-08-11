@@ -417,6 +417,10 @@ options:
   # for someone who only wants an in-HA alert when something's actually
   # flagged suspicious.
   notify_ha_suspicious: false
+  # Alert via mobile/email/Discord/HA (the channels above) when a camera's
+  # battery goes low. Independent of notify_ha_suspicious — reuses the same
+  # channels, but is its own on/off switch.
+  battery_alerts_enabled: false
 
   # --- Logging ---
   # Log verbosity level. Use "debug" to troubleshoot connection issues.
@@ -515,4 +519,5 @@ schema:
   discord_webhook_url: "str?"
   discord_enabled: "bool"
   notify_ha_suspicious: "bool"
+  battery_alerts_enabled: "bool"
   log_level: "list(debug|info|warning|error)"

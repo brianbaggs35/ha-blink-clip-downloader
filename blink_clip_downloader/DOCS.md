@@ -703,11 +703,13 @@ false-bypass risk this feature is designed to avoid.
 
 ## AI Alerts (Extended Notifications)
 
-When AI analysis flags a clip as suspicious it can notify you through four
-independent channels. The **Automations** tab has a **Notification Channels**
-panel with a one-off test button for each channel (email, Discord, mobile app
-push, HA persistent notification) so you can verify credentials are correct
-before actually enabling a channel for real alerts.
+When AI analysis flags a clip as suspicious — or a camera's battery goes low,
+see [Low-Battery Alerts](#low-battery-alerts) below — it can notify you
+through four independent channels. The **Automations** tab has a
+**Notification Channels** panel with a one-off test button for each channel
+(email, Discord, mobile app push, HA persistent notification) so you can
+verify credentials are correct before actually enabling a channel for real
+alerts.
 
 ### HA Mobile App Push
 
@@ -754,6 +756,22 @@ specifically, without the per-download noise `notify_ha` also produces. Like
 — enable `mobile_app_enabled` above (in [HA Mobile App
 Push](#ha-mobile-app-push)) for an actual push notification to your phone.
 
+### Low-Battery Alerts
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `battery_alerts_enabled` | `false` | Alert when a camera's battery goes low, via the channels above |
+
+Reuses the exact same four channels configured above (mobile push, email,
+Discord, HA persistent notification) — there's nothing separate to set up.
+An alert fires once, the moment a camera's battery transitions from normal
+to low; it does not repeat while the battery stays low, and there's no
+alert for the battery recovering (that's still visible in the Status tab's
+battery history, see [Web Library UI](#web-library-ui) below). Enabling this
+for the first time never alerts retroactively for a camera that's already
+low when you turn it on — only a genuine transition observed after that
+counts.
+
 ---
 
 ## Web Library UI
@@ -770,9 +788,13 @@ from any browser without leaving Home Assistant.
   storage stat shows both free disk space and, when `max_storage_gb` is
   configured, how much of that quota is used — since a large amount of free disk
   space doesn't mean much if the configured quota is small.
-- **Status tab** — Blink connection status, library stats, per-camera breakdown, a
-  7-day activity chart, and an **AI Analysis** card showing provider name,
-  online/offline status, model, pending queue count, and suspicious-clip count.
+- **Status tab** — a per-camera battery strip at the top (Normal/Low, color-coded;
+  click a camera to see its history — when it went low, when it recovered, and how
+  long each low period lasted — see [Low-Battery Alerts](#low-battery-alerts)
+  above for the matching alert), Blink connection status, library stats,
+  per-camera breakdown, a 7-day activity chart, and an **AI Analysis** card
+  showing provider name, online/offline status, model, pending queue count, and
+  suspicious-clip count.
 - **AI tab** — AI provider configuration (with a Fetch Models picker for both the
   tier-1 and, when configured, tier-2 escalation model), connection health check,
   Camera Configurations panel (descriptions/custom prompts), AI Usage statistics,

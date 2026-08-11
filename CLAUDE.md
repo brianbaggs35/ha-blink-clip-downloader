@@ -81,11 +81,12 @@ architecture.
     `/data/security_feed_settings.json`, same convention as
     `vehicle_settings.json`.
   - `event_watcher.py`, `notifier.py`, `notification_channels.py`,
-    `digest.py`, `archiver.py`, `storage.py`, `library_scanner.py`,
-    `tracker.py`, `manifest.py` — supporting modules (event-driven
-    fast-poll, HA/mobile/email/Discord notifications, daily digest, cold
-    storage archiving, storage quota enforcement, filesystem library
-    scan/reconcile, download-session tracking, clip manifest export).
+    `digest.py`, `battery_monitor.py`, `archiver.py`, `storage.py`,
+    `library_scanner.py`, `tracker.py`, `manifest.py` — supporting modules
+    (event-driven fast-poll, HA/mobile/email/Discord notifications, daily
+    digest, per-camera battery tracking/alerts, cold storage archiving,
+    storage quota enforcement, filesystem library scan/reconcile,
+    download-session tracking, clip manifest export).
 - `frontend/` — the Vue 3 + PrimeVue + Pinia web UI, a separate npm project
   (its own `package.json`/`node_modules`/toolchain). See **Web UI** below,
   including `frontend/e2e/`'s Playwright interaction tests.
