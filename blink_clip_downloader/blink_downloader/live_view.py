@@ -562,9 +562,23 @@ class LiveViewManager:
         to keep in sync by hand."""
         if session.error is not None:
             return "error"
-        if (session.hls_dir / _HLS_PLAYLIST_NAME).exists():
+        if self._playlist_is_ready(session.hls_dir):
             return "live"
         return "starting"
+
+    @staticmethod
+    def _playlist_is_ready(hls_dir: Path) -> bool:
+        """The manifest merely *existing* isn't enough to call the session
+        "live": ffmpeg creates the file before it has written a single
+        segment into it, and Video.js fatally errors — with no retry — if
+        it's sourced against an empty or partially-written manifest. Require
+        at least one #EXTINF segment entry, which ffmpeg only ever writes
+        once that segment has been fully flushed to disk."""
+        playlist = hls_dir / _HLS_PLAYLIST_NAME
+        try:
+            return "#EXTINF" in playlist.read_text(errors="ignore")
+        except OSError:
+            return False
 
     def _build_status(self, session: _LiveViewSession) -> LiveViewStatus:
         error = session.error

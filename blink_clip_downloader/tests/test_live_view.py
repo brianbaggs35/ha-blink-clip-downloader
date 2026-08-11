@@ -583,8 +583,30 @@ async def test_status_transitions_starting_to_live(
         assert manager.get_status().state == "starting"
         hls_dir = manager.get_hls_dir(status.session_id)
         assert hls_dir is not None
-        (hls_dir / "stream.m3u8").write_text("#EXTM3U\n")
+        (hls_dir / "stream.m3u8").write_text("#EXTM3U\n#EXTINF:2.0,\nseg_00000.ts\n")
         assert manager.get_status().state == "live"
+    finally:
+        await manager.stop_session(status.session_id)
+
+
+async def test_status_stays_starting_when_playlist_exists_with_no_segment_yet(
+    manager: LiveViewManager, camera_registry: dict[str, Any]
+) -> None:
+    """ffmpeg creates the manifest file before it has written any segment
+    into it — state must not flip to "live" (and the frontend must not
+    source the player) against a manifest with nothing playable in it yet,
+    or Video.js fatally errors with no retry."""
+    camera_registry["Front Door"] = _make_camera()
+    proc = _FakeProcess()
+    with _mock_exec(proc):
+        status = await manager.start_session("Front Door")
+    assert status.session_id
+
+    try:
+        hls_dir = manager.get_hls_dir(status.session_id)
+        assert hls_dir is not None
+        (hls_dir / "stream.m3u8").write_text("#EXTM3U\n#EXT-X-VERSION:3\n")
+        assert manager.get_status().state == "starting"
     finally:
         await manager.stop_session(status.session_id)
 
