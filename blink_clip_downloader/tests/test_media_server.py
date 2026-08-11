@@ -3004,12 +3004,16 @@ async def test_moondream_install_unsupported_arch(client: TestClient) -> None:
 
 
 async def test_moondream_run_install_success(
-    client: TestClient, tmp_path: Path
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Exercises the background _run_install() coroutine's success branch."""
     import blink_downloader.media_server as ms
 
     ms._moondream_install_state = {"status": "idle", "log": ""}
+    # A copy, so the install flow's sys.path.insert() mutates only this
+    # test's copy — monkeypatch restores the original list reference at
+    # teardown regardless of what got inserted into the copy.
+    monkeypatch.setattr(sys, "path", list(sys.path))
     fake_pkg_dir = tmp_path / "moondream_packages"
     captured: list = []
 
@@ -3042,8 +3046,6 @@ async def test_moondream_run_install_success(
             await captured[0]
         assert ms._moondream_install_state["status"] == "installed"
     finally:
-        if str(fake_pkg_dir) in sys.path:
-            sys.path.remove(str(fake_pkg_dir))
         ms._moondream_install_state = {"status": "idle", "log": ""}
 
 
