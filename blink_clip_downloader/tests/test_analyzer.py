@@ -5851,32 +5851,38 @@ def test_build_prompt_night_time(utc_local_tz) -> None:
     assert "Time of day: night" in prompt
 
 
-def test_time_of_day_uses_local_timezone_not_raw_utc_hour() -> None:
+@pytest.fixture
+def halifax_local_tz():
+    """See utc_local_tz's docstring above — same rationale, pinned to a
+    UTC-3 zone instead, for the regression test below that specifically
+    exercises a non-UTC local-time conversion."""
+    import os
+    import time as _time_module
+
+    original_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "America/Halifax"  # UTC-3 (ADT) in summer
+    _time_module.tzset()
+    yield
+    if original_tz is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = original_tz
+    _time_module.tzset()
+
+
+def test_time_of_day_uses_local_timezone_not_raw_utc_hour(halifax_local_tz) -> None:
     """clip_timestamp is always UTC (Blink's convention), but "is this
     normal for the time of day" is a local question — a clip at 20:10 UTC
     is broad-daylight late afternoon in a UTC-3 (e.g. Atlantic/Halifax)
     timezone, not "night". Regression test for reading dt.hour directly
     off the UTC value instead of converting to local time first."""
-    import os
-    import time as _time_module
-
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
-    original_tz = os.environ.get("TZ")
-    try:
-        os.environ["TZ"] = "America/Halifax"  # UTC-3 (ADT) in summer
-        _time_module.tzset()
-        # 20:10 UTC -> 17:10 ADT: late afternoon/early evening, nowhere
-        # near "night" despite the UTC hour alone suggesting it.
-        prompt = a._build_prompt("Cam", clip_timestamp="2026-07-14T20:10:00+00:00")
-        assert "Time of day: night" not in prompt
-        assert "Time of day: evening" in prompt
-        assert "17:10 local time" in prompt
-    finally:
-        if original_tz is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = original_tz
-        _time_module.tzset()
+    # 20:10 UTC -> 17:10 ADT: late afternoon/early evening, nowhere
+    # near "night" despite the UTC hour alone suggesting it.
+    prompt = a._build_prompt("Cam", clip_timestamp="2026-07-14T20:10:00+00:00")
+    assert "Time of day: night" not in prompt
+    assert "Time of day: evening" in prompt
+    assert "17:10 local time" in prompt
 
 
 def test_build_prompt_no_anomaly_alert_below_threshold() -> None:
