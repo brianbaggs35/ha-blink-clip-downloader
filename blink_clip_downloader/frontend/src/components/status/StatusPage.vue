@@ -75,7 +75,7 @@ watch(() => refresh.tick, load)
 <template>
   <div v-if="loading" style="padding: 2rem; width: 100%"><LoadingIndicator /></div>
   <div v-else-if="error" style="padding: 2rem; width: 100%; color: var(--danger)">Failed to load status.</div>
-  <template v-else>
+  <div v-else id="status-page-content">
     <BatteryStatusStrip
       v-if="batteryStatus.length"
       :readings="batteryStatus"
@@ -200,7 +200,7 @@ watch(() => refresh.tick, load)
         <ActivityChart :rows="activity" @select-date="onSelectDate" />
       </div>
     </div>
-  </template>
+  </div>
   <BatteryHistoryModal
     v-if="selectedBatteryCamera"
     :camera="selectedBatteryCamera"
