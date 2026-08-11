@@ -16,6 +16,7 @@ from blinkpy.auth import TokenRefreshFailed
 
 from blink_downloader import media_server
 from blink_downloader.analyzer import AnalysisResult
+from blink_downloader.archiver import ClipArchiver
 from blink_downloader.database import ClipDatabase
 from blink_downloader.gdrive_client import (
     DeviceFlowInfo,
@@ -6455,6 +6456,153 @@ async def test_gdrive_backup_now_enqueues_pending_clips(db: ClipDatabase) -> Non
         gdrive_queue.enqueue.assert_awaited_once()
     finally:
         await tc.close()
+
+
+async def test_gdrive_backup_now_reports_only_actually_queued_clips(
+    db: ClipDatabase,
+) -> None:
+    """The core bug: len(pending) used to be reported unconditionally, even
+    for clips enqueue() silently no-op'd on (already pending/processing/
+    completed) — this asserts the count reflects real work done."""
+    await db.add_clip(_make_clip("archived-bn1"))
+    await db.mark_archived("archived-bn1", "/archives/2024-06.zip")
+    await db.add_clip(_make_clip("archived-bn2"))
+    await db.mark_archived("archived-bn2", "/archives/2024-06.zip")
+    gdrive_client = _make_gdrive_client_mock(backup_policy="archived_only")
+    gdrive_queue = MagicMock(spec=GDriveUploadQueue)
+    # First clip actually queues; second is a no-op (e.g. already processing).
+    gdrive_queue.enqueue = AsyncMock(side_effect=[True, False])
+    server = MediaServer(
+        db=db, port=0, gdrive_client=gdrive_client, gdrive_queue=gdrive_queue
+    )
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/backup-now")
+        data = await resp.json()
+        assert data["enqueued"] == 1
+        assert gdrive_queue.enqueue.await_count == 2
+    finally:
+        await tc.close()
+
+
+# ------------------------------------------------------------------
+# Storage tab: Run Archiving Now
+# ------------------------------------------------------------------
+
+
+async def test_archive_run_now_not_configured_returns_503(client: TestClient) -> None:
+    resp = await client.post("/api/storage/archive/run-now")
+    assert resp.status == 503
+
+
+async def test_archive_run_now_returns_archived_count(db: ClipDatabase) -> None:
+    archiver = MagicMock(spec=ClipArchiver)
+    archiver.run = AsyncMock(return_value=[{"id": "c1"}, {"id": "c2"}])
+    server = MediaServer(db=db, port=0, archiver=archiver)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/archive/run-now")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["archived"] == 2
+        archiver.run.assert_awaited_once()
+    finally:
+        await tc.close()
+
+
+async def test_archive_run_now_zero_when_nothing_eligible(db: ClipDatabase) -> None:
+    archiver = MagicMock(spec=ClipArchiver)
+    archiver.run = AsyncMock(return_value=[])
+    server = MediaServer(db=db, port=0, archiver=archiver)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/archive/run-now")
+        data = await resp.json()
+        assert data["archived"] == 0
+    finally:
+        await tc.close()
+
+
+# ------------------------------------------------------------------
+# Storage tab: failed Google Drive uploads (list + retry)
+# ------------------------------------------------------------------
+
+
+async def test_gdrive_queue_failed_empty(client: TestClient) -> None:
+    resp = await client.get("/api/storage/gdrive/queue/failed")
+    assert resp.status == 200
+    assert await resp.json() == []
+
+
+async def test_gdrive_queue_failed_lists_error_details(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="quota exceeded")
+
+    resp = await client.get("/api/storage/gdrive/queue/failed")
+    data = await resp.json()
+    assert len(data) == 1
+    assert data[0]["clip_id"] == "c1"
+    assert data[0]["error_message"] == "quota exceeded"
+
+
+async def test_gdrive_queue_failed_works_without_gdrive_client_configured(
+    client: TestClient,
+) -> None:
+    """Unlike most Storage-tab Drive routes, this one only needs self._db —
+    a failed row is still worth seeing/retrying while currently disconnected."""
+    resp = await client.get("/api/storage/gdrive/queue/failed")
+    assert resp.status == 200
+
+
+async def test_gdrive_retry_one_clip(client: TestClient, db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.enqueue_for_gdrive_upload("c1", "A", "/c1.mp4")
+    await db.enqueue_for_gdrive_upload("c2", "B", "/c2.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="e1")
+    await db.update_gdrive_queue_status("c2", "failed", error="e2")
+
+    resp = await client.post("/api/storage/gdrive/retry", json={"clip_id": "c1"})
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["retried"] == 1
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["pending"] == 1
+    assert counts["failed"] == 1
+
+
+async def test_gdrive_retry_all_with_no_body(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.enqueue_for_gdrive_upload("c1", "A", "/c1.mp4")
+    await db.enqueue_for_gdrive_upload("c2", "B", "/c2.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="e1")
+    await db.update_gdrive_queue_status("c2", "failed", error="e2")
+
+    resp = await client.post("/api/storage/gdrive/retry")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["retried"] == 2
+
+
+async def test_gdrive_retry_invalid_json_still_retries_all(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """The body is optional — malformed JSON must not 400, just fall back
+    to "no clip_id specified" (retry everything failed)."""
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "A", "/c1.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="e1")
+
+    resp = await client.post("/api/storage/gdrive/retry", data="not json")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["retried"] == 1
 
 
 async def test_gdrive_upload_not_configured_returns_503(client: TestClient) -> None:

@@ -110,21 +110,31 @@ class GDriveUploadQueue:
     # Enqueue
     # ------------------------------------------------------------------
 
-    async def enqueue(self, clip: dict[str, Any], folder_id: str = "") -> None:
+    async def enqueue(self, clip: dict[str, Any], folder_id: str = "") -> bool:
         """Add a clip to the Google Drive upload queue.
 
         *folder_id* is empty for the automatic archived/all_clips path (use
         the client's default connected folder) and set for a manual, one-off
         upload (e.g. Library's "Upload to Drive" bulk action) targeting a
         different folder.
+
+        Returns whether this call actually (re)queued the clip — ``False``
+        for a missing clip_id or one already pending/processing/completed,
+        so callers (e.g. the Storage tab's "Back Up Existing Clips Now")
+        can report an accurate count instead of assuming every call queued
+        something new.
         """
         clip_id = str(clip.get("id") or "")
         camera = str(clip.get("camera") or "")
         clip_path = str(clip.get("path") or clip.get("file_path") or "")
         if not clip_id:
-            return
-        await self._db.enqueue_for_gdrive_upload(clip_id, camera, clip_path, folder_id)
-        _LOGGER.debug("Enqueued clip %s for Google Drive upload", clip_id)
+            return False
+        queued = await self._db.enqueue_for_gdrive_upload(
+            clip_id, camera, clip_path, folder_id
+        )
+        if queued:
+            _LOGGER.debug("Enqueued clip %s for Google Drive upload", clip_id)
+        return queued
 
     # ------------------------------------------------------------------
     # Processing

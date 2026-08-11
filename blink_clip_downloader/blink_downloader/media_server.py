@@ -28,6 +28,7 @@ from .vision import FaceEmbedder, is_face_recognition_available, torch_cpu_compa
 if TYPE_CHECKING:
     from .analysis_queue import AnalysisQueue
     from .analyzer import BaseAnalyzer, MoondreamFineTuneManager
+    from .archiver import ClipArchiver
     from .gdrive_client import GDriveClient
     from .gdrive_queue import GDriveUploadQueue
     from .live_view import LiveViewManager
@@ -184,6 +185,7 @@ class MediaServer:
         notification_dispatcher: NotificationDispatcher | None = None,
         gdrive_client: GDriveClient | None = None,
         gdrive_queue: GDriveUploadQueue | None = None,
+        archiver: ClipArchiver | None = None,
         moondream_api_key: str = "",
         prompt_debug_enabled: bool = False,
         live_view: LiveViewManager | None = None,
@@ -200,6 +202,7 @@ class MediaServer:
         self._notification_dispatcher = notification_dispatcher
         self._gdrive_client = gdrive_client
         self._gdrive_queue = gdrive_queue
+        self._archiver = archiver
         self._live_view = live_view
         # Narrow callables from BlinkDownloader (same DI idiom as
         # trigger_download/two_fa_callback above, and as get_camera/
@@ -399,6 +402,13 @@ class MediaServer:
 
         # Storage tab: archived clips + Google Drive backup
         app.router.add_get("/api/storage/archives", self._handle_storage_archives)
+        app.router.add_post(
+            "/api/storage/archive/run-now", self._handle_archive_run_now
+        )
+        app.router.add_get(
+            "/api/storage/gdrive/queue/failed", self._handle_gdrive_queue_failed
+        )
+        app.router.add_post("/api/storage/gdrive/retry", self._handle_gdrive_retry)
         app.router.add_get(
             "/api/storage/gdrive/settings", self._handle_gdrive_settings_get
         )
@@ -1857,6 +1867,19 @@ class MediaServer:
         )
         return web.json_response(groups)
 
+    async def _handle_archive_run_now(self, _request: web.Request) -> web.Response:
+        """Sweep everything currently eligible for archiving immediately,
+        instead of waiting for the next poll cycle.
+
+        Calls the exact same ClipArchiver.run() the poll loop already
+        calls — run()'s own lock means this is safe even if a poll cycle's
+        automatic archive run is in progress at the same time.
+        """
+        if self._archiver is None:
+            raise web.HTTPServiceUnavailable(text="Archiving is not available")
+        archived = await self._archiver.run()
+        return web.json_response({"archived": len(archived)})
+
     # ------------------------------------------------------------------
     # Storage tab: Google Drive backup
     #
@@ -2038,6 +2061,35 @@ class MediaServer:
             )
         return web.json_response(await self._gdrive_queue.get_queue_status())
 
+    async def _handle_gdrive_queue_failed(self, _request: web.Request) -> web.Response:
+        """Failed upload rows with their error message (Storage tab's
+        failed-uploads list) — deliberately gated on self._db only, not
+        gdrive_client/gdrive_queue: a failed row and its error message are
+        meaningful to look at (and retry) even while currently
+        disconnected, same as enqueueing before ever connecting.
+        """
+        return web.json_response(await self._db.get_failed_gdrive_uploads())
+
+    async def _handle_gdrive_retry(self, request: web.Request) -> web.Response:
+        """Reset one (or, with no clip_id, every) failed upload back to
+        pending so the queue retries it. Meaningful even while Drive is
+        currently disconnected — see _handle_gdrive_queue_failed above.
+
+        The request body is entirely optional (unlike most POST handlers in
+        this file) — no body/an empty body/invalid JSON are all treated the
+        same as "no clip_id", meaning "retry everything failed", rather
+        than a 400.
+        """
+        clip_id: str | None = None
+        try:
+            body = await request.json()
+            raw = body.get("clip_id")
+            clip_id = str(raw) if raw else None
+        except Exception:  # noqa: BLE001
+            clip_id = None
+        retried = await self._db.retry_failed_gdrive_uploads(clip_id)
+        return web.json_response({"retried": retried})
+
     async def _handle_gdrive_folders(self, request: web.Request) -> web.Response:
         """List folders directly inside ?parent_id= (default: Drive root).
 
@@ -2098,7 +2150,9 @@ class MediaServer:
         return web.json_response({"saved": True})
 
     async def _handle_gdrive_backup_now(self, _request: web.Request) -> web.Response:
-        """Enqueue every not-yet-backed-up eligible clip.
+        """Enqueue every not-yet-backed-up eligible clip — including
+        retrying any that previously failed, since get_clips_pending_gdrive_backup
+        filters only on gdrive_backed_up=FALSE, which a failed upload still is.
 
         Without this, connecting Drive for the first time would silently
         only cover clips downloaded/archived from that moment forward.
@@ -2107,9 +2161,15 @@ class MediaServer:
             raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
         include_unarchived = self._gdrive_client.backup_policy == "all_clips"
         pending = await self._db.get_clips_pending_gdrive_backup(include_unarchived)
+        # enqueue() returns whether it actually (re)queued the clip — a
+        # clip already pending/processing/completed is a no-op, so counting
+        # len(pending) unconditionally (the old behavior) overstated success
+        # for exactly the clips this button most needs to be honest about.
+        enqueued = 0
         for clip in pending:
-            await self._gdrive_queue.enqueue(clip)
-        return web.json_response({"enqueued": len(pending)})
+            if await self._gdrive_queue.enqueue(clip):
+                enqueued += 1
+        return web.json_response({"enqueued": enqueued})
 
     async def _handle_gdrive_upload(self, request: web.Request) -> web.Response:
         """Manual upload of specific clips (Library's "Upload to Drive" bulk

@@ -2226,16 +2226,37 @@ class ClipDatabase:
 
     async def enqueue_for_gdrive_upload(
         self, clip_id: str, camera: str, clip_path: str, folder_id: str = ""
-    ) -> None:
+    ) -> bool:
+        """Queue *clip_id* for upload, or reset it to retry if it previously failed.
+
+        A clip already ``pending``/``processing``/``completed`` is left
+        completely untouched (the ``WHERE`` clause on the ``DO UPDATE``
+        below only matches a ``failed`` row) — this used to be a plain
+        ``DO NOTHING``, which meant a clip that failed once could never be
+        retried again, automatically or manually: every future enqueue
+        attempt for that same clip_id silently no-op'd forever, since
+        get_pending_gdrive_uploads only ever selects status='pending'.
+        ``folder_id=EXCLUDED.folder_id`` matters for the retry case
+        specifically — a clip that failed via the automatic backup path
+        (folder_id='') and is later re-queued via Library's "Upload to
+        Drive" bulk action (an explicit folder_id) must pick up that new
+        target, not silently keep uploading to the old default. Returns
+        whether a row was actually inserted or reset, so callers can report
+        an accurate count instead of assuming every call queued something
+        new.
+        """
         if self._pool is None:
-            return
-        await self._pool.execute(
+            return False
+        status = await self._pool.execute(
             _qm(
                 """
                 INSERT INTO gdrive_upload_queue
                   (clip_id, camera, clip_path, status, queued_at, folder_id)
                 VALUES (?, ?, ?, 'pending', ?, ?)
-                ON CONFLICT (clip_id) DO NOTHING
+                ON CONFLICT (clip_id) DO UPDATE
+                  SET status='pending', queued_at=EXCLUDED.queued_at,
+                      error_message='', folder_id=EXCLUDED.folder_id
+                  WHERE gdrive_upload_queue.status='failed'
                 """
             ),
             clip_id,
@@ -2244,6 +2265,7 @@ class ClipDatabase:
             datetime.now(UTC).isoformat(),
             folder_id,
         )
+        return _affected(status) > 0
 
     async def get_pending_gdrive_uploads(self, limit: int = 10) -> list[dict[str, Any]]:
         if self._pool is None:
@@ -2278,6 +2300,50 @@ class ClipDatabase:
             error,
             clip_id,
         )
+
+    async def get_failed_gdrive_uploads(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Failed upload rows with their error message, newest-failure
+        first — powers the Storage tab's failed-uploads list."""
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT clip_id, camera, clip_path, error_message, completed_at
+                FROM gdrive_upload_queue
+                WHERE status='failed'
+                ORDER BY completed_at DESC
+                LIMIT ?
+                """
+            ),
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+    async def retry_failed_gdrive_uploads(self, clip_id: str | None = None) -> int:
+        """Reset failed upload(s) back to pending so the queue retries them.
+
+        A direct bulk UPDATE rather than routing through
+        enqueue_for_gdrive_upload: every failed row already has its own
+        camera/clip_path/folder_id sitting right here, so there's no need
+        for a per-row SELECT-then-INSERT round trip, and this naturally
+        preserves each row's own folder_id (a retry should go back to
+        wherever it originally failed to reach). *clip_id* narrows to one
+        clip; ``None`` retries every currently-failed upload. Returns how
+        many rows were actually reset.
+        """
+        if self._pool is None:
+            return 0
+        sql = (
+            "UPDATE gdrive_upload_queue SET status='pending', queued_at=?, "
+            "error_message='' WHERE status='failed'"
+        )
+        params: list[Any] = [datetime.now(UTC).isoformat()]
+        if clip_id is not None:
+            sql += " AND clip_id=?"
+            params.append(clip_id)
+        status = await self._pool.execute(_qm(sql), *params)
+        return _affected(status)
 
     async def get_gdrive_queue_counts(self) -> dict[str, int]:
         if self._pool is None:

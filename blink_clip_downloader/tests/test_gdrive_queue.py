@@ -141,6 +141,50 @@ async def test_enqueue_falls_back_to_file_path_key(db: ClipDatabase) -> None:
     assert len(pending) == 1
 
 
+async def test_enqueue_returns_true_when_queued(db: ClipDatabase) -> None:
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+
+    await db.add_clip(_add_clip("c1"))
+    assert (
+        await queue.enqueue({"id": "c1", "camera": "Front", "path": "/c1.mp4"}) is True
+    )
+
+
+async def test_enqueue_returns_false_for_empty_id(db: ClipDatabase) -> None:
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+
+    assert await queue.enqueue({"id": "", "camera": "A", "path": "/x.mp4"}) is False
+
+
+async def test_enqueue_returns_false_for_already_pending_clip(db: ClipDatabase) -> None:
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+
+    await db.add_clip(_add_clip("c1"))
+    clip = {"id": "c1", "camera": "Front", "path": "/c1.mp4"}
+    await queue.enqueue(clip)
+
+    assert await queue.enqueue(clip) is False
+
+
+async def test_enqueue_returns_true_when_retrying_a_failed_clip(
+    db: ClipDatabase,
+) -> None:
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+
+    await db.add_clip(_add_clip("c1"))
+    clip = {"id": "c1", "camera": "Front", "path": "/c1.mp4"}
+    await queue.enqueue(clip)
+    await db.update_gdrive_queue_status("c1", "failed", error="boom")
+
+    assert await queue.enqueue(clip) is True
+    pending = await db.get_pending_gdrive_uploads()
+    assert len(pending) == 1
+
+
 # ------------------------------------------------------------------
 # Processing — normal (unarchived) clips
 # ------------------------------------------------------------------
