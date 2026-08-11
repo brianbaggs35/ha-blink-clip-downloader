@@ -5,7 +5,24 @@ coverage:
   status:
     project:
       default:
+        # Scoped to backend+frontend only — the exact same combined-score
+        # computation as before the e2e flag existed. Deliberately excludes
+        # the e2e flag: istanbul (e2e) and v8 (frontend/vitest) count
+        # statements differently for the same frontend/src files, so
+        # merging them in here could move this number for reasons unrelated
+        # to an actual coverage regression in either suite.
         target: 85%
+        flags:
+          - backend
+          - frontend
+      e2e:
+        # Separate, informational-only check for the Playwright suite — a
+        # visibility number (see CLAUDE.md's E2E coverage note), never
+        # gates a PR and never affects the default check above.
+        target: 0%
+        informational: true
+        flags:
+          - e2e
     patch:
       default:
         target: 80%
