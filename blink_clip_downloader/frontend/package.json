@@ -51,5 +51,8 @@
     "vite-plugin-istanbul": "^9.0.1",
     "vitest": "^4.1.10",
     "vue-tsc": "^3.3.9"
+  },
+  "overrides": {
+    "js-beautify": "^2.0.3"
   }
 }

@@ -20,10 +20,16 @@
 ### Housekeeping
 
 - Added a Playwright interaction-test suite (`frontend/e2e/`) covering
-  Library, Vehicles, Status, AI, AI Usage, Automations, and Models against
-  a real (seeded) backend — distinct from the existing `e2e/` smoke tests,
-  which only check that the packaged container boots. New `frontend-e2e`
-  CI job. This is what surfaced the settings-save bug above.
+  Library, Vehicles, Status, AI, AI Usage, Automations, Models, and
+  Storage against a real (seeded) backend — distinct from the existing
+  `e2e/` smoke tests, which only check that the packaged container boots.
+  New `frontend-e2e` CI job. This is what surfaced the settings-save bug
+  above. Includes its own code coverage report (uploaded to Codecov under
+  a dedicated `e2e` flag, kept out of the combined backend/frontend score).
+- Pinned `js-beautify` (a transitive `@vue/test-utils` dev dependency) to
+  `^2.0.3` via an `overrides` entry — the version `@vue/test-utils`
+  otherwise pulls in depends on a `glob` release flagged deprecated by its
+  maintainer.
 
 ## 5.3.2
 
