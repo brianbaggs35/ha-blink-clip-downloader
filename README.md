@@ -47,7 +47,8 @@ This image takes anywhere from 5 to 20 minutes to be built depending on your dev
 
 Periodically polls the Blink API for new clips and saves them to `/share/blink-clips`
 (or a path you configure). Supports per-camera organisation, retention policies, storage
-quotas, Home Assistant notifications, and much more.
+quotas, Home Assistant notifications, per-camera battery monitoring with low-battery
+alerts, and much more.
 
 ## System Requirements
 
