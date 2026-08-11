@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './coverage-fixtures'
 
 // Exercises the Library tab's filters against real, seeded data from a
 // real backend (scripts/standalone_server.py) — not mocked fetch, unlike

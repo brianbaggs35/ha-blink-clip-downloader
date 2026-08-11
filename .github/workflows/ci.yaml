@@ -274,22 +274,23 @@ jobs:
         working-directory: blink_clip_downloader/frontend
         run: npm ci
 
-      # standalone_server.py serves MediaServer's real static output, same
-      # as media_server.py does in production — without this, _handle_index
-      # 500s and every e2e test fails at page.goto().
-      - name: Build frontend
-        working-directory: blink_clip_downloader/frontend
-        run: npm run build
-
       - name: Install Playwright browsers
         working-directory: blink_clip_downloader/frontend
         run: npx playwright install --with-deps chromium
 
-      - name: Run Playwright e2e tests
+      # test:e2e:coverage builds the frontend itself (instrumented via
+      # vite.config.ts's istanbul plugin, gated on VITE_COVERAGE=true — a
+      # plain `npm run build` elsewhere, e.g. the Dockerfile, never sets
+      # this and stays uninstrumented) before running Playwright, so there's
+      # no separate build step here the way the other jobs have one.
+      # standalone_server.py serves that build's real static output, same
+      # as media_server.py does in production — without it, _handle_index
+      # 500s and every e2e test fails at page.goto().
+      - name: Run Playwright e2e tests with coverage
         working-directory: blink_clip_downloader/frontend
         env:
           E2E_DATABASE_DSN: postgresql://postgres:postgres@localhost:5432/blink_clips_e2e
-        run: npm run test:e2e
+        run: npm run test:e2e:coverage
 
       - name: Upload Playwright report
         if: ${{ !env.ACT && failure() }}
@@ -298,6 +299,22 @@ jobs:
           name: playwright-report
           path: blink_clip_downloader/frontend/playwright-report
           retention-days: 7
+
+      - name: Upload e2e coverage artifact
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-coverage-report
+          path: blink_clip_downloader/frontend/coverage-e2e
+
+      - name: Upload e2e coverage to Codecov
+        if: ${{ !env.ACT }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: blink_clip_downloader/frontend/coverage-e2e/lcov.info
+          flags: e2e
+          fail_ci_if_error: false
 
   sonarqube:
     name: SonarCloud Scan

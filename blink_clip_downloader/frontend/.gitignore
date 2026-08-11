@@ -18,6 +18,10 @@ test-results
 playwright-report
 blob-report
 
+# test:e2e:coverage output (raw per-test coverage + the merged nyc report)
+.nyc_output
+coverage-e2e
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

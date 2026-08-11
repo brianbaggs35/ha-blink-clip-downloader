@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './coverage-fixtures'
 
 // AI and AI Usage are both gated server-side on `analyzer is not None`
 // (media_server.py's _handle_ai_status/_handle_ai_usage) -- standalone_server.py
