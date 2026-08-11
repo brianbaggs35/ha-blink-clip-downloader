@@ -2678,6 +2678,98 @@ def test_list_camera_names_returns_all_connected_cameras(dl: BlinkDownloader) ->
 
 
 # ---------------------------------------------------------------------------
+# get_battery_snapshot
+# ---------------------------------------------------------------------------
+
+
+def test_get_battery_snapshot_empty_before_connect(dl: BlinkDownloader) -> None:
+    assert dl.get_battery_snapshot() == []
+
+
+def test_get_battery_snapshot_returns_reading_per_camera(dl: BlinkDownloader) -> None:
+    front = MagicMock()
+    front.battery_state = "ok"
+    front.battery_level = 3
+    front.battery_voltage = 165
+    back = MagicMock()
+    back.battery_state = "low"
+    back.battery_level = 0
+    back.battery_voltage = 105
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": front, "Backyard": back})
+    dl._blink = fake_blink
+
+    snapshot = dl.get_battery_snapshot()
+    by_camera = {r["camera"]: r for r in snapshot}
+    assert by_camera["Front Door"] == {
+        "camera": "Front Door",
+        "battery_state": "ok",
+        "battery_level": 3,
+        "battery_voltage": 165,
+    }
+    assert by_camera["Backyard"]["battery_state"] == "low"
+
+
+def test_get_battery_snapshot_excludes_camera_with_no_battery_state(
+    dl: BlinkDownloader,
+) -> None:
+    wired = MagicMock()
+    wired.battery_state = None
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Wired Mini": wired})
+    dl._blink = fake_blink
+
+    assert dl.get_battery_snapshot() == []
+
+
+def test_get_battery_snapshot_normalizes_state_casing_and_whitespace(
+    dl: BlinkDownloader,
+) -> None:
+    camera = MagicMock()
+    camera.battery_state = " OK "
+    camera.battery_level = 3
+    camera.battery_voltage = 165
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    assert dl.get_battery_snapshot()[0]["battery_state"] == "ok"
+
+
+def test_get_battery_snapshot_preserves_zero_level_and_voltage(
+    dl: BlinkDownloader,
+) -> None:
+    """0 is a real reading (empty signal/voltage), not a "missing" sentinel."""
+    camera = MagicMock()
+    camera.battery_state = "low"
+    camera.battery_level = 0
+    camera.battery_voltage = 0
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    reading = dl.get_battery_snapshot()[0]
+    assert reading["battery_level"] == 0
+    assert reading["battery_voltage"] == 0
+
+
+def test_get_battery_snapshot_passes_through_none_level_and_voltage(
+    dl: BlinkDownloader,
+) -> None:
+    camera = MagicMock()
+    camera.battery_state = "ok"
+    camera.battery_level = None
+    camera.battery_voltage = None
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    reading = dl.get_battery_snapshot()[0]
+    assert reading["battery_level"] is None
+    assert reading["battery_voltage"] is None
+
+
+# ---------------------------------------------------------------------------
 # get_camera_snapshot (Security Feed)
 # ---------------------------------------------------------------------------
 

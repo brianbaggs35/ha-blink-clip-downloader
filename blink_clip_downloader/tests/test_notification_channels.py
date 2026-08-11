@@ -594,6 +594,111 @@ async def test_dispatch_only_enabled_channels() -> None:
 
 
 # ------------------------------------------------------------------
+# Dispatch battery alert
+# ------------------------------------------------------------------
+
+
+async def test_dispatch_battery_alert_calls_all_enabled_channels() -> None:
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_enabled=True,
+        mobile_app_target="mobile_app_phone",
+        smtp_enabled=True,
+        smtp_host="smtp.test.com",
+        smtp_recipients=["a@b.com"],
+        discord_enabled=True,
+        discord_webhook_url="https://discord.com/hook",
+        ha_notify_enabled=True,
+    )
+    dispatcher.send_mobile = AsyncMock(return_value=True)
+    dispatcher.send_email = AsyncMock(return_value=True)
+    dispatcher.send_discord = AsyncMock(return_value=True)
+    dispatcher.send_ha_notification = AsyncMock(return_value=True)
+
+    await dispatcher.dispatch_battery_alert("Front Door", "low", 105)
+
+    dispatcher.send_mobile.assert_awaited_once()
+    dispatcher.send_email.assert_awaited_once()
+    dispatcher.send_discord.assert_awaited_once()
+    dispatcher.send_ha_notification.assert_awaited_once()
+    # Discord's "Confidence" field doesn't apply to a battery event.
+    assert dispatcher.send_discord.call_args.kwargs.get("confidence") is None
+
+
+async def test_dispatch_battery_alert_only_enabled_channels() -> None:
+    dispatcher = NotificationDispatcher(
+        mobile_app_enabled=False,
+        smtp_enabled=False,
+        discord_enabled=True,
+        discord_webhook_url="https://discord.com/hook",
+        ha_notify_enabled=False,
+    )
+    dispatcher.send_mobile = AsyncMock()
+    dispatcher.send_email = AsyncMock()
+    dispatcher.send_discord = AsyncMock(return_value=True)
+    dispatcher.send_ha_notification = AsyncMock()
+
+    await dispatcher.dispatch_battery_alert("Front Door", "low")
+
+    dispatcher.send_mobile.assert_not_awaited()
+    dispatcher.send_email.assert_not_awaited()
+    dispatcher.send_discord.assert_awaited_once()
+    dispatcher.send_ha_notification.assert_not_awaited()
+
+
+async def test_dispatch_battery_alert_body_includes_voltage_when_present() -> None:
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok", mobile_app_enabled=True, mobile_app_target="phone"
+    )
+    dispatcher.send_mobile = AsyncMock(return_value=True)
+
+    await dispatcher.dispatch_battery_alert("Front Door", "low", 105)
+
+    _, body = dispatcher.send_mobile.call_args.args
+    assert "1.05V" in body
+    assert "Front Door" in body
+    assert "Low" in body
+
+
+async def test_dispatch_battery_alert_body_omits_voltage_when_none() -> None:
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok", mobile_app_enabled=True, mobile_app_target="phone"
+    )
+    dispatcher.send_mobile = AsyncMock(return_value=True)
+
+    await dispatcher.dispatch_battery_alert("Front Door", "low", None)
+
+    _, body = dispatcher.send_mobile.call_args.args
+    assert "Voltage" not in body
+
+
+async def test_send_discord_confidence_none_omits_confidence_field_uses_red() -> None:
+    """Battery alerts pass confidence=None — the embed should skip the
+    meaningless Confidence field while still reading as high-urgency red."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 204
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        discord_enabled=True, discord_webhook_url="https://discord.com/api/webhooks/1"
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    result = await dispatcher.send_discord(
+        "Low Battery", "Front Door's battery is low.", "Front Door", confidence=None
+    )
+    assert result is True
+
+    call_kwargs = dispatcher._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+    embed = payload["embeds"][0]
+    assert embed["color"] == 0xFF0000
+    field_names = [f["name"] for f in embed["fields"]]
+    assert field_names == ["Camera"]
+
+
+# ------------------------------------------------------------------
 # Coverage gap tests
 # ------------------------------------------------------------------
 

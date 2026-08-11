@@ -63,6 +63,25 @@ async def test_poll_cycle_refreshes_camera_state(app):
     app._downloader.refresh_camera_state.assert_awaited_once_with()
 
 
+async def test_poll_cycle_checks_battery_monitor(app):
+    app._battery_monitor.check_and_alert = AsyncMock()
+
+    await app._poll_cycle()
+
+    app._battery_monitor.check_and_alert.assert_awaited_once_with()
+
+
+async def test_poll_cycle_checks_battery_before_quota_early_return(app):
+    """Battery monitoring has nothing to do with download quota — a full
+    library must not silently stop battery checks every cycle."""
+    app._storage.is_over_quota = MagicMock(return_value=True)
+    app._battery_monitor.check_and_alert = AsyncMock()
+
+    await app._poll_cycle()
+
+    app._battery_monitor.check_and_alert.assert_awaited_once_with()
+
+
 async def test_poll_cycle_with_new_clips(app):
     clips = [
         {

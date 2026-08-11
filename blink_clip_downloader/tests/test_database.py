@@ -1338,6 +1338,136 @@ async def test_add_face_recognition_feedback_without_init_is_noop() -> None:
 
 
 # ------------------------------------------------------------------
+# Battery History
+# ------------------------------------------------------------------
+
+
+async def test_add_battery_reading_first_reading_inserts_but_returns_false(
+    db: ClipDatabase,
+) -> None:
+    transitioned = await db.add_battery_reading("Front Door", "ok", 3, 165)
+    assert transitioned is False
+
+    history = await db.get_battery_history("Front Door")
+    assert len(history) == 1
+    assert history[0]["battery_state"] == "ok"
+    assert history[0]["battery_level"] == 3
+    assert history[0]["battery_voltage"] == 165
+
+
+async def test_add_battery_reading_same_state_does_not_insert(
+    db: ClipDatabase,
+) -> None:
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    transitioned = await db.add_battery_reading("Front Door", "ok", 3, 160)
+
+    assert transitioned is False
+    history = await db.get_battery_history("Front Door")
+    assert len(history) == 1
+
+
+async def test_add_battery_reading_dedupes_on_state_only_not_level_or_voltage(
+    db: ClipDatabase,
+) -> None:
+    """battery_level/battery_voltage drift continuously even while state
+    stays the same — only a state change should ever produce a new row."""
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.add_battery_reading("Front Door", "ok", 2, 140)
+    await db.add_battery_reading("Front Door", "ok", 1, 120)
+
+    history = await db.get_battery_history("Front Door")
+    assert len(history) == 1
+    assert history[0]["battery_level"] == 3
+
+
+async def test_add_battery_reading_transition_returns_true(
+    db: ClipDatabase,
+) -> None:
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    transitioned = await db.add_battery_reading("Front Door", "low", 0, 105)
+
+    assert transitioned is True
+    history = await db.get_battery_history("Front Door")
+    assert len(history) == 2
+    assert history[0]["battery_state"] == "low"
+    assert history[1]["battery_state"] == "ok"
+
+
+async def test_add_battery_reading_recovery_returns_true(db: ClipDatabase) -> None:
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.add_battery_reading("Front Door", "low", 0, 105)
+    transitioned = await db.add_battery_reading("Front Door", "ok", 3, 168)
+
+    assert transitioned is True
+
+
+async def test_add_battery_reading_preserves_null_level_and_voltage(
+    db: ClipDatabase,
+) -> None:
+    """None is a real "not reported" value, distinct from 0 — must not be
+    coerced to 0 or dropped."""
+    await db.add_battery_reading("Front Door", "ok", None, None)
+
+    history = await db.get_battery_history("Front Door")
+    assert history[0]["battery_level"] is None
+    assert history[0]["battery_voltage"] is None
+
+
+async def test_get_battery_history_orders_newest_first_and_respects_limit(
+    db: ClipDatabase,
+) -> None:
+    for state in ("ok", "low", "ok", "low"):
+        await db.add_battery_reading("Front Door", state, None, None)
+
+    history = await db.get_battery_history("Front Door", limit=2)
+    assert len(history) == 2
+    assert history[0]["battery_state"] == "low"
+    assert history[1]["battery_state"] == "ok"
+
+
+async def test_get_battery_history_filters_by_camera_case_insensitive(
+    db: ClipDatabase,
+) -> None:
+    await db.add_battery_reading("Front Door", "ok", None, None)
+    await db.add_battery_reading("Backyard", "low", None, None)
+
+    history = await db.get_battery_history("front door")
+    assert len(history) == 1
+    assert history[0]["camera"] == "Front Door"
+
+
+async def test_get_battery_history_empty(db: ClipDatabase) -> None:
+    assert await db.get_battery_history("Front Door") == []
+
+
+async def test_get_latest_battery_state_one_row_per_camera(db: ClipDatabase) -> None:
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.add_battery_reading("Front Door", "low", 0, 105)
+    await db.add_battery_reading("Backyard", "ok", 3, 170)
+
+    latest = await db.get_latest_battery_state()
+    assert len(latest) == 2
+    by_camera = {row["camera"]: row for row in latest}
+    assert by_camera["Front Door"]["battery_state"] == "low"
+    assert by_camera["Backyard"]["battery_state"] == "ok"
+
+
+async def test_get_latest_battery_state_empty(db: ClipDatabase) -> None:
+    assert await db.get_latest_battery_state() == []
+
+
+async def test_battery_history_without_init_returns_empty() -> None:
+    d = ClipDatabase()
+    assert await d.get_battery_history("Front Door") == []
+    assert await d.get_latest_battery_state() == []
+
+
+async def test_add_battery_reading_without_init_returns_false() -> None:
+    d = ClipDatabase()
+    assert await d.add_battery_reading("Front Door", "ok", 3, 165) is False
+
+
+# ------------------------------------------------------------------
 # Analysis Queue
 # ------------------------------------------------------------------
 

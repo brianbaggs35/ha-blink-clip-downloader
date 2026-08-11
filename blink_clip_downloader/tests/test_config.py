@@ -709,6 +709,19 @@ def test_notify_ha_suspicious_enabled():
     assert cfg.notify_ha_suspicious is True
 
 
+def test_battery_alerts_disabled_by_default():
+    cfg = _parse_config({"username": "u", "password": "p"})
+    assert cfg.battery_alerts_enabled is False
+
+
+def test_battery_alerts_enabled():
+    """Independent of notify_ha_suspicious — see battery_monitor.py."""
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "battery_alerts_enabled": True}
+    )
+    assert cfg.battery_alerts_enabled is True
+
+
 def test_smtp_port_clamped():
     cfg = _parse_config({"username": "u", "password": "p", "smtp_port": 10})
     assert cfg.smtp_port == 25
