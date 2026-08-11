@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -54,6 +55,62 @@ async def test_run_disabled_returns_zero(tmp_path: Path) -> None:
     result = await archiver.run()
     assert result == []
     db.get_clips_to_archive.assert_not_awaited()
+
+
+# ------------------------------------------------------------------
+# Concurrency (poll loop vs. the Storage tab's "Run Archiving Now" button)
+# ------------------------------------------------------------------
+
+
+async def test_run_serializes_concurrent_calls(tmp_path: Path) -> None:
+    """run() can now be invoked from two places (the poll loop and a manual
+    trigger) as separate concurrent tasks — the lock must prevent their
+    critical sections from ever overlapping."""
+    archiver, db = _make_archiver(tmp_path, clips=[])
+    active = 0
+    max_active = 0
+
+    async def slow_get_clips_to_archive(_days: int) -> list[dict]:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return []
+
+    db.get_clips_to_archive = AsyncMock(side_effect=slow_get_clips_to_archive)
+
+    await asyncio.gather(archiver.run(), archiver.run())
+
+    assert max_active == 1
+    assert db.get_clips_to_archive.await_count == 2
+
+
+async def test_archive_month_yields_periodically_for_large_batch(
+    tmp_path: Path,
+) -> None:
+    clips = []
+    for i in range(45):
+        src = tmp_path / f"c{i}.mp4"
+        src.write_bytes(b"data")
+        clips.append(
+            {
+                "id": f"c{i}",
+                "camera": "Cam",
+                "file_path": str(src),
+                "timestamp": "2024-06-01T00:00:00+00:00",
+            }
+        )
+    archiver, _ = _make_archiver(tmp_path, clips=clips)
+
+    with patch(
+        "blink_downloader.archiver.asyncio.sleep", new=AsyncMock()
+    ) as mock_sleep:
+        result = await archiver.run()
+
+    assert len(result) == 45
+    # 45 clips, yielding every 20th (i=20, i=40) → 2 yields.
+    assert mock_sleep.await_count == 2
 
 
 # ------------------------------------------------------------------

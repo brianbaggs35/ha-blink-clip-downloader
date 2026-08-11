@@ -179,6 +179,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             notification_dispatcher=self._alert_dispatcher,
             gdrive_client=self._gdrive_client,
             gdrive_queue=self._gdrive_queue,
+            archiver=self._archiver,
             moondream_api_key=config.moondream_api_key,
             prompt_debug_enabled=config.ai_prompt_debug_enabled,
             live_view=self._live_view,

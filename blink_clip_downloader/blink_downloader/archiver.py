@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import zipfile
@@ -12,6 +13,13 @@ from typing import Any
 from .database import ClipDatabase
 
 _LOGGER = logging.getLogger(__name__)
+
+# _archive_month yields to the event loop after this many clips, so a large
+# manually-triggered sweep ("Run Archiving Now" on the Storage tab) of a
+# months-old backlog can't block Live View/Library/everything else for the
+# whole duration of one click — the automatic per-poll-cycle run benefits
+# too, it just rarely has enough backlog to notice.
+_YIELD_EVERY_N_CLIPS = 20
 
 
 class ClipArchiver:
@@ -32,33 +40,42 @@ class ClipArchiver:
         self._archive_dir = archive_dir
         self._archive_after = archive_after_days
         self._enabled = enabled
+        # run() is now called both from the poll loop and, directly, from
+        # the Storage tab's "Run Archiving Now" button — two separate
+        # asyncio tasks that could otherwise interleave at run()'s several
+        # await points (get_clips_to_archive/mark_archived/delete_clip),
+        # risking duplicate ZIP entries from processing the same clip twice.
+        self._lock = asyncio.Lock()
 
     async def run(self) -> list[dict[str, Any]]:
         """Archive clips older than *archive_after_days*. Returns the archived clips."""
         if not self._enabled:
             return []
 
-        clips = await self._db.get_clips_to_archive(self._archive_after)
-        if not clips:
-            return []
+        async with self._lock:
+            clips = await self._db.get_clips_to_archive(self._archive_after)
+            if not clips:
+                return []
 
-        _LOGGER.info(
-            "Archiving %d clip(s) older than %d days", len(clips), self._archive_after
-        )
-        self._archive_dir.mkdir(parents=True, exist_ok=True)
+            _LOGGER.info(
+                "Archiving %d clip(s) older than %d days",
+                len(clips),
+                self._archive_after,
+            )
+            self._archive_dir.mkdir(parents=True, exist_ok=True)
 
-        # Group by "YYYY-MM" for one ZIP per month.
-        by_month: dict[str, list[dict]] = defaultdict(list)
-        for clip in clips:
-            month = str(clip.get("timestamp", ""))[:7] or "unknown"
-            by_month[month].append(clip)
+            # Group by "YYYY-MM" for one ZIP per month.
+            by_month: dict[str, list[dict]] = defaultdict(list)
+            for clip in clips:
+                month = str(clip.get("timestamp", ""))[:7] or "unknown"
+                by_month[month].append(clip)
 
-        archived: list[dict[str, Any]] = []
-        for month, month_clips in by_month.items():
-            archived.extend(await self._archive_month(month, month_clips))
+            archived: list[dict[str, Any]] = []
+            for month, month_clips in by_month.items():
+                archived.extend(await self._archive_month(month, month_clips))
 
-        _LOGGER.info("Archive run complete: %d file(s) archived", len(archived))
-        return archived
+            _LOGGER.info("Archive run complete: %d file(s) archived", len(archived))
+            return archived
 
     async def prune_orphaned_archives(self) -> int:
         """Remove clip rows left orphaned by since-fixed archiving bugs.
@@ -150,7 +167,12 @@ class ClipArchiver:
         self._quarantine_if_corrupted(zip_path, month)
         archived: list[dict[str, Any]] = []
 
-        for clip in clips:
+        for i, clip in enumerate(clips):
+            # A manually-triggered sweep can face a months-old backlog with
+            # no yield point otherwise — see _YIELD_EVERY_N_CLIPS.
+            if i and i % _YIELD_EVERY_N_CLIPS == 0:
+                await asyncio.sleep(0)
+
             src = Path(str(clip.get("file_path", "")))
             if not src.exists():
                 # File already gone before we ever got to compress it —

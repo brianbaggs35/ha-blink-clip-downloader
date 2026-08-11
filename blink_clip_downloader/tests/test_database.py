@@ -1595,6 +1595,162 @@ async def test_gdrive_get_queue_counts(db: ClipDatabase) -> None:
     assert counts["failed"] == 1
 
 
+async def test_gdrive_enqueue_returns_true_for_new_clip(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    assert await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4") is True
+
+
+async def test_gdrive_enqueue_returns_false_for_already_pending_clip(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4")
+    assert await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4") is False
+
+
+async def test_gdrive_enqueue_retries_a_failed_clip(db: ClipDatabase) -> None:
+    """The core bug fix: a clip that failed once must be retryable, not
+    stuck forever — get_pending_gdrive_uploads only ever selects
+    status='pending', so a failed row needs to actually flip back."""
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="upload timed out")
+
+    requeued = await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4")
+
+    assert requeued is True
+    pending = await db.get_pending_gdrive_uploads()
+    assert len(pending) == 1
+    assert pending[0]["clip_id"] == "c1"
+    assert pending[0]["error_message"] == ""
+
+
+async def test_gdrive_enqueue_does_not_retry_completed_clip(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4")
+    await db.update_gdrive_queue_status("c1", "completed")
+
+    requeued = await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4")
+
+    assert requeued is False
+    assert await db.get_pending_gdrive_uploads() == []
+
+
+async def test_gdrive_enqueue_retry_picks_up_new_folder_id(db: ClipDatabase) -> None:
+    """A retry via Library's "Upload to Drive" (explicit folder_id) must
+    not silently keep the old default folder_id from the failed attempt."""
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4", folder_id="")
+    await db.update_gdrive_queue_status("c1", "failed", error="err")
+
+    await db.enqueue_for_gdrive_upload(
+        "c1", "Front Door", "/c1.mp4", folder_id="new-folder"
+    )
+
+    pending = await db.get_pending_gdrive_uploads()
+    assert pending[0]["folder_id"] == "new-folder"
+
+
+async def test_gdrive_enqueue_without_init_returns_false() -> None:
+    d = ClipDatabase()
+    assert await d.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4") is False
+
+
+async def test_get_failed_gdrive_uploads_returns_error_details(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "Front Door", "/c1.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="quota exceeded")
+
+    failed = await db.get_failed_gdrive_uploads()
+    assert len(failed) == 1
+    assert failed[0]["clip_id"] == "c1"
+    assert failed[0]["camera"] == "Front Door"
+    assert failed[0]["error_message"] == "quota exceeded"
+
+
+async def test_get_failed_gdrive_uploads_excludes_other_statuses(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.enqueue_for_gdrive_upload("c1", "A", "/c1.mp4")
+    await db.enqueue_for_gdrive_upload("c2", "B", "/c2.mp4")
+    await db.update_gdrive_queue_status("c2", "completed")
+
+    assert await db.get_failed_gdrive_uploads() == []
+
+
+async def test_get_failed_gdrive_uploads_empty(db: ClipDatabase) -> None:
+    assert await db.get_failed_gdrive_uploads() == []
+
+
+async def test_get_failed_gdrive_uploads_without_init_returns_empty() -> None:
+    d = ClipDatabase()
+    assert await d.get_failed_gdrive_uploads() == []
+
+
+async def test_retry_failed_gdrive_uploads_all(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.add_clip(_make_clip("c3"))
+    for cid in ("c1", "c2", "c3"):
+        await db.enqueue_for_gdrive_upload(cid, "A", f"/{cid}.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="e1")
+    await db.update_gdrive_queue_status("c2", "failed", error="e2")
+    # c3 stays pending.
+
+    retried = await db.retry_failed_gdrive_uploads()
+
+    assert retried == 2
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["pending"] == 3
+    assert counts["failed"] == 0
+
+
+async def test_retry_failed_gdrive_uploads_one_clip(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.enqueue_for_gdrive_upload("c1", "A", "/c1.mp4")
+    await db.enqueue_for_gdrive_upload("c2", "B", "/c2.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="e1")
+    await db.update_gdrive_queue_status("c2", "failed", error="e2")
+
+    retried = await db.retry_failed_gdrive_uploads(clip_id="c1")
+
+    assert retried == 1
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["pending"] == 1
+    assert counts["failed"] == 1
+
+
+async def test_retry_failed_gdrive_uploads_preserves_folder_id(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload(
+        "c1", "A", "/c1.mp4", folder_id="original-folder"
+    )
+    await db.update_gdrive_queue_status("c1", "failed", error="e1")
+
+    await db.retry_failed_gdrive_uploads()
+
+    pending = await db.get_pending_gdrive_uploads()
+    assert pending[0]["folder_id"] == "original-folder"
+
+
+async def test_retry_failed_gdrive_uploads_no_failed_rows(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "A", "/c1.mp4")
+    assert await db.retry_failed_gdrive_uploads() == 0
+
+
+async def test_retry_failed_gdrive_uploads_without_init_returns_zero() -> None:
+    d = ClipDatabase()
+    assert await d.retry_failed_gdrive_uploads() == 0
+
+
 async def test_mark_gdrive_uploaded(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.mark_gdrive_uploaded("c1", "drive-file-id-1")
