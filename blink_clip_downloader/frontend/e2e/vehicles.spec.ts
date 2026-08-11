@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './coverage-fixtures'
 
 // The Vehicles tab's camera list comes from the DB's distinct cameras
 // (get_camera_stats(), same source /api/cameras uses for the Library

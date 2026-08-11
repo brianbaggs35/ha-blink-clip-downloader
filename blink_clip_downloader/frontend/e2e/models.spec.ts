@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './coverage-fixtures'
 
 // Purely static reference content -- no fetch on mount (see ModelsPage.vue)
 // -- so this just confirms the real component actually mounted and

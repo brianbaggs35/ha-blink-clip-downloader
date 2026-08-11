@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './coverage-fixtures'
 
 // Every card on this tab is backed by the DB/analyzer state the
 // standalone server sets up, no live Blink connection needed — except

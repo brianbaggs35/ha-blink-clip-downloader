@@ -6,7 +6,7 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 import globals from 'globals'
 
 export default defineConfigWithVueTs(
-  { ignores: ['dist/**', '../blink_downloader/static/**', 'coverage/**'] },
+  { ignores: ['dist/**', '../blink_downloader/static/**', 'coverage/**', 'coverage-e2e/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...pluginVue.configs['flat/recommended'],
@@ -35,6 +35,17 @@ export default defineConfigWithVueTs(
     files: ['**/*.spec.ts'],
     rules: {
       'vue/one-component-per-file': 'off',
+    },
+  },
+  {
+    // frontend/e2e/ runs under Node (Playwright's test runner, plus
+    // generate-coverage-report.mjs), not a browser — unlike vite.config.ts/
+    // vitest.config.ts, which @vue/eslint-config-typescript already
+    // special-cases, plain files here need globals.node added explicitly
+    // or `process`/`__dirname`-style references trip no-undef.
+    files: ['e2e/**/*.{ts,mjs}'],
+    languageOptions: {
+      globals: { ...globals.node },
     },
   },
 )

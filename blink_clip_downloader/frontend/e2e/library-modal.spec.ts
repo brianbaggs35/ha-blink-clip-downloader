@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { test, expect } from './coverage-fixtures'
 
 // Exercises the clip modal against real, seeded data. Mutating tests
 // (star/tag) use the two "Test Scratch" camera clips seeded by

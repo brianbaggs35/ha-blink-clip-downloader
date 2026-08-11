@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from './coverage-fixtures'
 
 // Automations is mostly static reference content (no fetch on mount), but
 // its Notification Channels card has real test-action buttons that hit

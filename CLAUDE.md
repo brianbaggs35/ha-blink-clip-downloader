@@ -248,9 +248,11 @@ removed in 5.0.0.
   empty state there) — this suite instead proves specific web UI workflows
   actually work end to end against a real frontend+backend+DB round trip,
   the class of bug neither Vitest's mocked `fetch` nor pytest's
-  browser-less tests can catch (it has already caught one: a settings-save
-  endpoint returned `{"saved": true}` even when the file write silently
-  failed — see `_redirect_data_files` in the script). Covers Library
+  browser-less tests can catch (it has already caught one for real: several
+  settings-save endpoints used to return `{"saved": true}` even when the
+  file write silently failed — fixed in 5.3.3; see `_redirect_data_files`
+  in the script for why `/data` needs redirecting here in the first
+  place). Covers Library
   (filter/star/tag/modal), Vehicles, Status, AI, AI Usage, Automations, and
   Models — deliberately **not** Live View, Security Feed, or Biometrics,
   which need a real camera/face-recognition dependency this environment
@@ -268,6 +270,25 @@ removed in 5.0.0.
   class names as `ClipModal` — scope locators to the specific open modal
   (`.modal-bg.open`) rather than querying those classes unscoped, or
   Playwright's strict mode throws on the multiple matches.
+- **E2E coverage** — `npm run test:e2e:coverage` (separate from the fast,
+  default `npm run test:e2e`, same relationship as Vitest's `test`/
+  `test:coverage`) builds with `VITE_COVERAGE=true`, which switches on
+  `vite.config.ts`'s `vite-plugin-istanbul` plugin to instrument `src/**`
+  before running the suite — a plain `npm run build` (what the Dockerfile
+  actually runs) never sets that env var and ships uninstrumented, verified
+  by grepping the built bundle for `__coverage__` and finding none. Each
+  test's `window.__coverage__` is collected by a shared Playwright fixture
+  (`e2e/coverage-fixtures.ts`, which every spec imports `test`/`expect`
+  from instead of `@playwright/test` directly) into `.nyc_output/`, then
+  merged and rendered into `coverage-e2e/` (html/lcov/cobertura, same
+  reporters as Vitest's own coverage) by `e2e/generate-coverage-report.mjs`
+  — **not** `nyc report` itself, which silently dropped all but a handful
+  of the real source files when pointed at these externally-collected
+  files (confirmed by merging the identical files by hand with
+  `istanbul-lib-coverage` and getting the correct, full set) — the script
+  calls that same library, plus `istanbul-lib-report`/`istanbul-reports`,
+  directly instead. No enforced threshold — this is a visibility tool for
+  "what does this suite actually exercise", not a merge gate.
 - Responsive/mobile conventions carried over from the pre-Vue UI still
   apply: grid layouts use `minmax(min(Npx,100%),1fr)` (not bare
   `minmax(Npx,1fr)`) so columns shrink instead of overflowing narrow
@@ -288,13 +309,15 @@ npm run format:check    # prettier --check .
 npm run type-check      # vue-tsc -b
 npm test                 # vitest run
 npm run test:coverage   # vitest run --coverage
-npm run test:e2e        # playwright test (needs Postgres + npm run build first)
+npm run test:e2e        # playwright test (needs Postgres; builds first, no coverage instrumentation)
+npm run test:e2e:coverage # same, instrumented -> coverage-e2e/ (slower: full rebuild + per-test collection)
 ```
 
 CI folds the first six into the existing Python `lint`/`test` jobs
 (`.github/workflows/ci.yaml`), gated to run once (the `python-version ==
-"3.12"` matrix leg) rather than as a separate job. `test:e2e` runs in its
-own `frontend-e2e` job instead (own Postgres service, not matrixed).
+"3.12"` matrix leg) rather than as a separate job. `test:e2e:coverage`
+runs in its own `frontend-e2e` job instead (own Postgres service, not
+matrixed).
 
 ## Face-recognition suspicious-flag bypass (safety-critical — read before touching)
 
@@ -445,14 +468,16 @@ informational only, doesn't gate merges, and isn't practical to run
 locally since it needs a `SONAR_TOKEN` and network access to sonarcloud.io;
 skipped automatically for PRs from forks, which don't have repo secrets.
 
-CI's `frontend-e2e` job runs `npm run test:e2e` (Playwright, see **Web
-UI**'s E2E testing bullet) — unlike `build`/`smoke-test`, this one *is*
-practical to run locally (tens of seconds, no Docker: just a reachable
-Postgres, the same prerequisite `pytest` already needs, plus `npm run
-build` having been run first) — worth doing whenever a change touches
-Library, Vehicles, Status, AI, AI Usage, Automations, or Models (their
-page components, their API routes, or `media_server.py`'s handlers for
-them), since that's this suite's coverage so far.
+CI's `frontend-e2e` job runs `npm run test:e2e:coverage` (Playwright, see
+**Web UI**'s E2E testing/E2E coverage bullets) — unlike `build`/
+`smoke-test`, this one *is* practical to run locally (no Docker: just a
+reachable Postgres, the same prerequisite `pytest` already needs) — worth
+doing whenever a change touches Library, Vehicles, Status, AI, AI Usage,
+Automations, or Models (their page components, their API routes, or
+`media_server.py`'s handlers for them), since that's this suite's coverage
+so far. Plain `npm run test:e2e` (no coverage instrumentation, and it
+reuses an existing `npm run build` instead of always rebuilding) is faster
+for a quick local check; CI always runs the coverage variant.
 
 ## Versioning
 
