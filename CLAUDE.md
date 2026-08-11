@@ -237,9 +237,11 @@ removed in 5.0.0.
   backend — `scripts/standalone_server.py` boots an actual `MediaServer`
   against a throwaway Postgres database seeded with fake clips (12
   "distribution" clips across 3 cameras/3 sources for filter/count
-  assertions, plus 2 dedicated "Test Scratch" clips for star/tag mutation
-  tests — see the script for the exact layout and why mutating tests use
-  their own clips) and a real `ClipAnalyzer` pointed at an unreachable port
+  assertions, 2 dedicated "Test Scratch" clips for star/tag mutation tests,
+  and 3 pre-archived clips on real camera names for the Storage tab — see
+  the script's `_ARCHIVE_CLIPS` for why reusing real cameras there was
+  deliberate — see the script for the exact layout and why mutating tests
+  use their own clips) and a real `ClipAnalyzer` pointed at an unreachable port
   (fails fast, `ai_online: false`) so the AI/AI Usage tabs — both gated
   server-side on `analyzer is not None` — have something real to render
   instead of "AI Analysis Not Configured". This is deliberately distinct
@@ -253,11 +255,19 @@ removed in 5.0.0.
   file write silently failed — fixed in 5.3.3; see `_redirect_data_files`
   in the script for why `/data` needs redirecting here in the first
   place). Covers Library
-  (filter/star/tag/modal), Vehicles, Status, AI, AI Usage, Automations, and
-  Models — deliberately **not** Live View, Security Feed, or Biometrics,
-  which need a real camera/face-recognition dependency this environment
-  doesn't have; those stay covered by their own focused Vitest specs
-  instead. `vitest.config.ts` excludes `e2e/**` from Vitest's own test
+  (filter/star/tag/modal), Vehicles, Status, AI, AI Usage, Automations,
+  Models, and Storage (Archived Clips list/expand/camera-filter/delete —
+  all DB-backed; Google Drive only as far as its disconnected/
+  not-configured state, since exercising a real connection needs actual
+  OAuth credentials) — deliberately **not** Live View, Security Feed, or
+  Biometrics, which need a real camera/face-recognition dependency this
+  environment doesn't have; those stay covered by their own focused Vitest
+  specs instead. The Vehicles tab's zone-drawing canvas is similarly out of
+  reach here for a narrower reason: it only initializes its drawing surface
+  once its background `<img>` fires a real `load` event, and thumbnails
+  need a real file on disk at the clip's `file_path` (`.with_suffix(".jpg")`)
+  — unlike `/data`, clip paths live under `/share/...` and aren't redirected
+  by `_redirect_data_files`. `vitest.config.ts` excludes `e2e/**` from Vitest's own test
   discovery — the two runners don't overlap. Requires a reachable Postgres
   and `npm run build` having already produced `blink_downloader/static/`
   (see `playwright.config.ts`'s `webServer`, which starts/stops the
