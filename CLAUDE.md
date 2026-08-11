@@ -287,7 +287,21 @@ removed in 5.0.0.
   files (confirmed by merging the identical files by hand with
   `istanbul-lib-coverage` and getting the correct, full set) — the script
   calls that same library, plus `istanbul-lib-report`/`istanbul-reports`,
-  directly instead. No enforced threshold — this is a visibility tool for
+  directly instead. `vite.config.ts`'s `sourcemap` is `'hidden'` only inside
+  the `COVERAGE` build (istanbul needs sourcemaps to map instrumented output
+  back to source; `'hidden'` generates them without adding a
+  `sourceMappingURL` comment to the served JS, which as a side effect also
+  quiets `vite-plugin-istanbul`'s own console notice about auto-enabling
+  them) — the plain/shipped build stays `false`. CI uploads this report to
+  Codecov under its own `e2e` flag (`fail_ci_if_error: false` — never blocks
+  CI), but `codecov.yml`'s `project.default` status check is explicitly
+  scoped to `flags: [backend, frontend]`, not all flags — istanbul (e2e) and
+  v8 (Vitest) count "total statements" differently for the same
+  `frontend/src/` files, so leaving `default` unscoped would let the e2e
+  flag move the combined backend+frontend score for reasons unrelated to an
+  actual regression in either. The `e2e` flag instead gets its own
+  `informational: true` status check — visible on the PR, never gates it.
+  No enforced coverage threshold either — this is a visibility tool for
   "what does this suite actually exercise", not a merge gate.
 - Responsive/mobile conventions carried over from the pre-Vue UI still
   apply: grid layouts use `minmax(min(Npx,100%),1fr)` (not bare

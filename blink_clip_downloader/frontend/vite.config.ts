@@ -49,6 +49,13 @@ export default defineConfig({
   build: {
     outDir: OUT_DIR,
     emptyOutDir: true,
+    // Only the coverage build needs sourcemaps at all (istanbul reads them
+    // to map instrumented output back to source); 'hidden' generates the
+    // .map files without adding `//# sourceMappingURL=` comments to the
+    // served JS, which also quiets vite-plugin-istanbul's own console
+    // notice that it auto-enabled sourcemaps. The plain/shipped build
+    // (COVERAGE false) is unaffected either way.
+    sourcemap: COVERAGE ? 'hidden' : false,
   },
   server: {
     // Dev-mode only: proxy API calls to a real backend (e.g. `local-test/run.sh`,
