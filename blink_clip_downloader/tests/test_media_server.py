@@ -1975,10 +1975,12 @@ async def test_ai_camera_configs_get_default_entry_for_unconfigured_camera(
     assert garage["is_car_camera"] is False
 
 
-async def test_ai_camera_configs_put_write_oserror_logged(
+async def test_ai_camera_configs_put_write_failure_returns_500(
     client: TestClient, tmp_path: Path
 ) -> None:
-    """A write failure (e.g. read-only /data) is logged, not raised to the client."""
+    """A write failure (e.g. read-only /data) is logged *and* reported to
+    the client as an error — the caller has no other way to know its
+    change was actually discarded rather than saved."""
     bad_path = tmp_path / "missing_dir" / "camera_configs.json"
     payload = [
         {
@@ -1999,9 +2001,8 @@ async def test_ai_camera_configs_put_write_oserror_logged(
             headers={"Content-Type": "application/json"},
         )
 
-    assert resp.status == 200
-    data = await resp.json()
-    assert data["saved"] is True
+    assert resp.status == 500
+    assert "Could not save" in await resp.text()
 
 
 async def test_ai_camera_configs_put_updates_live_analyzer(
@@ -3912,12 +3913,15 @@ async def test_vehicle_settings_get_falls_back_on_corrupt_file(
         await tc.close()
 
 
-async def test_vehicle_settings_put_survives_write_failure(
+async def test_vehicle_settings_put_applies_live_but_returns_500_on_write_failure(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
-    """A filesystem error saving to disk must not crash the request — the
-    live analyzer still gets updated for this run, matching the
-    camera_configs.json precedent (_handle_ai_camera_configs_put)."""
+    """A filesystem error saving to disk must be reported to the client as
+    an error — but the live analyzer still gets updated for this run
+    regardless, matching the camera_configs.json precedent
+    (_handle_ai_camera_configs_put): failing to persist for next restart
+    shouldn't also cost the user the immediate, in-process effect of the
+    change they just made this session."""
     analyzer = _make_analyzer()
     server = MediaServer(db=db, port=0, analyzer=analyzer)
     tc = TestClient(TestServer(server._build_app()))
@@ -3933,8 +3937,7 @@ async def test_vehicle_settings_put_survives_write_failure(
             resp = await tc.put(
                 "/api/vehicle/settings", json={"car_description": "Silver Kia"}
             )
-        assert resp.status == 200
-        assert (await resp.json())["saved"] is True
+        assert resp.status == 500
         analyzer.update_car_description.assert_called_once_with("Silver Kia")
     finally:
         await tc.close()
@@ -4263,12 +4266,13 @@ async def test_vehicle_zone_put_survives_snapshot_write_failure(
         await tc.close()
 
 
-async def test_vehicle_zone_put_survives_camera_configs_write_failure(
+async def test_vehicle_zone_put_applies_live_but_returns_500_on_camera_configs_write_failure(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
-    """A filesystem error saving camera_configs.json must not crash the
-    request — the snapshot and live analyzer are still updated for this
-    run, matching the vehicle_settings.json precedent."""
+    """A filesystem error saving camera_configs.json must be reported to
+    the client as an error — but the snapshot and live analyzer are still
+    updated for this run regardless, matching the vehicle_settings.json
+    precedent."""
     await db.add_clip(_make_clip_with_thumb(tmp_path, "z6"))
     analyzer = _make_analyzer()
     server = MediaServer(db=db, port=0, analyzer=analyzer)
@@ -4302,8 +4306,7 @@ async def test_vehicle_zone_put_survives_camera_configs_write_failure(
                     "clip_id": "z6",
                 },
             )
-            assert resp.status == 200
-            assert (await resp.json())["saved"] is True
+            assert resp.status == 500
             assert MediaServer._vehicle_zone_snapshot_path("Driveway").exists()
         analyzer.update_car_zones.assert_called_once()
     finally:
@@ -4354,15 +4357,16 @@ async def test_vehicle_zone_put_with_corrupt_existing_camera_configs_starts_fres
     assert [c["camera"] for c in saved] == ["Driveway"]
 
 
-async def test_vehicle_zone_delete_survives_camera_configs_write_failure(
+async def test_vehicle_zone_delete_returns_500_on_camera_configs_write_failure(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
-    """A filesystem error saving camera_configs.json must not crash the
-    request. Needs a *readable* existing file (so _read_camera_configs
-    finds the "Driveway" entry and reaches the write attempt at all) with
-    only the write itself failing — unlike the PUT precedent, a directory
-    standing in for the file would break the read step too, since delete
-    reads-then-writes rather than just writing."""
+    """A filesystem error saving camera_configs.json must be reported to
+    the client as an error, not silently discarded. Needs a *readable*
+    existing file (so _read_camera_configs finds the "Driveway" entry and
+    reaches the write attempt at all) with only the write itself failing —
+    unlike the PUT precedent, a directory standing in for the file would
+    break the read step too, since delete reads-then-writes rather than
+    just writing."""
     cfg_file = tmp_path / "camera_configs.json"
     cfg_file.write_text(
         json.dumps(
@@ -4395,8 +4399,7 @@ async def test_vehicle_zone_delete_survives_camera_configs_write_failure(
             patch.object(Path, "write_text", side_effect=OSError("disk full")),
         ):
             resp = await tc.delete("/api/vehicle/zone/Driveway")
-        assert resp.status == 200
-        assert (await resp.json())["saved"] is True
+        assert resp.status == 500
     finally:
         await tc.close()
 
@@ -5223,11 +5226,51 @@ async def test_finetune_activate_success(db: ClipDatabase, tmp_path: Path) -> No
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
     try:
-        resp = await tc.post("/api/ai/finetune/ft1/activate", json={"step": 50})
+        # Without this, the handler's own write to the *real* default
+        # _FINETUNE_STATE_FILE (/data/finetune_state.json, absent outside
+        # the real add-on container) would fail and this test would only
+        # be passing because that failure used to be silently swallowed —
+        # see test_finetune_activate_returns_500_on_write_failure below for
+        # that path specifically; this test is about the activation/model-
+        # swap mechanism itself, matching test_finetune_activate_persists_state's
+        # own setup for the same reason.
+        with patch(
+            "blink_downloader.media_server.MediaServer._FINETUNE_STATE_FILE",
+            new=tmp_path / "finetune_state.json",
+        ):
+            resp = await tc.post("/api/ai/finetune/ft1/activate", json={"step": 50})
         assert resp.status == 200
         data = await resp.json()
         assert data["activated"] is True
         assert analyzer.model_name() == data["model"]
+        assert "ft1" in analyzer.model_name()
+    finally:
+        await tc.close()
+
+
+async def test_finetune_activate_returns_500_on_write_failure(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The hot-swap takes effect for this session regardless (see the
+    handler's own comment on why), but a failure to persist it must still
+    be reported to the client — the whole point of persisting is surviving
+    a restart, so a silently-discarded failure here would only surface
+    much later, as a confusing unexplained revert."""
+    from blink_downloader.analyzer import MoondreamCloudAnalyzer
+
+    analyzer = MoondreamCloudAnalyzer(api_key="md-key", prompt="test")
+    server = _make_finetune_server(db, tmp_path, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    unwritable = tmp_path / "not-a-file"
+    unwritable.mkdir()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._FINETUNE_STATE_FILE",
+            new=unwritable,
+        ):
+            resp = await tc.post("/api/ai/finetune/ft1/activate", json={"step": 50})
+        assert resp.status == 500
         assert "ft1" in analyzer.model_name()
     finally:
         await tc.close()
@@ -7056,7 +7099,7 @@ async def test_security_feed_settings_put_defaults_missing_fields(
         await tc.close()
 
 
-async def test_security_feed_settings_put_write_failure_is_logged(
+async def test_security_feed_settings_put_write_failure_logged_and_returns_500(
     db: ClipDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     server = MediaServer(db=db, port=0)
@@ -7072,9 +7115,10 @@ async def test_security_feed_settings_put_write_failure_is_logged(
             caplog.at_level("WARNING"),
         ):
             resp = await tc.put("/api/security-feed/settings", json={"cameras": []})
-        # Save failure is logged but not surfaced as an HTTP error - matches
-        # the vehicle_settings.json precedent this mirrors.
-        assert resp.status == 200
+        # Save failure is logged *and* surfaced as an HTTP error - the
+        # caller has no other way to know its change was actually
+        # discarded rather than saved.
+        assert resp.status == 500
         assert "Could not save Security Feed settings" in caplog.text
     finally:
         await tc.close()

@@ -44,6 +44,11 @@ _NOTIFICATIONS_NOT_CONFIGURED = "Notifications not configured"
 _FINETUNE_REQUIRES_MOONDREAM_CLOUD = "Fine-tuning requires ai_provider=moondream_cloud"
 _CAMERA_CONFIGS_SAVE_ERROR = "Could not save camera configs: %s"
 _AI_FEEDBACK_ROUTE = "/api/ai/feedback/{clip_id}"
+# Surfaced to the caller (not just logged) wherever a settings/state write to
+# disk fails — a prior version of several of these handlers logged the
+# OSError but still responded as if the write had succeeded, silently
+# discarding the change while the web UI showed a "saved" toast for it.
+_SETTINGS_WRITE_FAILED = "Could not save — check the add-on logs"
 
 # Strict allowlist for the Live View HLS file-serving route — the real
 # defense against path traversal: this structurally rejects anything with a
@@ -1024,6 +1029,7 @@ class MediaServer:
             self._SECURITY_FEED_SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
         except OSError as exc:
             _LOGGER.warning("Could not save Security Feed settings: %s", exc)
+            raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
         return web.json_response(settings)
 
     @classmethod
@@ -1560,12 +1566,16 @@ class MediaServer:
         except Exception:  # noqa: BLE001
             raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
+        # Applied before the write attempt, not after: a failure to persist
+        # for next restart shouldn't also cost the user the immediate,
+        # in-process effect of the change they just made this session.
+        self._apply_camera_configs_to_analyzer(configs)
+
         try:
             self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
         except OSError as exc:
             _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
-
-        self._apply_camera_configs_to_analyzer(configs)
+            raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
 
         return web.json_response({"saved": True, "count": len(configs)})
 
@@ -1628,15 +1638,19 @@ class MediaServer:
         except Exception:  # noqa: BLE001
             raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
+        # Applied before the write attempt, not after: a failure to persist
+        # for next restart shouldn't also cost the user the immediate,
+        # in-process effect of the change they just made this session.
+        if self._analyzer is not None:
+            self._analyzer.update_car_description(car_description)
+
         try:
             self._VEHICLE_SETTINGS_FILE.write_text(
                 json.dumps({"car_description": car_description}, indent=2)
             )
         except OSError as exc:
             _LOGGER.warning("Could not save vehicle settings: %s", exc)
-
-        if self._analyzer is not None:
-            self._analyzer.update_car_description(car_description)
+            raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
 
         return web.json_response({"saved": True})
 
@@ -1732,12 +1746,16 @@ class MediaServer:
                 "Could not save vehicle zone snapshot for %s: %s", camera, exc
             )
 
+        # Applied before the write attempt, not after: a failure to persist
+        # for next restart shouldn't also cost the user the immediate,
+        # in-process effect of the change they just made this session.
+        self._apply_camera_configs_to_analyzer(configs)
+
         try:
             self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
         except OSError as exc:
             _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
-
-        self._apply_camera_configs_to_analyzer(configs)
+            raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
 
         return web.json_response({"saved": True, "car_zone": zone})
 
@@ -1749,11 +1767,16 @@ class MediaServer:
         entry = next((c for c in configs if c.get("camera") == camera), None)
         if entry is not None:
             entry["car_zone"] = None
+            # Applied before the write attempt, not after: a failure to
+            # persist for next restart shouldn't also cost the user the
+            # immediate, in-process effect of the change they just made
+            # this session.
+            self._apply_camera_configs_to_analyzer(configs)
             try:
                 self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
             except OSError as exc:
                 _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
-            self._apply_camera_configs_to_analyzer(configs)
+                raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
 
         self._vehicle_zone_snapshot_path(camera).unlink(missing_ok=True)
 
@@ -2567,7 +2590,13 @@ class MediaServer:
                 json.dumps({"active_model_id": model_id}, indent=2)
             )
         except OSError as exc:
+            # The hot-swap above already took effect for this running
+            # session regardless — but the whole point of persisting here
+            # (see this method's docstring) is surviving a restart, so a
+            # write failure must still be reported rather than silently
+            # risking a later revert with no record anything went wrong.
             _LOGGER.warning("Could not save fine-tune activation state: %s", exc)
+            raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
         return web.json_response({"activated": True, "model": model_id})
 
     async def _handle_feedback_untrained_count(
