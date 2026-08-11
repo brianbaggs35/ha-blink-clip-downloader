@@ -1,5 +1,30 @@
 # Changelog
 
+## 5.3.3
+
+### Bug fixes
+
+- **Several web UI settings could silently fail to save while still
+  showing a "saved" confirmation** — protected-vehicle description and
+  per-camera settings (Vehicles tab), per-camera AI descriptions/prompts
+  and vehicle-zone edits (AI/Vehicles tabs), Security Feed's Customize
+  panel, and activating a Moondream fine-tuned checkpoint. Each of these
+  writes a small settings file to the add-on's persistent storage; if that
+  write ever failed (e.g. a full or read-only disk), the failure was only
+  logged, never reported back — the change looked saved but was actually
+  discarded, only to unexpectedly reappear at its old value after a
+  restart. These now correctly report a failure so you know to retry,
+  while still applying the change immediately for the running session
+  where that was already happening safely.
+
+### Housekeeping
+
+- Added a Playwright interaction-test suite (`frontend/e2e/`) covering
+  Library, Vehicles, Status, AI, AI Usage, Automations, and Models against
+  a real (seeded) backend — distinct from the existing `e2e/` smoke tests,
+  which only check that the packaged container boots. New `frontend-e2e`
+  CI job. This is what surfaced the settings-save bug above.
+
 ## 5.3.2
 
 ### Bug fixes
