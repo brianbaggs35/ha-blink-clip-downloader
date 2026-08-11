@@ -1272,6 +1272,13 @@ h3 {
   padding: 1.75rem;
   padding-bottom: 3rem;
 }
+/* .page.active is display:flex (row) with exactly one child expected — this
+   wraps the battery strip + status grid so together they're still that one
+   child, stacking normally instead of becoming two flex siblings that lay
+   out side by side and stretch to the full page height. */
+#status-page-content {
+  min-width: 0;
+}
 .battery-strip {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(190px, 100%), 1fr));
