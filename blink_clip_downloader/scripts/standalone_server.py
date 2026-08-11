@@ -25,10 +25,41 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import tempfile
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
+from blink_downloader import media_server
+from blink_downloader.analyzer import ClipAnalyzer
 from blink_downloader.database import ClipDatabase
 from blink_downloader.media_server import MediaServer
+
+
+# MediaServer's per-feature settings files (camera_configs.json,
+# vehicle_settings.json, etc.) are hardcoded to live under /data — the HA
+# Supervisor's persistent-storage mount, always present and writable in
+# the real add-on container. This script runs directly on the host, where
+# /data doesn't exist (and creating it would need root) — so these class
+# attributes are redirected to a throwaway temp dir before MediaServer is
+# constructed, same idea as pointing BLINK_DB_DSN at a throwaway database
+# instead of the bundled one. Genuinely required for any standalone (no
+# Supervisor) deployment, not just for tests.
+def _redirect_data_files(data_dir: Path) -> None:
+    media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE = (
+        data_dir / "security_feed_settings.json"
+    )
+    media_server.MediaServer._CAMERA_CONFIGS_FILE = data_dir / "camera_configs.json"
+    media_server.MediaServer._VEHICLE_SETTINGS_FILE = data_dir / "vehicle_settings.json"
+    media_server.MediaServer._FINETUNE_STATE_FILE = data_dir / "finetune_state.json"
+
+
+# Port 1 is a reserved/privileged port nothing ever listens on, so
+# health_check() fails fast (connection refused) rather than hanging on
+# a real timeout — this is a real ClipAnalyzer, not a mock, just pointed
+# at a guaranteed-closed port. Unlocks the AI and AI Usage tabs (both
+# gated on `analyzer is not None` server-side) for e2e testing without
+# needing a real Ollama/cloud provider.
+_UNREACHABLE_OLLAMA_URL = "http://127.0.0.1:1"
 
 _CAMERAS = ("Front Door", "Backyard", "Garage")
 # Real values the Library tab's source filter actually recognizes (see
@@ -113,13 +144,18 @@ async def _main() -> None:
     if not dsn:
         raise SystemExit("BLINK_DB_DSN must be set to a reachable Postgres DSN")
 
+    _redirect_data_files(Path(tempfile.mkdtemp(prefix="blink-e2e-data-")))
+
     db = ClipDatabase(dsn=dsn)
     await db.init()
     assert db._pool is not None
     await db._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")
     await _seed(db)
 
-    server = MediaServer(db=db, port=port)
+    analyzer = ClipAnalyzer(
+        ollama_url=_UNREACHABLE_OLLAMA_URL, model="llava", prompt="Describe this clip."
+    )
+    server = MediaServer(db=db, port=port, analyzer=analyzer)
     await server.start()
     print(f"Standalone e2e server ready on http://localhost:{port}/", flush=True)
 
