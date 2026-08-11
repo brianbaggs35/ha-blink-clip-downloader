@@ -125,6 +125,35 @@ describe('LiveViewPage', () => {
     expect(wrapper.findComponent(SelectButton).props('modelValue')).toBe('Front Door')
   })
 
+  it('unmounting while the initial adoption check is in flight does not start timers on the dead instance', async () => {
+    vi.useFakeTimers()
+    let resolveStatus!: (v: LiveViewStatus) => void
+    const deferred = new Promise<LiveViewStatus>((resolve) => {
+      resolveStatus = resolve
+    })
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/liveview/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
+      if (url === '/api/liveview/status') return deferred.then((v) => jsonResponse(v))
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await flushPromises()
+
+    wrapper.unmount()
+    // This session pre-existed us (adoption, not creation) — resolving
+    // after teardown must not start a heartbeat for a session we don't
+    // own, but also must not call stop, since we didn't create it either.
+    resolveStatus({ active: true, session_id: 's1', camera: 'Front Door', state: 'live' })
+    await flushPromises()
+
+    expect(fetchMock.mock.calls.find(([url]) => url === '/api/liveview/stop')).toBeFalsy()
+
+    await vi.advanceTimersByTimeAsync(15000)
+    await flushPromises()
+    expect(fetchMock.mock.calls.find(([url]) => url === '/api/liveview/heartbeat')).toBeFalsy()
+  })
+
   it('shows a toast when the Video.js player itself reports an error', async () => {
     const routes: Routes = {
       cameras: ['Front Door'],
@@ -166,6 +195,64 @@ describe('LiveViewPage', () => {
 
     resolveStart({ active: true, session_id: 's1', camera: 'Front Door', state: 'starting' })
     await flushPromises()
+  })
+
+  it('keeps the video element hidden while starting, even though the session is already active', async () => {
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: INACTIVE,
+      startResult: { active: true, session_id: 's1', camera: 'Front Door', state: 'starting' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.findComponent(SelectButton).vm.$emit('update:modelValue', 'Front Door')
+    await flushPromises()
+
+    expect(wrapper.find('.video-js-wrap').classes()).toContain('video-hidden')
+    expect(fakePlayer.src).not.toHaveBeenCalled()
+  })
+
+  it('unmounting while a start request is still in flight stops the session it just created, without leaking a heartbeat timer', async () => {
+    vi.useFakeTimers()
+    let resolveStart!: (v: LiveViewStatus) => void
+    const deferred = new Promise<LiveViewStatus>((resolve) => {
+      resolveStart = resolve
+    })
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/liveview/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
+      if (url === '/api/liveview/status') return Promise.resolve(jsonResponse(INACTIVE))
+      if (url === '/api/liveview/start' && opts?.method === 'POST') return deferred.then((v) => jsonResponse(v))
+      if (url === '/api/liveview/stop' && opts?.method === 'POST')
+        return Promise.resolve(jsonResponse({ stopped: true }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.findComponent(SelectButton).vm.$emit('update:modelValue', 'Front Door')
+    await wrapper.vm.$nextTick()
+
+    wrapper.unmount()
+    // Nothing to stop yet from onUnmounted's own point of view — the
+    // session this component is about to create doesn't exist until the
+    // deferred /start response below resolves.
+    expect(fetchMock.mock.calls.find(([url]) => url === '/api/liveview/stop')).toBeFalsy()
+
+    resolveStart({ active: true, session_id: 's1', camera: 'Front Door', state: 'starting' })
+    await flushPromises()
+
+    const stopCall = fetchMock.mock.calls.find(([url]) => url === '/api/liveview/stop')
+    expect(stopCall).toBeTruthy()
+    expect(JSON.parse((stopCall![1] as RequestInit).body as string)).toEqual({ session_id: 's1' })
+
+    // Prove there's no orphaned heartbeat timer keeping the session (that
+    // we just told the backend to stop) alive in the background.
+    await vi.advanceTimersByTimeAsync(15000)
+    await flushPromises()
+    expect(fetchMock.mock.calls.find(([url]) => url === '/api/liveview/heartbeat')).toBeFalsy()
   })
 
   it('a status poll transitions starting to live and sets the player source', async () => {
@@ -289,6 +376,89 @@ describe('LiveViewPage', () => {
       { src: '/api/liveview/hls/s2/stream.m3u8', type: 'application/x-mpegURL' },
     ])
     expect(wrapper.findComponent(SelectButton).props('modelValue')).toBe('Backyard')
+  })
+
+  it('hides the old camera stream while switching cameras, until the new one is live', async () => {
+    let resolveStart!: (v: LiveViewStatus) => void
+    const deferred = new Promise<LiveViewStatus>((resolve) => {
+      resolveStart = resolve
+    })
+    const routes: Routes = {
+      cameras: ['Front Door', 'Backyard'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/liveview/start' && opts?.method === 'POST') return deferred.then((v) => jsonResponse(v))
+        return routedFetch(routes)(url, opts)
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.find('.video-js-wrap').classes()).not.toContain('video-hidden')
+
+    await wrapper.findComponent(SelectButton).vm.$emit('update:modelValue', 'Backyard')
+    await wrapper.vm.$nextTick()
+
+    // Mid-switch: `status` still reports the old camera as active/live
+    // (it hasn't changed yet), but the video must stay hidden rather than
+    // keep showing Front Door's stream next to the "starting" placeholder.
+    expect(wrapper.find('.video-js-wrap').classes()).toContain('video-hidden')
+
+    resolveStart({ active: true, session_id: 's2', camera: 'Backyard', state: 'live' })
+    await flushPromises()
+    expect(wrapper.find('.video-js-wrap').classes()).not.toContain('video-hidden')
+  })
+
+  it('pressing stop while switching cameras resets immediately and stops the new session once it arrives', async () => {
+    let resolveStart!: (v: LiveViewStatus) => void
+    const deferred = new Promise<LiveViewStatus>((resolve) => {
+      resolveStart = resolve
+    })
+    const routes: Routes = {
+      cameras: ['Front Door', 'Backyard'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/liveview/start' && opts?.method === 'POST') return deferred.then((v) => jsonResponse(v))
+      return routedFetch(routes)(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.findComponent(SelectButton).vm.$emit('update:modelValue', 'Backyard')
+    await wrapper.vm.$nextTick()
+
+    const stopBtn = wrapper.findAll('button').find((b) => b.text().includes('Stop'))
+    expect(stopBtn).toBeTruthy()
+    await stopBtn!.trigger('click')
+    await flushPromises()
+
+    // Stop must take effect immediately -- not get stuck showing "Starting
+    // live view..." just because a select() it superseded hasn't resolved
+    // yet -- and must stop the *old* (Front Door) session right away.
+    expect(wrapper.text()).toContain('Select a camera above to start watching')
+    const stopCallsSoFar = fetchMock.mock.calls.filter(([url]) => url === '/api/liveview/stop')
+    expect(stopCallsSoFar).toHaveLength(1)
+    expect(JSON.parse((stopCallsSoFar[0][1] as RequestInit).body as string)).toEqual({ session_id: 's1' })
+
+    resolveStart({ active: true, session_id: 's2', camera: 'Backyard', state: 'live' })
+    await flushPromises()
+
+    // The belated Backyard session must also get cleaned up rather than
+    // resurrecting the player after Stop was already pressed.
+    const stopCalls = fetchMock.mock.calls.filter(([url]) => url === '/api/liveview/stop')
+    expect(stopCalls).toHaveLength(2)
+    expect(JSON.parse((stopCalls[1][1] as RequestInit).body as string)).toEqual({ session_id: 's2' })
+    expect(wrapper.text()).toContain('Select a camera above to start watching')
+    // s1 (Front Door) was legitimately sourced back on mount, when it was
+    // still live — what must never happen is s2 (Backyard) getting sourced
+    // after Stop was pressed.
+    expect(fakePlayer.src).not.toHaveBeenCalledWith([
+      { src: '/api/liveview/hls/s2/stream.m3u8', type: 'application/x-mpegURL' },
+    ])
   })
 
   it('unmounting stops the active session and disposes the player', async () => {

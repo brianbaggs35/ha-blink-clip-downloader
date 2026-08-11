@@ -41,6 +41,16 @@ let player: Player | null = null
 // the *same* session transitioning starting -> live with no id change at
 // all. Sourcing only on an id change would miss that transition entirely.
 let sourcedSessionId: string | null = null
+// Set once onUnmounted has run — checked after every await in an
+// in-flight async handler so its continuation can't act on a dead
+// component instance (see selectCamera/onMounted below).
+let unmounted = false
+// Bumped by both selectCamera() and stop() so an in-flight
+// startLiveView() call can tell, once it resolves, whether it's still the
+// most recent request — a later selectCamera() (fast camera-switching) or
+// an explicit stop() press must both win over an older, slower one that
+// only just now finished starting.
+let selectGeneration = 0
 
 let statusTimer: ReturnType<typeof setInterval> | undefined
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined
@@ -61,7 +71,17 @@ function ensurePlayer(): Player {
     html5: { vhs: { overrideNative: false } },
     controlBar: { pictureInPictureToggle: true },
   })
-  player.on('error', () => toast.show('Live view playback error', true))
+  player.on('error', () => {
+    toast.show('Live view playback error', true)
+    // If we still believe this session is live, the source may have been
+    // set against a manifest that existed but wasn't playable yet — clear
+    // the latch so the next status poll (still reporting the same live
+    // session) re-attempts sourcing, instead of leaving the player stuck
+    // on a failed load until the whole page is refreshed.
+    if (status.value.active && status.value.state === 'live') {
+      sourcedSessionId = null
+    }
+  })
   return player
 }
 
@@ -130,19 +150,45 @@ async function loadCameras() {
 
 async function selectCamera(camera: string | null) {
   if (!camera) return
+  const generation = ++selectGeneration
+  // The backend tears down whatever session was previously active as soon
+  // as a *different* camera is requested, even if this new start attempt
+  // goes on to fail — so a still-running poll/heartbeat timer for the old
+  // session can only poll/heartbeat a session that's already gone, or
+  // race applyStatus() into flipping `starting` back off mid-switch.
+  stopTimers()
   selectedCamera.value = camera
   starting.value = true
   try {
-    applyStatus(await startLiveView(camera))
+    const s = await startLiveView(camera)
+    if (unmounted || generation !== selectGeneration) {
+      // Superseded while the start request was in flight — either we
+      // navigated away (onUnmounted already ran, with nothing yet to
+      // stop), a newer selectCamera() call is now in charge, or stop()
+      // was pressed. Either way we're the only thing that knows this
+      // particular session exists, so tear it down now rather than
+      // leaking a live session with no heartbeats until the backend's
+      // idle timeout eventually notices.
+      void stopLiveView(s.session_id)
+      return
+    }
+    applyStatus(s)
     startTimers()
   } catch (err) {
-    toast.show(err instanceof Error ? err.message : 'Failed to start live view', true)
+    if (!unmounted && generation === selectGeneration) {
+      toast.show(err instanceof Error ? err.message : 'Failed to start live view', true)
+    }
   } finally {
-    starting.value = false
+    if (generation === selectGeneration) starting.value = false
   }
 }
 
 async function stop() {
+  selectGeneration++ // invalidate any in-flight selectCamera() call
+  // If that in-flight call is what set `starting`, its own finally block
+  // will see itself superseded and (correctly) leave `starting` alone —
+  // so this is the only place left that will ever clear it.
+  starting.value = false
   const id = status.value.session_id
   stopTimers()
   status.value = { active: false }
@@ -150,16 +196,18 @@ async function stop() {
   try {
     await stopLiveView(id)
   } catch {
-    toast.show('Failed to stop live view', true)
+    if (!unmounted) toast.show('Failed to stop live view', true)
   }
 }
 
 onMounted(async () => {
   await loadCameras()
+  if (unmounted) return
   try {
     // Adopt an already-active session (e.g. started from another browser
     // tab) instead of presenting an empty picker while it's running.
     const s = await getLiveViewStatus()
+    if (unmounted) return
     if (s.active) {
       applyStatus(s)
       startTimers()
@@ -170,6 +218,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  unmounted = true
   stopTimers()
   if (status.value.session_id) void stopLiveView(status.value.session_id)
   player?.dispose()
@@ -210,9 +259,16 @@ onUnmounted(() => {
         Video.js takes over the <video> tag on init, same reasoning as
         ClipModal.vue — never toggle this element with v-if/v-else, only the
         wrapper's class, or a re-render would tear it out from under the
-        player instance.
+        player instance. Hidden whenever `starting` is true or state isn't
+        actually "live" yet — not just "active", and not just the absence
+        of `starting`. `status` stays stale (still whatever the *previous*
+        camera was reporting) for the whole in-flight duration of a
+        selectCamera() call, so keying visibility only off `status` left an
+        empty video box — or the old camera's still-playing stream, when
+        switching cameras — visible side by side with the "Starting live
+        view…" placeholder below.
       -->
-      <div class="video-js-wrap" :class="{ 'video-hidden': !status.active }">
+      <div class="video-js-wrap" :class="{ 'video-hidden': starting || !(status.active && status.state === 'live') }">
         <video ref="videoEl" class="video-js vjs-big-play-centered" playsinline>
           <p class="vjs-no-js">JavaScript is required to watch live view.</p>
         </video>
