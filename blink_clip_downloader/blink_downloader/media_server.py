@@ -282,6 +282,10 @@ class MediaServer:
         app.router.add_get("/api/cameras", self._handle_cameras)
         app.router.add_get("/api/stats", self._handle_stats)
         app.router.add_get("/api/activity", self._handle_activity)
+        app.router.add_get("/api/battery/status", self._handle_battery_status)
+        app.router.add_get(
+            "/api/battery/history/{camera}", self._handle_battery_history
+        )
         app.router.add_get("/api/tags", self._handle_tags)
         app.router.add_post("/api/clips/export-zip", self._handle_export_zip)
         app.router.add_post("/api/download-now", self._handle_download_now)
@@ -754,6 +758,21 @@ class MediaServer:
     async def _handle_cameras(self, _request: web.Request) -> web.Response:
         camera_stats = await self._db.get_camera_stats()
         return web.json_response(camera_stats)
+
+    async def _handle_battery_status(self, _request: web.Request) -> web.Response:
+        """Current battery state for every camera with a recorded reading.
+
+        Deliberately a separate namespace from /api/cameras above, not
+        folded into it — that endpoint is derived from get_camera_stats()
+        and only lists cameras with at least one downloaded clip, which is
+        the wrong scope for battery status (should reflect every camera
+        Blink reports, regardless of clip history).
+        """
+        return web.json_response(await self._db.get_latest_battery_state())
+
+    async def _handle_battery_history(self, request: web.Request) -> web.Response:
+        camera = request.match_info["camera"]
+        return web.json_response(await self._db.get_battery_history(camera))
 
     async def _handle_stats(self, request: web.Request) -> web.Response:
         stats = await self._db.get_stats()

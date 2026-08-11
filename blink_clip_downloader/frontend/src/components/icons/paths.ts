@@ -111,6 +111,26 @@ export const ICONS = {
       'M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z',
     ],
   },
+  // Battery outline (body + small nub) shared by both states below — the
+  // consuming component (BatteryStatusStrip.vue) drives color via
+  // currentColor, not a second icon per color, since AppIcon renders every
+  // shape in one color. "battery" is a plain outline; "battery-low" adds
+  // the same exclamation glyph "error-circle" uses, matching the
+  // notif-on/notif-off precedent for a two-state icon pair (shape *and*
+  // color differ, not color alone, for colorblind accessibility).
+  battery: {
+    rects: [
+      { x: 2, y: 7, width: 18, height: 10, rx: 2 },
+      { x: 21, y: 10, width: 2, height: 4, rx: 1 },
+    ],
+  },
+  'battery-low': {
+    paths: ['M11 10v3', 'M11 15.5v.1'],
+    rects: [
+      { x: 2, y: 7, width: 18, height: 10, rx: 2 },
+      { x: 21, y: 10, width: 2, height: 4, rx: 1 },
+    ],
+  },
 } satisfies Record<string, IconDef>
 
 // keyof typeof ICONS only yields the real literal union of icon names (not

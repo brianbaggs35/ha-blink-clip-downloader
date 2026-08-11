@@ -527,3 +527,24 @@ export interface ArchiveGroup {
   total_size: number
   latest_timestamp: string
 }
+
+// ---------------------------------------------------------------------------
+// Battery — per-camera state + history (Status tab)
+// ---------------------------------------------------------------------------
+
+/** battery_state is "ok"/"low" (Blink's own, reliable classification) or
+ * possibly another raw value Blink reports — treat anything other than
+ * "low" as normal rather than allow-listing just "ok". battery_level is a
+ * coarse, non-percentage signal (not a true 0-100% charge) and
+ * battery_voltage is hundredths of a volt (e.g. 165 = 1.65V) — both are
+ * nullable since not every camera model reports them, and null is a real
+ * "not reported" value, never coerced to 0. */
+export interface BatteryStatus {
+  camera: string
+  battery_state: string
+  battery_level: number | null
+  battery_voltage: number | null
+  recorded_at: string
+}
+
+export type BatteryHistoryEntry = BatteryStatus

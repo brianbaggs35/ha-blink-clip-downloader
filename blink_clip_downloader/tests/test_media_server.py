@@ -513,6 +513,53 @@ async def test_cameras_returns_stats(client: TestClient, db: ClipDatabase) -> No
 
 
 # ---------------------------------------------------------------------------
+# /api/battery
+# ---------------------------------------------------------------------------
+
+
+async def test_battery_status_empty(client: TestClient) -> None:
+    resp = await client.get("/api/battery/status")
+    assert resp.status == 200
+    assert await resp.json() == []
+
+
+async def test_battery_status_returns_latest_per_camera(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.add_battery_reading("Front Door", "low", 0, 105)
+    await db.add_battery_reading("Backyard", "ok", 3, 170)
+
+    resp = await client.get("/api/battery/status")
+    assert resp.status == 200
+    data = await resp.json()
+    by_camera = {row["camera"]: row for row in data}
+    assert by_camera["Front Door"]["battery_state"] == "low"
+    assert by_camera["Backyard"]["battery_state"] == "ok"
+
+
+async def test_battery_history_empty(client: TestClient) -> None:
+    resp = await client.get("/api/battery/history/Front Door")
+    assert resp.status == 200
+    assert await resp.json() == []
+
+
+async def test_battery_history_returns_camera_rows_newest_first(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.add_battery_reading("Front Door", "low", 0, 105)
+    await db.add_battery_reading("Backyard", "low", 0, 100)
+
+    resp = await client.get("/api/battery/history/Front Door")
+    assert resp.status == 200
+    data = await resp.json()
+    assert len(data) == 2
+    assert data[0]["battery_state"] == "low"
+    assert data[1]["battery_state"] == "ok"
+
+
+# ---------------------------------------------------------------------------
 # /api/stats
 # ---------------------------------------------------------------------------
 
