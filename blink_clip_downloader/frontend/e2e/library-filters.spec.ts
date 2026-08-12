@@ -76,3 +76,21 @@ test('search for a nonexistent camera shows the empty state', async ({ page }) =
   await expect(page.getByText('No clips found')).toBeVisible()
   await expect(page.locator('.clip-card')).toHaveCount(0)
 })
+
+test('notified and recognized filters narrow the grid, and Refresh library confirms', async ({ page }) => {
+  // Nothing seeded has notified=TRUE or a recorded face match, so both
+  // filters narrow to zero here — still a real, distinct query-param and
+  // empty-state code path from the starred/tag filters above, not a no-op.
+  await page.locator('#lib-filter-notified').check()
+  await expect(page.locator('.clip-card')).toHaveCount(0)
+  await page.locator('#lib-filter-notified').uncheck()
+  await expect(page.locator('.clip-card')).toHaveCount(TOTAL_CLIPS)
+
+  await page.locator('#lib-filter-recognized').check()
+  await expect(page.locator('.clip-card')).toHaveCount(0)
+  await page.locator('#lib-filter-recognized').uncheck()
+  await expect(page.locator('.clip-card')).toHaveCount(TOTAL_CLIPS)
+
+  await page.getByRole('button', { name: 'Refresh library' }).click()
+  await expect(page.getByText('Library refreshed')).toBeVisible()
+})

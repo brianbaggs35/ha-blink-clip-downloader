@@ -58,6 +58,30 @@ test('Test Analysis runs a real analysis against the most recent clip', async ({
   await expect(page.getByText('No frames could be extracted')).toBeVisible()
 })
 
+// Continues from the Test Analysis test above (declaration order is
+// execution order, workers: 1): that real analysis already recorded real
+// usage stats for e2e-clip-000, so this reaches the populated stats grid /
+// per-model / daily tables the "zero usage" test above (which runs before
+// Test Analysis) can't.
+test('AI Usage tab reflects the completed analysis, and Clear Stats resets it', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="usage"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="usage"]')
+
+  const statsGrid = page.locator('.usage-grid')
+  await expect(statsGrid.locator('.usage-stat', { hasText: 'Clips Analyzed' }).locator('.num')).toHaveText('1')
+  await expect(page.getByText('No analysis data yet')).toHaveCount(0)
+  await expect(page.getByText('No analysis activity in the last 14 days')).toHaveCount(0)
+
+  await page.getByRole('button', { name: '🗑 Clear Stats' }).click()
+  await expect(page.getByText('Clear all AI usage stats')).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+
+  await expect(page.getByText('AI usage stats cleared')).toBeVisible()
+  await expect(statsGrid.locator('.usage-stat', { hasText: 'Clips Analyzed' }).locator('.num')).toHaveText('0')
+  await expect(page.getByText('No analysis data yet')).toBeVisible()
+})
+
 test('Fetch Models finds none on the unreachable Ollama server, and Copy requires a selection first', async ({
   page,
 }) => {
