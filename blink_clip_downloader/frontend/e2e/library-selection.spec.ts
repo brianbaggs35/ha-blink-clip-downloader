@@ -103,3 +103,48 @@ test('bulk ZIP export reports failure when none of the selected clips have a fil
   await page.getByRole('button', { name: '⬇ ZIP' }).click()
   await expect(page.getByText('ZIP export failed')).toBeVisible()
 })
+
+test('bulk-analyzing selected clips runs a real analysis on each and reports how many completed', async ({
+  page,
+}) => {
+  // e2e-clip-008/009: distinct from every clip another spec file selects by
+  // id (000/001 by library-modal.spec.ts and ai.spec.ts, 002/005 by the
+  // bulk-star test above, 007 by the bulk-ZIP-failure test above, 003/004/006
+  // pre-starred/tagged by standalone_server.py) — analyzing them can't
+  // disturb any other test's exact-count assertion.
+  const first = page.locator('.clip-card[data-id="e2e-clip-008"]')
+  const second = page.locator('.clip-card[data-id="e2e-clip-009"]')
+  await first.locator('.sel-check').click()
+  await second.locator('.sel-check').click()
+
+  await page.getByRole('button', { name: '🔬 Analyze selected' }).click()
+  await expect(
+    page.getByText('Analyze 2 clip(s) with AI? This uses real API tokens and may take a while.'),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+
+  // Neither clip has a real file on disk, so the real (not mocked)
+  // analyze_clip code path genuinely completes for both rather than
+  // throwing — same deterministic "no frames" result library-modal.spec.ts's
+  // AI panel test already exercises from a different entry point.
+  await expect(page.getByText('Analyzed 2/2 clip(s)')).toBeVisible()
+  await expect(page.locator('#bulk-bar')).toHaveCount(0)
+})
+
+test('bulk delete removes the selected clip after confirmation', async ({ page }) => {
+  // e2e-scratch-delete: its own dedicated clip (standalone_server.py's
+  // _DELETE_TEST_CLIP_ID) — deleting it can't shrink any other test's
+  // exact-count assertion the way deleting a distribution or star/tag
+  // scratch clip would.
+  const card = page.locator('.clip-card[data-id="e2e-scratch-delete"]')
+  await expect(card).toBeVisible()
+  await card.locator('.sel-check').click()
+
+  await page.getByRole('button', { name: '🗑 Delete selected' }).click()
+  await expect(page.getByText('Delete 1 clip(s) permanently?')).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+
+  await expect(page.getByText('Deleted 1 clip(s)')).toBeVisible()
+  await expect(page.locator('#bulk-bar')).toHaveCount(0)
+  await expect(page.locator('.clip-card[data-id="e2e-scratch-delete"]')).toHaveCount(0)
+})

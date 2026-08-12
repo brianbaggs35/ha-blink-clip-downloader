@@ -220,6 +220,14 @@ _FAILED_UPLOAD_CLIP_ID = "e2e-failed-upload"
 _BIOMETRICS_CLIP_ID = "e2e-biometrics-source"
 _BIOMETRICS_CLIP_DURATION = 3  # seconds — kept in sync with the generated video
 
+# Its own dedicated clip for the bulk-delete test — bulkDelete() is
+# destructive, so this can't reuse _SCRATCH_CLIP_IDS (star/tag tests need
+# those to keep existing) or a "distribution" clip (whose camera/source/
+# starred/tagged counts other tests assert as exact numbers). Only one
+# clip: exercising bulkDelete's Promise.all over a single id already
+# covers the same code path a multi-id selection would.
+_DELETE_TEST_CLIP_ID = "e2e-scratch-delete"
+
 
 async def _generate_test_video(path: Path, duration: int) -> None:
     proc = await asyncio.create_subprocess_exec(
@@ -380,6 +388,14 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     biometrics_clip["path"] = str(biometrics_source)
     biometrics_clip["duration"] = _BIOMETRICS_CLIP_DURATION
     await db.add_clip(biometrics_clip)
+
+    # source="snapshot" (not "pir"), same reasoning as the biometrics clip
+    # just above: keeps this off library-filters.spec.ts's "pir" source-
+    # filter count. library-selection.spec.ts's bulk-delete test removes
+    # this before status.spec.ts or storage.spec.ts run (declaration order
+    # is execution order given workers: 1), so it never shows up in either
+    # of their own Test-Scratch/total-clip counts.
+    await db.add_clip(_clip(_DELETE_TEST_CLIP_ID, _SCRATCH_CAMERA, "snapshot", 13, now))
 
     # Enrolled household members, seeded directly rather than through the
     # UI's enroll flow — that needs facenet_pytorch, not installed in this
