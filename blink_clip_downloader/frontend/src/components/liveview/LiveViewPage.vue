@@ -1,3 +1,13 @@
+<script lang="ts">
+// Module scope — survives across this component's own mount/unmount cycles,
+// unlike anything declared inside <script setup> below (which re-executes
+// fresh on every mount, so it can't remember what a previous mount did).
+// Lets a fresh mount wait for a stop request the PREVIOUS mount just issued
+// to actually land server-side before trusting a status check — see
+// onMounted/onUnmounted below for why that ordering matters.
+let pendingStop: Promise<unknown> | null = null
+</script>
+
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import videojs from 'video.js'
@@ -123,9 +133,20 @@ function applyStatus(s: LiveViewStatus) {
 
   if (s.active && s.state === 'live' && s.session_id && s.session_id !== sourcedSessionId) {
     sourcedSessionId = s.session_id
+    const sessionId = s.session_id
     const p = ensurePlayer()
-    p.src([{ src: liveViewPlaylistUrl(s.session_id), type: 'application/x-mpegURL' }])
-    p.play()?.catch(() => {})
+    // Video.js's tech (VHS, for HLS) isn't necessarily mounted the instant
+    // videojs() returns from ensurePlayer() — calling .src() before
+    // player.ready() fires is a known way to get a spurious, immediately-
+    // superseded MEDIA_ERR_SRC_NOT_SUPPORTED ("The media could not be
+    // loaded...") on the first camera selected after mount, even though the
+    // source is fine and playback goes on to start normally moments later.
+    // player.ready() runs its callback right away if the player is already
+    // ready, so this is always safe, not just on that first call.
+    p.ready(() => {
+      p.src([{ src: liveViewPlaylistUrl(sessionId), type: 'application/x-mpegURL' }])
+      p.play()?.catch(() => {})
+    })
   }
 
   if (!s.active) {
@@ -203,6 +224,18 @@ async function stop() {
 onMounted(async () => {
   await loadCameras()
   if (unmounted) return
+  if (pendingStop) {
+    // A previous mount of this same tab (quickly navigating away and back)
+    // may still have a stop request in flight from onUnmounted below.
+    // Wait for it to actually land before trusting a status check, or this
+    // mount can "adopt" a session that's a moment away from being torn
+    // down server-side — leaving the camera picker stuck showing it as
+    // selected even though it's about to stop (or has already stopped, but
+    // this status check raced ahead of that).
+    await pendingStop
+    pendingStop = null
+    if (unmounted) return
+  }
   try {
     // Adopt an already-active session (e.g. started from another browser
     // tab) instead of presenting an empty picker while it's running.
@@ -220,7 +253,9 @@ onMounted(async () => {
 onUnmounted(() => {
   unmounted = true
   stopTimers()
-  if (status.value.session_id) void stopLiveView(status.value.session_id)
+  if (status.value.session_id) {
+    pendingStop = stopLiveView(status.value.session_id).catch(() => {})
+  }
   player?.dispose()
 })
 </script>
