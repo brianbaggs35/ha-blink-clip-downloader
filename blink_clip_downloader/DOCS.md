@@ -247,6 +247,20 @@ selected** for several at once) regardless of this cap.
 | `archive_enabled` | `false` | Compress old clips into monthly ZIP files |
 | `archive_after_days` | `60` | Clips older than N days are archived (1–365) |
 
+Eligibility is per clip, not per month: a clip is swept in the moment it
+turns `archive_after_days` old, checked once per poll cycle. A practical
+effect of this is that a given month's archive can appear to fill in
+gradually over the following weeks, rather than all at once — the 1st of
+the month crosses the age threshold roughly a month before the 28th–31st
+does, so a mid-month check of that month's ZIP will often show it still
+short a few of the month's later days. This is expected behavior for
+age-based retention, the same way it would work anywhere else clips age out
+on a rolling basis — it is not a sign anything is stuck. If you want
+everything currently eligible archived immediately rather than waiting for
+it to trickle in over the rest of the poll cycle's schedule, use **Run
+Archiving Now** on the Storage tab's Archived Clips section, which sweeps
+the full current backlog on demand.
+
 ### Google Drive Backup
 
 Everything about connecting an account, choosing a backup folder, and picking a
@@ -811,9 +825,11 @@ from any browser without leaving Home Assistant.
 - **Biometrics tab** — enroll household members' faces (from a clip's frames or a
   single photo), approve/un-approve/rename/remove them, and the all-or-nothing
   suspicious-flag bypass this powers — see **Biometrics Tab** above.
-- **Storage tab** — view and delete archived clips, and connect a Google Drive
-  account to back them up — see [Storage Tab — Google Drive
-  Backup](#storage-tab--google-drive-backup) below.
+- **Storage tab** — view and delete archived clips, run archiving on demand
+  instead of waiting for the next poll cycle, and connect a Google Drive
+  account to back clips up, including retrying any upload that failed — see
+  [Storage Tab — Google Drive Backup](#storage-tab--google-drive-backup)
+  below.
 - **Automations tab** — ready-to-paste HA automation YAML snippets, plus a
   **Notification Channels** panel to test-send an email/Discord message/mobile
   push before enabling that channel for real.
@@ -988,7 +1004,19 @@ Backup policy (also settable from the same card):
 
 A **Back Up Existing Clips Now** button queues everything already eligible
 under the current policy — without it, connecting Drive for the first time
-would only cover clips going forward.
+would only cover clips going forward. It also retries anything that
+previously failed (see below), not just clips that were never queued.
+
+### Failed uploads
+
+An individual clip can fail to upload (a dropped connection, a Drive API
+error, a full quota) without affecting the rest of the queue. When at least
+one clip has failed, a **Failed Uploads** list appears on the Google Drive
+card showing each one's camera and error message, with a **Retry** button
+per clip and a **Retry All Failed** button for all of them at once — both
+just reset the clip back to pending, so it's picked up by the same upload
+queue as anything else. **Back Up Existing Clips Now** above also retries
+every failed clip as part of its normal sweep.
 
 ### What this does and doesn't do
 
