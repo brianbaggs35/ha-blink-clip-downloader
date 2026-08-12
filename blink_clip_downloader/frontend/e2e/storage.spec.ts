@@ -63,3 +63,20 @@ test('Google Drive card shows the disconnected setup prompt with no account conf
   ).toBeVisible()
   await expect(page.locator('#gdrive-client-id')).toHaveValue('')
 })
+
+// Must run after every test above: it archives standalone_server.py's
+// _PENDING_ARCHIVE_CLIP_ID (seeded old enough to already be eligible, on
+// its own dedicated Test Scratch clip so it can't collide with anything
+// else), which creates a brand new third archive group — the earlier
+// tests in this file all assert an exact panel count (2, or 1 after the
+// delete test) that a pre-existing archive group would throw off if this
+// ran first. Declaration order is execution order here (workers: 1,
+// no parallelism within a file).
+test('Run Archiving Now sweeps the currently-eligible backlog immediately', async ({ page }) => {
+  const panelsBefore = await page.locator('.archive-panel').count()
+
+  await page.getByRole('button', { name: 'Run Archiving Now' }).click()
+  await expect(page.getByText(/^Archived \d+ clip\(s\)$/)).toBeVisible()
+
+  await expect(page.locator('.archive-panel')).toHaveCount(panelsBefore + 1)
+})
