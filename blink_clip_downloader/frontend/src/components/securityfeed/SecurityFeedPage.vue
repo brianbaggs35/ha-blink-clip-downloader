@@ -138,6 +138,12 @@ onUnmounted(stopRefreshTimer)
       most recently cached — no extra load on Blink's API beyond what this add-on already does.
     </p>
 
+    <Message severity="info" size="small" :closable="false" class="secfeed-info-banner">
+      Tiles only change when Blink itself records new motion on that camera — this isn't a continuous live feed, and
+      "Refresh every" just controls how often we re-check for a newer cached snapshot, not how often a new one is taken.
+      A quiet camera can show the same image for a while; that's expected, not stuck.
+    </Message>
+
     <div v-if="loading" style="padding: 1rem"><LoadingIndicator /></div>
     <Message v-else-if="loadError" severity="error" size="small" :closable="false">
       Failed to load the Security Feed. Try refreshing the page.
@@ -225,6 +231,10 @@ onUnmounted(stopRefreshTimer)
 
 .page-intro {
   color: var(--muted);
+  margin-bottom: 1rem;
+}
+
+.secfeed-info-banner {
   margin-bottom: 1rem;
 }
 
