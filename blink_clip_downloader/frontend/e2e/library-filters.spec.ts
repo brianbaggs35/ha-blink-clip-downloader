@@ -8,11 +8,12 @@ import { test, expect } from './coverage-fixtures'
 // any test (see library-modal.spec.ts, which uses its own separate scratch
 // clips) — so those counts stay correct no matter what order specs run in.
 // TOTAL_CLIPS is the one exception: it also includes standalone_server.py's
-// _PENDING_ARCHIVE_CLIP_ID/_FAILED_UPLOAD_CLIP_ID (both on Test Scratch,
-// both archived=FALSE until storage.spec.ts's later tests touch them) —
-// safe only because library-filters.spec.ts alphabetically (and therefore
-// chronologically, given workers: 1) runs before storage.spec.ts.
-const TOTAL_CLIPS = 16
+// _PENDING_ARCHIVE_CLIP_ID/_FAILED_UPLOAD_CLIP_ID/_BIOMETRICS_CLIP_ID (all
+// three on Test Scratch, all archived=FALSE until storage.spec.ts's later
+// tests touch the first two) — safe only because library-filters.spec.ts
+// alphabetically (and therefore chronologically, given workers: 1) runs
+// before storage.spec.ts.
+const TOTAL_CLIPS = 17
 const CLIPS_PER_CAMERA = 4
 
 test.beforeEach(async ({ page }) => {
