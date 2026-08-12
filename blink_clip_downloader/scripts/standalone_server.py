@@ -29,6 +29,7 @@ import tempfile
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
 
@@ -36,6 +37,7 @@ from blink_downloader import media_server
 from blink_downloader.analyzer import ClipAnalyzer
 from blink_downloader.archiver import ClipArchiver
 from blink_downloader.database import ClipDatabase
+from blink_downloader.live_view import LiveViewManager
 from blink_downloader.media_server import MediaServer
 
 
@@ -55,6 +57,30 @@ def _redirect_data_files(data_dir: Path) -> None:
     media_server.MediaServer._CAMERA_CONFIGS_FILE = data_dir / "camera_configs.json"
     media_server.MediaServer._VEHICLE_SETTINGS_FILE = data_dir / "vehicle_settings.json"
     media_server.MediaServer._FINETUNE_STATE_FILE = data_dir / "finetune_state.json"
+    media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR = (
+        data_dir / "vehicle_zone_snapshots"
+    )
+
+
+def _force_face_recognition_available() -> None:
+    """Biometrics' nav tab — and BiometricsPage.vue's whole enroll form — are
+    hidden/disabled whenever GET /api/ai/faces reports available=false,
+    which vision.is_face_recognition_available() genuinely does here:
+    facenet_pytorch is part of the optional CV-pipeline extra (see
+    pyproject.toml), not this lightweight test environment. Patched to
+    always return True (media_server.py imported the name directly, via
+    `from .vision import ... is_face_recognition_available`, so it must be
+    patched on the *media_server* module, not vision — same reasoning as
+    _redirect_data_files patching MediaServer's own class attributes
+    above) so the tab and its CRUD (list/rename/approve/remove the
+    enrollments seeded below) are e2e-reachable. The actual embedding step
+    (FaceEmbedder.embed(), called only from the enroll endpoint) still
+    independently discovers facenet_pytorch is missing and gracefully
+    returns "no face detected" either way — a real, already-handled
+    response, not something this patch papers over — so an enrollment can
+    never actually (falsely) succeed here.
+    """
+    media_server.is_face_recognition_available = lambda: True
 
 
 # Port 1 is a reserved/privileged port nothing ever listens on, so
@@ -170,6 +196,36 @@ _PENDING_ARCHIVE_HOURS_AGO = 140  # ~5.8 days
 # the archive-delete test, and this needs to stay untouched by that.
 _FAILED_UPLOAD_CLIP_ID = "e2e-failed-upload"
 
+# A real, valid (not just placeholder bytes) short video, on _SCRATCH_CAMERA
+# so it doesn't inflate any real camera's count. Unlocks two things that
+# otherwise fail/404 in this environment: Biometrics' "enroll from a clip"
+# frame picker (_handle_clip_frames genuinely shells out to ffmpeg against
+# the clip's file_path — placeholder bytes just fail extraction instead of
+# exercising the real success path) and VehicleZonePicker's background
+# image (its drawing surface only initializes once a real <img> load event
+# fires on a clip thumbnail — reuses the exact camera the existing "car
+# camera" e2e test already marks, Test Scratch, so no new test dependency).
+_BIOMETRICS_CLIP_ID = "e2e-biometrics-source"
+_BIOMETRICS_CLIP_DURATION = 3  # seconds — kept in sync with the generated video
+
+
+async def _generate_test_video(path: Path, duration: int) -> None:
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"testsrc=duration={duration}:size=64x64:rate=5",
+        "-pix_fmt",
+        "yuv420p",
+        str(path),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await proc.wait()
+
+
 # Security Feed unlock: MediaServer's list_camera_names/get_camera_snapshot
 # are narrow callables (see media_server.py's __init__), deliberately not
 # routed through blinkpy/LiveViewManager — a fake camera list plus a real
@@ -196,6 +252,42 @@ async def _camera_snapshot(camera: str) -> bytes | None:
     if camera == _SECURITY_FEED_NO_SNAPSHOT_CAMERA:
         return None
     return _fake_snapshot_jpeg()
+
+
+# Live View unlock: MediaServer's live_view is a real LiveViewManager here
+# (unlike list_camera_names/get_camera_snapshot above, it isn't optional —
+# every /api/liveview/* route 503s without one), given a fake get_camera
+# whose init_livestream() always raises. Actually starting a session needs
+# a real Blink live-stream feeding a real ffmpeg process — completely out
+# of reach here — but this still exercises everything up to that point for
+# real: the camera picker, selecting a camera, the "starting" state, and a
+# genuine (not mocked) LiveViewError being caught and surfaced as a toast,
+# through live_view.py's real _create_session code path.
+class _FakeLiveViewCamera:
+    async def init_livestream(self) -> None:
+        # A small, deliberate delay — a real blinkpy call to Blink's cloud
+        # takes a real network round trip, giving LiveViewPage.vue's
+        # "starting" placeholder a real window to render before the error
+        # arrives. Without this, the fake camera fails near-instantly
+        # (no real I/O happening at all), racing ahead of the frontend's
+        # own render cycle and making that placeholder's e2e coverage
+        # flaky/unreliable to assert on.
+        await asyncio.sleep(0.3)
+        raise NotImplementedError("e2e fake camera has no live view support")
+
+
+# dict[str, Any] (not dict[str, _FakeLiveViewCamera]), matching
+# tests/test_live_view.py's own _get_camera_from fixture helper — needed so
+# _live_view_get_camera's inferred return type is Any (satisfies
+# LiveViewManager's real BlinkCamera | None signature) rather than pyright
+# tracking the concrete fake class and rejecting the mismatch.
+_LIVE_VIEW_CAMERA_REGISTRY: dict[str, Any] = {
+    name: _FakeLiveViewCamera() for name in _CAMERAS
+}
+
+
+def _live_view_get_camera(name: str):
+    return _LIVE_VIEW_CAMERA_REGISTRY.get(name)
 
 
 async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
@@ -257,6 +349,43 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
         _FAILED_UPLOAD_CLIP_ID, "failed", error="Simulated failure for e2e testing"
     )
 
+    # See _BIOMETRICS_CLIP_ID's comment above for why this needs a *real*
+    # video, not just a placeholder file like the archiving clip above.
+    biometrics_dir = archive_source_dir.parent / "biometrics-source"
+    biometrics_dir.mkdir(parents=True, exist_ok=True)
+    biometrics_source = biometrics_dir / f"{_BIOMETRICS_CLIP_ID}.mp4"
+    await _generate_test_video(biometrics_source, _BIOMETRICS_CLIP_DURATION)
+    biometrics_source.with_suffix(".jpg").write_bytes(_fake_snapshot_jpeg())
+    # source="snapshot" (not "pir"): keeps this off library-filters.spec.ts's
+    # "pir" source-filter count. hours_ago=12 (not 0-11, where every
+    # distribution clip already lives — see _distribution_clips): keeps it
+    # from inserting into the *global* newest-first ordering those clips'
+    # relative prev/next relationships depend on (library-modal.spec.ts),
+    # while staying inside EnrollFromClipPicker's default 24h lookback and
+    # still sorting newest-on-Test-Scratch (ahead of the ~100h-old scratch
+    # clips), so it's auto-selected with no extra click needed.
+    biometrics_clip = _clip(_BIOMETRICS_CLIP_ID, _SCRATCH_CAMERA, "snapshot", 12, now)
+    biometrics_clip["path"] = str(biometrics_source)
+    biometrics_clip["duration"] = _BIOMETRICS_CLIP_DURATION
+    await db.add_clip(biometrics_clip)
+
+    # Enrolled household members, seeded directly rather than through the
+    # UI's enroll flow — that needs facenet_pytorch, not installed in this
+    # lightweight test environment (see is_face_recognition_available()).
+    # Real embedding vectors aren't needed: nothing in list/rename/approve/
+    # delete inspects embedding *values* — only enroll does, and that's
+    # blocked either way here. "Alex E2E" has two enrollments with
+    # different approved states (exercises the mixedApproval badge);
+    # "Jordan E2E" is fully approved.
+    await db.add_face_enrollment("Alex E2E", [0.1, 0.2, 0.3], approved=True)
+    await db.add_face_enrollment("Alex E2E", [0.4, 0.5, 0.6], approved=False)
+    await db.add_face_enrollment("Jordan E2E", [0.7, 0.8, 0.9], approved=True)
+    # A third, dedicated to the rename-then-remove test — kept apart from
+    # Alex (a static mixedApproval reference) and Jordan (dedicated to the
+    # approve-toggle test) so those two tests' assertions never have to
+    # account for this one's mutations.
+    await db.add_face_enrollment("Casey E2E", [0.15, 0.25, 0.35], approved=True)
+
     # Battery history for the Status tab's battery strip/history modal
     # tests — Front Door ends up "ok", Backyard ends up "low" with one
     # prior recovered episode so the history modal has something to show.
@@ -275,6 +404,7 @@ async def _main() -> None:
 
     data_dir = Path(tempfile.mkdtemp(prefix="blink-e2e-data-"))
     _redirect_data_files(data_dir)
+    _force_face_recognition_available()
 
     db = ClipDatabase(dsn=dsn)
     await db.init()
@@ -292,6 +422,13 @@ async def _main() -> None:
     archiver = ClipArchiver(
         db=db, archive_dir=archive_dir, archive_after_days=5, enabled=True
     )
+    # Not started (no .start() call) — its sweep loop only matters for a
+    # session that actually got past _create_session, which the fake
+    # camera above can never reach; start_session/stop_session/get_status
+    # don't depend on the sweep loop running.
+    live_view = LiveViewManager(
+        get_camera=_live_view_get_camera, list_camera_names=_list_camera_names
+    )
     server = MediaServer(
         db=db,
         port=port,
@@ -299,6 +436,7 @@ async def _main() -> None:
         archiver=archiver,
         list_camera_names=_list_camera_names,
         get_camera_snapshot=_camera_snapshot,
+        live_view=live_view,
     )
     await server.start()
     print(f"Standalone e2e server ready on http://localhost:{port}/", flush=True)

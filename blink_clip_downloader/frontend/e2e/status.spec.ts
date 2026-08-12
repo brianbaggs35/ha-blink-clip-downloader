@@ -16,10 +16,11 @@ import { test, expect } from './coverage-fixtures'
 // - Archived starts at a fixed seed count of 3, but storage.spec.ts's
 //   delete test removes one of them later in the run.
 // - Total clips/Test Scratch's count include standalone_server.py's
-//   _PENDING_ARCHIVE_CLIP_ID (archived=FALSE-filtered, so it counts here,
-//   same as every other not-yet-archived clip) — storage.spec.ts's own
-//   "Run Archiving Now" test archives it away later in the run, which is
-//   exactly what that test is verifying.
+//   _PENDING_ARCHIVE_CLIP_ID and _BIOMETRICS_CLIP_ID (both archived=FALSE-
+//   filtered, so they count here, same as every other not-yet-archived
+//   clip) — storage.spec.ts's own "Run Archiving Now" test archives the
+//   former away later in the run, which is exactly what that test is
+//   verifying; the latter stays archived=FALSE for the whole run.
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   await page.locator('.app-nav-tab[data-tab="status"]').click()
@@ -32,7 +33,7 @@ test('shows disconnected (no live Blink session) and the seeded library totals',
 
   const libraryCard = page.locator('.status-card', { hasText: 'Clip Library' })
   await expect(libraryCard).toContainText('Total clips')
-  await expect(libraryCard.locator('.status-row', { hasText: 'Total clips' })).toContainText('16')
+  await expect(libraryCard.locator('.status-row', { hasText: 'Total clips' })).toContainText('17')
   await expect(libraryCard.locator('.status-row', { hasText: 'Archived' })).toContainText('3')
 })
 
@@ -42,7 +43,7 @@ test('shows every seeded camera with its total clip count', async ({ page }) => 
   await expect(camerasCard.locator('.status-row', { hasText: 'Front Door' })).toContainText('4 clips')
   await expect(camerasCard.locator('.status-row', { hasText: 'Backyard' })).toContainText('4 clips')
   await expect(camerasCard.locator('.status-row', { hasText: 'Garage' })).toContainText('4 clips')
-  await expect(camerasCard.locator('.status-row', { hasText: 'Test Scratch' })).toContainText('4 clips')
+  await expect(camerasCard.locator('.status-row', { hasText: 'Test Scratch' })).toContainText('5 clips')
 })
 
 test('shows the configured (but unreachable) AI provider as offline', async ({ page }) => {
