@@ -94,6 +94,13 @@ describe('SecurityFeedPage', () => {
     expect(wrapper.text()).toContain('No cameras found')
   })
 
+  it('shows an info banner explaining tiles only update on new motion', async () => {
+    vi.stubGlobal('fetch', routedFetch({ cameras: ['Front Door'] }))
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.find('.secfeed-info-banner').text()).toContain('only change when Blink itself records new motion')
+  })
+
   it('renders a tile per camera when no camera filter is saved', async () => {
     vi.stubGlobal('fetch', routedFetch({ cameras: ['Front Door', 'Backyard'] }))
     const wrapper = mountPage()
