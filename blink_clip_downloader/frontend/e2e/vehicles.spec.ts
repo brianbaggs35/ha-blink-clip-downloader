@@ -99,6 +99,56 @@ test('drawing and saving a rectangle zone shows the saved preview and survives a
   await expect(cardAfterReload.locator('.zone-rect')).toBeVisible()
 })
 
+// Continues from the previous test: Test Scratch has a saved rect zone and
+// the page was just reloaded (fresh component state, no leftover draft).
+test('too-small drags stay unsaveable, Clear wipes an in-progress draft, and Cancel discards it', async ({
+  page,
+}) => {
+  const card = page.locator('.camera-card', { hasText: 'Test Scratch' })
+  await card.getByRole('button', { name: 'Edit zone' }).click()
+  await expect(card.locator('.picker-overlay')).toBeVisible()
+
+  const img = card.locator('.picker-image')
+  await expect.poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  const overlay = card.locator('.picker-overlay')
+  await overlay.scrollIntoViewIfNeeded()
+  const box = await overlay.boundingBox()
+  if (!box) throw new Error('zone picker overlay has no bounding box')
+
+  // A drag smaller than MIN_RECT_SIZE (vehicleZoneGeometry.ts) draws
+  // visually but isn't a real selection yet — Save stays disabled and no
+  // Clear button appears (nothing meaningful to explicitly discard).
+  await page.mouse.move(box.x + 10, box.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 12, box.y + 12)
+  await page.mouse.up()
+  await expect(card.getByRole('button', { name: 'Save zone' })).toBeDisabled()
+  await expect(card.getByRole('button', { name: 'Clear', exact: true })).toHaveCount(0)
+
+  // A real-sized drag elsewhere on the frame replaces it with a valid,
+  // saveable draft — starting well clear of the tiny rect's corners so this
+  // draws a fresh rectangle instead of resizing the old one (hitTest()
+  // would treat a pointerdown near an existing corner as a resize grab).
+  await page.mouse.move(box.x + box.width - 80, box.y + box.height - 60)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width - 20, box.y + box.height - 20, { steps: 5 })
+  await page.mouse.up()
+  await expect(card.locator('.zone-rect')).toBeVisible()
+  await expect(card.getByRole('button', { name: 'Save zone' })).toBeEnabled()
+
+  // "Clear" wipes just the in-progress draft, not the already-saved zone.
+  await card.getByRole('button', { name: 'Clear', exact: true }).click()
+  await expect(card.locator('.zone-rect')).toHaveCount(0)
+  await expect(card.getByRole('button', { name: 'Save zone' })).toBeDisabled()
+
+  // "Cancel" backs out of edit mode entirely, back to the untouched
+  // preview of the zone test 4 saved — proving neither the too-small drag
+  // nor the cleared draft above ever got persisted.
+  await card.getByRole('button', { name: 'Cancel' }).click()
+  await expect(card.locator('.picker-overlay-static')).toBeVisible()
+  await expect(card.locator('.zone-rect')).toBeVisible()
+})
+
 test('Edit zone re-enters the drawing view, and Clear zone removes the saved zone', async ({ page }) => {
   const card = page.locator('.camera-card', { hasText: 'Test Scratch' })
   await card.getByRole('button', { name: 'Edit zone' }).click()
@@ -116,4 +166,46 @@ test('Edit zone re-enters the drawing view, and Clear zone removes the saved zon
   await expect(page.getByText('Vehicle zone cleared')).toBeVisible()
   await expect(cardAfterReload.locator('.zone-rect')).toHaveCount(0)
   await expect(cardAfterReload.locator('.picker-overlay')).toBeVisible()
+})
+
+// Continues from the previous test: Test Scratch's zone was just cleared,
+// so the card is already in edit mode with no saved zone — the shape
+// toggle defaults back to "Rectangle" every time resetDraft() runs, so
+// switching to Freeform here is a real, exercised click, not a no-op.
+test('drawing and saving a freeform zone shows the polygon preview and survives a reload', async ({ page }) => {
+  const card = page.locator('.camera-card', { hasText: 'Test Scratch' })
+  await expect(card.locator('.picker-overlay')).toBeVisible()
+  await card.getByRole('button', { name: '✏️ Freeform' }).click()
+
+  const img = card.locator('.picker-image')
+  await expect.poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  const overlay = card.locator('.picker-overlay')
+  await overlay.scrollIntoViewIfNeeded()
+  const box = await overlay.boundingBox()
+  if (!box) throw new Error('zone picker overlay has no bounding box')
+
+  // A 3-point trace — addFreeformPoint (vehicleZoneGeometry.ts) drops
+  // points closer than 4px to the last one, and polygonToFraction needs at
+  // least 3 points plus a bounding-box span over MIN_POLYGON_SPAN, so each
+  // move below is spaced well past both thresholds.
+  await page.mouse.move(box.x + 20, box.y + 20)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width - 20, box.y + 20, { steps: 5 })
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height - 20, { steps: 5 })
+  await page.mouse.up()
+  await expect(card.locator('.zone-polygon')).toBeVisible()
+
+  const saveZoneBtn = card.getByRole('button', { name: 'Save zone' })
+  await expect(saveZoneBtn).toBeEnabled()
+  await saveZoneBtn.click()
+  await expect(page.getByText('Vehicle zone saved')).toBeVisible()
+
+  await expect(card.locator('.picker-overlay-static')).toBeVisible()
+  await expect(card.locator('.zone-polygon')).toBeVisible()
+  await expect(card.locator('.zone-rect')).toHaveCount(0)
+
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="vehicles"]').click()
+  const cardAfterReload = page.locator('.camera-card', { hasText: 'Test Scratch' })
+  await expect(cardAfterReload.locator('.zone-polygon')).toBeVisible()
 })
