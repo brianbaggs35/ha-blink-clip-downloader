@@ -1928,9 +1928,15 @@ class MediaServer:
         backup_policy = str(
             body.get("backup_policy", "archived_only") or "archived_only"
         )
-        self._gdrive_client.set_settings(
-            client_id, str(client_secret) if client_secret else None, backup_policy
-        )
+        try:
+            self._gdrive_client.set_settings(
+                client_id,
+                str(client_secret) if client_secret else None,
+                backup_policy,
+            )
+        except OSError as exc:
+            _LOGGER.warning("Could not save Google Drive settings: %s", exc)
+            raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
         return web.json_response({"saved": True})
 
     async def _handle_gdrive_status(  # NOSONAR

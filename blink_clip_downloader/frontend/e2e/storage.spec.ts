@@ -3,9 +3,12 @@ import { test, expect } from './coverage-fixtures'
 // Archived Clips is fully DB-backed (standalone_server.py's _ARCHIVE_CLIPS
 // seeds 3 pre-archived clips: two sharing one archive_path so they group
 // into a single "archive", one alone in its own) — no Google account
-// needed. Google Drive itself can't be exercised past its disconnected
-// state without real OAuth credentials, so only that initial rendering is
-// covered here.
+// needed. Google Drive itself wires in a real (but uncredentialed)
+// GDriveClient, so the settings form's save/persist round trip is real
+// too — but actually connecting an account needs real OAuth credentials
+// this environment doesn't have, so that (and anything nested behind it:
+// quota, folder browsing, backup-now, GoogleDriveFailedUploads) stays out
+// of reach here.
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   await page.locator('.app-nav-tab[data-tab="storage"]').click()
@@ -62,6 +65,25 @@ test('Google Drive card shows the disconnected setup prompt with no account conf
     connectionCard.getByText('Set a Google OAuth Client ID and Secret above to connect an account.'),
   ).toBeVisible()
   await expect(page.locator('#gdrive-client-id')).toHaveValue('')
+})
+
+test('saving Google Drive settings persists them and survives a reload', async ({ page }) => {
+  await page.locator('#gdrive-client-id').fill('123.apps.googleusercontent.com')
+  await page.locator('#gdrive-client-secret input').fill('e2e-fake-secret')
+  await page.locator('#gdrive-backup-policy').click()
+  await page.getByRole('option', { name: 'All clips (archived + regular downloads)' }).click()
+
+  await page.getByRole('button', { name: 'Save Setup' }).click()
+  await expect(page.getByText('Google Drive settings saved')).toBeVisible()
+
+  // The secret field clears itself right after a successful save (never
+  // re-displayed once stored — see GoogleDriveCard.vue's saveSettings) but
+  // the client id and backup policy both round-trip through a real reload.
+  await expect(page.locator('#gdrive-client-secret input')).toHaveValue('')
+
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="storage"]').click()
+  await expect(page.locator('#gdrive-client-id')).toHaveValue('123.apps.googleusercontent.com')
 })
 
 // Must run after every test above: it archives standalone_server.py's

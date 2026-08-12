@@ -5874,6 +5874,21 @@ async def test_gdrive_settings_put_saves(db: ClipDatabase) -> None:
         await tc.close()
 
 
+async def test_gdrive_settings_put_write_failure_returns_500(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock()
+    gdrive_client.set_settings.side_effect = OSError("disk full")
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.put(
+            "/api/storage/gdrive/settings",
+            json={"client_id": "cid", "client_secret": "csecret"},
+        )
+        assert resp.status == 500
+    finally:
+        await tc.close()
+
+
 async def test_gdrive_status_not_configured(client: TestClient) -> None:
     resp = await client.get("/api/storage/gdrive/status")
     assert resp.status == 200

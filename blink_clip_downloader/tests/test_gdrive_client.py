@@ -124,19 +124,24 @@ def test_set_settings_invalid_policy_falls_back_to_archived_only(
     assert client.backup_policy == "archived_only"
 
 
-def test_set_settings_oserror_is_logged(
+def test_set_settings_oserror_propagates_after_updating_in_memory(
     client: GDriveClient,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     def _raise(*_a: object, **_k: object) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr("pathlib.Path.write_text", _raise)
-    with caplog.at_level("WARNING"):
+    with pytest.raises(OSError):
         client.set_settings("cid", "csecret", "archived_only")
 
-    assert "Could not save Google Drive settings" in caplog.text
+    # The in-memory update happens before the write attempt (see
+    # set_settings's docstring), so the change still takes effect for the
+    # rest of this session even though persisting it failed — the caller
+    # (media_server.py's _handle_gdrive_settings_put) is responsible for
+    # turning the propagated OSError into an honest failure response.
+    assert client.client_id == "cid"
+    assert client.has_client_secret is True
 
 
 def test_load_settings_from_existing_file(

@@ -33,10 +33,11 @@ from typing import Any
 
 from PIL import Image
 
-from blink_downloader import media_server
+from blink_downloader import gdrive_client, media_server
 from blink_downloader.analyzer import ClipAnalyzer
 from blink_downloader.archiver import ClipArchiver
 from blink_downloader.database import ClipDatabase
+from blink_downloader.gdrive_client import GDriveClient
 from blink_downloader.live_view import LiveViewManager
 from blink_downloader.media_server import MediaServer
 
@@ -60,6 +61,17 @@ def _redirect_data_files(data_dir: Path) -> None:
     media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR = (
         data_dir / "vehicle_zone_snapshots"
     )
+    # gdrive_client.py's CREDENTIALS_FILE/SETTINGS_FILE are bare
+    # module-level constants — referenced as globals throughout that
+    # module (SETTINGS_FILE.write_text(...), etc.), not MediaServer class
+    # attributes like the others above — so they're redirected on the
+    # gdrive_client module itself, same reasoning as
+    # _force_face_recognition_available() patching media_server directly
+    # below. Must happen before GDriveClient() is constructed in _main():
+    # its __init__ reads both files immediately via _load_settings()/
+    # _load_credentials().
+    gdrive_client.CREDENTIALS_FILE = data_dir / "google_drive_credentials.json"
+    gdrive_client.SETTINGS_FILE = data_dir / "google_drive_settings.json"
 
 
 def _force_face_recognition_available() -> None:
@@ -429,6 +441,18 @@ async def _main() -> None:
     live_view = LiveViewManager(
         get_camera=_live_view_get_camera, list_camera_names=_list_camera_names
     )
+    # A real (but unconfigured/uncredentialed) GDriveClient — constructing
+    # one does nothing beyond loading the two files redirected above (both
+    # absent, so it starts out blank/disconnected). This unlocks the
+    # Storage tab's settings-save flow for e2e coverage; every endpoint
+    # that needs an actual connection (status beyond "disconnected", quota,
+    # folders, backup-now, upload) still correctly reports not-connected or
+    # fails fast rather than making a real call to Google — same
+    # real-dependency-that-fails-gracefully idea as everywhere else in this
+    # script. _handle_gdrive_connect (the one path that *would* call out to
+    # Google) stays unreachable without both a client id and secret saved,
+    # which nothing here does.
+    gdrive = GDriveClient()
     server = MediaServer(
         db=db,
         port=port,
@@ -437,6 +461,7 @@ async def _main() -> None:
         list_camera_names=_list_camera_names,
         get_camera_snapshot=_camera_snapshot,
         live_view=live_view,
+        gdrive_client=gdrive,
     )
     await server.start()
     print(f"Standalone e2e server ready on http://localhost:{port}/", flush=True)

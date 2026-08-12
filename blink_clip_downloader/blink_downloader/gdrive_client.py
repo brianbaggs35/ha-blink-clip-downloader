@@ -252,7 +252,13 @@ class GDriveClient:
 
         *client_secret* of None (or empty) keeps the previously stored
         secret — the settings form doesn't need to re-collect it on every
-        save of an unrelated field like backup_policy.
+        save of an unrelated field like backup_policy. The in-memory update
+        above happens before the write below so the change still takes
+        immediate effect this session even if persisting it fails; that
+        failure propagates to the caller (media_server.py's
+        _handle_gdrive_settings_put turns it into a 500) rather than being
+        swallowed here, so a user clicking Save gets an honest result
+        instead of a false "saved" response.
         """
         self._client_id = client_id.strip()
         if client_secret:
@@ -260,19 +266,16 @@ class GDriveClient:
         self.backup_policy = (
             backup_policy if backup_policy in _BACKUP_POLICIES else "archived_only"
         )
-        try:
-            SETTINGS_FILE.write_text(
-                json.dumps(
-                    {
-                        "client_id": self._client_id,
-                        "client_secret": self._client_secret,
-                        "backup_policy": self.backup_policy,
-                    },
-                    indent=2,
-                )
+        SETTINGS_FILE.write_text(
+            json.dumps(
+                {
+                    "client_id": self._client_id,
+                    "client_secret": self._client_secret,
+                    "backup_policy": self.backup_policy,
+                },
+                indent=2,
             )
-        except OSError as exc:
-            _LOGGER.warning("Could not save Google Drive settings: %s", exc)
+        )
 
     @property
     def client_id(self) -> str:
