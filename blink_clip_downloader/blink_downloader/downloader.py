@@ -612,7 +612,10 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             except (ValueError, AttributeError):
                 ts = datetime.now(UTC)
 
-        dest = self._storage.resolve_path(camera_name, ts, clip_id)
+        # See the identical .astimezone() call (and its comment) in
+        # _download_clip above — local-storage clips need the same local-day
+        # folder/filename treatment, not raw UTC.
+        dest = self._storage.resolve_path(camera_name, ts.astimezone(), clip_id)
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         if dest.exists():
@@ -831,7 +834,20 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 _LOGGER.warning("Storage quota reached, skipping clip %s", clip_id)
                 return None
 
-            dest = self._storage.resolve_path(camera_name, timestamp, clip_id)
+            # The on-disk date folder/filename must reflect the *local*
+            # calendar day, not raw UTC (Blink's created_at is always UTC,
+            # confirmed by _in_time_window's identical conversion below) —
+            # same reasoning as gdrive_queue.py's _local_date_str. Using the
+            # UTC day here instead used to file a clip that happened at, say,
+            # 9:30pm local under the *next* day's folder for any timezone
+            # behind UTC — mismatching the Google Drive backup folder (which
+            # already converts to local), so the same clip could show up in
+            # two different "day" folders depending on which one you looked
+            # at. Only the path changes; the DB/result "timestamp" below
+            # stays the original UTC instant, unconverted.
+            dest = self._storage.resolve_path(
+                camera_name, timestamp.astimezone(), clip_id
+            )
             dest.parent.mkdir(parents=True, exist_ok=True)
 
             # Already on disk but not in tracker (e.g. tracker was reset).

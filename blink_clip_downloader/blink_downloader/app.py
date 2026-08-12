@@ -555,6 +555,35 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         _LOGGER.info(
             "  HA event watch  : %s", "on" if self._config.watch_ha_events else "off"
         )
+        self._warn_if_archive_after_retention()
+
+    def _warn_if_archive_after_retention(self) -> None:
+        """Archiving only ever gets a clip if it becomes archive-eligible
+        *before* retention deletes it (see _poll_cycle's ordering comment).
+
+        If archive_after_days >= retention_days, every clip is deleted by
+        retention on or before the day it would have become eligible for
+        archiving — archiving silently never runs on anything, and nothing
+        ever reaches Google Drive under the "archived_only" backup policy.
+        This is exactly the shipped default relationship (retention_days=30,
+        archive_after_days=60), so it's worth a loud warning rather than
+        just quietly doing nothing.
+        """
+        if not self._config.archive_enabled:
+            return
+        if self._config.retention_days == 0:
+            return  # 0 means "keep forever" — retention can never race it.
+        if self._config.archive_after_days >= self._config.retention_days:
+            _LOGGER.warning(
+                "archive_after_days (%d) is not less than retention_days "
+                "(%d) — clips will be deleted by retention before they ever "
+                "become old enough to archive, so archiving (and any Google "
+                "Drive backup relying on it) will not do anything. Lower "
+                "archive_after_days below retention_days, or raise "
+                "retention_days above it, to fix this.",
+                self._config.archive_after_days,
+                self._config.retention_days,
+            )
 
     async def _finish_startup(self) -> None:
         """Mark connected, publish status, and start event/analysis background tasks."""
@@ -717,17 +746,23 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # quota.
         await self._battery_monitor.check_and_alert()
 
-        deleted_paths = self._storage.apply_retention_policy_paths()
-        if deleted_paths:
-            _LOGGER.info("Retention removed %d file(s)", len(deleted_paths))
-            if self._config.enable_library_db:
-                # apply_retention_policy_paths() only touches the
-                # filesystem — without this, a deleted clip's row (and its
-                # tags/analysis results) would linger in the DB forever,
-                # pointing at a file that no longer exists.
-                for path in deleted_paths:
-                    await self._db.delete_clip_by_path(str(path))
-
+        # Archiver runs BEFORE retention, not after: both are independent,
+        # uncoordinated age cutoffs racing over the same clip, and retention
+        # unconditionally deletes the file *and* the DB row (see below) with
+        # nothing left for the archiver to find afterward. Archiving a clip
+        # first removes its source file from download_path as a side effect
+        # (see ClipArchiver._archive_month), so by the time retention's own
+        # filesystem sweep runs moments later, that file is already gone —
+        # retention can no longer race it away regardless of how close
+        # archive_after_days and retention_days are, as long as archiving is
+        # given the chance to run first. Doing this the other way around (as
+        # this used to) meant any clip whose retention_days cutoff was
+        # reached at or before its archive_after_days cutoff — true of this
+        # add-on's own shipped defaults (retention_days=30 <
+        # archive_after_days=60) — got permanently deleted before the
+        # archiver ever saw it, silently defeating archiving/Drive backup
+        # for most of the library. See _check_archive_retention_config below
+        # for the startup-time warning covering that same misconfiguration.
         archived = await self._archiver.run()
         if archived:
             _LOGGER.info("Archiver compressed %d clip(s)", len(archived))
@@ -738,6 +773,17 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             # eventually connects, so nothing archived is ever missed.
             for clip in archived:
                 await self._gdrive_queue.enqueue(clip)
+
+        deleted_paths = self._storage.apply_retention_policy_paths()
+        if deleted_paths:
+            _LOGGER.info("Retention removed %d file(s)", len(deleted_paths))
+            if self._config.enable_library_db:
+                # apply_retention_policy_paths() only touches the
+                # filesystem — without this, a deleted clip's row (and its
+                # tags/analysis results) would linger in the DB forever,
+                # pointing at a file that no longer exists.
+                for path in deleted_paths:
+                    await self._db.delete_clip_by_path(str(path))
 
         if self._storage.is_over_quota():
             msg = (
@@ -866,8 +912,15 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         # analyze=False for backlog clips beyond _MAX_AUTO_ANALYZE_BURST (see
         # _on_clips_downloaded) — still downloaded, notified, and stored
-        # normally, just not queued for (paid) AI analysis.
-        if analyze and self._analysis_queue:
+        # normally, just not queued for (paid) AI analysis. source="liveview"
+        # clips are excluded the same way regardless of the burst limiter:
+        # they're recordings of a session the user was already watching live,
+        # so an automatic analysis would just spend tokens summarizing
+        # something already seen firsthand. This only affects the automatic
+        # queue — media_server.py's _handle_ai_analyze_now ("Analyze Now" on
+        # the clip modal) is a separate, unconditional path and still works
+        # for these clips on request.
+        if analyze and clip.get("source") != "liveview" and self._analysis_queue:
             await self._analysis_queue.enqueue(clip)
 
         # Regular (not-yet-archived) clips only get backed up under the

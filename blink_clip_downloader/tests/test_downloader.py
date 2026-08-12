@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import time
@@ -49,6 +50,25 @@ def _force_utc_timezone():
             os.environ.pop("TZ", None)
         else:
             os.environ["TZ"] = original_tz
+        time.tzset()
+
+
+@contextlib.contextmanager
+def _local_timezone(tz_name: str):
+    """Force the process's local timezone for the duration of the block —
+    overrides the autouse UTC-pinning fixture above for tests that need to
+    prove local-day (not UTC-day) behavior. Mirrors the identical helper in
+    test_gdrive_queue.py/test_database.py."""
+    original = os.environ.get("TZ")
+    os.environ["TZ"] = tz_name
+    time.tzset()
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original
         time.tzset()
 
 
@@ -1057,6 +1077,60 @@ async def test_download_clip_invalid_created_at_falls_back_to_now(dl, tmp_path):
 
     assert result is not None
     assert result["timestamp"]  # a real ISO timestamp was generated
+
+
+async def test_download_clip_uses_local_day_for_path_not_utc(dl, tmp_path):
+    """The on-disk date folder/filename must reflect the *local* calendar
+    day, not raw UTC — Blink's created_at is always UTC (see
+    _in_time_window's identical conversion), so a clip a few hours before
+    UTC midnight is already the *next* UTC day while still being the
+    previous day locally. Matches gdrive_queue.py's _local_date_str, so a
+    clip's local file path and its Google Drive backup folder agree on
+    which day it belongs to instead of landing a day apart."""
+    clip = {
+        "id": 42,
+        "device_name": "Front Door",
+        "media": "/api/v1/accounts/1/clip/42.mp4",
+        "created_at": "2024-06-15T02:30:00+00:00",  # 2:30am UTC
+        "duration": 5,
+        "network_id": 1,
+        "source": "pir",
+        "deleted": False,
+    }
+    content = b"fake video data"
+
+    async def _iter_chunks(chunk_size):
+        yield content
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.content.iter_chunked = _iter_chunks
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.closed = False
+    dl._session = mock_session
+
+    mock_blink = MagicMock()
+    mock_blink.auth.header = {}
+    mock_blink.urls.base_url = "https://rest-prod.immedia-semi.com"
+    dl._blink = mock_blink
+    dl._db = None
+
+    sem = asyncio.Semaphore(1)
+    with _local_timezone("America/New_York"):  # UTC-4 in June (EDT)
+        result = await dl._download_clip(clip, sem)
+
+    assert result is not None
+    # 2024-06-15T02:30 UTC is still 2024-06-14 22:30 in America/New_York —
+    # the file must be filed under the *previous* day, not the UTC day.
+    assert "2024-06-14" in result["path"]
+    assert "2024-06-15" not in result["path"]
+    # The stored/returned timestamp itself stays the original UTC instant,
+    # unconverted — only the filesystem path changes.
+    assert result["timestamp"].startswith("2024-06-15T02:30:00")
 
 
 async def test_download_clip_already_on_disk_marks_downloaded(dl, tmp_path):
@@ -2136,6 +2210,42 @@ async def test_download_local_storage_parses_string_created_at(dl, tmp_path):
 
     assert len(results) == 1
     assert results[0]["timestamp"].startswith("2024-06-01T08:00:00")
+
+
+async def test_download_local_storage_uses_local_day_for_path_not_utc(dl, tmp_path):
+    """Same local-day requirement as test_download_clip_uses_local_day_for_
+    path_not_utc, for the separate local-storage call site into
+    resolve_path() — it must not regress to raw UTC independently."""
+    mock_item = MagicMock()
+    mock_item.id = 4244
+    mock_item.name = "Patio"
+    mock_item.created_at = "2024-06-15T02:30:00+00:00"  # 2:30am UTC
+    mock_item.size = 1024
+    mock_item.prepare_download = AsyncMock(return_value=True)
+
+    async def _fake_download(blink, file_name, max_retries=4):
+        Path(file_name).parent.mkdir(parents=True, exist_ok=True)
+        Path(file_name).write_bytes(b"V" * 50)
+        return True
+
+    mock_item.download_video = _fake_download
+
+    mock_sync = MagicMock()
+    mock_sync.local_storage = True
+    mock_sync.update_local_storage_manifest = AsyncMock()
+    mock_sync._local_storage = {"manifest": {mock_item}, "last_manifest_id": "m4"}
+
+    dl._blink = MagicMock()
+    dl._blink.sync = {"Network": mock_sync}
+    dl._db = None
+
+    with _local_timezone("America/New_York"):  # UTC-4 in June (EDT)
+        results = await dl.download_local_storage_clips()
+
+    assert len(results) == 1
+    assert "2024-06-14" in results[0]["path"]
+    assert "2024-06-15" not in results[0]["path"]
+    assert results[0]["timestamp"].startswith("2024-06-15T02:30:00")
 
 
 async def test_download_local_storage_unparseable_created_at_falls_back_to_now(

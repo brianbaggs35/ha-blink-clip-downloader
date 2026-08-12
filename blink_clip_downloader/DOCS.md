@@ -245,7 +245,17 @@ selected** for several at once) regardless of this cap.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `archive_enabled` | `false` | Compress old clips into monthly ZIP files |
-| `archive_after_days` | `60` | Clips older than N days are archived (1–365) |
+| `archive_after_days` | `21` | Clips older than N days are archived (1–365) |
+
+**`archive_after_days` must be lower than `retention_days`** (see
+[Retention & Quota](#retention--quota) above, default `30`). Retention
+deletes a clip's file — and its database row — outright once it crosses
+`retention_days`, with no regard for whether it's been archived yet; if
+`archive_after_days` isn't comfortably below that, retention deletes most
+clips before archiving ever gets a chance to preserve them, and little to
+nothing reaches your ZIP archives (or Google Drive, under the
+`archived_only` backup policy) no matter how long the add-on runs. A
+startup log warning calls this out if your configuration has it backwards.
 
 Eligibility is per clip, not per month: a clip is swept in the moment it
 turns `archive_after_days` old, checked once per poll cycle. A practical

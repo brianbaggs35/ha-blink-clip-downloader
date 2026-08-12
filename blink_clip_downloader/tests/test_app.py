@@ -228,6 +228,100 @@ async def test_poll_cycle_no_gdrive_enqueue_when_nothing_archived(app):
     app._gdrive_queue.enqueue.assert_not_awaited()
 
 
+async def test_poll_cycle_archiver_runs_before_retention(app):
+    """Archiving a clip removes its source file as a side effect (see
+    ClipArchiver._archive_month) — running the archiver first means that by
+    the time retention's own filesystem sweep runs moments later, a
+    just-archived clip's file is already gone and can't be raced away.
+    Doing this the other way around (as it used to) meant any clip whose
+    retention_days cutoff was reached at or before its archive_after_days
+    cutoff — true of this add-on's own shipped defaults before they were
+    fixed — got permanently deleted (file *and* DB row) before the archiver
+    ever got a chance to see it, silently defeating archiving/Drive backup
+    for most of the library."""
+    call_order: list[str] = []
+
+    async def _fake_archive():
+        call_order.append("archive")
+        return []
+
+    def _fake_retention():
+        call_order.append("retention")
+        return []
+
+    app._archiver.run = AsyncMock(side_effect=_fake_archive)
+    app._storage.apply_retention_policy_paths = MagicMock(side_effect=_fake_retention)
+
+    await app._poll_cycle()
+
+    assert call_order == ["archive", "retention"]
+
+
+# ---------------------------------------------------------------------------
+# _warn_if_archive_after_retention
+# ---------------------------------------------------------------------------
+
+
+def test_warns_when_archive_after_days_not_less_than_retention(app, caplog):
+    app._config.archive_enabled = True
+    app._config.retention_days = 30
+    app._config.archive_after_days = 60
+
+    with caplog.at_level("WARNING", logger="blink_downloader.app"):
+        app._warn_if_archive_after_retention()
+
+    assert "archive_after_days" in caplog.text
+    assert "retention_days" in caplog.text
+
+
+def test_warns_when_archive_after_days_equals_retention(app, caplog):
+    """A tie is still a bug — retention runs first each cycle (before this
+    fix) and would win every time, so >= (not just >) must warn."""
+    app._config.archive_enabled = True
+    app._config.retention_days = 30
+    app._config.archive_after_days = 30
+
+    with caplog.at_level("WARNING", logger="blink_downloader.app"):
+        app._warn_if_archive_after_retention()
+
+    assert "archive_after_days" in caplog.text
+
+
+def test_no_warning_when_archive_after_days_less_than_retention(app, caplog):
+    app._config.archive_enabled = True
+    app._config.retention_days = 30
+    app._config.archive_after_days = 21
+
+    with caplog.at_level("WARNING", logger="blink_downloader.app"):
+        app._warn_if_archive_after_retention()
+
+    assert caplog.text == ""
+
+
+def test_no_warning_when_archiving_disabled(app, caplog):
+    app._config.archive_enabled = False
+    app._config.retention_days = 30
+    app._config.archive_after_days = 60
+
+    with caplog.at_level("WARNING", logger="blink_downloader.app"):
+        app._warn_if_archive_after_retention()
+
+    assert caplog.text == ""
+
+
+def test_no_warning_when_retention_kept_forever(app, caplog):
+    """retention_days=0 means "keep forever" — retention can never race
+    archiving away, regardless of archive_after_days."""
+    app._config.archive_enabled = True
+    app._config.retention_days = 0
+    app._config.archive_after_days = 60
+
+    with caplog.at_level("WARNING", logger="blink_downloader.app"):
+        app._warn_if_archive_after_retention()
+
+    assert caplog.text == ""
+
+
 # ---------------------------------------------------------------------------
 # _on_clips_downloaded
 # ---------------------------------------------------------------------------
@@ -316,6 +410,82 @@ async def test_on_clips_downloaded_enqueues_for_analysis_when_configured(app):
     await app._on_clips_downloaded(clips)
 
     app._analysis_queue.enqueue.assert_awaited_once_with(clips[0])
+
+
+async def test_on_clips_downloaded_skips_analysis_for_liveview_source(app):
+    """A clip recorded from a Live View session must not be auto-queued for
+    AI analysis — the user was already watching live when it was recorded,
+    so an automatic analysis would just spend tokens summarizing something
+    already seen firsthand. Manual "Analyze Now" from the clip modal
+    (media_server.py's _handle_ai_analyze_now) is a separate, unconditional
+    code path and still works for these clips on request."""
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.enqueue = AsyncMock()
+    clips = [
+        {
+            "id": "1",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "t",
+            "size_bytes": 5,
+            "source": "liveview",
+        }
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._analysis_queue.enqueue.assert_not_awaited()
+
+
+async def test_on_clips_downloaded_analyzes_non_liveview_clips_in_mixed_batch(app):
+    """A liveview clip alongside regular clips in the same batch must not
+    suppress analysis for the others — only the liveview clip is skipped."""
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.enqueue = AsyncMock()
+    clips = [
+        {
+            "id": "1",
+            "camera": "C",
+            "path": "/p1",
+            "timestamp": "t",
+            "size_bytes": 5,
+            "source": "liveview",
+        },
+        {
+            "id": "2",
+            "camera": "C",
+            "path": "/p2",
+            "timestamp": "t",
+            "size_bytes": 5,
+            "source": "pir",
+        },
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._analysis_queue.enqueue.assert_awaited_once_with(clips[1])
+
+
+async def test_on_clips_downloaded_still_backs_up_liveview_clips_to_gdrive(app):
+    """The liveview AI-analysis exclusion is deliberately narrow — Drive
+    backup (unlike paid-per-token AI analysis) still covers these clips
+    normally under the "all_clips" policy."""
+    app._gdrive_client.backup_policy = "all_clips"
+    app._gdrive_queue.enqueue = AsyncMock()
+    clips = [
+        {
+            "id": "1",
+            "camera": "C",
+            "path": "/p",
+            "timestamp": "t",
+            "size_bytes": 5,
+            "source": "liveview",
+        }
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._gdrive_queue.enqueue.assert_awaited_once_with(clips[0])
 
 
 async def test_on_clips_downloaded_enqueues_for_gdrive_under_all_clips_policy(app):
