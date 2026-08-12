@@ -1,5 +1,63 @@
 # Changelog
 
+## 5.4.1
+
+### Bug fixes
+
+- **Clips could land in the wrong day's Google Drive backup folder.** A
+  clip's on-disk filename and date folder were dated using raw UTC, while
+  the Drive backup folder structure already converted to local time — so a
+  clip from, say, 9:30pm local could file under "today" on disk but
+  "tomorrow" in its Drive folder. Both now agree.
+- **Most clips never made it to a ZIP archive (or Google Drive) at all.**
+  Retention and archiving are two independent, uncoordinated age cutoffs
+  that both apply to the same clips — retention ran first every poll cycle
+  and unconditionally deleted a clip's file *and* its database row once it
+  crossed `retention_days`, with no regard for whether archiving had gotten
+  to it yet. Combined with this add-on's own shipped defaults
+  (`retention_days=30` < `archive_after_days=60`), archiving effectively
+  never ran on anything. Fixed by running the archiver before retention
+  each cycle, and lowering the default `archive_after_days` to 21 so a
+  fresh install isn't misconfigured out of the box. A startup log warning
+  now flags this misconfiguration if you've customized either value such
+  that it recurs.
+- **Live View could show "The media could not be loaded…" even though
+  playback started fine a moment later.** Video.js's HLS tech isn't
+  necessarily mounted the instant the player is created — sourcing it
+  before `player.ready()` fires could produce a spurious, immediately-
+  superseded error on the first camera you selected after opening the tab.
+- **Navigating away from Live View and back could leave the previous
+  camera stuck showing as selected**, with its session still technically
+  alive server-side. The stop request fired on navigating away is
+  fire-and-forget (Vue can't block navigation on it) and could lose a race
+  against a fast return trip's own status check; that check now waits for
+  a still-in-flight stop from the previous visit before trusting what it
+  sees.
+- **Clips recorded from a Live View session are no longer auto-queued for
+  AI analysis.** You're already watching live when one of these is
+  recorded, so an automatic analysis just spent tokens summarizing
+  something already seen firsthand — "Analyze Now" on the clip modal still
+  works for these on request.
+
+### Housekeeping
+
+- The Security Feed tab now explains, right on the page, that tiles only
+  update when Blink itself records new motion on that camera — it's not a
+  continuous live feed, and "Refresh every" only controls how often the
+  page re-checks for a newer cached snapshot, not how often a new one is
+  taken. Came up as a "the image looks stuck" report that turned out to be
+  expected behavior once the mechanism was clear.
+- Gave the Status tab's battery query a properly-ordered index, so
+  `get_latest_battery_state()` (run on every Status tab load) can be
+  satisfied with a plain index scan.
+- Extended the `frontend/e2e/` Playwright suite: the previously-out-of-
+  scope Security Feed tab is now covered (unlocked the same way the AI tab
+  already was — a real dependency pointed at something that fails fast,
+  not a mock), plus deeper coverage of the clip modal (theater mode,
+  auto-play/loop, prev/next navigation, the video-unavailable fallback,
+  and a real Analyze Now round trip) and the AI tab's Test Analysis button.
+  34 tests → 45; statement coverage 48%→52%.
+
 ## 5.4.0
 
 ### Added
