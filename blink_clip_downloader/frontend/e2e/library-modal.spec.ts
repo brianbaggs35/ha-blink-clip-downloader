@@ -182,4 +182,38 @@ test('expanding the AI panel and clicking Analyze Now shows a real analysis resu
   await modal.getByRole('button', { name: 'Analyze Now' }).click()
   await expect(modal.getByText('No frames could be extracted')).toBeVisible()
   await expect(modal.locator('.ai-badge-clean')).toHaveText('✓ Clear')
+
+  await modal.getByRole('button', { name: 'Full response' }).click()
+  await expect(modal.getByRole('button', { name: 'Hide response' })).toBeVisible()
+
+  await modal.getByRole('button', { name: '↺ Re-analyze' }).click()
+  await expect(page.getByText('AI analysis complete')).toBeVisible()
+  await expect(modal.locator('.ai-badge-clean')).toHaveText('✓ Clear')
+
+  await modal.getByRole('button', { name: '👍 Correct' }).click()
+  await expect(page.getByText('Feedback recorded — thanks!')).toBeVisible()
+  await expect(modal.getByText('👍 Marked correct')).toBeVisible()
+
+  await modal.getByRole('button', { name: 'Clear', exact: true }).click()
+  await expect(page.getByText('Feedback cleared')).toBeVisible()
+  await expect(modal.getByText('Was this verdict correct?')).toBeVisible()
+
+  await modal.getByRole('button', { name: '👎 Incorrect' }).click()
+  await modal.locator('#clip-ai-feedback-note').fill('e2e: actually a delivery')
+  await modal.locator('label', { hasText: 'flagged suspicious' }).locator('input[type="checkbox"]').check()
+  await modal.getByRole('button', { name: 'Submit' }).click()
+  await expect(page.getByText('Feedback recorded — thanks!').last()).toBeVisible()
+  await expect(modal.getByText('👎 Marked incorrect')).toBeVisible()
+  await expect(modal.getByText('"e2e: actually a delivery"')).toBeVisible()
+
+  // biometrics.spec.ts (runs before this file alphabetically) leaves
+  // exactly two enrolled people (Alex E2E, Jordan E2E — Casey E2E was
+  // renamed then removed there), so more than one name on file means this
+  // shows the picker rather than auto-submitting against a lone name.
+  await modal.getByRole('button', { name: 'Report a missed face match' }).click()
+  await expect(modal.locator('#clip-ai-face-report-name')).toBeVisible()
+  await modal.locator('#clip-ai-face-report-name').selectOption('Alex E2E')
+  await modal.getByRole('button', { name: 'Submit report' }).click()
+  await expect(page.getByText('Thanks, reported — visible on the Biometrics activity card')).toBeVisible()
+  await expect(modal.getByText('✓ Reported — thanks')).toBeVisible()
 })
