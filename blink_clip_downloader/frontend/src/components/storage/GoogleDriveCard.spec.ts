@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import GoogleDriveCard from './GoogleDriveCard.vue'
 import { useConfirmStore } from '../../stores/confirm'
+import { useToastStore } from '../../stores/toast'
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -276,6 +277,40 @@ describe('GoogleDriveCard', () => {
     const wrapper = mountCard()
     await flushPromises()
     expect(wrapper.text()).toContain('Unlimited storage')
+  })
+
+  it('treats a failed quota fetch as unavailable rather than crashing', async () => {
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url.startsWith('/api/storage/gdrive/quota'))
+        return Promise.resolve({ ok: false, status: 500, statusText: 'err', text: () => Promise.resolve('') })
+      return routedFetch({ settings: CONFIGURED, status: CONNECTED_WITH_FOLDER })(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('me@example.com')
+    expect(wrapper.text()).not.toContain('Unlimited storage')
+    expect(wrapper.text()).not.toContain('GB used')
+  })
+
+  it('shows an error toast when triggering a manual backup fails', async () => {
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/storage/gdrive/backup-now')
+        return Promise.resolve({ ok: false, status: 500, statusText: 'err', text: () => Promise.resolve('') })
+      return routedFetch({ settings: CONFIGURED, status: CONNECTED_WITH_FOLDER })(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    const backupBtn = wrapper.findAll('button').find((b) => b.text() === 'Back Up Existing Clips Now')
+    await backupBtn!.trigger('click')
+    await flushPromises()
+
+    const toast = useToastStore()
+    expect(toast.message).toBe('Could not start backup')
+    expect(toast.isError).toBe(true)
   })
 
   it('triggers a manual backup and shows the enqueued count', async () => {
