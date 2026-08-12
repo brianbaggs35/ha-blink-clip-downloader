@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createGDriveFolder,
   disconnectGDrive,
+  getFailedGDriveUploads,
   getGDriveConnectStatus,
   getGDriveQueueStatus,
   getGDriveQuota,
   getGDriveSettings,
   getGDriveStatus,
   listGDriveFolders,
+  retryFailedGDriveUploads,
   saveGDriveSettings,
   selectGDriveFolder,
   startGDriveConnect,
@@ -148,5 +150,28 @@ describe('gdrive api', () => {
       '/api/storage/gdrive/upload',
       expect.objectContaining({ body: JSON.stringify({ clip_ids: ['c1'], folder_id: '' }) }),
     )
+  })
+
+  it('getFailedGDriveUploads()', async () => {
+    await getFailedGDriveUploads()
+    expect(fetch).toHaveBeenCalledWith('/api/storage/gdrive/queue/failed', {})
+  })
+
+  it('retryFailedGDriveUploads() with a clip id', async () => {
+    await retryFailedGDriveUploads('c1')
+    expect(fetch).toHaveBeenCalledWith('/api/storage/gdrive/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clip_id: 'c1' }),
+    })
+  })
+
+  it('retryFailedGDriveUploads() with no clip id sends no body (retry all)', async () => {
+    await retryFailedGDriveUploads()
+    expect(fetch).toHaveBeenCalledWith('/api/storage/gdrive/retry', {
+      method: 'POST',
+      headers: undefined,
+      body: undefined,
+    })
   })
 })

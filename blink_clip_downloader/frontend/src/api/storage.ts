@@ -1,4 +1,4 @@
-import { apiGet } from './client'
+import { apiGet, apiPost } from './client'
 import type { ArchiveGroup } from './types'
 
 export interface ArchiveGroupFilters {
@@ -18,4 +18,10 @@ function buildQuery(filters: ArchiveGroupFilters): string {
 
 export function getArchiveGroups(filters: ArchiveGroupFilters = {}): Promise<ArchiveGroup[]> {
   return apiGet(`/api/storage/archives${buildQuery(filters)}`)
+}
+
+/** Sweeps everything currently eligible for archiving immediately, instead
+ * of waiting for the next poll cycle. */
+export function runArchiveNow(): Promise<{ archived: number }> {
+  return apiPost('/api/storage/archive/run-now')
 }

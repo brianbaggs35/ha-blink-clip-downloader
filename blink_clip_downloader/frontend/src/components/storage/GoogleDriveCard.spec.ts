@@ -47,6 +47,7 @@ interface Routes {
   queue?: unknown
   connectStatus?: unknown
   folders?: unknown
+  failedUploads?: unknown
 }
 
 function routedFetch(routes: Routes) {
@@ -68,10 +69,15 @@ function routedFetch(routes: Routes) {
       return Promise.resolve(jsonResponse(routes.connectStatus ?? IDLE_CONNECT))
     if (url === '/api/storage/gdrive/disconnect') return Promise.resolve(jsonResponse({ disconnected: true }))
     if (url === '/api/storage/gdrive/backup-now') return Promise.resolve(jsonResponse({ enqueued: 3 }))
+    if (url === '/api/storage/gdrive/retry' && method === 'POST') return Promise.resolve(jsonResponse({ retried: 1 }))
     if (url === '/api/storage/gdrive/folder' && method === 'PUT') return Promise.resolve(jsonResponse({ saved: true }))
     if (url.startsWith('/api/storage/gdrive/status')) return Promise.resolve(jsonResponse(routes.status))
     if (url.startsWith('/api/storage/gdrive/quota'))
       return Promise.resolve(jsonResponse(routes.quota ?? { available: false }))
+    // Must come before the /api/storage/gdrive/queue prefix check below —
+    // that check's startsWith would otherwise also swallow this route.
+    if (url.startsWith('/api/storage/gdrive/queue/failed'))
+      return Promise.resolve(jsonResponse(routes.failedUploads ?? []))
     if (url.startsWith('/api/storage/gdrive/queue'))
       return Promise.resolve(
         jsonResponse(routes.queue ?? { connected: false, pending: 0, processing: 0, completed: 0, failed: 0 }),
@@ -325,6 +331,49 @@ describe('GoogleDriveCard', () => {
     await flushPromises()
 
     expect(fetchMock).not.toHaveBeenCalledWith('/api/storage/gdrive/disconnect', expect.anything())
+  })
+
+  it('shows failed uploads and reloads queue status after a retry', async () => {
+    const routes: Routes = {
+      settings: CONFIGURED,
+      status: CONNECTED_WITH_FOLDER,
+      queue: { connected: true, pending: 0, processing: 0, completed: 5, failed: 1 },
+      failedUploads: [
+        {
+          clip_id: 'c1',
+          camera: 'Front Door',
+          clip_path: '/c1.mp4',
+          error_message: 'quota exceeded',
+          completed_at: 't',
+        },
+      ],
+    }
+    const fetchMock = routedFetch(routes)
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Failed Uploads (1)')
+    expect(wrapper.text()).toContain('quota exceeded')
+
+    routes.queue = { connected: true, pending: 1, processing: 0, completed: 5, failed: 0 }
+    const retryBtn = wrapper.findAll('button').find((b) => b.text() === 'Retry')
+    await retryBtn!.trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/storage/gdrive/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clip_id: 'c1' }),
+    })
+    expect(wrapper.text()).toContain('1 pending')
+  })
+
+  it('does not show the failed uploads section when nothing has failed', async () => {
+    vi.stubGlobal('fetch', routedFetch({ settings: CONFIGURED, status: CONNECTED_WITH_FOLDER, failedUploads: [] }))
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Failed Uploads')
   })
 
   it('opens the Change Folder dialog and updates the folder on selection', async () => {

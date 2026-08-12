@@ -32,6 +32,7 @@ import { fmtSize } from '../../api/constants'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
+import GoogleDriveFailedUploads from './GoogleDriveFailedUploads.vue'
 import GoogleDriveFolderBrowser from './GoogleDriveFolderBrowser.vue'
 import GoogleDriveSetupHelp from './GoogleDriveSetupHelp.vue'
 
@@ -354,6 +355,8 @@ onUnmounted(stopConnectPolling)
             Backup queue: {{ queueStatus.pending }} pending, {{ queueStatus.processing }} uploading,
             {{ queueStatus.completed }} completed, {{ queueStatus.failed }} failed.
           </p>
+
+          <GoogleDriveFailedUploads @retried="loadQueueStatus" />
 
           <Button
             size="small"

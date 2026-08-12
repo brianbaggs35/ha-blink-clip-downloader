@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getArchiveGroups } from './storage'
+import { getArchiveGroups, runArchiveNow } from './storage'
 
 function jsonResponse(body: unknown) {
   return {
@@ -62,5 +62,16 @@ describe('storage api', () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(groups))
     const result = await getArchiveGroups()
     expect(result).toEqual(groups)
+  })
+
+  it('runArchiveNow()', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ archived: 5 }))
+    const result = await runArchiveNow()
+    expect(fetch).toHaveBeenCalledWith('/api/storage/archive/run-now', {
+      method: 'POST',
+      headers: undefined,
+      body: undefined,
+    })
+    expect(result).toEqual({ archived: 5 })
   })
 })
