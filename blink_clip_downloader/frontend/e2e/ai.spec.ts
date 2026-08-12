@@ -57,3 +57,25 @@ test('Test Analysis runs a real analysis against the most recent clip', async ({
   await expect(page.getByText('✓ AI is working!')).toBeVisible()
   await expect(page.getByText('No frames could be extracted')).toBeVisible()
 })
+
+test('Fetch Models finds none on the unreachable Ollama server, and Copy requires a selection first', async ({
+  page,
+}) => {
+  // AiConnectionCard's model picker is shown for the ollama provider
+  // (showModelPicker()) regardless of connectivity — fetchAiModels() below
+  // makes a real request to the same unreachable port ai_online:false
+  // already comes from. ClipAnalyzer.fetch_models() (analyzer.py) catches
+  // the connection error itself and returns an empty list rather than
+  // raising, so this genuinely lands on the "found none" branch, not a
+  // request failure — same graceful-empty-result shape Test Analysis above
+  // already exercises for analyze_clip.
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  await page.getByRole('button', { name: '📋 Copy' }).click()
+  await expect(page.getByText('Fetch models and pick one first')).toBeVisible()
+
+  await page.getByRole('button', { name: '⟳ Fetch Models' }).click()
+  await expect(page.getByText('No vision models found on this Ollama server')).toBeVisible()
+})
