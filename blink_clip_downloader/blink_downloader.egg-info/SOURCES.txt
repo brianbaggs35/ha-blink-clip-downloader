@@ -5,6 +5,7 @@ blink_downloader/analysis_queue.py
 blink_downloader/analyzer.py
 blink_downloader/app.py
 blink_downloader/archiver.py
+blink_downloader/battery_monitor.py
 blink_downloader/config.py
 blink_downloader/database.py
 blink_downloader/digest.py
@@ -29,9 +30,8 @@ blink_downloader.egg-info/requires.txt
 blink_downloader.egg-info/top_level.txt
 blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
-blink_downloader/static/assets/index-CL8ol0Cd.js
-blink_downloader/static/assets/index-CL8ol0Cd.js.map
-blink_downloader/static/assets/index-Cg526FHc.css
+blink_downloader/static/assets/index-BcLRPwE9.css
+blink_downloader/static/assets/index-Dc_SJRCx.js
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2
@@ -111,6 +111,7 @@ tests/test_analysis_queue.py
 tests/test_analyzer.py
 tests/test_app.py
 tests/test_archiver.py
+tests/test_battery_monitor.py
 tests/test_config.py
 tests/test_database.py
 tests/test_digest.py
