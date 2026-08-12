@@ -61,6 +61,8 @@ interface Routes {
   clips?: Record<string, ClipListItem[]>
   clipsFail?: Record<string, boolean>
   deleteFail?: boolean
+  runNowArchived?: number
+  runNowFail?: boolean
 }
 
 function routedFetch(routes: Routes) {
@@ -68,6 +70,10 @@ function routedFetch(routes: Routes) {
     if (opts?.method === 'DELETE') {
       if (routes.deleteFail) return Promise.reject(new Error('down'))
       return Promise.resolve(jsonResponse({ deleted: true, gdrive_deleted: null }))
+    }
+    if (url === '/api/storage/archive/run-now' && opts?.method === 'POST') {
+      if (routes.runNowFail) return Promise.reject(new Error('down'))
+      return Promise.resolve(jsonResponse({ archived: routes.runNowArchived ?? 0 }))
     }
     if (url.startsWith('/api/storage/archives')) {
       if (routes.groupsFail) return Promise.reject(new Error('down'))
@@ -513,5 +519,52 @@ describe('ArchivedClipsSection', () => {
     // to 0 rather than staying at 10 (which would otherwise slice to empty).
     expect(wrapper.findComponent(Paginator).exists()).toBe(false)
     expect(wrapper.findAll('.archive-panel')).toHaveLength(10)
+  })
+
+  it('runs archiving now, toasts the result, and reloads the archive list', async () => {
+    const groupsBefore = [makeGroup()]
+    const groupsAfter = [makeGroup(), makeGroup({ archive_path: '/data/archives/2026-07.zip' })]
+    let loadCount = 0
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/storage/archive/run-now' && opts?.method === 'POST')
+        return Promise.resolve(jsonResponse({ archived: 3 }))
+      if (url.startsWith('/api/storage/archives')) {
+        loadCount += 1
+        return Promise.resolve(jsonResponse(loadCount === 1 ? groupsBefore : groupsAfter))
+      }
+      if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse([]))
+      return Promise.resolve(jsonResponse([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+    expect(wrapper.findAll('.archive-panel')).toHaveLength(1)
+
+    const toast = useToastStore()
+    const runNowBtn = wrapper.findAll('button').find((b) => b.text() === 'Run Archiving Now')
+    await runNowBtn!.trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/storage/archive/run-now', {
+      method: 'POST',
+      headers: undefined,
+      body: undefined,
+    })
+    expect(toast.message).toBe('Archived 3 clip(s)')
+    expect(wrapper.findAll('.archive-panel')).toHaveLength(2)
+  })
+
+  it('shows an error toast when running archiving now fails', async () => {
+    vi.stubGlobal('fetch', routedFetch({ groups: [makeGroup()], runNowFail: true }))
+    const wrapper = mountSection()
+    await flushPromises()
+
+    const toast = useToastStore()
+    const runNowBtn = wrapper.findAll('button').find((b) => b.text() === 'Run Archiving Now')
+    await runNowBtn!.trigger('click')
+    await flushPromises()
+
+    expect(toast.message).toBe('Could not run archiving')
+    expect(toast.isError).toBe(true)
   })
 })

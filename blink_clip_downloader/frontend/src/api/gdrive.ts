@@ -2,6 +2,7 @@ import { apiGet, apiPost, apiPut } from './client'
 import type {
   GDriveBackupPolicy,
   GDriveConnectState,
+  GDriveFailedUpload,
   GDriveFolder,
   GDriveFoldersResponse,
   GDriveQueueStatus,
@@ -68,4 +69,13 @@ export function triggerGDriveBackupNow(): Promise<{ enqueued: number }> {
 
 export function uploadClipsToGDrive(clipIds: string[], folderId = ''): Promise<{ enqueued: number }> {
   return apiPost('/api/storage/gdrive/upload', { clip_ids: clipIds, folder_id: folderId })
+}
+
+export function getFailedGDriveUploads(): Promise<GDriveFailedUpload[]> {
+  return apiGet('/api/storage/gdrive/queue/failed')
+}
+
+/** Omit clipId to retry every currently-failed upload. */
+export function retryFailedGDriveUploads(clipId?: string): Promise<{ retried: number }> {
+  return apiPost('/api/storage/gdrive/retry', clipId ? { clip_id: clipId } : undefined)
 }

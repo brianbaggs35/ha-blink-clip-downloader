@@ -467,6 +467,14 @@ export interface GDriveQueueStatus {
   failed: number
 }
 
+export interface GDriveFailedUpload {
+  clip_id: string
+  camera: string
+  clip_path: string
+  error_message: string
+  completed_at: string
+}
+
 export interface GDriveFolder {
   id: string
   name: string

@@ -10,7 +10,7 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import { fmtSize, fmtTs } from '../../api/constants'
 import { deleteClip, getCameras, listClips } from '../../api/clips'
-import { getArchiveGroups } from '../../api/storage'
+import { getArchiveGroups, runArchiveNow } from '../../api/storage'
 import type { ArchiveGroup, ClipListItem } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
@@ -43,6 +43,7 @@ const loadingArchive = ref<Record<string, boolean>>({})
 const archiveLoadError = ref<Record<string, boolean>>({})
 const expandedArchives = ref<Set<string>>(new Set())
 const deletingId = ref<string | null>(null)
+const archivingNow = ref(false)
 
 async function loadGroups() {
   loading.value = true
@@ -88,6 +89,19 @@ function clearFilters() {
   cameraFilter.value = 'all'
   sinceFilter.value = ''
   untilFilter.value = ''
+}
+
+async function runArchivingNow() {
+  archivingNow.value = true
+  try {
+    const res = await runArchiveNow()
+    toast.show(`Archived ${res.archived} clip(s)`)
+    await loadGroups()
+  } catch {
+    toast.show('Could not run archiving', true)
+  } finally {
+    archivingNow.value = false
+  }
 }
 
 const hasActiveFilters = computed(() => cameraFilter.value !== 'all' || !!sinceFilter.value || !!untilFilter.value)
@@ -218,6 +232,16 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
         text
         label="Clear filters"
         @click="clearFilters"
+      />
+      <Button
+        size="small"
+        severity="secondary"
+        outlined
+        class="run-archive-now"
+        :loading="archivingNow"
+        :disabled="archivingNow"
+        label="Run Archiving Now"
+        @click="runArchivingNow"
       />
     </div>
 
@@ -355,6 +379,10 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
 
 .archive-filter-camera {
   min-width: 10rem;
+}
+
+.run-archive-now {
+  margin-left: auto;
 }
 
 .archive-filter-date input {
