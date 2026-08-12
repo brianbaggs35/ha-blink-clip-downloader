@@ -35,6 +35,11 @@
   "Run Archiving Now" button above if you want the current backlog swept
   immediately.)
 
+### Housekeeping
+
+- Extended the `frontend/e2e/` Playwright suite with real backend+DB
+  coverage for the new battery strip/history modal and "Run Archiving Now".
+
 ## 5.3.3
 
 ### Bug fixes
