@@ -27,7 +27,10 @@ import os
 import sys
 import tempfile
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
+
+from PIL import Image
 
 from blink_downloader import media_server
 from blink_downloader.analyzer import ClipAnalyzer
@@ -167,6 +170,33 @@ _PENDING_ARCHIVE_HOURS_AGO = 140  # ~5.8 days
 # the archive-delete test, and this needs to stay untouched by that.
 _FAILED_UPLOAD_CLIP_ID = "e2e-failed-upload"
 
+# Security Feed unlock: MediaServer's list_camera_names/get_camera_snapshot
+# are narrow callables (see media_server.py's __init__), deliberately not
+# routed through blinkpy/LiveViewManager — a fake camera list plus a real
+# (tiny, Pillow-generated) JPEG per camera unlocks Security Feed for e2e
+# testing the same cheap way the AI tab is unlocked by a real ClipAnalyzer
+# pointed at an unreachable port, no actual camera hardware needed. Garage
+# deliberately returns no snapshot (None) so its tile exercises the "No
+# snapshot available yet" placeholder path instead of every camera taking
+# the same happy path.
+_SECURITY_FEED_NO_SNAPSHOT_CAMERA = "Garage"
+
+
+def _list_camera_names() -> list[str]:
+    return list(_CAMERAS)
+
+
+def _fake_snapshot_jpeg() -> bytes:
+    buf = BytesIO()
+    Image.new("RGB", (4, 3), color=(80, 120, 160)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+async def _camera_snapshot(camera: str) -> bytes | None:
+    if camera == _SECURITY_FEED_NO_SNAPSHOT_CAMERA:
+        return None
+    return _fake_snapshot_jpeg()
+
 
 async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     now = datetime.now(UTC)
@@ -262,7 +292,14 @@ async def _main() -> None:
     archiver = ClipArchiver(
         db=db, archive_dir=archive_dir, archive_after_days=5, enabled=True
     )
-    server = MediaServer(db=db, port=port, analyzer=analyzer, archiver=archiver)
+    server = MediaServer(
+        db=db,
+        port=port,
+        analyzer=analyzer,
+        archiver=archiver,
+        list_camera_names=_list_camera_names,
+        get_camera_snapshot=_camera_snapshot,
+    )
     await server.start()
     print(f"Standalone e2e server ready on http://localhost:{port}/", flush=True)
 

@@ -78,3 +78,108 @@ test('the close button closes the modal', async ({ page }) => {
   await modal.locator('.modal-close').click()
   await expect(openModal(page)).toHaveCount(0)
 })
+
+test('theater mode toggles a class on the modal and its own label', async ({ page }) => {
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = openModal(page)
+  // Located by its stable title attribute, not its name/text — the button's
+  // own accessible name flips between "Theater"/"Normal" on every click, so
+  // a locator bound to one of those text values stops matching as soon as
+  // it changes.
+  const theaterBtn = modal.locator('button[title="Theater mode"]')
+  await expect(modal.locator('.modal')).not.toHaveClass(/theater/)
+  await expect(theaterBtn).toHaveText(/Theater/)
+
+  await theaterBtn.click()
+  await expect(modal.locator('.modal')).toHaveClass(/theater/)
+  await expect(theaterBtn).toHaveText(/Normal/)
+
+  await theaterBtn.click()
+  await expect(modal.locator('.modal')).not.toHaveClass(/theater/)
+  await expect(theaterBtn).toHaveText(/Theater/)
+})
+
+test('auto-play and loop checkboxes toggle independently', async ({ page }) => {
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = openModal(page)
+  const autoplay = modal.getByLabel('Auto-play next clip')
+  const loop = modal.getByLabel('Loop')
+  await expect(autoplay).not.toBeChecked()
+  await expect(loop).not.toBeChecked()
+
+  await autoplay.check()
+  await expect(autoplay).toBeChecked()
+  await expect(loop).not.toBeChecked()
+
+  await loop.check()
+  await expect(loop).toBeChecked()
+  await expect(autoplay).toBeChecked()
+})
+
+test('prev/next nav buttons and arrow keys move between clips in the same sort order as the grid', async ({ page }) => {
+  // e2e-clip-000 (0h ago) and e2e-clip-001 (1h ago) are adjacent under the
+  // default "newest first" sort — real, seeded ordering, not a mock.
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = openModal(page)
+  await expect(modal.locator('.modal-title')).toContainText('Front Door')
+
+  await modal.locator('.vid-nav-btn[title^="Next"]').click()
+  await expect(modal.locator('.modal-title')).toContainText('Backyard')
+
+  await modal.locator('.vid-nav-btn[title^="Previous"]').click()
+  await expect(modal.locator('.modal-title')).toContainText('Front Door')
+
+  await page.keyboard.press('ArrowDown')
+  await expect(modal.locator('.modal-title')).toContainText('Backyard')
+  await page.keyboard.press('ArrowUp')
+  await expect(modal.locator('.modal-title')).toContainText('Front Door')
+})
+
+test('the download link and video-unavailable fallback point at the real clip stream', async ({ page }) => {
+  // None of the seeded distribution clips have a real file on disk (only a
+  // dedicated archiving-test clip does — see standalone_server.py), so
+  // Video.js reliably hits its error path here, exercising the fallback UI
+  // instead of just the happy path — a real, not-uncommon-in-production
+  // case per ClipModal.vue's own videoError comment, not an artificial
+  // test-only scenario. Not asserting toBeVisible() on .video-fallback
+  // itself: its layout height comes from its thumbnail <img>'s own natural
+  // size, and that thumbnail 404s for the same "no real file on disk"
+  // reason, collapsing it to zero height here — a fixture-data limitation
+  // (same one VehicleZonePicker's e2e coverage is blocked by), not a bug.
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = openModal(page)
+  await expect(modal.locator('.video-fallback')).toContainText("isn't available")
+
+  // Exact match: the fallback panel's own "Download instead" link also
+  // matches a loose /Download/ pattern.
+  const downloadLink = modal.getByRole('link', { name: '⬇ Download', exact: true })
+  await expect(downloadLink).toHaveAttribute('href', '/api/clips/e2e-clip-000/stream')
+})
+
+test('copying the file path shows a confirmation toast', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = openModal(page)
+  await modal.getByRole('button', { name: 'Path' }).click()
+  await expect(page.getByText('File path copied')).toBeVisible()
+})
+
+test('expanding the AI panel and clicking Analyze Now shows a real analysis result', async ({ page }) => {
+  // The real (but unreachable-provider) ClipAnalyzer wired into
+  // standalone_server.py still runs its own local frame-extraction step
+  // before ever reaching the network — since this clip has no real file on
+  // disk, that step genuinely fails, producing a deterministic result from
+  // the actual analyze_clip code path rather than a mocked stand-in.
+  // e2e-clip-001, not -000: ai.spec.ts's "Test Analysis" test always
+  // analyzes the single most-recent clip (e2e-clip-000, 0h old) — using a
+  // different clip here avoids depending on cross-file run order for which
+  // one is "not analyzed yet" when this test starts.
+  await page.locator('.clip-card[data-id="e2e-clip-001"]').click()
+  const modal = openModal(page)
+  await modal.locator('.ai-panel-hdr').click()
+  await expect(modal.getByText('Not analyzed yet')).toBeVisible()
+
+  await modal.getByRole('button', { name: 'Analyze Now' }).click()
+  await expect(modal.getByText('No frames could be extracted')).toBeVisible()
+  await expect(modal.locator('.ai-badge-clean')).toHaveText('✓ Clear')
+})

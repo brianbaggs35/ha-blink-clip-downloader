@@ -37,3 +37,23 @@ test('AI Usage tab shows the configured provider with zero usage recorded', asyn
   await expect(providerCard.locator('.status-row', { hasText: 'Model' })).toContainText('llava')
   await expect(page.getByText('No analysis data yet')).toBeVisible()
 })
+
+// Must run after the AI Usage test above: it creates a real analysis_results
+// row, which would make "No analysis data yet" false if it ran first.
+// Declaration order is execution order here (workers: 1, no intra-file
+// parallelism), same convention storage.spec.ts's own mutating test uses.
+test('Test Analysis runs a real analysis against the most recent clip', async ({ page }) => {
+  // Exercises AiConnectionCard's own runTest()/testResult rendering, a
+  // different frontend entry point into the same real analyze_clip code
+  // path ClipAiPanel's "Analyze Now" already covers from the clip modal —
+  // the most recent seeded clip has no real file on disk, so frame
+  // extraction genuinely (not mocked) comes back empty, landing on the
+  // "AI is working!" success branch with a real, deterministic result.
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  await page.getByRole('button', { name: 'Test Analysis' }).click()
+  await expect(page.getByText('✓ AI is working!')).toBeVisible()
+  await expect(page.getByText('No frames could be extracted')).toBeVisible()
+})

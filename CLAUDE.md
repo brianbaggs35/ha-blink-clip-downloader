@@ -256,14 +256,22 @@ removed in 5.0.0.
   file write silently failed — fixed in 5.3.3; see `_redirect_data_files`
   in the script for why `/data` needs redirecting here in the first
   place). Covers Library
-  (filter/star/tag/modal), Vehicles, Status, AI, AI Usage, Automations,
-  Models, and Storage (Archived Clips list/expand/camera-filter/delete —
-  all DB-backed; Google Drive only as far as its disconnected/
-  not-configured state, since exercising a real connection needs actual
-  OAuth credentials) — deliberately **not** Live View, Security Feed, or
-  Biometrics, which need a real camera/face-recognition dependency this
-  environment doesn't have; those stay covered by their own focused Vitest
-  specs instead. The Vehicles tab's zone-drawing canvas is similarly out of
+  (filter/star/tag/modal, including the clip modal's theater mode/autoplay/
+  loop/prev-next-nav/download-link/AI-panel-analyze-now), Vehicles, Status,
+  AI (including Test Analysis) + AI Usage, Automations, Models, Security
+  Feed, and Storage (Archived Clips list/expand/camera-filter/delete — all
+  DB-backed; Google Drive only as far as its disconnected/not-configured
+  state, since exercising a real connection needs actual OAuth credentials)
+  — deliberately **not** Live View or Biometrics, which need a real
+  camera/face-recognition dependency this environment doesn't have; those
+  stay covered by their own focused Vitest specs instead. Security Feed is
+  unlocked the same cheap way the AI tab is (a real dependency pointed at
+  something that fails fast, not a mock): `list_camera_names`/
+  `get_camera_snapshot` are narrow callables MediaServer takes regardless of
+  blinkpy, so the script wires in a fake camera list plus a real (tiny,
+  Pillow-generated) JPEG per camera — one camera deliberately returns no
+  snapshot, exercising the "No snapshot available yet" placeholder path
+  too. The Vehicles tab's zone-drawing canvas is similarly out of
   reach here for a narrower reason: it only initializes its drawing surface
   once its background `<img>` fires a real `load` event, and thumbnails
   need a real file on disk at the clip's `file_path` (`.with_suffix(".jpg")`)
