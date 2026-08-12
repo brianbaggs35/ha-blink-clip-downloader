@@ -394,8 +394,13 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     # filter count. library-selection.spec.ts's bulk-delete test removes
     # this before status.spec.ts or storage.spec.ts run (declaration order
     # is execution order given workers: 1), so it never shows up in either
-    # of their own Test-Scratch/total-clip counts.
-    await db.add_clip(_clip(_DELETE_TEST_CLIP_ID, _SCRATCH_CAMERA, "snapshot", 13, now))
+    # of their own Test-Scratch/total-clip counts. hours_ago=30, not
+    # something under 24: EnrollFromClipPicker's default lookback window is
+    # the last 24 hours on the selected camera (also Test Scratch), and
+    # biometrics.spec.ts (which runs first alphabetically, well before this
+    # clip is deleted) asserts exactly one clip shows up there — the
+    # biometrics-source clip itself, at hours_ago=12.
+    await db.add_clip(_clip(_DELETE_TEST_CLIP_ID, _SCRATCH_CAMERA, "snapshot", 30, now))
 
     # Enrolled household members, seeded directly rather than through the
     # UI's enroll flow — that needs facenet_pytorch, not installed in this
