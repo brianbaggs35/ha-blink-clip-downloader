@@ -10,13 +10,16 @@ import { test, expect } from './coverage-fixtures'
 // that's real, order-dependent state, not a stale assumption; the exact
 // starred count is already covered in isolation by library-filters.spec.ts).
 // Assertions here stick to what's true regardless of when/in what order
-// this runs: Total clips never changes (archived=FALSE-filtered, so the
-// 3 pre-archived clips standalone_server.py seeds for storage.spec.ts —
-// see _ARCHIVE_CLIPS — don't affect it). Archived does start at a fixed
-// seed count of 3, but storage.spec.ts's delete test removes one of
-// them later in the run — like "Starred" above, this only holds because
+// this runs, with two order-dependent exceptions, both only valid because
 // status.spec.ts alphabetically (and therefore chronologically, given
-// workers: 1) runs before storage.spec.ts.
+// workers: 1) runs before storage.spec.ts:
+// - Archived starts at a fixed seed count of 3, but storage.spec.ts's
+//   delete test removes one of them later in the run.
+// - Total clips/Test Scratch's count include standalone_server.py's
+//   _PENDING_ARCHIVE_CLIP_ID (archived=FALSE-filtered, so it counts here,
+//   same as every other not-yet-archived clip) — storage.spec.ts's own
+//   "Run Archiving Now" test archives it away later in the run, which is
+//   exactly what that test is verifying.
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   await page.locator('.app-nav-tab[data-tab="status"]').click()
@@ -29,7 +32,7 @@ test('shows disconnected (no live Blink session) and the seeded library totals',
 
   const libraryCard = page.locator('.status-card', { hasText: 'Clip Library' })
   await expect(libraryCard).toContainText('Total clips')
-  await expect(libraryCard.locator('.status-row', { hasText: 'Total clips' })).toContainText('14')
+  await expect(libraryCard.locator('.status-row', { hasText: 'Total clips' })).toContainText('16')
   await expect(libraryCard.locator('.status-row', { hasText: 'Archived' })).toContainText('3')
 })
 
@@ -39,7 +42,7 @@ test('shows every seeded camera with its total clip count', async ({ page }) => 
   await expect(camerasCard.locator('.status-row', { hasText: 'Front Door' })).toContainText('4 clips')
   await expect(camerasCard.locator('.status-row', { hasText: 'Backyard' })).toContainText('4 clips')
   await expect(camerasCard.locator('.status-row', { hasText: 'Garage' })).toContainText('4 clips')
-  await expect(camerasCard.locator('.status-row', { hasText: 'Test Scratch' })).toContainText('2 clips')
+  await expect(camerasCard.locator('.status-row', { hasText: 'Test Scratch' })).toContainText('4 clips')
 })
 
 test('shows the configured (but unreachable) AI provider as offline', async ({ page }) => {
@@ -55,4 +58,44 @@ test('clicking an activity chart bar switches to the Library tab filtered to tha
   await firstRow.locator('.act-bar-wrap').click()
 
   await expect(page.locator('.app-nav-tab.active[data-tab="library"]')).toBeVisible()
+})
+
+// Battery readings are seeded directly (add_battery_reading), independent
+// of any clip — Front Door ends up "ok", Backyard ends up "low" with one
+// prior recovered episode (see standalone_server.py's _seed).
+test('shows a battery tile per camera with a recorded reading, distinguishing low from normal', async ({ page }) => {
+  const strip = page.locator('#battery-strip')
+  await expect(strip).toBeVisible()
+
+  const frontDoor = strip.locator('.battery-tile', { hasText: 'Front Door' })
+  await expect(frontDoor).toContainText('Normal')
+  await expect(frontDoor).toContainText('1.65V')
+  await expect(frontDoor).not.toHaveClass(/low/)
+
+  const backyard = strip.locator('.battery-tile', { hasText: 'Backyard' })
+  await expect(backyard).toContainText('Low')
+  await expect(backyard).toHaveClass(/low/)
+})
+
+test('the battery strip renders above the rest of the Status tab', async ({ page }) => {
+  const strip = page.locator('#battery-strip')
+  const grid = page.locator('#status-grid')
+  const [stripBox, gridBox] = await Promise.all([strip.boundingBox(), grid.boundingBox()])
+  expect(stripBox).not.toBeNull()
+  expect(gridBox).not.toBeNull()
+  expect(stripBox!.y).toBeLessThan(gridBox!.y)
+})
+
+test('clicking a battery tile opens its history with state transitions and how long it stayed low', async ({
+  page,
+}) => {
+  await page.locator('#battery-strip .battery-tile', { hasText: 'Backyard' }).click()
+
+  const dialog = page.getByRole('dialog').filter({ hasText: 'Backyard — Battery History' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('Went low')
+  await expect(dialog).toContainText('Back to normal')
+
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await expect(dialog).not.toBeVisible()
 })

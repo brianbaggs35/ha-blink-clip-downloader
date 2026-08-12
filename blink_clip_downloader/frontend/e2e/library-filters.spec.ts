@@ -2,12 +2,17 @@ import { test, expect } from './coverage-fixtures'
 
 // Exercises the Library tab's filters against real, seeded data from a
 // real backend (scripts/standalone_server.py) — not mocked fetch, unlike
-// LibraryPage.spec.ts's Vitest tests. Read-only: every assertion here
-// targets the 12 "distribution" clips + 2 "Test Scratch" clips seeded by
-// that script, deliberately never mutated by any test (see
-// library-modal.spec.ts, which uses its own separate scratch clips) — so
-// these counts stay correct no matter what order specs run in.
-const TOTAL_CLIPS = 14
+// LibraryPage.spec.ts's Vitest tests. Read-only: every per-camera/per-source
+// assertion here targets the 12 "distribution" clips + the original 2
+// "Test Scratch" clips seeded by that script, deliberately never mutated by
+// any test (see library-modal.spec.ts, which uses its own separate scratch
+// clips) — so those counts stay correct no matter what order specs run in.
+// TOTAL_CLIPS is the one exception: it also includes standalone_server.py's
+// _PENDING_ARCHIVE_CLIP_ID/_FAILED_UPLOAD_CLIP_ID (both on Test Scratch,
+// both archived=FALSE until storage.spec.ts's later tests touch them) —
+// safe only because library-filters.spec.ts alphabetically (and therefore
+// chronologically, given workers: 1) runs before storage.spec.ts.
+const TOTAL_CLIPS = 16
 const CLIPS_PER_CAMERA = 4
 
 test.beforeEach(async ({ page }) => {

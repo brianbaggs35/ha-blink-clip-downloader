@@ -31,6 +31,7 @@ from pathlib import Path
 
 from blink_downloader import media_server
 from blink_downloader.analyzer import ClipAnalyzer
+from blink_downloader.archiver import ClipArchiver
 from blink_downloader.database import ClipDatabase
 from blink_downloader.media_server import MediaServer
 
@@ -144,8 +145,30 @@ _ARCHIVE_CLIPS = (
     ("e2e-archive-solo", "Garage", _ARCHIVE_PATH_SOLO, 204),
 )
 
+# A clip old enough to be eligible once the e2e ClipArchiver's
+# archive_after_days=5 (see _main) is applied, for the "Run Archiving Now"
+# test. Two independent constraints pin this to a narrow window: it must be
+# older than 120 hours (archive_after_days=5) while every *other* fixture
+# (distribution clips 0-11 hours, scratch clips ~100-101 hours, _ARCHIVE_CLIPS
+# already archived=True regardless of age) stays under that so only this one
+# clip is swept in — but it must also stay under 168 hours, or the Library
+# tab's own default date filter (dateRange='week', LibraryPage.vue) would
+# hide it from the Library grid entirely, which would silently break
+# library-filters.spec.ts's TOTAL_CLIPS count (that filter isn't applied by
+# /api/cameras or /api/stats, only by the Library tab's own clip list, which
+# is what made this so non-obvious — confirmed by direct API queries before
+# landing on 140h here). 140 clears both with a comfortable margin either way.
+_PENDING_ARCHIVE_CLIP_ID = "e2e-pending-archive"
+_PENDING_ARCHIVE_HOURS_AGO = 140  # ~5.8 days
 
-async def _seed(db: ClipDatabase) -> None:
+# A clip with a simulated failed Google Drive upload, for the Storage tab's
+# Failed Uploads / retry test. Deliberately its own clip rather than reusing
+# one of _ARCHIVE_CLIPS above — "e2e-archive-solo" is already earmarked for
+# the archive-delete test, and this needs to stay untouched by that.
+_FAILED_UPLOAD_CLIP_ID = "e2e-failed-upload"
+
+
+async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     now = datetime.now(UTC)
     for clip in _distribution_clips(now):
         await db.add_clip(clip)
@@ -163,6 +186,56 @@ async def _seed(db: ClipDatabase) -> None:
         await db.add_clip(_clip(clip_id, camera, "pir", hours_ago, now))
         await db.mark_archived(clip_id, archive_path)
 
+    # Both new clips below use _SCRATCH_CAMERA (not a real distribution
+    # camera) and a non-"pir" source, deliberately — every distribution
+    # camera's count, the "pir" source-filter count, and the total clip
+    # count are all asserted as exact numbers elsewhere (status.spec.ts,
+    # library-filters.spec.ts); landing on Test Scratch with a different
+    # source only requires updating that camera's own count + the total,
+    # not every one of those per-camera/per-source assertions individually.
+    # A real file on disk is required for the pending-archive clip —
+    # _archive_month treats a clip whose source file is missing as
+    # unrecoverable and deletes its row instead of archiving it, which
+    # would make this clip vanish rather than prove "Run Archiving Now"
+    # actually archived something.
+    archive_source_dir.mkdir(parents=True, exist_ok=True)
+    pending_source = archive_source_dir / f"{_PENDING_ARCHIVE_CLIP_ID}.mp4"
+    pending_source.write_bytes(b"fake video data for e2e archiving test")
+    pending_clip = _clip(
+        _PENDING_ARCHIVE_CLIP_ID,
+        _SCRATCH_CAMERA,
+        "snapshot",
+        _PENDING_ARCHIVE_HOURS_AGO,
+        now,
+    )
+    pending_clip["path"] = str(pending_source)
+    await db.add_clip(pending_clip)
+
+    # A clip with a failed Google Drive upload, for the Failed Uploads /
+    # retry test — the retry endpoints only need self._db (see
+    # media_server.py's _handle_gdrive_queue_failed/_handle_gdrive_retry),
+    # so no real GDriveClient/GDriveUploadQueue needs to be wired in here.
+    await db.add_clip(
+        _clip(_FAILED_UPLOAD_CLIP_ID, _SCRATCH_CAMERA, "snapshot", 50, now)
+    )
+    await db.enqueue_for_gdrive_upload(
+        _FAILED_UPLOAD_CLIP_ID,
+        _SCRATCH_CAMERA,
+        f"/share/blink-clips/{_SCRATCH_CAMERA}/{_FAILED_UPLOAD_CLIP_ID}.mp4",
+    )
+    await db.update_gdrive_queue_status(
+        _FAILED_UPLOAD_CLIP_ID, "failed", error="Simulated failure for e2e testing"
+    )
+
+    # Battery history for the Status tab's battery strip/history modal
+    # tests — Front Door ends up "ok", Backyard ends up "low" with one
+    # prior recovered episode so the history modal has something to show.
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.add_battery_reading("Backyard", "ok", 3, 170)
+    await db.add_battery_reading("Backyard", "low", 0, 108)
+    await db.add_battery_reading("Backyard", "ok", 3, 172)
+    await db.add_battery_reading("Backyard", "low", 0, 104)
+
 
 async def _main() -> None:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8199
@@ -170,18 +243,26 @@ async def _main() -> None:
     if not dsn:
         raise SystemExit("BLINK_DB_DSN must be set to a reachable Postgres DSN")
 
-    _redirect_data_files(Path(tempfile.mkdtemp(prefix="blink-e2e-data-")))
+    data_dir = Path(tempfile.mkdtemp(prefix="blink-e2e-data-"))
+    _redirect_data_files(data_dir)
 
     db = ClipDatabase(dsn=dsn)
     await db.init()
     assert db._pool is not None
     await db._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")
-    await _seed(db)
+    archive_dir = data_dir / "archives"
+    await _seed(db, data_dir / "pending-archive-source")
 
     analyzer = ClipAnalyzer(
         ollama_url=_UNREACHABLE_OLLAMA_URL, model="llava", prompt="Describe this clip."
     )
-    server = MediaServer(db=db, port=port, analyzer=analyzer)
+    # archive_after_days=5 (not the config.yaml default of 60) — see
+    # _PENDING_ARCHIVE_HOURS_AGO's comment above for exactly why 5, not a
+    # rounder-looking number.
+    archiver = ClipArchiver(
+        db=db, archive_dir=archive_dir, archive_after_days=5, enabled=True
+    )
+    server = MediaServer(db=db, port=port, analyzer=analyzer, archiver=archiver)
     await server.start()
     print(f"Standalone e2e server ready on http://localhost:{port}/", flush=True)
 
