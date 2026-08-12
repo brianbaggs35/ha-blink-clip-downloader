@@ -229,7 +229,11 @@ CREATE TABLE IF NOT EXISTS battery_history (
     battery_voltage INTEGER,
     recorded_at     TEXT    NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_battery_history_camera ON battery_history (camera, id);
+-- DESC on id matches get_latest_battery_state()'s own ORDER BY camera, id
+-- DESC exactly, so that query (run on every Status tab load) can satisfy its
+-- DISTINCT ON (camera) with a plain index scan instead of a sort — see the
+-- migration below for upgrading a database created before this mattered.
+CREATE INDEX IF NOT EXISTS idx_battery_history_camera ON battery_history (camera, id DESC);
 """
 
 # Schema changes applied to *already-existing* tables, run every startup
@@ -256,6 +260,8 @@ ALTER TABLE clips ADD COLUMN IF NOT EXISTS gdrive_file_id TEXT DEFAULT '';
 ALTER TABLE clips ADD COLUMN IF NOT EXISTS gdrive_uploaded_at TEXT DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_clips_gdrive_backed_up ON clips (gdrive_backed_up);
 ALTER TABLE gdrive_upload_queue ADD COLUMN IF NOT EXISTS folder_id TEXT DEFAULT '';
+DROP INDEX IF EXISTS idx_battery_history_camera;
+CREATE INDEX IF NOT EXISTS idx_battery_history_camera ON battery_history (camera, id DESC);
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
