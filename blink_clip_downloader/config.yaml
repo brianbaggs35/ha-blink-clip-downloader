@@ -134,8 +134,11 @@ options:
   # --- ZIP archiving ---
   # Move old clips into ZIP archives to save space while keeping records.
   archive_enabled: false
-  # Archive clips that are older than this many days.
-  archive_after_days: 60
+  # Archive clips that are older than this many days. Must stay below
+  # retention_days above (default 30) — retention deletes a clip's file (and
+  # its database row) outright once it crosses retention_days, so archiving
+  # needs to get to it first or it never runs on anything.
+  archive_after_days: 21
 
   # --- Google Drive backup ---
   # Everything about this feature (connect an account, OAuth client setup,

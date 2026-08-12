@@ -101,7 +101,9 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
 
     # --- ZIP archiving ---
     archive_enabled: bool = False
-    archive_after_days: int = 60
+    # Kept below retention_days' own default (30) — see config.yaml's
+    # archive_after_days comment for why that relationship matters.
+    archive_after_days: int = 21
 
     # --- Google Drive backup ---
     # Backs up clips to Google Drive via OAuth device flow — HA ingress gives
@@ -550,7 +552,7 @@ def _parse_digest_archive_kwargs(data: dict) -> dict[str, Any]:
         "digest_enabled": bool(data.get("digest_enabled", True)),
         "digest_time": str(data.get("digest_time", "08:00")),
         "archive_enabled": bool(data.get("archive_enabled", False)),
-        "archive_after_days": max(1, int(data.get("archive_after_days", 60))),
+        "archive_after_days": max(1, int(data.get("archive_after_days", 21))),
         "download_local_storage": bool(data.get("download_local_storage", False)),
     }
 
