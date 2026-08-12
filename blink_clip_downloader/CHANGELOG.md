@@ -1,5 +1,40 @@
 # Changelog
 
+## 5.4.0
+
+### Added
+
+- **Per-camera battery monitoring and low-battery alerts.** The Status tab
+  now shows a battery strip at the very top of the page — Normal/Low,
+  color-coded, plus voltage when a camera reports it (never a fabricated
+  percentage, since Blink itself only ever reports a coarse ok/low state).
+  Click a camera to see its history: every state change with a timestamp,
+  and how long it stayed low between each low/recovery pair. A new
+  `battery_alerts_enabled` option (off by default) sends an alert the
+  moment a camera's battery goes low, through the same mobile push/email/
+  Discord/HA-persistent channels already configured for AI alerts — no
+  separate setup needed.
+- **More control over archiving on the Storage tab.** A "Run Archiving
+  Now" button sweeps everything currently eligible for archiving
+  immediately, instead of waiting for the next poll cycle. A failed Google
+  Drive upload now shows up in a **Failed Uploads** list with its error
+  message and a **Retry** button (plus **Retry All Failed**) — see the Bug
+  fixes entry below for why this matters.
+
+### Bug fixes
+
+- **A Google Drive upload that failed once could never be retried again**
+  — not automatically, and not even by clicking "Back Up Existing Clips
+  Now" again, which would silently no-op on it while still reporting
+  success. Fixed at the source: re-queuing a previously-failed clip now
+  correctly resets it to pending instead of being silently ignored, and
+  "Back Up Existing Clips Now" reports how many clips it actually queued.
+  (Separately: a month's archive filling in gradually over several weeks
+  rather than all at once is expected behavior for age-based retention,
+  not a bug — see DOCS.md's ZIP Archiving section for why, and use the new
+  "Run Archiving Now" button above if you want the current backlog swept
+  immediately.)
+
 ## 5.3.3
 
 ### Bug fixes
