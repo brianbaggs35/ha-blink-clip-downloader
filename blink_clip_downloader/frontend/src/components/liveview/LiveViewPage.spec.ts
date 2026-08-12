@@ -11,6 +11,10 @@ const fakePlayer = {
   play: vi.fn().mockResolvedValue(undefined),
   pause: vi.fn(),
   dispose: vi.fn(),
+  // Default: already ready, so existing tests that don't care about ready()
+  // timing see the same behavior as if there were no ready() wrap at all.
+  // Tests that specifically exercise the wrap override this per-test.
+  ready: vi.fn((cb: () => void) => cb()),
   on: vi.fn((event: string, cb: () => void) => {
     if (event === 'error') errorHandler = cb
   }),
@@ -169,6 +173,38 @@ describe('LiveViewPage', () => {
     const toast = useToastStore()
     expect(toast.isError).toBe(true)
     expect(toast.message).toBe('Live view playback error')
+  })
+
+  it('sourcing the player waits for player.ready() instead of calling src() immediately', async () => {
+    // Video.js's tech (VHS, for HLS) isn't necessarily mounted the instant
+    // videojs() returns — calling .src() before player.ready() fires used
+    // to produce a spurious, immediately-superseded "media could not be
+    // loaded" error even though the source itself was fine. Defer ready()'s
+    // callback here (unlike the shared fakePlayer default, which invokes it
+    // synchronously) to prove src()/play() genuinely wait for it rather
+    // than firing eagerly.
+    let readyCallback: (() => void) | undefined
+    fakePlayer.ready.mockImplementationOnce((cb: () => void) => {
+      readyCallback = cb
+    })
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    mountPage()
+    await flushPromises()
+
+    expect(fakePlayer.src).not.toHaveBeenCalled()
+    expect(fakePlayer.play).not.toHaveBeenCalled()
+    expect(readyCallback).toBeTypeOf('function')
+
+    readyCallback?.()
+
+    expect(fakePlayer.src).toHaveBeenCalledWith([
+      { src: '/api/liveview/hls/s1/stream.m3u8', type: 'application/x-mpegURL' },
+    ])
+    expect(fakePlayer.play).toHaveBeenCalled()
   })
 
   it('selecting a camera starts a session and shows a starting placeholder', async () => {
@@ -477,6 +513,95 @@ describe('LiveViewPage', () => {
     const stopCall = fetchMock.mock.calls.find(([url]) => url === '/api/liveview/stop')
     expect(stopCall).toBeTruthy()
     expect(fakePlayer.dispose).toHaveBeenCalled()
+  })
+
+  it('navigating away and back before the stop request lands does not re-select the stopped camera', async () => {
+    // Regression test: onUnmounted's stop call is fire-and-forget (Vue
+    // can't block unmount on it), so quickly navigating away and back used
+    // to race a fresh mount's own status check against that still-in-flight
+    // stop request — the fresh mount could see the old session as still
+    // active and re-select its camera moments before the delayed stop
+    // finally landed. pendingStop (module-scoped, shared across this
+    // component's own mount/unmount cycles) closes that race by making the
+    // new mount wait for it first.
+    let resolveStop!: (v: { stopped: boolean }) => void
+    const stopDeferred = new Promise<{ stopped: boolean }>((resolve) => {
+      resolveStop = resolve
+    })
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    let statusCallCount = 0
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/liveview/status') statusCallCount++
+      if (url === '/api/liveview/stop' && opts?.method === 'POST') {
+        return stopDeferred.then((v) => jsonResponse(v))
+      }
+      return routedFetch(routes)(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper1 = mountPage()
+    await flushPromises()
+    expect(statusCallCount).toBe(1) // the initial adoption check
+
+    wrapper1.unmount() // fires the (still-unresolved) stop request
+
+    const wrapper2 = mountPage() // navigated back before it landed
+    await flushPromises()
+
+    // wrapper2's own status check must not have run yet — it's waiting on
+    // the pending stop — so it can't have adopted (or shown selected) a
+    // session that's a moment away from being torn down.
+    expect(statusCallCount).toBe(1)
+    expect(wrapper2.findComponent(SelectButton).props('modelValue')).toBeNull()
+
+    // The stop now lands for real, and the session is genuinely gone.
+    routes.status = { active: false }
+    resolveStop({ stopped: true })
+    await flushPromises()
+
+    expect(statusCallCount).toBe(2) // wrapper2 proceeded once unblocked
+    expect(wrapper2.findComponent(SelectButton).props('modelValue')).toBeNull()
+
+    wrapper2.unmount()
+  })
+
+  it('unmounting again while still waiting on a pending stop from a previous mount does not adopt or start timers', async () => {
+    vi.useFakeTimers()
+    let resolveStop!: (v: { stopped: boolean }) => void
+    const stopDeferred = new Promise<{ stopped: boolean }>((resolve) => {
+      resolveStop = resolve
+    })
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/liveview/stop' && opts?.method === 'POST') {
+        return stopDeferred.then((v) => jsonResponse(v))
+      }
+      return routedFetch(routes)(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper1 = mountPage()
+    await flushPromises()
+    wrapper1.unmount() // pendingStop now set, unresolved
+
+    const wrapper2 = mountPage()
+    await flushPromises() // wrapper2's onMounted is now blocked awaiting pendingStop
+    wrapper2.unmount() // ...torn down again before that ever resolves
+
+    resolveStop({ stopped: true })
+    await flushPromises()
+
+    // Neither adoption nor a heartbeat timer must have started for the
+    // now-doubly-dead wrapper2 instance.
+    await vi.advanceTimersByTimeAsync(15000)
+    await flushPromises()
+    expect(fetchMock.mock.calls.find(([url]) => url === '/api/liveview/heartbeat')).toBeFalsy()
   })
 
   it('unmounting without an active session does not call stop', async () => {
