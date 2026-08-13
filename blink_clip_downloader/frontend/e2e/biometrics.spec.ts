@@ -72,6 +72,23 @@ test('enrolling from a real extracted frame gracefully reports no face detected'
   await expect(page.getByText('Enrollment failed for every selected frame — no clear face detected')).toBeVisible()
 })
 
+test('narrowing the lookback window filters out the clip and shows the empty state', async ({ page }) => {
+  // e2e-biometrics-source sits at hours_ago=12 (standalone_server.py) — well
+  // inside the default 24h lookback (see the test above) but outside a 6h
+  // one, so switching the selector genuinely re-queries and empties the
+  // strip rather than this being a simulated empty state.
+  await page.locator('#biometrics-camera-select').click()
+  await page.getByRole('option', { name: 'Test Scratch' }).click()
+  await expect(page.locator('.thumb-strip-item')).toHaveCount(1)
+
+  await page.locator('#biometrics-lookback-select').click()
+  await page.getByRole('option', { name: 'Last 6 hours' }).click()
+  await expect(
+    page.getByText('No clips for this camera in that time range — try a longer lookback above.'),
+  ).toBeVisible()
+  await expect(page.locator('.thumb-strip-item')).toHaveCount(0)
+})
+
 // Mutates Jordan's approval state — kept apart from the read-only
 // assertions above (which check Jordan's *original* seeded state) by not
 // running until after them. Declaration order is execution order here
