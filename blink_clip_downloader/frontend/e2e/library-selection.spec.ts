@@ -104,9 +104,7 @@ test('bulk ZIP export reports failure when none of the selected clips have a fil
   await expect(page.getByText('ZIP export failed')).toBeVisible()
 })
 
-test('bulk-analyzing selected clips runs a real analysis on each and reports how many completed', async ({
-  page,
-}) => {
+test('bulk-analyzing selected clips runs a real analysis on each and reports how many completed', async ({ page }) => {
   // e2e-clip-008/009: distinct from every clip another spec file selects by
   // id (000/001 by library-modal.spec.ts and ai.spec.ts, 002/005 by the
   // bulk-star test above, 007 by the bulk-ZIP-failure test above, 003/004/006
