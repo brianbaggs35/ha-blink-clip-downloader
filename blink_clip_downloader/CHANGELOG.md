@@ -1,6 +1,30 @@
 # Changelog
 
-## 5.4.1
+## 5.4.2
+
+### Bug fixes
+
+- **Saving Google Drive settings could silently fail.** `GDriveClient.set_settings()`
+  caught the write error itself and only logged it, so
+  `PUT /api/storage/gdrive/settings` always responded `{"saved": true}` even
+  when persisting to disk failed — the same bug class already fixed for
+  other settings endpoints in 5.3.3, just missed here. The failure now
+  propagates and the endpoint returns a real error instead.
+
+### Housekeeping
+
+- Substantially extended the `frontend/e2e/` Playwright suite: new coverage
+  for Biometrics, Live View, and the Vehicles zone picker's real
+  rectangle/freeform drawing (none previously reachable at all), plus much
+  deeper coverage of the Library tab (bulk star/delete/analyze/ZIP export,
+  sort/date filters, the notified/recognized filters, Refresh), the clip
+  modal's AI panel (re-analyze, full response, feedback, face-match
+  reporting, the L loop shortcut), AI Usage's populated stats and Clear
+  Stats, the AI tab's Fetch Models, Google Drive's settings-save round trip,
+  the Status tab's post-analysis stats, and a new dedicated file for
+  AppSidebar (theme toggle, keyboard-shortcuts overlay, About dialog, Sync).
+  45 tests → 76; statement coverage 52%→68%, branch coverage 41%→57%.
+
 
 ### Bug fixes
 

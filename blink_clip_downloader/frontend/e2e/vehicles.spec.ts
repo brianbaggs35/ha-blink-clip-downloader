@@ -101,9 +101,7 @@ test('drawing and saving a rectangle zone shows the saved preview and survives a
 
 // Continues from the previous test: Test Scratch has a saved rect zone and
 // the page was just reloaded (fresh component state, no leftover draft).
-test('too-small drags stay unsaveable, Clear wipes an in-progress draft, and Cancel discards it', async ({
-  page,
-}) => {
+test('too-small drags stay unsaveable, Clear wipes an in-progress draft, and Cancel discards it', async ({ page }) => {
   const card = page.locator('.camera-card', { hasText: 'Test Scratch' })
   await card.getByRole('button', { name: 'Edit zone' }).click()
   await expect(card.locator('.picker-overlay')).toBeVisible()
