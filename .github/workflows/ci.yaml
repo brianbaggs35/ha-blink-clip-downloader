@@ -278,6 +278,13 @@ jobs:
         working-directory: blink_clip_downloader/frontend
         run: npx playwright install --with-deps chromium
 
+      # standalone_server.py's seeding step shells out to ffmpeg to
+      # generate a real short video (unlocks Biometrics' frame extraction
+      # and the Vehicles zone picker's real thumbnail — see that script's
+      # _generate_test_video) — not preinstalled on ubuntu-latest.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       # test:e2e:coverage builds the frontend itself (instrumented via
       # vite.config.ts's istanbul plugin, gated on VITE_COVERAGE=true — a
       # plain `npm run build` elsewhere, e.g. the Dockerfile, never sets
