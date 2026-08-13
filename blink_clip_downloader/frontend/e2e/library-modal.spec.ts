@@ -116,6 +116,24 @@ test('auto-play and loop checkboxes toggle independently', async ({ page }) => {
   await expect(autoplay).toBeChecked()
 })
 
+test('the L keyboard shortcut toggles loop with its own confirmation toast', async ({ page }) => {
+  // A genuinely different code path from the Loop checkbox above —
+  // onKeydown's 'l' case is the only place that shows the "Loop ON"/
+  // "Loop OFF" toast; ticking the checkbox directly doesn't.
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = openModal(page)
+  const loop = modal.getByLabel('Loop')
+  await expect(loop).not.toBeChecked()
+
+  await page.keyboard.press('l')
+  await expect(page.getByText('Loop ON')).toBeVisible()
+  await expect(loop).toBeChecked()
+
+  await page.keyboard.press('l')
+  await expect(page.getByText('Loop OFF')).toBeVisible()
+  await expect(loop).not.toBeChecked()
+})
+
 test('prev/next nav buttons and arrow keys move between clips in the same sort order as the grid', async ({ page }) => {
   // e2e-clip-000 (0h ago) and e2e-clip-001 (1h ago) are adjacent under the
   // default "newest first" sort — real, seeded ordering, not a mock.

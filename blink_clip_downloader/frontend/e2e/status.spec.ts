@@ -51,6 +51,16 @@ test('shows the configured (but unreachable) AI provider as offline', async ({ p
   await expect(aiCard.getByText('Offline')).toBeVisible()
   await expect(aiCard.locator('.status-row', { hasText: 'Provider' })).toContainText('Ollama (Local/LAN)')
   await expect(aiCard.locator('.status-row', { hasText: 'Model' })).toContainText('llava')
+
+  // Order-dependent, like "Starred" above: several earlier spec files (ai,
+  // library-modal, library-selection) already ran real analyses by this
+  // point in the suite, so the "Analyzed" row — hidden until
+  // frameStats?.total_analyzed is truthy — now renders. Exact count isn't
+  // asserted, only that it's showing something positive.
+  const analyzedRow = aiCard.locator('.status-row', { hasText: 'Analyzed' })
+  await expect(analyzedRow).toBeVisible()
+  const analyzedText = (await analyzedRow.locator('.val').textContent()) ?? ''
+  expect(Number(analyzedText)).toBeGreaterThan(0)
 })
 
 test('clicking an activity chart bar switches to the Library tab filtered to that date', async ({ page }) => {
