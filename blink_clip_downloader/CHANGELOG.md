@@ -8,6 +8,7 @@
 - Updated anthropic to 0.122.0
 - Updated numpy to 2.5.2
 - Updated pinia to 4.0.3
+- Updated video.js to 8.24.0
 
 ## 5.4.2
 
