@@ -32,6 +32,15 @@ If this project helps you, consider supporting its development.
 
 </div>
 
+# For Users Without Home Assistant OS
+
+I have created a standalone platform for any users who don't use home assistant but still want the same capabilities for their
+blink cameras. The repo can be found here - https://github.com/brianbaggs35/blink_downloader
+
+It uses the same blinkpy package and python/vue/typescript and also uses sonarqube and all other linters and tools to keep
+code quality high. If you have any issues, create an issue for it and anyone is welcome to contribute as well just open a 
+pull request for review.
+
 # Home Assistant Blink Clip Downloader
 
 A Home Assistant OS add-on that continuously downloads Blink camera clips to your
