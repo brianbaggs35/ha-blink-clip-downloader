@@ -7,6 +7,7 @@
 - Updated openai to 2.54.0
 - Updated anthropic to 0.122.0
 - Updated numpy to 2.5.2
+- Updated pinia to 4.0.3
 
 ## 5.4.2
 
