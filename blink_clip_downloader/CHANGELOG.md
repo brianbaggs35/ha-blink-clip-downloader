@@ -9,6 +9,7 @@
 - Updated numpy to 2.5.2
 - Updated pinia to 4.0.3
 - Updated video.js to 8.24.0
+- Updated globals to 17.11.0
 
 ## 5.4.2
 
