@@ -43,6 +43,7 @@ const cameras = ref<string[]>([])
 const selectedCamera = ref<string | null>(null)
 const status = ref<LiveViewStatus>({ active: false })
 const starting = ref(false)
+const sessionFailureCount = ref(0)
 
 const videoEl = ref<HTMLVideoElement | null>(null)
 let player: Player | null = null
@@ -82,7 +83,10 @@ function ensurePlayer(): Player {
     controlBar: { pictureInPictureToggle: true },
   })
   player.on('error', () => {
-    toast.show('Live view playback error', true)
+    if (sessionFailureCount.value < 1) {
+      toast.show('Live view playback error', true)
+      sessionFailureCount.value++
+    }
     // If we still believe this session is live, the source may have been
     // set against a manifest that existed but wasn't playable yet — clear
     // the latch so the next status poll (still reporting the same live
@@ -172,6 +176,7 @@ async function loadCameras() {
 async function selectCamera(camera: string | null) {
   if (!camera) return
   const generation = ++selectGeneration
+  sessionFailureCount.value = 0
   // The backend tears down whatever session was previously active as soon
   // as a *different* camera is requested, even if this new start attempt
   // goes on to fail — so a still-running poll/heartbeat timer for the old
