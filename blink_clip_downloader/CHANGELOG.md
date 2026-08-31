@@ -2,6 +2,10 @@
 
 ## 5.4.4
 
+### Dependency Updates
+
+- Updated openai to 3.6.0
+
 ### Bug Fixes
 
 - Fixed bug with live view
