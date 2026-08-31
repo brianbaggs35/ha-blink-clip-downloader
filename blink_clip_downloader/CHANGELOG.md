@@ -8,6 +8,7 @@
 - Updated anthropic to 1.2.0
 - Updated vue to 3.5.42
 - Updated @vue/test-utils to 2.5.0
+- Updated vite to 8.2.2
 
 ### Bug Fixes
 
