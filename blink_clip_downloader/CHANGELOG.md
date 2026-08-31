@@ -6,6 +6,7 @@
 
 - Updated openai to 3.6.0
 - Updated anthropic to 1.2.0
+- Updated vue to 3.5.42
 
 ### Bug Fixes
 
