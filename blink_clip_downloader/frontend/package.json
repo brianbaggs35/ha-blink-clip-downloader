@@ -24,7 +24,7 @@
     "primeicons": "^8.0.0",
     "primevue": "^4.5.5",
     "video.js": "^8.24.0",
-    "vue": "^3.5.41"
+    "vue": "^3.5.42"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
