@@ -9,6 +9,8 @@
 - Updated vue to 3.5.42
 - Updated @vue/test-utils to 2.5.0
 - Updated vite to 8.2.2
+- Updated @vitest/coverage-v8 to 4.1.11
+- Updated vitest to 4.1.11
 
 ### Bug Fixes
 
