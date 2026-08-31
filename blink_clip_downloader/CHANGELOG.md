@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.4.4
+
+### Bug Fixes
+
+- Fixed bug with live view
+
 ## 5.4.3
 
 ### Dependency Updates
