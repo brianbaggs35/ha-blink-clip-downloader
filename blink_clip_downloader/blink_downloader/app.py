@@ -75,6 +75,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
     def __init__(self, config: AppConfig) -> None:
         self._config = config
+        if config.hf_token:
+            os.environ["HF_TOKEN"] = config.hf_token
 
         self._storage = StorageManager(
             base_path=config.download_path,
@@ -390,6 +392,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     enhanced_detection_enabled=config.ai_enhanced_detection_enabled,
                     object_detection_model=config.ai_object_detection_model,
                     face_recognition_enabled=config.ai_face_recognition_enabled,
+                    hf_token=config.hf_token,
                 ),
                 db=self._db,
             )

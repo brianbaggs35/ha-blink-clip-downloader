@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time as _time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1982,12 +1983,15 @@ def _build_app_with_camera_configs(
     return app, mock_create_analyzer
 
 
-def test_init_wires_vision_pipeline_from_config(base_config, tmp_path) -> None:
+def test_init_wires_vision_pipeline_from_config(
+    base_config, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The optional CV pipeline config fields must reach the analyzer via
     attach_vision_pipeline(), so enabling a toggle in options.json actually
     turns the corresponding vision.py stage on."""
     from blink_downloader.vision import VisionPipeline
 
+    monkeypatch.delenv("HF_TOKEN", raising=False)
     _app, mock_create_analyzer = _build_app_with_camera_configs(
         base_config,
         tmp_path,
@@ -1995,6 +1999,7 @@ def test_init_wires_vision_pipeline_from_config(base_config, tmp_path) -> None:
         ai_enhanced_detection_enabled=True,
         ai_object_detection_model="yolo11s.pt",
         ai_face_recognition_enabled=True,
+        hf_token="hf_test_token",
     )
 
     mock_analyzer = mock_create_analyzer.return_value
@@ -2005,6 +2010,23 @@ def test_init_wires_vision_pipeline_from_config(base_config, tmp_path) -> None:
     assert config.enhanced_detection_enabled is True
     assert config.object_detection_model == "yolo11s.pt"
     assert config.face_recognition_enabled is True
+    assert config.hf_token == "hf_test_token"
+
+
+def test_init_sets_huggingface_token_environment(base_config, monkeypatch) -> None:
+    import dataclasses
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    config = dataclasses.replace(base_config, hf_token="hf_test_token")
+
+    BlinkClipDownloaderApp(config)
+
+    assert os.environ["HF_TOKEN"] == "hf_test_token"
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    BlinkClipDownloaderApp(dataclasses.replace(base_config, hf_token=""))
+
+    assert "HF_TOKEN" not in os.environ
 
 
 def test_init_camera_configs_ui_file_populates_descriptions_and_car_cameras(

@@ -143,6 +143,38 @@ _CPU_INCOMPATIBLE_MESSAGE = (
     "Pi 5 is not affected)"
 )
 
+_HF_AUTH_FAILURE_MESSAGE = (
+    "Hugging Face authentication failed while loading the %s model. "
+    "The configured Hugging Face Token (HF_TOKEN) may be invalid, expired, "
+    "or missing permission; update or clear it in the add-on Configuration tab."
+)
+
+
+def _is_huggingface_auth_error(exc: BaseException) -> bool:
+    """Return whether an exception indicates rejected Hugging Face access."""
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+    if status_code in (401, 403):
+        return True
+
+    if type(exc).__name__.lower() in {"invalidtokenerror", "gatedrepoerror"}:
+        return True
+
+    message = str(exc).lower()
+    return (
+        "huggingface.co" in message
+        or "huggingface hub" in message
+        or "hf_hub" in message
+    ) and (
+        "401" in message
+        or "403" in message
+        or "unauthorized" in message
+        or "invalid token" in message
+        or "expired" in message
+    )
+
 
 def torch_cpu_compatible() -> bool:
     """Return True if this CPU can safely run PyTorch's official builds.
@@ -600,8 +632,10 @@ class DepthEstimator:
 
     _MODEL_ID = "depth-anything/Depth-Anything-V2-Small-hf"
 
-    def __init__(self) -> None:
+    # Empty default means no token configured; it is not a credential.
+    def __init__(self, hf_token: str = "") -> None:  # nosec B107
         self._pipe: Any = None
+        self._hf_token = hf_token
         self._lock: asyncio.Lock | None = None
 
     def _get_lock(self) -> asyncio.Lock:
@@ -620,7 +654,10 @@ class DepthEstimator:
 
             _LOGGER.info("Loading depth-estimation model '%s'", self._MODEL_ID)
             self._pipe = pipeline(
-                task="depth-estimation", model=self._MODEL_ID, device="cpu"
+                task="depth-estimation",
+                model=self._MODEL_ID,
+                device="cpu",
+                token=self._hf_token or None,
             )
             _LOGGER.info("Depth-estimation model ready")
 
@@ -644,8 +681,11 @@ class DepthEstimator:
             except CPUIncompatibleError as exc:
                 _LOGGER.warning("Depth estimation unavailable: %s", exc)
                 return False
-            except Exception:
-                _LOGGER.exception("Failed to load depth-estimation model")
+            except Exception as exc:
+                if _is_huggingface_auth_error(exc):
+                    _LOGGER.error(_HF_AUTH_FAILURE_MESSAGE, "depth-estimation")
+                else:
+                    _LOGGER.exception("Failed to load depth-estimation model")
                 return False
 
     def _compare_sync(
@@ -754,9 +794,11 @@ class ContactSegmenter:
 
     _MODEL_ID = "facebook/sam2.1-hiera-tiny"
 
-    def __init__(self) -> None:
+    # Empty default means no token configured; it is not a credential.
+    def __init__(self, hf_token: str = "") -> None:  # nosec B107
         self._model: Any = None
         self._processor: Any = None
+        self._hf_token = hf_token
         self._lock: asyncio.Lock | None = None
 
     def _get_lock(self) -> asyncio.Lock:
@@ -780,8 +822,12 @@ class ContactSegmenter:
             # _MODEL_ID is a fixed constant for an official facebook/ repo;
             # this optional pipeline trusts the HF hub the same way the rest
             # of the CV stack trusts PyPI (B615).
-            self._model = Sam2Model.from_pretrained(self._MODEL_ID)  # nosec B615
-            self._processor = Sam2Processor.from_pretrained(self._MODEL_ID)  # nosec B615
+            self._model = Sam2Model.from_pretrained(  # nosec B615
+                self._MODEL_ID, token=self._hf_token or None
+            )
+            self._processor = Sam2Processor.from_pretrained(  # nosec B615
+                self._MODEL_ID, token=self._hf_token or None
+            )
             _LOGGER.info("SAM2 segmentation model ready")
 
     async def ensure_ready(self) -> bool:
@@ -805,8 +851,11 @@ class ContactSegmenter:
             except CPUIncompatibleError as exc:
                 _LOGGER.warning("Contact segmentation unavailable: %s", exc)
                 return False
-            except Exception:
-                _LOGGER.exception("Failed to load SAM2 model")
+            except Exception as exc:
+                if _is_huggingface_auth_error(exc):
+                    _LOGGER.error(_HF_AUTH_FAILURE_MESSAGE, "SAM2")
+                else:
+                    _LOGGER.exception("Failed to load SAM2 model")
                 return False
 
     def _check_sync(
@@ -1129,6 +1178,7 @@ class VisionConfig:
     enhanced_detection_enabled: bool = False
     object_detection_model: str = "yolo11n.pt"
     face_recognition_enabled: bool = False
+    hf_token: str = ""
 
 
 @dataclass
@@ -1158,14 +1208,17 @@ class VisionPipeline:
         self._config = config
         self._db = db
         self._detector = ObjectDetector(config.object_detection_model)
-        self._depth = DepthEstimator()
-        self._segmenter = ContactSegmenter()
+        self._depth = DepthEstimator(config.hf_token)
+        self._segmenter = ContactSegmenter(config.hf_token)
         self._face_embedder = FaceEmbedder()
 
     def update_config(self, config: VisionConfig) -> None:
         """Replace the active config at runtime (e.g. after an options reload)."""
         if config.object_detection_model != self._config.object_detection_model:
             self._detector = ObjectDetector(config.object_detection_model)
+        if config.hf_token != self._config.hf_token:
+            self._depth = DepthEstimator(config.hf_token)
+            self._segmenter = ContactSegmenter(config.hf_token)
         self._config = config
 
     async def process_clip(
