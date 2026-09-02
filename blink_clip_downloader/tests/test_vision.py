@@ -1222,6 +1222,12 @@ async def test_contact_segmenter_touching_immediately(
         obj_ids=[0, 1],
         input_boxes=[[[0, 0, 5, 5], [5, 5, 10, 10]]],
     )
+    mock_processor.post_process_masks.assert_called_once_with(
+        [
+            mock_transformers.Sam2VideoModel.from_pretrained.return_value.return_value.pred_masks.cpu.return_value
+        ],
+        [(10, 10)],
+    )
     mock_transformers.Sam2VideoModel.from_pretrained.return_value.assert_called_once_with(
         inference_session=mock_processor.init_video_session.return_value,
         frame_idx=0,

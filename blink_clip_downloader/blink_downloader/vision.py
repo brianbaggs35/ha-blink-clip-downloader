@@ -883,7 +883,7 @@ class ContactSegmenter:
             outputs = self._model(inference_session=inference_session, frame_idx=0)
         masks = self._processor.post_process_masks(
             [outputs.pred_masks.cpu()],
-            [[inference_session.video_height, inference_session.video_width]],
+            [(image.height, image.width)],
         )[0]
         if masks.shape[0] < 2:
             return None

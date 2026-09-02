@@ -16,7 +16,8 @@
   image-only `Sam2Model` class. The `facebook/sam2.1-hiera-tiny` checkpoint
   now uses Transformers' `Sam2VideoModel` and `Sam2VideoProcessor` inference
   session API, eliminating the architecture mismatch warning and preserving
-  bounding-box contact analysis.
+  bounding-box contact analysis. Mask post-processing now targets the original
+  frame dimensions rather than relying on inference-session dimensions.
 
 ## 5.4.4
 
