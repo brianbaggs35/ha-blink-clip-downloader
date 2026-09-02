@@ -5,12 +5,16 @@ import PrimeVue from 'primevue/config'
 import SelectButton from 'primevue/selectbutton'
 
 let errorHandler: (() => void) | undefined
+let fakePlayerErrorValue: { message: string } | null = null
+
+const fakePlayerError = vi.fn(() => fakePlayerErrorValue)
 
 const fakePlayer = {
   src: vi.fn(),
   play: vi.fn().mockResolvedValue(undefined),
   pause: vi.fn(),
   dispose: vi.fn(),
+  error: fakePlayerError,
   // Default: already ready, so existing tests that don't care about ready()
   // timing see the same behavior as if there were no ready() wrap at all.
   // Tests that specifically exercise the wrap override this per-test.
@@ -84,6 +88,7 @@ describe('LiveViewPage', () => {
     vi.useRealTimers()
     vi.clearAllMocks()
     errorHandler = undefined
+    fakePlayerErrorValue = null
   })
 
   it('loads and renders the camera list', async () => {
@@ -169,10 +174,36 @@ describe('LiveViewPage', () => {
 
     expect(errorHandler).toBeTypeOf('function')
     errorHandler?.()
+    errorHandler?.()
 
     const toast = useToastStore()
     expect(toast.isError).toBe(true)
     expect(toast.message).toBe('Live view playback error')
+  })
+
+  it('sources each live session once and shows the player error without retrying the HLS URL', async () => {
+    vi.useFakeTimers()
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(fakePlayer.src).toHaveBeenCalledTimes(1)
+    fakePlayerErrorValue = { message: 'The media could not be loaded' }
+    errorHandler?.()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('Live view playback failed: The media could not be loaded')
+
+    // A playback error must not clear sourcedSessionId. The HLS tech owns
+    // manifest refreshes; reassigning the same URL here starts another load
+    // loop and can make a healthy Blink session look throttled.
+    await vi.advanceTimersByTimeAsync(12000)
+    await flushPromises()
+    expect(fakePlayer.src).toHaveBeenCalledTimes(1)
   })
 
   it('sourcing the player waits for player.ready() instead of calling src() immediately', async () => {
@@ -205,6 +236,30 @@ describe('LiveViewPage', () => {
       { src: '/api/liveview/hls/s1/stream.m3u8', type: 'application/x-mpegURL' },
     ])
     expect(fakePlayer.play).toHaveBeenCalled()
+  })
+
+  it('does not source a queued player callback after Stop invalidates the session', async () => {
+    let readyCallback: (() => void) | undefined
+    fakePlayer.ready.mockImplementationOnce((cb: () => void) => {
+      readyCallback = cb
+    })
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const stopBtn = wrapper.findAll('button').find((b) => b.text().includes('Stop'))
+    expect(stopBtn).toBeTruthy()
+    await stopBtn!.trigger('click')
+    await flushPromises()
+
+    readyCallback?.()
+    errorHandler?.()
+    expect(fakePlayer.src).not.toHaveBeenCalled()
+    expect(useToastStore().isError).toBe(false)
   })
 
   it('selecting a camera starts a session and shows a starting placeholder', async () => {

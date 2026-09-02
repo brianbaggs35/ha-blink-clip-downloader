@@ -44,6 +44,7 @@ const selectedCamera = ref<string | null>(null)
 const status = ref<LiveViewStatus>({ active: false })
 const starting = ref(false)
 const sessionFailureCount = ref(0)
+const playbackError = ref<string | null>(null)
 
 const videoEl = ref<HTMLVideoElement | null>(null)
 let player: Player | null = null
@@ -52,6 +53,11 @@ let player: Player | null = null
 // the *same* session transitioning starting -> live with no id change at
 // all. Sourcing only on an id change would miss that transition entirely.
 let sourcedSessionId: string | null = null
+// Invalidates a ready() callback queued for a previous camera/session. Video.js
+// can invoke that callback after Stop or a camera switch, and sourcing that
+// stale URL would make the player reconnect to a stream the user no longer
+// selected.
+let sourceGeneration = 0
 // Set once onUnmounted has run — checked after every await in an
 // in-flight async handler so its continuation can't act on a dead
 // component instance (see selectCamera/onMounted below).
@@ -83,18 +89,16 @@ function ensurePlayer(): Player {
     controlBar: { pictureInPictureToggle: true },
   })
   player.on('error', () => {
+    if (unmounted || starting.value || !status.value.active) return
     if (sessionFailureCount.value < 1) {
       toast.show('Live view playback error', true)
       sessionFailureCount.value++
     }
-    // If we still believe this session is live, the source may have been
-    // set against a manifest that existed but wasn't playable yet — clear
-    // the latch so the next status poll (still reporting the same live
-    // session) re-attempts sourcing, instead of leaving the player stuck
-    // on a failed load until the whole page is refreshed.
-    if (status.value.active && status.value.state === 'live') {
-      sourcedSessionId = null
-    }
+    const mediaError = player?.error()
+    const detail = mediaError?.message?.trim()
+    playbackError.value = detail
+      ? `Live view playback failed: ${detail}`
+      : 'Live view playback failed. The stream could not be decoded by this browser.'
   })
   return player
 }
@@ -131,30 +135,42 @@ function startTimers() {
 }
 
 function applyStatus(s: LiveViewStatus) {
+  const previousSessionId = status.value.session_id
   status.value = s
 
   if (s.active && s.camera) selectedCamera.value = s.camera
 
   if (s.active && s.state === 'live' && s.session_id && s.session_id !== sourcedSessionId) {
+    if (s.session_id !== previousSessionId) {
+      playbackError.value = null
+      sessionFailureCount.value = 0
+    }
     sourcedSessionId = s.session_id
     const sessionId = s.session_id
+    const generation = sourceGeneration
     const p = ensurePlayer()
-    // Video.js's tech (VHS, for HLS) isn't necessarily mounted the instant
-    // videojs() returns from ensurePlayer() — calling .src() before
-    // player.ready() fires is a known way to get a spurious, immediately-
-    // superseded MEDIA_ERR_SRC_NOT_SUPPORTED ("The media could not be
-    // loaded...") on the first camera selected after mount, even though the
-    // source is fine and playback goes on to start normally moments later.
-    // player.ready() runs its callback right away if the player is already
-    // ready, so this is always safe, not just on that first call.
+    // The HLS tech is not guaranteed to be mounted when videojs() returns.
+    // Wait for ready(), then verify that this source is still current before
+    // setting it, so a fast switch or Stop cannot load a stale URL.
     p.ready(() => {
+      if (
+        unmounted ||
+        generation !== sourceGeneration ||
+        status.value.session_id !== sessionId ||
+        !status.value.active ||
+        status.value.state !== 'live'
+      ) {
+        return
+      }
       p.src([{ src: liveViewPlaylistUrl(sessionId), type: 'application/x-mpegURL' }])
       p.play()?.catch(() => {})
     })
   }
 
   if (!s.active) {
+    sourceGeneration++
     sourcedSessionId = null
+    playbackError.value = null
     stopTimers()
     player?.pause()
     starting.value = false
@@ -176,7 +192,9 @@ async function loadCameras() {
 async function selectCamera(camera: string | null) {
   if (!camera) return
   const generation = ++selectGeneration
+  sourceGeneration++
   sessionFailureCount.value = 0
+  playbackError.value = null
   // The backend tears down whatever session was previously active as soon
   // as a *different* camera is requested, even if this new start attempt
   // goes on to fail — so a still-running poll/heartbeat timer for the old
@@ -211,6 +229,7 @@ async function selectCamera(camera: string | null) {
 
 async function stop() {
   selectGeneration++ // invalidate any in-flight selectCamera() call
+  sourceGeneration++
   // If that in-flight call is what set `starting`, its own finally block
   // will see itself superseded and (correctly) leave `starting` alone —
   // so this is the only place left that will ever clear it.
@@ -257,6 +276,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unmounted = true
+  sourceGeneration++
   stopTimers()
   if (status.value.session_id) {
     pendingStop = stopLiveView(status.value.session_id).catch(() => {})
@@ -292,6 +312,9 @@ onUnmounted(() => {
 
     <Message v-if="status.state === 'error'" severity="error" size="small" :closable="false" class="status-banner">
       {{ status.error || 'Live view stopped unexpectedly.' }}
+    </Message>
+    <Message v-else-if="playbackError" severity="error" size="small" :closable="false" class="status-banner">
+      {{ playbackError }}
     </Message>
 
     <div class="player-area">

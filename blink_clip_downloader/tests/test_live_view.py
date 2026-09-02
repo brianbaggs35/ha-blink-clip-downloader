@@ -261,7 +261,7 @@ async def test_start_session_happy_path(
         args, kwargs = mock_exec.call_args
         assert args[0] == "ffmpeg"
         assert args[args.index("-c") + 1] == "copy"
-        assert args[args.index("-f") + 1] == "hls"
+        assert args[args.index("-f", args.index("-i")) + 1] == "hls"
         assert args[args.index("-i") + 1] == "tcp://127.0.0.1:9999"
         assert "delete_segments" in args[args.index("-hls_flags") + 1]
         assert "omit_endlist" in args[args.index("-hls_flags") + 1]
@@ -271,6 +271,9 @@ async def test_start_session_happy_path(
         assert hls_dir.is_dir()
         assert kwargs["cwd"] == str(hls_dir)
         assert kwargs["stderr"] == asyncio.subprocess.PIPE
+        assert args[args.index("-f") + 1] == "mpegts"
+        assert "temp_file" in args[args.index("-hls_flags") + 1]
+        assert args[args.index("-hls_delete_threshold") + 1] == "2"
     finally:
         await manager.stop_session(status.session_id)
 
@@ -583,6 +586,7 @@ async def test_status_transitions_starting_to_live(
         assert manager.get_status().state == "starting"
         hls_dir = manager.get_hls_dir(status.session_id)
         assert hls_dir is not None
+        (hls_dir / "seg_00000.ts").write_bytes(b"segment")
         (hls_dir / "stream.m3u8").write_text("#EXTM3U\n#EXTINF:2.0,\nseg_00000.ts\n")
         assert manager.get_status().state == "live"
     finally:
@@ -606,6 +610,27 @@ async def test_status_stays_starting_when_playlist_exists_with_no_segment_yet(
         hls_dir = manager.get_hls_dir(status.session_id)
         assert hls_dir is not None
         (hls_dir / "stream.m3u8").write_text("#EXTM3U\n#EXT-X-VERSION:3\n")
+        assert manager.get_status().state == "starting"
+    finally:
+        await manager.stop_session(status.session_id)
+
+
+async def test_status_stays_starting_when_playlist_references_missing_segment(
+    manager: LiveViewManager, camera_registry: dict[str, Any]
+) -> None:
+    """A manifest is not playable until its referenced segment is present."""
+    camera_registry["Front Door"] = _make_camera()
+    proc = _FakeProcess()
+    with _mock_exec(proc):
+        status = await manager.start_session("Front Door")
+    assert status.session_id
+
+    try:
+        hls_dir = manager.get_hls_dir(status.session_id)
+        assert hls_dir is not None
+        (hls_dir / "stream.m3u8").write_text("#EXTM3U\n#EXTINF:2.0,\nseg_00000.ts\n")
+        assert manager.get_status().state == "starting"
+        (hls_dir / "stream.m3u8").write_text("not an HLS playlist\n")
         assert manager.get_status().state == "starting"
     finally:
         await manager.stop_session(status.session_id)
@@ -753,6 +778,67 @@ async def test_sweep_never_went_live_grace_window_then_teardown(
 
     await mgr._sweep_once()
     assert mgr.get_status().active is False
+
+
+async def test_upstream_feed_ending_reports_error_and_stops_ffmpeg(
+    camera_registry: dict[str, Any],
+) -> None:
+    """A blinkpy relay ending must not leave the UI in a permanent live state."""
+    stream = _FakeStream()
+    camera_registry["Front Door"] = _make_camera(stream)
+    proc = _FakeProcess()
+    mgr = LiveViewManager(
+        get_camera=_get_camera_from(camera_registry),
+        list_camera_names=lambda: list(camera_registry),
+        idle_timeout=999,
+        max_session_duration=999,
+        startup_timeout=999,
+    )
+    with _mock_exec(proc):
+        status = await mgr.start_session("Front Door")
+    assert status.session_id
+
+    stream.stop()
+    await asyncio.sleep(0.05)
+
+    current = mgr.get_status()
+    assert current.state == "error"
+    assert "before a playable video was received" in (current.error or "")
+    assert proc.terminate_called is True
+
+    await mgr.stop_session(status.session_id)
+
+
+async def test_upstream_feed_ending_after_video_reports_relay_error(
+    camera_registry: dict[str, Any],
+) -> None:
+    """A relay that ends after producing video reports the right failure."""
+    stream = _FakeStream()
+    camera_registry["Front Door"] = _make_camera(stream)
+    proc = _FakeProcess()
+    mgr = LiveViewManager(
+        get_camera=_get_camera_from(camera_registry),
+        list_camera_names=lambda: list(camera_registry),
+        idle_timeout=999,
+        max_session_duration=999,
+        startup_timeout=999,
+    )
+    with _mock_exec(proc):
+        status = await mgr.start_session("Front Door")
+    assert status.session_id
+
+    hls_dir = mgr.get_hls_dir(status.session_id)
+    assert hls_dir is not None
+    (hls_dir / "seg_00000.ts").write_bytes(b"segment")
+    (hls_dir / "stream.m3u8").write_text("#EXTM3U\n#EXTINF:2.0,\nseg_00000.ts\n")
+    stream.stop()
+    await asyncio.sleep(0.05)
+
+    current = mgr.get_status()
+    assert current.state == "error"
+    assert "relay ended unexpectedly" in (current.error or "")
+
+    await mgr.stop_session(status.session_id)
 
 
 async def test_ffmpeg_crash_error_survives_one_full_sweep_tick_before_teardown(
