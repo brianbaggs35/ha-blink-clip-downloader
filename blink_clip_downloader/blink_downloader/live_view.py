@@ -513,7 +513,10 @@ class LiveViewManager:
                 )
         proc = session.ffmpeg_proc
         if proc.returncode is None:
-            proc.terminate()
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
 
     async def _watch_ffmpeg(self, session: _LiveViewSession) -> None:
         """Detect ffmpeg exiting on its own (a crash, not a requested stop)."""
