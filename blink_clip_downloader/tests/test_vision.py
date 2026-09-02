@@ -1083,17 +1083,15 @@ def _install_fake_transformers_for_sam2(
     monkeypatch: pytest.MonkeyPatch, masks: list[np.ndarray]
 ) -> MagicMock:
     mock_processor = MagicMock()
-    mock_processor.return_value = {
-        "pixel_values": "x",
-        "original_sizes": [[10, 10]],
-    }
     mock_processor.post_process_masks.return_value = [_FakeMasks(masks)]
     mock_model = MagicMock()
     mock_model.return_value.pred_masks.cpu.return_value = MagicMock()
 
     mock_transformers = MagicMock()
-    mock_transformers.Sam2Model.from_pretrained.return_value = mock_model
-    mock_transformers.Sam2Processor.from_pretrained.return_value = mock_processor
+    mock_processor.init_video_session.return_value.video_height = 10
+    mock_processor.init_video_session.return_value.video_width = 10
+    mock_transformers.Sam2VideoModel.from_pretrained.return_value = mock_model
+    mock_transformers.Sam2VideoProcessor.from_pretrained.return_value = mock_processor
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     monkeypatch.setitem(sys.modules, "torch", MagicMock())
     return mock_transformers
@@ -1120,7 +1118,7 @@ async def test_contact_segmenter_ensure_ready_concurrent_calls_load_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_transformers = MagicMock()
-    mock_transformers.Sam2Model.from_pretrained.side_effect = lambda *_a, **_kw: (
+    mock_transformers.Sam2VideoModel.from_pretrained.side_effect = lambda *_a, **_kw: (
         time.sleep(0.05),
         MagicMock(),
     )[1]
@@ -1129,14 +1127,16 @@ async def test_contact_segmenter_ensure_ready_concurrent_calls_load_once(
     segmenter = ContactSegmenter()
     results = await asyncio.gather(segmenter.ensure_ready(), segmenter.ensure_ready())
     assert results == [True, True]
-    mock_transformers.Sam2Model.from_pretrained.assert_called_once()
+    mock_transformers.Sam2VideoModel.from_pretrained.assert_called_once()
 
 
 async def test_contact_segmenter_ensure_ready_handles_generic_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_transformers = MagicMock()
-    mock_transformers.Sam2Model.from_pretrained.side_effect = RuntimeError("no weights")
+    mock_transformers.Sam2VideoModel.from_pretrained.side_effect = RuntimeError(
+        "no weights"
+    )
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     segmenter = ContactSegmenter()
     assert await segmenter.ensure_ready() is False
@@ -1152,11 +1152,11 @@ async def test_contact_segmenter_passes_huggingface_token(
     assert await segmenter.ensure_ready() is True
 
     assert (
-        mock_transformers.Sam2Model.from_pretrained.call_args.kwargs["token"]
+        mock_transformers.Sam2VideoModel.from_pretrained.call_args.kwargs["token"]
         == "hf_test_token"
     )
     assert (
-        mock_transformers.Sam2Processor.from_pretrained.call_args.kwargs["token"]
+        mock_transformers.Sam2VideoProcessor.from_pretrained.call_args.kwargs["token"]
         == "hf_test_token"
     )
 
@@ -1166,7 +1166,7 @@ async def test_contact_segmenter_handles_huggingface_http_auth_failure(
 ) -> None:
     error = RuntimeError("401 Client Error: Unauthorized for https://huggingface.co")
     mock_transformers = MagicMock()
-    mock_transformers.Sam2Model.from_pretrained.side_effect = error
+    mock_transformers.Sam2VideoModel.from_pretrained.side_effect = error
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     segmenter = ContactSegmenter()
 
@@ -1182,10 +1182,13 @@ async def test_contact_segmenter_ensure_ready_is_idempotent(
     segmenter = ContactSegmenter()
     assert await segmenter.ensure_ready() is True
     assert await segmenter.ensure_ready() is True
-    mock_transformers.Sam2Model.from_pretrained.assert_called_once()
-    assert mock_transformers.Sam2Model.from_pretrained.call_args.kwargs["token"] is None
+    mock_transformers.Sam2VideoModel.from_pretrained.assert_called_once()
     assert (
-        mock_transformers.Sam2Processor.from_pretrained.call_args.kwargs["token"]
+        mock_transformers.Sam2VideoModel.from_pretrained.call_args.kwargs["token"]
+        is None
+    )
+    assert (
+        mock_transformers.Sam2VideoProcessor.from_pretrained.call_args.kwargs["token"]
         is None
     )
 
@@ -1196,7 +1199,9 @@ async def test_contact_segmenter_touching_immediately(
     person_mask = np.zeros((10, 10), dtype=np.uint8)
     vehicle_mask = np.zeros((10, 10), dtype=np.uint8)
     vehicle_mask[5, 5] = 1
-    _install_fake_transformers_for_sam2(monkeypatch, [person_mask, vehicle_mask])
+    mock_transformers = _install_fake_transformers_for_sam2(
+        monkeypatch, [person_mask, vehicle_mask]
+    )
 
     mock_cv2 = MagicMock()
     mock_cv2.dilate.side_effect = lambda mask, kernel, iterations: vehicle_mask
@@ -1209,6 +1214,18 @@ async def test_contact_segmenter_touching_immediately(
     assert result is not None
     assert result.touching is True
     assert result.mask_gap_pixels == 0.0
+    mock_processor = mock_transformers.Sam2VideoProcessor.from_pretrained.return_value
+    mock_processor.init_video_session.assert_called_once()
+    mock_processor.add_inputs_to_inference_session.assert_called_once_with(
+        inference_session=mock_processor.init_video_session.return_value,
+        frame_idx=0,
+        obj_ids=[0, 1],
+        input_boxes=[[[0, 0, 5, 5], [5, 5, 10, 10]]],
+    )
+    mock_transformers.Sam2VideoModel.from_pretrained.return_value.assert_called_once_with(
+        inference_session=mock_processor.init_video_session.return_value,
+        frame_idx=0,
+    )
 
 
 async def test_contact_segmenter_touching_after_a_few_steps(
@@ -1285,9 +1302,10 @@ async def test_contact_segmenter_returns_none_on_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_transformers = MagicMock()
-    mock_processor = MagicMock(side_effect=RuntimeError("boom"))
-    mock_transformers.Sam2Processor.from_pretrained.return_value = mock_processor
-    mock_transformers.Sam2Model.from_pretrained.return_value = MagicMock()
+    mock_processor = MagicMock()
+    mock_processor.init_video_session.side_effect = RuntimeError("boom")
+    mock_transformers.Sam2VideoProcessor.from_pretrained.return_value = mock_processor
+    mock_transformers.Sam2VideoModel.from_pretrained.return_value = MagicMock()
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     monkeypatch.setitem(sys.modules, "torch", MagicMock())
     monkeypatch.setitem(sys.modules, "cv2", MagicMock())
@@ -1702,7 +1720,6 @@ async def test_vision_pipeline_full_stack(monkeypatch: pytest.MonkeyPatch) -> No
     vehicle_mask = np.zeros((10, 10), dtype=np.uint8)
     vehicle_mask[5, 5] = 1
     mock_processor = MagicMock()
-    mock_processor.return_value = {"pixel_values": "x", "original_sizes": [[10, 10]]}
     mock_processor.post_process_masks.return_value = [
         _FakeMasks([person_mask, vehicle_mask])
     ]
@@ -1711,8 +1728,10 @@ async def test_vision_pipeline_full_stack(monkeypatch: pytest.MonkeyPatch) -> No
 
     mock_transformers = MagicMock()
     mock_transformers.pipeline.return_value = mock_pipe
-    mock_transformers.Sam2Model.from_pretrained.return_value = mock_sam_model
-    mock_transformers.Sam2Processor.from_pretrained.return_value = mock_processor
+    mock_processor.init_video_session.return_value.video_height = 10
+    mock_processor.init_video_session.return_value.video_width = 10
+    mock_transformers.Sam2VideoModel.from_pretrained.return_value = mock_sam_model
+    mock_transformers.Sam2VideoProcessor.from_pretrained.return_value = mock_processor
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     monkeypatch.setitem(sys.modules, "torch", MagicMock())
     mock_cv2.dilate.side_effect = lambda mask, kernel, iterations: vehicle_mask

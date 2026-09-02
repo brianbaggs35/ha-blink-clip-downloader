@@ -814,18 +814,18 @@ class ContactSegmenter:
         # for why (this method also only ever runs once per process).
         with _native_import_lock:
             from transformers import (  # type: ignore[import-not-found]
-                Sam2Model,
-                Sam2Processor,
+                Sam2VideoModel,
+                Sam2VideoProcessor,
             )
 
             _LOGGER.info("Loading SAM2 segmentation model '%s'", self._MODEL_ID)
             # _MODEL_ID is a fixed constant for an official facebook/ repo;
             # this optional pipeline trusts the HF hub the same way the rest
             # of the CV stack trusts PyPI (B615).
-            self._model = Sam2Model.from_pretrained(  # nosec B615
+            self._model = Sam2VideoModel.from_pretrained(  # nosec B615
                 self._MODEL_ID, token=self._hf_token or None
             )
-            self._processor = Sam2Processor.from_pretrained(  # nosec B615
+            self._processor = Sam2VideoProcessor.from_pretrained(  # nosec B615
                 self._MODEL_ID, token=self._hf_token or None
             )
             _LOGGER.info("SAM2 segmentation model ready")
@@ -870,14 +870,20 @@ class ContactSegmenter:
         from PIL import Image
 
         image = Image.open(io.BytesIO(frame)).convert("RGB")
-        input_boxes = [[list(subject_box), list(vehicle_box)]]
-        inputs = self._processor(
-            images=image, input_boxes=input_boxes, return_tensors="pt"
+        inference_session = self._processor.init_video_session(
+            video=[image], inference_device="cpu"
+        )
+        self._processor.add_inputs_to_inference_session(
+            inference_session=inference_session,
+            frame_idx=0,
+            obj_ids=[0, 1],
+            input_boxes=[[list(subject_box), list(vehicle_box)]],
         )
         with torch.no_grad():
-            outputs = self._model(**inputs, multimask_output=False)
+            outputs = self._model(inference_session=inference_session, frame_idx=0)
         masks = self._processor.post_process_masks(
-            outputs.pred_masks.cpu(), inputs["original_sizes"]
+            [outputs.pred_masks.cpu()],
+            [[inference_session.video_height, inference_session.video_width]],
         )[0]
         if masks.shape[0] < 2:
             return None
