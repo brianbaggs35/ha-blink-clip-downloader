@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.4.6
+
+### Bug Fixes
+
+- Fixed Live View HLS playback intermittently failing after the first frame.
+  ffmpeg now publishes complete playlists and segments atomically, explicitly
+  handles Blink's MPEG-TS relay, and keeps a small segment grace window for
+  delayed browser requests. The player loads each session source once, ignores
+  stale callbacks during camera switches, and surfaces the browser's playback
+  error details when decoding fails.
+
 ## 5.4.5
 
 ### Added

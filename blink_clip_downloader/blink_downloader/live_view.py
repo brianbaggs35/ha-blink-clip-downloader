@@ -391,6 +391,9 @@ class LiveViewManager:
         session.feed_task = asyncio.create_task(
             stream.feed(), name=f"liveview-feed-{session.session_id}"
         )
+        session.feed_task.add_done_callback(
+            lambda task: self._handle_feed_done(session, task)
+        )
         session.watcher_task = asyncio.create_task(
             self._watch_ffmpeg(session), name=f"liveview-watch-{session.session_id}"
         )
@@ -421,6 +424,8 @@ class LiveViewManager:
             "nobuffer",
             "-flags",
             "low_delay",
+            "-f",
+            "mpegts",
             "-i",
             source_url,
             "-c",
@@ -432,7 +437,9 @@ class LiveViewManager:
             "-hls_list_size",
             "6",
             "-hls_flags",
-            "delete_segments+omit_endlist+independent_segments",
+            "delete_segments+omit_endlist+independent_segments+temp_file",
+            "-hls_delete_threshold",
+            "2",
             "-hls_segment_type",
             "mpegts",
             "-hls_segment_filename",
@@ -480,6 +487,34 @@ class LiveViewManager:
         finally:
             session.stderr_tail = "\n".join(tail)
 
+    def _handle_feed_done(self, session: _LiveViewSession, task: asyncio.Task) -> None:
+        """Record an unexpected end of blinkpy's upstream relay.
+
+        blinkpy currently catches most relay exceptions inside
+        ``BlinkLiveStream.feed()`` and then returns normally, so watching only
+        ffmpeg can leave the UI in a misleading "starting" or "live" state
+        until a process timeout. The callback is intentionally synchronous:
+        it only records the error and asks ffmpeg to stop; the normal sweep
+        loop performs the complete asynchronous teardown.
+        """
+        if session.stopping or self._session is not session or task.cancelled():
+            return
+        exception = task.exception()
+        detail = f": {exception}" if exception is not None else ""
+        if session.error is None:
+            if self._playlist_is_ready(session.hls_dir):
+                session.error = (
+                    f"The Blink live stream relay ended unexpectedly{detail}."
+                )
+            else:
+                session.error = (
+                    "The Blink live stream ended before a playable video was "
+                    f"received{detail}."
+                )
+        proc = session.ffmpeg_proc
+        if proc.returncode is None:
+            proc.terminate()
+
     async def _watch_ffmpeg(self, session: _LiveViewSession) -> None:
         """Detect ffmpeg exiting on its own (a crash, not a requested stop)."""
         returncode = await session.ffmpeg_proc.wait()
@@ -492,10 +527,17 @@ class LiveViewManager:
             session.camera_name,
             returncode,
         )
-        session.error = (
-            f"ffmpeg exited unexpectedly (code {returncode}) — the camera "
-            "may have gone offline or the stream ended."
-        )
+        if session.error is None:
+            if returncode == 0:
+                session.error = (
+                    "The live view stream ended unexpectedly — the camera "
+                    "may have gone offline."
+                )
+            else:
+                session.error = (
+                    f"ffmpeg exited unexpectedly (code {returncode}) — the "
+                    "camera may have gone offline or the stream ended."
+                )
         # No reason to keep the upstream Blink connection open once ffmpeg
         # can no longer consume it.
         session.stream.stop()
@@ -568,17 +610,33 @@ class LiveViewManager:
 
     @staticmethod
     def _playlist_is_ready(hls_dir: Path) -> bool:
-        """The manifest merely *existing* isn't enough to call the session
-        "live": ffmpeg creates the file before it has written a single
-        segment into it, and Video.js fatally errors — with no retry — if
-        it's sourced against an empty or partially-written manifest. Require
-        at least one #EXTINF segment entry, which ffmpeg only ever writes
-        once that segment has been fully flushed to disk."""
+        """Return whether ffmpeg has published a complete, playable playlist.
+
+        The manifest merely existing isn't enough to call the session "live":
+        ffmpeg creates it before writing a segment, and Video.js can fatally
+        error if it is sourced against an empty or partially-written manifest.
+        ``temp_file`` makes ffmpeg's final rename atomic, while checking the
+        referenced segment here also protects against an incomplete or stale
+        playlist if the process exits during startup.
+        """
         playlist = hls_dir / _HLS_PLAYLIST_NAME
         try:
-            return "#EXTINF" in playlist.read_text(errors="ignore")
+            lines = playlist.read_text(errors="ignore").splitlines()
         except OSError:
             return False
+        if not lines or lines[0].strip() != "#EXTM3U":
+            return False
+
+        segment_names = [
+            line.strip()
+            for line in lines
+            if line.strip() and not line.startswith("#") and line.endswith(".ts")
+        ]
+        return any(
+            segment_name == Path(segment_name).name
+            and (hls_dir / segment_name).is_file()
+            for segment_name in segment_names
+        )
 
     def _build_status(self, session: _LiveViewSession) -> LiveViewStatus:
         error = session.error
