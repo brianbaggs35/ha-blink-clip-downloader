@@ -634,6 +634,7 @@ def test_cv_pipeline_options_default_disabled():
     assert cfg.ai_enhanced_detection_enabled is False
     assert cfg.ai_object_detection_model == "yolo11n.pt"
     assert cfg.ai_face_recognition_enabled is False
+    assert cfg.hf_token == ""
 
 
 def test_cv_pipeline_options_can_all_be_enabled():
@@ -649,6 +650,13 @@ def test_cv_pipeline_options_can_all_be_enabled():
     assert cfg.ai_enhanced_detection_enabled is True
     assert cfg.ai_object_detection_model == "yolo11s.pt"
     assert cfg.ai_face_recognition_enabled is True
+
+
+def test_huggingface_token_is_trimmed():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "hf_token": "  hf_test_token  "}
+    )
+    assert cfg.hf_token == "hf_test_token"
 
 
 def test_ai_object_detection_model_blank_falls_back_to_default():

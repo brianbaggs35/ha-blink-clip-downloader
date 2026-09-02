@@ -44,6 +44,7 @@ from blink_downloader.vision import (
     _build_detection_hint,
     _build_recognition_hint,
     _build_tracking_hint,
+    _is_huggingface_auth_error,
     _proximity_label,
     cosine_similarity,
     is_face_recognition_available,
@@ -924,6 +925,34 @@ async def test_depth_estimator_ensure_ready_handles_generic_failure(
     assert await estimator.ensure_ready() is False
 
 
+async def test_depth_estimator_passes_huggingface_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_transformers = MagicMock()
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+    estimator = DepthEstimator("hf_test_token")
+
+    assert await estimator.ensure_ready() is True
+
+    assert mock_transformers.pipeline.call_args.kwargs["token"] == "hf_test_token"
+
+
+async def test_depth_estimator_handles_invalid_huggingface_token(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    class InvalidTokenError(RuntimeError):
+        pass
+
+    mock_transformers = MagicMock()
+    mock_transformers.pipeline.side_effect = InvalidTokenError("token rejected")
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+    estimator = DepthEstimator("hf_test_token")
+
+    assert await estimator.ensure_ready() is False
+    assert "Hugging Face authentication failed" in caplog.text
+    assert "hf_test_token" not in caplog.text
+
+
 async def test_depth_estimator_ensure_ready_is_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -933,6 +962,7 @@ async def test_depth_estimator_ensure_ready_is_idempotent(
     assert await estimator.ensure_ready() is True
     assert await estimator.ensure_ready() is True
     mock_transformers.pipeline.assert_called_once()
+    assert mock_transformers.pipeline.call_args.kwargs["token"] is None
 
 
 async def test_depth_estimator_compare_similar_depth(
@@ -1112,6 +1142,38 @@ async def test_contact_segmenter_ensure_ready_handles_generic_failure(
     assert await segmenter.ensure_ready() is False
 
 
+async def test_contact_segmenter_passes_huggingface_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_transformers = MagicMock()
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+    segmenter = ContactSegmenter("hf_test_token")
+
+    assert await segmenter.ensure_ready() is True
+
+    assert (
+        mock_transformers.Sam2Model.from_pretrained.call_args.kwargs["token"]
+        == "hf_test_token"
+    )
+    assert (
+        mock_transformers.Sam2Processor.from_pretrained.call_args.kwargs["token"]
+        == "hf_test_token"
+    )
+
+
+async def test_contact_segmenter_handles_huggingface_http_auth_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    error = RuntimeError("401 Client Error: Unauthorized for https://huggingface.co")
+    mock_transformers = MagicMock()
+    mock_transformers.Sam2Model.from_pretrained.side_effect = error
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+    segmenter = ContactSegmenter()
+
+    assert await segmenter.ensure_ready() is False
+    assert "Hugging Face authentication failed" in caplog.text
+
+
 async def test_contact_segmenter_ensure_ready_is_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1121,6 +1183,11 @@ async def test_contact_segmenter_ensure_ready_is_idempotent(
     assert await segmenter.ensure_ready() is True
     assert await segmenter.ensure_ready() is True
     mock_transformers.Sam2Model.from_pretrained.assert_called_once()
+    assert mock_transformers.Sam2Model.from_pretrained.call_args.kwargs["token"] is None
+    assert (
+        mock_transformers.Sam2Processor.from_pretrained.call_args.kwargs["token"]
+        is None
+    )
 
 
 async def test_contact_segmenter_touching_immediately(
@@ -1907,3 +1974,27 @@ def test_vision_pipeline_update_config_reloads_detector_on_model_change() -> Non
     original_detector = pipeline._detector
     pipeline.update_config(VisionConfig(object_detection_model="yolo11s.pt"))
     assert pipeline._detector is not original_detector
+
+
+def test_vision_pipeline_update_config_reloads_huggingface_stages_on_token_change() -> (
+    None
+):
+    pipeline = VisionPipeline(VisionConfig(hf_token="old_token"))
+    original_depth = pipeline._depth
+    original_segmenter = pipeline._segmenter
+
+    pipeline.update_config(VisionConfig(hf_token="new_token"))
+
+    assert pipeline._depth is not original_depth
+    assert pipeline._segmenter is not original_segmenter
+    assert pipeline._depth._hf_token == "new_token"
+    assert pipeline._segmenter._hf_token == "new_token"
+
+
+def test_huggingface_auth_error_status_code_is_detected() -> None:
+    class ForbiddenError(RuntimeError):
+        status_code = 403
+
+    error = ForbiddenError("request rejected")
+
+    assert _is_huggingface_auth_error(error) is True

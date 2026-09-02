@@ -330,6 +330,9 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # regardless of which ai_provider is configured. Off by default; enroll
     # household members via the web UI's AI tab.
     ai_face_recognition_enabled: bool = False
+    # Hugging Face Token (HF_TOKEN) for authenticated model downloads and
+    # higher rate limits. Optional; get one from https://huggingface.co/settings/tokens.
+    hf_token: str = ""
 
     # --- Extended Notifications (AI alerts) ---
     mobile_app_target: str = ""
@@ -664,6 +667,7 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
         "ai_face_recognition_enabled": bool(
             data.get("ai_face_recognition_enabled", False)
         ),
+        "hf_token": str(data.get("hf_token", "") or "").strip(),
     }
 
 

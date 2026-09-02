@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.4.5
+
+### Added
+
+- Added an optional **Hugging Face Token (HF_TOKEN)** field to the Home
+  Assistant configuration. When supplied, it is used for authenticated
+  computer-vision model downloads and higher Hugging Face Hub rate limits.
+  Invalid, expired, or unauthorized tokens now produce a clear error and
+  disable only the affected optional model stage.
+
 ## 5.4.4
 
 ### Dependency Updates

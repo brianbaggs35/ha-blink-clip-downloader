@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v5.4.4"
+version: "v5.4.5"
 slug: blink_clip_downloader
 description: >-
   Downloads Blink camera clips locally with AI-powered suspicious activity
@@ -390,6 +390,9 @@ options:
   # — reference photos and computed face embeddings never leave this add-on
   # or your network, and are never sent to any cloud AI provider.
   ai_face_recognition_enabled: false
+  # Hugging Face Token (HF_TOKEN) for authenticated model downloads and higher
+  # rate limits. Optional; create one at https://huggingface.co/settings/tokens.
+  hf_token: ""
 
   # --- Extended Notifications (AI alerts) ---
   # HA mobile app entity to push AI suspicious-activity alerts to.
@@ -509,6 +512,7 @@ schema:
   ai_enhanced_detection_enabled: "bool"
   ai_object_detection_model: "list(yolo11n.pt|yolo11s.pt|yolo11m.pt|yolo11l.pt|yolo11x.pt)"
   ai_face_recognition_enabled: "bool"
+  hf_token: "password?"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"
   smtp_host: "str?"
