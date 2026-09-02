@@ -10,6 +10,14 @@
   Invalid, expired, or unauthorized tokens now produce a clear error and
   disable only the affected optional model stage.
 
+### Bug Fixes
+
+- Fixed SAM2 contact segmentation loading the video checkpoint with the
+  image-only `Sam2Model` class. The `facebook/sam2.1-hiera-tiny` checkpoint
+  now uses Transformers' `Sam2VideoModel` and `Sam2VideoProcessor` inference
+  session API, eliminating the architecture mismatch warning and preserving
+  bounding-box contact analysis.
+
 ## 5.4.4
 
 ### Dependency Updates
