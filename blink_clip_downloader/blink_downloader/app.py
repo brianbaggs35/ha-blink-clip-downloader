@@ -77,6 +77,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._config = config
         if config.hf_token:
             os.environ["HF_TOKEN"] = config.hf_token
+        else:
+            os.environ.pop("HF_TOKEN", None)
 
         self._storage = StorageManager(
             base_path=config.download_path,
