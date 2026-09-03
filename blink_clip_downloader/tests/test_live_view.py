@@ -841,6 +841,80 @@ async def test_upstream_feed_ending_after_video_reports_relay_error(
     await mgr.stop_session(status.session_id)
 
 
+async def test_upstream_feed_error_ignores_ffmpeg_process_race(
+    camera_registry: dict[str, Any],
+) -> None:
+    """A feed failure remains visible if ffmpeg exits during cleanup."""
+    stream = _FakeStream()
+    camera_registry["Front Door"] = _make_camera(stream)
+    proc = _FakeProcess()
+    proc.terminate = MagicMock(side_effect=ProcessLookupError)
+    mgr = LiveViewManager(
+        get_camera=_get_camera_from(camera_registry),
+        list_camera_names=lambda: list(camera_registry),
+        idle_timeout=999,
+        max_session_duration=999,
+        startup_timeout=999,
+    )
+    with _mock_exec(proc):
+        status = await mgr.start_session("Front Door")
+    assert status.session_id
+
+    async def _fail_feed() -> None:
+        raise RuntimeError("relay failed")
+
+    feed_task = asyncio.create_task(_fail_feed())
+    with pytest.raises(RuntimeError, match="relay failed"):
+        await feed_task
+
+    internal_session = mgr._session
+    assert internal_session is not None
+    mgr._handle_feed_done(internal_session, feed_task)
+
+    current = mgr.get_status()
+    assert current.state == "error"
+    assert "relay failed" in (current.error or "")
+    proc.terminate.assert_called_once_with()
+
+    # Mark the fake process as already gone so teardown does not race the
+    # deliberately-raising terminate() mock a second time.
+    proc._exit(0)
+    await mgr.stop_session(status.session_id)
+
+
+async def test_upstream_feed_done_preserves_existing_error_and_exited_ffmpeg(
+    camera_registry: dict[str, Any],
+) -> None:
+    """A later feed callback must not overwrite an earlier process error."""
+    camera_registry["Front Door"] = _make_camera()
+    proc = _FakeProcess()
+    mgr = LiveViewManager(
+        get_camera=_get_camera_from(camera_registry),
+        list_camera_names=lambda: list(camera_registry),
+        idle_timeout=999,
+        max_session_duration=999,
+        startup_timeout=999,
+    )
+    with _mock_exec(proc):
+        status = await mgr.start_session("Front Door")
+    assert status.session_id
+
+    internal_session = mgr._session
+    assert internal_session is not None
+    internal_session.error = "ffmpeg already failed"
+    proc._exit(1)
+
+    async def _done_feed() -> None:
+        return None
+
+    feed_task = asyncio.create_task(_done_feed())
+    await feed_task
+    mgr._handle_feed_done(internal_session, feed_task)
+
+    assert mgr.get_status().error == "ffmpeg already failed"
+    await mgr.stop_session(status.session_id)
+
+
 async def test_ffmpeg_crash_error_survives_one_full_sweep_tick_before_teardown(
     camera_registry: dict[str, Any],
 ) -> None:

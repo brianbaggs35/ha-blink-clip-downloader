@@ -181,6 +181,22 @@ describe('LiveViewPage', () => {
     expect(toast.message).toBe('Live view playback error')
   })
 
+  it('shows a useful fallback when Video.js does not provide an error message', async () => {
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    fakePlayerErrorValue = null
+    errorHandler?.()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('Live view playback failed. The stream could not be decoded by this browser.')
+  })
+
   it('sources each live session once and shows the player error without retrying the HLS URL', async () => {
     vi.useFakeTimers()
     const routes: Routes = {
@@ -260,6 +276,34 @@ describe('LiveViewPage', () => {
     errorHandler?.()
     expect(fakePlayer.src).not.toHaveBeenCalled()
     expect(useToastStore().isError).toBe(false)
+  })
+
+  it('does not source a queued callback after the backend reports a different session', async () => {
+    vi.useFakeTimers()
+    let staleReadyCallback: (() => void) | undefined
+    fakePlayer.ready.mockImplementationOnce((cb: () => void) => {
+      staleReadyCallback = cb
+    })
+    const routes: Routes = {
+      cameras: ['Front Door', 'Backyard'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    routes.status = { active: true, session_id: 's2', camera: 'Backyard', state: 'live' }
+    await vi.advanceTimersByTimeAsync(4000)
+    await flushPromises()
+    staleReadyCallback?.()
+
+    expect(fakePlayer.src).not.toHaveBeenCalledWith([
+      { src: '/api/liveview/hls/s1/stream.m3u8', type: 'application/x-mpegURL' },
+    ])
+    expect(fakePlayer.src).toHaveBeenCalledWith([
+      { src: '/api/liveview/hls/s2/stream.m3u8', type: 'application/x-mpegURL' },
+    ])
+    wrapper.unmount()
   })
 
   it('selecting a camera starts a session and shows a starting placeholder', async () => {
