@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getArchiveGroups, runArchiveNow } from './storage'
+import { getArchiveClips, getArchiveGroups, runArchiveNow } from './storage'
 
 function jsonResponse(body: unknown) {
   return {
@@ -62,6 +62,34 @@ describe('storage api', () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse(groups))
     const result = await getArchiveGroups()
     expect(result).toEqual(groups)
+  })
+
+  it('getArchiveClips() forwards archive, camera, dates, and pagination', async () => {
+    const response = { items: [], total: 123 }
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(response))
+
+    const result = await getArchiveClips({
+      archivePath: '/data/archives/2026-06.zip',
+      camera: 'Driveway',
+      since: '2026-06-01',
+      until: '2026-06-30T23:59:59',
+      limit: 50,
+      offset: 100,
+    })
+
+    const url = vi.mocked(fetch).mock.calls[0][0] as string
+    expect(url).toContain('archive_path=%2Fdata%2Farchives%2F2026-06.zip')
+    expect(url).toContain('camera=Driveway')
+    expect(url).toContain('since=2026-06-01')
+    expect(url).toContain('until=2026-06-30T23%3A59%3A59')
+    expect(url).toContain('limit=50')
+    expect(url).toContain('offset=100')
+    expect(result).toEqual(response)
+  })
+
+  it('getArchiveClips() omits optional filters', async () => {
+    await getArchiveClips({ archivePath: '/archives/one.zip' })
+    expect(fetch).toHaveBeenCalledWith('/api/storage/archive-clips?archive_path=%2Farchives%2Fone.zip', {})
   })
 
   it('runArchiveNow()', async () => {

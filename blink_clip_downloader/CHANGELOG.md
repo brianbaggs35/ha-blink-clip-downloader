@@ -19,6 +19,13 @@
   monitoring and are not mistaken for removed hardware.
 - Added the missing Home Assistant configuration description for the optional
   `hf_token` field.
+- Added pagination for clips inside expanded Storage archives. Pages contain
+  50 clips by default, reuse the existing camera/from/to filters, preserve
+  camera grouping for multi-camera archives, and use a fixed-height,
+  light/dark-theme-aware layout to prevent the Storage page from jumping.
+- Fixed Archived Clips date filtering so a left-only date selects that full
+  calendar day, while two dates select the full inclusive range across all
+  matching monthly archives.
 
 ## 5.4.5
 

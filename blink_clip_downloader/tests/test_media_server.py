@@ -5774,6 +5774,68 @@ async def test_storage_archives_since_until_filter(
     assert [g["archive_path"] for g in data] == ["/archives/2024-07.zip"]
 
 
+async def test_storage_archives_date_range_keeps_mixed_archive(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("in-range", timestamp="2024-06-10T00:00:00+00:00"))
+    await db.add_clip(_make_clip("out-of-range", timestamp="2024-07-10T00:00:00+00:00"))
+    await db.mark_archived("in-range", "/archives/mixed.zip")
+    await db.mark_archived("out-of-range", "/archives/mixed.zip")
+
+    resp = await client.get(
+        "/api/storage/archives?since=2024-06-01&until=2024-06-30T23%3A59%3A59"
+    )
+
+    data = await resp.json()
+    assert len(data) == 1
+    assert data[0]["archive_path"] == "/archives/mixed.zip"
+    assert data[0]["clip_count"] == 1
+
+
+async def test_storage_archive_clips_returns_page_and_total(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    for clip_id, camera, timestamp in (
+        ("page-1", "Front Door", "2024-06-01T00:00:00+00:00"),
+        ("page-2", "Driveway", "2024-06-02T00:00:00+00:00"),
+    ):
+        await db.add_clip(_make_clip(clip_id, camera=camera, timestamp=timestamp))
+        await db.mark_archived(clip_id, "/archives/2024-06.zip")
+
+    resp = await client.get(
+        "/api/storage/archive-clips"
+        "?archive_path=%2Farchives%2F2024-06.zip&camera=Driveway"
+        "&since=2024-06-02&until=2024-06-02T23%3A59%3A59&limit=1&offset=0"
+    )
+
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["total"] == 1
+    assert [clip["id"] for clip in data["items"]] == ["page-2"]
+
+
+async def test_storage_archive_clips_requires_archive_path(client: TestClient) -> None:
+    resp = await client.get("/api/storage/archive-clips")
+    assert resp.status == 400
+
+
+async def test_storage_archive_clips_invalid_pagination_uses_defaults(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("default-page"))
+    await db.mark_archived("default-page", "/archives/default.zip")
+
+    resp = await client.get(
+        "/api/storage/archive-clips?archive_path=%2Farchives%2Fdefault.zip"
+        "&limit=invalid&offset=invalid"
+    )
+
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["total"] == 1
+    assert [clip["id"] for clip in data["items"]] == ["default-page"]
+
+
 # ---------------------------------------------------------------------------
 # Storage tab: Google Drive backup
 # ---------------------------------------------------------------------------

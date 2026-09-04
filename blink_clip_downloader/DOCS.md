@@ -993,6 +993,15 @@ The Storage tab has two parts: an **Archived Clips** list (view/delete clips
 Drive Backup** card that connects a Google account and uploads clips there
 as an extra copy.
 
+Archived clips are grouped by ZIP file and grouped by camera inside each
+expanded archive. The camera and from/to date filters at the top of the
+Archived Clips section apply to both the archive list and the clips inside an
+expanded archive, including archives containing multiple cameras. Selecting
+only the left date includes that entire calendar day; selecting both dates
+includes the full inclusive range. Expanded archives load 50 clips per page and
+keep a fixed-height scroll area so moving between pages does not shift the
+surrounding Storage page.
+
 The steps below are also available in-app — click the ⓘ button next to
 **Google Drive Setup** on the Storage tab for the same walkthrough without
 leaving the page.

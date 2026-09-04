@@ -536,6 +536,11 @@ export interface ArchiveGroup {
   latest_timestamp: string
 }
 
+export interface ArchiveClipsResponse {
+  items: ClipListItem[]
+  total: number
+}
+
 // ---------------------------------------------------------------------------
 // Battery — per-camera state + history (Status tab)
 // ---------------------------------------------------------------------------
