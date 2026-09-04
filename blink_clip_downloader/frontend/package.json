@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.2.0",
     "@types/video.js": "^7.3.58",
     "@vitejs/plugin-vue": "^6.0.8",
