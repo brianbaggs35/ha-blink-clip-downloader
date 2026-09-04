@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.4.7
+
+### Performance
+
+- Kept the Docker build's release metadata arguments out of the dependency
+  installation layers. Code-only releases can now reuse the large Debian,
+  Python, and computer-vision layers instead of forcing Home Assistant to
+  download them again during every update.
+
 ## 5.4.6
 
 ### Bug Fixes
