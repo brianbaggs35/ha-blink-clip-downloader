@@ -60,6 +60,8 @@ async function loadGroups() {
   clipsByArchivePage.value = {}
   archiveTotals.value = {}
   archiveFirst.value = {}
+  loadingArchive.value = {}
+  archiveLoadError.value = {}
   expandedArchives.value = new Set()
   try {
     const dates = archiveDateFilters()
