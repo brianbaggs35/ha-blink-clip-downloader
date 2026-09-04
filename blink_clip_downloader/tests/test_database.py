@@ -599,6 +599,57 @@ async def test_get_clips_archive_path_filter_no_match(db: ClipDatabase) -> None:
     assert clips == []
 
 
+async def test_get_archive_clips_returns_page_and_total(db: ClipDatabase) -> None:
+    for i in range(3):
+        clip_id = f"archive-{i}"
+        await db.add_clip(
+            _make_clip(
+                clip_id,
+                camera="Driveway" if i < 2 else "Front Door",
+                timestamp=f"2024-06-{i + 1:02d}T00:00:00+00:00",
+            )
+        )
+        await db.mark_archived(clip_id, "/archives/2024-06.zip")
+
+    result = await db.get_archive_clips(
+        "/archives/2024-06.zip",
+        camera="Driveway",
+        limit=1,
+        offset=1,
+    )
+
+    assert result["total"] == 2
+    assert len(result["items"]) == 1
+    assert result["items"][0]["camera"] == "Driveway"
+
+
+async def test_get_archive_clips_without_pool_returns_empty_page() -> None:
+    db = ClipDatabase()
+    assert await db.get_archive_clips("/archives/none.zip") == {
+        "items": [],
+        "total": 0,
+    }
+
+
+async def test_get_archive_groups_filters_clips_inside_mixed_date_archive(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("in-range", timestamp="2024-06-10T00:00:00+00:00"))
+    await db.add_clip(_make_clip("out-of-range", timestamp="2024-07-10T00:00:00+00:00"))
+    await db.mark_archived("in-range", "/archives/mixed.zip")
+    await db.mark_archived("out-of-range", "/archives/mixed.zip")
+
+    groups = await db.get_archive_groups(
+        since="2024-06-01",
+        until="2024-06-30T23:59:59",
+    )
+
+    assert len(groups) == 1
+    assert groups[0]["archive_path"] == "/archives/mixed.zip"
+    assert groups[0]["clip_count"] == 1
+    assert groups[0]["latest_timestamp"] == "2024-06-10T00:00:00+00:00"
+
+
 # ------------------------------------------------------------------
 # get_archived_clip_records / get_archive_groups
 # ------------------------------------------------------------------

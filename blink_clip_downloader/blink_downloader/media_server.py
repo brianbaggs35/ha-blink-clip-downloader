@@ -63,6 +63,8 @@ _LIVEVIEW_FILENAME_RE = re.compile(r"^(stream\.m3u8|seg_\d{5}\.ts)$")
 # explicitly via ?count=. Bounds ffmpeg's work and the JSON response size
 # (each frame is a base64 480px-wide JPEG) for an unusually long clip.
 _MAX_CLIP_FRAMES = 60
+_ARCHIVE_CLIPS_PAGE_SIZE = 50
+_MAX_ARCHIVE_CLIPS_PAGE_SIZE = 200
 
 # Built by `npm run build` in frontend/ (vite.config.ts writes straight into
 # this directory) — the Dockerfile's frontend-builder stage runs that build
@@ -402,6 +404,9 @@ class MediaServer:
 
         # Storage tab: archived clips + Google Drive backup
         app.router.add_get("/api/storage/archives", self._handle_storage_archives)
+        app.router.add_get(
+            "/api/storage/archive-clips", self._handle_storage_archive_clips
+        )
         app.router.add_post(
             "/api/storage/archive/run-now", self._handle_archive_run_now
         )
@@ -1866,6 +1871,36 @@ class MediaServer:
             until=q.get("until") or None,
         )
         return web.json_response(groups)
+
+    async def _handle_storage_archive_clips(self, request: web.Request) -> web.Response:
+        """Return one page of clips from one ZIP archive for the Storage tab."""
+        q = request.rel_url.query
+        try:
+            limit = max(
+                1,
+                min(
+                    int(q.get("limit", _ARCHIVE_CLIPS_PAGE_SIZE)),
+                    _MAX_ARCHIVE_CLIPS_PAGE_SIZE,
+                ),
+            )
+            offset = max(0, int(q.get("offset", 0)))
+        except ValueError:
+            limit = _ARCHIVE_CLIPS_PAGE_SIZE
+            offset = 0
+
+        archive_path = q.get("archive_path", "")
+        if not archive_path:
+            raise web.HTTPBadRequest(text="archive_path is required")
+
+        page = await self._db.get_archive_clips(
+            archive_path=archive_path,
+            camera=q.get("camera") or None,
+            since=q.get("since") or None,
+            until=q.get("until") or None,
+            limit=limit,
+            offset=offset,
+        )
+        return web.json_response(page)
 
     async def _handle_archive_run_now(self, _request: web.Request) -> web.Response:
         """Sweep everything currently eligible for archiving immediately,

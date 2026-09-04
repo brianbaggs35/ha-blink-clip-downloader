@@ -4,13 +4,13 @@ import Button from 'primevue/button'
 import Column from 'primevue/column'
 import DataTable from 'primevue/datatable'
 import Message from 'primevue/message'
-import Paginator from 'primevue/paginator'
+import Paginator, { type PageState } from 'primevue/paginator'
 import Panel from 'primevue/panel'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import { fmtSize, fmtTs } from '../../api/constants'
-import { deleteClip, getCameras, listClips } from '../../api/clips'
-import { getArchiveGroups, runArchiveNow } from '../../api/storage'
+import { deleteClip, getCameras } from '../../api/clips'
+import { getArchiveClips, getArchiveGroups, runArchiveNow } from '../../api/storage'
 import type { ArchiveGroup, ClipListItem } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
@@ -22,6 +22,7 @@ import LoadingIndicator from '../layout/LoadingIndicator.vue'
 // numbers (see pagedGroups below) and to hand the camera/date filters
 // without needing a dedicated total-count endpoint.
 const GROUPS_PER_PAGE = 10
+const CLIPS_PER_PAGE = 50
 
 const toast = useToastStore()
 const confirm = useConfirm()
@@ -35,17 +36,20 @@ const sinceFilter = ref('')
 const untilFilter = ref('')
 const first = ref(0)
 
-// Per-archive clip cache: fetched lazily the first time a panel is
-// expanded, not up front -- opening one archive shouldn't require loading
-// every clip across every archive.
-const clipsByArchive = ref<Record<string, ClipListItem[]>>({})
+// Per-archive clip pages are fetched lazily when a panel is expanded. This
+// keeps a large ZIP from sending hundreds or thousands of rows to the browser.
+const clipsByArchivePage = ref<Record<string, Record<number, ClipListItem[]>>>({})
+const archiveTotals = ref<Record<string, number>>({})
+const archiveFirst = ref<Record<string, number>>({})
 const loadingArchive = ref<Record<string, boolean>>({})
 const archiveLoadError = ref<Record<string, boolean>>({})
 const expandedArchives = ref<Set<string>>(new Set())
+const filterGeneration = ref(0)
 const deletingId = ref<string | null>(null)
 const archivingNow = ref(false)
 
 async function loadGroups() {
+  filterGeneration.value += 1
   loading.value = true
   loadError.value = false
   // A changed camera filter invalidates any already-fetched per-archive
@@ -53,13 +57,15 @@ async function loadGroups() {
   // freshly-filtered summary counts) -- clear them and collapse everything
   // rather than let a stale, differently-filtered list linger if the panel
   // happened to already be open.
-  clipsByArchive.value = {}
+  clipsByArchivePage.value = {}
+  archiveTotals.value = {}
+  archiveFirst.value = {}
   expandedArchives.value = new Set()
   try {
+    const dates = archiveDateFilters()
     allGroups.value = await getArchiveGroups({
       camera: cameraFilter.value === 'all' ? undefined : cameraFilter.value,
-      since: sinceFilter.value || undefined,
-      until: untilFilter.value ? `${untilFilter.value}T23:59:59` : undefined,
+      ...dates,
     })
     first.value = 0
   } catch {
@@ -106,6 +112,15 @@ async function runArchivingNow() {
 
 const hasActiveFilters = computed(() => cameraFilter.value !== 'all' || !!sinceFilter.value || !!untilFilter.value)
 
+function archiveDateFilters(): { since?: string; until?: string } {
+  // A lone left date means that calendar day, not "that day onward".
+  // Adding a right date turns the same controls into an inclusive range.
+  const since = sinceFilter.value ? `${sinceFilter.value}T00:00:00+00:00` : undefined
+  const endDate = untilFilter.value || sinceFilter.value
+  const until = endDate ? `${endDate}T23:59:59.999999+00:00` : undefined
+  return { since, until }
+}
+
 function archiveLabel(path: string): string {
   if (!path) return 'Unknown archive'
   return path.split(/[/\\]/).pop() || path
@@ -126,6 +141,18 @@ function cameraCount(clips: ClipListItem[], camera: string): number {
 
 const pagedGroups = computed(() => allGroups.value.slice(first.value, first.value + GROUPS_PER_PAGE))
 
+function currentArchiveFirst(path: string): number {
+  return archiveFirst.value[path] ?? 0
+}
+
+function clipsForArchive(path: string): ClipListItem[] {
+  return clipsByArchivePage.value[path]?.[currentArchiveFirst(path)] ?? []
+}
+
+function hasArchivePage(path: string, offset: number): boolean {
+  return clipsByArchivePage.value[path]?.[offset] !== undefined
+}
+
 // If the current page's groups all just got removed (e.g. deleting the
 // last clip in the last archive on the last page), step back rather than
 // showing an empty page with a non-zero Paginator position.
@@ -134,6 +161,41 @@ watch(allGroups, () => {
     first.value = Math.max(0, first.value - GROUPS_PER_PAGE)
   }
 })
+
+async function loadArchivePage(path: string, offset: number): Promise<void> {
+  if (hasArchivePage(path, offset)) {
+    archiveFirst.value = { ...archiveFirst.value, [path]: offset }
+    return
+  }
+
+  const requestGeneration = filterGeneration.value
+  loadingArchive.value = { ...loadingArchive.value, [path]: true }
+  archiveLoadError.value = { ...archiveLoadError.value, [path]: false }
+  try {
+    const dates = archiveDateFilters()
+    const response = await getArchiveClips({
+      archivePath: path,
+      camera: cameraFilter.value === 'all' ? undefined : cameraFilter.value,
+      ...dates,
+      limit: CLIPS_PER_PAGE,
+      offset,
+    })
+    if (requestGeneration !== filterGeneration.value) return
+    clipsByArchivePage.value = {
+      ...clipsByArchivePage.value,
+      [path]: { ...(clipsByArchivePage.value[path] ?? {}), [offset]: response.items },
+    }
+    archiveTotals.value = { ...archiveTotals.value, [path]: response.total }
+    archiveFirst.value = { ...archiveFirst.value, [path]: offset }
+  } catch {
+    if (requestGeneration !== filterGeneration.value) return
+    archiveLoadError.value = { ...archiveLoadError.value, [path]: true }
+  } finally {
+    if (requestGeneration === filterGeneration.value) {
+      loadingArchive.value = { ...loadingArchive.value, [path]: false }
+    }
+  }
+}
 
 async function toggleArchive(path: string) {
   const next = new Set(expandedArchives.value)
@@ -144,28 +206,12 @@ async function toggleArchive(path: string) {
   }
   next.add(path)
   expandedArchives.value = next
-  if (clipsByArchive.value[path] || loadingArchive.value[path]) return
+  if (loadingArchive.value[path]) return
+  await loadArchivePage(path, currentArchiveFirst(path))
+}
 
-  loadingArchive.value = { ...loadingArchive.value, [path]: true }
-  archiveLoadError.value = { ...archiveLoadError.value, [path]: false }
-  try {
-    // Matches the camera filter already narrowing this archive's
-    // clip_count/total_size in the summary above -- without this, expanding
-    // a filtered archive would show every camera's clips again, silently
-    // contradicting the numbers right above it.
-    const rows = await listClips({
-      archived: true,
-      archivePath: path,
-      camera: cameraFilter.value === 'all' ? undefined : cameraFilter.value,
-      sort: 'newest',
-      limit: 500,
-    })
-    clipsByArchive.value = { ...clipsByArchive.value, [path]: rows }
-  } catch {
-    archiveLoadError.value = { ...archiveLoadError.value, [path]: true }
-  } finally {
-    loadingArchive.value = { ...loadingArchive.value, [path]: false }
-  }
+function onArchivePage(path: string, event: PageState): void {
+  void loadArchivePage(path, event.first)
 }
 
 async function removeClip(clip: ClipListItem, archivePath: string) {
@@ -177,10 +223,9 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
   try {
     await deleteClip(clip.id)
     toast.show('Clip deleted')
-    clipsByArchive.value = {
-      ...clipsByArchive.value,
-      [archivePath]: (clipsByArchive.value[archivePath] || []).filter((c) => c.id !== clip.id),
-    }
+    const currentFirst = currentArchiveFirst(archivePath)
+    const newTotal = Math.max(0, (archiveTotals.value[archivePath] ?? 1) - 1)
+    archiveTotals.value = { ...archiveTotals.value, [archivePath]: newTotal }
     // Patch the already-loaded group counts locally instead of re-fetching
     // (which would also reset pagination back to page 1) -- we already
     // know exactly what changed.
@@ -191,6 +236,17 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
       if (group.clip_count <= 0) {
         allGroups.value = allGroups.value.filter((g) => g.archive_path !== archivePath)
       }
+    }
+    // Re-fetch from the server after deletion. A locally filtered page would
+    // leave later cached offsets stale and could skip one clip at the page
+    // boundary.
+    clipsByArchivePage.value = {
+      ...clipsByArchivePage.value,
+      [archivePath]: {},
+    }
+    if (newTotal > 0) {
+      const lastPageOffset = Math.floor((newTotal - 1) / CLIPS_PER_PAGE) * CLIPS_PER_PAGE
+      await loadArchivePage(archivePath, Math.min(currentFirst, lastPageOffset))
     }
   } catch {
     toast.show('Could not delete clip', true)
@@ -292,60 +348,79 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
           </div>
         </template>
 
-        <div v-if="loadingArchive[group.archive_path]" class="archived-status"><LoadingIndicator /></div>
-        <Message v-else-if="archiveLoadError[group.archive_path]" severity="error" :closable="false">
-          Failed to load clips in this archive.
-        </Message>
-        <!-- NOSONAR: prose, not commented-out code.
-          Grouped by camera (row-group-mode="subheader" needs its rows
-          pre-sorted so same-camera rows are contiguous, hence
-          sortedForGrouping rather than the raw fetched order) -- the
-          "Camera" column itself is dropped since the group header already
-          says it once per group instead of on every single row.
-        -->
-        <DataTable
-          v-else
-          :value="sortedForGrouping(clipsByArchive[group.archive_path] ?? [])"
-          data-key="id"
-          size="small"
-          row-group-mode="subheader"
-          group-rows-by="camera"
-        >
-          <template #groupheader="{ data }">
-            <span class="camera-group-header">
-              {{ data.camera }}
-              <span class="archive-meta"
-                >({{ cameraCount(clipsByArchive[group.archive_path] ?? [], data.camera) }} clip{{
-                  cameraCount(clipsByArchive[group.archive_path] ?? [], data.camera) === 1 ? '' : 's'
-                }})</span
-              >
-            </span>
-          </template>
-          <Column field="timestamp" header="Date">
-            <template #body="{ data }">{{ fmtTs(data.timestamp) }}</template>
-          </Column>
-          <Column field="size_bytes" header="Size">
-            <template #body="{ data }">{{ fmtSize(data.size_bytes) }}</template>
-          </Column>
-          <Column header="Drive Backup">
-            <template #body="{ data }">
-              <Tag v-if="data.gdrive_backed_up" severity="success" value="Backed up" />
-              <Tag v-else severity="secondary" value="Not backed up" />
-            </template>
-          </Column>
-          <Column header="">
-            <template #body="{ data }">
-              <Button
+        <div class="archive-clips-content">
+          <div v-if="loadingArchive[group.archive_path]" class="archive-clips-state">
+            <LoadingIndicator />
+          </div>
+          <Message v-else-if="archiveLoadError[group.archive_path]" severity="error" :closable="false">
+            Failed to load clips in this archive.
+          </Message>
+          <template v-else>
+            <Message v-if="!clipsForArchive(group.archive_path).length" severity="secondary" :closable="false">
+              No clips in this archive match the active filters.
+            </Message>
+            <!-- NOSONAR: prose, not commented-out code.
+              Grouped by camera (row-group-mode="subheader" needs its rows
+              pre-sorted so same-camera rows are contiguous, hence
+              sortedForGrouping rather than the raw fetched order) -- the
+              "Camera" column itself is dropped since the group header already
+              says it once per group instead of on every single row.
+            -->
+            <div v-else class="archive-clips-table-wrap">
+              <DataTable
+                :value="sortedForGrouping(clipsForArchive(group.archive_path))"
+                data-key="id"
                 size="small"
-                severity="danger"
-                text
-                label="Delete"
-                :disabled="deletingId === data.id"
-                @click="removeClip(data, group.archive_path)"
-              />
-            </template>
-          </Column>
-        </DataTable>
+                row-group-mode="subheader"
+                group-rows-by="camera"
+              >
+                <template #groupheader="{ data }">
+                  <span class="camera-group-header">
+                    {{ data.camera }}
+                    <span class="archive-meta"
+                      >({{ cameraCount(clipsForArchive(group.archive_path), data.camera) }} clip{{
+                        cameraCount(clipsForArchive(group.archive_path), data.camera) === 1 ? '' : 's'
+                      }})</span
+                    >
+                  </span>
+                </template>
+                <Column field="timestamp" header="Date">
+                  <template #body="{ data }">{{ fmtTs(data.timestamp) }}</template>
+                </Column>
+                <Column field="size_bytes" header="Size">
+                  <template #body="{ data }">{{ fmtSize(data.size_bytes) }}</template>
+                </Column>
+                <Column header="Drive Backup">
+                  <template #body="{ data }">
+                    <Tag v-if="data.gdrive_backed_up" severity="success" value="Backed up" />
+                    <Tag v-else severity="secondary" value="Not backed up" />
+                  </template>
+                </Column>
+                <Column header="">
+                  <template #body="{ data }">
+                    <Button
+                      size="small"
+                      severity="danger"
+                      text
+                      label="Delete"
+                      :disabled="deletingId === data.id"
+                      @click="removeClip(data, group.archive_path)"
+                    />
+                  </template>
+                </Column>
+              </DataTable>
+            </div>
+            <Paginator
+              v-if="(archiveTotals[group.archive_path] ?? 0) > CLIPS_PER_PAGE"
+              :first="currentArchiveFirst(group.archive_path)"
+              :rows="CLIPS_PER_PAGE"
+              :total-records="archiveTotals[group.archive_path]"
+              :always-show="false"
+              class="archive-clips-paginator"
+              @page="onArchivePage(group.archive_path, $event)"
+            />
+          </template>
+        </div>
       </Panel>
 
       <Paginator
@@ -401,6 +476,30 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
   padding: 1rem;
 }
 
+.archive-clips-content {
+  height: min(36rem, calc(100dvh - 16rem));
+  min-height: 20rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.archive-clips-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.archive-clips-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 .archive-panel-header {
   display: flex;
   align-items: center;
@@ -437,5 +536,37 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
      with no built-in wrap -- on a narrow/mobile viewport that overflows
      rather than shrinking, so it needs to be allowed to wrap here instead. */
   flex-wrap: wrap;
+}
+
+.archive-clips-paginator {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  width: 100%;
+  flex-shrink: 0;
+  padding: 0.45rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+}
+
+.archive-clips-paginator :deep(.p-paginator-page),
+.archive-clips-paginator :deep(.p-paginator-prev),
+.archive-clips-paginator :deep(.p-paginator-next) {
+  color: var(--text-dim);
+  background: transparent;
+}
+
+.archive-clips-paginator :deep(.p-paginator-page:hover),
+.archive-clips-paginator :deep(.p-paginator-prev:hover),
+.archive-clips-paginator :deep(.p-paginator-next:hover) {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.archive-clips-paginator :deep(.p-paginator-page.p-highlight) {
+  background: var(--accent);
+  color: var(--btn-text);
 }
 </style>

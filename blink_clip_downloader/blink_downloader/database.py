@@ -893,11 +893,9 @@ class ClipDatabase:
         ZIPs, so this is cheap to fetch in full (no pagination needed here;
         the frontend paginates over this already-small result) and gives an
         accurate page count, unlike paginating the flat clip list itself.
-        *since*/*until* filter by each archive's most recent clip
-        (``latest_timestamp``) — an archive with even one matching clip
-        would otherwise be hard to reason about with an exact-membership
-        filter, since a single ZIP can span clips from anywhere in that
-        calendar month.
+        *since*/*until* filter individual clips before grouping. This keeps
+        archive counts, sizes, and expanded archive pages consistent when a
+        monthly ZIP contains clips both inside and outside the selected range.
         """
         if self._pool is None:
             return []
@@ -908,15 +906,12 @@ class ClipDatabase:
             where.append("LOWER(camera) = LOWER(?)")
             params.append(camera)
 
-        having: list[str] = []
-        having_params: list[Any] = []
         if since:
-            having.append("MAX(timestamp) >= ?")
-            having_params.append(since)
+            where.append("timestamp >= ?")
+            params.append(since)
         if until:
-            having.append("MAX(timestamp) <= ?")
-            having_params.append(until)
-        having_clause = f" HAVING {' AND '.join(having)}" if having else ""
+            where.append("timestamp <= ?")
+            params.append(until)
 
         rows = await self._pool.fetch(
             _qm(
@@ -928,14 +923,54 @@ class ClipDatabase:
                     MAX(timestamp) AS latest_timestamp
                 FROM clips
                 WHERE {" AND ".join(where)}
-                GROUP BY archive_path{having_clause}
+                GROUP BY archive_path
                 ORDER BY latest_timestamp DESC
                 """
             ),
             *params,
-            *having_params,
         )
         return [dict(r) for r in rows]
+
+    async def get_archive_clips(
+        self,
+        archive_path: str,
+        camera: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Return one page of clips from an archive and its total count."""
+        if self._pool is None:
+            return {"items": [], "total": 0}
+
+        clips = await self.get_clips(
+            camera=camera,
+            archived=True,
+            archive_path=archive_path,
+            since=since,
+            until=until,
+            sort="newest",
+            limit=limit,
+            offset=offset,
+        )
+
+        where = ["archived = TRUE", "archive_path = ?"]
+        params: list[Any] = [archive_path]
+        if camera and camera != "all":
+            where.append("LOWER(camera) = LOWER(?)")
+            params.append(camera)
+        if since:
+            where.append("timestamp >= ?")
+            params.append(since)
+        if until:
+            where.append("timestamp <= ?")
+            params.append(until)
+        total = await self._pool.fetchval(
+            _qm(f"SELECT COUNT(*) FROM clips WHERE {' AND '.join(where)}"),
+            *params,
+        )
+        return {"items": clips, "total": int(total or 0)}
 
     async def get_all_file_paths(self) -> set[str]:
         """Return the set of all ``file_path`` values currently indexed."""

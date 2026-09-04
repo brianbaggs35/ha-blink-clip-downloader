@@ -79,6 +79,15 @@ function routedFetch(routes: Routes) {
       if (routes.groupsFail) return Promise.reject(new Error('down'))
       return Promise.resolve(jsonResponse(routes.groups ?? []))
     }
+    if (url.startsWith('/api/storage/archive-clips')) {
+      const params = new URL(url, 'http://localhost').searchParams
+      const archivePath = params.get('archive_path') ?? ''
+      if (routes.clipsFail?.[archivePath]) return Promise.reject(new Error('down'))
+      const clips = routes.clips?.[archivePath] ?? []
+      const offset = Number(params.get('offset') ?? 0)
+      const limit = Number(params.get('limit') ?? 50)
+      return Promise.resolve(jsonResponse({ items: clips.slice(offset, offset + limit), total: clips.length }))
+    }
     if (url.startsWith('/api/cameras')) {
       if (routes.camerasFail) return Promise.reject(new Error('down'))
       return Promise.resolve(
@@ -93,11 +102,6 @@ function routedFetch(routes: Routes) {
           })),
         ),
       )
-    }
-    if (url.startsWith('/api/clips')) {
-      const archivePath = new URL(url, 'http://localhost').searchParams.get('archive_path') ?? ''
-      if (routes.clipsFail?.[archivePath]) return Promise.reject(new Error('down'))
-      return Promise.resolve(jsonResponse(routes.clips?.[archivePath] ?? []))
     }
     return Promise.resolve(jsonResponse([]))
   })
@@ -225,7 +229,21 @@ describe('ArchivedClipsSection', () => {
     expect(wrapper.text()).toContain('No archives match these filters.')
   })
 
-  it('sends since/until with until extended to end-of-day', async () => {
+  it('treats a left-only date as one inclusive calendar day', async () => {
+    const fetchMock = routedFetch({ groups: [] })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.findAll('input[type="date"]')[0].setValue('2026-06-01')
+    await flushPromises()
+
+    const url = fetchMock.mock.calls.at(-1)?.[0] as string
+    expect(url).toContain('since=2026-06-01T00%3A00%3A00%2B00%3A00')
+    expect(url).toContain('until=2026-06-01T23%3A59%3A59.999999%2B00%3A00')
+  })
+
+  it('sends an inclusive date range when both dates are selected', async () => {
     const fetchMock = routedFetch({ groups: [] })
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountSection()
@@ -237,8 +255,8 @@ describe('ArchivedClipsSection', () => {
     await flushPromises()
 
     const url = fetchMock.mock.calls.at(-1)?.[0] as string
-    expect(url).toContain('since=2026-06-01')
-    expect(url).toContain('until=2026-06-30T23%3A59%3A59')
+    expect(url).toContain('since=2026-06-01T00%3A00%3A00%2B00%3A00')
+    expect(url).toContain('until=2026-06-30T23%3A59%3A59.999999%2B00%3A00')
   })
 
   it('expands an archive and fetches its clips, grouped by camera', async () => {
@@ -270,9 +288,8 @@ describe('ArchivedClipsSection', () => {
 
     await expandFirstArchive(wrapper)
 
-    const clipsCall = fetchMock.mock.calls.find((c) => (c[0] as string).startsWith('/api/clips'))
+    const clipsCall = fetchMock.mock.calls.find((c) => (c[0] as string).startsWith('/api/storage/archive-clips'))
     expect(clipsCall?.[0]).toContain('camera=Front+Door')
-    expect(clipsCall?.[0]).toContain('archived=1')
     expect(clipsCall?.[0]).toContain(`archive_path=${encodeURIComponent(group.archive_path)}`)
   })
 
@@ -287,7 +304,7 @@ describe('ArchivedClipsSection', () => {
     await expandFirstArchive(wrapper) // collapse
     await expandFirstArchive(wrapper) // re-expand (should use cache)
 
-    const clipCalls = fetchMock.mock.calls.filter((c) => (c[0] as string).startsWith('/api/clips'))
+    const clipCalls = fetchMock.mock.calls.filter((c) => (c[0] as string).startsWith('/api/storage/archive-clips'))
     expect(clipCalls).toHaveLength(1)
   })
 
@@ -305,7 +322,15 @@ describe('ArchivedClipsSection', () => {
   it('deletes a clip after confirmation and decrements the group count', async () => {
     const group = makeGroup({ clip_count: 2 })
     const clips = [makeClip({ id: 'c1' }), makeClip({ id: 'c2' })]
-    const fetchMock = routedFetch({ groups: [group], clips: { [group.archive_path]: clips } })
+    let deleted = false
+    const baseFetch = routedFetch({ groups: [group], clips: { [group.archive_path]: clips } })
+    const fetchMock = vi.fn((url: string, options?: RequestInit) => {
+      if (options?.method === 'DELETE') deleted = true
+      if (deleted && url.startsWith('/api/storage/archive-clips')) {
+        return Promise.resolve(jsonResponse({ items: [clips[1]], total: 1 }))
+      }
+      return baseFetch(url, options)
+    })
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mountSection()
     await flushPromises()
@@ -437,6 +462,141 @@ describe('ArchivedClipsSection', () => {
     await paginator.vm.$emit('update:first', 10)
     await flushPromises()
     expect(wrapper.findAll('.archive-panel')).toHaveLength(5)
+  })
+
+  it('paginates an expanded archive in 50-clip pages without loading all clips', async () => {
+    const group = makeGroup({ clip_count: 51 })
+    const clips = Array.from({ length: 51 }, (_, i) => makeClip({ id: `clip-${i}` }))
+    const fetchMock = routedFetch({ groups: [group], clips: { [group.archive_path]: clips } })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await expandFirstArchive(wrapper)
+
+    const paginator = wrapper.find('.archive-clips-paginator')
+    expect(paginator.exists()).toBe(true)
+    expect(wrapper.findAll('button').filter((b) => b.text() === 'Delete')).toHaveLength(50)
+    const firstCall = fetchMock.mock.calls.find((call) =>
+      (call[0] as string).startsWith('/api/storage/archive-clips'),
+    )?.[0] as string
+    expect(firstCall).toContain('limit=50')
+    expect(firstCall).toContain('offset=0')
+
+    await paginator.find('.p-paginator-next').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('button').filter((b) => b.text() === 'Delete')).toHaveLength(1)
+    const archiveCalls = fetchMock.mock.calls
+      .filter((call) => (call[0] as string).startsWith('/api/storage/archive-clips'))
+      .map((call) => call[0] as string)
+    expect(archiveCalls.at(-1)).toContain('offset=50')
+  })
+
+  it('moves back to the previous clip page after deleting its last clip', async () => {
+    const group = makeGroup({ clip_count: 51 })
+    const clips = Array.from({ length: 51 }, (_, i) => makeClip({ id: `clip-${i}` }))
+    const fetchMock = routedFetch({ groups: [group], clips: { [group.archive_path]: clips } })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+    await expandFirstArchive(wrapper)
+    await wrapper.find('.archive-clips-paginator .p-paginator-next').trigger('click')
+    await flushPromises()
+
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Delete')!
+      .trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+
+    expect(wrapper.findAll('button').filter((button) => button.text() === 'Delete')).toHaveLength(50)
+  })
+
+  it('reuses the top-level camera and date filters for expanded archive pages', async () => {
+    const group = makeGroup()
+    const fetchMock = routedFetch({
+      groups: [group],
+      cameras: ['Front Door'],
+      clips: { [group.archive_path]: [makeClip()] },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+    await wrapper.findComponent(Select).vm.$emit('update:modelValue', 'Front Door')
+    await flushPromises()
+    const dateInputs = wrapper.findAll('input[type="date"]')
+    await dateInputs[0].setValue('2026-06-01')
+    await dateInputs[1].setValue('2026-06-30')
+    await flushPromises()
+    await expandFirstArchive(wrapper)
+
+    const url = fetchMock.mock.calls
+      .filter((call) => (call[0] as string).startsWith('/api/storage/archive-clips'))
+      .at(-1)?.[0] as string
+    expect(url).toContain('camera=Front+Door')
+    expect(url).toContain('since=2026-06-01T00%3A00%3A00%2B00%3A00')
+    expect(url).toContain('until=2026-06-30T23%3A59%3A59.999999%2B00%3A00')
+    expect(url).toContain('offset=0')
+  })
+
+  it('ignores an archive page response that belongs to older filters', async () => {
+    const group = makeGroup()
+    let resolveClipRequest: (response: Response) => void = () => {}
+    let clipRequestPending = true
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/storage/archives')) {
+        return Promise.resolve(jsonResponse([group]))
+      }
+      if (url.startsWith('/api/storage/archive-clips') && clipRequestPending) {
+        clipRequestPending = false
+        return new Promise<Response>((resolve) => {
+          resolveClipRequest = resolve
+        })
+      }
+      if (url.startsWith('/api/storage/archive-clips')) {
+        return Promise.resolve(jsonResponse({ items: [], total: 0 }))
+      }
+      if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse([]))
+      return Promise.resolve(jsonResponse([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+    await wrapper.find('.archive-panel-header').trigger('click')
+    await wrapper.findAll('input[type="date"]')[0].setValue('2026-06-01')
+    await flushPromises()
+
+    resolveClipRequest(jsonResponse({ items: [makeClip()], total: 1 }))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Not backed up')
+  })
+
+  it('keeps the expanded archive body at a stable, theme-aware size', async () => {
+    const group = makeGroup()
+    vi.stubGlobal('fetch', routedFetch({ groups: [group], clips: { [group.archive_path]: [makeClip()] } }))
+    const wrapper = mountSection()
+    await flushPromises()
+    await expandFirstArchive(wrapper)
+
+    const content = wrapper.find('.archive-clips-content')
+    expect(content.exists()).toBe(true)
+    expect(content.classes()).toContain('archive-clips-content')
+  })
+
+  it('shows an empty matching state for a filtered archive', async () => {
+    const group = makeGroup()
+    vi.stubGlobal('fetch', routedFetch({ groups: [group], clips: { [group.archive_path]: [] } }))
+    const wrapper = mountSection()
+    await flushPromises()
+    await expandFirstArchive(wrapper)
+
+    expect(wrapper.text()).toContain('No clips in this archive match the active filters.')
   })
 
   it('exposes reload() for the parent to call', async () => {
