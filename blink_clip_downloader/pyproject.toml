@@ -59,7 +59,7 @@ vision = [
     # versus the previous 4.10.0 floor — checked by hand in isolated venvs,
     # not just "no import error." No known CVEs in either line at the time
     # of this bump (checked via pip-audit).
-    "opencv-python-headless>=4.10,<6",
+    "opencv-python-headless>=5.0.0.93,<6",
     "transformers>=5.5,<6",
     "facenet-pytorch>=2.6,<3",
 ]

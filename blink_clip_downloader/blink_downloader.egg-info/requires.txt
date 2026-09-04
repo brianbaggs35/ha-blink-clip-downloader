@@ -19,6 +19,6 @@ PyYAML>=6.0.3
 
 [vision]
 ultralytics<9,>=8.4.140
-opencv-python-headless<6,>=4.10
+opencv-python-headless<6,>=5.0.0.93
 transformers<6,>=5.5
 facenet-pytorch<3,>=2.6
