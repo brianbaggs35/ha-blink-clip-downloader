@@ -20,6 +20,7 @@
 - Updated @types/node to 26.4.1
 - Updated @playwright/test to 1.63.0
 - Updated openai to 3.8.0
+- Updated anthropic to 1.4.0
 
 ## 5.4.6
 
