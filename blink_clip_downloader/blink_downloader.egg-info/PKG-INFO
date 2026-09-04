@@ -13,7 +13,7 @@ Requires-Dist: python-dateutil>=2.9.0
 Requires-Dist: aiosmtplib>=5.1.2
 Requires-Dist: Pillow>=12.3.0
 Requires-Dist: anthropic>=1.2.0
-Requires-Dist: openai>=3.6.0
+Requires-Dist: openai>=3.8.0
 Requires-Dist: numpy>=2.5.2
 Provides-Extra: test
 Requires-Dist: pytest>=9.1.1; extra == "test"
