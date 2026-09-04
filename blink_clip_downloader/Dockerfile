@@ -33,17 +33,6 @@ RUN npm run build
 # Supervisor's own local build does — nothing else needed to change.
 FROM ghcr.io/home-assistant/base-debian:trixie
 
-# BUILD_ARCH is still injected by both the HA build system and this
-# repo's own CI workflows for multi-arch images (unlike BUILD_FROM above,
-# this one HA's migration guide explicitly keeps) — used below only for
-# the io.hass.arch OCI label. BUILD_VERSION likewise always passed
-# explicitly by both; the default here only applies to a manual
-# `docker build` with no --build-arg, so keeping it perfectly current
-# isn't load-bearing, just avoids a wildly stale value in that image's
-# OCI labels.
-ARG BUILD_ARCH
-ARG BUILD_VERSION=5.1.1
-
 # Base image switched from Alpine to Debian (trixie, glibc) in 4.1.0 — the
 # optional computer-vision pipeline (ai_object_detection_enabled and friends,
 # see config.yaml) depends on torch, which has no official wheels for
@@ -332,6 +321,12 @@ RUN chmod a+x /etc/services.d/blink-downloader/run \
 # exec-s /init) causes s6-svscan to be started a second time, producing
 # the "another instance already running" crash loop.
 
+# Keep release metadata out of the expensive dependency-install layers above.
+# Docker includes in-scope build arguments in cache keys, so declaring these
+# here lets code-only releases reuse the large Python/CV layers and lets
+# Supervisor pull only the changed application layer.
+ARG BUILD_ARCH
+ARG BUILD_VERSION=5.4.7
 LABEL \
     org.opencontainers.image.title="Blink Clip Downloader" \
     org.opencontainers.image.description="Home Assistant add-on for saving and viewing Blink camera clips, with AI analysis and facial recognition" \
