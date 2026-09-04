@@ -9,6 +9,18 @@
   Python, and computer-vision layers instead of forcing Home Assistant to
   download them again during every update.
 
+### Dependency Updates
+
+- Updated e2e playwright to 1.63.0
+- Updated vue-tsc to 3.3.11
+- Updated typescript-eslint to 8.69.0
+- Updated globals to 17.12.0
+- Updated eslint to 10.10.0
+- Updated vitest and @vitest/coverage-v8 to 5.0.0
+- Updated @types/node to 26.4.1
+- Updated @playwright/test to 1.63.0
+- Updated openai to 3.8.0
+
 ## 5.4.6
 
 ### Bug Fixes
