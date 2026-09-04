@@ -61,7 +61,7 @@ vision = [
     # of this bump (checked via pip-audit).
     "opencv-python-headless>=5.0.0.93,<6",
     "transformers>=5.16.1,<6",
-    "facenet-pytorch>=2.6,<3",
+    "facenet-pytorch>=2.6.0,<3",
 ]
 
 [tool.setuptools.packages.find]
