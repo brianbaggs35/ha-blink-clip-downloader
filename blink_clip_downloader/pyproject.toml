@@ -50,7 +50,7 @@ test = [
 #      Pillow>=12.3.0 — its actual runtime code works fine with modern
 #      Pillow, only the stale pin is broken).
 vision = [
-    "ultralytics>=8.3,<9",
+    "ultralytics>=8.4.140,<9",
     # Cap raised from <5 to <6 after verifying both cv2 call sites this add-on
     # actually uses (FramePreprocessor.enhance's imdecode/cvtColor/CLAHE/
     # fastNlMeansDenoisingColored/imencode chain, and ContactDetector's
