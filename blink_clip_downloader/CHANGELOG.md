@@ -23,6 +23,7 @@
 - Updated anthropic to 1.4.0
 - Updated ultralytics to 8.4.140
 - Updated opencv-python-headless to 5.0.0.93
+- Updated transformers to 5.16.1
 
 ## 5.4.6
 

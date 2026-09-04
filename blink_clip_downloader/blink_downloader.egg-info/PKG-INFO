@@ -24,5 +24,5 @@ Requires-Dist: PyYAML>=6.0.3; extra == "test"
 Provides-Extra: vision
 Requires-Dist: ultralytics<9,>=8.4.140; extra == "vision"
 Requires-Dist: opencv-python-headless<6,>=5.0.0.93; extra == "vision"
-Requires-Dist: transformers<6,>=5.5; extra == "vision"
+Requires-Dist: transformers<6,>=5.16.1; extra == "vision"
 Requires-Dist: facenet-pytorch<3,>=2.6; extra == "vision"
