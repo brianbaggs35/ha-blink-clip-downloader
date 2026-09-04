@@ -10,6 +10,15 @@
   delayed browser requests. The player loads each session source once, ignores
   stale callbacks during camera switches, and surfaces the browser's playback
   error details when decoding fails.
+- Sync-module and camera topology is now reconciled periodically while the
+  add-on is running. Replacing a sync module or adding cameras no longer leaves
+  stale device objects in Live View, Security Feed, battery monitoring, or
+  Sync Module local-storage downloads; newly onboarded Blink Outdoor 4 cameras
+  and Sync Module XR+ networks are discovered without requiring a restart.
+  Cameras and modules that blinkpy reports as offline remain available for
+  monitoring and are not mistaken for removed hardware.
+- Added the missing Home Assistant configuration description for the optional
+  `hf_token` field.
 
 ## 5.4.5
 

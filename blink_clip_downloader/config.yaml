@@ -60,6 +60,7 @@ options:
 
   # --- Filtering ---
   # Only download clips from these cameras (leave empty for all cameras).
+  # Keep this empty to include cameras added later without changing config.
   camera_filter: []
   # Only download PIR motion-triggered clips (skip liveview and snapshots).
   motion_only: false

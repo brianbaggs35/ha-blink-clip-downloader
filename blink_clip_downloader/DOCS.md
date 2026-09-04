@@ -98,6 +98,41 @@ They do not share state and cannot interfere with each other.
 
 ---
 
+## Changing Sync Modules or Adding Cameras
+
+The add-on discovers the Blink account's sync modules and cameras from the Blink
+cloud API rather than storing a fixed hardware list. This supports replacing a
+sync module, including moving to a **Sync Module XR+**, and adding **Blink Outdoor
+4** cameras alongside existing cameras. Outdoor 4 devices are handled through
+blinkpy's normal camera API; no model-specific option is required.
+
+After the change:
+
+1. Finish onboarding the XR+ and Outdoor 4 cameras in the Blink app first.
+2. Leave `camera_filter` empty (the default) if newly added cameras should be
+   downloaded automatically. If a whitelist is configured, add each new camera's
+   exact Blink name to it.
+3. The add-on refreshes the account topology periodically while it is running.
+   A restart is not required, although restarting after hardware changes is
+   reasonable if you want the new camera list immediately.
+
+An offline camera or sync module remains represented using blinkpy's reported
+offline state. It is not removed just because its batteries are dead or its
+power/network connection is unavailable. Removal is only applied after a
+successful available-topology response no longer lists the device.
+
+Existing clips, tracker entries, camera configurations, and the library database
+are keyed by clip/camera names and are not deleted when a sync module is replaced.
+If the new cameras use new names, they initially use the normal defaults in the
+web UI; configure their per-camera AI or vehicle settings after they appear.
+
+If `download_local_storage` is enabled, the add-on enumerates every currently
+available sync module on each local-storage pass. A replaced module's old USB
+manifest is not reused, and the new module's manifest is discovered after the
+topology refresh.
+
+---
+
 ## Two-Factor Authentication (2FA)
 
 If your Blink account has 2FA enabled, an **input overlay** appears automatically

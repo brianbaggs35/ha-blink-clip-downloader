@@ -390,6 +390,12 @@ configuration:
       web UI's AI tab and never leaves this add-on or your network — it is
       never sent to any cloud AI provider, regardless of which one is
       configured above. Off by default.
+  hf_token:
+    name: Hugging Face Token (optional)
+    description: >-
+      Optional Hugging Face access token used to authenticate computer-vision
+      model downloads and increase Hugging Face Hub rate limits. Create one at
+      https://huggingface.co/settings/tokens. Keep this secret.
   mobile_app_target:
     name: Mobile App Target Entity
     description: >-
