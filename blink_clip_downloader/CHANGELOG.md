@@ -21,6 +21,7 @@
 - Updated @playwright/test to 1.63.0
 - Updated openai to 3.8.0
 - Updated anthropic to 1.4.0
+- Update ultralytics to 8.4.140
 
 ## 5.4.6
 
