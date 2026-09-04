@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
+import time
 import uuid
+from collections.abc import Mapping, MutableMapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -54,6 +57,11 @@ _MAX_PAGES = 400
 _CHUNK_SIZE = 65_536
 # ffprobe subprocess timeout for probe_clip_duration() below.
 _PROBE_TIMEOUT = 15
+# Rebuild Blink's sync-module/camera maps periodically so hardware changes made
+# in the Blink app are picked up without requiring an add-on restart.  A full
+# topology rebuild refreshes every camera's initial state, so it is deliberately
+# much less frequent than the normal poll.
+_TOPOLOGY_REFRESH_INTERVAL = 900
 
 
 async def probe_clip_duration(video_path: Path) -> int:
@@ -128,6 +136,10 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         self._db = db
         self._blink: Blink | None = None
         self._session: aiohttp.ClientSession | None = None
+        # Start the timer at construction so tests and manually injected Blink
+        # instances retain the normal refresh path until a real connection has
+        # had time to establish its topology.
+        self._last_topology_refresh = time.monotonic()
         # Auth state exposed to the web UI.
         self.auth_state: str = "disconnected"
         self.auth_message: str = ""
@@ -263,6 +275,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         self.auth_state = "connected"
         self.auth_message = ""
         self._persist_auth()
+        self._last_topology_refresh = time.monotonic()
         _LOGGER.info("Connected to Blink (account_id=%s)", self._blink.account_id)
 
     async def disconnect(self) -> None:
@@ -378,6 +391,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         if self._blink is None:
             return False
         try:
+            await self._refresh_device_topology()
             return bool(await self._blink.refresh())
         except Exception as exc:
             _LOGGER.warning("Could not refresh camera state from Blink: %s", exc)
@@ -387,6 +401,120 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 # every cycle, until the add-on is restarted.
                 raise
             return False
+
+    async def _refresh_device_topology(self, *, force: bool = False) -> bool:
+        """Reconcile sync modules and cameras after a Blink account change.
+
+        ``blinkpy`` builds these maps during ``start()`` but its regular
+        ``refresh()`` only updates the objects it already knows about.  A
+        module replacement or newly onboarded camera would therefore remain
+        invisible to Live View, Security Feed, and battery monitoring until a
+        process restart.  The rebuild is transactional: a failed topology
+        request restores the previous maps so a transient Blink error cannot
+        discard a working configuration.
+
+        Returns ``True`` when a rebuild was completed, otherwise ``False``.
+        """
+        blink = self._blink
+        if blink is None:
+            return False
+
+        now = time.monotonic()
+        if not force and now - self._last_topology_refresh < _TOPOLOGY_REFRESH_INTERVAL:
+            return False
+
+        setup_post_verify = getattr(blink, "setup_post_verify", None)
+        # Avoid treating a dynamically-created mock attribute as a real
+        # coroutine in tests and, more importantly, avoid invoking an
+        # unexpected blinkpy implementation with an incompatible contract.
+        if not inspect.iscoroutinefunction(setup_post_verify):
+            _LOGGER.debug(
+                "Blink topology refresh is unavailable in this blinkpy version"
+            )
+            self._last_topology_refresh = now
+            return False
+
+        old_sync = blink.sync
+        old_cameras = blink.cameras
+        old_sync_names = tuple(str(name) for name in old_sync)
+        old_camera_names = tuple(str(name) for name in old_cameras)
+
+        try:
+            # setup_post_verify() adds newly discovered sync-less devices and
+            # then replaces/creates regular sync modules.  Give it empty
+            # containers so removed hardware cannot survive the rebuild.
+            blink.sync = type(old_sync)()
+            blink.cameras = type(old_cameras)()
+            if not await setup_post_verify():
+                blink.sync = old_sync
+                blink.cameras = old_cameras
+                _LOGGER.warning(
+                    "Blink topology refresh returned no usable device data; "
+                    "keeping the previous sync-module/camera map"
+                )
+                return False
+            # blinkpy keeps a sync module in ``blink.sync`` when its
+            # initialization sees the module but cannot reach it. Its
+            # ``available`` flag distinguishes an unavailable module from
+            # removed hardware, so retain the last known cameras until the
+            # module comes back online.
+            for sync_name, previous_sync in old_sync.items():
+                current_sync = blink.sync.get(sync_name)
+                if current_sync is None:
+                    continue
+                current_status = str(getattr(current_sync, "status", "")).lower()
+                if getattr(current_sync, "available", True) is not False and (
+                    current_status != "offline"
+                ):
+                    continue
+                previous_cameras = getattr(previous_sync, "cameras", {})
+                current_cameras = getattr(current_sync, "cameras", {})
+                if not isinstance(previous_cameras, Mapping) or not isinstance(
+                    current_cameras, MutableMapping
+                ):
+                    continue
+                for camera_name, camera in previous_cameras.items():
+                    if camera_name in current_cameras:
+                        continue
+                    # Rebind the retained camera to blinkpy's current sync
+                    # object so later API calls use the current network ID.
+                    camera.sync = current_sync
+                    camera.network_id = str(current_sync.network_id)
+                    current_cameras[camera_name] = camera
+                    blink.cameras[camera_name] = camera
+                _LOGGER.info(
+                    "Keeping cameras for unavailable sync module %r until "
+                    "blinkpy reports it online or removed",
+                    sync_name,
+                )
+        except AUTH_FATAL_EXCEPTIONS:
+            blink.sync = old_sync
+            blink.cameras = old_cameras
+            raise
+        except Exception as exc:  # noqa: BLE001
+            blink.sync = old_sync
+            blink.cameras = old_cameras
+            _LOGGER.warning(
+                "Could not refresh Blink sync-module/camera topology: %s; "
+                "keeping the previous map",
+                exc,
+            )
+            return False
+
+        self._last_topology_refresh = time.monotonic()
+        new_sync_names = tuple(str(name) for name in blink.sync)
+        new_camera_names = tuple(str(name) for name in blink.cameras)
+        if old_sync_names != new_sync_names or old_camera_names != new_camera_names:
+            _LOGGER.info(
+                "Blink topology changed: sync modules %s -> %s; cameras %s -> %s",
+                old_sync_names,
+                new_sync_names,
+                old_camera_names,
+                new_camera_names,
+            )
+        else:
+            _LOGGER.debug("Blink topology refreshed; no device changes detected")
+        return True
 
     async def get_camera_snapshot(self, name: str) -> bytes | None:
         """Return the most recent snapshot image for *name*, if available.
