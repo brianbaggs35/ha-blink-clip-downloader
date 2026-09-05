@@ -138,6 +138,44 @@ def _force_face_recognition_available() -> None:
 # needing a real Ollama/cloud provider.
 _UNREACHABLE_OLLAMA_URL = "http://127.0.0.1:1"
 
+
+class _FakeBlinkAuth:
+    """Deterministic Blink auth/2FA state machine for browser E2E tests."""
+
+    _VALID_CODE = "123456"
+    _ERROR_CODE = "999999"
+
+    def __init__(self) -> None:
+        self.state = "connected"
+        self.message = ""
+        self._result_seq = 0
+        self._result_ok: bool | None = None
+
+    def status(self) -> dict[str, object]:
+        return {
+            "state": self.state,
+            "message": self.message,
+            "two_fa_result_seq": self._result_seq,
+            "two_fa_result_ok": self._result_ok,
+        }
+
+    def submit_two_fa(self, code: str) -> int:
+        self._result_seq += 1
+        if code == self._VALID_CODE:
+            self.state = "connected"
+            self.message = ""
+            self._result_ok = True
+        elif code == self._ERROR_CODE:
+            self.state = "error"
+            self.message = "Blink authentication failed (simulated E2E error)."
+            self._result_ok = False
+        else:
+            self.state = "needs_2fa"
+            self.message = "Incorrect verification code. Please try again."
+            self._result_ok = False
+        return self._result_seq
+
+
 _CAMERAS = ("Front Door", "Backyard", "Garage")
 # Real values the Library tab's source filter actually recognizes (see
 # LibraryPage.vue's SOURCE_OPTIONS) — not arbitrary strings, so the
@@ -485,6 +523,7 @@ async def _main() -> None:
     analyzer = ClipAnalyzer(
         ollama_url=_UNREACHABLE_OLLAMA_URL, model="llava", prompt="Describe this clip."
     )
+    fake_auth = _FakeBlinkAuth()
     # archive_after_days=5 (not the config.yaml default of 60) — see
     # _PENDING_ARCHIVE_HOURS_AGO's comment above for exactly why 5, not a
     # rounder-looking number.
@@ -513,6 +552,8 @@ async def _main() -> None:
     server = MediaServer(
         db=db,
         port=port,
+        two_fa_callback=fake_auth.submit_two_fa,
+        auth_state_getter=fake_auth.status,
         analyzer=analyzer,
         archiver=archiver,
         list_camera_names=_list_camera_names,
