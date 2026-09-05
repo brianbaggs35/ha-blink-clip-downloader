@@ -30,7 +30,7 @@ require_command() {
 
 require_command act "https://nektosact.com/installation/"
 require_command docker "https://docs.docker.com/engine/install/"
-
+require_command python3 "https://www.python.org/downloads/"
 if ! docker info >/dev/null 2>&1; then
   echo "Docker daemon is not reachable." >&2
   exit 1
