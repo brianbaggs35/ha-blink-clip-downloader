@@ -74,6 +74,17 @@ describe('VehiclesPage', () => {
     expect(wrapper.text()).toContain("won't activate")
   })
 
+  it('shows the protected camera names when protection is active', async () => {
+    stubRoutedFetch({
+      vehicle_settings: { car_description: 'Silver Kia Forte' },
+      camera_configs: [{ ...FRONT_CAM, is_car_camera: true }],
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Protection active for: Driveway.')
+  })
+
   it('shows an empty state with no cameras', async () => {
     stubRoutedFetch({ camera_configs: [] })
     const wrapper = mountPage()
@@ -130,6 +141,47 @@ describe('VehiclesPage', () => {
     const body = JSON.parse((call[1] as RequestInit).body as string)
     expect(body[0].is_car_camera).toBe(true)
     expect(body[0].description).toBe('Watches the driveway') // untouched field preserved
+  })
+
+  it('preserves the latest automatic-analysis preference when saving camera settings', async () => {
+    let cameraReads = 0
+    let saved: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT') {
+          saved = JSON.parse(init.body as string)
+          return Promise.resolve(jsonResponse({ saved: true, count: 1 }))
+        }
+        if (url.includes('/api/vehicle/settings')) return Promise.resolve(jsonResponse({ car_description: '' }))
+        cameraReads++
+        return Promise.resolve(
+          jsonResponse([
+            {
+              ...FRONT_CAM,
+              is_car_camera: true,
+              auto_analyze: cameraReads === 1 ? false : true,
+            },
+          ]),
+        )
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Settings'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(saved).toEqual([
+      {
+        ...FRONT_CAM,
+        is_car_camera: true,
+        auto_analyze: true,
+      },
+    ])
   })
 
   it('shows a toast when saving the description fails', async () => {

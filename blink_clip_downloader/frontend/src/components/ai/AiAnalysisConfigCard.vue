@@ -33,11 +33,12 @@ function normalizeConfig(config: CameraConfig): EditableCameraConfig {
 }
 
 function cameraInputId(camera: string): string {
-  const slug = camera
+  let slug = camera
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/^-+/, '')
+  while (slug.endsWith('-')) slug = slug.slice(0, -1)
   return `ai-analysis-${slug || 'camera'}`
 }
 

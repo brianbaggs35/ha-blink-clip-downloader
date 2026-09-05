@@ -214,6 +214,32 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
     # AI analysis setup
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _apply_camera_config_from_ui(
+        cam_cfg: object,
+        camera_descriptions: dict[str, str],
+        camera_prompts: dict[str, str],
+        car_cameras_from_ui: list[str],
+        car_zones: dict[str, dict[str, Any]],
+        auto_analysis_disabled_cameras: set[str],
+    ) -> None:
+        """Apply one camera's web UI settings to the loaded configuration."""
+        if not isinstance(cam_cfg, dict) or not cam_cfg.get("camera"):
+            return
+
+        cam = str(cam_cfg["camera"])
+        if cam_cfg.get("description"):
+            camera_descriptions[cam] = str(cam_cfg["description"])
+        if cam_cfg.get("custom_prompt"):
+            camera_prompts[cam] = str(cam_cfg["custom_prompt"])
+        if cam_cfg.get("is_car_camera"):
+            car_cameras_from_ui.append(cam)
+        if cam_cfg.get("auto_analyze", True) is False:
+            auto_analysis_disabled_cameras.add(cam)
+        zone = MediaServer._normalize_car_zone(cam_cfg.get("car_zone"))
+        if zone is not None:
+            car_zones[cam] = zone
+
     def _load_camera_configs_from_ui(
         self,
     ) -> tuple[
@@ -247,20 +273,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         try:
             cam_cfgs = json.loads(cam_desc_file.read_text())
             for cam_cfg in cam_cfgs:
-                if not isinstance(cam_cfg, dict) or not cam_cfg.get("camera"):
-                    continue
-                cam = str(cam_cfg["camera"])
-                if cam_cfg.get("description"):
-                    camera_descriptions[cam] = str(cam_cfg["description"])
-                if cam_cfg.get("custom_prompt"):
-                    camera_prompts[cam] = str(cam_cfg["custom_prompt"])
-                if cam_cfg.get("is_car_camera"):
-                    car_cameras_from_ui.append(cam)
-                if cam_cfg.get("auto_analyze", True) is False:
-                    auto_analysis_disabled_cameras.add(cam)
-                zone = MediaServer._normalize_car_zone(cam_cfg.get("car_zone"))
-                if zone is not None:
-                    car_zones[cam] = zone
+                self._apply_camera_config_from_ui(
+                    cam_cfg,
+                    camera_descriptions,
+                    camera_prompts,
+                    car_cameras_from_ui,
+                    car_zones,
+                    auto_analysis_disabled_cameras,
+                )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning(
                 "Could not load %s, starting with no per-camera AI "

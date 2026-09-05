@@ -135,6 +135,51 @@ describe('AiAnalysisConfigCard', () => {
     expect(label).not.toBeNull()
   })
 
+  it('uses a fallback id for camera names without alphanumeric characters', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([
+            {
+              ...CAMERA_CONFIGS[0],
+              camera: '---',
+            },
+          ]),
+        ),
+      ),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(document.querySelector('#ai-analysis-camera')).not.toBeNull()
+    expect(document.querySelector('label[for="ai-analysis-camera"]')).not.toBeNull()
+  })
+
+  it('trims trailing separators from camera ids', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([
+            {
+              ...CAMERA_CONFIGS[0],
+              camera: 'Front---',
+            },
+          ]),
+        ),
+      ),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    expect(document.querySelector('#ai-analysis-front')).not.toBeNull()
+  })
+
   it('closes when the modal reports that it is no longer visible', async () => {
     vi.stubGlobal(
       'fetch',

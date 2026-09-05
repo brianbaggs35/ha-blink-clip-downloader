@@ -2020,7 +2020,8 @@ async def test_ai_camera_configs_put_rejects_stale_revision(
     ):
         get_response = await client.get("/api/ai/camera-configs")
         revision = get_response.headers["ETag"]
-        assert revision.startswith('"') and revision.endswith('"')
+        assert revision.startswith('"')
+        assert revision.endswith('"')
         cfg_file.write_text(json.dumps(current))
         put_response = await client.put(
             "/api/ai/camera-configs",
@@ -2029,7 +2030,8 @@ async def test_ai_camera_configs_put_rejects_stale_revision(
         )
 
     assert put_response.status == 409
-    assert json.loads(cfg_file.read_text()) == current
+    saved = json.loads(cfg_file.read_text())
+    assert saved == current
 
 
 async def test_ai_camera_configs_put_bad_json(client: TestClient) -> None:

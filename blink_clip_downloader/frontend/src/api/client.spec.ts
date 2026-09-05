@@ -97,6 +97,16 @@ describe('api client', () => {
     })
   })
 
+  it('apiPut(): sends extra headers when no body is given', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({}))
+    await apiPut('/api/ai/camera-configs', undefined, { 'If-Match': '"revision"' })
+    expect(fetch).toHaveBeenCalledWith('/api/ai/camera-configs', {
+      method: 'PUT',
+      headers: { 'If-Match': '"revision"' },
+      body: undefined,
+    })
+  })
+
   it('apiPatch(): sends a JSON body via PATCH', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({}))
     await apiPatch('/api/ai/faces/1', { approved: false })
