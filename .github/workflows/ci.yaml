@@ -426,7 +426,7 @@ jobs:
         with:
           # Scanner version, pinned independently of the action version —
           # the action's bundled default lags behind Trivy releases.
-          version: v0.72.0
+          version: v0.74.0
           image-ref: ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
           scanners: vuln
           severity: HIGH,CRITICAL

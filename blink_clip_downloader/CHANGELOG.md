@@ -25,9 +25,11 @@
 - Updated opencv-python-headless to 5.0.0.93
 - Updated transformers to 5.16.1
 - Updated facenet-pytorch to 2.6.0
+- Updated trivy to 0.74.0
 - Kept the shared Pillow/Torch runtime versions intact when installing
   Moondream, whose published Pillow constraint is older than the versions
   required by the add-on.
+- Added version number to the about modal.
 
 ## 5.4.6
 
