@@ -283,28 +283,28 @@ and related toggles will report unavailable"
 # for local mode) without a matching major-version bump at the time, and an
 # unpinned install here previously let that rewrite silently break this
 # provider.
-# Non-fatal: if the install fails the moondream_local provider reports "not
+# Moondream's only runtime dependency is kestrel, while its Pillow<11 pin is
+# incompatible with this project's Pillow>=12.3 requirement. Install kestrel
+# normally so its native dependencies are resolved, then install moondream
+# without dependencies so it cannot downgrade Pillow in the shared runtime.
+# Non-fatal: if either install fails the moondream_local provider reports "not
 # installed" at runtime and the image still starts normally.
-RUN pip3 install --no-cache-dir "moondream>=1.3,<2" 2>&1 | tail -5 || \
+RUN pip3 install --no-cache-dir "kestrel>=0.4.2,<0.5" \
+    && pip3 install --no-cache-dir --no-deps "moondream>=1.3,<2" \
+    2>&1 | tail -5 || \
     echo "INFO: moondream install failed; moondream_local provider will be unavailable"
 
 # Install the app package so `python3 -m blink_downloader` works anywhere.
-# Ordering note: this must stay the *last* install step. moondream pins
-# pillow<11.0.0 and silently downgrades the Pillow>=12.3.0 already installed
-# from requirements.txt above (pip's default resolver applies a later
-# package's pin even when it conflicts with one installed earlier, only
-# warning "incompatible" rather than failing). Installing this project's own
-# package last — with its own Pillow>=12.3.0 requirement — re-upgrades
-# Pillow back to the version this codebase actually needs. Verified by hand
-# that moondream still imports fine against Pillow 12.3.0 despite its
-# (overly conservative) pin. If a future dependency gets added after this
-# block, re-verify Pillow's final installed version doesn't regress.
+# requirements.txt and the optional CV blocks above have already installed all
+# runtime dependencies. --no-deps prevents pip from trying to reconcile the
+# intentionally newer shared stack with facenet-pytorch's stale dependency
+# metadata, while preserving the Pillow version required by this project.
 COPY pyproject.toml /app/pyproject.toml
 COPY blink_downloader/ /app/blink_downloader/
 # Built Vue app (see frontend-builder stage above) — media_server.py's
 # _handle_index/_STATIC_DIR serve this instead of an embedded HTML string.
 COPY --from=frontend-builder /blink_downloader/static /app/blink_downloader/static
-RUN pip3 install --no-cache-dir /app \
+RUN pip3 install --no-cache-dir --no-deps /app \
     && rm -rf /app
 
 # Copy rootfs overlay (services.d service definitions + cont-init.d)
