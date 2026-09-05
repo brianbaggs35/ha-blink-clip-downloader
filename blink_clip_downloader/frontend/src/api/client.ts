@@ -40,12 +40,19 @@ export function apiPost<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export function apiPut<T>(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  const contentHeaders: Record<string, string> = body === undefined ? {} : { 'Content-Type': 'application/json' }
+  let headers: Record<string, string> | undefined
+  if (body === undefined && !extraHeaders) {
+    headers = undefined
+  } else if (extraHeaders) {
+    headers = { ...contentHeaders, ...extraHeaders }
+  } else {
+    headers = contentHeaders
+  }
+
   return api<T>(path, {
     method: 'PUT',
-    headers:
-      body === undefined && !extraHeaders
-        ? undefined
-        : { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...extraHeaders },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 }
