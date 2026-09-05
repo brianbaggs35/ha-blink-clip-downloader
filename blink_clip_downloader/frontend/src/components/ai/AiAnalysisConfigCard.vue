@@ -140,10 +140,10 @@ onMounted(load)
       <div class="camera-list">
         <div v-for="config in configs" :key="config.camera" class="camera-row">
           <div>
-            <label :for="`ai-analysis-${config.camera}`">📷 {{ config.camera }}</label>
+            <label :for="`ai-analysis-${encodeURIComponent(config.camera)}`">📷 {{ config.camera }}</label>
             <span>{{ config.auto_analyze ? 'Automatic analysis enabled' : 'Automatic analysis disabled' }}</span>
           </div>
-          <ToggleSwitch v-model="config.auto_analyze" :input-id="`ai-analysis-${config.camera}`" />
+          <ToggleSwitch v-model="config.auto_analyze" :input-id="`ai-analysis-${encodeURIComponent(config.camera)}`" />
         </div>
       </div>
     </template>
