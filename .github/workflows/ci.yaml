@@ -121,7 +121,8 @@ jobs:
     # (see Dockerfile) — tests/conftest.py's `db` fixture connects to this
     # via TEST_DATABASE_DSN, defaulting to
     # postgresql://postgres:postgres@localhost:5432/blink_clips_test, which
-    # is exactly what this service exposes, so no DSN override is needed.
+    # GitHub-hosted jobs use the default localhost DSN; the pytest step
+    # overrides it under act to use the dynamically rewritten host port.
     services:
       postgres:
         image: postgres:17
@@ -154,6 +155,10 @@ jobs:
 
       - name: Run pytest with coverage
         working-directory: blink_clip_downloader
+        env:
+          TEST_DATABASE_DSN: >-
+            ${{ env.ACT && env.ACT_TEST_DATABASE_DSN ||
+            'postgresql://postgres:postgres@localhost:5432/blink_clips_test' }}
         run: |
           pytest tests \
             -v \
@@ -296,7 +301,9 @@ jobs:
       - name: Run Playwright e2e tests with coverage
         working-directory: blink_clip_downloader/frontend
         env:
-          E2E_DATABASE_DSN: postgresql://postgres:postgres@localhost:5432/blink_clips_e2e
+          E2E_DATABASE_DSN: >-
+            ${{ env.ACT && env.ACT_E2E_DATABASE_DSN ||
+            'postgresql://postgres:postgres@localhost:5432/blink_clips_e2e' }}
         run: npm run test:e2e:coverage
 
       - name: Upload Playwright report
@@ -331,8 +338,9 @@ jobs:
     # SONAR_TOKEN) - without this guard the scan would fail outright on
     # every external contribution instead of just being skipped.
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.actor != 'nektos/act' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
 

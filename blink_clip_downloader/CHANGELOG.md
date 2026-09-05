@@ -30,6 +30,10 @@
   Moondream, whose published Pillow constraint is older than the versions
   required by the add-on.
 - Added version number to the about modal.
+- Added tests for authentication and mocked authentication for them.
+- Added copilot-instructions for copilot coding agent.
+- Added script for running act (github actions locally).
+- Updated ci.yaml to work with act.
 
 ## 5.4.6
 

@@ -27,3 +27,4 @@ coverage.xml
 lcov.info
 .scannerwork/
 .sonar/
+.act-ci.*.yaml
