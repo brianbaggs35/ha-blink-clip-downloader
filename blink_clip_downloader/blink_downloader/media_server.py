@@ -1535,7 +1535,7 @@ class MediaServer:
                         "auto_analyze": entry.get("auto_analyze", True) is not False,
                     }
                 )
-        return web.json_response(result, headers={"ETag": revision})
+        return web.json_response(result, headers={"ETag": f'"{revision}"'})
 
     @staticmethod
     def _normalize_car_zone(zone: Any) -> dict[str, Any] | None:
@@ -1615,8 +1615,9 @@ class MediaServer:
             current_revision = self._camera_configs_revision(
                 self._read_camera_configs()
             )
+            current_etag = f'"{current_revision}"'
             expected_revision = request.headers.get("If-Match")
-            if expected_revision and expected_revision != current_revision:
+            if expected_revision and expected_revision != current_etag:
                 raise web.HTTPConflict(
                     text="Camera settings changed; reload before saving"
                 )
@@ -1635,7 +1636,7 @@ class MediaServer:
             revision = self._camera_configs_revision(configs)
 
         return web.json_response(
-            {"saved": True, "count": len(configs)}, headers={"ETag": revision}
+            {"saved": True, "count": len(configs)}, headers={"ETag": f'"{revision}"'}
         )
 
     def _apply_camera_configs_to_analyzer(self, configs: list[dict[str, Any]]) -> None:
