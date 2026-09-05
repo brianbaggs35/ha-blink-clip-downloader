@@ -18,7 +18,10 @@ export default defineConfig({
   // once would be a race, not a real failure.
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
+  // Keep GitHub annotations for failures, but use the list reporter as the
+  // primary CI output so every test is visible instead of being collapsed to
+  // a row of dots.
+  reporter: process.env.CI ? [['list'], ['github'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
@@ -40,7 +43,7 @@ export default defineConfig({
     // expect.
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
-    env: { BLINK_DB_DSN: DB_DSN },
+    env: { BLINK_DB_DSN: DB_DSN, BLINK_E2E: '1' },
     stdout: 'pipe',
     stderr: 'pipe',
   },
