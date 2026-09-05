@@ -220,7 +220,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         dict[str, str],
         dict[str, str],
         list[str],
-        dict[str, dict[str, float]],
+        dict[str, dict[str, Any]],
         set[str],
     ]:
         """Load per-camera settings from the web UI config file.
