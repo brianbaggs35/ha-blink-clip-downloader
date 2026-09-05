@@ -8,6 +8,10 @@ export default mergeConfig(
       environment: 'jsdom',
       globals: true,
       setupFiles: ['./src/test-setup.ts'],
+      // Reuse one VM-backed jsdom environment per worker while preserving
+      // isolation between test files. This avoids creating 72 jsdom
+      // environments during CI coverage runs.
+      pool: 'vmThreads',
       // e2e/ holds @playwright/test specs (frontend/playwright.config.ts),
       // a different test runner entirely — Vitest's default file glob
       // would otherwise pick them up and try (and fail) to run them too.
@@ -18,7 +22,9 @@ export default mergeConfig(
         // in sonar-project.properties) - cobertura is what Codecov consumes.
         reporter: ['text', 'text-summary', 'cobertura', 'lcov', 'html'],
         include: ['src/**/*.{ts,vue}'],
-        exclude: ['src/main.ts', 'src/test-setup.ts', 'src/vite-env.d.ts', 'src/**/*.spec.ts'],
+        // TypeScript-only declarations are erased before Vitest runs, so
+        // api/types.ts has no executable statements that a test can cover.
+        exclude: ['src/main.ts', 'src/test-setup.ts', 'src/vite-env.d.ts', 'src/api/types.ts', 'src/**/*.spec.ts'],
         // Mirrors the backend's pyproject.toml coverage gate (fail_under = 80)
         // so the frontend is held to the same bar as the Python package.
         thresholds: {
