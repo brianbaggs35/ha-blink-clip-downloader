@@ -1,5 +1,15 @@
 # Changelog
 
+### 5.4.8 (Placeholder not released yet)
+
+### Added
+
+- Added configuration description for battery_alerts_enabled.
+- Added support for French language for configuration.
+- Added support for Spanish language for configuration.
+- Added support for the Russian language for configuration.
+- Added support for the Chinese language for configuration.
+
 ## 5.4.7
 
 ### Added

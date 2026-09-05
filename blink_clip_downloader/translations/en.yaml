@@ -455,3 +455,7 @@ configuration:
   log_level:
     name: Log Level
     description: Verbosity of add-on logs.
+  battery_alerts_enabled:
+    name: Enable Battery Alerts
+    description: >-
+      Send an alert when a camera's battery is low.
