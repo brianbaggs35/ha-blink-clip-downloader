@@ -2020,6 +2020,7 @@ async def test_ai_camera_configs_put_rejects_stale_revision(
     ):
         get_response = await client.get("/api/ai/camera-configs")
         revision = get_response.headers["ETag"]
+        assert revision.startswith('"') and revision.endswith('"')
         cfg_file.write_text(json.dumps(current))
         put_response = await client.put(
             "/api/ai/camera-configs",
