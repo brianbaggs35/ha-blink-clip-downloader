@@ -1,0 +1,397 @@
+---
+configuration:
+  username:
+    name: Blink 用户名
+    description: 你的 Blink 账户邮箱地址。
+  password:
+    name: Blink 密码
+    description: 你的 Blink 账户密码。
+  download_path:
+    name: 下载路径
+    description: >-
+      保存片段的绝对路径。必须位于 /share/ 目录下，这样 HA 的媒体浏览器才能看到它们
+      （例如 /share/blink-clips）。
+  organize_by_camera:
+    name: 按摄像头整理
+    description: 为每个摄像头名称创建一个子文件夹。
+  organize_by_date:
+    name: 按日期整理
+    description: 为每个录制日期创建一个子文件夹（YYYY-MM-DD）。
+  filename_format:
+    name: 文件名格式
+    description: >-
+      片段文件名的模板。可用占位符：{camera}、{timestamp}、{date}、{time}、{id}。
+      扩展名（.mp4）会自动添加。
+  poll_interval:
+    name: 轮询间隔（秒）
+    description: 检查 Blink 是否有新片段的频率（30–3600 秒）。
+  max_clips_per_poll:
+    name: 每次轮询的最大片段数
+    description: 单次轮询周期内下载的最大片段数量。
+  retention_days:
+    name: 保留天数
+    description: >-
+      删除超过此天数的片段。设为 0 表示永久保留所有片段。
+  max_storage_gb:
+    name: 存储配额（GB）
+    description: >-
+      当下载文件夹超过此大小时停止下载。设为 0 表示不限制。
+  camera_filter:
+    name: 摄像头白名单
+    description: >-
+      仅从这些摄像头下载（名称须与 Blink 应用中显示的完全一致）。留空表示从所有摄像头下载。
+  motion_only:
+    name: 仅动作触发
+    description: 跳过未由动作（PIR 传感器）触发的片段。
+  time_window_start:
+    name: 时间窗口开始
+    description: >-
+      仅下载在此时间之后录制的片段（HH:MM，24 小时制）。留空以禁用此过滤器。
+  time_window_end:
+    name: 时间窗口结束
+    description: >-
+      仅下载在此时间之前录制的片段（HH:MM，24 小时制）。留空以禁用此过滤器。
+  download_thumbnails:
+    name: 下载缩略图
+    description: 同时保存每个片段对应的 JPEG 缩略图。
+  concurrent_downloads:
+    name: 并发下载数
+    description: 并行下载的片段数量（1–10）。
+  retry_attempts:
+    name: 重试次数
+    description: 下载失败后重试的次数，超过后将跳过该片段。
+  retry_delay:
+    name: 重试间隔（秒）
+    description: >-
+      每次重试之间等待的秒数。该延迟会随重试次数递增相乘（例如 5 秒、10 秒、15 秒）。
+      范围 0–300 秒。
+  notify_ha:
+    name: HA 通知
+    description: >-
+      每当有新片段到达时发送一条持久化的 Home Assistant 通知，此外每日摘要和系统事件
+      （需要 2FA、身份验证失败、存储已满）也会发送通知。这些通知显示在 HA 的通知面板中，
+      而不是手机推送通知——如果只想针对可疑片段发送提醒（不包含每次下载的噪音通知），
+      请改用下方的“启用 Home Assistant 提醒”。
+  ha_notification_title:
+    name: 通知标题
+    description: Home Assistant 持久化通知使用的标题。
+  webhook_url:
+    name: Webhook 网址
+    description: >-
+      可选的 HTTP(S) 网址，每次成功下载后会向该网址 POST 片段元数据。留空以禁用。
+  create_clip_manifest:
+    name: 创建片段清单
+    description: >-
+      在 /data/clip_manifest.json 中维护一份 JSON 清单，记录每个已下载片段的元数据。
+  min_clip_duration:
+    name: 最短片段时长（秒）
+    description: >-
+      跳过短于此时长（秒）的片段。设为 0 表示保留所有片段，不论时长。
+  enable_library_db:
+    name: 启用片段库数据库
+    description: >-
+      将片段元数据存储在 PostgreSQL 数据库中，为 Web 片段库界面、每日摘要和归档功能提供支持。
+  enable_media_server:
+    name: 启用 Web 片段库界面
+    description: >-
+      在配置的端口上启动内置的 Web 服务器，让你可以在任意浏览器中浏览、搜索、标星并播放已保存的片段。
+  media_server_port:
+    name: Web 界面端口
+    description: 片段库 Web 服务器使用的 TCP 端口（默认 8099）。
+  watch_ha_events:
+    name: 监控 HA 动作事件
+    description: >-
+      订阅 Home Assistant 的 state_changed 事件，在动作传感器触发时立即执行一次
+      Blink 轮询，使片段能在几秒钟内出现。
+  fast_poll_duration:
+    name: 快速轮询持续时间（秒）
+    description: >-
+      检测到动作事件后，快速轮询模式保持的时长（默认 120 秒）。
+  fast_poll_interval:
+    name: 快速轮询间隔（秒）
+    description: >-
+      由动作事件触发的快速轮询模式下的轮询间隔（默认 15 秒，最小 5 秒）。
+  post_motion_delay:
+    name: 动作后下载延迟（秒）
+    description: >-
+      Blink 动作传感器状态清除后，等待多少秒再去轮询新片段。Blink 通常需要 15–60
+      秒在动作结束后对片段进行编码并上传。默认 30 秒（范围 5–300 秒）。
+  event_cameras:
+    name: 事件摄像头过滤器
+    description: >-
+      仅为这些摄像头的动作事件触发快速轮询模式。留空表示对所有 Blink 摄像头做出响应。
+  digest_enabled:
+    name: 启用每日摘要
+    description: >-
+      发送一条每日 Home Assistant 通知，总结已下载的片段数量和当前存储使用情况。
+  digest_time:
+    name: 每日摘要时间（HH:MM）
+    description: >-
+      发送每日摘要通知的本地时间（24 小时制，例如 “08:00”）。
+  archive_enabled:
+    name: 启用 ZIP 归档
+    description: >-
+      将超过归档阈值的片段压缩为按月生成的 ZIP 文件，在保留元数据的同时释放磁盘空间。
+  archive_after_days:
+    name: 归档时限（天）
+    description: >-
+      超过此天数的片段将被压缩为 ZIP 归档文件（仅在启用归档时生效）。
+  gdrive_batch_size:
+    name: Google Drive 上传批量大小
+    description: 每个检查周期上传到 Google Drive 的最大片段数量。
+  gdrive_check_interval:
+    name: Google Drive 检查间隔（秒）
+    description: 上传队列检查待备份片段的频率。
+  download_local_storage:
+    name: 下载 Sync Module 本地存储
+    description: >-
+      同时下载存储在连接到 Blink Sync Module 的 U 盘上的片段。Blink 会先将这些片段
+      上传到云端才能被获取，因此仍需要互联网连接。
+  ai_analysis_enabled:
+    name: 启用 AI 视频分析
+    description: >-
+      自动分析每个已下载的片段是否存在可疑活动，并通过 Discord、电子邮件或 HA
+      手机应用发送提醒。
+  ai_provider:
+    name: AI 提供商
+    description: >-
+      使用哪个 AI 后端。“ollama” = 你局域网内的本地 Ollama 服务器（免费、私密）。
+      “ollama_cloud” = Ollama Cloud API（付费）。“moondream_cloud” = Moondream
+      Cloud API（付费，使用物体检测 + 推理以提高准确率）。“moondream_local” =
+      本地设备端的 Moondream 0.5B（免费，仅限 x86_64）。“anthropic” = Claude
+      API（付费）。“openai” = OpenAI GPT API（付费）。
+  ollama_url:
+    name: Ollama 服务器网址
+    description: >-
+      你的 Ollama 实例网址，例如 http://192.168.1.10:11434。“ollama” 和
+      “ollama_cloud” 提供商需要此项。
+  ollama_model:
+    name: Ollama 视觉模型
+    description: >-
+      在你的 Ollama 服务器上使用的具备视觉能力的模型，例如 llava:7b 或
+      llama3.2-vision:11b。可在 Web 界面的 AI 标签页中使用“Fetch Models”查看可用模型。
+  ollama_cloud_api_key:
+    name: Ollama Cloud API 密钥
+    description: >-
+      来自 api.ollama.com 的 API 密钥。当 ai_provider 为 “ollama_cloud” 时必填。
+  moondream_api_key:
+    name: Moondream API 密钥
+    description: >-
+      来自 moondream.ai 的 API 密钥。当 ai_provider 为 “moondream_cloud” 时必填。
+  moondream_finetune_model:
+    name: Moondream 微调模型（可选）
+    description: >-
+      推理时使用的微调检查点模型 ID，用以替代基础模型，例如
+      “moondream3-preview/abc123@50”。留空则使用基础模型。请通过 AI 标签页的
+      “Fine-Tuning” 面板（Activate 按钮）设置此值，而不要手动输入——该面板会列出
+      你实际拥有的微调模型/检查点。通过该面板实时设置的值会立即生效，但只有同时
+      保存在此处，才能在重启后继续保留。
+  anthropic_api_key:
+    name: Anthropic API 密钥
+    description: >-
+      来自 console.anthropic.com 的 API 密钥。当 ai_provider 为
+      “anthropic” 时必填。请妥善保密。
+  anthropic_model:
+    name: Anthropic 模型
+    description: >-
+      要使用的 Claude 模型。claude-haiku-4-5 是用于安防摄像头分析性价比最高的选择。
+      可在 Web 界面的 AI 标签页中使用“Fetch Models”。
+  openai_api_key:
+    name: OpenAI API 密钥
+    description: >-
+      来自 platform.openai.com 的 API 密钥。当 ai_provider 为 “openai” 时必填。
+      请妥善保密。
+  openai_model:
+    name: OpenAI 模型
+    description: >-
+      要使用的 GPT 模型。gpt-4o-mini 是性价比最高的视觉分析选项。可在 Web 界面的
+      AI 标签页中使用“Fetch Models”。
+  openai_escalation_model:
+    name: OpenAI 升级模型（已弃用）
+    description: >-
+      已弃用——请改用下方的“启用二级升级分析”和“AI 升级提供商/模型”，它们适用于
+      所有提供商，而不仅限于 OpenAI。请将此项留空。系统仍会读取现有值，并在启动
+      时自动迁移到下方的字段中。
+  ai_escalation_enabled:
+    name: 启用二级升级分析
+    description: >-
+      开启或关闭两级升级分析。启用后，每个片段首先使用上方的 AI 提供商进行分析
+      （第一级）；只有被第一级标记为可疑的片段才会由下方的 AI 升级提供商
+      （第二级）重新分析，以获得更深入的第二意见，并以该结果作为最终记录。
+      大多数片段并不可疑，因此将廉价的第一级模型与更强大的第二级模型搭配使用，
+      比对每个片段都运行更强模型更能节省 API 成本/令牌用量。禁用时，下方的
+      “AI 升级提供商”和“模型”将完全被忽略，分析仅在第一级进行。
+  ai_escalation_provider:
+    name: AI 升级提供商
+    description: >-
+      两级升级分析中使用的第二级提供商，仅在上方“启用二级升级分析”开启时使用。
+      可以与 AI 提供商不同（例如第一级 = openai，第二级 = moondream_cloud）——
+      会复用该提供商在上方已设置的凭据，无需单独的 API 密钥。
+  ai_escalation_model:
+    name: AI 升级模型（可选）
+    description: >-
+      用于上方 AI 升级提供商的模型 ID，例如 “gpt-4o”、“claude-opus-4-5” 或
+      Moondream 微调模型 ID。留空则使用该提供商的默认/基础模型。不适用于
+      moondream_local，该选项没有可选模型。
+  ai_prompt:
+    name: AI 分析提示词
+    description: >-
+      每个片段发送给 AI 的基础提示词。必须要求返回包含 “suspicious”、
+      “confidence” 和 “description” 键的 JSON 响应。可通过 ai_camera_prompts
+      或 Web 界面中的“摄像头配置”部分针对单个摄像头进行覆盖。
+  ai_car_description:
+    name: 受保护车辆描述
+    description: >-
+      要保护的车辆的可选描述，例如“银色起亚 Forte，停在车道上”。设置后，AI
+      会应用严格的距离规则，并将任何触碰该车辆的人标记为可疑。在 Web 界面的
+      “车辆”标签页中填写描述会永久覆盖此设置——一旦在那里保存，此选项就会被
+      忽略，无论此处的值是什么；请直接在“车辆”标签页中修改。
+  ai_max_frames:
+    name: 每个片段的最大帧数
+    description: >-
+      每个片段用于分析提取的帧数（1–100）。更多帧能提供更好的覆盖范围，但会增加
+      API 成本和分析时间。对于 moondream_cloud，每一帧都会占用额外的 API 请求。
+  ai_frame_interval:
+    name: 帧间隔（秒）
+    description: >-
+      每隔多少秒视频提取一帧。使用 5 帧、2 秒间隔时，分析大约覆盖片段的前 8 秒。
+  ai_suspicious_keywords:
+    name: 可疑关键词
+    description: >-
+      在 AI 的纯文本响应中出现时会触发可疑标记的词语。当 AI 未返回有效的 JSON
+      时，作为备用判断方式使用。
+  ai_schedule_start:
+    name: AI 计划开始时间（HH:MM）
+    description: >-
+      仅在此时间与 ai_schedule_end 之间运行 AI 分析（本地时间，24 小时制）。
+      留空表示全天候运行分析。
+  ai_schedule_end:
+    name: AI 计划结束时间（HH:MM）
+    description: >-
+      在此时间之后停止运行 AI 分析（本地时间，24 小时制）。留空表示全天候运行分析。
+  ai_batch_size:
+    name: AI 批处理大小
+    description: >-
+      在暂停 ai_check_interval 秒之前，单批最多分析的片段数量。用于避免
+      AI 后端过载。
+  ai_check_interval:
+    name: AI 检查间隔（秒）
+    description: 分析批次运行之间的间隔秒数。队列会按此频率检查是否有尚未分析的新片段。
+  ai_min_confidence:
+    name: 最低提醒置信度
+    description: >-
+      发送可疑片段提醒前所需的最低 AI 置信度分数（0.0–1.0）。无论此设置为何，
+      结果都会始终被保存。0.0 = 对所有结果都提醒；0.5 = 仅在 AI 相当确定时提醒。
+  ai_camera_prompts:
+    name: 按摄像头设置的 AI 提示词
+    description: >-
+      为特定摄像头覆盖全局 ai_prompt。每个条目包含一个 “camera” 名称
+      （须与 Blink 应用中显示的摄像头名称完全一致）和一个 “prompt” 字符串。
+      未列出的摄像头使用 ai_prompt。建议改用 Web 界面 AI 标签页下的
+      “摄像头配置”部分——它会列出你实际的摄像头名称，无需手动输入，也不会出错。
+  ai_camera_descriptions:
+    name: 按摄像头设置的描述
+    description: >-
+      注入到对应摄像头每次 AI 提示词中的上下文描述，例如“对着车道；左侧停着一辆
+      银色起亚 Forte”。“camera” 名称须与 Blink 应用中显示的摄像头名称完全一致。
+      建议直接在 Web 界面 AI 标签页下的“摄像头配置”部分进行实时编辑——它会列出
+      你实际的摄像头名称，无需手动输入，也不会出错。
+  ai_frame_strategy:
+    name: 帧提取策略
+    description: >-
+      “smart”（默认）会先提取双倍数量的帧，再通过运动差异分析挑选出起始帧、
+      运动高峰帧和结束帧。“sequential”会逐帧单独分析，并返回最令人担忧的结果。
+      “uniform”是旧版的固定间隔模式。
+  ai_car_cameras:
+    name: 车辆保护摄像头
+    description: >-
+      将受保护车辆的距离规则限制到这些摄像头名称（须与 Blink 应用中显示的摄像头
+      名称完全一致）。未列入此列表的摄像头只关注自身的描述，不会应用车辆距离规则。
+      留空表示对所有摄像头都应用车辆规则。建议改用 Web 界面 AI 标签页下
+      “摄像头配置”部分中的“此摄像头可看到受保护车辆”复选框——它会列出你实际的
+      摄像头名称，无需手动输入，也不会出错。
+  ai_prompt_debug_enabled:
+    name: 启用提示词调试日志
+    description: >-
+      保存每个片段发送的确切提示词文本（不包含图像帧），以便通过该片段 AI
+      面板中的“📝 Prompt”按钮查看——从 Web 界面的“片段库”标签页打开任意片段
+      即可看到——有助于理解并调整实际发送的内容。默认关闭，因为提示词较长，
+      且这是一项可选的调试辅助功能。
+  ai_enhanced_detection_enabled:
+    name: "⚠️ 启用增强检测与追踪（高负载）"
+    description: >-
+      帧预处理（对比度调整/降噪）、物体检测与追踪（YOLO + ByteTrack）、单目
+      深度估计（Depth Anything V2），以及像素级接触分割（SAM2）——这四项功能
+      由一个开关统一控制，可为 AI 提供由代码精确计算出的检测/追踪/深度/接触
+      线索，而不是仅依赖运动差异启发式方法。首次使用时会下载多个模型（总计
+      100MB–800MB 以上），且所需的 CPU/RAM 远高于本插件的其余部分。在 Raspberry
+      Pi 5（8GB）或更高配置上运行流畅。默认关闭；不启用此项时分析效果完全相同。
+  ai_object_detection_model:
+    name: 物体检测模型
+    description: >-
+      上方检测阶段所使用的 Ultralytics 模型文件——请准确输入以下之一：yolo11n.pt
+      （nano——最快/最轻量，推荐作为纯 CPU 硬件的起点）、yolo11s.pt（small）、
+      yolo11m.pt（medium）、yolo11l.pt（large）或 yolo11x.pt（extra-large——最
+      精确，但速度慢得多）。首次使用时会自动下载；默认值为 yolo11n.pt。
+  ai_face_recognition_enabled:
+    name: 启用本地人脸识别
+    description: >-
+      抑制针对已录入家庭成员的提醒。录入过程（参考照片、计算得出的人脸特征向量）
+      完全在本机通过 Web 界面的 AI 标签页完成，绝不会离开本插件或你的网络——无论
+      上方配置的是哪个云端 AI 提供商，都绝不会发送给它们。默认关闭。
+  hf_token:
+    name: Hugging Face 令牌（可选）
+    description: >-
+      可选的 Hugging Face 访问令牌，用于验证计算机视觉模型下载身份并提高
+      Hugging Face Hub 的速率限制。可在
+      https://huggingface.co/settings/tokens 创建。请妥善保密。
+  mobile_app_target:
+    name: 手机应用目标实体
+    description: >-
+      用于接收可疑片段提醒的 Home Assistant 手机应用通知实体，例如
+      mobile_app_my_phone。当 mobile_app_enabled 为 true 时必填。
+  mobile_app_enabled:
+    name: 启用手机应用提醒
+    description: 检测到可疑片段时，向 HA 手机应用发送推送通知。
+  smtp_host:
+    name: SMTP 主机
+    description: 用于邮件提醒的 SMTP 服务器主机名或 IP 地址。
+  smtp_port:
+    name: SMTP 端口
+    description: SMTP 服务器端口。STARTTLS（推荐）使用 587，SSL 使用 465。
+  smtp_user:
+    name: SMTP 用户名
+    description: 登录 SMTP 服务器的用户名（通常是你的邮箱地址）。
+  smtp_password:
+    name: SMTP 密码
+    description: 登录 SMTP 服务器的密码。请妥善保密。
+  smtp_recipients:
+    name: 邮件提醒收件人
+    description: >-
+      接收可疑片段提醒的邮箱地址列表。当 smtp_enabled 为 true 时，至少需要一个地址。
+  smtp_sender:
+    name: 邮件发件人地址
+    description: 发出的提醒邮件所使用的发件人地址。
+  smtp_enabled:
+    name: 启用邮件提醒
+    description: 检测到可疑活动时，发送包含片段摘要的邮件提醒。
+  discord_webhook_url:
+    name: Discord Webhook 网址
+    description: >-
+      用于发布可疑片段提醒的 Discord Webhook 网址。留空以禁用 Discord 通知。
+  discord_enabled:
+    name: 启用 Discord 提醒
+    description: 检测到可疑活动时，发布包含片段详情的 Discord 消息。
+  notify_ha_suspicious:
+    name: 启用 Home Assistant 提醒
+    description: >-
+      仅在检测到可疑活动时才创建 Home Assistant 持久化通知——独立于上方的
+      “HA 通知”，后者涵盖每次新片段下载以及每日摘要和系统事件。与该选项一样，
+      这也会显示在 HA 自身的通知面板中，而不是手机推送通知；如果需要真正推送到
+      你的手机，请同时启用上方的“启用手机应用提醒”。
+  log_level:
+    name: 日志级别
+    description: 插件日志的详细程度。
+  battery_alerts_enabled:
+    name: 启用电池提醒
+    description: 当摄像头电量不足时发送提醒。

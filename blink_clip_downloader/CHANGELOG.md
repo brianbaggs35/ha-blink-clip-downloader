@@ -2,6 +2,14 @@
 
 ## 5.5.0 (unreleased)
 
+### Added
+
+- Added configuration description for battery_alerts_enabled.
+- Added support for French language for configuration.
+- Added support for Spanish language for configuration.
+- Added support for the Russian language for configuration.
+- Added support for the Chinese language for configuration.
+
 ### Bug Fixes
 
 - Fixed the Vehicles tab (and the AI tab's Camera Configurations) still
