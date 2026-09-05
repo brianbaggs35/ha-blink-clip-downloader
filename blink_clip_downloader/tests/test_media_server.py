@@ -1662,6 +1662,7 @@ async def test_ai_camera_configs_get_returns_is_car_camera_field(
                     "description": "Points at car",
                     "custom_prompt": "",
                     "is_car_camera": True,
+                    "auto_analyze": False,
                 }
             ]
         )
@@ -1680,6 +1681,7 @@ async def test_ai_camera_configs_get_returns_is_car_camera_field(
     driveway = next((c for c in data if c["camera"] == "Driveway"), None)
     if driveway:
         assert driveway["is_car_camera"] is True
+        assert driveway["auto_analyze"] is False
 
 
 async def test_ai_camera_configs_put_saves_is_car_camera(
@@ -1692,12 +1694,14 @@ async def test_ai_camera_configs_put_saves_is_car_camera(
             "description": "Side driveway",
             "custom_prompt": "",
             "is_car_camera": True,
+            "auto_analyze": False,
         },
         {
             "camera": "Front Door",
             "description": "Front entrance",
             "custom_prompt": "",
             "is_car_camera": False,
+            "auto_analyze": True,
         },
     ]
     import json
@@ -1724,8 +1728,10 @@ async def test_ai_camera_configs_put_saves_is_car_camera(
     saved = json.loads(cfg_file.read_text())
     driveway = next(c for c in saved if c["camera"] == "Driveway")
     assert driveway["is_car_camera"] is True
+    assert driveway["auto_analyze"] is False
     front = next(c for c in saved if c["camera"] == "Front Door")
     assert front["is_car_camera"] is False
+    assert front["auto_analyze"] is True
 
 
 async def test_ai_camera_configs_get_returns_car_zone_field(
@@ -1907,6 +1913,7 @@ async def test_ai_camera_configs_put_saves_and_normalizes_car_zone(
             "description": "",
             "custom_prompt": "",
             "is_car_camera": True,
+            "auto_analyze": False,
             "car_zone": {"x_min": "0.1", "y_min": 0.2, "x_max": 0.9, "y_max": 0.95},
         },
         {
@@ -1914,6 +1921,7 @@ async def test_ai_camera_configs_put_saves_and_normalizes_car_zone(
             "description": "",
             "custom_prompt": "",
             "is_car_camera": False,
+            "auto_analyze": True,
             "car_zone": {"x_min": 0.9, "y_min": 0.2, "x_max": 0.1, "y_max": 0.95},
         },
     ]
@@ -1941,6 +1949,86 @@ async def test_ai_camera_configs_put_saves_and_normalizes_car_zone(
     }
     front = next(c for c in saved if c["camera"] == "Front Door")
     assert front["car_zone"] is None
+    assert driveway["auto_analyze"] is False
+    assert front["auto_analyze"] is True
+
+
+async def test_ai_camera_configs_put_updates_auto_analysis_callback(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Saving the shared camera config immediately updates the app's
+    automatic-analysis gate without requiring a restart."""
+    disabled_cameras: list[set[str]] = []
+    server = MediaServer(
+        db=db,
+        port=0,
+        update_auto_analysis_cameras=disabled_cameras.append,
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    cfg_file = tmp_path / "camera_configs.json"
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+            new=cfg_file,
+        ):
+            resp = await tc.put(
+                "/api/ai/camera-configs",
+                json=[
+                    {
+                        "camera": "Driveway",
+                        "description": "",
+                        "custom_prompt": "",
+                        "is_car_camera": False,
+                        "auto_analyze": False,
+                    },
+                    {
+                        "camera": "Front Door",
+                        "description": "",
+                        "custom_prompt": "",
+                        "is_car_camera": False,
+                    },
+                ],
+            )
+        assert resp.status == 200
+        assert disabled_cameras == [{"Driveway"}]
+    finally:
+        await tc.close()
+
+
+async def test_ai_camera_configs_put_rejects_stale_revision(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A stale full-array save must not overwrite a newer camera-config write."""
+    cfg_file = tmp_path / "camera_configs.json"
+    initial = [
+        {
+            "camera": "Driveway",
+            "description": "",
+            "custom_prompt": "",
+            "is_car_camera": False,
+            "car_zone": None,
+            "auto_analyze": False,
+        }
+    ]
+    current = [{**initial[0], "auto_analyze": True}]
+    cfg_file.write_text(json.dumps(initial))
+
+    with patch(
+        "blink_downloader.media_server.MediaServer._CAMERA_CONFIGS_FILE",
+        new=cfg_file,
+    ):
+        get_response = await client.get("/api/ai/camera-configs")
+        revision = get_response.headers["ETag"]
+        cfg_file.write_text(json.dumps(current))
+        put_response = await client.put(
+            "/api/ai/camera-configs",
+            json=initial,
+            headers={"If-Match": revision},
+        )
+
+    assert put_response.status == 409
+    assert json.loads(cfg_file.read_text()) == current
 
 
 async def test_ai_camera_configs_put_bad_json(client: TestClient) -> None:
@@ -2021,6 +2109,7 @@ async def test_ai_camera_configs_get_default_entry_for_unconfigured_camera(
     assert garage["description"] == ""
     assert garage["custom_prompt"] == ""
     assert garage["is_car_camera"] is False
+    assert garage["auto_analyze"] is True
 
 
 async def test_ai_camera_configs_put_write_failure_returns_500(

@@ -5,7 +5,7 @@ import Card from 'primevue/card'
 import Message from 'primevue/message'
 import Textarea from 'primevue/textarea'
 import ToggleSwitch from 'primevue/toggleswitch'
-import { getCameraConfigs, saveCameraConfigs } from '../../api/ai'
+import { getCameraConfigs, updateCameraConfigs } from '../../api/ai'
 import { getVehicleSettings, saveVehicleSettings } from '../../api/vehicle'
 import type { CameraConfig } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
@@ -50,7 +50,29 @@ async function saveDescription() {
 async function saveCameras() {
   savingCameras.value = true
   try {
-    await saveCameraConfigs(configs.value)
+    // PUT replaces the complete camera-config array. Re-read it immediately
+    // before saving so vehicle edits preserve newer AI descriptions, prompts,
+    // and automatic-analysis preferences from the AI tab.
+    const localByCamera = new Map(configs.value.map((config) => [config.camera, config]))
+    const { configs: payload } = await updateCameraConfigs((latest) => {
+      const latestCameras = new Set(latest.map((config) => config.camera))
+      const merged = latest.map((config) => {
+        const local = localByCamera.get(config.camera)
+        return local
+          ? {
+              ...config,
+              is_car_camera: local.is_car_camera,
+              car_zone: local.car_zone,
+              auto_analyze: config.auto_analyze ?? local.auto_analyze,
+            }
+          : config
+      })
+      for (const local of configs.value) {
+        if (!latestCameras.has(local.camera)) merged.push(local)
+      }
+      return merged
+    })
+    configs.value = payload
     toast.show('Vehicle camera settings saved')
   } catch {
     toast.show('Failed to save camera settings', true)

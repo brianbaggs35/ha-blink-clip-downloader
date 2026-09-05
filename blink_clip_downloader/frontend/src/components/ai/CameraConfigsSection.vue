@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { getCameraConfigs, saveCameraConfigs } from '../../api/ai'
+import { getCameraConfigs, updateCameraConfigs } from '../../api/ai'
 import type { CameraConfig } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
@@ -8,15 +8,16 @@ import LoadingIndicator from '../layout/LoadingIndicator.vue'
 // is_car_camera and car_zone are edited on the Vehicles tab now, not here —
 // this component only owns description/custom_prompt, but still carries
 // those two fields through unchanged on save (PUT /api/ai/camera-configs is
-// a full-array replace, so this component and VehiclesPage must each
-// round-trip the fields they don't own, or one would silently clobber the
-// other's edits).
+// a full-array replace, so this component, the AI analysis modal, and
+// VehiclesPage must each round-trip the fields they don't own, or one would
+// silently clobber the other's edits).
 interface EditableConfig {
   camera: string
   description: string
   custom_prompt: string
   is_car_camera: boolean
   car_zone: CameraConfig['car_zone']
+  auto_analyze: boolean
 }
 
 const toast = useToastStore()
@@ -32,6 +33,7 @@ function toEditable(c: CameraConfig): EditableConfig {
     custom_prompt: c.custom_prompt,
     is_car_camera: c.is_car_camera,
     car_zone: c.car_zone,
+    auto_analyze: c.auto_analyze !== false,
   }
 }
 
@@ -52,14 +54,35 @@ onMounted(load)
 async function save() {
   saving.value = true
   try {
-    const payload: CameraConfig[] = configs.value.map((c) => ({
-      camera: c.camera,
-      description: c.description.trim(),
-      custom_prompt: c.custom_prompt.trim(),
-      is_car_camera: c.is_car_camera,
-      car_zone: c.car_zone,
-    }))
-    await saveCameraConfigs(payload)
+    // PUT replaces the complete camera-config array. Re-read it immediately
+    // before saving so this section cannot restore an old auto_analyze value
+    // after the AI Analysis Configuration modal changes it.
+    const localByCamera = new Map(configs.value.map((config) => [config.camera, config]))
+    const { configs: payload } = await updateCameraConfigs((latest) => {
+      const latestCameras = new Set(latest.map((config) => config.camera))
+      const merged: CameraConfig[] = latest.map((config) => {
+        const local = localByCamera.get(config.camera)
+        return local
+          ? {
+              ...config,
+              description: local.description.trim(),
+              custom_prompt: local.custom_prompt.trim(),
+              auto_analyze: config.auto_analyze ?? local.auto_analyze,
+            }
+          : config
+      })
+      for (const local of configs.value) {
+        if (!latestCameras.has(local.camera)) {
+          merged.push({
+            ...local,
+            description: local.description.trim(),
+            custom_prompt: local.custom_prompt.trim(),
+          })
+        }
+      }
+      return merged
+    })
+    configs.value = payload.map(toEditable)
     toast.show('Camera configs saved')
   } catch {
     toast.show('Failed to save camera configs', true)

@@ -278,6 +278,8 @@ export interface CameraConfig {
   custom_prompt: string
   is_car_camera: boolean
   car_zone: CarZone | null
+  /** Missing on camera_configs.json entries created before v5.4.7; defaults to true. */
+  auto_analyze?: boolean
 }
 
 // ---------------------------------------------------------------------
