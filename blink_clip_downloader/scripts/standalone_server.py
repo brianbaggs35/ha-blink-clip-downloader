@@ -23,6 +23,7 @@ the database itself).
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import tempfile
@@ -40,6 +41,40 @@ from blink_downloader.database import ClipDatabase
 from blink_downloader.gdrive_client import GDriveClient
 from blink_downloader.live_view import LiveViewManager
 from blink_downloader.media_server import MediaServer
+
+
+class _ExpectedE2ENoiseFilter(logging.Filter):
+    """Hide expected optional-fixture warnings from Playwright's live output."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if record.name == "blink_downloader.media_server":
+            return not (
+                message.startswith("ffmpeg exited ") and " for e2e-clip-" in message
+            )
+        if record.name == "blink_downloader.analyzer":
+            return not (
+                message.startswith("ffmpeg exited ")
+                and " for /share/blink-clips/" in message
+            )
+        if record.name == "blink_downloader.vision":
+            return not message.startswith(
+                "facenet_pytorch package is not installed, face recognition unavailable:"
+            )
+        return True
+
+
+def _configure_e2e_logging() -> None:
+    """Keep expected standalone-fixture noise out of CI without hiding errors."""
+    if os.environ.get("BLINK_E2E") != "1":
+        return
+    noise_filter = _ExpectedE2ENoiseFilter()
+    for logger_name in (
+        "blink_downloader.media_server",
+        "blink_downloader.analyzer",
+        "blink_downloader.vision",
+    ):
+        logging.getLogger(logger_name).addFilter(noise_filter)
 
 
 # MediaServer's per-feature settings files (camera_configs.json,
@@ -430,6 +465,7 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
 
 
 async def _main() -> None:
+    _configure_e2e_logging()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8199
     dsn = os.environ.get("BLINK_DB_DSN")
     if not dsn:
