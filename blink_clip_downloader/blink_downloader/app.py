@@ -139,6 +139,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # --- AI Analysis (optional) ---
         self._analyzer: BaseAnalyzer | None = None
         self._analysis_queue: AnalysisQueue | None = None
+        self._auto_analysis_disabled_cameras: set[str] = set()
         # Constructed unconditionally (not gated by ai_analysis_enabled) so the
         # web UI's "Send Test Email" button works even before AI analysis —
         # and therefore real suspicious-activity alerts — is turned on.
@@ -189,6 +190,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             live_view=self._live_view,
             list_camera_names=self._downloader.list_camera_names,
             get_camera_snapshot=self._downloader.get_camera_snapshot,
+            update_auto_analysis_cameras=self._set_auto_analysis_disabled_cameras,
         )
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,
@@ -214,20 +216,33 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
     def _load_camera_configs_from_ui(
         self,
-    ) -> tuple[dict[str, str], dict[str, str], list[str], dict[str, dict[str, float]]]:
+    ) -> tuple[
+        dict[str, str],
+        dict[str, str],
+        list[str],
+        dict[str, dict[str, float]],
+        set[str],
+    ]:
         """Load per-camera settings from the web UI config file.
 
         camera_configs.json is the primary source of truth for descriptions,
-        custom prompts, and car-camera flags.
+        custom prompts, car-camera flags, and automatic-analysis preferences.
         """
         camera_descriptions: dict[str, str] = {}
         camera_prompts: dict[str, str] = {}
         car_cameras_from_ui: list[str] = []
         car_zones: dict[str, dict[str, Any]] = {}
+        auto_analysis_disabled_cameras: set[str] = set()
 
         cam_desc_file = Path("/data/camera_configs.json")
         if not cam_desc_file.exists():
-            return camera_descriptions, camera_prompts, car_cameras_from_ui, car_zones
+            return (
+                camera_descriptions,
+                camera_prompts,
+                car_cameras_from_ui,
+                car_zones,
+                auto_analysis_disabled_cameras,
+            )
 
         try:
             cam_cfgs = json.loads(cam_desc_file.read_text())
@@ -241,18 +256,26 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     camera_prompts[cam] = str(cam_cfg["custom_prompt"])
                 if cam_cfg.get("is_car_camera"):
                     car_cameras_from_ui.append(cam)
+                if cam_cfg.get("auto_analyze", True) is False:
+                    auto_analysis_disabled_cameras.add(cam)
                 zone = MediaServer._normalize_car_zone(cam_cfg.get("car_zone"))
                 if zone is not None:
                     car_zones[cam] = zone
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning(
                 "Could not load %s, starting with no per-camera AI "
-                "descriptions/prompts/car-camera settings: %s",
+                "descriptions/prompts/car-camera/automatic-analysis settings: %s",
                 cam_desc_file,
                 exc,
             )
 
-        return camera_descriptions, camera_prompts, car_cameras_from_ui, car_zones
+        return (
+            camera_descriptions,
+            camera_prompts,
+            car_cameras_from_ui,
+            car_zones,
+            auto_analysis_disabled_cameras,
+        )
 
     def _load_vehicle_settings_from_ui(self) -> str | None:
         """Load the protected-vehicle description from the web UI config file.
@@ -331,13 +354,19 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             if cam and pmt and cam not in camera_prompts:
                 camera_prompts[cam] = pmt
 
+    def _set_auto_analysis_disabled_cameras(self, cameras: set[str]) -> None:
+        """Apply automatic-analysis camera preferences without a restart."""
+        self._auto_analysis_disabled_cameras = set(cameras)
+
     def _setup_ai_analysis(self, config: AppConfig) -> None:
         (
             camera_descriptions,
             camera_prompts,
             car_cameras_from_ui,
             car_zones,
+            auto_analysis_disabled_cameras,
         ) = self._load_camera_configs_from_ui()
+        self._auto_analysis_disabled_cameras = auto_analysis_disabled_cameras
         self._merge_camera_config_fallbacks(config, camera_descriptions, camera_prompts)
 
         # Derive car_cameras: web UI checkboxes take priority; fall back
@@ -925,7 +954,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # queue — media_server.py's _handle_ai_analyze_now ("Analyze Now" on
         # the clip modal) is a separate, unconditional path and still works
         # for these clips on request.
-        if analyze and clip.get("source") != "liveview" and self._analysis_queue:
+        camera = str(clip.get("camera") or "")
+        if (
+            analyze
+            and clip.get("source") != "liveview"
+            and self._analysis_queue
+            and camera not in self._auto_analysis_disabled_cameras
+        ):
             await self._analysis_queue.enqueue(clip)
 
         # Regular (not-yet-archived) clips only get backed up under the

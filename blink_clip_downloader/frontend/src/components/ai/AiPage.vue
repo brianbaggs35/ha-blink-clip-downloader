@@ -5,6 +5,7 @@ import type { AiStatus } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import AdaptiveLearningCard from './AdaptiveLearningCard.vue'
+import AiAnalysisConfigCard from './AiAnalysisConfigCard.vue'
 import AiConnectionCard from './AiConnectionCard.vue'
 import AiStatusCards from './AiStatusCards.vue'
 import CameraConfigsSection from './CameraConfigsSection.vue'
@@ -76,6 +77,7 @@ watch(
         <FineTuneCard v-if="status.provider === 'moondream_cloud'" @activated="load" />
       </div>
 
+      <AiAnalysisConfigCard />
       <CameraConfigsSection />
       <SuspiciousFeed ref="suspiciousFeed" />
     </template>

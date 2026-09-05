@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client'
+import { ApiError, apiDelete, apiGet, apiGetWithHeaders, apiPatch, apiPost, apiPut } from './client'
 import type {
   AiModelsResponse,
   AiStatus,
@@ -22,6 +22,8 @@ import type {
   SuspiciousPeriod,
   TestEmailResult,
 } from './types'
+
+let cameraConfigUpdateQueue: Promise<void> = Promise.resolve()
 
 export function getAiStatus(): Promise<AiStatus> {
   return apiGet('/api/ai/status')
@@ -71,8 +73,40 @@ export function getCameraConfigs(): Promise<CameraConfig[]> {
   return apiGet('/api/ai/camera-configs')
 }
 
-export function saveCameraConfigs(configs: CameraConfig[]): Promise<{ saved: boolean; count: number }> {
-  return apiPut('/api/ai/camera-configs', configs)
+async function getCameraConfigsSnapshot(): Promise<{ configs: CameraConfig[]; revision: string | null }> {
+  const response = await apiGetWithHeaders<CameraConfig[]>('/api/ai/camera-configs')
+  return { configs: response.data, revision: response.headers.get('ETag') }
+}
+
+export function saveCameraConfigs(
+  configs: CameraConfig[],
+  revision?: string,
+): Promise<{ saved: boolean; count: number }> {
+  return apiPut('/api/ai/camera-configs', configs, revision ? { 'If-Match': revision } : undefined)
+}
+
+export function updateCameraConfigs(
+  buildConfigs: (latest: CameraConfig[]) => CameraConfig[],
+): Promise<{ saved: boolean; count: number; configs: CameraConfig[] }> {
+  const update = async (attempt: number): Promise<{ saved: boolean; count: number; configs: CameraConfig[] }> => {
+    const snapshot = await getCameraConfigsSnapshot()
+    const configs = buildConfigs(snapshot.configs)
+    try {
+      const result = await saveCameraConfigs(configs, snapshot.revision ?? undefined)
+      return { ...result, configs }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409 && attempt === 0) {
+        return update(1)
+      }
+      throw error
+    }
+  }
+  const operation = cameraConfigUpdateQueue.then(() => update(0))
+  cameraConfigUpdateQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  )
+  return operation
 }
 
 export function getFeedbackStats(camera?: string): Promise<FeedbackStats> {

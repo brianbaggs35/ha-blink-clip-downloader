@@ -17,6 +17,7 @@ function jsonResponse(body: unknown, ok = true) {
     statusText: 'x',
     json: () => Promise.resolve(body),
     text: () => Promise.resolve(''),
+    headers: new Headers(),
   } as Response
 }
 
@@ -169,6 +170,44 @@ describe('VehiclesPage', () => {
     await saveBtn.trigger('click')
     await flushPromises()
     expect(wrapper.exists()).toBe(true) // did not throw
+  })
+
+  it('keeps local cameras when the latest server list changes', async () => {
+    let cameraReads = 0
+    let saved: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT' && url.includes('/api/ai/camera-configs')) {
+          saved = JSON.parse(init.body as string)
+          return Promise.resolve(jsonResponse({ saved: true, count: 2 }))
+        }
+        if (url.includes('/api/vehicle/settings')) return Promise.resolve(jsonResponse({ car_description: '' }))
+        if (url.includes('/api/ai/camera-configs')) {
+          cameraReads++
+          return Promise.resolve(
+            jsonResponse(
+              cameraReads === 1
+                ? [FRONT_CAM]
+                : [{ camera: 'Garage', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }],
+            ),
+          )
+        }
+        return Promise.resolve(jsonResponse([]))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Settings'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(saved).toEqual([
+      { camera: 'Garage', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+      FRONT_CAM,
+    ])
   })
 
   it("updates a camera's car_zone when VehicleZonePicker emits a new value", async () => {

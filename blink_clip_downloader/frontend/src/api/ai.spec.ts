@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from './client'
 import {
   activateCheckpoint,
   analyzeClipNow,
@@ -37,15 +38,17 @@ import {
   testHaNotification,
   testMobile,
   trainFromFeedback,
+  updateCameraConfigs,
 } from './ai'
 
-function jsonResponse(body: unknown) {
+function jsonResponse(body: unknown, headers: HeadersInit = {}) {
   return {
     ok: true,
     status: 200,
     statusText: 'OK',
     json: () => Promise.resolve(body),
     text: () => Promise.resolve(JSON.stringify(body)),
+    headers: new Headers(headers),
   } as Response
 }
 
@@ -106,6 +109,45 @@ describe('ai api', () => {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(configs),
+    })
+  })
+
+  it('updateCameraConfigs serializes a read/merge/write operation', async () => {
+    const latest = [{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(latest))
+      .mockResolvedValueOnce(jsonResponse({ saved: true, count: 1 }))
+
+    const result = await updateCameraConfigs((configs) => configs.map((config) => ({ ...config, auto_analyze: false })))
+
+    expect(result.configs[0].auto_analyze).toBe(false)
+    expect(fetch).toHaveBeenNthCalledWith(1, '/api/ai/camera-configs', {})
+    expect(fetch).toHaveBeenNthCalledWith(2, '/api/ai/camera-configs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([{ ...latest[0], auto_analyze: false }]),
+    })
+  })
+
+  it('updateCameraConfigs retries once when another writer changes the revision', async () => {
+    const latest = [{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(latest, { ETag: 'old' }))
+      .mockRejectedValueOnce(new ApiError(409, '409: changed'))
+      .mockResolvedValueOnce(jsonResponse(latest, { ETag: 'new' }))
+      .mockResolvedValueOnce(jsonResponse({ saved: true, count: 1 }))
+
+    await updateCameraConfigs((configs) => configs)
+
+    expect(fetch).toHaveBeenNthCalledWith(2, '/api/ai/camera-configs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': 'old' },
+      body: JSON.stringify(latest),
+    })
+    expect(fetch).toHaveBeenNthCalledWith(4, '/api/ai/camera-configs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'If-Match': 'new' },
+      body: JSON.stringify(latest),
     })
   })
 

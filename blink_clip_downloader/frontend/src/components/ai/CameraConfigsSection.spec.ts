@@ -11,6 +11,7 @@ function jsonResponse(body: unknown, ok = true) {
     statusText: 'x',
     json: () => Promise.resolve(body),
     text: () => Promise.resolve(''),
+    headers: new Headers(),
   } as Response
 }
 
@@ -87,6 +88,7 @@ describe('CameraConfigsSection', () => {
 
   it('saves description/custom_prompt while preserving is_car_camera and car_zone untouched', async () => {
     let saved: unknown
+    let reads = 0
     vi.stubGlobal(
       'fetch',
       vi.fn((_url: string, opts?: RequestInit) => {
@@ -94,14 +96,16 @@ describe('CameraConfigsSection', () => {
           saved = JSON.parse(opts.body as string)
           return Promise.resolve(jsonResponse({ saved: true, count: 1 }))
         }
+        reads++
         return Promise.resolve(
           jsonResponse([
             {
               camera: 'front',
-              description: 'old',
+              description: reads === 1 ? 'old' : 'newer server description',
               custom_prompt: '',
               is_car_camera: true,
               car_zone: { x_min: 0.1, y_min: 0.2, x_max: 0.5, y_max: 0.9 },
+              ...(reads === 1 ? {} : { auto_analyze: false }),
             },
           ]),
         )
@@ -122,6 +126,7 @@ describe('CameraConfigsSection', () => {
         custom_prompt: '',
         is_car_camera: true,
         car_zone: { x_min: 0.1, y_min: 0.2, x_max: 0.5, y_max: 0.9 },
+        auto_analyze: false,
       },
     ])
   })
@@ -144,5 +149,46 @@ describe('CameraConfigsSection', () => {
     const toast = useToastStore()
     expect(toast.message).toBe('Failed to save camera configs')
     expect(toast.isError).toBe(true)
+  })
+
+  it('keeps local cameras when the latest server list changes', async () => {
+    let reads = 0
+    let saved: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, opts?: RequestInit) => {
+        if (opts?.method === 'PUT') {
+          saved = JSON.parse(opts.body as string)
+          return Promise.resolve(jsonResponse({ saved: true, count: 2 }))
+        }
+        reads++
+        return Promise.resolve(
+          jsonResponse(
+            reads === 1
+              ? [{ camera: 'front', description: 'old', custom_prompt: '', is_car_camera: false, car_zone: null }]
+              : [{ camera: 'garage', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }],
+          ),
+        )
+      }),
+    )
+    const wrapper = mount(CameraConfigsSection)
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Configs'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(saved).toEqual([
+      { camera: 'garage', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+      {
+        camera: 'front',
+        description: 'old',
+        custom_prompt: '',
+        is_car_camera: false,
+        car_zone: null,
+        auto_analyze: true,
+      },
+    ])
   })
 })

@@ -413,6 +413,61 @@ async def test_on_clips_downloaded_enqueues_for_analysis_when_configured(app):
     app._analysis_queue.enqueue.assert_awaited_once_with(clips[0])
 
 
+async def test_on_clips_downloaded_skips_disabled_camera_analysis(app):
+    """Camera-level automatic analysis exclusions leave the clip available
+    for manual Analyze Now requests in the library."""
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.enqueue = AsyncMock()
+    app._auto_analysis_disabled_cameras = {"C"}
+    clips = [
+        {"id": "1", "camera": "C", "path": "/p", "timestamp": "t", "size_bytes": 5}
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._notifier.notify.assert_awaited_once()
+    app._notifier.fire_event.assert_awaited_once()
+    app._analysis_queue.enqueue.assert_not_awaited()
+
+
+async def test_on_clips_downloaded_still_analyzes_enabled_camera_when_another_is_disabled(
+    app,
+):
+    """Disabling one camera must not suppress automatic analysis for another."""
+    app._analysis_queue = MagicMock()
+    app._analysis_queue.enqueue = AsyncMock()
+    app._auto_analysis_disabled_cameras = {"C"}
+    clips = [
+        {
+            "id": "disabled",
+            "camera": "C",
+            "path": "/disabled",
+            "timestamp": "t",
+            "size_bytes": 5,
+        },
+        {
+            "id": "enabled",
+            "camera": "D",
+            "path": "/enabled",
+            "timestamp": "t",
+            "size_bytes": 5,
+        },
+    ]
+
+    await app._on_clips_downloaded(clips)
+
+    app._analysis_queue.enqueue.assert_awaited_once_with(clips[1])
+
+
+def test_set_auto_analysis_disabled_cameras_replaces_the_runtime_set(app):
+    disabled = {"Front Door"}
+
+    app._set_auto_analysis_disabled_cameras(disabled)
+    disabled.add("Driveway")
+
+    assert app._auto_analysis_disabled_cameras == {"Front Door"}
+
+
 async def test_on_clips_downloaded_skips_analysis_for_liveview_source(app):
     """A clip recorded from a Live View session must not be auto-queued for
     AI analysis — the user was already watching live when it was recorded,
@@ -2051,6 +2106,7 @@ def test_init_camera_configs_ui_file_populates_descriptions_and_car_cameras(
                 "description": "Watches for package theft and unauthorized entry",
                 "custom_prompt": "Flag anyone lingering near the porch.",
                 "is_car_camera": False,
+                "auto_analyze": False,
             },
         ],
     )
@@ -2064,6 +2120,7 @@ def test_init_camera_configs_ui_file_populates_descriptions_and_car_cameras(
         "Front Door": "Flag anyone lingering near the porch."
     }
     assert kwargs["car_cameras"] == ["Driveway"]
+    assert _app._auto_analysis_disabled_cameras == {"Front Door"}
 
 
 def test_init_camera_configs_car_zone_reaches_analyzer(base_config, tmp_path) -> None:

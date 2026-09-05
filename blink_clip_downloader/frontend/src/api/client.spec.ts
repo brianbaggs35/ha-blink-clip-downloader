@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, apiDelete, ApiError, apiGet, apiPatch, apiPost, apiPut } from './client'
+import { api, apiDelete, ApiError, apiGet, apiGetWithHeaders, apiPatch, apiPost, apiPut } from './client'
 
 function jsonResponse(body: unknown, ok = true, status = 200, statusText = 'OK') {
   return {
@@ -45,6 +45,16 @@ describe('api client', () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse([]))
     await apiGet('/api/cameras')
     expect(fetch).toHaveBeenCalledWith('/api/cameras', {})
+  })
+
+  it('apiGetWithHeaders(): returns parsed JSON and response headers', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ...jsonResponse([]),
+      headers: new Headers({ ETag: 'revision' }),
+    } as Response)
+    const response = await apiGetWithHeaders('/api/cameras')
+    expect(response.data).toEqual([])
+    expect(response.headers.get('ETag')).toBe('revision')
   })
 
   it('apiPost(): sends a JSON body with the right header', async () => {

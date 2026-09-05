@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import logging
@@ -193,6 +194,7 @@ class MediaServer:
         live_view: LiveViewManager | None = None,
         list_camera_names: Callable[[], list[str]] | None = None,
         get_camera_snapshot: Callable[[str], Awaitable[bytes | None]] | None = None,
+        update_auto_analysis_cameras: Callable[[set[str]], None] | None = None,
     ) -> None:
         self._db = db
         self._port = port
@@ -213,6 +215,7 @@ class MediaServer:
         # LiveViewManager, so Security Feed works independently of it.
         self._list_camera_names = list_camera_names
         self._get_camera_snapshot = get_camera_snapshot
+        self._update_auto_analysis_cameras = update_auto_analysis_cameras
         # Used only to stand up a MoondreamFineTuneManager for the Fine-Tuning
         # API/panel when provider == "moondream_cloud" — see _handle_finetune_*.
         self._moondream_api_key = moondream_api_key
@@ -228,6 +231,7 @@ class MediaServer:
         # a reference to the analyzer's private pipeline through for it.
         self._face_embedder = FaceEmbedder()
         self._runner: web.AppRunner | None = None
+        self._camera_configs_lock = asyncio.Lock()
         self.extra_status: dict = {}
         # Holds a strong reference to the background moondream-install task —
         # asyncio only keeps a weak reference internally, so an unreferenced
@@ -1490,12 +1494,9 @@ class MediaServer:
         """Return current per-camera AI configurations."""
         cameras = await self._db.get_camera_stats()
         cam_names = [c["camera"] for c in cameras]
-        configs: list[dict] = []
-        if self._CAMERA_CONFIGS_FILE.exists():
-            try:
-                configs = json.loads(self._CAMERA_CONFIGS_FILE.read_text())
-            except Exception:  # noqa: BLE001
-                configs = []
+        async with self._camera_configs_lock:
+            configs = self._read_camera_configs()
+            revision = self._camera_configs_revision(configs)
         # Ensure every known camera has an entry
         configured = {c.get("camera", ""): c for c in configs}
         result = []
@@ -1508,6 +1509,7 @@ class MediaServer:
                     "custom_prompt": "",
                     "is_car_camera": False,
                     "car_zone": None,
+                    "auto_analyze": True,
                 },
             )
             result.append(
@@ -1517,6 +1519,7 @@ class MediaServer:
                     "custom_prompt": str(entry.get("custom_prompt", "")),
                     "is_car_camera": bool(entry.get("is_car_camera", False)),
                     "car_zone": self._normalize_car_zone(entry.get("car_zone")),
+                    "auto_analyze": entry.get("auto_analyze", True) is not False,
                 }
             )
         # Also include configured cameras not in the current clip list
@@ -1529,9 +1532,10 @@ class MediaServer:
                         "custom_prompt": str(entry.get("custom_prompt", "")),
                         "is_car_camera": bool(entry.get("is_car_camera", False)),
                         "car_zone": self._normalize_car_zone(entry.get("car_zone")),
+                        "auto_analyze": entry.get("auto_analyze", True) is not False,
                     }
                 )
-        return web.json_response(result)
+        return web.json_response(result, headers={"ETag": revision})
 
     @staticmethod
     def _normalize_car_zone(zone: Any) -> dict[str, Any] | None:
@@ -1573,6 +1577,12 @@ class MediaServer:
             "y_max": y_max,
         }
 
+    @staticmethod
+    def _camera_configs_revision(configs: list[dict[str, Any]]) -> str:
+        """Return a stable revision token for the persisted camera settings."""
+        serialized = json.dumps(configs, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(serialized.encode()).hexdigest()
+
     async def _handle_ai_camera_configs_put(self, request: web.Request) -> web.Response:
         """Save per-camera AI configurations and update the live analyzer."""
         try:
@@ -1591,6 +1601,7 @@ class MediaServer:
                     "custom_prompt": str(c.get("custom_prompt", "")),
                     "is_car_camera": bool(c.get("is_car_camera", False)),
                     "car_zone": self._normalize_car_zone(c.get("car_zone")),
+                    "auto_analyze": c.get("auto_analyze", True) is not False,
                 }
                 for c in body
                 if isinstance(c, dict) and c.get("camera")
@@ -1600,18 +1611,32 @@ class MediaServer:
         except Exception:  # noqa: BLE001
             raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
-        # Applied before the write attempt, not after: a failure to persist
-        # for next restart shouldn't also cost the user the immediate,
-        # in-process effect of the change they just made this session.
-        self._apply_camera_configs_to_analyzer(configs)
+        async with self._camera_configs_lock:
+            current_revision = self._camera_configs_revision(
+                self._read_camera_configs()
+            )
+            expected_revision = request.headers.get("If-Match")
+            if expected_revision and expected_revision != current_revision:
+                raise web.HTTPConflict(
+                    text="Camera settings changed; reload before saving"
+                )
 
-        try:
-            self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
-        except OSError as exc:
-            _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
-            raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
+            # Applied before the write attempt, not after: a failure to persist
+            # for next restart shouldn't also cost the user the immediate,
+            # in-process effect of the change they just made this session.
+            self._apply_camera_configs_to_analyzer(configs)
 
-        return web.json_response({"saved": True, "count": len(configs)})
+            try:
+                self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
+            except OSError as exc:
+                _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
+                raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
+
+            revision = self._camera_configs_revision(configs)
+
+        return web.json_response(
+            {"saved": True, "count": len(configs)}, headers={"ETag": revision}
+        )
 
     def _apply_camera_configs_to_analyzer(self, configs: list[dict[str, Any]]) -> None:
         """Update the live analyzer without restart.
@@ -1622,6 +1647,10 @@ class MediaServer:
         immediately rather than leaving the last non-empty value in place
         until a restart.
         """
+        if self._update_auto_analysis_cameras is not None:
+            self._update_auto_analysis_cameras(
+                {c["camera"] for c in configs if c.get("auto_analyze", True) is False}
+            )
         if self._analyzer is None:
             return
         descriptions = {
@@ -1745,51 +1774,53 @@ class MediaServer:
         if not thumb.exists():
             raise web.HTTPNotFound(text="Thumbnail not available for that clip")
 
-        configs = self._read_camera_configs()
-        entry = next((c for c in configs if c.get("camera") == camera), None)
-        if entry is None:
-            entry = {
-                "camera": camera,
-                "description": "",
-                "custom_prompt": "",
-                "is_car_camera": True,
-                "car_zone": None,
-            }
-            configs.append(entry)
-        entry["car_zone"] = zone
-        # The picker is only reachable once the "protected vehicle visible
-        # from this camera" toggle is on, but that toggle only persists via
-        # the Vehicles page's own batch save — without this, saving a zone
-        # before ever clicking that batch save would silently have no
-        # effect (car-zone rules are gated on is_car_camera).
-        entry["is_car_camera"] = True
+        async with self._camera_configs_lock:
+            configs = self._read_camera_configs()
+            entry = next((c for c in configs if c.get("camera") == camera), None)
+            if entry is None:
+                entry = {
+                    "camera": camera,
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": True,
+                    "car_zone": None,
+                    "auto_analyze": True,
+                }
+                configs.append(entry)
+            entry["car_zone"] = zone
+            # The picker is only reachable once the "protected vehicle visible
+            # from this camera" toggle is on, but that toggle only persists via
+            # the Vehicles page's own batch save — without this, saving a zone
+            # before ever clicking that batch save would silently have no
+            # effect (car-zone rules are gated on is_car_camera).
+            entry["is_car_camera"] = True
 
-        try:
-            self._VEHICLE_ZONE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
-            # SonarCloud flags this path as built from user-controlled data
-            # (camera comes straight off the URL) — but
-            # _vehicle_zone_snapshot_path slugifies it through
-            # re.sub(r"[^a-z0-9]+", "-", ...) first, so the result can only
-            # ever contain [a-z0-9-]: no "/" or ".." can reach the
-            # filesystem here regardless of what camera actually is.
-            self._vehicle_zone_snapshot_path(camera).write_bytes(  # NOSONAR
-                thumb.read_bytes()
-            )
-        except OSError as exc:
-            _LOGGER.warning(
-                "Could not save vehicle zone snapshot for %s: %s", camera, exc
-            )
+            try:
+                self._VEHICLE_ZONE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+                # SonarCloud flags this path as built from user-controlled data
+                # (camera comes straight off the URL) — but
+                # _vehicle_zone_snapshot_path slugifies it through
+                # re.sub(r"[^a-z0-9]+", "-", ...) first, so the result can only
+                # ever contain [a-z0-9-]: no "/" or ".." can reach the
+                # filesystem here regardless of what camera actually is.
+                self._vehicle_zone_snapshot_path(camera).write_bytes(  # NOSONAR
+                    thumb.read_bytes()
+                )
+            except OSError as exc:
+                _LOGGER.warning(
+                    "Could not save vehicle zone snapshot for %s: %s", camera, exc
+                )
 
-        # Applied before the write attempt, not after: a failure to persist
-        # for next restart shouldn't also cost the user the immediate,
-        # in-process effect of the change they just made this session.
-        self._apply_camera_configs_to_analyzer(configs)
+            # Applied before the write attempt, not after: a failure to persist
+            # for next restart shouldn't also cost the user the immediate,
+            # in-process effect of the change they just made this session.
+            self._apply_camera_configs_to_analyzer(configs)
 
-        try:
-            self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
-        except OSError as exc:
-            _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
-            raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
+            try:
+                self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
+            except OSError as exc:
+                _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
+                raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
 
         return web.json_response({"saved": True, "car_zone": zone})
 
@@ -1797,20 +1828,23 @@ class MediaServer:
         self, request: web.Request
     ) -> web.Response:
         camera = request.match_info["camera"]
-        configs = self._read_camera_configs()
-        entry = next((c for c in configs if c.get("camera") == camera), None)
-        if entry is not None:
-            entry["car_zone"] = None
-            # Applied before the write attempt, not after: a failure to
-            # persist for next restart shouldn't also cost the user the
-            # immediate, in-process effect of the change they just made
-            # this session.
-            self._apply_camera_configs_to_analyzer(configs)
-            try:
-                self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
-            except OSError as exc:
-                _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
-                raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
+        async with self._camera_configs_lock:
+            configs = self._read_camera_configs()
+            entry = next((c for c in configs if c.get("camera") == camera), None)
+            if entry is not None:
+                entry["car_zone"] = None
+                # Applied before the write attempt, not after: a failure to
+                # persist for next restart shouldn't also cost the user the
+                # immediate, in-process effect of the change they just made
+                # this session.
+                self._apply_camera_configs_to_analyzer(configs)
+                try:
+                    self._CAMERA_CONFIGS_FILE.write_text(json.dumps(configs, indent=2))
+                except OSError as exc:
+                    _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
+                    raise web.HTTPInternalServerError(
+                        text=_SETTINGS_WRITE_FAILED
+                    ) from exc
 
         self._vehicle_zone_snapshot_path(camera).unlink(missing_ok=True)
 

@@ -2,6 +2,12 @@
 
 ## 5.4.7
 
+### Added
+
+- Added AI Analysis Configuration in the AI tab. Automatic AI analysis can
+  now be enabled or disabled per camera to reduce token usage, while manual
+  Analyze Now remains available for every clip.
+
 ### Performance
 
 - Kept the Docker build's release metadata arguments out of the dependency
