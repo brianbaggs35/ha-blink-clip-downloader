@@ -110,6 +110,31 @@ describe('AiAnalysisConfigCard', () => {
     expect(useToastStore().message).toBe('AI analysis settings saved')
   })
 
+  it('uses stable sanitized ids for camera toggle labels', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([
+            {
+              ...CAMERA_CONFIGS[0],
+              camera: 'Front Door / Patio',
+            },
+          ]),
+        ),
+      ),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    const input = document.querySelector('#ai-analysis-front-door-patio')
+    const label = document.querySelector('label[for="ai-analysis-front-door-patio"]')
+    expect(input).not.toBeNull()
+    expect(label).not.toBeNull()
+  })
+
   it('closes when the modal reports that it is no longer visible', async () => {
     vi.stubGlobal(
       'fetch',

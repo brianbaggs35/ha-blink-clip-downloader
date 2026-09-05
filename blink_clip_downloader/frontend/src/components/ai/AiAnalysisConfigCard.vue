@@ -32,6 +32,15 @@ function normalizeConfig(config: CameraConfig): EditableCameraConfig {
   return { ...config, auto_analyze: config.auto_analyze !== false }
 }
 
+function cameraInputId(camera: string): string {
+  const slug = camera
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `ai-analysis-${slug || 'camera'}`
+}
+
 async function load() {
   loading.value = true
   loadError.value = false
@@ -140,10 +149,10 @@ onMounted(load)
       <div class="camera-list">
         <div v-for="config in configs" :key="config.camera" class="camera-row">
           <div>
-            <label :for="`ai-analysis-${encodeURIComponent(config.camera)}`">📷 {{ config.camera }}</label>
+            <label :for="cameraInputId(config.camera)">📷 {{ config.camera }}</label>
             <span>{{ config.auto_analyze ? 'Automatic analysis enabled' : 'Automatic analysis disabled' }}</span>
           </div>
-          <ToggleSwitch v-model="config.auto_analyze" :input-id="`ai-analysis-${encodeURIComponent(config.camera)}`" />
+          <ToggleSwitch v-model="config.auto_analyze" :input-id="cameraInputId(config.camera)" />
         </div>
       </div>
     </template>

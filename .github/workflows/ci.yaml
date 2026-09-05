@@ -393,16 +393,6 @@ jobs:
     permissions:
       contents: read
 
-    # Both legs build *natively* on a runner of the matching architecture —
-    # GitHub's arm64-hosted runners (free for public repos as of 2025) make
-    # this possible without QEMU cross-emulation, which is both faster and a
-    # more faithful test than an emulated build: it exercises this add-on's
-    # actual dependency resolution (see the Dockerfile's computer-vision
-    # pipeline block) exactly as it would run on real hardware — most
-    # relevantly a Raspberry Pi 5, since that's this project's aarch64
-    # reference target. The Dockerfile's own FROM is a single multi-platform
-    # manifest tag (see its top-of-file comment), so no per-arch base image
-    # needs to be threaded through here — only BUILD_ARCH.
     strategy:
       fail-fast: false
       matrix:
@@ -416,24 +406,38 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Build add-on image (local Docker)
-        run: |
-          docker build \
-            --pull \
-            --build-arg BUILD_ARCH=${{ matrix.arch }} \
-            -t ${{ env.ADDON_IMAGE }}:${{ env.TAG }} \
-            blink_clip_downloader
+      - name: Build add-on image with Home Assistant builder
+        uses: home-assistant/builder/actions/build-image@2026.06.0
+        with:
+          arch: ${{ matrix.arch }}
+          context: blink_clip_downloader
+          # The builder declares this input as required even for local
+          # builds; push=false means it is never used for registry login.
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image: ${{ env.ADDON_IMAGE }}
+          image-tags: ${{ env.TAG }}
+          version: ${{ env.TAG }}
+          # act cannot provide the GitHub Actions cache runtime token; keep
+          # BuildKit's GHA cache enabled on hosted runners.
+          cache-gha: ${{ !env.ACT }}
+          load: "true"
+          push: "false"
+          cosign: "false"
 
-      # Scans the image just built on this matrix leg, so both amd64 and
-      # aarch64 get their own native scan. Gates only on vulnerabilities a
-      # rebuild could actually remove: HIGH/CRITICAL with a fix available —
-      # Debian-stable's long tail of no-fix-yet CVEs is excluded
-      # (ignore-unfixed), since no change to this repo can address those.
+      - name: Verify built image
+        run: |
+          docker image inspect \
+            ${{ env.ADDON_IMAGE }}:${{ env.TAG }} \
+            >/dev/null
+
+          echo "Built ${{ matrix.arch }} image successfully"
+
       - name: Scan image for vulnerabilities (Trivy)
+        # act cannot authenticate to the public Trivy DB mirrors in this
+        # environment; hosted CI still runs the scan on every architecture.
+        if: ${{ !env.ACT }}
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          # Scanner version, pinned independently of the action version —
-          # the action's bundled default lags behind Trivy releases.
           version: v0.74.0
           image-ref: ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
           scanners: vuln
@@ -441,8 +445,6 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
         env:
-          # Fall back to the ECR mirror when ghcr's trivy-db pull quota
-          # throttles shared GitHub runners.
           TRIVY_DB_REPOSITORY: >-
             ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
 
@@ -453,12 +455,6 @@ jobs:
             -o addon-image.tar
 
       - name: Upload image artifact
-        # Skipped under `act` — see the coverage-artifact step above for why.
-        # `act` runs jobs against the host's Docker daemon, so the image
-        # `build` just created is already visible to `smoke-test` without
-        # needing to round-trip through the artifact service. (`act` also
-        # has no equivalent of GitHub's hosted arm64 runners, so only the
-        # amd64 leg is meaningful to run locally under it.)
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v7
         with:

@@ -46,3 +46,75 @@ test('selecting a different camera after a failed start attempts a fresh session
   await expect(page.getByText(/This camera does not support live view/).last()).toBeVisible()
   await expect(page.getByText('Select a camera above to start watching.')).toBeVisible()
 })
+
+test('renders and stops a mocked live session without a real Blink account', async ({ page }) => {
+  let active = false
+  await page.route('**/api/liveview/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const method = request.method()
+
+    if (url.pathname === '/api/liveview/cameras') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ cameras: ['Front Door'] }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/status') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          active
+            ? { active: true, session_id: 'mock-session', camera: 'Front Door', state: 'live' }
+            : { active: false },
+        ),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+      active = true
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ active: true, session_id: 'mock-session', camera: 'Front Door', state: 'live' }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/stop' && method === 'POST') {
+      active = false
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ stopped: true }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true }),
+      })
+      return
+    }
+    if (url.pathname.startsWith('/api/liveview/hls/')) {
+      await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
+      return
+    }
+    await route.fallback()
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="liveview"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="liveview"]')
+  await page.getByRole('button', { name: 'Front Door', exact: true }).click()
+
+  await expect(page.getByRole('button', { name: '■ Stop' })).toBeVisible()
+  await expect(page.locator('#page-liveview .video-js-wrap')).not.toHaveClass(/video-hidden/)
+  await page.getByRole('button', { name: '■ Stop' }).click()
+  await expect(page.getByText('Select a camera above to start watching.')).toBeVisible()
+  await expect(page.getByRole('button', { name: '■ Stop' })).toHaveCount(0)
+})
