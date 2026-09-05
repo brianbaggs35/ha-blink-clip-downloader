@@ -1,0 +1,531 @@
+---
+configuration:
+  username:
+    name: Nombre de usuario de Blink
+    description: Dirección de correo electrónico de tu cuenta de Blink.
+  password:
+    name: Contraseña de Blink
+    description: Contraseña de tu cuenta de Blink.
+  download_path:
+    name: Ruta de descarga
+    description: >-
+      Ruta absoluta donde se guardan los clips. Debe estar bajo /share/
+      para que el navegador multimedia de HA pueda verlos (por ej.
+      /share/blink-clips).
+  organize_by_camera:
+    name: Organizar por cámara
+    description: Crea una subcarpeta por nombre de cámara.
+  organize_by_date:
+    name: Organizar por fecha
+    description: Crea una subcarpeta por fecha de grabación (YYYY-MM-DD).
+  filename_format:
+    name: Formato del nombre de archivo
+    description: >-
+      Plantilla para los nombres de archivo de los clips. Tokens
+      disponibles: {camera}, {timestamp}, {date}, {time}, {id}. La
+      extensión (.mp4) se añade automáticamente.
+  poll_interval:
+    name: Intervalo de sondeo (segundos)
+    description: Frecuencia con la que se comprueba Blink en busca de clips nuevos (30–3600 s).
+  max_clips_per_poll:
+    name: Clips máx. por sondeo
+    description: Número máximo de clips descargados en un solo ciclo de sondeo.
+  retention_days:
+    name: Retención (días)
+    description: >-
+      Elimina los clips con más de este número de días de antigüedad.
+      Establece 0 para conservar todos los clips indefinidamente.
+  max_storage_gb:
+    name: Cuota de almacenamiento (GB)
+    description: >-
+      Detiene la descarga cuando la carpeta de destino supera este
+      tamaño. Establece 0 para que no tenga límite.
+  camera_filter:
+    name: Lista blanca de cámaras
+    description: >-
+      Descargar solo desde estas cámaras (nombres exactos tal como
+      aparecen en la app de Blink). Déjalo vacío para descargar desde
+      todas las cámaras.
+  motion_only:
+    name: Solo activado por movimiento
+    description: >-
+      Omite los clips que no fueron activados por movimiento (sensor
+      PIR).
+  time_window_start:
+    name: Inicio de la franja horaria
+    description: >-
+      Descarga solo los clips grabados a partir de esta hora (HH:MM,
+      formato 24 h). Déjalo en blanco para desactivar el filtro.
+  time_window_end:
+    name: Fin de la franja horaria
+    description: >-
+      Descarga solo los clips grabados hasta esta hora (HH:MM, formato
+      24 h). Déjalo en blanco para desactivar el filtro.
+  download_thumbnails:
+    name: Descargar miniaturas
+    description: También guarda la miniatura JPEG junto a cada clip.
+  concurrent_downloads:
+    name: Descargas simultáneas
+    description: Número de clips descargados en paralelo (1–10).
+  retry_attempts:
+    name: Intentos de reintento
+    description: >-
+      Cuántas veces reintentar una descarga fallida antes de omitirla.
+  retry_delay:
+    name: Retraso entre reintentos (segundos)
+    description: >-
+      Segundos de espera entre reintentos. El retraso se multiplica por
+      el número de intento (por ej. 5 s, 10 s, 15 s). Rango 0–300 s.
+  notify_ha:
+    name: Notificaciones de HA
+    description: >-
+      Envía una notificación persistente de Home Assistant cada vez que
+      llegan clips nuevos, además del resumen diario y los eventos del
+      sistema (2FA requerido, fallos de autenticación, almacenamiento
+      lleno). Esto aparece en el panel de notificaciones de HA, no como
+      una notificación push al teléfono — para las alertas de clips
+      sospechosos específicamente (sin el ruido de cada descarga), usa
+      en su lugar «Activar alertas de Home Assistant» más abajo.
+  ha_notification_title:
+    name: Título de la notificación
+    description: Título usado para las notificaciones persistentes de Home Assistant.
+  webhook_url:
+    name: URL del webhook
+    description: >-
+      URL HTTP(S) opcional a la que enviar (POST) los metadatos del
+      clip tras cada descarga correcta. Déjalo en blanco para
+      desactivarlo.
+  create_clip_manifest:
+    name: Crear manifiesto de clips
+    description: >-
+      Mantiene un manifiesto JSON en /data/clip_manifest.json con los
+      metadatos de cada clip descargado.
+  min_clip_duration:
+    name: Duración mínima del clip (segundos)
+    description: >-
+      Omite los clips más cortos que esta duración en segundos.
+      Establece 0 para conservar todos los clips sin importar su
+      duración.
+  enable_library_db:
+    name: Activar base de datos de la biblioteca
+    description: >-
+      Almacena los metadatos de los clips en una base de datos
+      PostgreSQL que alimenta la interfaz web de la biblioteca, el
+      resumen diario y las funciones de archivado.
+  enable_media_server:
+    name: Activar la interfaz web de la biblioteca
+    description: >-
+      Inicia el servidor web integrado en el puerto configurado para
+      poder explorar, buscar, destacar y reproducir los clips guardados
+      desde cualquier navegador.
+  media_server_port:
+    name: Puerto de la interfaz web
+    description: Puerto TCP del servidor web de la biblioteca de clips (por defecto 8099).
+  watch_ha_events:
+    name: Vigilar eventos de movimiento de HA
+    description: >-
+      Se suscribe a los eventos state_changed de Home Assistant y
+      activa un sondeo inmediato de Blink cuando se dispara un sensor de
+      movimiento, para que los clips aparezcan en cuestión de segundos.
+  fast_poll_duration:
+    name: Duración del sondeo rápido (segundos)
+    description: >-
+      Cuánto tiempo permanecer en modo de sondeo rápido tras detectar un
+      evento de movimiento (por defecto 120 s).
+  fast_poll_interval:
+    name: Intervalo de sondeo rápido (segundos)
+    description: >-
+      Intervalo de sondeo en modo de sondeo rápido activado por un
+      evento de movimiento (por defecto 15 s, mínimo 5 s).
+  post_motion_delay:
+    name: Retraso de descarga tras el movimiento (segundos)
+    description: >-
+      Cuántos segundos esperar después de que un sensor de movimiento de
+      Blink se despeje antes de sondear el clip nuevo. Blink suele
+      tardar entre 15 y 60 segundos en codificar y subir un clip tras el
+      fin del movimiento. Por defecto 30 s (rango 5–300 s).
+  event_cameras:
+    name: Filtro de cámaras para eventos
+    description: >-
+      Activa el modo de sondeo rápido solo para eventos de movimiento de
+      estas cámaras. Déjalo vacío para reaccionar a todas las cámaras
+      Blink.
+  digest_enabled:
+    name: Activar resumen diario
+    description: >-
+      Envía una notificación diaria de Home Assistant resumiendo cuántos
+      clips se descargaron y cuánto almacenamiento se está usando.
+  digest_time:
+    name: Hora del resumen diario (HH:MM)
+    description: >-
+      Hora local a la que se envía la notificación del resumen diario
+      (formato 24 h, por ej. «08:00»).
+  archive_enabled:
+    name: Activar archivado ZIP
+    description: >-
+      Comprime los clips más antiguos que el umbral de archivado en
+      archivos ZIP mensuales para recuperar espacio en disco
+      conservando los metadatos.
+  archive_after_days:
+    name: Archivar después de (días)
+    description: >-
+      Los clips con más de este número de días de antigüedad se
+      comprimen en un archivo ZIP (solo cuando el archivado está
+      activado).
+  gdrive_batch_size:
+    name: Tamaño de lote de subida a Google Drive
+    description: >-
+      Número máximo de clips subidos a Google Drive por ciclo de
+      comprobación.
+  gdrive_check_interval:
+    name: Intervalo de comprobación de Google Drive (segundos)
+    description: >-
+      Con qué frecuencia la cola de subida comprueba si hay clips
+      pendientes de respaldar.
+  download_local_storage:
+    name: Descargar almacenamiento local del Sync Module
+    description: >-
+      También descarga los clips almacenados en la unidad USB conectada
+      al Sync Module de Blink. Blink los sube primero a la nube antes de
+      que puedan recuperarse, por lo que sigue siendo necesaria una
+      conexión a Internet.
+  ai_analysis_enabled:
+    name: Activar análisis de vídeo con IA
+    description: >-
+      Analiza automáticamente cada clip descargado en busca de actividad
+      sospechosa y envía alertas por Discord, correo electrónico o la
+      app móvil de HA.
+  ai_provider:
+    name: Proveedor de IA
+    description: >-
+      Qué motor de IA usar. «ollama» = servidor Ollama local en tu red
+      (gratis, privado). «ollama_cloud» = API de Ollama Cloud (de
+      pago). «moondream_cloud» = API de Moondream Cloud (de pago, usa
+      detección de objetos + razonamiento para mayor precisión).
+      «moondream_local» = Moondream 0.5B en el propio dispositivo
+      (gratis, solo x86_64). «anthropic» = API de Claude (de pago).
+      «openai» = API de OpenAI GPT (de pago).
+  ollama_url:
+    name: URL del servidor Ollama
+    description: >-
+      URL de tu instancia de Ollama, por ej. http://192.168.1.10:11434.
+      Necesaria para los proveedores «ollama» y «ollama_cloud».
+  ollama_model:
+    name: Modelo de visión de Ollama
+    description: >-
+      Modelo con capacidad de visión a usar en tu servidor Ollama, por
+      ej. llava:7b o llama3.2-vision:11b. Usa «Fetch Models» en la
+      pestaña de IA de la interfaz web para ver qué hay disponible.
+  ollama_cloud_api_key:
+    name: Clave API de Ollama Cloud
+    description: >-
+      Clave API de api.ollama.com. Necesaria cuando ai_provider es
+      «ollama_cloud».
+  moondream_api_key:
+    name: Clave API de Moondream
+    description: >-
+      Clave API de moondream.ai. Necesaria cuando ai_provider es
+      «moondream_cloud».
+  moondream_finetune_model:
+    name: Modelo Moondream afinado (opcional)
+    description: >-
+      ID del punto de control (checkpoint) afinado a usar para la
+      inferencia en lugar del modelo base, por ej.
+      «moondream3-preview/abc123@50». Déjalo vacío para usar el modelo
+      base. Configura este valor desde el panel «Fine-Tuning» de la
+      pestaña de IA (botón Activate) en lugar de escribirlo a mano — ese
+      panel lista tus afinados/puntos de control reales. Un valor
+      establecido en vivo desde el panel surte efecto de inmediato,
+      pero solo persiste tras un reinicio si también se guarda aquí.
+  anthropic_api_key:
+    name: Clave API de Anthropic
+    description: >-
+      Clave API de console.anthropic.com. Necesaria cuando ai_provider
+      es «anthropic». Mantenla en secreto.
+  anthropic_model:
+    name: Modelo de Anthropic
+    description: >-
+      Modelo de Claude a usar. claude-haiku-4-5 es la opción más
+      económica para el análisis de cámaras de seguridad. Usa «Fetch
+      Models» en la pestaña de IA de la interfaz web.
+  openai_api_key:
+    name: Clave API de OpenAI
+    description: >-
+      Clave API de platform.openai.com. Necesaria cuando ai_provider es
+      «openai». Mantenla en secreto.
+  openai_model:
+    name: Modelo de OpenAI
+    description: >-
+      Modelo GPT a usar. gpt-4o-mini es la opción de visión más
+      económica. Usa «Fetch Models» en la pestaña de IA de la interfaz
+      web.
+  openai_escalation_model:
+    name: Modelo de escalado de OpenAI (obsoleto)
+    description: >-
+      Obsoleto — usa en su lugar «Activar escalado de nivel 2» y
+      «Proveedor/Modelo de escalado de IA» más abajo, que funcionan con
+      cualquier proveedor, no solo con OpenAI. Deja esto en blanco. Los
+      valores existentes se siguen leyendo y se migran automáticamente
+      a los campos de abajo al iniciar.
+  ai_escalation_enabled:
+    name: Activar escalado de nivel 2
+    description: >-
+      Activa o desactiva el escalado de dos niveles. Cuando está
+      activado, cada clip se analiza primero con el proveedor de IA de
+      arriba (nivel 1); solo los clips que el nivel 1 marca como
+      sospechosos se reanalizan con el proveedor de escalado de IA de
+      abajo (nivel 2) para una segunda opinión más exhaustiva, y ese
+      veredicto es el que se registra. La mayoría de los clips no son
+      sospechosos, así que combinar un modelo de nivel 1 barato con uno
+      de nivel 2 más potente ahorra coste/tokens de API frente a
+      ejecutar el modelo más potente en todos los clips. Cuando está
+      desactivado, «Proveedor de escalado de IA» y «Modelo» de abajo se
+      ignoran por completo y el análisis se ejecuta solo en el nivel 1.
+  ai_escalation_provider:
+    name: Proveedor de escalado de IA
+    description: >-
+      Proveedor de nivel 2 para el escalado de dos niveles, usado solo
+      cuando «Activar escalado de nivel 2» de arriba está activado.
+      Puede ser un proveedor distinto al Proveedor de IA (por ej. nivel
+      1 = openai, nivel 2 = moondream_cloud) — reutiliza las
+      credenciales de ese proveedor ya definidas arriba, sin necesidad
+      de una clave API aparte.
+  ai_escalation_model:
+    name: Modelo de escalado de IA (opcional)
+    description: >-
+      ID del modelo a usar para el Proveedor de escalado de IA de
+      arriba, por ej. «gpt-4o», «claude-opus-4-5» o un ID de afinado de
+      Moondream. Déjalo vacío para usar el modelo base/por defecto de
+      ese proveedor. No aplicable a moondream_local, que no tiene
+      modelo seleccionable.
+  ai_prompt:
+    name: Instrucción de análisis de IA
+    description: >-
+      Instrucción (prompt) base enviada a la IA para cada clip. Debe
+      solicitar una respuesta JSON con las claves «suspicious»,
+      «confidence» y «description». Se puede anular por cámara mediante
+      ai_camera_prompts o la sección «Configuraciones de cámara» de la
+      interfaz web.
+  ai_car_description:
+    name: Descripción del vehículo protegido
+    description: >-
+      Descripción opcional de un vehículo a proteger, por ej. «Kia
+      Forte plateado, aparcado en el camino de entrada». Cuando está
+      definida, la IA aplica reglas de distancia estrictas y marca como
+      sospechosa a cualquier persona que toque el vehículo. Introducir
+      una descripción en la pestaña Vehículos de la interfaz web anula
+      permanentemente este ajuste — una vez guardada allí, esta opción
+      se ignora sea cual sea el valor que le pongas aquí; edita
+      directamente la pestaña Vehículos en su lugar.
+  ai_max_frames:
+    name: Fotogramas máx. por clip
+    description: >-
+      Número de fotogramas extraídos por clip para el análisis (1–100).
+      Más fotogramas dan mejor cobertura pero aumentan el coste de la
+      API y el tiempo de análisis. Con moondream_cloud, cada fotograma
+      consume solicitudes de API adicionales.
+  ai_frame_interval:
+    name: Intervalo entre fotogramas (segundos)
+    description: >-
+      Extrae un fotograma cada este número de segundos de vídeo. Con 5
+      fotogramas y un intervalo de 2 s, el análisis cubre
+      aproximadamente los primeros 8 s del clip.
+  ai_suspicious_keywords:
+    name: Palabras clave sospechosas
+    description: >-
+      Palabras que activan un marcado como sospechoso cuando se
+      encuentran en la respuesta de texto plano de la IA. Se usa como
+      método alternativo cuando la IA no devuelve un JSON válido.
+  ai_schedule_start:
+    name: Inicio del horario de IA (HH:MM)
+    description: >-
+      Ejecuta el análisis de IA solo entre esta hora y ai_schedule_end
+      (hora local, 24 h). Déjalo en blanco para analizar sin
+      interrupción.
+  ai_schedule_end:
+    name: Fin del horario de IA (HH:MM)
+    description: >-
+      Deja de ejecutar el análisis de IA después de esta hora (hora
+      local, 24 h). Déjalo en blanco para analizar sin interrupción.
+  ai_batch_size:
+    name: Tamaño de lote de IA
+    description: >-
+      Número máximo de clips a analizar en un lote antes de hacer una
+      pausa de ai_check_interval segundos. Evita sobrecargar el motor
+      de IA.
+  ai_check_interval:
+    name: Intervalo de comprobación de IA (segundos)
+    description: >-
+      Segundos entre lotes de análisis. La cola se comprueba con esta
+      frecuencia en busca de clips nuevos sin analizar.
+  ai_min_confidence:
+    name: Confianza mínima para alertar
+    description: >-
+      Puntuación de confianza mínima de la IA (0,0–1,0) necesaria antes
+      de enviar una alerta de clip sospechoso. Los resultados siempre
+      se almacenan sin importar este ajuste. 0,0 = alertar en todos los
+      resultados; 0,5 = solo cuando la IA está razonablemente segura.
+  ai_camera_prompts:
+    name: Instrucciones de IA por cámara
+    description: >-
+      Anula el ai_prompt global para cámaras concretas. Cada entrada
+      tiene un nombre «camera» (debe coincidir exactamente con un
+      nombre de cámara mostrado en la app de Blink) y una cadena
+      «prompt». Las cámaras no listadas usan ai_prompt. Es preferible
+      usar la pestaña de IA de la interfaz web, sección
+      «Configuraciones de cámara» — lista tus nombres de cámara reales,
+      así que no hay nada que escribir ni equivocarse.
+  ai_camera_descriptions:
+    name: Descripciones por cámara
+    description: >-
+      Descripciones de contexto inyectadas en cada instrucción de IA
+      para la cámara correspondiente, por ej. «Apunta al camino de
+      entrada; Kia Forte plateado aparcado a la izquierda». El nombre
+      «camera» debe coincidir exactamente con un nombre de cámara
+      mostrado en la app de Blink. Es preferible editar en vivo en la
+      pestaña de IA de la interfaz web, sección «Configuraciones de
+      cámara» — lista tus nombres de cámara reales, así que no hay nada
+      que escribir ni equivocarse.
+  ai_frame_strategy:
+    name: Estrategia de extracción de fotogramas
+    description: >-
+      «smart» (por defecto) extrae el doble de fotogramas y luego elige
+      los de entrada, pico de movimiento y salida mediante análisis de
+      diferencia de movimiento. «sequential» analiza cada fotograma
+      individualmente y devuelve el resultado más alarmante. «uniform»
+      es el modo antiguo de intervalo fijo.
+  ai_car_cameras:
+    name: Cámaras de protección de vehículo
+    description: >-
+      Restringe las reglas de distancia de protección de vehículo a
+      estos nombres de cámara (deben coincidir exactamente con un
+      nombre de cámara mostrado en la app de Blink). Las cámaras no
+      incluidas en esta lista se centran en su propia descripción y no
+      aplican las reglas de proximidad de vehículo. Déjalo vacío para
+      aplicar las reglas de vehículo a todas las cámaras. Es preferible
+      usar la casilla «Vehículo protegido visible desde esta cámara» en
+      la pestaña de IA de la interfaz web, sección «Configuraciones de
+      cámara» — lista tus nombres de cámara reales, así que no hay nada
+      que escribir ni equivocarse.
+  ai_prompt_debug_enabled:
+    name: Activar registro de depuración de instrucciones
+    description: >-
+      Guarda el texto exacto de la instrucción de cada clip (no los
+      fotogramas de imagen) para poder inspeccionarlo con el botón
+      «📝 Prompt» del panel de IA de ese clip — abre cualquier clip
+      desde la pestaña Biblioteca de la interfaz web para verlo — útil
+      para entender y ajustar qué se está enviando realmente.
+      Desactivado por defecto porque las instrucciones son largas y
+      esto es una ayuda de depuración opcional.
+  ai_enhanced_detection_enabled:
+    name: "⚠️ Activar detección y seguimiento avanzados (pesado)"
+    description: >-
+      Preprocesado de fotogramas (contraste/reducción de ruido),
+      detección y seguimiento de objetos (YOLO + ByteTrack), estimación
+      de profundidad monocular (Depth Anything V2) y segmentación de
+      contacto a nivel de píxel (SAM2) — un solo interruptor para las
+      cuatro funciones, que aporta a la IA indicios precisos de
+      detección/seguimiento/profundidad/contacto calculados por código
+      en lugar de depender solo de heurísticas de diferencia de
+      movimiento. Descarga varios modelos (100 MB-800 MB+ en total) la
+      primera vez que se usa y requiere bastante más CPU/RAM que el
+      resto de este add-on. Va cómodo en una Raspberry Pi 5 (8 GB) o
+      superior. Desactivado por defecto; el análisis funciona
+      exactamente igual sin esta opción.
+  ai_object_detection_model:
+    name: Modelo de detección de objetos
+    description: >-
+      Archivo de modelo de Ultralytics que ejecuta la etapa de
+      detección de arriba — introduce exactamente uno de estos:
+      yolo11n.pt (nano — el más rápido/ligero, punto de partida
+      recomendado en hardware sin GPU), yolo11s.pt (pequeño), yolo11m.pt
+      (mediano), yolo11l.pt (grande), o yolo11x.pt (extragrande — el
+      más preciso, mucho más lento). Se descarga automáticamente la
+      primera vez que se usa; por defecto yolo11n.pt.
+  ai_face_recognition_enabled:
+    name: Activar reconocimiento facial local
+    description: >-
+      Suprime las alertas para los miembros del hogar registrados. El
+      registro (fotos de referencia, incrustaciones faciales
+      calculadas) ocurre por completo en el propio dispositivo a través
+      de la pestaña de IA de la interfaz web y nunca sale de este
+      add-on ni de tu red — nunca se envía a ningún proveedor de IA en
+      la nube, sea cual sea el configurado arriba. Desactivado por
+      defecto.
+  hf_token:
+    name: Token de Hugging Face (opcional)
+    description: >-
+      Token de acceso opcional de Hugging Face usado para autenticar las
+      descargas de modelos de visión por computador y aumentar los
+      límites de tasa del Hugging Face Hub. Crea uno en
+      https://huggingface.co/settings/tokens. Mantenlo en secreto.
+  mobile_app_target:
+    name: Entidad de destino de la app móvil
+    description: >-
+      Entidad de notificación de la app móvil de Home Assistant a la
+      que enviar las alertas de clip sospechoso, por ej.
+      mobile_app_my_phone. Necesaria cuando mobile_app_enabled está
+      activado.
+  mobile_app_enabled:
+    name: Activar alertas de app móvil
+    description: >-
+      Envía una notificación push a la app móvil de HA cuando se
+      detecta un clip sospechoso.
+  smtp_host:
+    name: Host SMTP
+    description: Nombre de host o dirección IP del servidor SMTP para las alertas por correo.
+  smtp_port:
+    name: Puerto SMTP
+    description: >-
+      Puerto del servidor SMTP. Usa 587 para STARTTLS (recomendado) o
+      465 para SSL.
+  smtp_user:
+    name: Usuario SMTP
+    description: >-
+      Nombre de usuario de acceso al servidor SMTP (normalmente tu
+      dirección de correo).
+  smtp_password:
+    name: Contraseña SMTP
+    description: Contraseña de acceso al servidor SMTP. Mantenla en secreto.
+  smtp_recipients:
+    name: Destinatarios de alertas por correo
+    description: >-
+      Lista de direcciones de correo a las que enviar alertas de clip
+      sospechoso. Se requiere al menos una dirección cuando smtp_enabled
+      está activado.
+  smtp_sender:
+    name: Dirección de correo del remitente
+    description: Dirección de origen usada en los correos de alerta salientes.
+  smtp_enabled:
+    name: Activar alertas por correo
+    description: >-
+      Envía una alerta por correo con un resumen del clip cuando se
+      detecta actividad sospechosa.
+  discord_webhook_url:
+    name: URL del webhook de Discord
+    description: >-
+      URL del webhook de Discord en la que publicar las alertas de clip
+      sospechoso. Déjalo en blanco para desactivar las notificaciones de
+      Discord.
+  discord_enabled:
+    name: Activar alertas de Discord
+    description: >-
+      Publica un mensaje de Discord con los detalles del clip cuando se
+      detecta actividad sospechosa.
+  notify_ha_suspicious:
+    name: Activar alertas de Home Assistant
+    description: >-
+      Crea una notificación persistente de Home Assistant solo cuando
+      se detecta actividad sospechosa — independiente de
+      «Notificaciones de HA» de arriba, que cubre cada descarga de clip
+      nuevo además del resumen diario y los eventos del sistema. Al
+      igual que esa opción, esto aparece en el propio panel de
+      notificaciones de HA, no como una notificación push al teléfono;
+      para una notificación push real a tu teléfono, activa también
+      «Activar alertas de app móvil» de arriba.
+  log_level:
+    name: Nivel de registro
+    description: Nivel de detalle de los registros del add-on.
+  battery_alerts_enabled:
+    name: Activar alertas de batería
+    description: Envía una alerta cuando la batería de una cámara está baja.

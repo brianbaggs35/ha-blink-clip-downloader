@@ -1,0 +1,540 @@
+---
+configuration:
+  username:
+    name: Blink-Benutzername
+    description: E-Mail-Adresse deines Blink-Kontos.
+  password:
+    name: Blink-Passwort
+    description: Passwort deines Blink-Kontos.
+  download_path:
+    name: Download-Pfad
+    description: >-
+      Absoluter Pfad, unter dem Clips gespeichert werden. Muss sich
+      unter /share/ befinden, damit der Medienbrowser von HA sie
+      anzeigen kann (z. B. /share/blink-clips).
+  organize_by_camera:
+    name: Nach Kamera organisieren
+    description: Erstellt einen Unterordner pro Kameranamen.
+  organize_by_date:
+    name: Nach Datum organisieren
+    description: Erstellt einen Unterordner pro Aufnahmedatum (YYYY-MM-DD).
+  filename_format:
+    name: Dateinamenformat
+    description: >-
+      Vorlage für die Dateinamen der Clips. Verfügbare Platzhalter:
+      {camera}, {timestamp}, {date}, {time}, {id}. Die Dateiendung
+      (.mp4) wird automatisch angehängt.
+  poll_interval:
+    name: Abfrageintervall (Sekunden)
+    description: Wie oft Blink auf neue Clips geprüft wird (30–3600 s).
+  max_clips_per_poll:
+    name: Max. Clips pro Abfrage
+    description: Maximale Anzahl an Clips, die in einem einzelnen Abfragezyklus heruntergeladen werden.
+  retention_days:
+    name: Aufbewahrung (Tage)
+    description: >-
+      Löscht Clips, die älter als diese Anzahl an Tagen sind. Auf 0
+      setzen, um alle Clips dauerhaft zu behalten.
+  max_storage_gb:
+    name: Speicherkontingent (GB)
+    description: >-
+      Stoppt den Download, sobald der Zielordner diese Größe
+      überschreitet. Auf 0 setzen für unbegrenzten Speicher.
+  camera_filter:
+    name: Kamera-Whitelist
+    description: >-
+      Nur von diesen Kameras herunterladen (exakte Namen wie in der
+      Blink-App angezeigt). Leer lassen, um von allen Kameras
+      herunterzuladen.
+  motion_only:
+    name: Nur bei Bewegung
+    description: >-
+      Überspringt Clips, die nicht durch Bewegung (PIR-Sensor)
+      ausgelöst wurden.
+  time_window_start:
+    name: Beginn des Zeitfensters
+    description: >-
+      Lädt nur Clips herunter, die zu oder nach dieser Uhrzeit
+      aufgenommen wurden (HH:MM, 24-Stunden-Format). Leer lassen, um
+      den Filter zu deaktivieren.
+  time_window_end:
+    name: Ende des Zeitfensters
+    description: >-
+      Lädt nur Clips herunter, die zu oder vor dieser Uhrzeit
+      aufgenommen wurden (HH:MM, 24-Stunden-Format). Leer lassen, um
+      den Filter zu deaktivieren.
+  download_thumbnails:
+    name: Vorschaubilder herunterladen
+    description: Speichert zusätzlich das JPEG-Vorschaubild zu jedem Clip.
+  concurrent_downloads:
+    name: Gleichzeitige Downloads
+    description: Anzahl der parallel heruntergeladenen Clips (1–10).
+  retry_attempts:
+    name: Wiederholungsversuche
+    description: >-
+      Wie oft ein fehlgeschlagener Download wiederholt wird, bevor er
+      übersprungen wird.
+  retry_delay:
+    name: Verzögerung zwischen Versuchen (Sekunden)
+    description: >-
+      Wartezeit in Sekunden zwischen den Wiederholungsversuchen. Die
+      Verzögerung wird mit der Versuchsnummer multipliziert (z. B. 5 s,
+      10 s, 15 s). Bereich 0–300 s.
+  notify_ha:
+    name: HA-Benachrichtigungen
+    description: >-
+      Sendet bei jedem Eintreffen neuer Clips eine dauerhafte Home
+      Assistant-Benachrichtigung, ebenso für die tägliche
+      Zusammenfassung und Systemereignisse (2FA erforderlich,
+      Authentifizierungsfehler, Speicher voll). Dies erscheint im
+      Benachrichtigungsbereich von HA, nicht als Push-Benachrichtigung
+      auf dem Smartphone — für Warnungen speziell bei verdächtigen
+      Clips (ohne das Rauschen jedes einzelnen Downloads) weiter unten
+      stattdessen „Home Assistant-Warnungen aktivieren“ verwenden.
+  ha_notification_title:
+    name: Benachrichtigungstitel
+    description: Titel für dauerhafte Home Assistant-Benachrichtigungen.
+  webhook_url:
+    name: Webhook-URL
+    description: >-
+      Optionale HTTP(S)-URL, an die nach jedem erfolgreichen Download
+      Clip-Metadaten per POST gesendet werden. Leer lassen, um dies zu
+      deaktivieren.
+  create_clip_manifest:
+    name: Clip-Manifest erstellen
+    description: >-
+      Pflegt ein JSON-Manifest unter /data/clip_manifest.json mit
+      Metadaten zu jedem heruntergeladenen Clip.
+  min_clip_duration:
+    name: Mindestdauer des Clips (Sekunden)
+    description: >-
+      Überspringt Clips, die kürzer als diese Dauer in Sekunden sind.
+      Auf 0 setzen, um alle Clips unabhängig von ihrer Länge zu
+      behalten.
+  enable_library_db:
+    name: Clip-Bibliotheksdatenbank aktivieren
+    description: >-
+      Speichert Clip-Metadaten in einer PostgreSQL-Datenbank, die die
+      Web-Bibliotheksoberfläche, die tägliche Zusammenfassung und die
+      Archivierungsfunktionen antreibt.
+  enable_media_server:
+    name: Web-Bibliotheksoberfläche aktivieren
+    description: >-
+      Startet den integrierten Webserver auf dem konfigurierten Port,
+      damit du gespeicherte Clips von jedem Browser aus durchsuchen,
+      suchen, markieren und streamen kannst.
+  media_server_port:
+    name: Web-UI-Port
+    description: TCP-Port des Webservers der Clip-Bibliothek (Standard 8099).
+  watch_ha_events:
+    name: HA-Bewegungsereignisse überwachen
+    description: >-
+      Abonniert die state_changed-Ereignisse von Home Assistant und
+      löst eine sofortige Blink-Abfrage aus, sobald ein
+      Bewegungssensor auslöst, damit Clips innerhalb von Sekunden
+      erscheinen.
+  fast_poll_duration:
+    name: Dauer der Schnellabfrage (Sekunden)
+    description: >-
+      Wie lange der Schnellabfrage-Modus nach einem erkannten
+      Bewegungsereignis beibehalten wird (Standard 120 s).
+  fast_poll_interval:
+    name: Schnellabfrageintervall (Sekunden)
+    description: >-
+      Abfrageintervall im durch ein Bewegungsereignis ausgelösten
+      Schnellabfrage-Modus (Standard 15 s, min. 5 s).
+  post_motion_delay:
+    name: Download-Verzögerung nach Bewegung (Sekunden)
+    description: >-
+      Wie viele Sekunden nach dem Ende einer Blink-Bewegungserkennung
+      gewartet wird, bevor der neue Clip abgefragt wird. Blink benötigt
+      typischerweise 15–60 Sekunden, um einen Clip nach Bewegungsende
+      zu kodieren und hochzuladen. Standard ist 30 s (Bereich 5–300 s).
+  event_cameras:
+    name: Kamerafilter für Ereignisse
+    description: >-
+      Löst den Schnellabfrage-Modus nur für Bewegungsereignisse dieser
+      Kameras aus. Leer lassen, um auf alle Blink-Kameras zu reagieren.
+  digest_enabled:
+    name: Tägliche Zusammenfassung aktivieren
+    description: >-
+      Sendet eine tägliche Home Assistant-Benachrichtigung mit einer
+      Zusammenfassung, wie viele Clips heruntergeladen wurden und wie
+      viel Speicherplatz belegt ist.
+  digest_time:
+    name: Uhrzeit der täglichen Zusammenfassung (HH:MM)
+    description: >-
+      Lokale Uhrzeit, zu der die Benachrichtigung mit der täglichen
+      Zusammenfassung gesendet wird (24-Stunden-Format, z. B. „08:00“).
+  archive_enabled:
+    name: ZIP-Archivierung aktivieren
+    description: >-
+      Komprimiert Clips, die älter als der Archivierungsschwellenwert
+      sind, in monatliche ZIP-Dateien, um Speicherplatz zurückzugewinnen
+      und dabei die Metadaten zu behalten.
+  archive_after_days:
+    name: Archivieren nach (Tagen)
+    description: >-
+      Clips, die älter als diese Anzahl an Tagen sind, werden in ein
+      ZIP-Archiv komprimiert (nur wenn Archivierung aktiviert ist).
+  gdrive_batch_size:
+    name: Batch-Größe für Google Drive-Upload
+    description: >-
+      Maximale Anzahl an Clips, die pro Prüfzyklus zu Google Drive
+      hochgeladen werden.
+  gdrive_check_interval:
+    name: Google Drive-Prüfintervall (Sekunden)
+    description: >-
+      Wie oft die Upload-Warteschlange auf ausstehende Clips zur
+      Sicherung prüft.
+  download_local_storage:
+    name: Lokalen Speicher des Sync Module herunterladen
+    description: >-
+      Lädt zusätzlich Clips herunter, die auf dem am Blink Sync Module
+      angeschlossenen USB-Laufwerk gespeichert sind. Blink lädt diese
+      zuerst in die Cloud hoch, bevor sie abgerufen werden können, eine
+      Internetverbindung ist also weiterhin erforderlich.
+  ai_analysis_enabled:
+    name: KI-Videoanalyse aktivieren
+    description: >-
+      Analysiert jeden heruntergeladenen Clip automatisch auf
+      verdächtige Aktivitäten und sendet Warnungen per Discord, E-Mail
+      oder die HA-Mobil-App.
+  ai_provider:
+    name: KI-Anbieter
+    description: >-
+      Welches KI-Backend verwendet werden soll. „ollama“ = lokaler
+      Ollama-Server in deinem Netzwerk (kostenlos, privat).
+      „ollama_cloud“ = Ollama Cloud API (kostenpflichtig).
+      „moondream_cloud“ = Moondream Cloud API (kostenpflichtig, nutzt
+      Objekterkennung + Schlussfolgerung für bessere Genauigkeit).
+      „moondream_local“ = Moondream 0.5B lokal auf dem Gerät (kostenlos,
+      nur x86_64). „anthropic“ = Claude API (kostenpflichtig).
+      „openai“ = OpenAI GPT API (kostenpflichtig).
+  ollama_url:
+    name: Ollama-Server-URL
+    description: >-
+      URL deiner Ollama-Instanz, z. B. http://192.168.1.10:11434.
+      Erforderlich für die Anbieter „ollama“ und „ollama_cloud“.
+  ollama_model:
+    name: Ollama-Vision-Modell
+    description: >-
+      Vision-fähiges Modell, das auf deinem Ollama-Server verwendet
+      wird, z. B. llava:7b oder llama3.2-vision:11b. Nutze „Fetch
+      Models“ im KI-Tab der Web-UI, um zu sehen, was verfügbar ist.
+  ollama_cloud_api_key:
+    name: Ollama Cloud API-Schlüssel
+    description: >-
+      API-Schlüssel von api.ollama.com. Erforderlich, wenn ai_provider
+      auf „ollama_cloud“ gesetzt ist.
+  moondream_api_key:
+    name: Moondream API-Schlüssel
+    description: >-
+      API-Schlüssel von moondream.ai. Erforderlich, wenn ai_provider auf
+      „moondream_cloud“ gesetzt ist.
+  moondream_finetune_model:
+    name: Moondream-Feinabstimmungsmodell (optional)
+    description: >-
+      ID des feinabgestimmten Checkpoint-Modells, das anstelle des
+      Basismodells für die Inferenz verwendet wird, z. B.
+      „moondream3-preview/abc123@50“. Leer lassen, um das Basismodell zu
+      verwenden. Diesen Wert über das „Fine-Tuning“-Panel im KI-Tab
+      (Schaltfläche Activate) setzen, statt ihn von Hand einzugeben —
+      dieses Panel listet deine tatsächlichen Feinabstimmungen/
+      Checkpoints auf. Ein live über das Panel gesetzter Wert wird
+      sofort wirksam, bleibt aber nach einem Neustart nur erhalten,
+      wenn er auch hier gespeichert wird.
+  anthropic_api_key:
+    name: Anthropic API-Schlüssel
+    description: >-
+      API-Schlüssel von console.anthropic.com. Erforderlich, wenn
+      ai_provider auf „anthropic“ gesetzt ist. Geheim halten.
+  anthropic_model:
+    name: Anthropic-Modell
+    description: >-
+      Zu verwendendes Claude-Modell. claude-haiku-4-5 ist die
+      kostengünstigste Option für die Analyse von
+      Sicherheitskameraaufnahmen. Nutze „Fetch Models“ im KI-Tab der
+      Web-UI.
+  openai_api_key:
+    name: OpenAI API-Schlüssel
+    description: >-
+      API-Schlüssel von platform.openai.com. Erforderlich, wenn
+      ai_provider auf „openai“ gesetzt ist. Geheim halten.
+  openai_model:
+    name: OpenAI-Modell
+    description: >-
+      Zu verwendendes GPT-Modell. gpt-4o-mini ist die kostengünstigste
+      Vision-Option. Nutze „Fetch Models“ im KI-Tab der Web-UI.
+  openai_escalation_model:
+    name: OpenAI-Eskalationsmodell (veraltet)
+    description: >-
+      Veraltet — verwende stattdessen unten „Tier-2-Eskalation
+      aktivieren“ und „KI-Eskalationsanbieter/-Modell“, die für jeden
+      Anbieter funktionieren, nicht nur für OpenAI. Dieses Feld leer
+      lassen. Vorhandene Werte werden weiterhin gelesen und beim Start
+      automatisch in die untenstehenden Felder migriert.
+  ai_escalation_enabled:
+    name: Tier-2-Eskalation aktivieren
+    description: >-
+      Schaltet die zweistufige Eskalation ein oder aus. Wenn aktiviert,
+      wird jeder Clip zunächst mit dem oben genannten KI-Anbieter
+      analysiert (Stufe 1); nur Clips, die Stufe 1 als verdächtig
+      einstuft, werden vom unten genannten KI-Eskalationsanbieter
+      (Stufe 2) für eine genauere zweite Einschätzung erneut
+      analysiert, und dieses Urteil wird gespeichert. Die meisten Clips
+      sind nicht verdächtig, daher spart die Kombination eines
+      günstigen Stufe-1-Modells mit einem stärkeren Stufe-2-Modell
+      API-Kosten/Tokens im Vergleich dazu, das stärkere Modell auf
+      jeden Clip anzuwenden. Wenn deaktiviert, werden „KI-
+      Eskalationsanbieter“ und „-Modell“ unten vollständig ignoriert und
+      die Analyse läuft nur auf Stufe 1.
+  ai_escalation_provider:
+    name: KI-Eskalationsanbieter
+    description: >-
+      Stufe-2-Anbieter für die zweistufige Eskalation, nur verwendet,
+      wenn „Tier-2-Eskalation aktivieren“ oben eingeschaltet ist. Kann
+      ein anderer Anbieter als der KI-Anbieter sein (z. B. Stufe 1 =
+      openai, Stufe 2 = moondream_cloud) — verwendet die oben bereits
+      gesetzten Zugangsdaten dieses Anbieters wieder, kein separater
+      API-Schlüssel nötig.
+  ai_escalation_model:
+    name: KI-Eskalationsmodell (optional)
+    description: >-
+      Zu verwendende Modell-ID für den oben genannten
+      KI-Eskalationsanbieter, z. B. „gpt-4o“, „claude-opus-4-5“ oder
+      eine Moondream-Feinabstimmungs-ID. Leer lassen, um das
+      Standard-/Basismodell dieses Anbieters zu verwenden. Nicht
+      anwendbar auf moondream_local, das kein auswählbares Modell hat.
+  ai_prompt:
+    name: KI-Analyse-Prompt
+    description: >-
+      Basis-Prompt, der für jeden Clip an die KI gesendet wird. Muss
+      eine JSON-Antwort mit den Schlüsseln „suspicious“, „confidence“
+      und „description“ anfordern. Pro Kamera überschreibbar über
+      ai_camera_prompts oder den Bereich „Kamerakonfigurationen“ in der
+      Web-UI.
+  ai_car_description:
+    name: Beschreibung des geschützten Fahrzeugs
+    description: >-
+      Optionale Beschreibung eines zu schützenden Fahrzeugs, z. B.
+      „Silberner Kia Forte, in der Einfahrt geparkt“. Wenn gesetzt,
+      wendet die KI strenge Abstandsregeln an und stuft jeden, der das
+      Fahrzeug berührt, als verdächtig ein. Das Eintragen einer
+      Beschreibung im Fahrzeuge-Tab der Web-UI überschreibt diese
+      Einstellung dauerhaft — sobald dort gespeichert, wird diese Option
+      unabhängig vom hier gesetzten Wert ignoriert; bearbeite
+      stattdessen direkt den Fahrzeuge-Tab.
+  ai_max_frames:
+    name: Max. Einzelbilder pro Clip
+    description: >-
+      Anzahl der pro Clip für die Analyse extrahierten Einzelbilder
+      (1–100). Mehr Einzelbilder liefern eine bessere Abdeckung, erhöhen
+      aber API-Kosten und Analysezeit. Bei moondream_cloud verbraucht
+      jedes Einzelbild zusätzliche API-Anfragen.
+  ai_frame_interval:
+    name: Einzelbildintervall (Sekunden)
+    description: >-
+      Extrahiert alle so viele Sekunden ein Einzelbild aus dem Video.
+      Mit 5 Einzelbildern und 2 s Intervall deckt die Analyse etwa die
+      ersten 8 s des Clips ab.
+  ai_suspicious_keywords:
+    name: Verdächtige Schlüsselwörter
+    description: >-
+      Wörter, die eine Verdachtsmarkierung auslösen, wenn sie in der
+      Klartextantwort der KI gefunden werden. Wird als Rückfalloption
+      verwendet, wenn die KI kein gültiges JSON zurückgibt.
+  ai_schedule_start:
+    name: Beginn des KI-Zeitplans (HH:MM)
+    description: >-
+      Führt die KI-Analyse nur zwischen dieser Uhrzeit und
+      ai_schedule_end aus (lokale Zeit, 24-Stunden-Format). Leer lassen,
+      um rund um die Uhr zu analysieren.
+  ai_schedule_end:
+    name: Ende des KI-Zeitplans (HH:MM)
+    description: >-
+      Beendet die KI-Analyse nach dieser Uhrzeit (lokale Zeit,
+      24-Stunden-Format). Leer lassen, um rund um die Uhr zu
+      analysieren.
+  ai_batch_size:
+    name: KI-Batch-Größe
+    description: >-
+      Maximale Anzahl an Clips, die in einem Batch analysiert werden,
+      bevor für ai_check_interval Sekunden pausiert wird. Verhindert
+      eine Überlastung des KI-Backends.
+  ai_check_interval:
+    name: KI-Prüfintervall (Sekunden)
+    description: >-
+      Sekunden zwischen Analyse-Batch-Durchläufen. Die Warteschlange
+      wird in diesem Abstand auf neue, noch nicht analysierte Clips
+      geprüft.
+  ai_min_confidence:
+    name: Mindestvertrauen für Warnung
+    description: >-
+      Mindest-KI-Vertrauenswert (0,0–1,0), der erforderlich ist, bevor
+      eine Warnung zu einem verdächtigen Clip ausgelöst wird. Ergebnisse
+      werden unabhängig von dieser Einstellung immer gespeichert.
+      0,0 = bei allen Ergebnissen warnen; 0,5 = nur wenn die KI sich
+      recht sicher ist.
+  ai_camera_prompts:
+    name: KI-Prompts pro Kamera
+    description: >-
+      Überschreibt den globalen ai_prompt für bestimmte Kameras. Jeder
+      Eintrag hat einen „camera“-Namen (muss exakt mit einem in der
+      Blink-App angezeigten Kameranamen übereinstimmen) und eine
+      „prompt“-Zeichenkette. Nicht aufgeführte Kameras verwenden
+      ai_prompt. Bevorzuge stattdessen den KI-Tab der Web-UI im Bereich
+      „Kamerakonfigurationen“ — dort werden deine tatsächlichen
+      Kameranamen aufgelistet, sodass nichts eingetippt oder falsch
+      geschrieben werden kann.
+  ai_camera_descriptions:
+    name: Beschreibungen pro Kamera
+    description: >-
+      Kontextbeschreibungen, die in jeden KI-Prompt für die
+      entsprechende Kamera eingefügt werden, z. B. „Blick auf die
+      Einfahrt; silberner Kia Forte links geparkt“. Der „camera“-Name
+      muss exakt mit einem in der Blink-App angezeigten Kameranamen
+      übereinstimmen. Bevorzuge die Live-Bearbeitung im KI-Tab der
+      Web-UI im Bereich „Kamerakonfigurationen“ — dort werden deine
+      tatsächlichen Kameranamen aufgelistet, sodass nichts eingetippt
+      oder falsch geschrieben werden kann.
+  ai_frame_strategy:
+    name: Strategie zur Einzelbildextraktion
+    description: >-
+      „smart“ (Standard) extrahiert die doppelte Anzahl an
+      Einzelbildern und wählt dann per Bewegungsdifferenzanalyse das
+      Eingangs-, Bewegungsspitzen- und Ausgangsbild aus. „sequential“
+      analysiert jedes Einzelbild einzeln und liefert das
+      alarmierendste Ergebnis zurück. „uniform“ ist der alte Modus mit
+      festem Intervall.
+  ai_car_cameras:
+    name: Fahrzeugschutz-Kameras
+    description: >-
+      Beschränkt die Abstandsregeln zum Fahrzeugschutz auf diese
+      Kameranamen (müssen exakt mit einem in der Blink-App angezeigten
+      Kameranamen übereinstimmen). Nicht in dieser Liste enthaltene
+      Kameras konzentrieren sich auf ihre eigene Beschreibung und wenden
+      keine Fahrzeugnähe-Regeln an. Leer lassen, um die Fahrzeugregeln
+      auf alle Kameras anzuwenden. Bevorzuge stattdessen das Kontrollkästchen
+      „Geschütztes Fahrzeug von dieser Kamera aus sichtbar“ im KI-Tab
+      der Web-UI im Bereich „Kamerakonfigurationen“ — dort werden deine
+      tatsächlichen Kameranamen aufgelistet, sodass nichts eingetippt
+      oder falsch geschrieben werden kann.
+  ai_prompt_debug_enabled:
+    name: Prompt-Debug-Protokollierung aktivieren
+    description: >-
+      Speichert den genauen Prompt-Text jedes Clips (nicht die
+      Bildeinzelbilder), damit er über die Schaltfläche „📝 Prompt“ im
+      KI-Panel dieses Clips eingesehen werden kann — öffne dazu einen
+      beliebigen Clip im Bibliothek-Tab der Web-UI — nützlich, um zu
+      verstehen und zu optimieren, was tatsächlich gesendet wird.
+      Standardmäßig deaktiviert, da Prompts lang sind und dies eine
+      optionale Debugging-Hilfe ist.
+  ai_enhanced_detection_enabled:
+    name: "⚠️ Erweiterte Erkennung & Tracking aktivieren (aufwendig)"
+    description: >-
+      Bildvorverarbeitung (Kontrast/Rauschunterdrückung), Objekterkennung
+      + Tracking (YOLO + ByteTrack), monokulare Tiefenschätzung (Depth
+      Anything V2) und pixelgenaue Kontaktsegmentierung (SAM2) — ein
+      einziger Schalter für alle vier Funktionen, der der KI präzise,
+      codeberechnete Hinweise zu Erkennung/Tracking/Tiefe/Kontakt
+      liefert, statt sich allein auf Bewegungsdifferenz-Heuristiken zu
+      verlassen. Lädt beim ersten Gebrauch mehrere Modelle (zusammen
+      100 MB–800 MB+) herunter und benötigt deutlich mehr CPU/RAM als
+      der Rest dieses Add-ons. Läuft komfortabel auf einem Raspberry Pi
+      5 (8 GB) oder besser. Standardmäßig deaktiviert; die Analyse
+      funktioniert ohne diese Option genauso.
+  ai_object_detection_model:
+    name: Objekterkennungsmodell
+    description: >-
+      Ultralytics-Modelldatei, die die obige Erkennungsstufe verwendet
+      — gib genau eines der folgenden ein: yolo11n.pt (nano — am
+      schnellsten/leichtesten, empfohlener Startpunkt auf reiner
+      CPU-Hardware), yolo11s.pt (klein), yolo11m.pt (mittel), yolo11l.pt
+      (groß) oder yolo11x.pt (extra groß — am genauesten, deutlich
+      langsamer). Wird beim ersten Gebrauch automatisch heruntergeladen;
+      Standard ist yolo11n.pt.
+  ai_face_recognition_enabled:
+    name: Lokale Gesichtserkennung aktivieren
+    description: >-
+      Unterdrückt Warnungen für erfasste Haushaltsmitglieder. Die
+      Erfassung (Referenzfotos, berechnete Gesichts-Embeddings) erfolgt
+      vollständig lokal auf dem Gerät über den KI-Tab der Web-UI und
+      verlässt niemals dieses Add-on oder dein Netzwerk — sie wird
+      niemals an einen Cloud-KI-Anbieter gesendet, unabhängig davon,
+      welcher oben konfiguriert ist. Standardmäßig deaktiviert.
+  hf_token:
+    name: Hugging Face-Token (optional)
+    description: >-
+      Optionales Hugging Face-Zugriffstoken zur Authentifizierung von
+      Computer-Vision-Modell-Downloads und zur Erhöhung der
+      Hugging Face Hub-Ratenlimits. Erstelle eines unter
+      https://huggingface.co/settings/tokens. Geheim halten.
+  mobile_app_target:
+    name: Ziel-Entität der Mobil-App
+    description: >-
+      Home Assistant-Mobil-App-Benachrichtigungsentität, an die
+      Warnungen zu verdächtigen Clips gesendet werden, z. B.
+      mobile_app_my_phone. Erforderlich, wenn mobile_app_enabled
+      aktiviert ist.
+  mobile_app_enabled:
+    name: Mobil-App-Warnungen aktivieren
+    description: >-
+      Sendet eine Push-Benachrichtigung an die HA-Mobil-App, wenn ein
+      verdächtiger Clip erkannt wird.
+  smtp_host:
+    name: SMTP-Host
+    description: Hostname oder IP-Adresse des SMTP-Servers für E-Mail-Warnungen.
+  smtp_port:
+    name: SMTP-Port
+    description: >-
+      SMTP-Server-Port. Verwende 587 für STARTTLS (empfohlen) oder 465
+      für SSL.
+  smtp_user:
+    name: SMTP-Benutzername
+    description: Anmeldename für den SMTP-Server (in der Regel deine E-Mail-Adresse).
+  smtp_password:
+    name: SMTP-Passwort
+    description: Anmeldepasswort für den SMTP-Server. Geheim halten.
+  smtp_recipients:
+    name: E-Mail-Warnungsempfänger
+    description: >-
+      Liste der E-Mail-Adressen, an die Warnungen zu verdächtigen Clips
+      gesendet werden. Mindestens eine Adresse ist erforderlich, wenn
+      smtp_enabled aktiviert ist.
+  smtp_sender:
+    name: Absenderadresse für E-Mails
+    description: In ausgehenden Warn-E-Mails verwendete Absenderadresse.
+  smtp_enabled:
+    name: E-Mail-Warnungen aktivieren
+    description: >-
+      Sendet eine E-Mail-Warnung mit einer Clip-Zusammenfassung, wenn
+      verdächtige Aktivität erkannt wird.
+  discord_webhook_url:
+    name: Discord-Webhook-URL
+    description: >-
+      Discord-Webhook-URL, an die Warnungen zu verdächtigen Clips
+      gepostet werden. Leer lassen, um Discord-Benachrichtigungen zu
+      deaktivieren.
+  discord_enabled:
+    name: Discord-Warnungen aktivieren
+    description: >-
+      Postet eine Discord-Nachricht mit Clip-Details, wenn verdächtige
+      Aktivität erkannt wird.
+  notify_ha_suspicious:
+    name: Home Assistant-Warnungen aktivieren
+    description: >-
+      Erstellt eine dauerhafte Home Assistant-Benachrichtigung nur, wenn
+      verdächtige Aktivität erkannt wird — unabhängig von den oben
+      genannten HA-Benachrichtigungen, die jeden neuen Clip-Download
+      sowie die tägliche Zusammenfassung und Systemereignisse abdecken.
+      Wie diese Option erscheint dies im eigenen Benachrichtigungsbereich
+      von HA, nicht als Push-Benachrichtigung auf dem Smartphone; für
+      eine tatsächliche Push-Benachrichtigung auf dein Smartphone
+      aktiviere zusätzlich oben „Mobil-App-Warnungen aktivieren“.
+  log_level:
+    name: Protokollstufe
+    description: Ausführlichkeit der Add-on-Protokolle.
+  battery_alerts_enabled:
+    name: Batteriewarnungen aktivieren
+    description: Sendet eine Warnung, wenn der Akku einer Kamera schwach ist.
