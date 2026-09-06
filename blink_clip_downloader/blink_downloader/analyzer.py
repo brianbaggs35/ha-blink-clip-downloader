@@ -637,6 +637,21 @@ class BaseAnalyzer(abc.ABC):
         """Update per-camera descriptions at runtime without restart."""
         self._camera_descriptions = descriptions
 
+    def rename_camera(self, old_name: str, new_name: str) -> None:
+        """Move in-memory per-camera settings to a newly renamed Blink camera."""
+        for settings in (self._camera_descriptions, self._camera_prompts):
+            if old_name in settings and new_name not in settings:
+                settings[new_name] = settings.pop(old_name)
+            elif old_name in settings:
+                settings.pop(old_name)
+        if old_name in self._car_zones and new_name not in self._car_zones:
+            self._car_zones[new_name] = self._car_zones.pop(old_name)
+        elif old_name in self._car_zones:
+            self._car_zones.pop(old_name)
+        self._car_cameras = {
+            new_name if camera == old_name else camera for camera in self._car_cameras
+        }
+
     def update_camera_prompts(self, prompts: dict[str, str]) -> None:
         """Replace per-camera custom prompts at runtime without restart.
 

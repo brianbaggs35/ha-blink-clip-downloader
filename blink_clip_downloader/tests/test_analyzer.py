@@ -5198,6 +5198,51 @@ def test_update_camera_descriptions() -> None:
     assert "Side entrance to the house" in prompt
 
 
+def test_rename_camera_preserves_ai_settings_and_car_rules() -> None:
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        camera_prompts={"Front Door": "Watch the entry"},
+        camera_descriptions={"Front Door": "Entryway"},
+        car_cameras=["Front Door"],
+        car_zones={
+            "Front Door": {"x_min": 0.1, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9}
+        },
+    )
+
+    analyzer.rename_camera("Front Door", "Entryway")
+
+    assert analyzer._camera_prompts == {"Entryway": "Watch the entry"}
+    assert analyzer._camera_descriptions == {"Entryway": "Entryway"}
+    assert analyzer._car_cameras == {"Entryway"}
+    assert analyzer._car_zones == {
+        "Entryway": {"x_min": 0.1, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9}
+    }
+
+
+def test_rename_camera_does_not_overwrite_existing_new_settings() -> None:
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        camera_prompts={"Front Door": "Old", "Entryway": "New"},
+        camera_descriptions={"Front Door": "Old", "Entryway": "New"},
+        car_zones={
+            "Front Door": {"x_min": 0.1, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9},
+            "Entryway": {"x_min": 0.2, "y_min": 0.2, "x_max": 0.8, "y_max": 0.8},
+        },
+    )
+
+    analyzer.rename_camera("Front Door", "Entryway")
+
+    assert analyzer._camera_prompts == {"Entryway": "New"}
+    assert analyzer._camera_descriptions == {"Entryway": "New"}
+    assert analyzer._car_zones == {
+        "Entryway": {"x_min": 0.2, "y_min": 0.2, "x_max": 0.8, "y_max": 0.8}
+    }
+
+
 def test_update_camera_prompts_replaces_not_merges() -> None:
     """update_camera_prompts fully replaces the mapping so clearing a
     camera's custom prompt in the AI tab actually stops it from applying,

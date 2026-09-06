@@ -45,6 +45,20 @@ def _write_real_zip(path: Path, members: dict[str, bytes]) -> None:
             zf.writestr(name, data)
 
 
+def test_archive_member_exists_falls_back_to_unique_filename_after_rename(
+    tmp_path: Path,
+) -> None:
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    _write_real_zip(zip_path, {"Front Door/clip.mp4": b"video"})
+    record = {
+        "archive_path": str(zip_path),
+        "camera": "Entryway",
+        "file_path": str(tmp_path / "Front_Door/2024-06-01/clip.mp4"),
+    }
+
+    assert ClipArchiver._archive_member_exists(record, {}) is True
+
+
 # ------------------------------------------------------------------
 # Disabled
 # ------------------------------------------------------------------

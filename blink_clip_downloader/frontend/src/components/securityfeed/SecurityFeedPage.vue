@@ -13,6 +13,7 @@ import {
   securityFeedSnapshotUrl,
 } from '../../api/securityFeed'
 import type { SecurityFeedSettings } from '../../api/types'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
@@ -26,6 +27,7 @@ import LoadingIndicator from '../layout/LoadingIndicator.vue'
 const COLUMN_OPTIONS = [1, 2, 3].map((n) => ({ label: String(n), value: n }))
 
 const toast = useToastStore()
+const refresh = useRefreshStore()
 
 const loading = ref(true)
 const loadError = ref(false)
@@ -39,6 +41,7 @@ const saving = ref(false)
 const draftCameras = ref<string[]>([])
 const draftColumns = ref(2)
 const draftRefreshSeconds = ref(15)
+let loadedDraftSignature = ''
 
 // Bumped on every refresh tick and appended as a cache-busting query
 // param on every tile's <img> src - without it the browser would just
@@ -48,6 +51,7 @@ const draftRefreshSeconds = ref(15)
 // BlinkDownloader.get_camera_snapshot's docstring).
 const refreshTick = ref(Date.now())
 let refreshTimer: ReturnType<typeof setInterval> | undefined
+let loadSeq = 0
 const tileErrors = ref<Record<string, boolean>>({})
 
 const displayedCameras = computed(() => {
@@ -88,19 +92,22 @@ watch(
 )
 
 async function load() {
+  const seq = ++loadSeq
   loading.value = true
   loadError.value = false
   try {
     const [camerasRes, settingsRes] = await Promise.all([getSecurityFeedCameras(), getSecurityFeedSettings()])
+    if (seq !== loadSeq) return
     allCameras.value = camerasRes.cameras
     settings.value = settingsRes
     draftCameras.value = [...settingsRes.cameras]
     draftColumns.value = settingsRes.columns
     draftRefreshSeconds.value = settingsRes.refresh_seconds
+    loadedDraftSignature = JSON.stringify(settingsRes)
   } catch {
-    loadError.value = true
+    if (seq === loadSeq) loadError.value = true
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -113,6 +120,7 @@ async function saveSettings() {
       refresh_seconds: draftRefreshSeconds.value,
     })
     settings.value = saved
+    loadedDraftSignature = JSON.stringify(saved)
     tileErrors.value = {}
     refreshTick.value = Date.now()
     toast.show('Security Feed settings saved')
@@ -128,6 +136,17 @@ onMounted(async () => {
   startRefreshTimer()
 })
 onUnmounted(stopRefreshTimer)
+watch(
+  () => refresh.tick,
+  () => {
+    const draftSignature = JSON.stringify({
+      cameras: draftCameras.value,
+      columns: draftColumns.value,
+      refresh_seconds: draftRefreshSeconds.value,
+    })
+    if (draftSignature === loadedDraftSignature) void load()
+  },
+)
 </script>
 
 <template>

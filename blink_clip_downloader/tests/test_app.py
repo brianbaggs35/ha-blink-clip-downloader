@@ -83,6 +83,101 @@ async def test_poll_cycle_checks_battery_before_quota_early_return(app):
     app._battery_monitor.check_and_alert.assert_awaited_once_with()
 
 
+async def test_camera_rename_updates_ai_filters_and_event_watcher(app, tmp_path):
+    app._db.rename_camera = AsyncMock(return_value=True)
+    app._media_server.rename_camera = AsyncMock()
+    app._analyzer = MagicMock()
+    app._config.camera_filter = ["Front Door", "Garage"]
+    app._config.event_cameras = ["Front Door"]
+    app._config.ai_car_cameras = ["Front Door"]
+    app._config.ai_camera_prompts = [{"camera": "Front Door", "prompt": "Watch"}]
+    app._config.ai_camera_descriptions = [
+        {"camera": "Front Door", "description": "Entry"}
+    ]
+    app._auto_analysis_disabled_cameras = {"Front Door"}
+    app._camera_name_aliases = {"Legacy Door": "Front Door"}
+    app._event_watcher.rename_camera = MagicMock()
+
+    with patch(
+        "blink_downloader.app.CAMERA_NAME_ALIASES_FILE",
+        tmp_path / "camera_name_aliases.json",
+    ):
+        await app._handle_camera_renamed("Front Door", "Entryway")
+
+    app._db.rename_camera.assert_awaited_once_with("Front Door", "Entryway")
+    app._media_server.rename_camera.assert_awaited_once_with("Front Door", "Entryway")
+    app._analyzer.rename_camera.assert_called_once_with("Front Door", "Entryway")
+    assert app._config.camera_filter == ["Entryway", "Garage"]
+    assert app._config.event_cameras == ["Entryway"]
+    assert app._config.ai_car_cameras == ["Entryway"]
+    assert app._config.ai_camera_prompts[0]["camera"] == "Entryway"
+    assert app._config.ai_camera_descriptions[0]["camera"] == "Entryway"
+    assert app._auto_analysis_disabled_cameras == {"Entryway"}
+    assert app._camera_name_aliases == {
+        "Legacy Door": "Entryway",
+        "Front Door": "Entryway",
+    }
+    app._event_watcher.rename_camera.assert_called_once_with("Front Door", "Entryway")
+
+
+def test_apply_camera_name_aliases_to_restart_sensitive_options(base_config):
+    base_config.camera_filter = ["Front Door"]
+    base_config.event_cameras = ["Front Door"]
+    base_config.ai_car_cameras = ["Front Door"]
+    base_config.ai_camera_prompts = [{"camera": "Front Door", "prompt": "Watch"}]
+    base_config.ai_camera_descriptions = [
+        {"camera": "Front Door", "description": "Entry"}
+    ]
+
+    BlinkClipDownloaderApp._apply_camera_name_aliases(
+        base_config, {"Front Door": "Entryway", "Old Entry": "Front Door"}
+    )
+
+    assert base_config.camera_filter == ["Entryway"]
+    assert base_config.event_cameras == ["Entryway"]
+    assert base_config.ai_car_cameras == ["Entryway"]
+    assert base_config.ai_camera_prompts[0]["camera"] == "Entryway"
+    assert base_config.ai_camera_descriptions[0]["camera"] == "Entryway"
+
+
+def test_load_camera_name_aliases_handles_invalid_files(tmp_path):
+    alias_file = tmp_path / "camera_name_aliases.json"
+    alias_file.write_text("{invalid")
+    with patch("blink_downloader.app.CAMERA_NAME_ALIASES_FILE", alias_file):
+        assert BlinkClipDownloaderApp._load_camera_name_aliases() == {}
+
+    alias_file.write_text("[]")
+    with patch("blink_downloader.app.CAMERA_NAME_ALIASES_FILE", alias_file):
+        assert BlinkClipDownloaderApp._load_camera_name_aliases() == {}
+
+    alias_file.write_text(json.dumps({"Front Door": "Entryway"}))
+    with patch("blink_downloader.app.CAMERA_NAME_ALIASES_FILE", alias_file):
+        assert BlinkClipDownloaderApp._load_camera_name_aliases() == {
+            "Front Door": "Entryway"
+        }
+
+
+async def test_camera_rename_alias_write_failure_is_retried(app, tmp_path):
+    app._db.rename_camera = AsyncMock()
+    app._media_server.rename_camera = AsyncMock()
+    with (
+        patch(
+            "blink_downloader.app.CAMERA_NAME_ALIASES_FILE", tmp_path / "aliases.json"
+        ),
+        patch.object(Path, "write_text", side_effect=OSError("disk full")),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        await app._handle_camera_renamed("Front Door", "Entryway")
+
+
+async def test_camera_replacement_resets_battery_history(app):
+    app._db.reset_battery_history = AsyncMock()
+
+    await app._handle_camera_replaced("Front Door")
+
+    app._db.reset_battery_history.assert_awaited_once_with("Front Door")
+
+
 async def test_poll_cycle_with_new_clips(app):
     clips = [
         {

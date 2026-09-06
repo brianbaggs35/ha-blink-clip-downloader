@@ -78,6 +78,13 @@ class HAEventWatcher:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    def rename_camera(self, old_name: str, new_name: str) -> None:
+        """Keep the optional event-camera allowlist aligned with Blink names."""
+        old_lower = old_name.lower()
+        if old_lower in self._event_cameras:
+            self._event_cameras.remove(old_lower)
+            self._event_cameras.add(new_name.lower())
+
     # ------------------------------------------------------------------
     # Internal: WebSocket session
     # ------------------------------------------------------------------

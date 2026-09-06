@@ -1647,6 +1647,166 @@ async def test_ai_camera_configs_get_empty(client: TestClient) -> None:
     assert isinstance(data, list)
 
 
+async def test_rename_camera_migrates_persisted_settings(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Other",
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": False,
+                    "car_zone": None,
+                    "auto_analyze": True,
+                },
+                {
+                    "camera": "Front Door",
+                    "description": "Entry",
+                    "custom_prompt": "",
+                    "is_car_camera": False,
+                    "car_zone": None,
+                    "auto_analyze": True,
+                },
+                {
+                    "camera": "Entryway",
+                    "description": "Preferred",
+                    "custom_prompt": "Keep this",
+                    "is_car_camera": True,
+                    "car_zone": None,
+                    "auto_analyze": False,
+                },
+            ]
+        )
+    )
+    feed_file = tmp_path / "security_feed_settings.json"
+    feed_file.write_text(
+        json.dumps({"cameras": ["Front Door"], "columns": 2, "refresh_seconds": 15})
+    )
+    server = MediaServer(db=db, port=0)
+    with (
+        patch.object(server, "_CAMERA_CONFIGS_FILE", cfg_file),
+        patch.object(server, "_SECURITY_FEED_SETTINGS_FILE", feed_file),
+    ):
+        await server.rename_camera("Front Door", "Entryway")
+
+    configs = json.loads(cfg_file.read_text())
+    assert [config["camera"] for config in configs] == ["Other", "Entryway"]
+    assert configs[1]["description"] == "Preferred"
+    assert json.loads(feed_file.read_text())["cameras"] == ["Entryway"]
+
+
+def test_canonicalize_camera_configs_applies_aliases(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    alias_file = tmp_path / "camera_name_aliases.json"
+    alias_file.write_text(json.dumps({"Front Door": "Entryway"}))
+    server = MediaServer(db=db, port=0)
+    with patch.object(server, "_CAMERA_NAME_ALIASES_FILE", alias_file):
+        configs = server._canonicalize_camera_configs(
+            [
+                {"camera": "Entryway", "description": "Current"},
+                {"camera": "Front Door", "description": "Edited"},
+            ]
+        )
+
+    assert configs == [{"camera": "Entryway", "description": "Edited"}]
+
+    alias_file.write_text("{invalid")
+    with patch.object(server, "_CAMERA_NAME_ALIASES_FILE", alias_file):
+        assert server._canonicalize_camera_configs(
+            [{"camera": "Front Door", "description": "Fallback"}]
+        ) == [{"camera": "Front Door", "description": "Fallback"}]
+
+
+async def test_rename_camera_creates_config_and_logs_settings_write_failures(
+    db: ClipDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(json.dumps([{"camera": "Front Door"}]))
+    feed_file = tmp_path / "security_feed_settings.json"
+    feed_file.write_text(json.dumps({"cameras": ["Front Door"]}))
+    server = MediaServer(db=db, port=0)
+    with (
+        patch.object(server, "_CAMERA_CONFIGS_FILE", cfg_file),
+        patch.object(server, "_SECURITY_FEED_SETTINGS_FILE", feed_file),
+        patch.object(Path, "write_text", side_effect=OSError("disk full")),
+        caplog.at_level("WARNING"),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        await server.rename_camera("Front Door", "Entryway")
+
+    assert "Could not save camera configs" in caplog.text
+
+    cfg_file.write_text("[]")
+    with (
+        patch.object(server, "_CAMERA_CONFIGS_FILE", cfg_file),
+        patch.object(server, "_SECURITY_FEED_SETTINGS_FILE", feed_file),
+        patch.object(Path, "write_text", side_effect=OSError("disk full")),
+        caplog.at_level("WARNING"),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        await server.rename_camera("Front Door", "Entryway")
+    assert "Could not save security feed settings" in caplog.text
+
+
+async def test_rename_camera_migrates_vehicle_zone_snapshot(
+    db: ClipDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    server = MediaServer(db=db, port=0)
+    snapshot_dir = tmp_path / "snapshots"
+    old_snapshot = snapshot_dir / "front-door.jpg"
+    new_snapshot = snapshot_dir / "entryway.jpg"
+    snapshot_dir.mkdir()
+    old_snapshot.write_bytes(b"old")
+    with patch.object(
+        server, "_vehicle_zone_snapshot_path", side_effect=[old_snapshot, new_snapshot]
+    ):
+        await server.rename_camera("Front Door", "Entryway")
+    assert new_snapshot.read_bytes() == b"old"
+    assert not old_snapshot.exists()
+
+    old_snapshot.write_bytes(b"old-again")
+    new_snapshot.write_bytes(b"new")
+    with patch.object(
+        server, "_vehicle_zone_snapshot_path", side_effect=[old_snapshot, new_snapshot]
+    ):
+        await server.rename_camera("Front Door", "Entryway")
+    assert new_snapshot.read_bytes() == b"new"
+    assert not old_snapshot.exists()
+
+    old_snapshot.write_bytes(b"old-failing")
+    new_snapshot.unlink()
+    with (
+        patch.object(
+            server,
+            "_vehicle_zone_snapshot_path",
+            side_effect=[old_snapshot, new_snapshot],
+        ),
+        patch.object(Path, "replace", side_effect=OSError("disk full")),
+        caplog.at_level("WARNING"),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        await server.rename_camera("Front Door", "Entryway")
+    assert "Could not migrate vehicle zone snapshot" in caplog.text
+
+
+async def test_security_feed_settings_rejects_non_object_file(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    settings_file = tmp_path / "security_feed_settings.json"
+    settings_file.write_text("[]")
+    server = MediaServer(db=db, port=0)
+    with patch.object(server, "_SECURITY_FEED_SETTINGS_FILE", settings_file):
+        assert server._read_security_feed_settings() == {
+            "cameras": [],
+            "columns": 2,
+            "refresh_seconds": 15,
+        }
+
+
 async def test_ai_camera_configs_get_returns_is_car_camera_field(
     client: TestClient, db: ClipDatabase, tmp_path: Path
 ) -> None:
@@ -4118,12 +4278,13 @@ def test_vehicle_zone_snapshot_path_slugifies_the_camera_name() -> None:
         "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
         new=Path("/data/vehicle_zone_snapshots"),
     ):
-        assert MediaServer._vehicle_zone_snapshot_path("Front Door Cam!") == Path(
-            "/data/vehicle_zone_snapshots/front-door-cam.jpg"
-        )
-        assert MediaServer._vehicle_zone_snapshot_path("") == Path(
-            "/data/vehicle_zone_snapshots/camera.jpg"
-        )
+        camera_path = MediaServer._vehicle_zone_snapshot_path("Front Door Cam!")
+        empty_path = MediaServer._vehicle_zone_snapshot_path("")
+        assert camera_path.parent == Path("/data/vehicle_zone_snapshots")
+        assert camera_path.name.startswith("front-door-cam-")
+        assert camera_path.suffix == ".jpg"
+        assert empty_path.name.startswith("camera-")
+        assert empty_path.suffix == ".jpg"
 
 
 async def test_vehicle_zone_put_saves_zone_snapshot_and_updates_analyzer(

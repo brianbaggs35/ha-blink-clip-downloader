@@ -326,7 +326,7 @@ RUN chmod a+x /etc/services.d/blink-downloader/run \
 # here lets code-only releases reuse the large Python/CV layers and lets
 # Supervisor pull only the changed application layer.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=5.4.7
+ARG BUILD_VERSION=5.4.8
 LABEL \
     org.opencontainers.image.title="Blink Clip Downloader" \
     org.opencontainers.image.description="Home Assistant add-on for saving and viewing Blink camera clips, with AI analysis and facial recognition" \

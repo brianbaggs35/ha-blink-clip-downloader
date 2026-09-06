@@ -1,18 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Card from 'primevue/card'
 import Dialog from 'primevue/dialog'
 import Message from 'primevue/message'
 import ToggleSwitch from 'primevue/toggleswitch'
-import { getCameraConfigs, updateCameraConfigs } from '../../api/ai'
+import { getCameraConfigs, resolveCameraAlias, updateCameraConfigs } from '../../api/ai'
 import type { CameraConfig } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
+import { useRefreshStore } from '../../stores/refresh'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
 type EditableCameraConfig = CameraConfig & { auto_analyze: boolean }
 
 const toast = useToastStore()
+const refresh = useRefreshStore()
 const visible = ref(false)
 const loading = ref(true)
 const saving = ref(false)
@@ -76,14 +78,26 @@ async function save() {
     // before saving so edits made by the Camera Configurations or Vehicles
     // sections since this modal opened are not overwritten by a stale snapshot.
     const requestedByCamera = new Map(configs.value.map((config) => [config.camera, config]))
-    const { configs: payload } = await updateCameraConfigs((latest) => {
+    const { configs: payload } = await updateCameraConfigs((latest, aliases) => {
       const latestCameras = new Set(latest.map((config) => config.camera))
+      const localOnly = configs.value.filter((config) => !latestCameras.has(config.camera))
+      const latestOnly = latest.filter((config) => !requestedByCamera.has(config.camera))
+      const renamedRemote = latestOnly[0]
+      const renamedLocal =
+        localOnly.length === 1 &&
+        latestOnly.length === 1 &&
+        renamedRemote &&
+        resolveCameraAlias(localOnly[0].camera, aliases).toLowerCase() === renamedRemote.camera.toLowerCase()
+          ? localOnly[0]
+          : undefined
       const merged = latest.map((config) => {
-        const requested = requestedByCamera.get(config.camera)
+        const requested = requestedByCamera.get(config.camera) || (renamedRemote === config ? renamedLocal : undefined)
         return requested ? { ...config, auto_analyze: requested.auto_analyze } : config
       })
       for (const requested of configs.value) {
-        if (!latestCameras.has(requested.camera)) merged.push(requested)
+        if (!latestCameras.has(requested.camera) && requested !== renamedLocal) {
+          merged.push(requested)
+        }
       }
       return merged
     })
@@ -99,6 +113,12 @@ async function save() {
 }
 
 onMounted(load)
+watch(
+  () => refresh.tick,
+  () => {
+    if (!visible.value) void load()
+  },
+)
 </script>
 
 <template>

@@ -9,7 +9,7 @@ let pendingStop: Promise<unknown> | null = null
 </script>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import videojs from 'video.js'
 import type Player from 'video.js/dist/types/player'
 import 'video.js/dist/video-js.css'
@@ -25,6 +25,7 @@ import {
   stopLiveView,
 } from '../../api/liveview'
 import type { LiveViewStatus } from '../../api/types'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
@@ -37,6 +38,7 @@ const STATUS_POLL_INTERVAL_MS = 4000
 const HEARTBEAT_INTERVAL_MS = 15000
 
 const toast = useToastStore()
+const refresh = useRefreshStore()
 
 const loadingCameras = ref(true)
 const cameras = ref<string[]>([])
@@ -71,6 +73,7 @@ let selectGeneration = 0
 
 let statusTimer: ReturnType<typeof setInterval> | undefined
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+let cameraLoadSeq = 0
 
 function ensurePlayer(): Player {
   if (player) return player
@@ -178,14 +181,19 @@ function applyStatus(s: LiveViewStatus) {
 }
 
 async function loadCameras() {
+  const seq = ++cameraLoadSeq
   loadingCameras.value = true
   try {
     const res = await getLiveViewCameras()
+    if (seq !== cameraLoadSeq) return
     cameras.value = res.cameras
+    if (selectedCamera.value && !cameras.value.includes(selectedCamera.value)) {
+      selectedCamera.value = null
+    }
   } catch {
-    toast.show('Failed to load cameras', true)
+    if (seq === cameraLoadSeq) toast.show('Failed to load cameras', true)
   } finally {
-    loadingCameras.value = false
+    if (seq === cameraLoadSeq) loadingCameras.value = false
   }
 }
 
@@ -273,6 +281,7 @@ onMounted(async () => {
     // Picker is still usable even if this initial check fails.
   }
 })
+watch(() => refresh.tick, loadCameras)
 
 onUnmounted(() => {
   unmounted = true

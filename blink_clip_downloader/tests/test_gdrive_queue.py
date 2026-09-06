@@ -486,6 +486,27 @@ async def test_process_one_archived_clip_extracts_from_zip(
     assert counts["completed"] == 1
 
 
+async def test_process_one_archived_clip_falls_back_to_unique_filename_after_rename(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    zip_path = _make_archive(tmp_path, "Front Door", "c1.mp4", b"archived video bytes")
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+    queue._running = True
+
+    clip = _add_clip("c1")
+    clip["camera"] = "Entryway"
+    clip["path"] = str(tmp_path / "Front_Door/2024-06-01/c1.mp4")
+    await db.add_clip(clip)
+    await db.mark_archived("c1", str(zip_path))
+    await queue.enqueue(clip)
+
+    await queue._process_pending()
+
+    client.upload_file.assert_awaited_once()
+    assert (await db.get_gdrive_queue_counts())["completed"] == 1
+
+
 async def test_process_one_archived_clip_uploads_under_its_real_filename(
     db: ClipDatabase, tmp_path: Path
 ) -> None:

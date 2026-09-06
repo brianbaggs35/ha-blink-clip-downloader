@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { getCameraConfigs, updateCameraConfigs } from '../../api/ai'
+import { onMounted, ref, watch } from 'vue'
+import { getCameraConfigs, resolveCameraAlias, updateCameraConfigs } from '../../api/ai'
 import type { CameraConfig } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
+import { useRefreshStore } from '../../stores/refresh'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
 // is_car_camera and car_zone are edited on the Vehicles tab now, not here —
@@ -21,10 +22,12 @@ interface EditableConfig {
 }
 
 const toast = useToastStore()
+const refresh = useRefreshStore()
 const loading = ref(true)
 const loadError = ref(false)
 const configs = ref<EditableConfig[]>([])
 const saving = ref(false)
+let loadedSignature = ''
 
 function toEditable(c: CameraConfig): EditableConfig {
   return {
@@ -43,6 +46,7 @@ async function load() {
   try {
     const data = await getCameraConfigs()
     configs.value = data.map(toEditable)
+    loadedSignature = JSON.stringify(configs.value)
   } catch {
     loadError.value = true
   } finally {
@@ -50,6 +54,13 @@ async function load() {
   }
 }
 onMounted(load)
+watch(
+  () => refresh.tick,
+  () => {
+    if (JSON.stringify(configs.value) !== loadedSignature) return
+    void load()
+  },
+)
 
 async function save() {
   saving.value = true
@@ -58,10 +69,20 @@ async function save() {
     // before saving so this section cannot restore an old auto_analyze value
     // after the AI Analysis Configuration modal changes it.
     const localByCamera = new Map(configs.value.map((config) => [config.camera, config]))
-    const { configs: payload } = await updateCameraConfigs((latest) => {
+    const { configs: payload } = await updateCameraConfigs((latest, aliases) => {
       const latestCameras = new Set(latest.map((config) => config.camera))
+      const localOnly = configs.value.filter((config) => !latestCameras.has(config.camera))
+      const latestOnly = latest.filter((config) => !localByCamera.has(config.camera))
+      const renamedRemote = latestOnly[0]
+      const renamedLocal =
+        localOnly.length === 1 &&
+        latestOnly.length === 1 &&
+        renamedRemote &&
+        resolveCameraAlias(localOnly[0].camera, aliases).toLowerCase() === renamedRemote.camera.toLowerCase()
+          ? localOnly[0]
+          : undefined
       const merged: CameraConfig[] = latest.map((config) => {
-        const local = localByCamera.get(config.camera)
+        const local = localByCamera.get(config.camera) || (renamedRemote === config ? renamedLocal : undefined)
         return local
           ? {
               ...config,
@@ -72,7 +93,7 @@ async function save() {
           : config
       })
       for (const local of configs.value) {
-        if (!latestCameras.has(local.camera)) {
+        if (!latestCameras.has(local.camera) && local !== renamedLocal) {
           merged.push({
             ...local,
             description: local.description.trim(),
@@ -83,6 +104,7 @@ async function save() {
       return merged
     })
     configs.value = payload.map(toEditable)
+    loadedSignature = JSON.stringify(configs.value)
     toast.show('Camera configs saved')
   } catch {
     toast.show('Failed to save camera configs', true)

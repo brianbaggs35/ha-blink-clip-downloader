@@ -287,17 +287,42 @@ class GDriveUploadQueue:
         # Matches archiver.py's own arcname construction exactly.
         original_name = Path(str(clip.get("file_path", ""))).name
         arcname = f"{clip.get('camera', 'unknown')}/{original_name}"
+        file_path = Path(str(clip.get("file_path", "")))
+        fallback_arcnames = {
+            f"{parent.name}/{original_name}"
+            for parent in file_path.parents
+            if parent.name and parent.name != clip.get("camera", "unknown")
+        }
 
         try:
-            with (
-                zipfile.ZipFile(archive_path) as zf,
-                zf.open(arcname) as member,
-                NamedTemporaryFile(
-                    suffix=Path(original_name).suffix or ".mp4", delete=False
-                ) as tmp,
-            ):
-                tmp.write(member.read())
-                return Path(tmp.name)
+            with zipfile.ZipFile(archive_path) as zf:
+                member_name = arcname
+                member_names = set(zf.namelist())
+                if member_name not in member_names:
+                    member_name = next(
+                        (
+                            candidate
+                            for candidate in fallback_arcnames
+                            if candidate in member_names
+                        ),
+                        member_name,
+                    )
+                if member_name not in member_names:
+                    basename_matches = [
+                        candidate
+                        for candidate in member_names
+                        if Path(candidate).name == original_name
+                    ]
+                    if len(basename_matches) == 1:
+                        member_name = basename_matches[0]
+                with (
+                    zf.open(member_name) as member,
+                    NamedTemporaryFile(
+                        suffix=Path(original_name).suffix or ".mp4", delete=False
+                    ) as tmp,
+                ):
+                    tmp.write(member.read())
+                    return Path(tmp.name)
         except (zipfile.BadZipFile, KeyError, OSError) as exc:
             _LOGGER.warning(
                 "Could not extract %s from %s: %s", arcname, archive_path, exc

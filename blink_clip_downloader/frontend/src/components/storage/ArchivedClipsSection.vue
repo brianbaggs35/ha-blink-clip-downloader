@@ -13,6 +13,7 @@ import { deleteClip, getCameras } from '../../api/clips'
 import { getArchiveClips, getArchiveGroups, runArchiveNow } from '../../api/storage'
 import type { ArchiveGroup, ClipListItem } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
@@ -26,6 +27,7 @@ const CLIPS_PER_PAGE = 50
 
 const toast = useToastStore()
 const confirm = useConfirm()
+const refresh = useRefreshStore()
 
 const loading = ref(true)
 const loadError = ref(false)
@@ -45,10 +47,12 @@ const loadingArchive = ref<Record<string, boolean>>({})
 const archiveLoadError = ref<Record<string, boolean>>({})
 const expandedArchives = ref<Set<string>>(new Set())
 const filterGeneration = ref(0)
+let groupsRequestSeq = 0
 const deletingId = ref<string | null>(null)
 const archivingNow = ref(false)
 
 async function loadGroups() {
+  const requestSeq = ++groupsRequestSeq
   filterGeneration.value += 1
   loading.value = true
   loadError.value = false
@@ -65,21 +69,26 @@ async function loadGroups() {
   expandedArchives.value = new Set()
   try {
     const dates = archiveDateFilters()
-    allGroups.value = await getArchiveGroups({
+    const groups = await getArchiveGroups({
       camera: cameraFilter.value === 'all' ? undefined : cameraFilter.value,
       ...dates,
     })
+    if (requestSeq !== groupsRequestSeq) return
+    allGroups.value = groups
     first.value = 0
   } catch {
-    loadError.value = true
+    if (requestSeq === groupsRequestSeq) loadError.value = true
   } finally {
-    loading.value = false
+    if (requestSeq === groupsRequestSeq) loading.value = false
   }
 }
 
 async function loadCameras() {
   try {
     cameras.value = (await getCameras()).map((c) => c.camera).sort((a, b) => a.localeCompare(b))
+    if (cameraFilter.value !== 'all' && !cameras.value.includes(cameraFilter.value)) {
+      cameraFilter.value = 'all'
+    }
   } catch {
     // Non-fatal -- the camera filter is just empty (besides "All") if this fails.
   }
@@ -92,6 +101,13 @@ onMounted(() => {
 defineExpose({ reload: loadGroups })
 
 watch([cameraFilter, sinceFilter, untilFilter], () => void loadGroups())
+watch(
+  () => refresh.tick,
+  () => {
+    void loadCameras()
+    void loadGroups()
+  },
+)
 
 function clearFilters() {
   cameraFilter.value = 'all'
