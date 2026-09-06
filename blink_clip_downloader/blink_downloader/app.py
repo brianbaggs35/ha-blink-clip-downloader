@@ -44,6 +44,7 @@ _LOGGER = logging.getLogger(__name__)
 
 STATS_FILE = Path("/data/stats.json")
 TRIGGER_FILE = Path("/data/trigger_download")
+CAMERA_NAME_ALIASES_FILE = Path("/data/camera_name_aliases.json")
 
 # How many missing clip thumbnails to generate per poll cycle. Keeps ffmpeg
 # CPU usage low on constrained hardware while gradually backfilling large
@@ -75,6 +76,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
     def __init__(self, config: AppConfig) -> None:
         self._config = config
+        self._camera_name_aliases = self._load_camera_name_aliases()
+        self._apply_camera_name_aliases(config, self._camera_name_aliases)
         if config.hf_token:
             os.environ["HF_TOKEN"] = config.hf_token
         else:
@@ -98,7 +101,12 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             webhook_url=config.webhook_url,
         )
         self._downloader = BlinkDownloader(
-            config, self._storage, self._tracker, self._db
+            config,
+            self._storage,
+            self._tracker,
+            self._db,
+            on_camera_renamed=self._handle_camera_renamed,
+            on_camera_replaced=self._handle_camera_replaced,
         )
         self._live_view = LiveViewManager(
             get_camera=self._downloader.get_camera,
@@ -377,6 +385,105 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
     def _set_auto_analysis_disabled_cameras(self, cameras: set[str]) -> None:
         """Apply automatic-analysis camera preferences without a restart."""
         self._auto_analysis_disabled_cameras = set(cameras)
+
+    async def _handle_camera_renamed(self, old_name: str, new_name: str) -> None:
+        """Keep database, analyzer, filters, and persisted settings in sync."""
+        await self._db.rename_camera(old_name, new_name)
+        if self._analyzer is not None:
+            self._analyzer.rename_camera(old_name, new_name)
+        await self._live_view.rename_camera(old_name, new_name)
+        await self._media_server.rename_camera(old_name, new_name)
+        self._config.camera_filter = [
+            new_name if camera.lower() == old_name.lower() else camera
+            for camera in self._config.camera_filter
+        ]
+        self._config.event_cameras = [
+            new_name if camera.lower() == old_name.lower() else camera
+            for camera in self._config.event_cameras
+        ]
+        self._config.ai_car_cameras = [
+            new_name if camera.lower() == old_name.lower() else camera
+            for camera in self._config.ai_car_cameras
+        ]
+        for entry in (
+            *self._config.ai_camera_prompts,
+            *self._config.ai_camera_descriptions,
+        ):
+            if str(entry.get("camera", "")).lower() == old_name.lower():
+                entry["camera"] = new_name
+        self._auto_analysis_disabled_cameras = {
+            new_name if camera.lower() == old_name.lower() else camera
+            for camera in self._auto_analysis_disabled_cameras
+        }
+        self._camera_name_aliases[old_name] = new_name
+        for alias, target in self._camera_name_aliases.items():
+            if target.lower() == old_name.lower():
+                self._camera_name_aliases[alias] = new_name
+        try:
+            CAMERA_NAME_ALIASES_FILE.write_text(
+                json.dumps(self._camera_name_aliases, indent=2)
+            )
+        except OSError as exc:
+            _LOGGER.warning("Could not save camera name aliases: %s", exc)
+            raise
+        if hasattr(self, "_event_watcher"):
+            self._event_watcher.rename_camera(old_name, new_name)
+
+    @staticmethod
+    def _load_camera_name_aliases() -> dict[str, str]:
+        """Load durable camera-name aliases used by restart-sensitive options."""
+        if not CAMERA_NAME_ALIASES_FILE.exists():
+            return {}
+        try:
+            data = json.loads(CAMERA_NAME_ALIASES_FILE.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            _LOGGER.warning("Could not load camera name aliases: %s", exc)
+            return {}
+        if not isinstance(data, dict):
+            _LOGGER.warning("Camera name aliases must be a JSON object")
+            return {}
+        return {
+            str(alias): str(target)
+            for alias, target in data.items()
+            if alias and target
+        }
+
+    @staticmethod
+    def _resolve_camera_name(name: str, aliases: dict[str, str]) -> str:
+        """Resolve a camera name through any previously stored rename chain."""
+        current = name
+        seen: set[str] = set()
+        aliases_lower = {alias.lower(): target for alias, target in aliases.items()}
+        while current.lower() in aliases_lower and current.lower() not in seen:
+            seen.add(current.lower())
+            current = aliases_lower[current.lower()]
+        return current
+
+    @classmethod
+    def _apply_camera_name_aliases(
+        cls, config: AppConfig, aliases: dict[str, str]
+    ) -> None:
+        """Apply durable aliases to camera-keyed options after a restart."""
+        if not aliases:
+            return
+        config.camera_filter = [
+            cls._resolve_camera_name(camera, aliases) for camera in config.camera_filter
+        ]
+        config.event_cameras = [
+            cls._resolve_camera_name(camera, aliases) for camera in config.event_cameras
+        ]
+        config.ai_car_cameras = [
+            cls._resolve_camera_name(camera, aliases)
+            for camera in config.ai_car_cameras
+        ]
+        for entry in (*config.ai_camera_prompts, *config.ai_camera_descriptions):
+            camera = entry.get("camera")
+            if camera:
+                entry["camera"] = cls._resolve_camera_name(str(camera), aliases)
+
+    async def _handle_camera_replaced(self, camera_name: str) -> None:
+        """Reset physical battery state when a camera keeps its display name."""
+        await self._db.reset_battery_history(camera_name)
 
     def _setup_ai_analysis(self, config: AppConfig) -> None:
         (

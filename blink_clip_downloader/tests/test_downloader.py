@@ -3023,6 +3023,175 @@ async def test_refresh_device_topology_replaces_removed_and_added_devices(
     fake_blink.setup_post_verify.assert_awaited_once_with()
 
 
+async def test_refresh_device_topology_reports_camera_rename_by_stable_id(
+    dl: BlinkDownloader,
+) -> None:
+    old_camera = MagicMock(camera_id="100")
+    new_camera = MagicMock(camera_id="100")
+    old_cameras = CaseInsensitiveDict({"Front Door": old_camera})
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict()
+    fake_blink.cameras = old_cameras
+
+    async def rebuild_topology() -> bool:
+        fake_blink.cameras["Entryway"] = new_camera
+        return True
+
+    callback = AsyncMock()
+    dl._on_camera_renamed = callback
+    fake_blink.setup_post_verify = AsyncMock(side_effect=rebuild_topology)
+    dl._blink = fake_blink
+
+    assert await dl._refresh_device_topology(force=True) is True
+
+    callback.assert_awaited_once_with("Front Door", "Entryway")
+
+
+async def test_refresh_device_topology_logs_camera_rename_migration_failure(
+    dl: BlinkDownloader, caplog: pytest.LogCaptureFixture
+) -> None:
+    old_camera = MagicMock(camera_id="100")
+    new_camera = MagicMock(camera_id="100")
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": old_camera})
+
+    async def rebuild_topology() -> bool:
+        fake_blink.cameras["Entryway"] = new_camera
+        return True
+
+    dl._on_camera_renamed = AsyncMock(side_effect=RuntimeError("disk full"))
+    fake_blink.setup_post_verify = AsyncMock(side_effect=rebuild_topology)
+    dl._blink = fake_blink
+
+    with caplog.at_level("ERROR"):
+        assert await dl._refresh_device_topology(force=True) is True
+
+    assert "Could not migrate state" in caplog.text
+    assert dl._pending_camera_renames == {("Front Door", "Entryway")}
+
+    retry_callback = AsyncMock()
+    dl._on_camera_renamed = retry_callback
+    fake_blink.setup_post_verify = AsyncMock(return_value=True)
+    assert await dl._refresh_device_topology(force=True) is True
+    retry_callback.assert_awaited_once_with("Front Door", "Entryway")
+    assert not dl._pending_camera_renames
+
+
+async def test_refresh_device_topology_ignores_rename_without_callback(
+    dl: BlinkDownloader,
+) -> None:
+    old_camera = MagicMock(camera_id="100")
+    new_camera = MagicMock(camera_id="100")
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": old_camera})
+
+    async def rebuild_topology() -> bool:
+        fake_blink.cameras["Entryway"] = new_camera
+        return True
+
+    fake_blink.setup_post_verify = AsyncMock(side_effect=rebuild_topology)
+    dl._blink = fake_blink
+
+    assert await dl._refresh_device_topology(force=True) is True
+
+
+async def test_refresh_device_topology_detects_same_name_camera_replacement(
+    dl: BlinkDownloader,
+) -> None:
+    old_camera = MagicMock(camera_id="old-camera")
+    new_camera = MagicMock(camera_id="new-camera")
+    old_sync = MagicMock()
+    old_sync.cameras = CaseInsensitiveDict({"Front Door": old_camera})
+    new_sync = MagicMock(available=True, network_id="20")
+    new_sync.cameras = CaseInsensitiveDict({"Front Door": new_camera})
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Sync Module 2": old_sync})
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": old_camera})
+
+    async def rebuild_topology() -> bool:
+        fake_blink.sync["XR+"] = new_sync
+        fake_blink.cameras["Front Door"] = new_camera
+        return True
+
+    callback = AsyncMock()
+    dl._on_camera_replaced = callback
+    fake_blink.setup_post_verify = AsyncMock(side_effect=rebuild_topology)
+    dl._blink = fake_blink
+
+    assert await dl._refresh_device_topology(force=True) is True
+
+    assert fake_blink.sync == CaseInsensitiveDict({"XR+": new_sync})
+    assert fake_blink.cameras["Front Door"] is new_camera
+    callback.assert_awaited_once_with("Front Door")
+
+
+async def test_refresh_device_topology_logs_replacement_reset_failure(
+    dl: BlinkDownloader, caplog: pytest.LogCaptureFixture
+) -> None:
+    old_camera = MagicMock(camera_id="old-camera")
+    new_camera = MagicMock(camera_id="new-camera")
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": old_camera})
+
+    async def rebuild_topology() -> bool:
+        fake_blink.cameras["Front Door"] = new_camera
+        return True
+
+    dl._on_camera_replaced = AsyncMock(side_effect=RuntimeError("database down"))
+    fake_blink.setup_post_verify = AsyncMock(side_effect=rebuild_topology)
+    dl._blink = fake_blink
+
+    with caplog.at_level("ERROR"):
+        assert await dl._refresh_device_topology(force=True) is True
+
+    assert "Could not reset state for replaced camera" in caplog.text
+
+
+async def test_refresh_device_topology_skips_replacement_when_identity_is_same(
+    dl: BlinkDownloader,
+) -> None:
+    old_camera = MagicMock(camera_id="same-camera")
+    new_camera = MagicMock(camera_id="same-camera")
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": old_camera})
+
+    async def rebuild_topology() -> bool:
+        fake_blink.cameras["Front Door"] = new_camera
+        return True
+
+    callback = AsyncMock()
+    dl._on_camera_replaced = callback
+    fake_blink.setup_post_verify = AsyncMock(side_effect=rebuild_topology)
+    dl._blink = fake_blink
+
+    assert await dl._refresh_device_topology(force=True) is True
+    callback.assert_not_awaited()
+
+
+async def test_refresh_device_topology_skips_replacement_migration_without_callback(
+    dl: BlinkDownloader,
+) -> None:
+    old_camera = MagicMock(camera_id="old-camera")
+    new_camera = MagicMock(camera_id="new-camera")
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": old_camera})
+
+    async def rebuild_topology() -> bool:
+        fake_blink.cameras["Front Door"] = new_camera
+        return True
+
+    fake_blink.setup_post_verify = AsyncMock(side_effect=rebuild_topology)
+    dl._blink = fake_blink
+
+    assert await dl._refresh_device_topology(force=True) is True
+    assert not dl._pending_camera_replacements
+
+
 async def test_refresh_device_topology_retains_cameras_for_offline_sync(
     dl: BlinkDownloader,
 ) -> None:

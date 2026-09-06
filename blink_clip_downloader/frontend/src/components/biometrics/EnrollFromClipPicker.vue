@@ -5,12 +5,15 @@ import Message from 'primevue/message'
 import Select from 'primevue/select'
 import { clipThumbUrl, getCameras, getClipFrames, listClips } from '../../api/clips'
 import type { CameraStat, ClipListItem } from '../../api/types'
+import { useRefreshStore } from '../../stores/refresh'
 
 const selectedFrames = defineModel<string[]>('selectedFrames', { required: true })
 
 const cameras = ref<CameraStat[]>([])
 const selectedCamera = ref('')
 const loadingCameras = ref(true)
+const refresh = useRefreshStore()
+let camerasSeq = 0
 
 const LOOKBACK_OPTIONS = [
   { label: 'Last 6 hours', value: 6 },
@@ -59,12 +62,17 @@ function nextFrames() {
 }
 
 async function loadCameras() {
+  const seq = ++camerasSeq
   loadingCameras.value = true
   try {
-    cameras.value = await getCameras()
-    if (cameras.value.length) selectedCamera.value = cameras.value[0].camera
+    const result = await getCameras()
+    if (seq !== camerasSeq) return
+    cameras.value = result
+    if (!cameras.value.some((camera) => camera.camera === selectedCamera.value)) {
+      selectedCamera.value = cameras.value[0]?.camera ?? ''
+    }
   } finally {
-    loadingCameras.value = false
+    if (seq === camerasSeq) loadingCameras.value = false
   }
 }
 // Deliberately fire-and-forget, not top-level await (SonarQube's S7785
@@ -74,6 +82,7 @@ async function loadCameras() {
 // just to keep working. loadingCameras already drives its own in-place
 // loading state without that.
 loadCameras() // NOSONAR
+watch(() => refresh.tick, loadCameras)
 
 // Rapid camera/clip switching can fire loadClips/loadFrames again before an
 // earlier call's response has resolved, letting a stale, slower response

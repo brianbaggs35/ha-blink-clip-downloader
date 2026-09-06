@@ -669,6 +669,21 @@ def test_list_cameras_delegates_to_injected_callable(
     assert set(manager.list_cameras()) == {"Front Door", "Backyard"}
 
 
+async def test_rename_camera_updates_active_session_status(
+    manager: LiveViewManager, camera_registry: dict[str, Any]
+) -> None:
+    camera_registry["Front Door"] = _make_camera()
+    proc = _FakeProcess()
+    with _mock_exec(proc):
+        status = await manager.start_session("Front Door")
+
+    try:
+        await manager.rename_camera("Front Door", "Entryway")
+        assert manager.get_status().camera == "Entryway"
+    finally:
+        await manager.stop_session(status.session_id)
+
+
 # ---------------------------------------------------------------------------
 # Sweep loop — idle timeout / hard cap / crash detection
 # ---------------------------------------------------------------------------

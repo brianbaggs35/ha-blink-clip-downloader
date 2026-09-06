@@ -154,7 +154,27 @@ class ClipArchiver:
         camera = str(record.get("camera") or "unknown")
         filename = Path(str(record.get("file_path") or "")).name
         arcname = f"{camera}/{filename}"
-        return arcname in member_cache[archive_path]
+        if arcname in member_cache[archive_path]:
+            return True
+        # A camera rename updates the database display name but cannot rewrite
+        # an existing monthly ZIP. The source path retains the old camera
+        # directory, so use it as a compatibility fallback.
+        file_path = Path(str(record.get("file_path") or ""))
+        return (
+            any(
+                parent.name != camera
+                and f"{parent.name}/{filename}" in member_cache[archive_path]
+                for parent in file_path.parents
+                if parent.name
+            )
+            or sum(
+                1
+                for member in member_cache[archive_path]
+                if Path(member).name == filename
+            )
+            >= 1
+            # Keep ambiguous matches; pruning must never delete valid data.
+        )
 
     # ------------------------------------------------------------------
     # Internal

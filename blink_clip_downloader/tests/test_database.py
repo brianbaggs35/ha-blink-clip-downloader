@@ -867,6 +867,54 @@ async def test_get_camera_stats_merges_case_insensitively(db: ClipDatabase) -> N
     assert cam_stats[0]["total"] == 3
 
 
+async def test_rename_camera_migrates_library_and_battery_state(
+    db: ClipDatabase,
+) -> None:
+    await db.record_clip_baseline("Front Door", 8, 10.0)
+    await db.record_scene_baseline("Front Door", [0.1, 0.2])
+    await db.add_clip(_make_clip("rename-1", camera="Front Door"))
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.enqueue_for_analysis("rename-1", "Front Door", "/clips/rename-1.mp4")
+
+    assert await db.rename_camera("Front Door", "Entryway") is True
+
+    clips = await db.get_clips(camera="Entryway")
+    assert [clip["id"] for clip in clips] == ["rename-1"]
+    assert await db.get_clips(camera="Front Door") == []
+    battery = await db.get_latest_battery_state()
+    assert [row["camera"] for row in battery] == ["Entryway"]
+    queue = await db.get_pending_analysis()
+    assert queue[0]["camera"] == "Entryway"
+    assert db._pool is not None
+    assert (
+        await db._pool.fetchval(
+            "SELECT camera FROM camera_baselines WHERE hour = $1", 8
+        )
+        == "Entryway"
+    )
+    assert (
+        await db._pool.fetchval(
+            "SELECT camera FROM camera_duration_stats WHERE camera = $1", "Entryway"
+        )
+        == "Entryway"
+    )
+    assert (
+        await db._pool.fetchval(
+            "SELECT camera FROM camera_scene_baselines WHERE camera = $1", "Entryway"
+        )
+        == "Entryway"
+    )
+
+
+async def test_rename_camera_noop_without_persisted_state() -> None:
+    database = ClipDatabase()
+    assert await database.rename_camera("Front Door", "Entryway") is False
+
+
+async def test_rename_camera_noop_for_same_name(db: ClipDatabase) -> None:
+    assert await db.rename_camera("Front Door", "Front Door") is False
+
+
 @pytest.mark.parametrize("tz_name", [_WEST_OF_UTC_TZ, _EAST_OF_UTC_TZ])
 async def test_get_camera_stats_today_uses_local_calendar_day(
     db: ClipDatabase,
@@ -1462,6 +1510,19 @@ async def test_add_battery_reading_preserves_null_level_and_voltage(
     history = await db.get_battery_history("Front Door")
     assert history[0]["battery_level"] is None
     assert history[0]["battery_voltage"] is None
+
+
+async def test_reset_battery_history_for_replaced_camera(db: ClipDatabase) -> None:
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.reset_battery_history("Front Door")
+
+    assert await db.get_battery_history("Front Door") == []
+    assert await db.get_latest_battery_state() == []
+
+
+async def test_reset_battery_history_without_init_is_safe() -> None:
+    database = ClipDatabase()
+    await database.reset_battery_history("Front Door")
 
 
 async def test_get_battery_history_orders_newest_first_and_respects_limit(

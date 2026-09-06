@@ -724,6 +724,141 @@ class ClipDatabase:
         )
         return _affected(status) > 0
 
+    async def rename_camera(self, old_name: str, new_name: str) -> bool:
+        """Migrate all persisted camera-keyed state after a Blink rename."""
+        if self._pool is None or not old_name or not new_name:
+            return False
+        if old_name == new_name:
+            return False
+
+        async with self._pool.acquire() as conn, conn.transaction():
+            changed = False
+
+            baseline_rows = await conn.fetch(
+                _qm(
+                    "SELECT hour, count FROM camera_baselines "
+                    "WHERE LOWER(camera) = LOWER(?) OR LOWER(camera) = LOWER(?)"
+                ),
+                old_name,
+                new_name,
+            )
+            if baseline_rows:
+                await conn.execute(
+                    _qm(
+                        "DELETE FROM camera_baselines "
+                        "WHERE LOWER(camera) = LOWER(?) OR LOWER(camera) = LOWER(?)"
+                    ),
+                    old_name,
+                    new_name,
+                )
+                counts: dict[int, int] = {}
+                for row in baseline_rows:
+                    hour = int(row["hour"])
+                    counts[hour] = counts.get(hour, 0) + int(row["count"] or 0)
+                for hour, count in counts.items():
+                    await conn.execute(
+                        _qm(
+                            "INSERT INTO camera_baselines (camera, hour, count) "
+                            "VALUES (?, ?, ?)"
+                        ),
+                        new_name,
+                        hour,
+                        count,
+                    )
+                changed = True
+
+            duration_rows = await conn.fetch(
+                _qm(
+                    "SELECT avg_duration, sample_count FROM camera_duration_stats "
+                    "WHERE LOWER(camera) = LOWER(?) OR LOWER(camera) = LOWER(?)"
+                ),
+                old_name,
+                new_name,
+            )
+            if duration_rows:
+                await conn.execute(
+                    _qm(
+                        "DELETE FROM camera_duration_stats "
+                        "WHERE LOWER(camera) = LOWER(?) OR LOWER(camera) = LOWER(?)"
+                    ),
+                    old_name,
+                    new_name,
+                )
+                sample_count = sum(
+                    int(row["sample_count"] or 0) for row in duration_rows
+                )
+                if sample_count:
+                    weighted_duration = sum(
+                        float(row["avg_duration"] or 0) * int(row["sample_count"] or 0)
+                        for row in duration_rows
+                    )
+                    await conn.execute(
+                        _qm(
+                            "INSERT INTO camera_duration_stats "
+                            "(camera, avg_duration, sample_count) VALUES (?, ?, ?)"
+                        ),
+                        new_name,
+                        weighted_duration / sample_count,
+                        sample_count,
+                    )
+                changed = True
+
+            scene_rows = await conn.fetch(
+                _qm(
+                    "SELECT thumbnail, sample_count, updated_at, "
+                    "consecutive_deviation_count FROM camera_scene_baselines "
+                    "WHERE LOWER(camera) = LOWER(?) OR LOWER(camera) = LOWER(?) "
+                    "ORDER BY sample_count DESC LIMIT 1"
+                ),
+                old_name,
+                new_name,
+            )
+            if scene_rows:
+                scene = scene_rows[0]
+                await conn.execute(
+                    _qm(
+                        "DELETE FROM camera_scene_baselines "
+                        "WHERE LOWER(camera) = LOWER(?) OR LOWER(camera) = LOWER(?)"
+                    ),
+                    old_name,
+                    new_name,
+                )
+                await conn.execute(
+                    _qm(
+                        "INSERT INTO camera_scene_baselines "
+                        "(camera, thumbnail, sample_count, updated_at, "
+                        "consecutive_deviation_count) VALUES (?, ?, ?, ?, ?)"
+                    ),
+                    new_name,
+                    scene["thumbnail"],
+                    scene["sample_count"],
+                    scene["updated_at"],
+                    scene["consecutive_deviation_count"],
+                )
+                changed = True
+
+            for table in (
+                "clips",
+                "analysis_results",
+                "analysis_queue",
+                "gdrive_upload_queue",
+                "analysis_feedback",
+                "face_recognition_feedback",
+                "battery_history",
+            ):
+                status = await conn.execute(
+                    _qm(f"UPDATE {table} SET camera=? WHERE LOWER(camera)=LOWER(?)"),
+                    new_name,
+                    old_name,
+                )
+                changed = changed or _affected(status) > 0
+
+        if changed:
+            _LOGGER.info(
+                "Migrated persisted state for camera %r -> %r", old_name, new_name
+            )
+        return changed
+
     # ------------------------------------------------------------------
     # Reading
     # ------------------------------------------------------------------
@@ -1460,6 +1595,15 @@ class ClipDatabase:
             datetime.now(UTC).isoformat(),
         )
         return last_state is not None
+
+    async def reset_battery_history(self, camera: str) -> None:
+        """Drop readings when a physical camera is replaced under the same name."""
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm("DELETE FROM battery_history WHERE LOWER(camera)=LOWER(?)"),
+            camera,
+        )
 
     async def get_battery_history(
         self, camera: str, limit: int = 50

@@ -188,6 +188,31 @@ describe('AppSidebar', () => {
       await vi.advanceTimersByTimeAsync(0)
       expect(connection.connected).toBeNull()
     })
+
+    it('refreshes camera navigation and dependent tabs after a rename', async () => {
+      let cameras = [{ camera: 'Front Door', total: 3, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }]
+      const fetchMock = vi.fn((url: string) =>
+        Promise.resolve(
+          jsonResponse(url === '/api/cameras' ? cameras : { connected: true, available: true, faces: [] }),
+        ),
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      const wrapper = mountSidebar('ai')
+      const library = useLibraryStore()
+      const refresh = useRefreshStore()
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(library.cameras[0].camera).toBe('Front Door')
+      library.selectCamera('Front Door')
+
+      cameras = [{ ...cameras[0], camera: 'Entryway' }]
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(library.cameras[0].camera).toBe('Entryway')
+      expect(library.currentCamera).toBe('Entryway')
+      expect(refresh.tick).toBe(1)
+      wrapper.unmount()
+    })
   })
 
   describe('biometrics tab visibility', () => {
