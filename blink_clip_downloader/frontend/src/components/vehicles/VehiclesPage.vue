@@ -51,8 +51,10 @@ watch(
 async function saveDescription() {
   savingDescription.value = true
   try {
-    await saveVehicleSettings(carDescription.value.trim())
-    loadedCarDescription = carDescription.value
+    const persistedDescription = carDescription.value.trim()
+    await saveVehicleSettings(persistedDescription)
+    carDescription.value = persistedDescription
+    loadedCarDescription = persistedDescription
     toast.show('Protected vehicle description saved')
   } catch {
     toast.show('Failed to save description', true)

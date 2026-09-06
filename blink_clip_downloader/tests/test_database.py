@@ -911,6 +911,10 @@ async def test_rename_camera_noop_without_persisted_state() -> None:
     assert await database.rename_camera("Front Door", "Entryway") is False
 
 
+async def test_rename_camera_noop_with_no_matching_rows(db: ClipDatabase) -> None:
+    assert await db.rename_camera("Unknown", "Entryway") is False
+
+
 async def test_rename_camera_noop_for_same_name(db: ClipDatabase) -> None:
     assert await db.rename_camera("Front Door", "Front Door") is False
 
