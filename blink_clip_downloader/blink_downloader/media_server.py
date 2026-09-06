@@ -1550,84 +1550,98 @@ class MediaServer:
             },
         )
 
+    @staticmethod
+    def _merge_camera_config_fields(
+        target: dict[str, Any], source: dict[str, Any]
+    ) -> None:
+        for field in (
+            "description",
+            "custom_prompt",
+            "is_car_camera",
+            "car_zone",
+            "auto_analyze",
+        ):
+            if field not in target or target[field] in ("", None):
+                target[field] = source.get(field)
+
+    def _migrate_camera_configs(self, old_name: str, new_name: str) -> None:
+        configs = self._read_camera_configs()
+        target = next(
+            (
+                config
+                for config in configs
+                if str(config.get("camera", "")).lower() == new_name.lower()
+            ),
+            None,
+        )
+        migrated: list[dict[str, Any]] = []
+        changed = False
+        for config in configs:
+            if str(config.get("camera", "")).lower() != old_name.lower():
+                migrated.append(config)
+                continue
+            changed = True
+            if target is None:
+                config["camera"] = new_name
+                target = config
+                migrated.append(config)
+            elif config is not target:
+                self._merge_camera_config_fields(target, config)
+        if not changed:
+            return
+        try:
+            self._CAMERA_CONFIGS_FILE.write_text(json.dumps(migrated, indent=2))
+        except OSError as exc:
+            _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
+            raise
+        self._apply_camera_configs_to_analyzer(migrated)
+
+    def _migrate_security_feed_settings(self, old_name: str, new_name: str) -> None:
+        settings = self._read_security_feed_settings()
+        cameras = settings.get("cameras", [])
+        renamed_cameras = [
+            new_name if str(camera).lower() == old_name.lower() else camera
+            for camera in cameras
+        ]
+        if renamed_cameras == cameras:
+            return
+        settings["cameras"] = list(dict.fromkeys(renamed_cameras))
+        try:
+            self._SECURITY_FEED_SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
+        except OSError as exc:
+            _LOGGER.warning(
+                "Could not save security feed settings after camera rename: %s",
+                exc,
+            )
+            raise
+
+    def _migrate_vehicle_zone_snapshot(self, old_name: str, new_name: str) -> None:
+        old_snapshot = self._vehicle_zone_snapshot_path(old_name)
+        if not old_snapshot.exists():
+            old_snapshot = self._legacy_vehicle_zone_snapshot_path(old_name)
+        new_snapshot = self._vehicle_zone_snapshot_path(new_name)
+        if not old_snapshot.exists() or old_snapshot == new_snapshot:
+            return
+        try:
+            if new_snapshot.exists():
+                old_snapshot.unlink()
+            else:
+                old_snapshot.replace(new_snapshot)
+        except OSError as exc:
+            _LOGGER.warning(
+                "Could not migrate vehicle zone snapshot %s -> %s: %s",
+                old_name,
+                new_name,
+                exc,
+            )
+            raise
+
     async def rename_camera(self, old_name: str, new_name: str) -> None:
         """Migrate persisted camera settings after Blink changes a name."""
         async with self._camera_configs_lock:
-            configs = self._read_camera_configs()
-            target = next(
-                (
-                    config
-                    for config in configs
-                    if str(config.get("camera", "")).lower() == new_name.lower()
-                ),
-                None,
-            )
-            migrated: list[dict[str, Any]] = []
-            changed = False
-            for config in configs:
-                if str(config.get("camera", "")).lower() != old_name.lower():
-                    migrated.append(config)
-                    continue
-                changed = True
-                if target is None:
-                    config["camera"] = new_name
-                    target = config
-                    migrated.append(config)
-                elif config is not target:
-                    for field in (
-                        "description",
-                        "custom_prompt",
-                        "is_car_camera",
-                        "car_zone",
-                        "auto_analyze",
-                    ):
-                        if field not in target or target[field] in ("", None):
-                            target[field] = config.get(field)
-            if changed:
-                try:
-                    self._CAMERA_CONFIGS_FILE.write_text(json.dumps(migrated, indent=2))
-                except OSError as exc:
-                    _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
-                    raise
-                self._apply_camera_configs_to_analyzer(migrated)
-
-            settings = self._read_security_feed_settings()
-            cameras = settings.get("cameras", [])
-            renamed_cameras = [
-                new_name if str(camera).lower() == old_name.lower() else camera
-                for camera in cameras
-            ]
-            if renamed_cameras != cameras:
-                settings["cameras"] = list(dict.fromkeys(renamed_cameras))
-                try:
-                    self._SECURITY_FEED_SETTINGS_FILE.write_text(
-                        json.dumps(settings, indent=2)
-                    )
-                except OSError as exc:
-                    _LOGGER.warning(
-                        "Could not save security feed settings after camera rename: %s",
-                        exc,
-                    )
-                    raise
-
-            old_snapshot = self._vehicle_zone_snapshot_path(old_name)
-            if not old_snapshot.exists():
-                old_snapshot = self._legacy_vehicle_zone_snapshot_path(old_name)
-            new_snapshot = self._vehicle_zone_snapshot_path(new_name)
-            if old_snapshot.exists() and old_snapshot != new_snapshot:
-                try:
-                    if new_snapshot.exists():
-                        old_snapshot.unlink()
-                    else:
-                        old_snapshot.replace(new_snapshot)
-                except OSError as exc:
-                    _LOGGER.warning(
-                        "Could not migrate vehicle zone snapshot %s -> %s: %s",
-                        old_name,
-                        new_name,
-                        exc,
-                    )
-                    raise
+            self._migrate_camera_configs(old_name, new_name)
+            self._migrate_security_feed_settings(old_name, new_name)
+            self._migrate_vehicle_zone_snapshot(old_name, new_name)
 
     @staticmethod
     def _normalize_car_zone(zone: Any) -> dict[str, Any] | None:

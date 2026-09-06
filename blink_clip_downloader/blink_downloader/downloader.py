@@ -435,6 +435,154 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         async with self._topology_lock:
             return await self._refresh_device_topology_locked(force=force)
 
+    def _restore_topology(
+        self,
+        blink: Any,
+        old_sync: Any,
+        old_cameras: Any,
+        old_available: Any,
+    ) -> None:
+        blink.sync = old_sync
+        blink.cameras = old_cameras
+        self._topology_fallback_cameras = None
+        blink.available = old_available
+
+    def _retain_unavailable_sync_cameras(self, blink: Any, old_sync: Any) -> None:
+        """Keep cameras from sync modules that blinkpy reports as unavailable."""
+        for sync_name, previous_sync in old_sync.items():
+            current_sync = blink.sync.get(sync_name)
+            if current_sync is None:
+                continue
+            current_status = str(getattr(current_sync, "status", "")).lower()
+            if getattr(current_sync, "available", True) is not False and (
+                current_status != "offline"
+            ):
+                continue
+            previous_cameras = getattr(previous_sync, "cameras", {})
+            current_cameras = getattr(current_sync, "cameras", {})
+            if not isinstance(previous_cameras, Mapping) or not isinstance(
+                current_cameras, MutableMapping
+            ):
+                continue
+            for camera_name, camera in previous_cameras.items():
+                if camera_name in current_cameras:
+                    continue
+                # Rebind the retained camera to blinkpy's current sync object
+                # so later API calls use the current network ID.
+                camera.sync = current_sync
+                camera.network_id = str(current_sync.network_id)
+                current_cameras[camera_name] = camera
+                blink.cameras[camera_name] = camera
+            _LOGGER.info(
+                "Keeping cameras for unavailable sync module %r until "
+                "blinkpy reports it online or removed",
+                sync_name,
+            )
+
+    async def _rebuild_topology(
+        self,
+        blink: Any,
+        setup_post_verify: Any,
+        old_sync: Any,
+        old_cameras: Any,
+        old_available: Any,
+        now: float,
+    ) -> bool:
+        """Rebuild blinkpy's device maps, rolling back on a failed discovery."""
+        try:
+            # Give setup_post_verify empty containers so removed hardware cannot
+            # survive the rebuild.
+            blink.sync = type(old_sync)()
+            blink.cameras = type(old_cameras)()
+            if not await setup_post_verify():
+                self._restore_topology(blink, old_sync, old_cameras, old_available)
+                self._last_topology_refresh = now
+                _LOGGER.warning(
+                    "Blink topology refresh returned no usable device data; "
+                    "keeping the previous sync-module/camera map"
+                )
+                return False
+            self._retain_unavailable_sync_cameras(blink, old_sync)
+        except AUTH_FATAL_EXCEPTIONS:
+            self._restore_topology(blink, old_sync, old_cameras, old_available)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self._restore_topology(blink, old_sync, old_cameras, old_available)
+            self._last_topology_refresh = now
+            _LOGGER.warning(
+                "Could not refresh Blink sync-module/camera topology: %s; "
+                "keeping the previous map",
+                exc,
+            )
+            return False
+        return True
+
+    def _camera_topology_changes(
+        self, old_cameras: Mapping[str, Any], new_cameras: Mapping[str, Any]
+    ) -> tuple[set[tuple[str, str]], set[str], dict[str, str]]:
+        renames = set(self._find_camera_renames(old_cameras, new_cameras))
+        renames |= self._pending_camera_renames
+        replacements = set(self._find_camera_replacements(old_cameras, new_cameras))
+        replacements |= self._pending_camera_replacements
+        current_identities = self._camera_identity_map(new_cameras)
+        current_names = {
+            identity: str(name)
+            for name, camera in new_cameras.items()
+            if (identity := self._camera_identity(camera)) is not None
+        }
+        current_by_name = {
+            name.lower(): identity for name, identity in current_identities.items()
+        }
+        for stored_name, stored_identity in self._known_camera_identities.items():
+            current_identity = current_by_name.get(stored_name.lower())
+            if current_identity is not None:
+                if current_identity != stored_identity:
+                    replacements.add(current_names[current_identity])
+            elif stored_identity in current_names:
+                renames.add((stored_name, current_names[stored_identity]))
+        return renames, replacements, current_identities
+
+    async def _process_camera_renames(self, renames: set[tuple[str, str]]) -> None:
+        for old_name, new_name in renames:
+            _LOGGER.info("Blink camera renamed from %r to %r", old_name, new_name)
+            if self._on_camera_renamed is None:
+                continue
+            try:
+                await self._on_camera_renamed(old_name, new_name)
+            except Exception:
+                self._pending_camera_renames.add((old_name, new_name))
+                _LOGGER.exception(
+                    "Could not migrate state for camera rename %r -> %r",
+                    old_name,
+                    new_name,
+                )
+            else:
+                self._pending_camera_renames.discard((old_name, new_name))
+
+    async def _process_camera_replacements(self, replacements: set[str]) -> None:
+        for camera_name in replacements:
+            if self._on_camera_replaced is None:
+                continue
+            try:
+                await self._on_camera_replaced(camera_name)
+            except Exception:
+                self._pending_camera_replacements.add(camera_name)
+                _LOGGER.exception(
+                    "Could not reset state for replaced camera %r",
+                    camera_name,
+                )
+            else:
+                self._pending_camera_replacements.discard(camera_name)
+
+    def _save_camera_identities(self, identities: dict[str, str]) -> None:
+        if self._pending_camera_renames or self._pending_camera_replacements:
+            return
+        try:
+            CAMERA_IDENTITIES_FILE.write_text(json.dumps(identities, indent=2))
+            self._known_camera_identities = identities
+        except OSError as exc:
+            _LOGGER.warning("Could not save Blink camera identities: %s", exc)
+
     async def _refresh_device_topology_locked(self, *, force: bool = False) -> bool:
         """Reconcile sync modules and cameras after a Blink account change.
 
@@ -474,81 +622,15 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         old_camera_names = tuple(str(name) for name in old_cameras)
         self._topology_fallback_cameras = old_cameras
 
-        try:
-            # setup_post_verify() adds newly discovered sync-less devices and
-            # then replaces/creates regular sync modules.  Give it empty
-            # containers so removed hardware cannot survive the rebuild.
-            blink.sync = type(old_sync)()
-            blink.cameras = type(old_cameras)()
-            if not await setup_post_verify():
-                blink.sync = old_sync
-                blink.cameras = old_cameras
-                self._topology_fallback_cameras = None
-                blink.available = old_available
-                self._last_topology_refresh = now
-                _LOGGER.warning(
-                    "Blink topology refresh returned no usable device data; "
-                    "keeping the previous sync-module/camera map"
-                )
-                return False
-            # blinkpy keeps a sync module in ``blink.sync`` when its
-            # initialization sees the module but cannot reach it. Its
-            # ``available`` flag distinguishes an unavailable module from
-            # removed hardware, so retain the last known cameras until the
-            # module comes back online.
-            for sync_name, previous_sync in old_sync.items():
-                current_sync = blink.sync.get(sync_name)
-                if current_sync is None:
-                    continue
-                current_status = str(getattr(current_sync, "status", "")).lower()
-                if getattr(current_sync, "available", True) is not False and (
-                    current_status != "offline"
-                ):
-                    continue
-                previous_cameras = getattr(previous_sync, "cameras", {})
-                current_cameras = getattr(current_sync, "cameras", {})
-                if not isinstance(previous_cameras, Mapping) or not isinstance(
-                    current_cameras, MutableMapping
-                ):
-                    continue
-                for camera_name, camera in previous_cameras.items():
-                    if camera_name in current_cameras:
-                        continue
-                    # Rebind the retained camera to blinkpy's current sync
-                    # object so later API calls use the current network ID.
-                    camera.sync = current_sync
-                    camera.network_id = str(current_sync.network_id)
-                    current_cameras[camera_name] = camera
-                    blink.cameras[camera_name] = camera
-                _LOGGER.info(
-                    "Keeping cameras for unavailable sync module %r until "
-                    "blinkpy reports it online or removed",
-                    sync_name,
-                )
-        except AUTH_FATAL_EXCEPTIONS:
-            blink.sync = old_sync
-            blink.cameras = old_cameras
-            self._topology_fallback_cameras = None
-            blink.available = old_available
-            raise
-        except Exception as exc:  # noqa: BLE001
-            blink.sync = old_sync
-            blink.cameras = old_cameras
-            self._topology_fallback_cameras = None
-            blink.available = old_available
-            self._last_topology_refresh = now
-            _LOGGER.warning(
-                "Could not refresh Blink sync-module/camera topology: %s; "
-                "keeping the previous map",
-                exc,
-            )
+        if not await self._rebuild_topology(
+            blink, setup_post_verify, old_sync, old_cameras, old_available, now
+        ):
             return False
 
         self._topology_fallback_cameras = None
         self._last_topology_refresh = time.monotonic()
         new_sync_names = tuple(str(name) for name in blink.sync)
         new_camera_names = tuple(str(name) for name in blink.cameras)
-        renames = self._find_camera_renames(old_cameras, blink.cameras)
         if old_sync_names != new_sync_names or old_camera_names != new_camera_names:
             _LOGGER.info(
                 "Blink topology changed: sync modules %s -> %s; cameras %s -> %s",
@@ -559,67 +641,12 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             )
         else:
             _LOGGER.debug("Blink topology refreshed; no device changes detected")
-        renames = set(renames) | self._pending_camera_renames
-        replacements = set(self._find_camera_replacements(old_cameras, blink.cameras))
-        replacements |= self._pending_camera_replacements
-        current_identities = self._camera_identity_map(blink.cameras)
-        current_names = {
-            identity: str(name)
-            for name, camera in blink.cameras.items()
-            if (identity := self._camera_identity(camera)) is not None
-        }
-        current_by_name = {
-            name.lower(): identity for name, identity in current_identities.items()
-        }
-        for stored_name, stored_identity in self._known_camera_identities.items():
-            current_identity = current_by_name.get(stored_name.lower())
-            if current_identity is not None:
-                if current_identity != stored_identity:
-                    replacements.add(current_names[current_identity])
-            elif stored_identity in current_names:
-                current_name = current_names[stored_identity]
-                renames.add((stored_name, current_name))
-
-        for old_name, new_name in renames:
-            _LOGGER.info(
-                "Blink camera renamed from %r to %r",
-                old_name,
-                new_name,
-            )
-            if self._on_camera_renamed is None:
-                continue
-            try:
-                await self._on_camera_renamed(old_name, new_name)
-            except Exception:
-                self._pending_camera_renames.add((old_name, new_name))
-                _LOGGER.exception(
-                    "Could not migrate state for camera rename %r -> %r",
-                    old_name,
-                    new_name,
-                )
-            else:
-                self._pending_camera_renames.discard((old_name, new_name))
-        for camera_name in replacements:
-            if self._on_camera_replaced is None:
-                continue
-            try:
-                await self._on_camera_replaced(camera_name)
-            except Exception:
-                self._pending_camera_replacements.add(camera_name)
-                _LOGGER.exception(
-                    "Could not reset state for replaced camera %r",
-                    camera_name,
-                )
-            else:
-                self._pending_camera_replacements.discard(camera_name)
-        if not self._pending_camera_renames and not self._pending_camera_replacements:
-            try:
-                CAMERA_IDENTITIES_FILE.write_text(
-                    json.dumps(current_identities, indent=2)
-                )
-                self._known_camera_identities = current_identities
-            except OSError as exc:
-                _LOGGER.warning("Could not save Blink camera identities: %s", exc)
+        renames, replacements, current_identities = self._camera_topology_changes(
+            old_cameras, blink.cameras
+        )
+        await self._process_camera_renames(renames)
+        await self._process_camera_replacements(replacements)
+        self._save_camera_identities(current_identities)
         return True
 
     @staticmethod

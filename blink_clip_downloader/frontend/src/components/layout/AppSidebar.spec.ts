@@ -213,6 +213,27 @@ describe('AppSidebar', () => {
       expect(refresh.tick).toBe(1)
       wrapper.unmount()
     })
+
+    it('does not refresh dependent tabs when only clip totals change', async () => {
+      let cameras = [{ camera: 'Front Door', total: 3, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }]
+      const fetchMock = vi.fn((url: string) =>
+        Promise.resolve(
+          jsonResponse(url === '/api/cameras' ? cameras : { connected: true, available: true, faces: [] }),
+        ),
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      const wrapper = mountSidebar('ai')
+      const library = useLibraryStore()
+      const refresh = useRefreshStore()
+
+      await vi.advanceTimersByTimeAsync(0)
+      cameras = [{ ...cameras[0], total: 4 }]
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(library.cameras[0].total).toBe(4)
+      expect(refresh.tick).toBe(0)
+      wrapper.unmount()
+    })
   })
 
   describe('biometrics tab visibility', () => {

@@ -184,7 +184,7 @@ async function pollCameras() {
     if (seq !== cameraPollSeq) return
     const previousCameras = library.cameras
     const signature = cameras
-      .map((camera) => `${camera.camera}\u0000${camera.total ?? 0}`)
+      .map((camera) => camera.camera.toLowerCase())
       .sort()
       .join('\u0001')
     const changed = cameraListInitialized && signature !== cameraSignature

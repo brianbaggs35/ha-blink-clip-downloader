@@ -3047,6 +3047,47 @@ async def test_refresh_device_topology_reports_camera_rename_by_stable_id(
     callback.assert_awaited_once_with("Front Door", "Entryway")
 
 
+async def test_refresh_device_topology_uses_persisted_identity_after_restart(
+    dl: BlinkDownloader, tmp_path: Path
+) -> None:
+    new_camera = MagicMock(camera_id="100")
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict()
+    fake_blink.cameras = CaseInsensitiveDict()
+
+    async def rebuild_topology() -> bool:
+        fake_blink.cameras["Entryway"] = new_camera
+        return True
+
+    callback = AsyncMock()
+    dl._known_camera_identities = {"Front Door": "camera_id:100"}
+    dl._on_camera_renamed = callback
+    fake_blink.setup_post_verify = AsyncMock(side_effect=rebuild_topology)
+    dl._blink = fake_blink
+    identity_file = tmp_path / "camera_identities.json"
+
+    with patch("blink_downloader.downloader.CAMERA_IDENTITIES_FILE", identity_file):
+        assert await dl._refresh_device_topology(force=True) is True
+
+    callback.assert_awaited_once_with("Front Door", "Entryway")
+    assert json.loads(identity_file.read_text()) == {"Entryway": "camera_id:100"}
+
+
+def test_camera_topology_changes_detects_persisted_replacement(
+    dl: BlinkDownloader,
+) -> None:
+    dl._known_camera_identities = {"Front Door": "camera_id:old"}
+    new_camera = MagicMock(camera_id="new")
+
+    renames, replacements, identities = dl._camera_topology_changes(
+        CaseInsensitiveDict(), CaseInsensitiveDict({"Front Door": new_camera})
+    )
+
+    assert not renames
+    assert replacements == {"Front Door"}
+    assert identities == {"Front Door": "camera_id:new"}
+
+
 async def test_refresh_device_topology_logs_camera_rename_migration_failure(
     dl: BlinkDownloader, caplog: pytest.LogCaptureFixture
 ) -> None:

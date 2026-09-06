@@ -5,6 +5,7 @@ import PrimeVue from 'primevue/config'
 import VehiclesPage from './VehiclesPage.vue'
 import VehicleZonePicker from './VehicleZonePicker.vue'
 import type { CameraConfig } from '../../api/types'
+import { useRefreshStore } from '../../stores/refresh'
 
 function mountPage() {
   return mount(VehiclesPage, { global: { plugins: [PrimeVue] } })
@@ -64,6 +65,22 @@ describe('VehiclesPage', () => {
     expect(wrapper.text()).toContain('Protection active')
   })
 
+  it('reloads clean settings when the shared refresh tick changes', async () => {
+    stubRoutedFetch({ vehicle_settings: { car_description: 'Silver Kia Forte' }, camera_configs: [FRONT_CAM] })
+    mountPage()
+    await flushPromises()
+
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(
+      vi.mocked(fetch).mock.calls.filter(([url]) => typeof url === 'string' && url.includes('/api/vehicle/settings')),
+    ).toHaveLength(2)
+    expect(
+      vi.mocked(fetch).mock.calls.filter(([url]) => typeof url === 'string' && url.includes('/api/ai/camera-configs')),
+    ).toHaveLength(2)
+  })
+
   it('shows an inactive warning when a car camera is set but no description', async () => {
     stubRoutedFetch({
       vehicle_settings: { car_description: '' },
@@ -106,7 +123,7 @@ describe('VehiclesPage', () => {
     stubRoutedFetch({ vehicle_settings: { car_description: '' }, camera_configs: [FRONT_CAM] })
     const wrapper = mountPage()
     await flushPromises()
-    await wrapper.find('textarea').setValue('Red Honda Civic')
+    await wrapper.find('textarea').setValue('  Red Honda Civic  ')
     const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('Save Description'))!
     await saveBtn.trigger('click')
     await flushPromises()
@@ -117,6 +134,7 @@ describe('VehiclesPage', () => {
         body: JSON.stringify({ car_description: 'Red Honda Civic' }),
       }),
     )
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('Red Honda Civic')
   })
 
   it('reveals the zone picker only when a camera is marked as a car camera, and saves camera settings', async () => {
