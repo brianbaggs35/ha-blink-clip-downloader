@@ -6,6 +6,7 @@ import FileUpload from 'primevue/fileupload'
 import Select from 'primevue/select'
 import BiometricsPage from './BiometricsPage.vue'
 import { useConfirmStore } from '../../stores/confirm'
+import { useToastStore } from '../../stores/toast'
 import type { FaceEnrollment } from '../../api/types'
 
 function jsonResponse(body: unknown, ok = true) {
@@ -289,6 +290,45 @@ describe('BiometricsPage', () => {
     expect(body.approved).toBe(false)
   })
 
+  it('defaults to approved when the selected "add to" person no longer exists by that name (e.g. renamed since selecting)', async () => {
+    const calls: [string, RequestInit?][] = []
+    vi.stubGlobal(
+      'fetch',
+      routedFetch((url, init) => {
+        calls.push([url, init])
+        if (init?.method === 'PATCH') return Promise.resolve(jsonResponse({ updated: true }))
+        if (init?.method === 'POST') return Promise.resolve(jsonResponse({ id: 2, name: 'Brian', approved: true }))
+        return Promise.resolve(
+          jsonResponse({ available: true, faces: [faceEnrollment({ name: 'Brian', approved: false })] }),
+        )
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    const fileUpload = wrapper.findComponent(FileUpload)
+    await fileUpload.vm.$emit('select', { files: [new File(['x'], 'brian2.jpg', { type: 'image/jpeg' })] })
+    await wrapper.findComponent(Select).vm.$emit('update:modelValue', 'Brian')
+
+    // Rename Brian's own card away -- "Brian" no longer names any group in
+    // groupedPeople, but the Add-to-person dropdown's v-model still holds it.
+    const editBtn = wrapper.findAll('button').find((b) => b.text() === '✎')!
+    await editBtn.trigger('click')
+    const input = wrapper.findAll('input').find((i) => (i.element as HTMLInputElement).value === 'Brian')!
+    await input.setValue('Brian Baggs')
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    const addBtn = wrapper.findAll('button').find((b) => b.text().includes('Add to person'))!
+    await addBtn.trigger('click')
+    await flushPromises()
+
+    const postCall = calls.find(([, init]) => init?.method === 'POST')!
+    const body = JSON.parse(postCall[1]!.body as string)
+    expect(body.approved).toBe(true)
+  })
+
   it('disables "Add to person" until an existing person is selected', async () => {
     stubFaces([faceEnrollment()])
     const wrapper = mountPage()
@@ -340,6 +380,28 @@ describe('BiometricsPage', () => {
     expect(wrapper.exists()).toBe(true) // did not throw
   })
 
+  it('falls back to a generic message when photo enrollment throws something other than an Error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch((_url, init) => {
+        if (init?.method === 'POST') return Promise.reject('rejected as a plain string, not an Error')
+        return Promise.resolve(jsonResponse({ available: true, faces: [] }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    await wrapper.find('#biometrics-name').setValue('Brian')
+    const fileUpload = wrapper.findComponent(FileUpload)
+    await fileUpload.vm.$emit('select', { files: [new File(['x'], 'brian.jpg', { type: 'image/jpeg' })] })
+    const enrollBtn = wrapper.findAll('button').find((b) => b.text().includes('Enroll'))!
+    await enrollBtn.trigger('click')
+    await flushPromises()
+
+    const toast = useToastStore()
+    expect(toast.message).toBe('Enrollment failed: unknown error')
+  })
+
   it("toggles a person's approved status for every enrolled photo (bulk by-name)", async () => {
     vi.stubGlobal(
       'fetch',
@@ -362,6 +424,39 @@ describe('BiometricsPage', () => {
       '/api/ai/faces/by-name/Brian',
       expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ approved: false }) }),
     )
+  })
+
+  it("approving a person shows the approved toast and leaves other people's approval untouched", async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch((_url, init) => {
+        if (init?.method === 'PATCH') return Promise.resolve(jsonResponse({ updated: true }))
+        return Promise.resolve(
+          jsonResponse({
+            available: true,
+            faces: [
+              faceEnrollment({ id: 1, name: 'Brian', approved: false }),
+              faceEnrollment({ id: 2, name: 'Guest', approved: true }),
+            ],
+          }),
+        )
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    const toggle = wrapper.find('#biometrics-approved-Brian')
+    await toggle.setValue(true)
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/ai/faces/by-name/Brian',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ approved: true }) }),
+    )
+    const toast = useToastStore()
+    expect(toast.message).toBe('Brian approved for auto-clear')
+    // Guest (a face with a different name) must be unaffected by Brian's change.
+    const guestCard = wrapper.findAll('.person-card').find((c) => c.text().includes('Guest'))!
+    expect(guestCard.text()).toContain('Approved')
+    expect(guestCard.text()).not.toContain('Not approved')
   })
 
   it('shows a toast-worthy error when updating approval fails', async () => {
@@ -421,6 +516,41 @@ describe('BiometricsPage', () => {
     await saveBtn.trigger('click')
     await flushPromises()
     expect(wrapper.exists()).toBe(true) // did not throw
+  })
+
+  it("renaming a person leaves other enrolled people's names untouched", async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch((_url, init) => {
+        if (init?.method === 'PATCH') return Promise.resolve(jsonResponse({ updated: true }))
+        return Promise.resolve(
+          jsonResponse({
+            available: true,
+            faces: [
+              faceEnrollment({ id: 1, name: 'Brain', approved: true }),
+              faceEnrollment({ id: 2, name: 'Guest', approved: true }),
+            ],
+          }),
+        )
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    const editBtn = wrapper
+      .findAll('.person-card')
+      .find((c) => c.text().includes('Brain'))!
+      .findAll('button')
+      .find((b) => b.text() === '✎')!
+    await editBtn.trigger('click')
+    const input = wrapper.findAll('input').find((i) => (i.element as HTMLInputElement).value === 'Brain')!
+    await input.setValue('Brian')
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save')!
+    await saveBtn.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Guest')
+    const guestCard = wrapper.findAll('.person-card').find((c) => c.text().includes('Guest'))!
+    expect(guestCard.text()).not.toContain('Brian')
   })
 
   it('cancels an inline rename without saving', async () => {
@@ -543,6 +673,19 @@ describe('BiometricsPage', () => {
     expect(wrapper.find('.enroll-from-clip').exists()).toBe(true)
   })
 
+  it('treats a select event with no files as clearing the selection, rather than crashing', async () => {
+    stubFaces([])
+    const wrapper = mountPage()
+    await flushPromises()
+    await switchToPhotoMode(wrapper)
+    const fileUpload = wrapper.findComponent(FileUpload)
+    // PrimeVue's FileUploadSelectEvent types `files` as `any` -- a select
+    // event with the field missing entirely must not crash onFileSelect.
+    await fileUpload.vm.$emit('select', { files: undefined })
+    await flushPromises()
+    expect(wrapper.find('img.preview-thumb').exists()).toBe(false)
+  })
+
   it('clears the selected photo in photo mode', async () => {
     stubFaces([])
     const wrapper = mountPage()
@@ -637,6 +780,70 @@ describe('BiometricsPage', () => {
     await flushPromises()
 
     expect(posted).toEqual(['data:image/jpeg;base64,AAA', 'data:image/jpeg;base64,BBB'])
+  })
+
+  it('enrolls from selected clip frames, reporting full success when none are rejected', async () => {
+    const posted: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (url.includes('/api/cameras')) {
+          return Promise.resolve(
+            jsonResponse([{ camera: 'Front Door', total: 1, size_bytes: 1, today: 0, this_week: 1, last_seen: '' }]),
+          )
+        }
+        if (url.includes('/frames')) {
+          return Promise.resolve(jsonResponse({ frames: ['data:image/jpeg;base64,AAA', 'data:image/jpeg;base64,BBB'] }))
+        }
+        if (url.includes('/api/clips')) {
+          return Promise.resolve(
+            jsonResponse([
+              {
+                id: 'c1',
+                camera: 'Front Door',
+                file_path: '/data/c1.mp4',
+                timestamp: '2026-01-05T10:00:00Z',
+                size_bytes: 1000,
+                duration: 5,
+                source: 'pir',
+                network_id: 1,
+                starred: false,
+                tags: [],
+                downloaded_at: '2026-01-05T10:01:00Z',
+                archived: false,
+                archive_path: '',
+                notified: false,
+              },
+            ]),
+          )
+        }
+        if (url.includes('/api/ai/faces/bypass-stats')) {
+          return Promise.resolve(jsonResponse({ total_bypassed: 0, by_name: [], recent: [] }))
+        }
+        if (init?.method === 'POST') {
+          posted.push(JSON.parse(init.body as string).image_base64)
+          return Promise.resolve(jsonResponse({ id: 2, name: 'Brian', approved: true }))
+        }
+        return Promise.resolve(jsonResponse({ available: true, faces: posted.length ? [faceEnrollment()] : [] }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.find('#biometrics-name').setValue('Brian')
+    await flushPromises()
+
+    const frameItems = wrapper.findAll('.frame-item')
+    await frameItems[0].trigger('click')
+    await frameItems[1].trigger('click')
+    await flushPromises()
+
+    const enrollBtn = wrapper.findAll('button').find((b) => b.text().includes('Enroll'))!
+    await enrollBtn.trigger('click')
+    await flushPromises()
+
+    expect(posted).toHaveLength(2)
+    const toast = useToastStore()
+    expect(toast.message).toBe('Enrolled 2 photo(s) for Brian')
   })
 
   it('warns when enrolling from clip frames with no name entered', async () => {

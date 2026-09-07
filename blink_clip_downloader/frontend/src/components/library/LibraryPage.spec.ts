@@ -42,6 +42,7 @@ vi.mock('video.js', () => ({ default: vi.fn(() => fakePlayer) }))
 vi.mock('video.js/dist/video-js.css', () => ({}))
 
 import LibraryPage from './LibraryPage.vue'
+import GDriveUploadModal from '../storage/GDriveUploadModal.vue'
 import { useCapabilitiesStore } from '../../stores/capabilities'
 import { useConfirmStore } from '../../stores/confirm'
 import { useConnectionStore } from '../../stores/connection'
@@ -314,6 +315,16 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('clicking a card checkbox while already in select mode just toggles selection', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper.find('.sel-check').trigger('click')
+    expect(wrapper.text()).toContain('1 selected')
+    wrapper.unmount()
+  })
+
   it('bulk star stars every selected clip', async () => {
     mockFetch()
     const wrapper = mountLibrary()
@@ -355,6 +366,46 @@ describe('LibraryPage', () => {
     await clickPromise
     await flushPromises()
     expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c1', expect.objectContaining({ method: 'DELETE' }))
+    wrapper.unmount()
+  })
+
+  it('bulk delete continues deleting the rest even if one clip fails to delete', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/clips/c1' && opts?.method === 'DELETE') return Promise.reject(new Error('boom'))
+        if (url === '/api/clips/c2' && opts?.method === 'DELETE')
+          return Promise.resolve(jsonResponse({ deleted: true, gdrive_deleted: null }))
+        if (url.startsWith('/api/clips/')) return Promise.resolve(jsonResponse(clip()))
+        if (url.startsWith('/api/clips')) return Promise.resolve(jsonResponse([clip({ id: 'c1' }), clip({ id: 'c2' })]))
+        if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
+        if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
+        if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
+        if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+        if (url.startsWith('/api/storage/gdrive/status'))
+          return Promise.resolve(
+            jsonResponse({ configured: false, connected: false, account_email: '', folder_id: '', folder_name: '' }),
+          )
+        return Promise.reject(new Error(`unexpected fetch ${url} ${opts?.method}`))
+      }),
+    )
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    const selectAllBtn = wrapper.findAll('button').find((b) => b.text().includes('Select all'))!
+    await selectAllBtn.trigger('click')
+    const confirm = useConfirmStore()
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete selected'))!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    // Both deletes were attempted (Promise.all didn't short-circuit on c1's
+    // rejection) and the flow completed normally rather than throwing.
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c2', expect.objectContaining({ method: 'DELETE' }))
+    const toast = useToastStore()
+    expect(toast.message).toBe('Deleted 2 clip(s)')
     wrapper.unmount()
   })
 
@@ -400,6 +451,73 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('bulk analyze caps the confirmation question at BULK_ANALYZE_MAX when more clips are selected', async () => {
+    const manyClips = Array.from({ length: 26 }, (_, i) => clip({ id: `c${i}` }))
+    mockFetch({ '/api/ai/status': { ...AI_STATUS, enabled: true } }, manyClips)
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    const selectAllBtn = wrapper.findAll('button').find((b) => b.text().includes('Select all'))!
+    await selectAllBtn.trigger('click')
+    const confirmStore = useConfirmStore()
+    const analyzeBtn = wrapper.findAll('button').find((b) => b.text().includes('Analyze selected'))!
+    const clickPromise = analyzeBtn.trigger('click')
+    await flushPromises()
+    expect(confirmStore.message).toBe(
+      'Analyze the first 25 of 26 selected clips with AI? This uses real API tokens and may take a while.',
+    )
+    confirmStore.settle(false)
+    await clickPromise
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('bulk analyze does nothing when the confirmation is declined', async () => {
+    mockFetch({ '/api/ai/status': { ...AI_STATUS, enabled: true } })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    const confirmStore = useConfirmStore()
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    const analyzeBtn = wrapper.findAll('button').find((b) => b.text().includes('Analyze selected'))!
+    const clickPromise = analyzeBtn.trigger('click')
+    await flushPromises()
+    confirmStore.settle(false)
+    await clickPromise
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBefore)
+    wrapper.unmount()
+  })
+
+  it('bulk analyze / upload to drive do nothing with an empty selection', async () => {
+    mockFetch({
+      '/api/ai/status': { ...AI_STATUS, enabled: true },
+      '/api/storage/gdrive/status': {
+        configured: true,
+        connected: true,
+        account_email: 'me@example.com',
+        folder_id: 'f1',
+        folder_name: 'Blink Clips',
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    const callsBefore = vi.mocked(fetch).mock.calls.length
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Analyze selected'))!
+      .trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Upload to Drive'))!
+      .trigger('click')
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBefore)
+    wrapper.unmount()
+  })
+
   it('bulk uploads selected clips to Drive once connected, then exits select mode', async () => {
     mockFetch({
       '/api/storage/gdrive/status': {
@@ -436,6 +554,30 @@ describe('LibraryPage', () => {
     )
     // Bulk bar/select mode is exited once the upload is queued.
     expect(wrapper.findAll('button').some((b) => b.text().includes('Upload to Drive'))).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('closing the Google Drive upload modal without uploading just hides it', async () => {
+    mockFetch({
+      '/api/storage/gdrive/status': {
+        configured: true,
+        connected: true,
+        account_email: 'me@example.com',
+        folder_id: 'f1',
+        folder_name: 'Blink Clips',
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper.find('.clip-card').trigger('click')
+    const uploadBtn = wrapper.findAll('button').find((b) => b.text().includes('Upload to Drive'))!
+    await uploadBtn.trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(GDriveUploadModal).exists()).toBe(true)
+    wrapper.findComponent(GDriveUploadModal).vm.$emit('close')
+    await flushPromises()
+    expect(wrapper.findComponent(GDriveUploadModal).exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -703,6 +845,84 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('does not let a stale loadClipsForDate response overwrite a newer date request', async () => {
+    const day1Clip = clip({ id: 'day1', camera: 'Day1Cam' })
+    const day2Clip = clip({ id: 'day2', camera: 'Day2Cam' })
+    let resolveDay1: (() => void) | undefined
+    let resolveDay2: (() => void) | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/clips') && url.includes('since=2026-01-05')) {
+          return new Promise((resolve) => {
+            resolveDay1 = () => resolve(jsonResponse([day1Clip]))
+          })
+        }
+        if (url.startsWith('/api/clips') && url.includes('since=2026-01-06')) {
+          return new Promise((resolve) => {
+            resolveDay2 = () => resolve(jsonResponse([day2Clip]))
+          })
+        }
+        if (url.startsWith('/api/clips')) return Promise.resolve(jsonResponse([]))
+        if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
+        if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
+        if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
+        if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mountLibrary()
+    await flushPromises()
+    useDateFilterStore().requestDate('2026-01-05')
+    await flushPromises()
+    useDateFilterStore().requestDate('2026-01-06')
+    await flushPromises()
+    expect(resolveDay1).toBeDefined()
+    expect(resolveDay2).toBeDefined()
+
+    // Resolve the later-fired (2026-01-06) request first, then the earlier
+    // (2026-01-05) one -- simulating the stale response arriving last.
+    resolveDay2?.()
+    await flushPromises()
+    resolveDay1?.()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Day2Cam')
+    expect(wrapper.text()).not.toContain('Day1Cam')
+    wrapper.unmount()
+  })
+
+  it('suppresses the failure toast for an abandoned (since-superseded) loadClipsForDate request', async () => {
+    let rejectDay1: ((e: Error) => void) | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/clips') && url.includes('since=2026-01-05')) {
+          return new Promise((_resolve, reject) => {
+            rejectDay1 = reject
+          })
+        }
+        if (url.startsWith('/api/clips')) return Promise.resolve(jsonResponse([]))
+        if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
+        if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
+        if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
+        if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mountLibrary()
+    await flushPromises()
+    useDateFilterStore().requestDate('2026-01-05')
+    await flushPromises()
+    useDateFilterStore().requestDate('2026-01-06')
+    await flushPromises()
+    expect(rejectDay1).toBeDefined()
+    rejectDay1?.(new Error('boom'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Failed to load clips')
+    wrapper.unmount()
+  })
+
   it('polls stats/cameras every 60s while the modal is closed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch()
@@ -776,6 +996,18 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('onNav advances to the next clip within bounds', async () => {
+    mockFetch({}, [clip({ id: 'c1' }), clip({ id: 'c2' })])
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await wrapper.findAll('.clip-card')[0]!.trigger('click')
+    await flushPromises()
+    await body().find('.vid-nav-btn:nth-of-type(2)').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c2', expect.anything())
+    wrapper.unmount()
+  })
+
   it('onNav does nothing past the last clip', async () => {
     mockFetch()
     const wrapper = mountLibrary()
@@ -803,6 +1035,82 @@ describe('LibraryPage', () => {
     await clickPromise
     await flushPromises()
     expect(body().find('.modal-bg').classes()).not.toContain('open')
+    wrapper.unmount()
+  })
+
+  it('deleting the last clip in a multi-clip list moves the modal to the new last clip instead of closing', async () => {
+    mockFetch({}, [clip({ id: 'c1' }), clip({ id: 'c2' })])
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await wrapper.findAll('.clip-card')[1]!.trigger('click')
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const deleteBtn = body()
+      .findAll('button')
+      .find((b) => b.text() === '🗑 Delete')!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(body().find('.modal-bg').classes()).toContain('open')
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c1', expect.anything())
+    wrapper.unmount()
+  })
+
+  it('deleting a clip that a background refresh already dropped from the list just closes the modal', async () => {
+    // Race: a cross-tab refresh.tick (or the 60s auto-refresh) can swap
+    // clips.value out from under an already-open modal (loadAll(true) is
+    // silent and never touches activeClipId). If the open clip isn't in the
+    // fresh list, onDeleted's idx lookup comes back -1 -- it must fall
+    // through to closing the modal rather than indexing into the list.
+    let listCalls = 0
+    mockFetch({
+      '/api/clips?': () => {
+        listCalls++
+        return listCalls === 1 ? [clip({ id: 'c1' })] : [clip({ id: 'c2' })]
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const deleteBtn = body()
+      .findAll('button')
+      .find((b) => b.text() === '🗑 Delete')!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(body().find('.modal-bg').classes()).not.toContain('open')
+    wrapper.unmount()
+  })
+
+  it('starring a clip that a background refresh already dropped from the list is a no-op', async () => {
+    let listCalls = 0
+    mockFetch({
+      '/api/clips?': () => {
+        listCalls++
+        return listCalls === 1 ? [clip({ id: 'c1' })] : [clip({ id: 'c2' })]
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await wrapper.find('.clip-card').trigger('click')
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+    const starBtn = body()
+      .findAll('button')
+      .find((b) => b.text().includes('Star'))!
+    await starBtn.trigger('click')
+    await flushPromises()
+    const starredStat = wrapper.findAll('.lib-stat').find((el) => el.text().includes('Starred'))!
+    expect(starredStat.find('.lib-stat-value').text()).toBe('1')
     wrapper.unmount()
   })
 
@@ -956,6 +1264,23 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('uses singular "clip" in the notification when exactly one new clip arrived', async () => {
+    localStorage.setItem('blink_notif', '1')
+    const NotificationMock = vi.fn()
+    // @ts-expect-error test stub
+    NotificationMock.permission = 'granted'
+    vi.stubGlobal('Notification', NotificationMock)
+    let total = 10
+    mockFetch({ '/api/stats': () => ({ ...STATS, total_count: total }) })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    total = 11
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(NotificationMock).toHaveBeenCalledWith('🎥 1 new Blink clip', expect.any(Object))
+    wrapper.unmount()
+  })
+
   it.each([
     { usageBand: 'above 90% (danger)', usedBytes: 95, freeBytes: 5 },
     { usageBand: 'between 70% and 90% (warn)', usedBytes: 80, freeBytes: 20 },
@@ -978,6 +1303,51 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     expect(wrapper.findComponent({ name: 'ProgressBar' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows a quota bar at 0% when a quota is configured but nothing has been used yet', async () => {
+    mockFetch({
+      '/api/stats': {
+        ...STATS,
+        disk: {
+          used_bytes: 0,
+          used_mb: 0,
+          free_bytes: 100,
+          free_gb: 0,
+          total_bytes: 100,
+          total_gb: 0,
+          quota_bytes: 100,
+          quota_gb: 0,
+        },
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    const bar = wrapper.findComponent({ name: 'ProgressBar' })
+    expect(bar.exists()).toBe(true)
+    expect(bar.props('value')).toBe(0)
+    wrapper.unmount()
+  })
+
+  it('falls back to 0 MB in the used-storage label when used_mb is missing from the disk stats', async () => {
+    mockFetch({
+      '/api/stats': {
+        ...STATS,
+        disk: {
+          used_bytes: 0,
+          free_bytes: 100,
+          free_gb: 0,
+          total_bytes: 100,
+          total_gb: 0,
+          quota_bytes: 0,
+          quota_gb: 0,
+        },
+      },
+    })
+    const wrapper = mountLibrary()
+    await flushPromises()
+    expect(wrapper.text()).toContain('0 MB')
     wrapper.unmount()
   })
 

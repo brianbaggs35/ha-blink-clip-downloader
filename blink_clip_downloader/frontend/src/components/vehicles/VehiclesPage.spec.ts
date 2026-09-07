@@ -81,6 +81,30 @@ describe('VehiclesPage', () => {
     ).toHaveLength(2)
   })
 
+  it('does not reload on a shared refresh tick while a local camera edit is unsaved', async () => {
+    // A clone, not the shared FRONT_CAM reference -- the component's
+    // configs ref makes this object reactive, and toggling the checkbox
+    // below writes straight through Vue's reactive proxy onto the
+    // underlying object. Using the bare module-level constant here would
+    // permanently flip its is_car_camera for every later test in this file.
+    stubRoutedFetch({ vehicle_settings: { car_description: '' }, camera_configs: [{ ...FRONT_CAM }] })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    // Marks a car camera without saving -- configs.value now differs from
+    // loadedConfigsSignature, so a background refresh tick must not
+    // silently discard this unsaved edit by reloading over it.
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await flushPromises()
+    const callsBeforeTick = vi.mocked(fetch).mock.calls.length
+
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBeforeTick)
+    expect(wrapper.find('.vehicle-zone-picker').exists()).toBe(true)
+  })
+
   it('shows an inactive warning when a car camera is set but no description', async () => {
     stubRoutedFetch({
       vehicle_settings: { car_description: '' },
@@ -359,5 +383,56 @@ describe('VehiclesPage', () => {
       )!
     const body = JSON.parse((call[1] as RequestInit).body as string)
     expect(body[0].car_zone).toEqual(zone)
+  })
+
+  it('declines to guess a rename when the server list changed ambiguously (two unmatched cameras on each side)', async () => {
+    const BACKYARD_CAM: CameraConfig = {
+      camera: 'Backyard',
+      description: '',
+      custom_prompt: '',
+      is_car_camera: false,
+      car_zone: null,
+    }
+    let cameraReads = 0
+    let saved: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT' && url.includes('/api/ai/camera-configs')) {
+          saved = JSON.parse(init.body as string)
+          return Promise.resolve(jsonResponse({ saved: true, count: 2 }))
+        }
+        if (url.includes('/api/vehicle/settings')) return Promise.resolve(jsonResponse({ car_description: '' }))
+        if (url.includes('/api/ai/camera-configs')) {
+          cameraReads++
+          if (cameraReads === 1) return Promise.resolve(jsonResponse([FRONT_CAM, BACKYARD_CAM]))
+          // Two cameras never seen before -- with two local-only *and*
+          // two latest-only entries, the "exactly one renamed camera"
+          // heuristic must not guess which maps to which.
+          return Promise.resolve(
+            jsonResponse([
+              { camera: 'Entryway', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+              { camera: 'Garage', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+            ]),
+          )
+        }
+        return Promise.resolve(jsonResponse([]))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Settings'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(saved).toEqual([
+      { camera: 'Entryway', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+      { camera: 'Garage', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+      FRONT_CAM,
+      BACKYARD_CAM,
+    ])
   })
 })

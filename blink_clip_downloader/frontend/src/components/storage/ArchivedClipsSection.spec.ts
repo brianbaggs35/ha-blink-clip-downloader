@@ -309,6 +309,62 @@ describe('ArchivedClipsSection', () => {
     expect(clipCalls).toHaveLength(1)
   })
 
+  it('collapsing and re-expanding while the initial fetch is still in flight does not fire a duplicate request', async () => {
+    const group = makeGroup()
+    let resolveClipRequest: (response: Response) => void = () => {}
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/storage/archives')) return Promise.resolve(jsonResponse([group]))
+      if (url.startsWith('/api/storage/archive-clips')) {
+        return new Promise<Response>((resolve) => {
+          resolveClipRequest = resolve
+        })
+      }
+      return Promise.resolve(jsonResponse([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await expandFirstArchive(wrapper) // expand -- starts loading, still pending
+    await expandFirstArchive(wrapper) // collapse
+    await expandFirstArchive(wrapper) // re-expand while the first request is still in flight
+
+    resolveClipRequest(jsonResponse({ items: [makeClip()], total: 1 }))
+    await flushPromises()
+
+    const clipCalls = fetchMock.mock.calls.filter((c) => (c[0] as string).startsWith('/api/storage/archive-clips'))
+    expect(clipCalls).toHaveLength(1)
+  })
+
+  it('ignores a failed archive page response that belongs to older filters', async () => {
+    const group = makeGroup()
+    let rejectClipRequest: (e: Error) => void = () => {}
+    let clipRequestPending = true
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/storage/archives')) return Promise.resolve(jsonResponse([group]))
+      if (url.startsWith('/api/storage/archive-clips') && clipRequestPending) {
+        clipRequestPending = false
+        return new Promise<Response>((_resolve, reject) => {
+          rejectClipRequest = reject
+        })
+      }
+      if (url.startsWith('/api/storage/archive-clips')) return Promise.resolve(jsonResponse({ items: [], total: 0 }))
+      if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse([]))
+      return Promise.resolve(jsonResponse([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+    await wrapper.find('.archive-panel-header').trigger('click')
+    await wrapper.findAll('input[type="date"]')[0].setValue('2026-06-01')
+    await flushPromises()
+
+    rejectClipRequest(new Error('down'))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Failed to load clips in this archive.')
+  })
+
   it('shows an error if the per-archive clip fetch fails', async () => {
     const group = makeGroup()
     vi.stubGlobal('fetch', routedFetch({ groups: [group], clipsFail: { [group.archive_path]: true } }))
@@ -348,6 +404,74 @@ describe('ArchivedClipsSection', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/clips/c1', { method: 'DELETE' })
     expect(wrapper.text()).toContain('1 clip')
     expect(wrapper.findAll('button').filter((b) => b.text() === 'Delete')).toHaveLength(1)
+  })
+
+  it('treats a clip with no size_bytes as 0 when reducing the group total', async () => {
+    const group = makeGroup({ clip_count: 2, total_size: 5_000_000 })
+    const clips = [makeClip({ id: 'c1', size_bytes: 0 }), makeClip({ id: 'c2' })]
+    let deleted = false
+    const baseFetch = routedFetch({ groups: [group], clips: { [group.archive_path]: clips } })
+    const fetchMock = vi.fn((url: string, options?: RequestInit) => {
+      if (options?.method === 'DELETE') deleted = true
+      if (deleted && url.startsWith('/api/storage/archive-clips')) {
+        return Promise.resolve(jsonResponse({ items: [clips[1]], total: 1 }))
+      }
+      return baseFetch(url, options)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+    await expandFirstArchive(wrapper)
+
+    const confirm = useConfirmStore()
+    const deleteButton = wrapper.findAll('button').find((b) => b.text() === 'Delete')
+    const clickPromise = deleteButton!.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+
+    // Group total_size (5.0 MB) is unchanged by a 0-byte clip's removal.
+    expect(wrapper.text()).toContain('4.8 MB')
+  })
+
+  it('falls back to a paginator total of 1 if a background refresh cleared the cached total while the delete confirmation was open', async () => {
+    const group = makeGroup({ clip_count: 2 })
+    const clips = [makeClip({ id: 'c1' }), makeClip({ id: 'c2' })]
+    let deleted = false
+    const baseFetch = routedFetch({ groups: [group], clips: { [group.archive_path]: clips } })
+    const fetchMock = vi.fn((url: string, options?: RequestInit) => {
+      if (options?.method === 'DELETE') deleted = true
+      if (deleted && url.startsWith('/api/storage/archive-clips')) {
+        return Promise.resolve(jsonResponse({ items: [clips[1]], total: 1 }))
+      }
+      return baseFetch(url, options)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+    await expandFirstArchive(wrapper)
+
+    const confirm = useConfirmStore()
+    const deleteButton = wrapper.findAll('button').find((b) => b.text() === 'Delete')
+    const clickPromise = deleteButton!.trigger('click')
+    await flushPromises()
+
+    // A background refresh (e.g. a cross-tab signal) reloads groups while the
+    // confirm dialog is still open -- this clears the cached per-archive
+    // pagination total (archiveTotals) and collapses every archive.
+    useRefreshStore().bump()
+    await flushPromises()
+
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+
+    // No crash -- the delete itself still went through regardless of the
+    // now-stale pagination bookkeeping.
+    expect(
+      fetchMock.mock.calls.some((c) => c[0] === '/api/clips/c1' && (c[1] as RequestInit)?.method === 'DELETE'),
+    ).toBe(true)
   })
 
   it('removes the whole group once its last clip is deleted', async () => {
@@ -647,6 +771,25 @@ describe('ArchivedClipsSection', () => {
     const wrapper = mountSection()
     await flushPromises()
     expect(wrapper.text()).toContain('Unknown archive')
+  })
+
+  it('falls back to the full path when it has no filename segment (trailing separator)', async () => {
+    const group = makeGroup({ archive_path: '/data/archives/2026-06/' })
+    vi.stubGlobal('fetch', routedFetch({ groups: [group] }))
+    const wrapper = mountSection()
+    await flushPromises()
+    expect(wrapper.text()).toContain('/data/archives/2026-06/')
+  })
+
+  it('renders "All cameras" and each real camera name in the filter dropdown options', async () => {
+    vi.stubGlobal('fetch', routedFetch({ groups: [], cameras: ['Front Door'] }))
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.find('.archive-filter-camera .p-select-label').trigger('click')
+    await flushPromises()
+    const options = [...document.body.querySelectorAll('[role="option"]')].map((el) => el.textContent?.trim())
+    expect(options).toEqual(['All cameras', 'Front Door'])
   })
 
   it('steps the paginator back a page if deletion empties the current page', async () => {

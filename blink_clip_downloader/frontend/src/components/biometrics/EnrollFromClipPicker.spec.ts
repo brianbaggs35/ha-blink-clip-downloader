@@ -117,6 +117,17 @@ describe('EnrollFromClipPicker', () => {
     expect(wrapper.findAll('.thumb-strip-item')).toHaveLength(0)
   })
 
+  it('keeps the current camera selected on a refresh tick when it is still in the list', async () => {
+    stubRoutedFetch({ cameras: [makeCamera('Front Door'), makeCamera('Back Yard')] })
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.findComponent(Select).props('modelValue')).toBe('Front Door')
+
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(wrapper.findComponent(Select).props('modelValue')).toBe('Front Door')
+  })
+
   it('does not let a stale loadCameras response overwrite a newer camera list/selection', async () => {
     // Regression-style guard: a refresh tick can fire loadCameras() again
     // before an earlier call (e.g. the initial fire-and-forget load) has
