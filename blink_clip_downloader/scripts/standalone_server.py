@@ -332,7 +332,18 @@ _SECURITY_FEED_NO_SNAPSHOT_CAMERA = "Garage"
 
 
 def _list_camera_names() -> list[str]:
-    return list(_CAMERAS)
+    # _CAMERAS alone (the 3 "distribution" cameras) would leave out
+    # _SCRATCH_CAMERA ("Test Scratch") -- since media_server.py's
+    # /api/ai/camera-configs now cross-checks *every* clip-history camera
+    # against this live list (not just configured-but-unclipped ones; see
+    # its own docstring), a fake list scoped only to Security Feed's
+    # original 3 cameras would make Test Scratch -- which has real seeded
+    # clips, used by several scratch/mutation tests including the Vehicles
+    # tab's -- vanish from the AI/Vehicles camera list entirely. Deliberately
+    # not added to _CAMERAS itself, which also drives the 12 distribution
+    # clips' per-camera split (see its own definition) and the Live View
+    # fake camera picker -- neither needs Test Scratch.
+    return [*_CAMERAS, _SCRATCH_CAMERA]
 
 
 def _fake_snapshot_jpeg() -> bytes:
