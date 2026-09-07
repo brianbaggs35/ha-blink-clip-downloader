@@ -22,6 +22,10 @@ const suspiciousFeed = ref<InstanceType<typeof SuspiciousFeed> | null>(null)
 async function load() {
   try {
     status.value = await getAiStatus()
+  } catch {
+    // Transient -- this polls every 10s (see pollTimer below), so leave
+    // status at its last known value rather than let a single dropped
+    // poll surface as an unhandled rejection.
   } finally {
     loading.value = false
   }
