@@ -13,6 +13,16 @@
   code path and was never checked at all. `/api/ai/camera-configs` now
   applies the same live-camera-list check to every entry regardless of
   clip history.
+- Fixed the AI Usage tab crashing (uncaught render error, page stuck
+  blank) if the `/api/ai/usage` response was ever missing its `by_model`
+  or `daily` arrays. One computed value on the page already defensively
+  handled a missing `by_model`, but the per-model and daily-usage tables'
+  own empty-state checks (`usage.by_model.length` / `usage.daily.length`)
+  did not, so an incomplete response crashed there instead of rendering
+  the intended "no data yet" messages. Found while adding coverage for
+  this defensive path; both fields are always present in a well-formed
+  response, so this could not have affected a healthy install, but the
+  page now degrades gracefully instead of crashing if it ever isn't.
 
 ## 5.4.9
 

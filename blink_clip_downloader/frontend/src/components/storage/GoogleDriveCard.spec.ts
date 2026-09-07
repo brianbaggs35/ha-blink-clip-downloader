@@ -134,6 +134,23 @@ describe('GoogleDriveCard', () => {
     })
   })
 
+  it('saves settings with a null client_secret when the field is left blank (keeps the existing secret)', async () => {
+    const fetchMock = routedFetch({ settings: CONFIGURED, status: NOT_CONNECTED_STATUS })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Setup')
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/storage/gdrive/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: 'cid', client_secret: null, backup_policy: 'archived_only' }),
+    })
+  })
+
   it('shows a Connect button once configured but not connected', async () => {
     vi.stubGlobal('fetch', routedFetch({ settings: CONFIGURED, status: NOT_CONNECTED_STATUS }))
     const wrapper = mountCard()
@@ -163,6 +180,57 @@ describe('GoogleDriveCard', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('me@example.com')
+  })
+
+  it('keeps polling while the connect-status endpoint still reports pending', async () => {
+    vi.useFakeTimers()
+    const routes: Routes = { settings: CONFIGURED, status: NOT_CONNECTED_STATUS }
+    const fetchMock = routedFetch(routes)
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    const connectBtn = wrapper.findAll('button').find((b) => b.text() === 'Connect Google Drive')
+    await connectBtn!.trigger('click')
+    await flushPromises()
+
+    // The first poll tick still reports pending -- must not stop polling.
+    routes.connectStatus = { phase: 'pending', user_code: 'ABCD-1234', verification_url: 'https://google.com/device' }
+    const callsBeforeTick = fetchMock.mock.calls.length
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    // Still polling: another connect-status request went out, and the card
+    // still shows the pending code rather than having stopped early.
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBeforeTick)
+    expect(wrapper.text()).toContain('ABCD-1234')
+
+    routes.connectStatus = { phase: 'connected', account_email: 'me@example.com' }
+    routes.status = CONNECTED_WITH_FOLDER
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(wrapper.text()).toContain('me@example.com')
+  })
+
+  it('does not start polling when the connect response resolves immediately (no pending phase)', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/storage/gdrive/connect' && opts?.method === 'POST')
+        return Promise.resolve(jsonResponse({ phase: 'error', message: 'Google Drive is not configured correctly' }))
+      return routedFetch({ settings: CONFIGURED, status: NOT_CONNECTED_STATUS })(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    const connectBtn = wrapper.findAll('button').find((b) => b.text() === 'Connect Google Drive')
+    await connectBtn!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Google Drive is not configured correctly')
+    const callsBeforeTick = fetchMock.mock.calls.length
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeTick)
   })
 
   it('resumes polling on mount if a connect was already in flight', async () => {
@@ -195,6 +263,24 @@ describe('GoogleDriveCard', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Sign-in was denied')
+  })
+
+  it('falls back to a generic message when the poll reports an error with no message', async () => {
+    vi.useFakeTimers()
+    const routes: Routes = { settings: CONFIGURED, status: NOT_CONNECTED_STATUS }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountCard()
+    await flushPromises()
+
+    const connectBtn = wrapper.findAll('button').find((b) => b.text() === 'Connect Google Drive')
+    await connectBtn!.trigger('click')
+    await flushPromises()
+
+    routes.connectStatus = { phase: 'error' }
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Sign-in failed.')
   })
 
   it('shows an expired message once the poll reports the device code timed out', async () => {
@@ -277,6 +363,20 @@ describe('GoogleDriveCard', () => {
     const wrapper = mountCard()
     await flushPromises()
     expect(wrapper.text()).toContain('Unlimited storage')
+  })
+
+  it('shows 0% usage when the Drive quota reports no usage yet', async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch({
+        settings: CONFIGURED,
+        status: CONNECTED_WITH_FOLDER,
+        quota: { available: true, limit: 1_073_741_824 * 10, usage: 0, usage_in_drive: 0 },
+      }),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ProgressBar' }).props('value')).toBe(0)
   })
 
   it('treats a failed quota fetch as unavailable rather than crashing', async () => {
@@ -427,5 +527,150 @@ describe('GoogleDriveCard', () => {
 
     const body = new DOMWrapper(document.body)
     expect(body.text()).toContain('Other Folder')
+  })
+
+  it('closing the Change Folder dialog without selecting a folder just hides it', async () => {
+    vi.stubGlobal('fetch', routedFetch({ settings: CONFIGURED, status: CONNECTED_WITH_FOLDER }))
+    const wrapper = mountCard()
+    await flushPromises()
+    const changeBtn = wrapper.findAll('button').find((b) => b.text() === 'Change Folder')
+    await changeBtn!.trigger('click')
+    await flushPromises()
+    // GoogleDriveSetupHelp and GoogleDriveFolderBrowser each render their own
+    // (normally hidden) Dialog too -- find this card's own by its header.
+    const folderDialog = () =>
+      wrapper.findAllComponents({ name: 'Dialog' }).find((d) => d.props('header') === 'Change Backup Folder')!
+    expect(folderDialog().props('visible')).toBe(true)
+    folderDialog().vm.$emit('update:visible', false)
+    await flushPromises()
+    expect(folderDialog().props('visible')).toBe(false)
+  })
+
+  it('shows a toast when changing the backup folder fails', async () => {
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/storage/gdrive/folder' && opts?.method === 'PUT') return Promise.reject(new Error('down'))
+      return routedFetch({
+        settings: CONFIGURED,
+        status: CONNECTED_WITH_FOLDER,
+        folders: { folders: [{ id: 'f2', name: 'Other Folder', modified_time: '' }] },
+      })(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+    const changeBtn = wrapper.findAll('button').find((b) => b.text() === 'Change Folder')
+    await changeBtn!.trigger('click')
+    await flushPromises()
+    const body = new DOMWrapper(document.body)
+    const selectBtn = body.findAll('button').find((b) => b.text() === 'Select')
+    await selectBtn!.trigger('click')
+    await flushPromises()
+    const toast = useToastStore()
+    expect(toast.message).toBe('Could not select that folder')
+    expect(toast.isError).toBe(true)
+  })
+
+  it('changes the backup policy and saves it', async () => {
+    const fetchMock = routedFetch({ settings: CONFIGURED, status: NOT_CONNECTED_STATUS })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    await wrapper.find('#gdrive-backup-policy .p-select-label').trigger('click')
+    await flushPromises()
+    const opt = [...document.body.querySelectorAll('[role="option"]')].find(
+      (el) => el.getAttribute('aria-label') === 'All clips (archived + regular downloads)',
+    ) as HTMLElement
+    await new DOMWrapper(opt).trigger('mousedown')
+    await flushPromises()
+
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Setup')
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/storage/gdrive/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: 'cid', client_secret: null, backup_policy: 'all_clips' }),
+    })
+  })
+
+  it('shows a toast when the initial load fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/storage/gdrive/settings')) return Promise.reject(new Error('down'))
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    mountCard()
+    await flushPromises()
+    const toast = useToastStore()
+    expect(toast.message).toBe('Failed to load Google Drive status')
+    expect(toast.isError).toBe(true)
+  })
+
+  it('shows a toast when saving settings fails', async () => {
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/storage/gdrive/settings' && opts?.method === 'PUT') return Promise.reject(new Error('down'))
+      return routedFetch({ settings: NOT_CONFIGURED, status: NOT_CONNECTED_STATUS })(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+    const saveBtn = wrapper.findAll('button').find((b) => b.text() === 'Save Setup')
+    await saveBtn!.trigger('click')
+    await flushPromises()
+    const toast = useToastStore()
+    expect(toast.message).toBe('Could not save Google Drive settings')
+    expect(toast.isError).toBe(true)
+  })
+
+  it('shows a toast when starting the connect flow fails', async () => {
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/storage/gdrive/connect' && opts?.method === 'POST') return Promise.reject(new Error('down'))
+      return routedFetch({ settings: CONFIGURED, status: NOT_CONNECTED_STATUS })(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+    const connectBtn = wrapper.findAll('button').find((b) => b.text() === 'Connect Google Drive')
+    await connectBtn!.trigger('click')
+    await flushPromises()
+    const toast = useToastStore()
+    expect(toast.message).toBe('Could not start Google Drive sign-in')
+    expect(toast.isError).toBe(true)
+  })
+
+  it('shows a toast when disconnecting fails', async () => {
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/storage/gdrive/disconnect') return Promise.reject(new Error('down'))
+      return routedFetch({ settings: CONFIGURED, status: CONNECTED_WITH_FOLDER })(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const disconnectBtn = wrapper.findAll('button').find((b) => b.text() === 'Disconnect')
+    const clickPromise = disconnectBtn!.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    const toast = useToastStore()
+    expect(toast.message).toBe('Could not disconnect')
+    expect(toast.isError).toBe(true)
+  })
+
+  it('treats a failed queue-status fetch as unavailable rather than crashing', async () => {
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/storage/gdrive/queue')
+        return Promise.resolve({ ok: false, status: 500, statusText: 'err', text: () => Promise.resolve('') })
+      return routedFetch({ settings: CONFIGURED, status: CONNECTED_WITH_FOLDER })(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Backup queue:')
   })
 })

@@ -186,6 +186,30 @@ describe('useAuthStore', () => {
     expect(auth.twoFAMessage).toContain('Network error')
   })
 
+  it('submitTwoFA(): a non-ok response whose body cannot even be read falls back to a generic error', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      text: () => Promise.reject(new Error('body already consumed')),
+    } as unknown as Response)
+    const auth = useAuthStore()
+    const ok = await auth.submitTwoFA('123456')
+    expect(ok).toBe(false)
+    expect(auth.twoFAMessage).toBe('Error')
+    expect(auth.twoFAMessageIsError).toBe(true)
+  })
+
+  it('submitTwoFA(): an ok response with an unparsable body still submits with pendingSeq 0', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: () => Promise.reject(new Error('invalid JSON')),
+    } as unknown as Response)
+    const auth = useAuthStore()
+    const ok = await auth.submitTwoFA('123456')
+    expect(ok).toBe(true)
+    expect(auth.pendingSeq).toBe(0)
+    expect(auth.twoFAPhase).toBe('submitted')
+  })
+
   it('submitTwoFA(): a response with no seq falls back to 0', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({}))
     const auth = useAuthStore()

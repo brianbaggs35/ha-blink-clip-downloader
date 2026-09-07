@@ -68,6 +68,20 @@ describe('NotificationChannelsCard', () => {
     expect(wrapper.text()).toContain('Test message sent to Discord.')
   })
 
+  it('sends a test Discord message and shows a failure message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        expect(url).toContain('/api/notifications/test-discord')
+        return Promise.resolve(jsonResponse({ success: false, message: 'Discord webhook URL is not configured.' }))
+      }),
+    )
+    const wrapper = mount(NotificationChannelsCard)
+    await findButtonByText(wrapper, 'Send test message').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Discord webhook URL is not configured.')
+  })
+
   it('sends a test mobile notification and shows a failure message', async () => {
     vi.stubGlobal(
       'fetch',
@@ -82,6 +96,20 @@ describe('NotificationChannelsCard', () => {
     expect(wrapper.text()).toContain('Mobile app target is not configured.')
   })
 
+  it('sends a test mobile notification and shows the success message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        expect(url).toContain('/api/notifications/test-mobile')
+        return Promise.resolve(jsonResponse({ success: true, message: 'Test notification sent to your device.' }))
+      }),
+    )
+    const wrapper = mount(NotificationChannelsCard)
+    await findButtonByText(wrapper, 'Send test notification').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Test notification sent to your device.')
+  })
+
   it('sends a test HA notification and shows the success message', async () => {
     vi.stubGlobal(
       'fetch',
@@ -94,6 +122,20 @@ describe('NotificationChannelsCard', () => {
     await findButtonByText(wrapper, 'Send test HA notification').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Test notification sent to Home Assistant.')
+  })
+
+  it('sends a test HA notification and shows a failure message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        expect(url).toContain('/api/notifications/test-ha')
+        return Promise.resolve(jsonResponse({ success: false, message: 'Home Assistant notify service failed.' }))
+      }),
+    )
+    const wrapper = mount(NotificationChannelsCard)
+    await findButtonByText(wrapper, 'Send test HA notification').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Home Assistant notify service failed.')
   })
 
   it('shows a generic failure message when the request throws', async () => {

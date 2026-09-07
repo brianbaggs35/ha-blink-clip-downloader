@@ -500,6 +500,45 @@ describe('ClipAiPanel', () => {
     })
   })
 
+  it('treats a null is_suspicious (legacy row predating the column default) as not-suspicious when proposing a correction', async () => {
+    // is_suspicious is nullable in the DB schema (no NOT NULL constraint) --
+    // a pre-existing row could come back with null rather than a real
+    // boolean. The proposed correction must fall back the same way an
+    // explicit `false` does, not propagate null into the request body.
+    const legacyRow = { ...RESULT, is_suspicious: null }
+    let submittedBody: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/ai/feedback/c1' && opts?.method === 'POST') {
+          submittedBody = JSON.parse(opts.body as string)
+          return Promise.resolve(jsonResponse({ saved: true }))
+        }
+        if (url === '/api/ai/results/c1') return Promise.resolve(jsonResponse(legacyRow))
+        if (url === '/api/ai/feedback/c1') return Promise.resolve(jsonResponse(null))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('👎 Incorrect'))!
+      .trigger('click')
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Submit')!
+      .trigger('click')
+    await flushPromises()
+    expect(submittedBody).toEqual({
+      correct: false,
+      correction_note: '',
+      corrected_suspicious: true,
+    })
+  })
+
   it('submits the feedback note without checking corrected-suspicious', async () => {
     let submittedBody: unknown
     vi.stubGlobal(

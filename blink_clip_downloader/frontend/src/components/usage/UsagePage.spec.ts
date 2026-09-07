@@ -257,6 +257,29 @@ describe('UsagePage', () => {
     wrapper.unmount()
   })
 
+  it('tolerates a malformed response with by_model missing entirely', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ by_model: undefined })))),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Models Used')
+    expect(wrapper.text()).toContain('No analysis data yet')
+    wrapper.unmount()
+  })
+
+  it('tolerates a malformed response with daily missing entirely', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(baseUsage({ daily: undefined })))),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    expect(wrapper.text()).toContain('No analysis activity in the last 14 days')
+    wrapper.unmount()
+  })
+
   it('hides the cost stat when there is no priced data', async () => {
     vi.stubGlobal(
       'fetch',
