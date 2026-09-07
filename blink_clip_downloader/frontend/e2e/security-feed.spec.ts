@@ -15,10 +15,14 @@ test.beforeEach(async ({ page }) => {
 test('renders a tile per camera with the info banner', async ({ page }) => {
   await expect(page.locator('.secfeed-info-banner')).toContainText('only change when Blink itself records new motion')
   const tiles = page.locator('.secfeed-tile')
-  await expect(tiles).toHaveCount(3)
+  // 4, not 3: list_camera_names() (standalone_server.py) also includes
+  // Test Scratch alongside the 3 "distribution" cameras, so it can be
+  // recognized as a live camera by /api/ai/camera-configs too.
+  await expect(tiles).toHaveCount(4)
   await expect(tiles.filter({ hasText: 'Front Door' })).toBeVisible()
   await expect(tiles.filter({ hasText: 'Backyard' })).toBeVisible()
   await expect(tiles.filter({ hasText: 'Garage' })).toBeVisible()
+  await expect(tiles.filter({ hasText: 'Test Scratch' })).toBeVisible()
 })
 
 test('shows a real snapshot for a camera with one cached, and the placeholder for one without', async ({ page }) => {
