@@ -12,7 +12,7 @@ import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { useCapabilitiesStore } from '../../stores/capabilities'
 import { apiPost } from '../../api/client'
-import { getStats } from '../../api/clips'
+import { getCameras, getStats } from '../../api/clips'
 import { listFaces } from '../../api/ai'
 
 export type TabName =
@@ -162,6 +162,10 @@ function onRefreshClick() {
 // lifetime, so it's the right place to own this independently.
 const CONNECTION_POLL_INTERVAL_MS = 10000
 let connectionPollTimer: ReturnType<typeof setInterval> | undefined
+let cameraPollTimer: ReturnType<typeof setInterval> | undefined
+let cameraSignature = ''
+let cameraListInitialized = false
+let cameraPollSeq = 0
 
 async function pollConnection() {
   try {
@@ -173,13 +177,42 @@ async function pollConnection() {
   }
 }
 
+async function pollCameras() {
+  const seq = ++cameraPollSeq
+  try {
+    const cameras = await getCameras()
+    if (seq !== cameraPollSeq) return
+    const previousCameras = library.cameras
+    const signature = cameras
+      .map((camera) => camera.camera.toLowerCase())
+      .sort()
+      .join('\u0001')
+    const changed = cameraListInitialized && signature !== cameraSignature
+    if (library.currentCamera !== 'all' && !cameras.some((camera) => camera.camera === library.currentCamera)) {
+      const additions = cameras.filter(
+        (camera) => !previousCameras.some((previous) => previous.camera === camera.camera),
+      )
+      library.selectCamera(additions.length === 1 ? additions[0].camera : 'all')
+    }
+    library.setCameras(cameras)
+    cameraSignature = signature
+    cameraListInitialized = true
+    if (changed) refresh.bump()
+  } catch {
+    // Transient — leave the camera navigation at its last known state.
+  }
+}
+
 onMounted(() => {
   void pollConnection()
+  void pollCameras()
   void pollFaceRecognitionAvailable()
   connectionPollTimer = setInterval(pollConnection, CONNECTION_POLL_INTERVAL_MS)
+  cameraPollTimer = setInterval(pollCameras, CONNECTION_POLL_INTERVAL_MS)
 })
 onUnmounted(() => {
   if (connectionPollTimer) clearInterval(connectionPollTimer)
+  if (cameraPollTimer) clearInterval(cameraPollTimer)
 })
 </script>
 
@@ -297,7 +330,7 @@ onUnmounted(() => {
       v-model:visible="showAbout"
       modal
       dismissable-mask
-      header="About Blink Clips 5.4.7"
+      header="About Blink Clips 5.4.8"
       :style="{ width: '26rem' }"
       :draggable="false"
     >

@@ -1018,9 +1018,7 @@ class MediaServer:
             raise web.HTTPServiceUnavailable(text="Security Feed is not available")
         return web.json_response({"cameras": self._list_camera_names()})
 
-    async def _handle_security_feed_settings_get(  # NOSONAR
-        self, _request: web.Request
-    ) -> web.Response:
+    def _read_security_feed_settings(self) -> dict[str, Any]:
         settings = {
             # Empty means "show every camera" — same convention as
             # ai_car_cameras (see config.py), not a distinct sentinel.
@@ -1031,6 +1029,8 @@ class MediaServer:
         if self._SECURITY_FEED_SETTINGS_FILE.exists():
             try:
                 data = json.loads(self._SECURITY_FEED_SETTINGS_FILE.read_text())
+                if not isinstance(data, dict):
+                    raise TypeError("settings must be a JSON object")
                 settings["cameras"] = [str(c) for c in data.get("cameras", [])]
                 settings["columns"] = self._clamp_security_feed_columns(
                     data.get("columns", self._SECURITY_FEED_DEFAULT_COLUMNS)
@@ -1042,6 +1042,12 @@ class MediaServer:
                 )
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.debug("Could not read Security Feed settings file: %s", exc)
+        return settings
+
+    async def _handle_security_feed_settings_get(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
+        settings = self._read_security_feed_settings()
         return web.json_response(settings)
 
     async def _handle_security_feed_settings_put(
@@ -1487,6 +1493,7 @@ class MediaServer:
         return web.json_response({"status": "installing"})
 
     _CAMERA_CONFIGS_FILE = Path("/data/camera_configs.json")
+    _CAMERA_NAME_ALIASES_FILE = Path("/data/camera_name_aliases.json")
 
     async def _handle_ai_camera_configs_get(
         self, _request: web.Request
@@ -1535,7 +1542,106 @@ class MediaServer:
                         "auto_analyze": entry.get("auto_analyze", True) is not False,
                     }
                 )
-        return web.json_response(result, headers={"ETag": f'"{revision}"'})
+        return web.json_response(
+            result,
+            headers={
+                "ETag": f'"{revision}"',
+                "X-Camera-Aliases": json.dumps(self._read_camera_name_aliases()),
+            },
+        )
+
+    @staticmethod
+    def _merge_camera_config_fields(
+        target: dict[str, Any], source: dict[str, Any]
+    ) -> None:
+        for field in (
+            "description",
+            "custom_prompt",
+            "is_car_camera",
+            "car_zone",
+            "auto_analyze",
+        ):
+            if field not in target or target[field] in ("", None):
+                target[field] = source.get(field)
+
+    def _migrate_camera_configs(self, old_name: str, new_name: str) -> None:
+        configs = self._read_camera_configs()
+        target = next(
+            (
+                config
+                for config in configs
+                if str(config.get("camera", "")).lower() == new_name.lower()
+            ),
+            None,
+        )
+        migrated: list[dict[str, Any]] = []
+        changed = False
+        for config in configs:
+            if str(config.get("camera", "")).lower() != old_name.lower():
+                migrated.append(config)
+                continue
+            changed = True
+            if target is None:
+                config["camera"] = new_name
+                target = config
+                migrated.append(config)
+            elif config is not target:
+                self._merge_camera_config_fields(target, config)
+        if not changed:
+            return
+        try:
+            self._CAMERA_CONFIGS_FILE.write_text(json.dumps(migrated, indent=2))
+        except OSError as exc:
+            _LOGGER.warning(_CAMERA_CONFIGS_SAVE_ERROR, exc)
+            raise
+        self._apply_camera_configs_to_analyzer(migrated)
+
+    def _migrate_security_feed_settings(self, old_name: str, new_name: str) -> None:
+        settings = self._read_security_feed_settings()
+        cameras = settings.get("cameras", [])
+        renamed_cameras = [
+            new_name if str(camera).lower() == old_name.lower() else camera
+            for camera in cameras
+        ]
+        if renamed_cameras == cameras:
+            return
+        settings["cameras"] = list(dict.fromkeys(renamed_cameras))
+        try:
+            self._SECURITY_FEED_SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
+        except OSError as exc:
+            _LOGGER.warning(
+                "Could not save security feed settings after camera rename: %s",
+                exc,
+            )
+            raise
+
+    def _migrate_vehicle_zone_snapshot(self, old_name: str, new_name: str) -> None:
+        old_snapshot = self._vehicle_zone_snapshot_path(old_name)
+        if not old_snapshot.exists():
+            old_snapshot = self._legacy_vehicle_zone_snapshot_path(old_name)
+        new_snapshot = self._vehicle_zone_snapshot_path(new_name)
+        if not old_snapshot.exists() or old_snapshot == new_snapshot:
+            return
+        try:
+            if new_snapshot.exists():
+                old_snapshot.unlink()
+            else:
+                old_snapshot.replace(new_snapshot)
+        except OSError as exc:
+            _LOGGER.warning(
+                "Could not migrate vehicle zone snapshot %s -> %s: %s",
+                old_name,
+                new_name,
+                exc,
+            )
+            raise
+
+    async def rename_camera(self, old_name: str, new_name: str) -> None:
+        """Migrate persisted camera settings after Blink changes a name."""
+        async with self._camera_configs_lock:
+            self._migrate_camera_configs(old_name, new_name)
+            self._migrate_security_feed_settings(old_name, new_name)
+            self._migrate_vehicle_zone_snapshot(old_name, new_name)
 
     @staticmethod
     def _normalize_car_zone(zone: Any) -> dict[str, Any] | None:
@@ -1606,6 +1712,7 @@ class MediaServer:
                 for c in body
                 if isinstance(c, dict) and c.get("camera")
             ]
+            configs = self._canonicalize_camera_configs(configs)
         except web.HTTPBadRequest:
             raise
         except Exception:  # noqa: BLE001
@@ -1666,6 +1773,47 @@ class MediaServer:
         self._analyzer.update_car_cameras(car_cameras)
         car_zones = {c["camera"]: c["car_zone"] for c in configs if c.get("car_zone")}
         self._analyzer.update_car_zones(car_zones)
+
+    def _canonicalize_camera_configs(
+        self, configs: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Apply durable camera aliases and collapse stale duplicate entries."""
+        aliases = self._read_camera_name_aliases()
+
+        canonical: list[dict[str, Any]] = []
+        by_name: dict[str, int] = {}
+        for config in configs:
+            name = str(config["camera"])
+            seen: set[str] = set()
+            while name.lower() in aliases and name.lower() not in seen:
+                seen.add(name.lower())
+                name = aliases[name.lower()]
+            config["camera"] = name
+            key = name.lower()
+            existing = by_name.get(key)
+            if existing is None:
+                by_name[key] = len(canonical)
+                canonical.append(config)
+            else:
+                canonical[existing] = config
+        return canonical
+
+    def _read_camera_name_aliases(self) -> dict[str, str]:
+        """Return persisted aliases normalized for case-insensitive lookups."""
+        if not self._CAMERA_NAME_ALIASES_FILE.exists():
+            return {}
+        try:
+            data = json.loads(self._CAMERA_NAME_ALIASES_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            _LOGGER.warning("Could not load camera name aliases")
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            str(alias).lower(): str(target)
+            for alias, target in data.items()
+            if alias and target
+        }
 
     # ------------------------------------------------------------------
     # Vehicle settings (Vehicles tab) — the one global (not per-camera)
@@ -1744,6 +1892,12 @@ class MediaServer:
 
     @classmethod
     def _vehicle_zone_snapshot_path(cls, camera: str) -> Path:
+        slug = re.sub(r"[^a-z0-9]+", "-", camera.lower()).strip("-") or "camera"
+        suffix = hashlib.sha256(camera.encode("utf-8")).hexdigest()[:10]
+        return cls._VEHICLE_ZONE_SNAPSHOTS_DIR / f"{slug}-{suffix}.jpg"
+
+    @classmethod
+    def _legacy_vehicle_zone_snapshot_path(cls, camera: str) -> Path:
         slug = re.sub(r"[^a-z0-9]+", "-", camera.lower()).strip("-") or "camera"
         return cls._VEHICLE_ZONE_SNAPSHOTS_DIR / f"{slug}.jpg"
 
@@ -1848,6 +2002,7 @@ class MediaServer:
                     ) from exc
 
         self._vehicle_zone_snapshot_path(camera).unlink(missing_ok=True)
+        self._legacy_vehicle_zone_snapshot_path(camera).unlink(missing_ok=True)
 
         return web.json_response({"saved": True})
 
@@ -1856,6 +2011,10 @@ class MediaServer:
     ) -> web.StreamResponse:
         camera = request.match_info["camera"]
         snapshot_path = self._vehicle_zone_snapshot_path(camera)
+        if not snapshot_path.exists():
+            legacy_snapshot_path = self._legacy_vehicle_zone_snapshot_path(camera)
+            if legacy_snapshot_path.exists():
+                snapshot_path = legacy_snapshot_path
         if not snapshot_path.exists():
             # A car_zone saved before the persisted-snapshot redesign (see
             # _handle_vehicle_zone_put) has no snapshot file on disk — the
@@ -1876,6 +2035,7 @@ class MediaServer:
                 raise web.HTTPNotFound(text="No snapshot saved for this camera")
             try:
                 self._VEHICLE_ZONE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+                snapshot_path = self._vehicle_zone_snapshot_path(camera)
                 snapshot_path.write_bytes(fallback.read_bytes())
             except OSError as exc:
                 _LOGGER.warning(

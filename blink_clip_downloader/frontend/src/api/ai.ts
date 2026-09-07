@@ -24,6 +24,7 @@ import type {
 } from './types'
 
 let cameraConfigUpdateQueue: Promise<void> = Promise.resolve()
+export type CameraNameAliases = Record<string, string>
 
 export function getAiStatus(): Promise<AiStatus> {
   return apiGet('/api/ai/status')
@@ -73,9 +74,20 @@ export function getCameraConfigs(): Promise<CameraConfig[]> {
   return apiGet('/api/ai/camera-configs')
 }
 
-async function getCameraConfigsSnapshot(): Promise<{ configs: CameraConfig[]; revision: string | null }> {
+async function getCameraConfigsSnapshot(): Promise<{
+  configs: CameraConfig[]
+  revision: string | null
+  aliases: CameraNameAliases
+}> {
   const response = await apiGetWithHeaders<CameraConfig[]>('/api/ai/camera-configs')
-  return { configs: response.data, revision: response.headers.get('ETag') }
+  const aliases = (() => {
+    try {
+      return JSON.parse(response.headers.get('X-Camera-Aliases') || '{}') as CameraNameAliases
+    } catch {
+      return {}
+    }
+  })()
+  return { configs: response.data, revision: response.headers.get('ETag'), aliases }
 }
 
 export function saveCameraConfigs(
@@ -86,11 +98,11 @@ export function saveCameraConfigs(
 }
 
 export function updateCameraConfigs(
-  buildConfigs: (latest: CameraConfig[]) => CameraConfig[],
+  buildConfigs: (latest: CameraConfig[], aliases: CameraNameAliases) => CameraConfig[],
 ): Promise<{ saved: boolean; count: number; configs: CameraConfig[] }> {
   const update = async (attempt: number): Promise<{ saved: boolean; count: number; configs: CameraConfig[] }> => {
     const snapshot = await getCameraConfigsSnapshot()
-    const configs = buildConfigs(snapshot.configs)
+    const configs = buildConfigs(snapshot.configs, snapshot.aliases)
     try {
       const result = await saveCameraConfigs(configs, snapshot.revision ?? undefined)
       return { ...result, configs }
@@ -98,6 +110,7 @@ export function updateCameraConfigs(
       if (error instanceof ApiError && error.status === 409 && attempt === 0) {
         return update(1)
       }
+
       throw error
     }
   }
@@ -107,6 +120,16 @@ export function updateCameraConfigs(
     () => undefined,
   )
   return operation
+}
+
+export function resolveCameraAlias(camera: string, aliases: CameraNameAliases): string {
+  let current = camera
+  const seen = new Set<string>()
+  while (aliases[current.toLowerCase()] && !seen.has(current.toLowerCase())) {
+    seen.add(current.toLowerCase())
+    current = aliases[current.toLowerCase()]
+  }
+  return current
 }
 
 export function getFeedbackStats(camera?: string): Promise<FeedbackStats> {

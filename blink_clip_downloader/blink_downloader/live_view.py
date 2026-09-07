@@ -208,6 +208,15 @@ class LiveViewManager:
         """Every camera name on the currently authenticated account."""
         return self._list_camera_names()
 
+    async def rename_camera(self, old_name: str, new_name: str) -> None:
+        """Keep an active session's display name aligned with Blink."""
+        async with self._lock:
+            if (
+                self._session is not None
+                and self._session.camera_name.lower() == old_name.lower()
+            ):
+                self._session.camera_name = new_name
+
     async def start_session(self, camera_name: str) -> LiveViewStatus:
         """Start (or join) a live-view session for *camera_name*.
 
