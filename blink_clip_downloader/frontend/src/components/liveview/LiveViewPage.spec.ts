@@ -885,4 +885,68 @@ describe('LiveViewPage', () => {
     expect(wrapper.text()).toContain('Entryway')
     expect(wrapper.findComponent(SelectButton).props('modelValue')).toBe('Front Door')
   })
+
+  it('does not let a stale loadCameras response overwrite a newer camera list', async () => {
+    let resolveStale!: (cameras: string[]) => void
+    const stale = new Promise<string[]>((resolve) => {
+      resolveStale = resolve
+    })
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/liveview/cameras') {
+          call++
+          if (call === 1) return stale.then((cameras) => jsonResponse({ cameras }))
+          return Promise.resolve(jsonResponse({ cameras: ['Entryway'] }))
+        }
+        if (url === '/api/liveview/status') return Promise.resolve(jsonResponse(INACTIVE))
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mountPage()
+    // The mount-time loadCameras() call is in flight (call 1, deferred).
+    // A refresh tick fires a second one, which resolves immediately.
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Entryway')
+
+    // The stale first call resolves last, with a camera list that no
+    // longer contains "Entryway" at all.
+    resolveStale(['Front Door'])
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Entryway')
+    expect(wrapper.text()).not.toContain('Front Door')
+  })
+
+  it('does not show a stale loadCameras error after a newer call already succeeded', async () => {
+    let rejectStale!: (err: Error) => void
+    const stale = new Promise<never>((_resolve, reject) => {
+      rejectStale = reject
+    })
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/liveview/cameras') {
+          call++
+          if (call === 1) return stale
+          return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
+        }
+        if (url === '/api/liveview/status') return Promise.resolve(jsonResponse(INACTIVE))
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mountPage()
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Front Door')
+
+    rejectStale(new Error('network down'))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Front Door')
+    expect(wrapper.text()).not.toContain('Failed to load cameras')
+  })
 })

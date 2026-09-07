@@ -906,6 +906,34 @@ async def test_rename_camera_migrates_library_and_battery_state(
     )
 
 
+async def test_rename_camera_skips_reinsert_when_duration_stats_have_no_samples(
+    db: ClipDatabase,
+) -> None:
+    """A camera_duration_stats row can only exist with sample_count >= 1
+    through record_clip_baseline(), but the migration's weighted-average
+    guard (skip the reinsert if the matched rows sum to zero samples,
+    avoiding a division by zero) should still behave safely if a row ever
+    is found with no samples -- e.g. a legacy/manually-edited row."""
+    assert db._pool is not None
+    await db._pool.execute(
+        "INSERT INTO camera_duration_stats (camera, avg_duration, sample_count) "
+        "VALUES ($1, $2, $3)",
+        "Front Door",
+        0.0,
+        0,
+    )
+
+    assert await db.rename_camera("Front Door", "Entryway") is True
+
+    assert (
+        await db._pool.fetchval(
+            "SELECT COUNT(*) FROM camera_duration_stats WHERE LOWER(camera) = LOWER($1)",
+            "Entryway",
+        )
+        == 0
+    )
+
+
 async def test_rename_camera_noop_without_persisted_state() -> None:
     database = ClipDatabase()
     assert await database.rename_camera("Front Door", "Entryway") is False

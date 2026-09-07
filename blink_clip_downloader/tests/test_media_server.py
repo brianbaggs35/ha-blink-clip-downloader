@@ -1647,6 +1647,109 @@ async def test_ai_camera_configs_get_empty(client: TestClient) -> None:
     assert isinstance(data, list)
 
 
+async def test_ai_camera_configs_get_excludes_cameras_no_longer_on_the_account(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A camera_configs.json entry for a camera that no longer exists under
+    that name on the Blink account (e.g. renamed before this add-on's
+    rename-tracking ever observed the old name -- the only way rename
+    migration can ever fire) must not keep showing up forever as if it
+    were still a real, selectable camera. Regression test for a live report:
+    a renamed camera's old default name ("Outdoor 4 - JTU8"-style) kept
+    appearing in the AI Analysis Configuration modal alongside the real
+    cameras.
+    """
+    await db.add_clip(_make_clip("c1", camera="Inside House"))
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Outdoor 4 - JTU8",
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": False,
+                    "car_zone": None,
+                    "auto_analyze": True,
+                },
+                {
+                    "camera": "Front Door",
+                    "description": "Still real, just no recent clips",
+                    "custom_prompt": "",
+                    "is_car_camera": False,
+                    "car_zone": None,
+                    "auto_analyze": True,
+                },
+                {
+                    "camera": "Inside House",
+                    "description": "Has a recent clip too",
+                    "custom_prompt": "",
+                    "is_car_camera": False,
+                    "car_zone": None,
+                    "auto_analyze": True,
+                },
+            ]
+        )
+    )
+    server = MediaServer(
+        db=db, port=0, list_camera_names=lambda: ["Front Door", "Inside House"]
+    )
+    with patch.object(server, "_CAMERA_CONFIGS_FILE", cfg_file):
+        tc = TestClient(TestServer(server._build_app()))
+        await tc.start_server()
+        try:
+            resp = await tc.get("/api/ai/camera-configs")
+            data = await resp.json()
+        finally:
+            await tc.close()
+
+    names = [c["camera"] for c in data]
+    assert "Outdoor 4 - JTU8" not in names
+    assert "Front Door" in names
+    # A configured camera that also has recent clips must appear exactly
+    # once (via the recent-clips pass), not duplicated by the "configured
+    # but not recently clipped" pass too.
+    assert names.count("Inside House") == 1
+    inside_house = next(c for c in data if c["camera"] == "Inside House")
+    assert inside_house["description"] == "Has a recent clip too"
+
+
+async def test_ai_camera_configs_get_keeps_stale_entries_without_a_live_camera_list(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Without a live camera list wired in at all (list_camera_names is
+    None) -- e.g. before Blink has connected yet -- fall back to the old
+    behavior rather than risk hiding every not-yet-clipped camera's
+    settings just because there's nothing to check against.
+    """
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Outdoor 4 - JTU8",
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": False,
+                    "car_zone": None,
+                    "auto_analyze": True,
+                }
+            ]
+        )
+    )
+    server = MediaServer(db=db, port=0)
+    with patch.object(server, "_CAMERA_CONFIGS_FILE", cfg_file):
+        tc = TestClient(TestServer(server._build_app()))
+        await tc.start_server()
+        try:
+            resp = await tc.get("/api/ai/camera-configs")
+            data = await resp.json()
+        finally:
+            await tc.close()
+
+    assert {c["camera"] for c in data} == {"Outdoor 4 - JTU8"}
+
+
 async def test_rename_camera_migrates_persisted_settings(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
@@ -1719,6 +1822,12 @@ def test_canonicalize_camera_configs_applies_aliases(
         assert server._canonicalize_camera_configs(
             [{"camera": "Front Door", "description": "Fallback"}]
         ) == [{"camera": "Front Door", "description": "Fallback"}]
+
+    alias_file.write_text("[]")
+    with patch.object(server, "_CAMERA_NAME_ALIASES_FILE", alias_file):
+        assert server._canonicalize_camera_configs(
+            [{"camera": "Front Door", "description": "Not an object"}]
+        ) == [{"camera": "Front Door", "description": "Not an object"}]
 
 
 async def test_rename_camera_creates_config_and_logs_settings_write_failures(
@@ -4806,6 +4915,28 @@ async def test_vehicle_zone_snapshot_get_not_found(
     ):
         resp = await client.get("/api/vehicle/zone-snapshot/Driveway")
     assert resp.status == 404
+
+
+async def test_vehicle_zone_snapshot_get_falls_back_to_legacy_path(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """A car_zone saved before the hashed-suffix snapshot scheme (added
+    alongside camera rename support, to avoid two differently-cased/renamed
+    cameras slugifying to the same filename) only has a file at the old,
+    unsuffixed path. The GET endpoint must still find and serve it rather
+    than 404 just because the new-scheme path is empty.
+    """
+    snapshots_dir = tmp_path / "snapshots"
+    snapshots_dir.mkdir()
+    with patch(
+        "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+        new=snapshots_dir,
+    ):
+        legacy_path = MediaServer._legacy_vehicle_zone_snapshot_path("Driveway")
+        legacy_path.write_bytes(b"\xff\xd8\xff" + b"\x00" * 16)
+        resp = await client.get("/api/vehicle/zone-snapshot/Driveway")
+    assert resp.status == 200
+    assert resp.content_type == "image/jpeg"
 
 
 async def test_vehicle_zone_snapshot_get_falls_back_to_newest_clip_thumbnail(

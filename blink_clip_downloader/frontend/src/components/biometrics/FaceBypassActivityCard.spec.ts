@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import FaceBypassActivityCard from './FaceBypassActivityCard.vue'
+import { useRefreshStore } from '../../stores/refresh'
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -33,6 +35,9 @@ function mountCard() {
 }
 
 describe('FaceBypassActivityCard', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
   afterEach(() => {
     vi.unstubAllGlobals()
   })
@@ -180,5 +185,33 @@ describe('FaceBypassActivityCard', () => {
       expect(wrapper.text()).toContain('No suspicious-flag bypass has fired yet')
       expect(wrapper.text()).toContain('No accuracy reports yet')
     })
+  })
+
+  it('reloads on a shared refresh tick, so a camera rename is reflected without navigating away', async () => {
+    const routes: Record<string, unknown> = {
+      '/api/ai/faces/bypass-stats': {
+        total_bypassed: 1,
+        by_name: [{ name: 'Brian', count: 1 }],
+        recent: [
+          { clip_id: 'c1', camera: 'Front Door', face_bypass_names: 'Brian', analyzed_at: '2026-01-05T10:00:00Z' },
+        ],
+      },
+      '/api/ai/faces/feedback': [],
+    }
+    mockFetch(routes)
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Front Door')
+
+    routes['/api/ai/faces/bypass-stats'] = {
+      total_bypassed: 1,
+      by_name: [{ name: 'Brian', count: 1 }],
+      recent: [{ clip_id: 'c1', camera: 'Entryway', face_bypass_names: 'Brian', analyzed_at: '2026-01-05T10:00:00Z' }],
+    }
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Entryway')
+    expect(wrapper.text()).not.toContain('Front Door')
   })
 })

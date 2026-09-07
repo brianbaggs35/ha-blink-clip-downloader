@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import Card from 'primevue/card'
 import Tag from 'primevue/tag'
 import { getFaceBypassStats, getFaceRecognitionFeedback } from '../../api/ai'
 import type { FaceBypassStats, FaceRecognitionFeedback } from '../../api/types'
+import { useRefreshStore } from '../../stores/refresh'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
 // Auditability for the suspicious-flag bypass (see analyzer.py's
@@ -19,6 +20,7 @@ const stats = ref<FaceBypassStats | null>(null)
 // audit trail (see database.py's face_recognition_feedback schema comment)
 // — surfaced here for a human to notice and act on, not auto-applied.
 const feedback = ref<FaceRecognitionFeedback[]>([])
+const refresh = useRefreshStore()
 
 async function load() {
   loading.value = true
@@ -35,6 +37,11 @@ async function load() {
   }
 }
 onMounted(load)
+// This card is a pure historical log with no unsaved-edit state of its own
+// to protect, so unlike the camera-picker/settings tabs there's nothing to
+// guard against clobbering -- always safe to just reload on every tick,
+// including the tick a camera rename triggers (see AppSidebar.vue).
+watch(() => refresh.tick, load)
 
 function fmtTs(iso: string): string {
   const d = new Date(iso)

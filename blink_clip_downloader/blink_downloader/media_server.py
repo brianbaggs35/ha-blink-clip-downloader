@@ -1529,19 +1529,38 @@ class MediaServer:
                     "auto_analyze": entry.get("auto_analyze", True) is not False,
                 }
             )
-        # Also include configured cameras not in the current clip list
+        # Also include configured cameras not in the current clip list (e.g.
+        # a battery-dead camera that hasn't produced a clip recently) -- but
+        # only if they still exist under this name on the Blink account.
+        # A rename this add-on never observed under the old name (renamed
+        # before this add-on's rename-tracking ever ran, or before it had
+        # ever seen the camera at all) has nothing to migrate this entry
+        # away from, so without this check it would linger here forever,
+        # looking like a real, selectable camera long after the name is
+        # gone. list_camera_names() reflects every camera *registered* to
+        # the account regardless of recent activity (unlike cam_names,
+        # which only reflects recent clips) so a merely-offline camera is
+        # unaffected -- only skip when we have a real, non-empty list to
+        # check against, so a startup window before Blink has connected
+        # yet (list_camera_names() briefly empty) can't be misread as
+        # "every configured camera is gone" and hide them all.
+        live_names = self._list_camera_names() if self._list_camera_names else []
+        live_names_lower = {str(n).lower() for n in live_names}
         for name, entry in configured.items():
-            if name not in cam_names:
-                result.append(
-                    {
-                        "camera": name,
-                        "description": str(entry.get("description", "")),
-                        "custom_prompt": str(entry.get("custom_prompt", "")),
-                        "is_car_camera": bool(entry.get("is_car_camera", False)),
-                        "car_zone": self._normalize_car_zone(entry.get("car_zone")),
-                        "auto_analyze": entry.get("auto_analyze", True) is not False,
-                    }
-                )
+            if name in cam_names:
+                continue
+            if live_names_lower and name.lower() not in live_names_lower:
+                continue
+            result.append(
+                {
+                    "camera": name,
+                    "description": str(entry.get("description", "")),
+                    "custom_prompt": str(entry.get("custom_prompt", "")),
+                    "is_car_camera": bool(entry.get("is_car_camera", False)),
+                    "car_zone": self._normalize_car_zone(entry.get("car_zone")),
+                    "auto_analyze": entry.get("auto_analyze", True) is not False,
+                }
+            )
         return web.json_response(
             result,
             headers={
@@ -1585,7 +1604,13 @@ class MediaServer:
                 config["camera"] = new_name
                 target = config
                 migrated.append(config)
-            elif config is not target:
+            else:
+                # target is always a different object here: it was either
+                # found (before this loop ran) among entries already named
+                # new_name, or fixed on an earlier iteration of this same
+                # loop -- never this iteration's own `config`, since the
+                # caller guarantees old_name != new_name and `configs`
+                # (freshly parsed JSON) never repeats an object reference.
                 self._merge_camera_config_fields(target, config)
         if not changed:
             return

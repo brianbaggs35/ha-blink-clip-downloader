@@ -4,14 +4,14 @@ import { createPinia, setActivePinia } from 'pinia'
 import CameraConfigsSection from './CameraConfigsSection.vue'
 import { useToastStore } from '../../stores/toast'
 
-function jsonResponse(body: unknown, ok = true) {
+function jsonResponse(body: unknown, ok = true, headers: HeadersInit = {}) {
   return {
     ok,
     status: ok ? 200 : 500,
     statusText: 'x',
     json: () => Promise.resolve(body),
     text: () => Promise.resolve(''),
-    headers: new Headers(),
+    headers: new Headers(headers),
   } as Response
 }
 
@@ -127,6 +127,70 @@ describe('CameraConfigsSection', () => {
         is_car_camera: true,
         car_zone: { x_min: 0.1, y_min: 0.2, x_max: 0.5, y_max: 0.9 },
         auto_analyze: false,
+      },
+    ])
+  })
+
+  it('merges a local description edit into the renamed remote entry when the alias header identifies the rename', async () => {
+    let reads = 0
+    let saved: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, opts?: RequestInit) => {
+        if (opts?.method === 'PUT') {
+          saved = JSON.parse(opts.body as string)
+          return Promise.resolve(jsonResponse({ saved: true, count: 1 }))
+        }
+        reads++
+        if (reads === 1) {
+          return Promise.resolve(
+            jsonResponse([
+              {
+                camera: 'Front Door',
+                description: 'old',
+                custom_prompt: '',
+                is_car_camera: false,
+                car_zone: null,
+                auto_analyze: true,
+              },
+            ]),
+          )
+        }
+        return Promise.resolve(
+          jsonResponse(
+            [
+              {
+                camera: 'Entryway',
+                description: '',
+                custom_prompt: '',
+                is_car_camera: false,
+                car_zone: null,
+                auto_analyze: true,
+              },
+            ],
+            true,
+            { 'X-Camera-Aliases': JSON.stringify({ 'front door': 'Entryway' }) },
+          ),
+        )
+      }),
+    )
+    const wrapper = mount(CameraConfigsSection)
+    await flushPromises()
+    await wrapper.find('input.tag-input').setValue('edited locally')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Configs'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(saved).toEqual([
+      {
+        camera: 'Entryway',
+        description: 'edited locally',
+        custom_prompt: '',
+        is_car_camera: false,
+        car_zone: null,
+        auto_analyze: true,
       },
     ])
   })

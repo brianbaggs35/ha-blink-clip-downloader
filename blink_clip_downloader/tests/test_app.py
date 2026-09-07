@@ -90,9 +90,13 @@ async def test_camera_rename_updates_ai_filters_and_event_watcher(app, tmp_path)
     app._config.camera_filter = ["Front Door", "Garage"]
     app._config.event_cameras = ["Front Door"]
     app._config.ai_car_cameras = ["Front Door"]
-    app._config.ai_camera_prompts = [{"camera": "Front Door", "prompt": "Watch"}]
+    app._config.ai_camera_prompts = [
+        {"camera": "Front Door", "prompt": "Watch"},
+        {"camera": "Garage", "prompt": "Watch the garage"},
+    ]
     app._config.ai_camera_descriptions = [
-        {"camera": "Front Door", "description": "Entry"}
+        {"camera": "Front Door", "description": "Entry"},
+        {"camera": "Garage", "description": "Garage door"},
     ]
     app._auto_analysis_disabled_cameras = {"Front Door"}
     app._camera_name_aliases = {"Legacy Door": "Front Door"}
@@ -112,6 +116,8 @@ async def test_camera_rename_updates_ai_filters_and_event_watcher(app, tmp_path)
     assert app._config.ai_car_cameras == ["Entryway"]
     assert app._config.ai_camera_prompts[0]["camera"] == "Entryway"
     assert app._config.ai_camera_descriptions[0]["camera"] == "Entryway"
+    assert app._config.ai_camera_prompts[1]["camera"] == "Garage"
+    assert app._config.ai_camera_descriptions[1]["camera"] == "Garage"
     assert app._auto_analysis_disabled_cameras == {"Entryway"}
     assert app._camera_name_aliases == {
         "Legacy Door": "Entryway",
@@ -120,11 +126,34 @@ async def test_camera_rename_updates_ai_filters_and_event_watcher(app, tmp_path)
     app._event_watcher.rename_camera.assert_called_once_with("Front Door", "Entryway")
 
 
+async def test_camera_rename_skips_event_watcher_when_not_yet_constructed(
+    app, tmp_path
+):
+    """Defensive: _handle_camera_renamed is wired as BlinkDownloader's rename
+    callback before __init__ finishes, so it must tolerate running before
+    self._event_watcher exists rather than raising AttributeError."""
+    app._db.rename_camera = AsyncMock(return_value=True)
+    app._media_server.rename_camera = AsyncMock()
+    app._analyzer = None
+    del app._event_watcher
+
+    with patch(
+        "blink_downloader.app.CAMERA_NAME_ALIASES_FILE",
+        tmp_path / "camera_name_aliases.json",
+    ):
+        await app._handle_camera_renamed("Front Door", "Entryway")
+
+    assert not hasattr(app, "_event_watcher")
+
+
 def test_apply_camera_name_aliases_to_restart_sensitive_options(base_config):
     base_config.camera_filter = ["Front Door"]
     base_config.event_cameras = ["Front Door"]
     base_config.ai_car_cameras = ["Front Door"]
-    base_config.ai_camera_prompts = [{"camera": "Front Door", "prompt": "Watch"}]
+    base_config.ai_camera_prompts = [
+        {"camera": "Front Door", "prompt": "Watch"},
+        {"camera": "", "prompt": "Not yet assigned to a camera"},
+    ]
     base_config.ai_camera_descriptions = [
         {"camera": "Front Door", "description": "Entry"}
     ]
@@ -137,6 +166,7 @@ def test_apply_camera_name_aliases_to_restart_sensitive_options(base_config):
     assert base_config.event_cameras == ["Entryway"]
     assert base_config.ai_car_cameras == ["Entryway"]
     assert base_config.ai_camera_prompts[0]["camera"] == "Entryway"
+    assert base_config.ai_camera_prompts[1]["camera"] == ""
     assert base_config.ai_camera_descriptions[0]["camera"] == "Entryway"
 
 

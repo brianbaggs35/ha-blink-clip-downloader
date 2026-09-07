@@ -77,6 +77,18 @@ def test_rename_camera_updates_event_camera_allowlist() -> None:
     callback.assert_called_once_with("entryway")
 
 
+def test_rename_camera_is_a_no_op_when_old_name_is_not_in_the_allowlist() -> None:
+    watcher, callback, _ = _make_watcher(["Front Door"])
+
+    watcher.rename_camera("Backyard", "Side Yard")
+
+    assert watcher._event_cameras == {"front door"}
+    watcher._handle_state_changed(
+        _motion_event("binary_sensor.blink_front_door_motion", "on")
+    )
+    callback.assert_called_once_with("front door")
+
+
 def test_handle_motion_off_fires_cleared_callback() -> None:
     w, cb, cb_cleared = _make_watcher(with_cleared=True)
     w._handle_state_changed(

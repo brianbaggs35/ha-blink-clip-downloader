@@ -6,6 +6,7 @@ import InputNumber from 'primevue/inputnumber'
 import MultiSelect from 'primevue/multiselect'
 import SelectButton from 'primevue/selectbutton'
 import SecurityFeedPage from './SecurityFeedPage.vue'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import type { SecurityFeedSettings } from '../../api/types'
 
@@ -319,5 +320,107 @@ describe('SecurityFeedPage', () => {
     await vi.advanceTimersByTimeAsync(5000)
     const after = wrapper.find('img.secfeed-tile-image').attributes('src')
     expect(after).not.toBe(before)
+  })
+
+  it('reloads clean settings on a shared refresh tick (e.g. a camera rename)', async () => {
+    const routes: Routes = { cameras: ['Front Door'], settings: { cameras: [], columns: 3, refresh_seconds: 15 } }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    routes.cameras = ['Entryway']
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Entryway')
+  })
+
+  it('does not clobber unsaved draft changes on a shared refresh tick', async () => {
+    const routes: Routes = { cameras: ['Front Door'], settings: { cameras: [], columns: 3, refresh_seconds: 15 } }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.findComponent(InputNumber).vm.$emit('update:modelValue', 2)
+
+    routes.settings = { cameras: [], columns: 3, refresh_seconds: 30 }
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(wrapper.findComponent(InputNumber).props('modelValue')).toBe(2)
+  })
+
+  it('does not let a stale load() response overwrite newer settings', async () => {
+    let resolveStale!: (v: Response) => void
+    const stale = new Promise<Response>((resolve) => {
+      resolveStale = resolve
+    })
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/security-feed/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
+        if (url === '/api/security-feed/settings') {
+          call++
+          // Call 1: the initial mount-time load. Call 2: a refresh tick,
+          // deferred (this is the one that goes stale). Call 3: a second
+          // refresh tick, resolving before call 2 does.
+          if (call === 2) return stale
+          return Promise.resolve(jsonResponse({ cameras: [], columns: call === 3 ? 1 : 3, refresh_seconds: 15 }))
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+
+    // Both ticks fire load() while the draft is still clean from the
+    // initial load -- call 2 starts (and is deferred), then call 3 starts
+    // and resolves immediately, before call 2 ever does.
+    useRefreshStore().bump()
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(wrapper.find('.loading-indicator').exists()).toBe(false)
+
+    resolveStale(jsonResponse({ cameras: [], columns: 3, refresh_seconds: 60 }))
+    await flushPromises()
+
+    // Call 3 (columns: 1) must win; call 2's stale response (refresh_seconds:
+    // 60) must not overwrite it despite resolving last.
+    expect(wrapper.findComponent(InputNumber).props('modelValue')).toBe(15)
+  })
+
+  it('does not show a stale load() error after a newer refresh tick already succeeded', async () => {
+    let rejectStale!: (err: Error) => void
+    const stale = new Promise<Response>((_resolve, reject) => {
+      rejectStale = reject
+    })
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/security-feed/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
+        if (url === '/api/security-feed/settings') {
+          call++
+          if (call === 2) return stale
+          return Promise.resolve(jsonResponse({ cameras: [], columns: 3, refresh_seconds: 15 }))
+        }
+        return Promise.resolve(jsonResponse({}))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+
+    useRefreshStore().bump()
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Failed to load the Security Feed')
+
+    rejectStale(new Error('network down'))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Failed to load the Security Feed')
   })
 })

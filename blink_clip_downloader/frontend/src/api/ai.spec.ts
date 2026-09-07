@@ -27,6 +27,7 @@ import {
   listFinetunes,
   renameFace,
   renameFacesByName,
+  resolveCameraAlias,
   saveCameraConfigs,
   saveCheckpoint,
   setFaceApproved,
@@ -40,6 +41,7 @@ import {
   trainFromFeedback,
   updateCameraConfigs,
 } from './ai'
+import type { CameraNameAliases } from './ai'
 
 function jsonResponse(body: unknown, headers: HeadersInit = {}) {
   return {
@@ -148,6 +150,54 @@ describe('ai api', () => {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'If-Match': 'new' },
       body: JSON.stringify(latest),
+    })
+  })
+
+  it('updateCameraConfigs passes the parsed X-Camera-Aliases header through to buildConfigs', async () => {
+    const latest = [{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(latest, { 'X-Camera-Aliases': JSON.stringify({ old: 'front' }) }))
+      .mockResolvedValueOnce(jsonResponse({ saved: true, count: 1 }))
+
+    let seenAliases: CameraNameAliases | undefined
+    await updateCameraConfigs((configs, aliases) => {
+      seenAliases = aliases
+      return configs
+    })
+
+    expect(seenAliases).toEqual({ old: 'front' })
+  })
+
+  it('updateCameraConfigs tolerates a malformed X-Camera-Aliases header', async () => {
+    const latest = [{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse(latest, { 'X-Camera-Aliases': '{not valid json' }))
+      .mockResolvedValueOnce(jsonResponse({ saved: true, count: 1 }))
+
+    let seenAliases: CameraNameAliases | undefined
+    await updateCameraConfigs((configs, aliases) => {
+      seenAliases = aliases
+      return configs
+    })
+
+    expect(seenAliases).toEqual({})
+  })
+
+  describe('resolveCameraAlias', () => {
+    it('returns the camera unchanged when it has no alias', () => {
+      expect(resolveCameraAlias('Front Door', {})).toBe('Front Door')
+    })
+
+    it('resolves a rename case-insensitively', () => {
+      expect(resolveCameraAlias('front door', { 'front door': 'Entryway' })).toBe('Entryway')
+    })
+
+    it('resolves through a multi-hop rename chain', () => {
+      expect(resolveCameraAlias('Old Name', { 'old name': 'Middle Name', 'middle name': 'Entryway' })).toBe('Entryway')
+    })
+
+    it('stops at a cycle instead of looping forever', () => {
+      expect(resolveCameraAlias('Front Door', { 'front door': 'Entryway', entryway: 'Front Door' })).toBe('Front Door')
     })
   })
 

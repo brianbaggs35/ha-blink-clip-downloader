@@ -2787,6 +2787,34 @@ def test_list_camera_names_returns_all_connected_cameras(dl: BlinkDownloader) ->
     assert set(dl.list_camera_names()) == {"Front Door", "Backyard"}
 
 
+def test_get_camera_falls_back_to_previous_topology_mid_refresh(
+    dl: BlinkDownloader,
+) -> None:
+    """While a topology rebuild is in flight, blink.cameras briefly holds
+    only whatever's been (re)discovered so far -- the last-known topology
+    stays queryable as a fallback so a camera doesn't briefly vanish from
+    callers (e.g. Live View) mid-refresh. See _refresh_device_topology_locked.
+    """
+    old_camera = MagicMock()
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict()
+    dl._blink = fake_blink
+    dl._topology_fallback_cameras = CaseInsensitiveDict({"Front Door": old_camera})
+
+    assert dl.get_camera("Front Door") is old_camera
+
+
+def test_list_camera_names_includes_fallback_only_cameras(
+    dl: BlinkDownloader,
+) -> None:
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Backyard": MagicMock()})
+    dl._blink = fake_blink
+    dl._topology_fallback_cameras = CaseInsensitiveDict({"Front Door": MagicMock()})
+
+    assert set(dl.list_camera_names()) == {"Backyard", "Front Door"}
+
+
 # ---------------------------------------------------------------------------
 # get_battery_snapshot
 # ---------------------------------------------------------------------------
@@ -2794,6 +2822,27 @@ def test_list_camera_names_returns_all_connected_cameras(dl: BlinkDownloader) ->
 
 def test_get_battery_snapshot_empty_before_connect(dl: BlinkDownloader) -> None:
     assert dl.get_battery_snapshot() == []
+
+
+def test_get_battery_snapshot_includes_fallback_only_cameras(
+    dl: BlinkDownloader,
+) -> None:
+    back = MagicMock()
+    back.battery_state = "ok"
+    back.battery_level = 3
+    back.battery_voltage = 165
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Backyard": back})
+    dl._blink = fake_blink
+
+    front = MagicMock()
+    front.battery_state = "low"
+    front.battery_level = 1
+    front.battery_voltage = 110
+    dl._topology_fallback_cameras = CaseInsensitiveDict({"Front Door": front})
+
+    snapshot = dl.get_battery_snapshot()
+    assert {r["camera"] for r in snapshot} == {"Backyard", "Front Door"}
 
 
 def test_get_battery_snapshot_returns_reading_per_camera(dl: BlinkDownloader) -> None:
@@ -3086,6 +3135,53 @@ def test_camera_topology_changes_detects_persisted_replacement(
     assert not renames
     assert replacements == {"Front Door"}
     assert identities == {"Front Door": "camera_id:new"}
+
+
+def test_camera_topology_changes_ignores_unchanged_and_removed_cameras(
+    dl: BlinkDownloader,
+) -> None:
+    """A steady-state camera (same identity as last known) is neither a
+    rename nor a replacement, and a camera that's simply gone from the
+    account (its identity isn't anywhere in the current topology) is not a
+    rename either -- both must be safe no-ops against persisted identities.
+    """
+    dl._known_camera_identities = {
+        "Front Door": "camera_id:same",
+        "Removed Camera": "camera_id:gone",
+    }
+    same_camera = MagicMock(camera_id="same")
+
+    renames, replacements, identities = dl._camera_topology_changes(
+        CaseInsensitiveDict(), CaseInsensitiveDict({"Front Door": same_camera})
+    )
+
+    assert not renames
+    assert not replacements
+    assert identities == {"Front Door": "camera_id:same"}
+
+
+def test_load_camera_identities_reads_and_filters_persisted_file(
+    tmp_path: Path,
+) -> None:
+    identities_file = tmp_path / "camera_identities.json"
+    identities_file.write_text(
+        json.dumps({"Front Door": "camera_id:100", "": "camera_id:ignored", "Bad": ""})
+    )
+    with patch("blink_downloader.downloader.CAMERA_IDENTITIES_FILE", identities_file):
+        assert BlinkDownloader._load_camera_identities() == {
+            "Front Door": "camera_id:100"
+        }
+
+
+def test_load_camera_identities_handles_invalid_files(tmp_path: Path) -> None:
+    identities_file = tmp_path / "camera_identities.json"
+    identities_file.write_text("{invalid")
+    with patch("blink_downloader.downloader.CAMERA_IDENTITIES_FILE", identities_file):
+        assert BlinkDownloader._load_camera_identities() == {}
+
+    identities_file.write_text("[]")
+    with patch("blink_downloader.downloader.CAMERA_IDENTITIES_FILE", identities_file):
+        assert BlinkDownloader._load_camera_identities() == {}
 
 
 async def test_refresh_device_topology_logs_camera_rename_migration_failure(
