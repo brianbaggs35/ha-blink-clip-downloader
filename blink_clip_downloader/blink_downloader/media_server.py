@@ -1557,7 +1557,24 @@ class MediaServer:
     ) -> web.Response:
         """Return current per-camera AI configurations."""
         cameras = await self._db.get_camera_stats()
-        cam_names = [c["camera"] for c in cameras]
+        # Unlike /api/cameras (a clip-browsing surface, where a renamed-away
+        # name's history is still real and worth keeping reachable), this
+        # endpoint is "configure this camera going forward" -- the AI tab's
+        # Camera Configurations and the Vehicles tab. A camera that no
+        # longer exists under this name has nothing to configure, no matter
+        # how much clip history it has: without this filter here too, a
+        # camera renamed *after* it had already produced clips (the common
+        # case -- e.g. "Inside" with hundreds of old clips, renamed to
+        # "Inside House") would sail straight through this cam_names list
+        # forever, since only the second loop below (configured-but-
+        # unclipped entries) previously checked the live camera list.
+        live_names = self._list_camera_names() if self._list_camera_names else []
+        live_names_lower = {str(n).lower() for n in live_names}
+        cam_names = [
+            c["camera"]
+            for c in cameras
+            if not live_names_lower or c["camera"].lower() in live_names_lower
+        ]
         async with self._camera_configs_lock:
             configs = self._read_camera_configs()
             revision = self._camera_configs_revision(configs)
@@ -1601,8 +1618,6 @@ class MediaServer:
         # check against, so a startup window before Blink has connected
         # yet (list_camera_names() briefly empty) can't be misread as
         # "every configured camera is gone" and hide them all.
-        live_names = self._list_camera_names() if self._list_camera_names else []
-        live_names_lower = {str(n).lower() for n in live_names}
         for name, entry in configured.items():
             if name in cam_names:
                 continue

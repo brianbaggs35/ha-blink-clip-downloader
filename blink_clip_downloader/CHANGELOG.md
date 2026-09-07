@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.5.0 (unreleased)
+
+### Bug Fixes
+
+- Fixed the Vehicles tab (and the AI tab's Camera Configurations) still
+  showing a renamed camera's old name (e.g. "Inside" after renaming it to
+  "Inside House") when that old name already had clip history from before
+  the rename. The 5.4.8 fix for this same bug class only cross-checked the
+  *configured-but-never-clipped* entries against the account's live camera
+  list; a stale name that already had clips took a separate, unfiltered
+  code path and was never checked at all. `/api/ai/camera-configs` now
+  applies the same live-camera-list check to every entry regardless of
+  clip history.
+
 ## 5.4.9
 
 ### Bug Fixes
