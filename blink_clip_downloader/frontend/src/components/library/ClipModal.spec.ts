@@ -124,6 +124,33 @@ describe('ClipModal', () => {
     expect(downloadLink.attributes('download')).toBe('front_.mp4')
   })
 
+  it('treats a missing tags field on the loaded clip as no tags, rather than crashing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1') return Promise.resolve(jsonResponse({ ...CLIP, tags: undefined }))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    expect(wrapper.findAll('.tag-item')).toHaveLength(0)
+  })
+
+  it('swallows a rejected play() promise on load (e.g. autoplay blocked by the browser)', async () => {
+    fakePlayer.play.mockRejectedValueOnce(new Error('NotAllowedError'))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1') return Promise.resolve(jsonResponse(CLIP))
+        return Promise.reject(new Error(`unexpected ${url}`))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    expect(wrapper.find('.modal-bg').classes()).toContain('open')
+  })
+
   it('opens and loads clip details when clipId is set', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()

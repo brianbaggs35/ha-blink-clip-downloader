@@ -5,6 +5,7 @@ import PrimeVue from 'primevue/config'
 import Dialog from 'primevue/dialog'
 import AiAnalysisConfigCard from './AiAnalysisConfigCard.vue'
 import { useToastStore } from '../../stores/toast'
+import { useRefreshStore } from '../../stores/refresh'
 
 function jsonResponse(body: unknown, ok = true, headers: HeadersInit = {}) {
   return {
@@ -259,7 +260,14 @@ describe('AiAnalysisConfigCard', () => {
           return Promise.resolve(jsonResponse({ saved: true, count: 2 }))
         }
         reads++
-        if (reads === 1) return Promise.resolve(jsonResponse(CAMERA_CONFIGS))
+        // reads 1 and 2 are the initial mount load and open()'s own
+        // reload (which always re-fetches, even if nothing changed) --
+        // the rename must only appear at save() time (read 3+), or
+        // configs.value would already show "Entryway" before the user
+        // ever toggles anything, making the toggle below target the
+        // already-renamed row directly (a plain reload, not an actual
+        // exercise of the alias-based rename merge this test is named for).
+        if (reads <= 2) return Promise.resolve(jsonResponse(CAMERA_CONFIGS))
         return Promise.resolve(
           jsonResponse([{ ...CAMERA_CONFIGS[0], camera: 'Entryway' }, CAMERA_CONFIGS[1]], true, {
             'X-Camera-Aliases': JSON.stringify({ 'front door': 'Entryway' }),
@@ -344,5 +352,65 @@ describe('AiAnalysisConfigCard', () => {
     expect(toast.message).toBe('Failed to save AI analysis settings')
     expect(toast.isError).toBe(true)
     expect(document.body.textContent).toContain('AI Analysis Configuration')
+  })
+
+  it('ignores a shared refresh tick while the modal is open, to avoid clobbering an in-progress edit', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(CAMERA_CONFIGS)))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    const callsBeforeTick = fetchMock.mock.calls.length
+
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(fetchMock.mock.calls.length).toBe(callsBeforeTick)
+  })
+
+  it('declines to guess a rename when the server list changed ambiguously (two unmatched cameras on each side)', async () => {
+    let reads = 0
+    let saved: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, options?: RequestInit) => {
+        if (options?.method === 'PUT') {
+          saved = JSON.parse(options.body as string)
+          return Promise.resolve(jsonResponse({ saved: true, count: 2 }))
+        }
+        reads++
+        // reads 1 and 2 are the initial mount load and open()'s own
+        // reload (which always re-fetches, even if nothing changed) --
+        // the ambiguous list must only appear at save() time (read 3+),
+        // or configs.value would already reflect it before the user ever
+        // acts, making local and latest trivially match by name again.
+        if (reads <= 2) return Promise.resolve(jsonResponse(CAMERA_CONFIGS))
+        // Two cameras never seen before -- with two local-only *and* two
+        // latest-only entries, the "exactly one renamed camera" heuristic
+        // must not guess which maps to which, so both pass through as-is.
+        return Promise.resolve(
+          jsonResponse([
+            { camera: 'Entryway', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+            { camera: 'Garage', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+          ]),
+        )
+      }),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    const saveButton = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Save Settings'),
+    )!
+    saveButton.click()
+    await flushPromises()
+
+    expect(saved).toEqual([
+      { camera: 'Entryway', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+      { camera: 'Garage', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+      { ...CAMERA_CONFIGS[0] },
+      { ...CAMERA_CONFIGS[1] },
+    ])
   })
 })

@@ -157,6 +157,26 @@ describe('App', () => {
     wrapper.unmount()
   })
 
+  it('switches to the Security Feed tab and mounts SecurityFeedPage', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="securityfeed"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-securityfeed').classes()).toContain('active')
+    expect(wrapper.text()).toContain('Security Feed')
+    wrapper.unmount()
+  })
+
+  it('switches to the Storage tab and mounts StoragePage', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="storage"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-storage').classes()).toContain('active')
+    expect(wrapper.text()).toContain('Storage')
+    wrapper.unmount()
+  })
+
   it('toggling the help overlay from the sidebar opens HelpOverlay', async () => {
     const wrapper = mountApp()
     const helpOverlay = wrapper.findAll('.modal-bg').find((el) => el.text().includes('Keyboard Shortcuts'))

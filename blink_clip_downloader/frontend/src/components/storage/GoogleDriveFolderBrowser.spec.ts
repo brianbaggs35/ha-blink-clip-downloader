@@ -104,6 +104,30 @@ describe('GoogleDriveFolderBrowser', () => {
     expect(fetchMock).toHaveBeenLastCalledWith('/api/storage/gdrive/folders?parent_id=root', {})
   })
 
+  it('clicking a middle breadcrumb entry (not just Home) navigates back to that level', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ folders: [{ id: 'f1', name: 'Level1', modified_time: '' }] }))
+      .mockResolvedValueOnce(jsonResponse({ folders: [{ id: 'f2', name: 'Level2', modified_time: '' }] }))
+      .mockResolvedValueOnce(jsonResponse({ folders: [] }))
+      .mockResolvedValueOnce(jsonResponse({ folders: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountBrowser()
+    await flushPromises()
+    await wrapper.find('.folder-name-btn').trigger('click') // into Level1
+    await flushPromises()
+    await wrapper.find('.folder-name-btn').trigger('click') // into Level2
+    await flushPromises()
+
+    const breadcrumb = wrapper.findComponent(Breadcrumb)
+    const model = breadcrumb.props('model') as { label: string; command: () => void }[]
+    expect(model.map((m) => m.label)).toEqual(['Level1', 'Level2'])
+    model[0]!.command()
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/storage/gdrive/folders?parent_id=f1', {})
+  })
+
   it('cancelling the new-folder dialog closes it without creating anything', async () => {
     const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ folders: [] })))
     vi.stubGlobal('fetch', fetchMock)
@@ -118,6 +142,51 @@ describe('GoogleDriveFolderBrowser', () => {
     await flushPromises()
 
     expect(fetchMock).toHaveBeenCalledTimes(1) // only the initial load — no create call
+  })
+
+  it('pressing Enter with a blank folder name does not create anything', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ folders: [] })))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountBrowser()
+    await flushPromises()
+
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    const body = new DOMWrapper(document.body)
+    await body.find('input').trigger('keyup.enter')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1) // only the initial load — no create call
+  })
+
+  it('closing the new-folder dialog via its own close control does not create anything', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ folders: [] })))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountBrowser()
+    await flushPromises()
+
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'Dialog' }).props('visible')).toBe(true)
+    wrapper.findComponent({ name: 'Dialog' }).vm.$emit('update:visible', false)
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'Dialog' }).props('visible')).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the formatted modified date when a folder row has one', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse({ folders: [{ id: 'f1', name: 'Blink Clips', modified_time: '2026-01-05T10:00:00Z' }] }),
+        ),
+      ),
+    )
+    const wrapper = mountBrowser()
+    await flushPromises()
+    expect(wrapper.text()).toContain(new Date('2026-01-05T10:00:00Z').toLocaleDateString())
   })
 
   it('creates a new folder and refreshes the listing', async () => {

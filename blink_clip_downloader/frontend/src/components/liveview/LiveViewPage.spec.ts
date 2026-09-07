@@ -135,6 +135,30 @@ describe('LiveViewPage', () => {
     expect(wrapper.findComponent(SelectButton).props('modelValue')).toBe('Front Door')
   })
 
+  it('unmounting while the initial camera list is still loading skips the adoption check entirely', async () => {
+    let resolveCameras!: (v: { cameras: string[] }) => void
+    const camerasDeferred = new Promise<{ cameras: string[] }>((resolve) => {
+      resolveCameras = resolve
+    })
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/liveview/cameras') return camerasDeferred.then((v) => jsonResponse(v))
+      if (url === '/api/liveview/status')
+        return Promise.resolve(jsonResponse({ active: true, session_id: 's1', camera: 'Front Door', state: 'live' }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await flushPromises()
+
+    wrapper.unmount()
+    resolveCameras({ cameras: ['Front Door'] })
+    await flushPromises()
+
+    // onMounted bailed out on `unmounted` right after the camera list
+    // resolved, so it never went on to check for an adoptable session.
+    expect(fetchMock.mock.calls.some((c) => c[0] === '/api/liveview/status')).toBe(false)
+  })
+
   it('unmounting while the initial adoption check is in flight does not start timers on the dead instance', async () => {
     vi.useFakeTimers()
     let resolveStatus!: (v: LiveViewStatus) => void
@@ -255,6 +279,38 @@ describe('LiveViewPage', () => {
     expect(fakePlayer.play).toHaveBeenCalled()
   })
 
+  it('swallows a rejected play() promise when a live session source is applied (e.g. autoplay blocked)', async () => {
+    fakePlayer.play.mockRejectedValueOnce(new Error('NotAllowedError'))
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(fakePlayer.play).toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('undefined')
+  })
+
+  it('a failed stop-on-unmount request from onUnmounted is swallowed rather than crashing', async () => {
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/liveview/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
+      if (url === '/api/liveview/status')
+        return Promise.resolve(jsonResponse({ active: true, session_id: 's1', camera: 'Front Door', state: 'live' }))
+      if (url === '/api/liveview/stop' && opts?.method === 'POST') return Promise.reject(new Error('network down'))
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await flushPromises()
+
+    wrapper.unmount()
+    await flushPromises()
+
+    expect(fetchMock.mock.calls.some((c) => c[0] === '/api/liveview/stop')).toBe(true)
+  })
+
   it('does not source a queued player callback after Stop invalidates the session', async () => {
     let readyCallback: (() => void) | undefined
     fakePlayer.ready.mockImplementationOnce((cb: () => void) => {
@@ -348,6 +404,67 @@ describe('LiveViewPage', () => {
 
     expect(wrapper.find('.video-js-wrap').classes()).toContain('video-hidden')
     expect(fakePlayer.src).not.toHaveBeenCalled()
+  })
+
+  it('does not toast a start failure for a selectCamera call that has since been superseded by a newer selection', async () => {
+    let rejectStart!: (e: Error) => void
+    const deferred = new Promise<LiveViewStatus>((_resolve, reject) => {
+      rejectStart = reject
+    })
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/liveview/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door', 'Backyard'] }))
+      if (url === '/api/liveview/status') return Promise.resolve(jsonResponse(INACTIVE))
+      if (url === '/api/liveview/start' && opts?.method === 'POST') {
+        const body = JSON.parse(opts.body as string)
+        if (body.camera === 'Front Door') return deferred.then((v) => jsonResponse(v))
+        return Promise.resolve(jsonResponse({ active: true, session_id: 's2', camera: 'Backyard', state: 'starting' }))
+      }
+      if (url === '/api/liveview/stop' && opts?.method === 'POST')
+        return Promise.resolve(jsonResponse({ stopped: true }))
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.findComponent(SelectButton).vm.$emit('update:modelValue', 'Front Door')
+    await wrapper.vm.$nextTick()
+    await wrapper.findComponent(SelectButton).vm.$emit('update:modelValue', 'Backyard')
+    await flushPromises()
+
+    rejectStart(new Error('camera offline'))
+    await flushPromises()
+
+    const toast = useToastStore()
+    expect(toast.visible).toBe(false)
+  })
+
+  it('does not toast a stop failure once the component has already been unmounted', async () => {
+    let rejectStop!: (e: Error) => void
+    const deferred = new Promise<{ stopped: boolean }>((_resolve, reject) => {
+      rejectStop = reject
+    })
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (url === '/api/liveview/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
+      if (url === '/api/liveview/status')
+        return Promise.resolve(jsonResponse({ active: true, session_id: 's1', camera: 'Front Door', state: 'live' }))
+      if (url === '/api/liveview/stop' && opts?.method === 'POST') return deferred
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const stopBtn = wrapper.findAll('button').find((b) => b.text().includes('Stop'))!
+    await stopBtn.trigger('click')
+    await flushPromises()
+
+    wrapper.unmount()
+    rejectStop(new Error('network down'))
+    await flushPromises()
+
+    const toast = useToastStore()
+    expect(toast.visible).toBe(false)
   })
 
   it('unmounting while a start request is still in flight stops the session it just created, without leaking a heartbeat timer', async () => {

@@ -31,7 +31,15 @@ const avgCostPerClip = computed(() => {
   if (!showCost.value || total == null || count <= 0) return null
   return total / count
 })
-const modelsUsedCount = computed(() => new Set((usage.value?.by_model || []).map((m) => m.model).filter(Boolean)).size)
+// Guards against a malformed/incomplete API response the same way the rest
+// of this page already treats missing fields (see showCost/showTokens
+// above) — by_model/daily are always real arrays in a well-formed
+// AiUsage response, but nothing upstream actually guarantees that at
+// runtime, and an unguarded usage.by_model.length below would otherwise
+// throw instead of just rendering the empty-state message.
+const byModel = computed(() => usage.value?.by_model || [])
+const dailyRows = computed(() => usage.value?.daily || [])
+const modelsUsedCount = computed(() => new Set(byModel.value.map((m) => m.model).filter(Boolean)).size)
 
 async function load() {
   try {
@@ -146,7 +154,7 @@ async function clearUsage() {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(m, i) in usage.by_model" :key="i">
+              <tr v-for="(m, i) in byModel" :key="i">
                 <td>
                   {{ m.model || '—'
                   }}<span v-if="m.escalated" style="color: var(--muted); font-size: 0.75em"> (escalated)</span>
@@ -166,7 +174,7 @@ async function clearUsage() {
               </tr>
             </tbody>
           </table>
-          <p v-if="!usage.by_model.length" style="color: var(--muted); padding: 1rem; text-align: center">
+          <p v-if="!byModel.length" style="color: var(--muted); padding: 1rem; text-align: center">
             No analysis data yet. Run the AI analysis to see usage statistics.
           </p>
         </div>
@@ -183,7 +191,7 @@ async function clearUsage() {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in usage.daily" :key="row.day">
+              <tr v-for="row in dailyRows" :key="row.day">
                 <td>{{ row.day || '—' }}</td>
                 <td style="text-align: right">{{ fmtNum(row.analyses || 0) }}</td>
                 <td style="text-align: right">{{ fmtNum(row.tokens_total || 0) }}</td>
@@ -191,7 +199,7 @@ async function clearUsage() {
               </tr>
             </tbody>
           </table>
-          <p v-if="!usage.daily.length" style="color: var(--muted); padding: 1rem; text-align: center">
+          <p v-if="!dailyRows.length" style="color: var(--muted); padding: 1rem; text-align: center">
             No analysis activity in the last 14 days.
           </p>
         </div>

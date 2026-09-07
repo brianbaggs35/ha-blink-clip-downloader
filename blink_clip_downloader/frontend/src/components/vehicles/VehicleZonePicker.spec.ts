@@ -306,6 +306,24 @@ describe('VehicleZonePicker', () => {
       expect(body.zone).toEqual({ shape: 'rect', x_min: 0.1, y_min: 0.1, x_max: 1, y_max: 1 })
     })
 
+    it('does not crash on a resize-drag pointermove after the rect was cleared mid-drag', async () => {
+      const wrapper = await mountInEditMode()
+      const overlay = wrapper.find('.picker-overlay')
+      await firePointer(overlay.element, 'pointerdown', 40, 30)
+      await firePointer(overlay.element, 'pointermove', 200, 150)
+      await firePointer(overlay.element, 'pointerup', 200, 150)
+
+      // Start a resize drag on the SE handle, then wipe the draft (e.g. the
+      // user clicks Clear) before releasing the pointer -- drag.value still
+      // says "resize" but rect.value is now null.
+      await firePointer(overlay.element, 'pointerdown', 200, 150)
+      const clearBtn = wrapper.findAll('button').find((b) => b.text() === 'Clear')!
+      await clearBtn.trigger('click')
+      await firePointer(overlay.element, 'pointermove', 400, 300)
+
+      expect(wrapper.find('.zone-rect').exists()).toBe(false)
+    })
+
     it('saves a rectangle zone: PUTs the zone + selected clip id, emits the server result, and returns to preview', async () => {
       vi.stubGlobal(
         'fetch',
@@ -660,6 +678,139 @@ describe('VehicleZonePicker', () => {
       await flushPromises()
 
       expect(wrapper.findAll('.thumb-strip-item')).toHaveLength(1)
+    })
+
+    it('suppresses the failure state for a slower, stale recent-clips request that has since been superseded', async () => {
+      let rejectFirst!: (e: Error) => void
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string) => {
+          if (url.includes('camera=Driveway')) {
+            return new Promise<Response>((_resolve, reject) => {
+              rejectFirst = reject
+            })
+          }
+          return Promise.resolve(jsonResponse([makeClip('newer')]))
+        }),
+      )
+      const wrapper = mountPicker(null)
+      await flushPromises()
+      await wrapper.setProps({ camera: 'Backyard' })
+      await flushPromises()
+      expect(wrapper.findAll('.thumb-strip-item')).toHaveLength(1)
+
+      rejectFirst(new Error('down'))
+      await flushPromises()
+
+      // The stale, now-superseded Driveway failure must not clobber the
+      // already-successfully-loaded Backyard clip list with an error state.
+      expect(wrapper.text()).not.toContain('Failed to load recent clips')
+      expect(wrapper.findAll('.thumb-strip-item')).toHaveLength(1)
+    })
+  })
+
+  describe('re-entering edit mode / clearing with clips already cached', () => {
+    it('does not re-fetch recent clips when re-entering edit mode after cancelling back to preview', async () => {
+      const wrapper = mountPicker(RECT_ZONE)
+      await flushPromises()
+      const editBtn = wrapper.findAll('button').find((b) => b.text().includes('Edit zone'))!
+      await editBtn.trigger('click')
+      await flushPromises()
+      const clipCallsAfterFirstEdit = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/api/clips'))
+      expect(clipCallsAfterFirstEdit).toHaveLength(1)
+
+      const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')!
+      await cancelBtn.trigger('click')
+      await flushPromises()
+
+      await editBtn.trigger('click')
+      await flushPromises()
+
+      const clipCallsAfterSecondEdit = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/api/clips'))
+      expect(clipCallsAfterSecondEdit).toHaveLength(1)
+    })
+
+    it('does not re-fetch recent clips when clearing a zone with clips already cached from a prior edit', async () => {
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url, init) => {
+          if (url.includes('/api/vehicle/zone/Driveway') && init?.method === 'DELETE') {
+            return Promise.resolve(jsonResponse({ saved: true }))
+          }
+          return undefined
+        }),
+      )
+      const wrapper = mountPicker(RECT_ZONE)
+      await flushPromises()
+      const editBtn = wrapper.findAll('button').find((b) => b.text().includes('Edit zone'))!
+      await editBtn.trigger('click')
+      await flushPromises()
+      const cancelBtn = wrapper.findAll('button').find((b) => b.text() === 'Cancel')!
+      await cancelBtn.trigger('click')
+      await flushPromises()
+      const clipCallsBeforeClear = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/api/clips'))
+      expect(clipCallsBeforeClear).toHaveLength(1)
+
+      const confirm = useConfirmStore()
+      const clearBtn = wrapper.findAll('button').find((b) => b.text().includes('Clear zone'))!
+      const clickPromise = clearBtn.trigger('click')
+      await flushPromises()
+      confirm.settle(true)
+      await clickPromise
+      await flushPromises()
+
+      const clipCallsAfterClear = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/api/clips'))
+      expect(clipCallsAfterClear).toHaveLength(1)
+      expect(wrapper.text()).toContain('No vehicle selected')
+    })
+  })
+
+  describe('camera switch into a preview state', () => {
+    it('switches straight to preview mode when the new camera already has a saved zone', async () => {
+      const wrapper = mountPicker(null)
+      await flushPromises()
+      await wrapper.find('img.picker-image').trigger('load')
+      await flushPromises()
+      expect(wrapper.text()).toContain('No vehicle selected')
+
+      await wrapper.setProps({ camera: 'Backyard', modelValue: RECT_ZONE })
+      await flushPromises()
+      await wrapper.find('img.picker-image').trigger('load')
+      await flushPromises()
+
+      expect(wrapper.find('.zone-rect').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Edit zone')
+    })
+  })
+
+  describe('camera switch to an empty camera mid-session', () => {
+    it('drops the selected/displayed clip after switching to a camera with no recent clips', async () => {
+      const wrapper = mountPicker(null)
+      await flushPromises()
+      await wrapper.find('img.picker-image').trigger('load')
+      await flushPromises()
+      expect(wrapper.find('img.picker-image').exists()).toBe(true)
+
+      vi.stubGlobal(
+        'fetch',
+        routedFetch(() => Promise.resolve(jsonResponse([]))),
+      )
+      await wrapper.setProps({ camera: 'Backyard' })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('download a clip first')
+      expect(wrapper.find('img.picker-image').exists()).toBe(false)
+    })
+  })
+
+  describe('measuring the container', () => {
+    it('does not crash if the component unmounts between the image load event and measuring the container', async () => {
+      const wrapper = mountPicker(null)
+      await flushPromises()
+      const loadPromise = wrapper.find('img.picker-image').trigger('load')
+      wrapper.unmount()
+      await loadPromise
+      await flushPromises()
     })
   })
 })

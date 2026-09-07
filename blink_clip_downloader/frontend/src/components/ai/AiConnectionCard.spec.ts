@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AiConnectionCard from './AiConnectionCard.vue'
+import { useToastStore } from '../../stores/toast'
 import type { AiStatus } from '../../api/types'
 
 function jsonResponse(body: unknown, ok = true) {
@@ -187,6 +188,22 @@ describe('AiConnectionCard', () => {
     expect(wrapper.find('#ai-escalation-model-picker option').exists()).toBe(true)
   })
 
+  it('treats a missing models/error fields as no models and a generic toast message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: false }))),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: { status: baseStatus({ escalation_provider: 'anthropic', escalation_model: '' }) },
+    })
+    const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
+    await fetchBtn.trigger('click')
+    await flushPromises()
+    const toast = useToastStore()
+    expect(toast.message).toBe('No models found for the escalation provider')
+    expect(toast.isError).toBe(true)
+  })
+
   it('copies the selected escalation model id to the clipboard', async () => {
     vi.stubGlobal(
       'fetch',
@@ -324,6 +341,17 @@ describe('AiConnectionCard', () => {
     expect(wrapper.find('select.sel').exists()).toBe(true)
   })
 
+  it('treats a missing models field in the response as no models, rather than crashing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ enabled: true }))),
+    )
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('select.sel').exists()).toBe(true)
+  })
+
   it('re-fetching models does not clobber an already-selected model', async () => {
     vi.stubGlobal(
       'fetch',
@@ -394,6 +422,21 @@ describe('AiConnectionCard', () => {
     })
     await flushPromises()
     expect(wrapper.text()).toContain('moondream package not installed')
+  })
+
+  it('moondream_local: defaults to idle status when install_state is missing from the response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ installed: false, arch_supported: true }))),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
+      },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('moondream package not installed')
+    expect(wrapper.text()).not.toContain('undefined')
   })
 
   it('moondream_local: shows unsupported-architecture message', async () => {
@@ -605,6 +648,27 @@ describe('AiConnectionCard', () => {
     const retryBtn = wrapper.findAll('button').find((b) => b.text().includes('Retry Install'))!
     await retryBtn.trigger('click')
     expect(wrapper.text()).toContain('Installing')
+  })
+
+  it('moondream_local: shows a failed state with no log output when the response omits it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(jsonResponse({ installed: false, arch_supported: true, install_state: { status: 'failed' } })),
+      ),
+    )
+    const wrapper = mount(AiConnectionCard, {
+      props: {
+        status: baseStatus({ provider: 'moondream_local', moondream_installed: false, moondream_arch_supported: true }),
+      },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Installation failed')
+  })
+
+  it('shows an em dash for the model when the status reports none', () => {
+    const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ model: '' }) } })
+    expect(wrapper.text()).toContain('—')
   })
 
   it('runs a test analysis and shows the result', async () => {
