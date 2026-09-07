@@ -513,6 +513,104 @@ async def test_cameras_returns_stats(client: TestClient, db: ClipDatabase) -> No
     assert "Back Yard" in cameras
 
 
+async def test_cameras_includes_a_live_camera_with_no_clips_yet(
+    db: ClipDatabase,
+) -> None:
+    """A camera the account currently reports but that has never had a
+    clip downloaded (just installed, or renamed before this add-on's
+    identity-tracking ever saw it under any name) must still show up --
+    with zero stats -- rather than being unreachable from the nav sidebar
+    until its first clip downloads. Regression test for a live report:
+    a real, active camera ("Inside House 2") was completely absent from
+    the Library nav even though it appeared correctly in the AI/Vehicles
+    tabs (which already union in the live camera list).
+    """
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    server = MediaServer(
+        db=db,
+        port=0,
+        list_camera_names=lambda: ["Front Door", "Inside House 2"],
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/cameras")
+        data = await resp.json()
+    finally:
+        await tc.close()
+
+    by_camera = {row["camera"]: row for row in data}
+    assert by_camera["Front Door"]["total"] == 1
+    assert by_camera["Inside House 2"] == {
+        "camera": "Inside House 2",
+        "total": 0,
+        "size_bytes": 0,
+        "today": 0,
+        "this_week": 0,
+        "last_seen": "",
+    }
+
+
+async def test_cameras_does_not_duplicate_a_live_camera_with_clip_history(
+    db: ClipDatabase,
+) -> None:
+    """A camera name that's both in the live list and already has real
+    clip stats must appear exactly once, using the real stats -- not a
+    second, zeroed-out duplicate.
+    """
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    server = MediaServer(db=db, port=0, list_camera_names=lambda: ["front door"])
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/cameras")
+        data = await resp.json()
+    finally:
+        await tc.close()
+
+    assert len([row for row in data if row["camera"].lower() == "front door"]) == 1
+    assert data[0]["total"] == 1
+
+
+async def test_cameras_keeps_a_camera_with_history_that_is_no_longer_live(
+    db: ClipDatabase,
+) -> None:
+    """A camera with real historical clips (e.g. its old name before a
+    rename this add-on never observed) must stay visible even once it's
+    no longer in the live camera list -- unlike the battery strip, this is
+    a Library filter and those clips are still real, reachable footage.
+    """
+    await db.add_clip(_make_clip("c1", camera="Inside"))
+    server = MediaServer(db=db, port=0, list_camera_names=lambda: ["Inside House"])
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/cameras")
+        data = await resp.json()
+    finally:
+        await tc.close()
+
+    cameras = {row["camera"] for row in data}
+    assert "Inside" in cameras
+    assert "Inside House" in cameras
+
+
+async def test_cameras_without_a_live_camera_list_returns_history_only(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Without a live camera list wired in at all (list_camera_names is
+    None -- the `client` fixture's default) -- e.g. before Blink has
+    connected yet -- there's nothing to union in, so the response is
+    exactly the clip-history stats, unchanged from before this endpoint
+    gained the live-camera fallback.
+    """
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    resp = await client.get("/api/cameras")
+    data = await resp.json()
+    cameras = {row["camera"] for row in data}
+    assert cameras == {"Front Door"}
+
+
 # ---------------------------------------------------------------------------
 # /api/battery
 # ---------------------------------------------------------------------------
@@ -537,6 +635,58 @@ async def test_battery_status_returns_latest_per_camera(
     by_camera = {row["camera"]: row for row in data}
     assert by_camera["Front Door"]["battery_state"] == "low"
     assert by_camera["Backyard"]["battery_state"] == "ok"
+
+
+async def test_battery_status_excludes_cameras_no_longer_on_the_account(
+    db: ClipDatabase,
+) -> None:
+    """A battery_history row for a camera that no longer exists under that
+    name on the Blink account (e.g. renamed before this add-on's
+    rename-tracking ever observed the old name -- the only way rename
+    migration can ever fire) must not keep showing up forever as if it
+    were still a real camera. Regression test for a live report: two
+    renamed cameras' old default names kept appearing as extra tiles in
+    the Status tab's battery strip alongside the real cameras.
+    """
+    await db.add_battery_reading("Front Door", "ok", 3, 165)
+    await db.add_battery_reading("Outdoor 4 - JTU8", "ok", 3, 170)
+
+    server = MediaServer(
+        db=db, port=0, list_camera_names=lambda: ["Front Door", "Inside House"]
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/battery/status")
+        data = await resp.json()
+    finally:
+        await tc.close()
+
+    names = [row["camera"] for row in data]
+    assert "Outdoor 4 - JTU8" not in names
+    assert names == ["Front Door"]
+
+
+async def test_battery_status_keeps_stale_entries_without_a_live_camera_list(
+    db: ClipDatabase,
+) -> None:
+    """Without a live camera list wired in at all (list_camera_names is
+    None) -- e.g. before Blink has connected yet -- fall back to the old
+    behavior rather than risk hiding every camera's battery reading just
+    because there's nothing to check against.
+    """
+    await db.add_battery_reading("Outdoor 4 - JTU8", "ok", 3, 170)
+
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.get("/api/battery/status")
+        data = await resp.json()
+    finally:
+        await tc.close()
+
+    assert {row["camera"] for row in data} == {"Outdoor 4 - JTU8"}
 
 
 async def test_battery_history_empty(client: TestClient) -> None:

@@ -3,6 +3,7 @@ import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import StatusPage from './StatusPage.vue'
+import BatteryHistoryModal from './BatteryHistoryModal.vue'
 import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
 import { useRefreshStore } from '../../stores/refresh'
@@ -145,6 +146,18 @@ describe('StatusPage', () => {
     await flushPromises()
     await wrapper.find('.act-bar-wrap').trigger('click')
     expect(useDateFilterStore().date).toBe('2026-01-05')
+  })
+
+  it('closes the battery history modal when it emits close', async () => {
+    const wrapper = mount(StatusPage, { global: { plugins: [PrimeVue] } })
+    await flushPromises()
+    await wrapper.find('.battery-tile').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(BatteryHistoryModal).exists()).toBe(true)
+
+    await wrapper.findComponent(BatteryHistoryModal).vm.$emit('close')
+    await flushPromises()
+    expect(wrapper.findComponent(BatteryHistoryModal).exists()).toBe(false)
   })
 
   it('shows an error state when the fetch fails', async () => {
