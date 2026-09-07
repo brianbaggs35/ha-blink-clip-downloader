@@ -262,21 +262,37 @@ removed in 5.0.0.
   Feed, and Storage (Archived Clips list/expand/camera-filter/delete — all
   DB-backed; Google Drive only as far as its disconnected/not-configured
   state, since exercising a real connection needs actual OAuth credentials)
-  — deliberately **not** Live View or Biometrics, which need a real
-  camera/face-recognition dependency this environment doesn't have; those
-  stay covered by their own focused Vitest specs instead. Security Feed is
+  — also Live View and Biometrics, each via its own unlock trick (below);
+  neither is a mock in the sense of faking application logic, just a fake
+  data source feeding the real code paths. Security Feed is
   unlocked the same cheap way the AI tab is (a real dependency pointed at
   something that fails fast, not a mock): `list_camera_names`/
   `get_camera_snapshot` are narrow callables MediaServer takes regardless of
   blinkpy, so the script wires in a fake camera list plus a real (tiny,
   Pillow-generated) JPEG per camera — one camera deliberately returns no
   snapshot, exercising the "No snapshot available yet" placeholder path
-  too. The Vehicles tab's zone-drawing canvas is similarly out of
-  reach here for a narrower reason: it only initializes its drawing surface
-  once its background `<img>` fires a real `load` event, and thumbnails
-  need a real file on disk at the clip's `file_path` (`.with_suffix(".jpg")`)
-  — unlike `/data`, clip paths live under `/share/...` and aren't redirected
-  by `_redirect_data_files`. `vitest.config.ts` excludes `e2e/**` from Vitest's own test
+  too. Live View similarly wires in a real `LiveViewManager` with a fake
+  `get_camera` whose `init_livestream()` always raises — this exercises
+  the camera picker and a genuine (not mocked) `LiveViewError` surfaced as
+  a toast through `live_view.py`'s real code path, but actually starting a
+  session needs a real Blink stream feeding a real ffmpeg process, out of
+  reach here — `live-view.spec.ts` covers the rest (an active session,
+  switching cameras mid-session, the server ending a session with an
+  error) via `page.route()` mocking the `/api/liveview/*` responses
+  instead, the same "mock the API layer, not the application" approach
+  `mocked-integrations.spec.ts` uses for Google Drive's connected state.
+  Biometrics is unlocked via `_force_face_recognition_available()`
+  patching `media_server.is_face_recognition_available` to always return
+  `True` (real dependency: `facenet_pytorch`, part of the optional CV-
+  pipeline extra, genuinely absent in this lightweight test environment)
+  — the tab and its CRUD (list/rename/approve/remove enrollments) are
+  e2e-reachable this way, while the actual embedding step still
+  independently (and correctly) reports "no face detected" either way, so
+  an enrollment can never falsely succeed. The Vehicles tab's zone-drawing
+  canvas depends on its background `<img>` firing a real `load` event,
+  which needs a real thumbnail file on disk — solved by giving `Test
+  Scratch` a real, `ffmpeg`-generated video (the same fixture Biometrics'
+  enrollment test needs), not a placeholder file. `vitest.config.ts` excludes `e2e/**` from Vitest's own test
   discovery — the two runners don't overlap. Requires a reachable Postgres
   and `npm run build` having already produced `blink_downloader/static/`
   (see `playwright.config.ts`'s `webServer`, which starts/stops the
