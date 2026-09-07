@@ -271,6 +271,18 @@ async def test_list_clips_starred_filter(client: TestClient, db: ClipDatabase) -
     assert data[0]["id"] == "s1"
 
 
+async def test_list_clips_starred_filter_excludes_starred(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("s1"))
+    await db.add_clip(_make_clip("s2"))
+    await db.star_clip("s1", True)
+    resp = await client.get("/api/clips?starred=0")
+    data = await resp.json()
+    assert len(data) == 1
+    assert data[0]["id"] == "s2"
+
+
 async def test_list_clips_archived_filter(client: TestClient, db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("regular1"))
     await db.add_clip(_make_clip("archived1"))
