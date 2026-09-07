@@ -87,6 +87,36 @@ describe('EnrollFromClipPicker', () => {
     expect(wrapper.text()).toContain('No cameras found yet')
   })
 
+  it('does not crash when loadCameras() rejects -- including on a refresh tick', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('down'))),
+    )
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.text()).toContain('No cameras found yet')
+
+    // The refresh-tick watcher re-invokes loadCameras() the same way a
+    // camera rename would -- a second rejection must not throw either.
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(wrapper.text()).toContain('No cameras found yet')
+  })
+
+  it('does not crash when loadClips() rejects', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/cameras')) return Promise.resolve(jsonResponse([makeCamera('Front Door')]))
+        if (url.includes('/api/clips')) return Promise.reject(new Error('down'))
+        return Promise.resolve(jsonResponse({ frames: [] }))
+      }),
+    )
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.findAll('.thumb-strip-item')).toHaveLength(0)
+  })
+
   it('does not let a stale loadCameras response overwrite a newer camera list/selection', async () => {
     // Regression-style guard: a refresh tick can fire loadCameras() again
     // before an earlier call (e.g. the initial fire-and-forget load) has

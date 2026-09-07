@@ -71,6 +71,10 @@ async function loadCameras() {
     if (!cameras.value.some((camera) => camera.camera === selectedCamera.value)) {
       selectedCamera.value = cameras.value[0]?.camera ?? ''
     }
+  } catch {
+    // Transient -- leave the camera list/selection at their last known
+    // state rather than let a refresh-tick failure surface as an
+    // unhandled rejection.
   } finally {
     if (seq === camerasSeq) loadingCameras.value = false
   }
@@ -112,6 +116,9 @@ async function loadClips() {
     recentClips.value = result
     hasMoreClips.value = result.length === CLIPS_PAGE_SIZE
     if (recentClips.value.length) selectedClipId.value = recentClips.value[0].id
+  } catch {
+    // Transient -- the clip strip just stays empty (already cleared above)
+    // rather than let a failure surface as an unhandled rejection.
   } finally {
     if (seq === clipsSeq) loadingClips.value = false
   }

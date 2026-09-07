@@ -144,6 +144,38 @@ describe('AiPage', () => {
     wrapper.unmount()
   })
 
+  it('does not crash when a 10s poll rejects, and keeps the last known status', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let statusCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/ai/status')) {
+          statusCalls++
+          if (statusCalls > 1) return Promise.reject(new Error('down'))
+          return Promise.resolve(jsonResponse(AI_STATUS_ENABLED))
+        }
+        if (url.startsWith('/api/ai/camera-configs')) return Promise.resolve(jsonResponse([]))
+        if (url.startsWith('/api/ai/faces')) return Promise.resolve(jsonResponse({ available: true, faces: [] }))
+        if (url.startsWith('/api/ai/suspicious')) return Promise.resolve(jsonResponse({ items: [], total: 0 }))
+        if (url.startsWith('/api/ai/feedback/stats'))
+          return Promise.resolve(
+            jsonResponse({ total: 0, correct: 0, incorrect: 0, false_positive: 0, false_negative: 0 }),
+          )
+        return Promise.reject(new Error(`unexpected fetch ${url}`))
+      }),
+    )
+    const wrapper = mountAiPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('AI Connection')
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('AI Connection')
+    wrapper.unmount()
+  })
+
   it('stops polling after unmount', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch()

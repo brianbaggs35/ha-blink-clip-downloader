@@ -305,24 +305,34 @@ class GDriveUploadQueue:
         try:
             with zipfile.ZipFile(archive_path) as zf:
                 member_name = arcname
-                member_names = set(zf.namelist())
-                if member_name not in member_names:
-                    member_name = next(
-                        (
+                # Fast path: the overwhelming majority of extractions hit the
+                # camera's current name on the first try, so check that one
+                # member directly (an O(1) dict lookup) rather than building
+                # a set from the archive's full namelist() on every call.
+                # Only a rename that predates this arcname makes the direct
+                # lookup miss, and that's when the slower full-enumeration
+                # fallback below is actually needed.
+                try:
+                    zf.getinfo(member_name)
+                except KeyError:
+                    member_names = set(zf.namelist())
+                    if member_name not in member_names:
+                        member_name = next(
+                            (
+                                candidate
+                                for candidate in fallback_arcnames
+                                if candidate in member_names
+                            ),
+                            member_name,
+                        )
+                    if member_name not in member_names:
+                        basename_matches = [
                             candidate
-                            for candidate in fallback_arcnames
-                            if candidate in member_names
-                        ),
-                        member_name,
-                    )
-                if member_name not in member_names:
-                    basename_matches = [
-                        candidate
-                        for candidate in member_names
-                        if Path(candidate).name == original_name
-                    ]
-                    if len(basename_matches) == 1:
-                        member_name = basename_matches[0]
+                            for candidate in member_names
+                            if Path(candidate).name == original_name
+                        ]
+                        if len(basename_matches) == 1:
+                            member_name = basename_matches[0]
                 with (
                     zf.open(member_name) as member,
                     NamedTemporaryFile(

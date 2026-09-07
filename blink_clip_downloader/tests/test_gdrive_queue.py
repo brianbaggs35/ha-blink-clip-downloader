@@ -507,6 +507,34 @@ async def test_process_one_archived_clip_falls_back_to_unique_filename_after_ren
     assert (await db.get_gdrive_queue_counts())["completed"] == 1
 
 
+async def test_process_one_archived_clip_skips_full_enumeration_on_the_fast_path(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The common case (no rename involved) must resolve via a direct
+    getinfo() lookup, not by building a set from the archive's full
+    namelist() -- that full enumeration is only for the rare fallback path.
+    """
+    zip_path = _make_archive(tmp_path, "Front Door", "c1.mp4", b"archived video bytes")
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+    queue._running = True
+
+    clip = _add_clip("c1")
+    clip["path"] = str(tmp_path / "c1.mp4")
+    await db.add_clip(clip)
+    await db.mark_archived("c1", str(zip_path))
+    await queue.enqueue(clip)
+
+    with patch.object(
+        zipfile.ZipFile, "namelist", wraps=zipfile.ZipFile.namelist, autospec=True
+    ) as namelist_spy:
+        await queue._process_pending()
+
+    namelist_spy.assert_not_called()
+    client.upload_file.assert_awaited_once()
+    assert (await db.get_gdrive_queue_counts())["completed"] == 1
+
+
 async def test_process_one_archived_clip_prefers_nearest_parent_fallback(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
