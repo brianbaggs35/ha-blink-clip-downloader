@@ -28,6 +28,7 @@ vi.mock('video.js', () => ({ default: vi.fn(() => fakePlayer) }))
 vi.mock('video.js/dist/video-js.css', () => ({}))
 
 import LiveViewPage from './LiveViewPage.vue'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import type { LiveViewStatus } from '../../api/types'
 
@@ -841,5 +842,47 @@ describe('LiveViewPage', () => {
     await flushPromises()
 
     expect(fetchMock.mock.calls.find(([url]) => url === '/api/liveview/start')).toBeFalsy()
+  })
+
+  it('reloads the camera list on a shared refresh tick and clears a stale, inactive selection', async () => {
+    const routes: Routes = { cameras: ['Front Door'], status: INACTIVE }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.findComponent(SelectButton).props('modelValue')).toBeNull()
+
+    await wrapper.findComponent(SelectButton).vm.$emit('update:modelValue', 'Front Door')
+    await flushPromises()
+    expect(wrapper.findComponent(SelectButton).props('modelValue')).toBe('Front Door')
+
+    // No active session, so a rename that drops "Front Door" from the list
+    // must clear the now-stale picker selection.
+    routes.cameras = ['Entryway']
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Entryway')
+    expect(wrapper.findComponent(SelectButton).props('modelValue')).toBeNull()
+  })
+
+  it('does not clear the picker selection for an active session when a refresh tick updates the camera list', async () => {
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.findComponent(SelectButton).props('modelValue')).toBe('Front Door')
+
+    // The active session's own status poll (not this refresh tick) is what
+    // follows a rename -- a stale/racing camera-list reload must not blank
+    // the picker out from under a stream that's still playing.
+    routes.cameras = ['Entryway']
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Entryway')
+    expect(wrapper.findComponent(SelectButton).props('modelValue')).toBe('Front Door')
   })
 })

@@ -1524,6 +1524,41 @@ async def test_reset_battery_history_for_replaced_camera(db: ClipDatabase) -> No
     assert await db.get_latest_battery_state() == []
 
 
+async def test_reset_camera_baselines_for_replaced_camera(db: ClipDatabase) -> None:
+    await db.record_clip_baseline("Front Door", 8, 10.0)
+    await db.record_scene_baseline("Front Door", [0.1, 0.2])
+    assert db._pool is not None
+
+    await db.reset_camera_baselines("Front Door")
+
+    assert (
+        await db._pool.fetchval(
+            "SELECT COUNT(*) FROM camera_baselines WHERE LOWER(camera) = LOWER($1)",
+            "Front Door",
+        )
+        == 0
+    )
+    assert (
+        await db._pool.fetchval(
+            "SELECT COUNT(*) FROM camera_duration_stats WHERE LOWER(camera) = LOWER($1)",
+            "Front Door",
+        )
+        == 0
+    )
+    assert (
+        await db._pool.fetchval(
+            "SELECT COUNT(*) FROM camera_scene_baselines WHERE LOWER(camera) = LOWER($1)",
+            "Front Door",
+        )
+        == 0
+    )
+
+
+async def test_reset_camera_baselines_without_init_is_safe() -> None:
+    database = ClipDatabase()
+    await database.reset_camera_baselines("Front Door")
+
+
 async def test_reset_battery_history_without_init_is_safe() -> None:
     database = ClipDatabase()
     await database.reset_battery_history("Front Door")

@@ -288,11 +288,19 @@ class GDriveUploadQueue:
         original_name = Path(str(clip.get("file_path", ""))).name
         arcname = f"{clip.get('camera', 'unknown')}/{original_name}"
         file_path = Path(str(clip.get("file_path", "")))
-        fallback_arcnames = {
-            f"{parent.name}/{original_name}"
-            for parent in file_path.parents
-            if parent.name and parent.name != clip.get("camera", "unknown")
-        }
+        # A list, not a set: file_path.parents already yields nearest-parent
+        # first, and preserving that order (via dict.fromkeys for dedup)
+        # keeps the fallback match below deterministic. A set here would let
+        # Python's per-process hash-randomized iteration order pick a
+        # different candidate on different runs whenever more than one
+        # fallback arcname happens to exist in the ZIP.
+        fallback_arcnames = list(
+            dict.fromkeys(
+                f"{parent.name}/{original_name}"
+                for parent in file_path.parents
+                if parent.name and parent.name != clip.get("camera", "unknown")
+            )
+        )
 
         try:
             with zipfile.ZipFile(archive_path) as zf:

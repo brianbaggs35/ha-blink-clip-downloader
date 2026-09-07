@@ -6,13 +6,17 @@
 
 - Fixed Blink camera renames leaving stale names in the library navigation,
   battery status, AI and biometrics camera lists, Storage filters, and other
-  camera pickers. Renames are now matched by the camera's stable Blink ID,
-  migrate persisted camera-keyed state and settings, preserve archived clips,
-  and refresh the affected UI surfaces without requiring an add-on restart.
-  Replacing a physical camera while keeping its display name also resets its
-  battery history so the replacement cannot inherit the previous camera's
-  battery state. Camera-name aliases are persisted so camera filters and AI
-  fallback settings continue working after an add-on restart.
+  camera pickers. Renames — including one that only changes letter casing —
+  are now matched by the camera's stable Blink ID, migrate persisted
+  camera-keyed state and settings, preserve archived clips, and refresh the
+  affected UI surfaces without requiring an add-on restart. Replacing a
+  physical camera while keeping its display name resets its battery history
+  and AI behavior baselines (activity-hour, clip-duration, and scene
+  baselines) so the replacement cannot inherit the previous camera's state.
+  Camera-name aliases are persisted so camera filters and AI fallback
+  settings continue working after an add-on restart, and Live View no
+  longer briefly clears its camera picker while actively streaming through
+  a rename.
 
 ## 5.4.7
 

@@ -1634,6 +1634,30 @@ class ClipDatabase:
             camera,
         )
 
+    async def reset_camera_baselines(self, camera: str) -> None:
+        """Drop AI baseline state when a physical camera is replaced under the
+        same name.
+
+        A replacement's field of view, mount angle, and typical clip
+        duration/motion frequency can all differ from the unit it replaced,
+        so keeping the old baselines would compare the new hardware against
+        a reference that no longer describes what it actually sees. Unlike
+        ``rename_camera``'s baseline migration (same camera, new name --
+        the data is still valid and worth carrying forward), a replacement
+        means the *data itself* is stale, so it's dropped rather than kept.
+        """
+        if self._pool is None:
+            return
+        for table in (
+            "camera_baselines",
+            "camera_duration_stats",
+            "camera_scene_baselines",
+        ):
+            await self._pool.execute(
+                _qm(f"DELETE FROM {table} WHERE LOWER(camera)=LOWER(?)"),
+                camera,
+            )
+
     async def get_battery_history(
         self, camera: str, limit: int = 50
     ) -> list[dict[str, Any]]:
