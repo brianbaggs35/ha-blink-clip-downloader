@@ -507,6 +507,45 @@ async def test_process_one_archived_clip_falls_back_to_unique_filename_after_ren
     assert (await db.get_gdrive_queue_counts())["completed"] == 1
 
 
+async def test_process_one_archived_clip_prefers_nearest_parent_fallback(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Multiple ancestor directories of the clip's stored path can each
+    coincidentally match a ZIP member after more than one rename. The
+    nearest parent must win deterministically, not an arbitrary one --
+    fallback_arcnames used to be a set, so Python's per-process hash
+    randomization could pick either candidate across different runs.
+    """
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Distant Name/c1.mp4", b"stale distant-ancestor video")
+        zf.writestr("Nearest Name/c1.mp4", b"correct nearest-parent video")
+
+    uploaded_bytes: list[bytes] = []
+
+    async def _fake_upload(path: Path, *_args: Any, **_kwargs: Any) -> str:
+        uploaded_bytes.append(Path(path).read_bytes())
+        return "drive-file-123"
+
+    client = _make_client_mock()
+    client.upload_file = AsyncMock(side_effect=_fake_upload)
+    queue = _make_queue(client, db)
+    queue._running = True
+
+    clip = _add_clip("c1")
+    clip["camera"] = "Entryway"
+    clip["path"] = str(tmp_path / "Distant Name/Nearest Name/c1.mp4")
+    await db.add_clip(clip)
+    await db.mark_archived("c1", str(zip_path))
+    await queue.enqueue(clip)
+
+    await queue._process_pending()
+
+    client.upload_file.assert_awaited_once()
+    assert uploaded_bytes == [b"correct nearest-parent video"]
+    assert (await db.get_gdrive_queue_counts())["completed"] == 1
+
+
 async def test_process_one_archived_clip_uploads_under_its_real_filename(
     db: ClipDatabase, tmp_path: Path
 ) -> None:

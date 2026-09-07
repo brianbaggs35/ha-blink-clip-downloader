@@ -482,8 +482,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 entry["camera"] = cls._resolve_camera_name(str(camera), aliases)
 
     async def _handle_camera_replaced(self, camera_name: str) -> None:
-        """Reset physical battery state when a camera keeps its display name."""
+        """Reset battery state and AI baselines when a camera keeps its
+        display name but the underlying hardware changed."""
         await self._db.reset_battery_history(camera_name)
+        await self._db.reset_camera_baselines(camera_name)
 
     def _setup_ai_analysis(self, config: AppConfig) -> None:
         (

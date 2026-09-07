@@ -170,12 +170,14 @@ async def test_camera_rename_alias_write_failure_is_retried(app, tmp_path):
         await app._handle_camera_renamed("Front Door", "Entryway")
 
 
-async def test_camera_replacement_resets_battery_history(app):
+async def test_camera_replacement_resets_battery_history_and_ai_baselines(app):
     app._db.reset_battery_history = AsyncMock()
+    app._db.reset_camera_baselines = AsyncMock()
 
     await app._handle_camera_replaced("Front Door")
 
     app._db.reset_battery_history.assert_awaited_once_with("Front Door")
+    app._db.reset_camera_baselines.assert_awaited_once_with("Front Door")
 
 
 async def test_poll_cycle_with_new_clips(app):

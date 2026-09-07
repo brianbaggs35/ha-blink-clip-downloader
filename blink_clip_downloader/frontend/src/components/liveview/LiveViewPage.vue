@@ -187,7 +187,13 @@ async function loadCameras() {
     const res = await getLiveViewCameras()
     if (seq !== cameraLoadSeq) return
     cameras.value = res.cameras
-    if (selectedCamera.value && !cameras.value.includes(selectedCamera.value)) {
+    // Only while nothing is active: applyStatus() is the sole owner of
+    // selectedCamera whenever a session is running (it follows the active
+    // session's camera name, including through a rename, on its own 4s
+    // poll) -- nulling it out here too would race that poll and could
+    // briefly blank the picker's highlighted selection even though the
+    // stream itself is still playing uninterrupted.
+    if (!status.value.active && selectedCamera.value && !cameras.value.includes(selectedCamera.value)) {
       selectedCamera.value = null
     }
   } catch {

@@ -184,7 +184,12 @@ async function pollCameras() {
     if (seq !== cameraPollSeq) return
     const previousCameras = library.cameras
     const signature = cameras
-      .map((camera) => camera.camera.toLowerCase())
+      // Deliberately case-sensitive: a rename that changes only casing
+      // ("front door" -> "Front Door") is still a real rename that the
+      // backend fully migrates, so this must stay sensitive to it. Only
+      // `total` (which churns on every download and isn't a topology
+      // change) is excluded from the signature.
+      .map((camera) => camera.camera)
       .sort()
       .join('\u0001')
     const changed = cameraListInitialized && signature !== cameraSignature
