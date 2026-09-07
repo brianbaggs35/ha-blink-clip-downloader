@@ -1,5 +1,39 @@
 # Changelog
 
+## 5.4.9
+
+### Bug Fixes
+
+- Fixed the Status tab's battery strip permanently showing a renamed
+  camera's old default name (e.g. "Outdoor 4 - JTU8") as an extra tile
+  alongside its real cameras, the same bug class fixed for the AI/Vehicles
+  camera lists in 5.4.8. Rename migration only fires for a rename this
+  add-on directly observes — a camera renamed the moment it was installed
+  (before the add-on's first poll under the default name) has no prior
+  state to migrate away from, so its last battery reading lingered under
+  the old name forever. `/api/battery/status` now cross-checks each
+  reading against the account's current camera list and drops it once the
+  name no longer exists there — the same treatment already applied to
+  removed cameras (no longer reported by Blink at all) and, via the
+  existing camera-replaced handler, to a physical unit swapped under an
+  unchanged name.
+- Fixed the opposite gap on the same endpoint family: a real, current
+  camera that hasn't had a clip downloaded yet (just installed, or renamed
+  before this add-on's identity-tracking ever saw it under any name) was
+  completely absent from the Library nav sidebar, its camera filter, the
+  Storage tab's archived-clips filter, the Biometrics enrollment picker,
+  and the Status tab's own Cameras card — all five read from `/api/cameras`,
+  which was purely clip-history-based with no fallback. It now also
+  includes every camera the account currently reports, with zero stats
+  until its first clip downloads, matching the AI/Vehicles tabs' existing
+  behavior. A camera with real historical clips under an old, no-longer-live
+  name (e.g. after an unobserved rename) is unaffected and stays visible —
+  that history is still real, reachable footage.
+- Extracted the duplicated `LOWER(camera) = LOWER(?)`/`timestamp >= ?`/
+  `timestamp <= ?` WHERE-clause fragments shared by `get_clips`,
+  `get_archive_groups`, and `get_archive_clips` into module-level
+  constants (SonarCloud maintainability).
+
 ## 5.4.8
 
 ### Bug Fixes

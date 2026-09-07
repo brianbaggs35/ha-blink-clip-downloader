@@ -304,6 +304,12 @@ _FEEDBACK_THRESHOLD_CEILING = 0.95
 # capped at this many, matching analyzer._build_prompt's own cap.
 _FEEDBACK_PROMPT_CORRECTIONS_LIMIT = 3
 
+# Shared WHERE-clause fragments for the camera/since/until clip filters that
+# get_clips/get_archive_groups/get_archive_clips each build independently.
+_WHERE_CAMERA = "LOWER(camera) = LOWER(?)"
+_WHERE_SINCE = "timestamp >= ?"
+_WHERE_UNTIL = "timestamp <= ?"
+
 
 def _qm(sql: str) -> str:
     """Convert ``?``-style positional placeholders to asyncpg's ``$1, $2, ...``.
@@ -994,16 +1000,16 @@ class ClipDatabase:
         params: list[Any] = [archived]
 
         if camera and camera != "all":
-            where.append("LOWER(camera) = LOWER(?)")
+            where.append(_WHERE_CAMERA)
             params.append(camera)
         if archive_path:
             where.append("archive_path = ?")
             params.append(archive_path)
         if since:
-            where.append("timestamp >= ?")
+            where.append(_WHERE_SINCE)
             params.append(since)
         if until:
-            where.append("timestamp <= ?")
+            where.append(_WHERE_UNTIL)
             params.append(until)
         if starred is not None:
             where.append("starred = ?")
@@ -1067,14 +1073,14 @@ class ClipDatabase:
         where = ["archived = TRUE", "archive_path != ''"]
         params: list[Any] = []
         if camera and camera != "all":
-            where.append("LOWER(camera) = LOWER(?)")
+            where.append(_WHERE_CAMERA)
             params.append(camera)
 
         if since:
-            where.append("timestamp >= ?")
+            where.append(_WHERE_SINCE)
             params.append(since)
         if until:
-            where.append("timestamp <= ?")
+            where.append(_WHERE_UNTIL)
             params.append(until)
 
         rows = await self._pool.fetch(
@@ -1122,13 +1128,13 @@ class ClipDatabase:
         where = ["archived = TRUE", "archive_path = ?"]
         params: list[Any] = [archive_path]
         if camera and camera != "all":
-            where.append("LOWER(camera) = LOWER(?)")
+            where.append(_WHERE_CAMERA)
             params.append(camera)
         if since:
-            where.append("timestamp >= ?")
+            where.append(_WHERE_SINCE)
             params.append(since)
         if until:
-            where.append("timestamp <= ?")
+            where.append(_WHERE_UNTIL)
             params.append(until)
         total = await self._pool.fetchval(
             _qm(f"SELECT COUNT(*) FROM clips WHERE {' AND '.join(where)}"),

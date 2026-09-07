@@ -775,7 +775,41 @@ class MediaServer:
         return frames
 
     async def _handle_cameras(self, _request: web.Request) -> web.Response:
+        """Per-camera clip stats, backing the Library nav/filter sidebar.
+
+        get_camera_stats() is purely clip-history-based (GROUP BY over
+        clips), so a camera the account currently reports but that has
+        never had a clip downloaded -- just installed, or renamed/replaced
+        before this add-on's identity-tracking (downloader.py) ever saw it
+        under any name, so there is nothing for it to migrate -- would
+        otherwise never appear here at all, even though it's a completely
+        real, live camera. The AI/Vehicles tabs' camera-configs endpoint
+        already unions in the live camera list for exactly this reason
+        (see _handle_ai_camera_configs_get); do the same here so a
+        brand-new camera is at least visible (with zero stats) instead of
+        unreachable from the nav sidebar until its first clip downloads.
+        Purely additive -- a camera with real clip history (including one
+        no longer live, e.g. after a rename this add-on never observed) is
+        untouched, since those historical clips are still real and worth
+        keeping reachable; nothing is ever removed here.
+        """
         camera_stats = await self._db.get_camera_stats()
+        existing_lower = {str(row.get("camera", "")).lower() for row in camera_stats}
+        live_names = self._list_camera_names() if self._list_camera_names else []
+        for name in live_names:
+            if name.lower() in existing_lower:
+                continue
+            camera_stats.append(
+                {
+                    "camera": name,
+                    "total": 0,
+                    "size_bytes": 0,
+                    "today": 0,
+                    "this_week": 0,
+                    "last_seen": "",
+                }
+            )
+            existing_lower.add(name.lower())
         return web.json_response(camera_stats)
 
     async def _handle_battery_status(self, _request: web.Request) -> web.Response:
@@ -786,8 +820,31 @@ class MediaServer:
         and only lists cameras with at least one downloaded clip, which is
         the wrong scope for battery status (should reflect every camera
         Blink reports, regardless of clip history).
+
+        battery_history rows are camera-name-keyed and only ever migrated
+        to a new name when this add-on directly observes the rename (see
+        ClipDatabase.rename_camera) -- a rename from before that tracking
+        ever saw the old name (e.g. renamed the moment a brand-new camera
+        was installed, before its first poll under the default name) has
+        nothing to migrate the old row away from, so it would otherwise
+        sit here forever, looking like a real extra camera. Same fix as
+        _handle_ai_camera_configs_get: filter against the live camera
+        list, but only when it's non-empty, so a startup window before
+        Blink has connected (list_camera_names() briefly []) can't be
+        misread as "every camera is gone" and hide them all. Rows aren't
+        deleted, just excluded from this response -- a false-positive
+        exclusion self-heals the instant the live list is accurate again.
         """
-        return web.json_response(await self._db.get_latest_battery_state())
+        readings = await self._db.get_latest_battery_state()
+        live_names = self._list_camera_names() if self._list_camera_names else []
+        if live_names:
+            live_names_lower = {str(n).lower() for n in live_names}
+            readings = [
+                r
+                for r in readings
+                if str(r.get("camera", "")).lower() in live_names_lower
+            ]
+        return web.json_response(readings)
 
     async def _handle_battery_history(self, request: web.Request) -> web.Response:
         camera = request.match_info["camera"]

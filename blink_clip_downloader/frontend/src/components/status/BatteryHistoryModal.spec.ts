@@ -201,6 +201,37 @@ describe('BatteryHistoryModal', () => {
     expect(body.text()).toContain('Ongoing')
   })
 
+  it('shows "—" for a duration that cannot be computed from a malformed timestamp', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([
+            {
+              camera: 'Backyard',
+              battery_state: 'ok',
+              battery_level: 3,
+              battery_voltage: 170,
+              recorded_at: 'not-a-real-timestamp',
+            },
+            {
+              camera: 'Backyard',
+              battery_state: 'low',
+              battery_level: 0,
+              battery_voltage: 105,
+              recorded_at: '2026-01-01T09:00:00Z',
+            },
+          ]),
+        ),
+      ),
+    )
+    mountModal()
+    await flushPromises()
+    const body = new DOMWrapper(document.body)
+    expect(body.text()).toContain('Went low')
+    expect(body.text()).toContain('—')
+  })
+
   it('shows a loading indicator before the fetch resolves', async () => {
     vi.stubGlobal(
       'fetch',
