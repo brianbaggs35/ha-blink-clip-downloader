@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import { getFailedGDriveUploads, retryFailedGDriveUploads } from '../../api/gdrive'
 import type { GDriveFailedUpload } from '../../api/types'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 
 const emit = defineEmits<{ retried: [] }>()
 const toast = useToastStore()
+const refresh = useRefreshStore()
 
 const failed = ref<GDriveFailedUpload[]>([])
 const retryingId = ref<string | null>(null)
@@ -49,6 +51,11 @@ async function retryAll() {
 }
 
 onMounted(load)
+// Read-only history list -- no draft/unsaved state to protect, so it's
+// always safe to reload on every shared tick, including the one a camera
+// rename triggers (see AppSidebar.vue). The exposed reload() stays for
+// GoogleDriveCard's own retry-driven refresh, a separate trigger.
+watch(() => refresh.tick, load)
 defineExpose({ reload: load })
 </script>
 

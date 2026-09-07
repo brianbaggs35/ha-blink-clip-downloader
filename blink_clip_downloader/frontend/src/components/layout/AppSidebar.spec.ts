@@ -253,6 +253,69 @@ describe('AppSidebar', () => {
       expect(refresh.tick).toBe(1)
       wrapper.unmount()
     })
+
+    it('does not let a stale pollCameras response overwrite a newer camera list', async () => {
+      let resolveStale!: (body: unknown) => void
+      const stale = new Promise((resolve) => {
+        resolveStale = resolve
+      })
+      let call = 0
+      const fetchMock = vi.fn((url: string) => {
+        if (url === '/api/cameras') {
+          call++
+          if (call === 1) return stale.then((cameras) => jsonResponse(cameras))
+          return Promise.resolve(
+            jsonResponse([{ camera: 'Entryway', total: 1, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }]),
+          )
+        }
+        return Promise.resolve(jsonResponse({ connected: true, available: true, faces: [] }))
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      const wrapper = mountSidebar('ai')
+      const library = useLibraryStore()
+
+      // The mount-time pollCameras() call is in flight (call 1, deferred).
+      // Advancing past the poll interval fires a second one, which resolves
+      // immediately with a different camera.
+      await vi.advanceTimersByTimeAsync(10000)
+      expect(library.cameras[0]?.camera).toBe('Entryway')
+
+      resolveStale([{ camera: 'Front Door', total: 1, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }])
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(library.cameras[0]?.camera).toBe('Entryway')
+      wrapper.unmount()
+    })
+
+    it('falls back to "all" when the selected camera disappears without a single unambiguous replacement', async () => {
+      let cameras = [
+        { camera: 'Front Door', total: 3, size_bytes: 0, today: 0, this_week: 0, last_seen: '' },
+        { camera: 'Backyard', total: 1, size_bytes: 0, today: 0, this_week: 0, last_seen: '' },
+      ]
+      const fetchMock = vi.fn((url: string) =>
+        Promise.resolve(
+          jsonResponse(url === '/api/cameras' ? cameras : { connected: true, available: true, faces: [] }),
+        ),
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      const wrapper = mountSidebar('ai')
+      const library = useLibraryStore()
+
+      await vi.advanceTimersByTimeAsync(0)
+      library.selectCamera('Front Door')
+
+      // Front Door is gone and there's no single unambiguous replacement --
+      // two new cameras appeared at once -- so this can't be read as a rename.
+      cameras = [
+        { camera: 'Entryway', total: 3, size_bytes: 0, today: 0, this_week: 0, last_seen: '' },
+        { camera: 'Side Yard', total: 0, size_bytes: 0, today: 0, this_week: 0, last_seen: '' },
+        cameras[1],
+      ]
+      await vi.advanceTimersByTimeAsync(10000)
+
+      expect(library.currentCamera).toBe('all')
+      wrapper.unmount()
+    })
   })
 
   describe('biometrics tab visibility', () => {

@@ -4,6 +4,16 @@
 
 ### Bug Fixes
 
+- Fixed the AI tab's Camera Configurations, the AI Analysis Configuration
+  modal, and the Vehicles tab permanently showing a renamed camera's old
+  default name (e.g. "Outdoor 4 - JTU8") alongside its real cameras. Rename
+  migration can only ever fire for a rename this add-on directly observes
+  going forward — a camera renamed before upgrading to this version, or
+  before the add-on had ever seen it under the old name, has nothing to
+  migrate that entry away from, so it lingered forever with no way to reach
+  or remove it from the UI. The camera-configs list now cross-checks each
+  saved-but-not-recently-clipped entry against the account's current camera
+  list and drops it once the name no longer exists there.
 - Fixed Blink camera renames leaving stale names in the library navigation,
   battery status, AI and biometrics camera lists, Storage filters, and other
   camera pickers. Renames — including one that only changes letter casing —

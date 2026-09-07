@@ -5,6 +5,7 @@ import PrimeVue from 'primevue/config'
 import Select from 'primevue/select'
 import EnrollFromClipPicker from './EnrollFromClipPicker.vue'
 import type { CameraStat, ClipListItem } from '../../api/types'
+import { useRefreshStore } from '../../stores/refresh'
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -84,6 +85,47 @@ describe('EnrollFromClipPicker', () => {
     const wrapper = mountPicker()
     await flushPromises()
     expect(wrapper.text()).toContain('No cameras found yet')
+  })
+
+  it('does not let a stale loadCameras response overwrite a newer camera list/selection', async () => {
+    // Regression-style guard: a refresh tick can fire loadCameras() again
+    // before an earlier call (e.g. the initial fire-and-forget load) has
+    // resolved. The slower, stale response arriving last must not clobber
+    // whatever the newer response already set (a renamed/changed camera
+    // list, and the selection loadCameras derives from it).
+    let resolveStale!: (cameras: CameraStat[]) => void
+    const stale = new Promise<CameraStat[]>((resolve) => {
+      resolveStale = resolve
+    })
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('/api/cameras')) {
+          call++
+          return call === 1
+            ? stale.then((cameras) => jsonResponse(cameras))
+            : Promise.resolve(jsonResponse([makeCamera('Entryway')]))
+        }
+        if (url.includes('/frames')) return Promise.resolve(jsonResponse({ frames: [] }))
+        if (url.includes('/api/clips')) return Promise.resolve(jsonResponse([]))
+        return Promise.reject(new Error(`unexpected fetch: ${url}`))
+      }),
+    )
+    const wrapper = mountPicker()
+    // The initial fire-and-forget loadCameras() call is now in flight
+    // (call 1, deferred). Fire a second one via a refresh tick, which
+    // resolves immediately with a different camera.
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(wrapper.findComponent(Select).props('modelValue')).toBe('Entryway')
+
+    // Now let the stale first call resolve, with a camera list that no
+    // longer even contains "Entryway".
+    resolveStale([makeCamera('Front Door')])
+    await flushPromises()
+
+    expect(wrapper.findComponent(Select).props('modelValue')).toBe('Entryway')
   })
 
   it('changing the lookback with no camera selected does not fetch clips', async () => {

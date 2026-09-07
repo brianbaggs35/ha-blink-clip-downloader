@@ -11,14 +11,14 @@ function mountPage() {
   return mount(VehiclesPage, { global: { plugins: [PrimeVue] } })
 }
 
-function jsonResponse(body: unknown, ok = true) {
+function jsonResponse(body: unknown, ok = true, headers: HeadersInit = {}) {
   return {
     ok,
     status: ok ? 200 : 500,
     statusText: 'x',
     json: () => Promise.resolve(body),
     text: () => Promise.resolve(''),
-    headers: new Headers(),
+    headers: new Headers(headers),
   } as Response
 }
 
@@ -277,6 +277,61 @@ describe('VehiclesPage', () => {
     expect(saved).toEqual([
       { camera: 'Garage', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
       FRONT_CAM,
+    ])
+  })
+
+  it('merges a local is_car_camera toggle into the renamed remote entry when the alias header identifies the rename', async () => {
+    let cameraReads = 0
+    let saved: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (init?.method === 'PUT' && url.includes('/api/ai/camera-configs')) {
+          saved = JSON.parse(init.body as string)
+          return Promise.resolve(jsonResponse({ saved: true, count: 1 }))
+        }
+        if (url.includes('/api/vehicle/settings')) return Promise.resolve(jsonResponse({ car_description: '' }))
+        if (url.includes('/api/ai/camera-configs')) {
+          cameraReads++
+          if (cameraReads === 1) return Promise.resolve(jsonResponse([FRONT_CAM]))
+          return Promise.resolve(
+            jsonResponse(
+              [
+                {
+                  camera: 'Entryway',
+                  description: 'Watches the driveway',
+                  custom_prompt: '',
+                  is_car_camera: false,
+                  car_zone: null,
+                },
+              ],
+              true,
+              { 'X-Camera-Aliases': JSON.stringify({ driveway: 'Entryway' }) },
+            ),
+          )
+        }
+        return Promise.resolve(jsonResponse([]))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.find('input[type="checkbox"]').setValue(true)
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Camera Settings'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(saved).toEqual([
+      {
+        camera: 'Entryway',
+        description: 'Watches the driveway',
+        custom_prompt: '',
+        is_car_camera: true,
+        car_zone: null,
+      },
     ])
   })
 

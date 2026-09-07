@@ -6,6 +6,7 @@ import Paginator from 'primevue/paginator'
 import Select from 'primevue/select'
 import ArchivedClipsSection from './ArchivedClipsSection.vue'
 import { useConfirmStore } from '../../stores/confirm'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import type { ArchiveGroup, ClipListItem } from '../../api/types'
 
@@ -726,5 +727,96 @@ describe('ArchivedClipsSection', () => {
 
     expect(toast.message).toBe('Could not run archiving')
     expect(toast.isError).toBe(true)
+  })
+
+  it('falls back to "all" when the selected camera filter no longer exists on the account', async () => {
+    const routes: Routes = { groups: [makeGroup()], cameras: ['Front Door', 'Backyard'] }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountSection()
+    await flushPromises()
+    await wrapper.findComponent(Select).vm.$emit('update:modelValue', 'Front Door')
+    await flushPromises()
+    expect(wrapper.findComponent(Select).props('modelValue')).toBe('Front Door')
+
+    // Front Door was renamed/removed -- the next camera-list load (a
+    // refresh tick, same as any other rename-driven surface) must not
+    // leave the filter pointed at a camera that no longer exists.
+    routes.cameras = ['Entryway', 'Backyard']
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(wrapper.findComponent(Select).props('modelValue')).toBe('all')
+  })
+
+  it('reloads cameras and archive groups on a shared refresh tick', async () => {
+    const routes: Routes = { groups: [makeGroup()], cameras: ['Front Door'] }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountSection()
+    await flushPromises()
+
+    routes.groups = [makeGroup({ archive_path: '/data/archives/2026-07.zip' })]
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('2026-07')
+  })
+
+  it('does not let a stale loadGroups response overwrite a newer filtered result', async () => {
+    let resolveStale!: (v: Response) => void
+    const stale = new Promise<Response>((resolve) => {
+      resolveStale = resolve
+    })
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/storage/archives')) {
+          call++
+          if (call === 1) return stale
+          return Promise.resolve(jsonResponse([makeGroup({ archive_path: '/data/archives/2026-08.zip' })]))
+        }
+        return Promise.resolve(jsonResponse([]))
+      }),
+    )
+    const wrapper = mountSection()
+    // The mount-time loadGroups() call is in flight (call 1, deferred). A
+    // refresh tick fires a second, faster call before it resolves.
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(wrapper.text()).toContain('2026-08')
+
+    resolveStale(jsonResponse([makeGroup({ archive_path: '/data/archives/2026-01.zip' })]))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('2026-08')
+    expect(wrapper.text()).not.toContain('2026-01')
+  })
+
+  it('does not show a stale loadGroups error after a newer refresh tick already succeeded', async () => {
+    let rejectStale!: (err: Error) => void
+    const stale = new Promise<Response>((_resolve, reject) => {
+      rejectStale = reject
+    })
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/storage/archives')) {
+          call++
+          if (call === 1) return stale
+          return Promise.resolve(jsonResponse([makeGroup()]))
+        }
+        return Promise.resolve(jsonResponse([]))
+      }),
+    )
+    const wrapper = mountSection()
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Failed to load archived clips')
+
+    rejectStale(new Error('network down'))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Failed to load archived clips')
   })
 })

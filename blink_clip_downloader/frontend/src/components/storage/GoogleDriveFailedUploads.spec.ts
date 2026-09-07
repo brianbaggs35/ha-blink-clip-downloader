@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import GoogleDriveFailedUploads from './GoogleDriveFailedUploads.vue'
+import { useRefreshStore } from '../../stores/refresh'
 
 function jsonResponse(body: unknown) {
   return {
@@ -167,5 +168,23 @@ describe('GoogleDriveFailedUploads', () => {
 
     await (wrapper.vm as unknown as { reload: () => Promise<void> }).reload()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('reloads on a shared refresh tick, so a camera rename is reflected without navigating away', async () => {
+    let failed = FAILED
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(failed))),
+    )
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Front Door')
+
+    failed = [{ ...FAILED[0], camera: 'Entryway' }, FAILED[1]]
+    useRefreshStore().bump()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Entryway')
+    expect(wrapper.text()).not.toContain('Front Door')
   })
 })

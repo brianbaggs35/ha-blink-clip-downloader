@@ -6,14 +6,14 @@ import Dialog from 'primevue/dialog'
 import AiAnalysisConfigCard from './AiAnalysisConfigCard.vue'
 import { useToastStore } from '../../stores/toast'
 
-function jsonResponse(body: unknown, ok = true) {
+function jsonResponse(body: unknown, ok = true, headers: HeadersInit = {}) {
   return {
     ok,
     status: ok ? 200 : 500,
     statusText: 'x',
     json: () => Promise.resolve(body),
     text: () => Promise.resolve(''),
-    headers: new Headers(),
+    headers: new Headers(headers),
   } as Response
 }
 
@@ -246,6 +246,45 @@ describe('AiAnalysisConfigCard', () => {
       CAMERA_CONFIGS[0],
       CAMERA_CONFIGS[1],
     ])
+  })
+
+  it('merges a local toggle into the renamed remote entry when the alias header identifies the rename', async () => {
+    let reads = 0
+    let saved: unknown
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, options?: RequestInit) => {
+        if (options?.method === 'PUT') {
+          saved = JSON.parse(options.body as string)
+          return Promise.resolve(jsonResponse({ saved: true, count: 2 }))
+        }
+        reads++
+        if (reads === 1) return Promise.resolve(jsonResponse(CAMERA_CONFIGS))
+        return Promise.resolve(
+          jsonResponse([{ ...CAMERA_CONFIGS[0], camera: 'Entryway' }, CAMERA_CONFIGS[1]], true, {
+            'X-Camera-Aliases': JSON.stringify({ 'front door': 'Entryway' }),
+          }),
+        )
+      }),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+    await wrapper.find('button').trigger('click')
+    await flushPromises()
+
+    // Front Door starts enabled (CAMERA_CONFIGS[0].auto_analyze === true) --
+    // toggle it off locally before the rename is ever seen by this modal.
+    const toggles = [...document.body.querySelectorAll('input[type="checkbox"]')] as HTMLInputElement[]
+    toggles[1].click()
+    await flushPromises()
+
+    const saveButton = [...document.body.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Save Settings'),
+    )!
+    saveButton.click()
+    await flushPromises()
+
+    expect(saved).toEqual([{ ...CAMERA_CONFIGS[0], camera: 'Entryway', auto_analyze: false }, CAMERA_CONFIGS[1]])
   })
 
   it('shows an empty state when no cameras are available', async () => {

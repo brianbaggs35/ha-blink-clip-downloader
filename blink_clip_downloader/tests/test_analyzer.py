@@ -5243,6 +5243,27 @@ def test_rename_camera_does_not_overwrite_existing_new_settings() -> None:
     }
 
 
+def test_rename_camera_handles_camera_missing_some_settings() -> None:
+    """A camera commonly has only some of prompt/description/car_zone set --
+    rename_camera must not assume old_name is present in every dict/set."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        camera_prompts={"Front Door": "Watch the entry"},
+        camera_descriptions={},
+        car_cameras=["Front Door"],
+        car_zones={},
+    )
+
+    analyzer.rename_camera("Front Door", "Entryway")
+
+    assert analyzer._camera_prompts == {"Entryway": "Watch the entry"}
+    assert analyzer._camera_descriptions == {}
+    assert analyzer._car_cameras == {"Entryway"}
+    assert analyzer._car_zones == {}
+
+
 def test_update_camera_prompts_replaces_not_merges() -> None:
     """update_camera_prompts fully replaces the mapping so clearing a
     camera's custom prompt in the AI tab actually stops it from applying,
