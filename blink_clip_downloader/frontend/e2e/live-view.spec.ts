@@ -118,3 +118,140 @@ test('renders and stops a mocked live session without a real Blink account', asy
   await expect(page.getByText('Select a camera above to start watching.')).toBeVisible()
   await expect(page.getByRole('button', { name: '■ Stop' })).toHaveCount(0)
 })
+
+// Same "real backend for the reachable part, page.route() for the rest"
+// approach as the mocked session above -- neither of these two scenarios
+// (switching cameras mid-session; the server ending a session with an
+// error) can happen against the fake get_camera that always fails to
+// start in the first place.
+test('switching cameras while a session is active tears down the old one and starts a fresh session', async ({
+  page,
+}) => {
+  let currentCamera: string | null = null
+  let sessionSeq = 0
+  await page.route('**/api/liveview/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const method = request.method()
+
+    if (url.pathname === '/api/liveview/cameras') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ cameras: ['Front Door', 'Backyard'] }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/status') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          currentCamera
+            ? { active: true, session_id: `mock-${sessionSeq}`, camera: currentCamera, state: 'live' }
+            : { active: false },
+        ),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+      const body = request.postDataJSON() as { camera: string }
+      currentCamera = body.camera
+      sessionSeq++
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ active: true, session_id: `mock-${sessionSeq}`, camera: currentCamera, state: 'live' }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/stop' && method === 'POST') {
+      currentCamera = null
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ stopped: true }) })
+      return
+    }
+    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
+      return
+    }
+    if (url.pathname.startsWith('/api/liveview/hls/')) {
+      await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
+      return
+    }
+    await route.fallback()
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="liveview"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="liveview"]')
+
+  await page.getByRole('button', { name: 'Front Door', exact: true }).click()
+  await expect(page.getByRole('button', { name: '■ Stop' })).toBeVisible()
+  await expect.poll(() => currentCamera).toBe('Front Door')
+  const firstSessionSeq = sessionSeq
+
+  await page.getByRole('button', { name: 'Backyard', exact: true }).click()
+  await expect.poll(() => currentCamera).toBe('Backyard')
+  expect(sessionSeq).toBeGreaterThan(firstSessionSeq)
+  await expect(page.getByRole('button', { name: '■ Stop' })).toBeVisible()
+})
+
+test('the server ending a session with an error surfaces it and resets to the picker', async ({ page }) => {
+  let sessionState: 'live' | 'error' | null = null
+  await page.route('**/api/liveview/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const method = request.method()
+
+    if (url.pathname === '/api/liveview/cameras') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ cameras: ['Front Door'] }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/status') {
+      let body: unknown = { active: false }
+      if (sessionState === 'live') {
+        body = { active: true, session_id: 'mock-session', camera: 'Front Door', state: 'live' }
+      } else if (sessionState === 'error') {
+        body = { active: false, state: 'error', error: 'ffmpeg exited unexpectedly (simulated E2E error).' }
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+      return
+    }
+    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+      sessionState = 'live'
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ active: true, session_id: 'mock-session', camera: 'Front Door', state: 'live' }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
+      return
+    }
+    if (url.pathname.startsWith('/api/liveview/hls/')) {
+      await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
+      return
+    }
+    await route.fallback()
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="liveview"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="liveview"]')
+
+  await page.getByRole('button', { name: 'Front Door', exact: true }).click()
+  await expect(page.getByRole('button', { name: '■ Stop' })).toBeVisible()
+
+  // The next 4s status poll (STATUS_POLL_INTERVAL_MS in LiveViewPage.vue)
+  // picks up the server-reported error and tears the session down client-side.
+  sessionState = 'error'
+  await expect(page.getByText('ffmpeg exited unexpectedly (simulated E2E error).')).toBeVisible({ timeout: 6000 })
+  await expect(page.getByText('Select a camera above to start watching.')).toBeVisible()
+  await expect(page.getByRole('button', { name: '■ Stop' })).toHaveCount(0)
+})

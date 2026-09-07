@@ -207,3 +207,111 @@ test('drawing and saving a freeform zone shows the polygon preview and survives 
   const cardAfterReload = page.locator('.camera-card', { hasText: 'Test Scratch' })
   await expect(cardAfterReload.locator('.zone-polygon')).toBeVisible()
 })
+
+// Continues from the previous test: Test Scratch has a saved polygon zone
+// from the reload above. Neither existing rectangle test drags an
+// *already-drawn* rectangle by its body or a corner handle — both only
+// ever draw one from scratch — so hitTest()'s 'move'/corner branches,
+// moveRect(), and resizeRect() (vehicleZoneGeometry.ts) are otherwise never
+// exercised end to end.
+test('dragging an existing rectangle by its body moves it, and a corner handle resizes it', async ({ page }) => {
+  const card = page.locator('.camera-card', { hasText: 'Test Scratch' })
+  await card.getByRole('button', { name: 'Edit zone' }).click()
+  await expect(card.getByRole('button', { name: '▭ Rectangle' })).toBeVisible()
+
+  const img = card.locator('.picker-image')
+  await expect.poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  const overlay = card.locator('.picker-overlay')
+  await overlay.scrollIntoViewIfNeeded()
+  const box = await overlay.boundingBox()
+  if (!box) throw new Error('zone picker overlay has no bounding box')
+
+  // Draw an initial rectangle roughly in the middle-left of the frame,
+  // leaving headroom on every side to move/resize it without hitting the
+  // container's edge (clampRect would otherwise mask a real move/resize).
+  await page.mouse.move(box.x + 40, box.y + 40)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 140, box.y + 100, { steps: 5 })
+  await page.mouse.up()
+  const zoneRect = card.locator('.zone-rect')
+  await expect(zoneRect).toBeVisible()
+  const drawn = await zoneRect.boundingBox()
+  if (!drawn) throw new Error('drawn zone-rect has no bounding box')
+
+  // Drag from the rectangle's center (body, not a corner) — hitTest()
+  // returns 'move' here, not a corner handle or null.
+  const centerX = drawn.x + drawn.width / 2
+  const centerY = drawn.y + drawn.height / 2
+  await page.mouse.move(centerX, centerY)
+  await page.mouse.down()
+  await page.mouse.move(centerX + 60, centerY + 30, { steps: 5 })
+  await page.mouse.up()
+  const moved = await zoneRect.boundingBox()
+  if (!moved) throw new Error('moved zone-rect has no bounding box')
+  // Moved, not resized: position shifts, size stays the same.
+  expect(moved.x).toBeGreaterThan(drawn.x + 30)
+  expect(moved.y).toBeGreaterThan(drawn.y + 15)
+  expect(Math.abs(moved.width - drawn.width)).toBeLessThan(2)
+  expect(Math.abs(moved.height - drawn.height)).toBeLessThan(2)
+
+  // Drag from the bottom-right corner handle — hitTest() returns 'se' here
+  // (within HANDLE_GRAB_RADIUS of that corner), triggering resizeRect()
+  // instead of a move.
+  const corner = { x: moved.x + moved.width, y: moved.y + moved.height }
+  await page.mouse.move(corner.x, corner.y)
+  await page.mouse.down()
+  await page.mouse.move(corner.x + 50, corner.y + 25, { steps: 5 })
+  await page.mouse.up()
+  const resized = await zoneRect.boundingBox()
+  if (!resized) throw new Error('resized zone-rect has no bounding box')
+  // Resized, not moved: the anchored (top-left) corner stays put, the
+  // dragged corner's size grows.
+  expect(Math.abs(resized.x - moved.x)).toBeLessThan(2)
+  expect(Math.abs(resized.y - moved.y)).toBeLessThan(2)
+  expect(resized.width).toBeGreaterThan(moved.width + 30)
+  expect(resized.height).toBeGreaterThan(moved.height + 15)
+
+  const saveZoneBtn = card.getByRole('button', { name: 'Save zone' })
+  await expect(saveZoneBtn).toBeEnabled()
+  await saveZoneBtn.click()
+  await expect(page.getByText('Vehicle zone saved')).toBeVisible()
+})
+
+// Continues from the previous test: Test Scratch has a saved rect zone and
+// several real clips (distribution/archive/gdrive/biometrics fixtures all
+// land on this camera — see standalone_server.py), so its thumb strip has
+// more than one frame to switch between.
+test('selecting a different clip from the thumb strip switches frames and clears an in-progress draft', async ({
+  page,
+}) => {
+  const card = page.locator('.camera-card', { hasText: 'Test Scratch' })
+  await card.getByRole('button', { name: 'Edit zone' }).click()
+
+  const img = card.locator('.picker-image')
+  await expect.poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  const overlay = card.locator('.picker-overlay')
+  await overlay.scrollIntoViewIfNeeded()
+  const box = await overlay.boundingBox()
+  if (!box) throw new Error('zone picker overlay has no bounding box')
+
+  await page.mouse.move(box.x + 20, box.y + 20)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 80, box.y + 60, { steps: 5 })
+  await page.mouse.up()
+  await expect(card.locator('.zone-rect')).toBeVisible()
+
+  // Positional locators, not a class filter -- a live ".active"-based
+  // locator re-resolves against the DOM at assertion time, so after the
+  // click it would just match a *different* (still-inactive) thumb instead
+  // of confirming this one switched, the same "locator bound to changing
+  // criteria" pitfall as a text/role name that changes after an action.
+  const thumbs = card.locator('.thumb-strip-item')
+  const firstThumb = thumbs.nth(0)
+  const secondThumb = thumbs.nth(1)
+  await expect(firstThumb).toHaveClass(/active/)
+  await secondThumb.click()
+
+  await expect(secondThumb).toHaveClass(/active/)
+  await expect(firstThumb).not.toHaveClass(/active/)
+  await expect(card.locator('.zone-rect')).toHaveCount(0)
+})
