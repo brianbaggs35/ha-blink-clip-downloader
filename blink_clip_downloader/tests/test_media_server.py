@@ -1864,6 +1864,52 @@ async def test_ai_camera_configs_get_excludes_cameras_no_longer_on_the_account(
     assert inside_house["description"] == "Has a recent clip too"
 
 
+async def test_ai_camera_configs_get_excludes_a_stale_camera_that_has_clip_history(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A renamed-away camera that already had real clips *before* the
+    rename (the common case, not the "battery-dead, never clipped" case
+    the sibling test above covers) must also disappear from the AI/
+    Vehicles camera list. Regression test for a live report: "Inside" (534
+    old clips, renamed to "Inside House") kept showing up in the Vehicles
+    tab -- because it went through the *first* pass below (built from
+    clip-history cam_names), which previously had no live-camera check at
+    all; only the second pass (configured-but-unclipped entries) did.
+    """
+    await db.add_clip(_make_clip("c1", camera="Inside"))
+    await db.add_clip(_make_clip("c2", camera="Inside House"))
+    cfg_file = tmp_path / "camera_configs.json"
+    cfg_file.write_text(
+        json.dumps(
+            [
+                {
+                    "camera": "Inside",
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": True,
+                    "car_zone": None,
+                    "auto_analyze": True,
+                }
+            ]
+        )
+    )
+    server = MediaServer(
+        db=db, port=0, list_camera_names=lambda: ["Inside House", "Front Door"]
+    )
+    with patch.object(server, "_CAMERA_CONFIGS_FILE", cfg_file):
+        tc = TestClient(TestServer(server._build_app()))
+        await tc.start_server()
+        try:
+            resp = await tc.get("/api/ai/camera-configs")
+            data = await resp.json()
+        finally:
+            await tc.close()
+
+    names = [c["camera"] for c in data]
+    assert "Inside" not in names
+    assert "Inside House" in names
+
+
 async def test_ai_camera_configs_get_keeps_stale_entries_without_a_live_camera_list(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
