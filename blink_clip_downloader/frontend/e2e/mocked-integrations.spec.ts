@@ -442,3 +442,66 @@ test('shows the vehicle empty state when mocked APIs return no cameras', async (
   await expect(page.getByText('No cameras found. Download at least one clip first.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Save Camera Settings' })).toHaveCount(0)
 })
+
+// The three tests below cover the *save*-failure branches of the AI tab's
+// Camera Configurations and both Vehicles-tab save actions -- the sibling
+// *load*-failure states above (and library-modal.spec.ts's own real-backend
+// coverage of the happy paths) leave these catch{} branches as the one gap:
+// a real backend round trip has no easy way to make a single PUT fail
+// without also breaking the GET each of these does first to re-read the
+// latest camera list, so route()-mocking only the PUT (falling back to the
+// real server for every GET) is the only practical way to reach them.
+
+test('shows a failure toast when saving Camera Configs fails', async ({ page }) => {
+  await page.route('**/api/ai/camera-configs', async (route) => {
+    if (route.request().method() !== 'PUT') {
+      await route.fallback()
+      return
+    }
+    await fulfillJson(route, { error: 'mocked unavailable' }, 500)
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect(page.getByText('Camera Configurations')).toBeVisible()
+
+  await page.locator('#cam-desc-Garage').fill('should not persist')
+  await page.getByRole('button', { name: '💾 Save Camera Configs' }).click()
+  await expect(page.getByText('Failed to save camera configs')).toBeVisible()
+})
+
+test('shows a failure toast when saving the protected vehicle description fails', async ({ page }) => {
+  await page.route('**/api/vehicle/settings', async (route) => {
+    if (route.request().method() !== 'PUT') {
+      await route.fallback()
+      return
+    }
+    await fulfillJson(route, { error: 'mocked unavailable' }, 500)
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="vehicles"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="vehicles"]')
+
+  await page.locator('#vehicle-description').fill('should not persist')
+  await page.getByRole('button', { name: 'Save Description' }).click()
+  await expect(page.getByText('Failed to save description')).toBeVisible()
+})
+
+test('shows a failure toast when saving Vehicles camera settings fails', async ({ page }) => {
+  await page.route('**/api/ai/camera-configs', async (route) => {
+    if (route.request().method() !== 'PUT') {
+      await route.fallback()
+      return
+    }
+    await fulfillJson(route, { error: 'mocked unavailable' }, 500)
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="vehicles"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="vehicles"]')
+
+  await page.getByRole('button', { name: 'Save Camera Settings' }).click()
+  await expect(page.getByText('Failed to save camera settings')).toBeVisible()
+})

@@ -102,8 +102,15 @@ const systemStatusIcon = computed(() => {
   return 'pi pi-exclamation-triangle'
 })
 const cameraCount = computed(() => syncModules.value.reduce((n, m) => n + m.cameras.length, 0))
+// A disarmed sync module stops every one of its cameras from recording
+// regardless of their own motion-detection flag (same fact
+// systemDisarmed's own comment above relies on) -- so a camera only counts
+// toward this readout while its parent module is armed too, or the
+// subtitle could contradict the headline right next to it (e.g. "Disarmed"
+// next to "2 of 2 cameras armed" for a module disarmed via the hero button
+// without touching either camera's own toggle).
 const armedCameraCount = computed(() =>
-  syncModules.value.reduce((n, m) => n + m.cameras.filter((c) => c.armed).length, 0),
+  syncModules.value.reduce((n, m) => n + (m.armed ? m.cameras.filter((c) => c.armed).length : 0), 0),
 )
 const systemHeroButtonLabel = computed(() => {
   if (armingAll.value) return armingAllTarget.value ? 'Arming…' : 'Disarming…'

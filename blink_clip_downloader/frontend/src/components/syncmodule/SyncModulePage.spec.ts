@@ -140,6 +140,20 @@ describe('SyncModulePage', () => {
     expect(wrapper.find('.system-hero').classes()).toContain('system-hero-disarmed')
   })
 
+  it('does not count a disarmed module\'s cameras toward "armed" in the subtitle, even though their own motion-detection flag is untouched', async () => {
+    // A disarmed module stops every one of its cameras from recording
+    // regardless of their own armed flag -- makeModule()'s default cameras
+    // are both armed: true, so a subtitle that ignored module state here
+    // would contradict the "Disarmed" headline right above it.
+    vi.stubGlobal(
+      'fetch',
+      routedFetch(() => Promise.resolve(jsonResponse([makeModule({ armed: false })]))),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('0 of 2 cameras armed')
+  })
+
   it('shows "Partially Armed" when sync modules disagree', async () => {
     vi.stubGlobal(
       'fetch',
