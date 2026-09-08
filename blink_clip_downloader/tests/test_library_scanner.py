@@ -71,6 +71,24 @@ async def test_imports_clip_from_camera_date_layout(
     assert clip["size_bytes"] == len(b"fake-mp4")
 
 
+async def test_imports_multiple_files_in_one_scan(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Coverage: the scan loop's non-yield-point index (i % 25 != 0) --
+    every other test here only ever scans a single file."""
+    download_path = tmp_path / "clips"
+    _touch(
+        download_path / "Front_Door" / "2024-06-01" / "Front_Door_20240601_080000.mp4"
+    )
+    _touch(download_path / "Backyard" / "2024-06-01" / "Backyard_20240601_090000.mp4")
+
+    added = await import_existing_clips(db, download_path)
+    assert added == 2
+
+    clips = await db.get_clips()
+    assert {c["camera"] for c in clips} == {"Front Door", "Backyard"}
+
+
 async def test_skips_files_already_in_database(
     db: ClipDatabase, tmp_path: Path
 ) -> None:

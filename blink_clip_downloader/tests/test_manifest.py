@@ -52,6 +52,16 @@ def test_corrupt_line_is_skipped(tmp_path):
     assert records[1]["id"] == "also_ok"
 
 
+def test_blank_line_is_skipped(tmp_path):
+    f = tmp_path / "manifest.json"
+    f.write_text('{"id":"ok"}\n\n{"id":"also_ok"}\n')
+    m = ClipManifest(f)
+    records = m.read_all()
+    assert len(records) == 2
+    assert records[0]["id"] == "ok"
+    assert records[1]["id"] == "also_ok"
+
+
 def test_append_adds_recorded_at(tmp_path):
     m = make_manifest(tmp_path)
     m.append({"id": "x"})

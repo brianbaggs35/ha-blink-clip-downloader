@@ -133,6 +133,16 @@ async def test_send_includes_camera_breakdown(tmp_path: Path) -> None:
     assert "Back Yard" in message
 
 
+async def test_send_omits_camera_breakdown_when_no_camera_stats(
+    tmp_path: Path,
+) -> None:
+    digest, notifier, db = _make_digest(tmp_path)
+    db.get_camera_stats = AsyncMock(return_value=[])
+    await digest.send()
+    message = notifier.notify.call_args[0][0]
+    assert "By camera" not in message
+
+
 # ------------------------------------------------------------------
 # State file persistence
 # ------------------------------------------------------------------
