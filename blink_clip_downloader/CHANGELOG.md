@@ -47,6 +47,32 @@
   this defensive path; both fields are always present in a well-formed
   response, so this could not have affected a healthy install, but the
   page now degrades gracefully instead of crashing if it ever isn't.
+- Fixed the Sync Module tab's headline subtitle ("N of N cameras armed")
+  staying at its pre-disarm count after disarming a sync module — via the
+  hero button, or its own card's switch — without touching any individual
+  camera's motion-detection toggle, showing a self-contradictory "3 of 3
+  cameras armed" directly beneath a "Disarmed" or "Partially Armed"
+  headline. A disarmed sync module stops every one of its cameras from
+  recording regardless of their own armed flag (already true of the
+  "Disarmed" status logic itself), so the count now only credits a camera
+  toward "armed" while its parent sync module is armed too.
+- Fixed the Security Feed tab's curated camera selection (the Customize
+  panel's "Cameras" picker) permanently keeping a renamed-away camera in
+  its saved selection whenever this add-on doesn't directly observe the
+  rename — the same root cause as the Vehicles tab fix above — silently
+  narrowing the grid below what was actually selected, with nothing to
+  self-heal it. `/api/security-feed/settings` now applies the same
+  live-camera-list cross-check `/api/ai/camera-configs` and
+  `/api/battery/status` already use.
+- Fixed the Home Assistant event watcher (the instant-download-on-motion
+  feature) reconnecting in a zero-delay loop whenever the HA Supervisor's
+  WebSocket closes gracefully rather than the connection just dropping —
+  routine on an HA Core restart (config reload, add-on update, automation
+  edit), not a rare edge case. Only an actual exception engaged the
+  30-second reconnect backoff; a clean server-initiated close returned
+  normally and skipped it entirely, hammering the Supervisor with repeated
+  full reconnect+auth handshakes until a real failure finally interrupted
+  the loop.
 
 ## 5.4.9
 

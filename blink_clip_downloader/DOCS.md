@@ -986,6 +986,50 @@ eye on multiple cameras at once rather than watching one at a time.
 
 ---
 
+## Sync Module
+
+Arm or disarm your entire Blink system in one click, or fine-tune motion
+detection per camera — the same arm/disarm state as the Blink app itself.
+
+### How it works
+
+- Open the **Sync Module** tab to see a large **Arm/Disarm Entire System**
+  button, one card per sync module on your account, and (nested inside each
+  module's card) one card per camera on that module.
+- The headline status is **System Armed**, **Partially Armed**, or
+  **Disarmed**. Being fully armed requires *every* sync module *and* every
+  one of their cameras to be armed — disarming even a single camera drops
+  the whole system to **Partially Armed** until it's armed again.
+- Each sync module card shows its own arm switch plus firmware version,
+  serial number, online/offline status, and whether Local Storage is
+  active. Each camera card shows its own arm switch plus online/offline and
+  battery status.
+- Disarming the entire system (via the hero button or a sync module's own
+  switch, if it's the last one still armed) asks for confirmation first,
+  since it stops every camera on that module from recording on motion.
+  Arming never needs confirmation.
+- Every arm/disarm action shows a spinner on that control while it's in
+  flight and is guarded against a double-click firing the request twice.
+- The tab refreshes itself automatically every 30 seconds while open (in
+  case the armed state changes from the Blink app, another Home Assistant
+  session, or an automation) and stops polling entirely once you navigate
+  away.
+
+### Limitations
+
+- The **Arm/Disarm Entire System** button and each sync module's own switch
+  only toggle that module's arm state — they don't also change any
+  individual camera's separate motion-detection toggle. If a camera was
+  disarmed on its own, arming the system as a whole won't re-arm it; arm
+  that camera's own switch (here or in the Blink app) to get back to a
+  fully **System Armed** state. This mirrors how the Blink app itself keeps
+  the two switches independent.
+- Like the rest of this add-on, arm state reflects the last poll of the
+  Blink API — an extremely recent change made from the Blink app itself
+  may take a few seconds to appear here.
+
+---
+
 ## Storage Tab — Google Drive Backup
 
 The Storage tab has two parts: an **Archived Clips** list (view/delete clips
