@@ -73,24 +73,6 @@
   normally and skipped it entirely, hammering the Supervisor with repeated
   full reconnect+auth handshakes until a real failure finally interrupted
   the loop.
-- Fixed the add-on failing to start at all under a real, AppArmor-confined
-  Supervisor install on a host that actively enforces Unix-domain-socket
-  mediation (`apparmor.txt` had no `network unix stream` rule at all,
-  needed since the s6-overlay 3.x base image uses Unix sockets for its own
-  internal process supervision regardless of what the app itself does over
-  the network — every `s6-ipcserver-socketbinder` call was silently denied,
-  so none of the add-on's actual services, not just the ones doing
-  networking, ever started). The container itself still reported healthy
-  to Supervisor throughout, since the container *process* really was
-  running — only what's inside it silently never came up. Also added the
-  missing `network inet`/`inet6 stream`/`dgram` rules the add-on's real
-  network use (its own media server's TCP listener, the bundled
-  PostgreSQL server, DNS resolution, and outbound HTTPS to the Blink API,
-  AI providers, and Google Drive) already needed but never had explicitly
-  granted either. Found by a new CI check that installs this add-on into a
-  real, AppArmor-confined Home Assistant Supervisor (a plain `docker run`,
-  which is all CI checked before, never applies that confinement, so this
-  was undetectable there).
 
 ## 5.4.9
 
