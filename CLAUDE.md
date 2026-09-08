@@ -530,6 +530,36 @@ instrumentation, and it reuses an existing `npm run build` instead of
 always rebuilding) is faster for a quick local check; CI always runs the
 coverage variant.
 
+A separate workflow, `.github/workflows/ha-integration.yaml`, installs the
+add-on into a *real* Home Assistant Supervisor + Core (the official
+`ghcr.io/home-assistant/devcontainer` image, not just a bare `docker run`
+of the built image) and drives the real ingress-proxied UI with
+Playwright — the only CI coverage of the actual app↔Home Assistant
+integration boundary (Supervisor discovery/build/install/start, the
+ingress panel, real ingress routing), which `build`/`smoke-test` above
+don't touch at all. Deliberately separate from `ci.yaml` and
+informational-only (not required/blocking), since it depends on
+Supervisor/devcontainer infrastructure this repo doesn't control — see
+that workflow file's own header comment for the specific known upstream
+risks it's built to tolerate. `scripts/ci/ha_integration_setup.sh`'s
+subcommands (`wait-core`/`discover`/`install`/`start`/
+`enable-ingress-panel`/`diagnostics`) can each be run independently
+against an already-running container for local debugging, and
+`scripts/run-act-ha-integration.sh` runs the whole workflow locally via
+`act`, mirroring `scripts/run-act.sh`'s conventions for `ci.yaml`. Slow
+(~15–20 min, dominated by Supervisor building the add-on's own image) and
+not something to run per-change. If this workflow ever needs modifying,
+re-derive nothing by guesswork — bring the environment up by hand first
+(`docker run` the devcontainer image, `bash devcontainer_bootstrap`,
+background `supervisor_run`, then poke at it with `ha --raw-json`/curl/a
+throwaway Playwright script) and confirm each command actually works
+before touching the workflow YAML; several of its details (Supervisor's
+real entry point is container port 80, not Core's own 8123; a freshly
+installed add-on's ingress panel is not automatically added to the HA
+sidebar; the sidebar panel link needs an unscoped `page.getByText()`
+click, not a forced click on the `<a>`) came from exactly that kind of
+hands-on discovery and aren't documented anywhere upstream.
+
 ## Versioning
 
 The add-on version appears in **five places** that must all be updated
