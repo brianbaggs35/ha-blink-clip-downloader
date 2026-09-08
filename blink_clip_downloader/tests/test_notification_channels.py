@@ -593,6 +593,29 @@ async def test_dispatch_only_enabled_channels() -> None:
     dispatcher.send_ha_notification.assert_not_awaited()
 
 
+async def test_dispatch_skips_discord_when_disabled() -> None:
+    """Coverage: every other test above either enables Discord or leaves
+    every channel at its all-disabled default -- none exercises the
+    specifically-disabled branch with the other channels on."""
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_enabled=True,
+        mobile_app_target="phone",
+        discord_enabled=False,
+        ha_notify_enabled=True,
+    )
+    dispatcher.send_mobile = AsyncMock(return_value=True)
+    dispatcher.send_discord = AsyncMock()
+    dispatcher.send_ha_notification = AsyncMock(return_value=True)
+
+    result = _make_result(suspicious=True)
+    await dispatcher.dispatch(result, {"id": "c1", "camera": "A"})
+
+    dispatcher.send_discord.assert_not_awaited()
+    dispatcher.send_mobile.assert_awaited_once()
+    dispatcher.send_ha_notification.assert_awaited_once()
+
+
 # ------------------------------------------------------------------
 # Dispatch battery alert
 # ------------------------------------------------------------------

@@ -101,6 +101,21 @@ test('Google Drive card shows the disconnected setup prompt with no account conf
   await expect(page.locator('#gdrive-client-id')).toHaveValue('')
 })
 
+test('the Google Drive setup help dialog explains the OAuth client steps', async ({ page }) => {
+  await page.getByRole('button', { name: 'How to connect Google Drive' }).click()
+
+  const helpDialog = page.getByRole('dialog', { name: 'Connecting Google Drive' })
+  await expect(helpDialog).toBeVisible()
+  await expect(helpDialog).toContainText('TVs and Limited Input devices')
+  await expect(helpDialog.getByRole('link', { name: 'Google Cloud Console' })).toHaveAttribute(
+    'href',
+    'https://console.cloud.google.com/',
+  )
+
+  await page.keyboard.press('Escape')
+  await expect(helpDialog).toHaveCount(0)
+})
+
 test('saving Google Drive settings persists them and survives a reload', async ({ page }) => {
   await page.locator('#gdrive-client-id').fill('123.apps.googleusercontent.com')
   await page.locator('#gdrive-client-secret input').fill('e2e-fake-secret')

@@ -238,6 +238,73 @@ test('covers AI configuration, feedback, email alerts, and model-picker success 
   }
 })
 
+// The AI panel's "📝 Prompt" debug button (ClipAiPanel.vue) and its
+// PromptOverlay only ever show real content when ai_prompt_debug_enabled
+// is on server-side *and* a clip was analyzed while it was on — neither is
+// true for standalone_server.py's real ClipAnalyzer (pointed at an
+// unreachable Ollama URL purely for its local, deterministic "no frames
+// extracted"/network-failure fallbacks elsewhere in this suite, neither of
+// which ever reaches the code path that actually records prompt_text).
+// Mocked the same way Google Drive's connected state is above: a stub for
+// the one response this environment can't produce for real, everything
+// else (the button's own click handler, the overlay, the Escape-key
+// priority chain) is the real application code.
+test('the AI panel prompt-debug button shows the real prompt text sent to the model', async ({ page }) => {
+  await patchAiStatus(page, { prompt_debug_enabled: true })
+  await page.route('**/api/ai/results/e2e-clip-000', (route) =>
+    fulfillJson(route, {
+      clip_id: 'e2e-clip-000',
+      camera: 'Front Door',
+      model: 'llava:7b',
+      response_text: 'A person walks up to the front door and rings the bell.',
+      is_suspicious: false,
+      confidence: 0.15,
+      summary: 'Person at the door',
+      frame_count: 4,
+      analysis_duration: 1.4,
+      analyzed_at: '2026-01-01T00:00:00Z',
+      tokens_prompt: 512,
+      tokens_completion: 64,
+      anomaly_score: 0.1,
+      escalation_model: '',
+      escalation_tokens_prompt: 0,
+      escalation_tokens_completion: 0,
+      escalation_provider: '',
+      prompt_text: 'You are a home security camera AI. Describe this clip. Camera: Front Door.',
+      face_bypass_applied: false,
+      face_bypass_names: '',
+    }),
+  )
+
+  await page.goto('/')
+  await page.waitForSelector('.app-nav-tab.active[data-tab="library"]')
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = page.locator('.modal-bg.open')
+  await modal.locator('.ai-panel-hdr').click()
+  await expect(modal.getByText('Person at the door')).toBeVisible()
+
+  await modal.getByRole('button', { name: '📝 Prompt' }).click()
+  const promptOverlay = page.locator('.modal-bg.nested-overlay.open')
+  await expect(promptOverlay.getByText('Prompt Sent to AI')).toBeVisible()
+  await expect(promptOverlay.getByText('No prompt was recorded')).toHaveCount(0)
+  await expect(promptOverlay.locator('pre')).toContainText('You are a home security camera AI')
+
+  // The visible close (x) button and the Escape shortcut are two separate
+  // code paths (PromptOverlay.vue's own @click handler vs.
+  // useKeyboardShortcuts.ts's global listener) -- exercise both.
+  await promptOverlay.locator('.modal-close').click()
+  await expect(promptOverlay).toHaveCount(0)
+
+  await modal.getByRole('button', { name: '📝 Prompt' }).click()
+  await expect(promptOverlay.getByText('Prompt Sent to AI')).toBeVisible()
+
+  // Escape closes just the prompt overlay, not the clip modal underneath it
+  // (see useKeyboardShortcuts.ts's help -> prompt -> confirm priority chain).
+  await page.keyboard.press('Escape')
+  await expect(promptOverlay).toHaveCount(0)
+  await expect(modal).toBeVisible()
+})
+
 test('shows a successful mocked email alert result', async ({ page }) => {
   await patchAiStatus(page, { smtp_configured: true })
   await page.route('**/api/notifications/test-email', (route) =>
@@ -389,7 +456,11 @@ test('covers connected Google Drive, folder management, retries, and library upl
   await folderDialog.getByRole('button', { name: 'Use This Folder' }).click()
   await expect(page.getByText('Backup folder: New E2E Folder')).toBeVisible()
 
-  await page.goto('/')
+  // An in-SPA tab click, not page.goto('/') -- a full navigation here would
+  // reset the page's JS module state (and with it, this run's coverage
+  // instrumentation counters) losing credit for everything exercised above,
+  // for no behavioral difference (Library is the default tab either way).
+  await page.locator('.app-nav-tab[data-tab="library"]').click()
   await page.waitForSelector('.app-nav-tab.active[data-tab="library"]')
   const firstClip = page.locator('.clip-card').first()
   await firstClip.locator('.sel-check').click()

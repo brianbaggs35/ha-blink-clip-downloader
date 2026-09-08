@@ -151,6 +151,16 @@ def test_used_bytes_sums_files(tmp_path):
     assert s.used_bytes() == 1500
 
 
+def test_used_bytes_skips_directory_entries(tmp_path):
+    s = make_storage(tmp_path)
+    s.ensure_directory()
+    (tmp_path / "clips" / "a.mp4").write_bytes(b"x" * 1000)
+    # organize_by_camera creates per-camera subdirectories under the base
+    # path -- rglob("*") yields those directory entries too, not just files.
+    (tmp_path / "clips" / "Front Door").mkdir()
+    assert s.used_bytes() == 1000
+
+
 def test_is_over_quota_false_when_within(tmp_path):
     s = make_storage(tmp_path, max_storage_gb=1.0)
     s.ensure_directory()
