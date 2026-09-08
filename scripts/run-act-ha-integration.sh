@@ -65,6 +65,25 @@ ACT_ARGS=(
   --env ACT=true
   --job ha-integration-test
   --rm
+  # Required for this specific job: without --bind, act's job container
+  # gets a one-time `docker cp` snapshot of the repo, not a live view of
+  # it - so the "Prepare CI-only add-on copy" step's freshly-created
+  # directory would exist only inside that ephemeral snapshot, invisible
+  # to the sibling `docker run` (which talks to the *host's* real Docker
+  # daemon) a few steps later. Docker doesn't error on a missing
+  # bind-mount source, it silently creates an empty directory instead -
+  # confirmed the hard way: two different host-side paths both came up
+  # empty under plain `docker cp` semantics before this flag was added.
+  # --bind makes the whole working directory a live two-way mount, so a
+  # step-created file genuinely exists on the host by the time a later
+  # step's sibling container needs it. Side effect worth knowing: with
+  # --bind, anything a step writes into the checked-out tree lands in
+  # your real working directory, not a throwaway copy - this workflow
+  # only ever writes to paths already covered by .gitignore
+  # (.ha-integration-addon-copy/, ha-integration-diagnostics/,
+  # e2e/ha-integration-failure-*.png), so a local run won't dirty `git
+  # status`, but keep that in mind before adding any new output path.
+  --bind
 )
 
 if [[ -d "$PLAYWRIGHT_CACHE" ]]; then

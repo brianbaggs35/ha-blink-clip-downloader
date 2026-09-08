@@ -22,6 +22,23 @@ name: HA Supervisor Integration Test
 # discovery, closed "not planned") and
 # https://github.com/home-assistant/supervisor/issues/5991 (a build
 # regression tied to Supervisor's beta channel - this job pins `stable`).
+#
+# Explicit scope reduction, and why: this job disables AppArmor confinement
+# for the add-on copy it installs (see "Prepare CI-only add-on copy"
+# below) - AppArmor policy correctness is NOT exercised here. Real
+# confinement under this exact profile made the add-on's own s6-overlay
+# services fail entirely (s6-ipcserver-socketbinder: Permission denied)
+# inside this nested Docker-in-Docker environment, and a fix modelled
+# directly on Supervisor's own reference apparmor.txt (matching rule,
+# matching rationale) did not resolve it on a real run - see git history
+# on blink_clip_downloader/apparmor.txt around 2026-09-08 for the
+# investigation. That strongly suggests this CI environment's AppArmor
+# enforcement doesn't faithfully reproduce a real Home Assistant OS host,
+# not that the add-on's profile is actually broken (it is unchanged from
+# the last state confirmed working on real HAOS installs). Chasing that
+# gap further wasn't worth blocking this job's actual purpose - Supervisor
+# discovery/build/install/start and real ingress - on an environment
+# difference outside this repo's control.
 on:
   pull_request:
   push:
@@ -65,6 +82,11 @@ env:
   # used only as a secondary startup-readiness probe. Never used to prove
   # ingress works; see e2e/ha_integration_smoke.mjs's assertRealIngress().
   ADDON_PORT: "8099"
+  # Deliberately under github.workspace, NOT runner.temp - see the
+  # "Prepare CI-only add-on copy" step's comment for why runner.temp
+  # cannot be validated locally via act, even though it would work fine
+  # on a real runner.
+  ADDON_COPY_DIR: ${{ github.workspace }}/.ha-integration-addon-copy
 
 jobs:
   ha-integration-test:
@@ -90,6 +112,45 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
+      # Copies blink_clip_downloader/ to ADDON_COPY_DIR (github.workspace,
+      # not runner.temp - see below) and sets `apparmor: false` in that
+      # copy's config.yaml only - the real repo files (what a real user's
+      # install actually gets) are never written to. See the
+      # scope-reduction note in this file's header comment for why this
+      # exists at all.
+      #
+      # Why github.workspace, specifically, and not runner.temp: the next
+      # step's `docker run` creates a *sibling* container talking directly
+      # to the runner's own Docker daemon, so its host-side bind-mount
+      # path is resolved against the actual runner machine's filesystem,
+      # not this step's own shell. On a real GitHub-hosted runner that's
+      # not a distinction that matters - the runner process, the step's
+      # shell, and the Docker daemon are all the same one machine. Under
+      # `act`, though, each step runs inside act's own job container, and
+      # by default that container gets a one-time `docker cp` *snapshot*
+      # of the repo at checkout, not a live view of it - so ANY path
+      # created fresh during a step, github.workspace-relative or not,
+      # would normally only exist inside that ephemeral snapshot,
+      # invisible to the *host's* real Docker daemon the sibling container
+      # talks to. Docker doesn't error on a missing bind-mount source; it
+      # silently creates an empty directory there instead, which is
+      # exactly what happened here on 2026-09-08 (confirmed via the
+      # phantom empty directory left behind on the real host: first tried
+      # runner.temp, then github.workspace, both came up empty under
+      # act's default copy semantics). The actual fix is
+      # scripts/run-act-ha-integration.sh passing act's `--bind` flag,
+      # which makes the whole working directory a live two-way mount
+      # instead of a one-time copy - github.workspace matters because
+      # --bind only covers the working directory specifically, not
+      # runner.temp or any other path. This is also exactly why this
+      # exists as its own copy step instead of writing `apparmor: false`
+      # into the real checked-out blink_clip_downloader/ directly - with
+      # --bind making the workspace a live mount, writing there for real
+      # would mutate the actual repo checkout, so the copy step (and this
+      # directory being gitignored) is what keeps that from happening.
+      - name: Prepare CI-only add-on copy (AppArmor disabled)
+        run: scripts/ci/ha_integration_setup.sh prepare-addon-copy
+
       # Real nested Docker-in-Docker (this container runs its own dockerd
       # against the volumes below, not a socket-passthrough to the
       # runner's daemon) - --privileged is required for that, same as the
@@ -105,7 +166,7 @@ jobs:
             -v /var/lib/containerd \
             -v /mnt/supervisor \
             --tmpfs /tmp \
-            -v "${{ github.workspace }}/blink_clip_downloader:/mnt/supervisor/apps/local/blink_clip_downloader" \
+            -v "${ADDON_COPY_DIR}:/mnt/supervisor/apps/local/blink_clip_downloader" \
             "$DEVCONTAINER_IMAGE"
 
       - name: Bootstrap devcontainer

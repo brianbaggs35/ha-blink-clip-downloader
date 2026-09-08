@@ -541,12 +541,39 @@ don't touch at all. Deliberately separate from `ci.yaml` and
 informational-only (not required/blocking), since it depends on
 Supervisor/devcontainer infrastructure this repo doesn't control — see
 that workflow file's own header comment for the specific known upstream
-risks it's built to tolerate. `scripts/ci/ha_integration_setup.sh`'s
-subcommands (`wait-core`/`discover`/`install`/`start`/
+risks it's built to tolerate. AppArmor confinement itself is deliberately
+**not** exercised here — the job installs a separate copy of the add-on
+(under `github.workspace`, deliberately **not** `runner.temp`) with
+`apparmor: false` forced into that copy's `config.yaml`
+(`prepare-addon-copy`), never the real repo files. This was a deliberate
+retreat, not a shortcut taken casually: a real, ecosystem-standard fix
+(`network unix stream,` etc., matching Supervisor's own reference profile)
+for a genuine confinement failure (s6-ipcserver-socketbinder denied)
+didn't resolve it on a real run, pointing at this nested Docker-in-Docker
+CI environment not faithfully reproducing real HAOS AppArmor enforcement
+rather than an actual bug in the add-on's profile — see the workflow
+file's header comment and `blink_clip_downloader/apparmor.txt`'s git
+history around 2026-09-08 before attempting this again; don't re-edit that
+file for a CI-only problem without a real HAOS host (or at least a kernel
+with `CONFIG_SECURITY_APPARMOR` actually enabled — this dev sandbox's
+doesn't, confirmed via `/sys/module/apparmor/parameters/enabled`) to
+validate against, and prefer extending the CI-only bypass over touching
+the production profile again on circumstantial evidence alone.
+`scripts/ci/ha_integration_setup.sh`'s subcommands (`prepare-addon-copy`/
+`wait-docker`/`wait-core`/`discover`/`install`/`start`/
 `enable-ingress-panel`/`diagnostics`) can each be run independently
 against an already-running container for local debugging, and
 `scripts/run-act-ha-integration.sh` runs the whole workflow locally via
-`act`, mirroring `scripts/run-act.sh`'s conventions for `ci.yaml`. Slow
+`act`, mirroring `scripts/run-act.sh`'s conventions for `ci.yaml` but with
+one addition specific to this job: `--bind`, required because
+`prepare-addon-copy` creates a new directory mid-job that a later sibling
+`docker run` needs to see on the real host — `act`'s default checkout
+(a one-time `docker cp` snapshot into its own job container) doesn't
+give it that visibility, `--bind` (a live two-way mount of the working
+directory) does. See the "Prepare CI-only add-on copy" step's own comment
+in `ha-integration.yaml` for the full mechanism if this ever needs
+revisiting — confirmed the hard way over several act runs each leaving a
+phantom empty host directory behind, not guessed. Slow
 (~15–20 min, dominated by Supervisor building the add-on's own image) and
 not something to run per-change. If this workflow ever needs modifying,
 re-derive nothing by guesswork — bring the environment up by hand first
