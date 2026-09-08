@@ -250,13 +250,24 @@ _SCRATCH_CLIP_IDS = ("e2e-scratch-star", "e2e-scratch-tag")
 # group down to a subset of its clips); a third has its own archive_path
 # with a single clip (its own archive group, dedicated to the delete
 # test so removing it doesn't shrink the count the other assertions
-# depend on — same isolation principle as _SCRATCH_CLIP_IDS above).
+# depend on — same isolation principle as _SCRATCH_CLIP_IDS above). A
+# fourth, also two clips sharing one archive_path, is dedicated to the
+# "delete entire archive" test (as opposed to deleting one clip within
+# an archive) — deliberately neither clip is on Front Door, since the
+# camera-filter test asserts an exact single-panel/single-clip result
+# when filtered to that camera. storage.spec.ts's test ordering relies
+# on this archive being deleted before the solo-archive delete test
+# runs, so that test's own "back down to 1 panel" assertion doesn't
+# need to change to account for this one.
 _ARCHIVE_PATH_MULTI = "/archives/2024-01-e2e.zip"
 _ARCHIVE_PATH_SOLO = "/archives/2024-02-e2e.zip"
+_ARCHIVE_PATH_BULK_DELETE = "/archives/2024-03-e2e.zip"
 _ARCHIVE_CLIPS = (
     ("e2e-archive-front", "Front Door", _ARCHIVE_PATH_MULTI, 200),
     ("e2e-archive-back", "Backyard", _ARCHIVE_PATH_MULTI, 202),
     ("e2e-archive-solo", "Garage", _ARCHIVE_PATH_SOLO, 204),
+    ("e2e-archive-bulk-1", "Backyard", _ARCHIVE_PATH_BULK_DELETE, 206),
+    ("e2e-archive-bulk-2", "Garage", _ARCHIVE_PATH_BULK_DELETE, 208),
 )
 
 # A clip old enough to be eligible once the e2e ClipArchiver's

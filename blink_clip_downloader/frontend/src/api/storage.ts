@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client'
+import { apiDelete, apiGet, apiPost } from './client'
 import type { ArchiveClipsResponse, ArchiveGroup } from './types'
 
 export interface ArchiveGroupFilters {
@@ -43,4 +43,10 @@ export function getArchiveClips(filters: ArchiveClipFilters): Promise<ArchiveCli
  * of waiting for the next poll cycle. */
 export function runArchiveNow(): Promise<{ archived: number }> {
   return apiPost('/api/storage/archive/run-now')
+}
+
+/** Deletes an entire archive ZIP: every clip stored in it, their Google
+ * Drive backups, and the ZIP file itself. */
+export function deleteArchive(archivePath: string): Promise<{ deleted_clips: number; gdrive_deleted: number }> {
+  return apiDelete(`/api/storage/archive?archive_path=${encodeURIComponent(archivePath)}`)
 }
