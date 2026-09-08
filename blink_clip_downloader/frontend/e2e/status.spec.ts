@@ -13,8 +13,9 @@ import { test, expect } from './coverage-fixtures'
 // this runs, with two order-dependent exceptions, both only valid because
 // status.spec.ts alphabetically (and therefore chronologically, given
 // workers: 1) runs before storage.spec.ts:
-// - Archived starts at a fixed seed count of 3, but storage.spec.ts's
-//   delete test removes one of them later in the run.
+// - Archived starts at a fixed seed count of 5, but storage.spec.ts's
+//   delete-entire-archive and single-clip-delete tests remove 3 of them
+//   (2 then 1) later in the run.
 // - Total clips/Test Scratch's count include standalone_server.py's
 //   _PENDING_ARCHIVE_CLIP_ID and _BIOMETRICS_CLIP_ID (both archived=FALSE-
 //   filtered, so they count here, same as every other not-yet-archived
@@ -34,7 +35,7 @@ test('shows disconnected (no live Blink session) and the seeded library totals',
   const libraryCard = page.locator('.status-card', { hasText: 'Clip Library' })
   await expect(libraryCard).toContainText('Total clips')
   await expect(libraryCard.locator('.status-row', { hasText: 'Total clips' })).toContainText('17')
-  await expect(libraryCard.locator('.status-row', { hasText: 'Archived' })).toContainText('3')
+  await expect(libraryCard.locator('.status-row', { hasText: 'Archived' })).toContainText('5')
 })
 
 test('shows every seeded camera with its total clip count', async ({ page }) => {

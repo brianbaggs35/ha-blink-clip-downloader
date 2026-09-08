@@ -631,6 +631,62 @@ async def test_get_archive_clips_without_pool_returns_empty_page() -> None:
     }
 
 
+async def test_get_clips_by_archive_path_returns_full_rows(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("a1", camera="Front Door"))
+    await db.add_clip(_make_clip("a2", camera="Backyard"))
+    await db.add_clip(_make_clip("other"))
+    await db.mark_archived("a1", "/archives/2024-06.zip")
+    await db.mark_archived("a2", "/archives/2024-06.zip")
+    await db.mark_archived("other", "/archives/2024-07.zip")
+
+    clips = await db.get_clips_by_archive_path("/archives/2024-06.zip")
+
+    assert {c["id"] for c in clips} == {"a1", "a2"}
+    # Full rows, not just id/camera/file_path -- gdrive_file_id must be
+    # present so the caller can trash each clip's Drive backup.
+    assert "gdrive_file_id" in clips[0]
+
+
+async def test_get_clips_by_archive_path_no_match(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("a1"))
+    await db.mark_archived("a1", "/archives/2024-06.zip")
+    assert await db.get_clips_by_archive_path("/archives/nope.zip") == []
+
+
+async def test_get_clips_by_archive_path_without_init() -> None:
+    d = ClipDatabase()
+    assert await d.get_clips_by_archive_path("/archives/2024-06.zip") == []
+
+
+async def test_delete_clips_by_archive_path_removes_all_matching(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("a1"))
+    await db.add_clip(_make_clip("a2"))
+    await db.add_clip(_make_clip("keep"))
+    await db.mark_archived("a1", "/archives/2024-06.zip")
+    await db.mark_archived("a2", "/archives/2024-06.zip")
+    await db.mark_archived("keep", "/archives/2024-07.zip")
+
+    removed = await db.delete_clips_by_archive_path("/archives/2024-06.zip")
+
+    assert removed == 2
+    assert await db.get_clip("a1") is None
+    assert await db.get_clip("a2") is None
+    assert await db.get_clip("keep") is not None
+
+
+async def test_delete_clips_by_archive_path_no_match_returns_zero(
+    db: ClipDatabase,
+) -> None:
+    assert await db.delete_clips_by_archive_path("/archives/nope.zip") == 0
+
+
+async def test_delete_clips_by_archive_path_without_init() -> None:
+    d = ClipDatabase()
+    assert await d.delete_clips_by_archive_path("/archives/2024-06.zip") == 0
+
+
 async def test_get_archive_groups_filters_clips_inside_mixed_date_archive(
     db: ClipDatabase,
 ) -> None:

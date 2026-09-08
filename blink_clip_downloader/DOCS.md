@@ -1046,6 +1046,13 @@ includes the full inclusive range. Expanded archives load 50 clips per page and
 keep a fixed-height scroll area so moving between pages does not shift the
 surrounding Storage page.
 
+Each archive's header has a **Delete archive** button (next to the
+collapse/expand toggle) for removing every clip in that ZIP at once,
+instead of deleting them one at a time — useful for clearing out an old
+month's archive in a single action. It asks for confirmation first and
+also removes any Google Drive backups of the clips it contains, along
+with the ZIP file itself.
+
 The steps below are also available in-app — click the ⓘ button next to
 **Google Drive Setup** on the Storage tab for the same walkthrough without
 leaving the page.

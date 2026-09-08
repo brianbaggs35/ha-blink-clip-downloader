@@ -731,6 +731,23 @@ class ClipDatabase:
         )
         return _affected(status) > 0
 
+    async def delete_clips_by_archive_path(self, archive_path: str) -> int:
+        """Remove every clip record stored in one archive ZIP.
+
+        Used by the Storage tab's "delete entire archive" action, once the
+        ZIP file itself and any Google Drive backups have already been
+        handled by the caller (media_server.py's _handle_delete_archive) —
+        this is just the bulk DB-side cleanup. Returns the number of rows
+        removed.
+        """
+        if self._pool is None:
+            return 0
+        status = await self._pool.execute(
+            _qm("DELETE FROM clips WHERE archived=TRUE AND archive_path=?"),
+            archive_path,
+        )
+        return _affected(status)
+
     @staticmethod
     async def _migrate_camera_baselines(
         conn: asyncpg.Connection | PoolConnectionProxy, old_name: str, new_name: str
@@ -1141,6 +1158,24 @@ class ClipDatabase:
             *params,
         )
         return {"items": clips, "total": int(total or 0)}
+
+    async def get_clips_by_archive_path(
+        self, archive_path: str
+    ) -> list[dict[str, Any]]:
+        """Return every clip record stored in one archive ZIP, unpaginated.
+
+        Used when deleting an entire archive — the caller needs each
+        clip's ``gdrive_file_id`` to also remove its Google Drive backup,
+        which the paginated/filtered :meth:`get_archive_clips` (built for
+        the Storage tab's display) isn't a good fit for.
+        """
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm("SELECT * FROM clips WHERE archived=TRUE AND archive_path=?"),
+            archive_path,
+        )
+        return [_row_to_dict(r) for r in rows]
 
     async def get_all_file_paths(self) -> set[str]:
         """Return the set of all ``file_path`` values currently indexed."""

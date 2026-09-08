@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _CLIP_NOT_FOUND = "Clip not found"
+_ARCHIVE_NOT_FOUND = "Archive not found"
 _INVALID_JSON_BODY = "Invalid JSON body"
 _INVALID_REQUEST_BODY = "Invalid request body"
 _LIVE_VIEW_NOT_AVAILABLE = "Live View is not available"
@@ -430,6 +431,7 @@ class MediaServer:
         app.router.add_post(
             "/api/storage/archive/run-now", self._handle_archive_run_now
         )
+        app.router.add_delete("/api/storage/archive", self._handle_delete_archive)
         app.router.add_get(
             "/api/storage/gdrive/queue/failed", self._handle_gdrive_queue_failed
         )
@@ -2286,6 +2288,50 @@ class MediaServer:
             raise web.HTTPServiceUnavailable(text="Archiving is not available")
         archived = await self._archiver.run()
         return web.json_response({"archived": len(archived)})
+
+    async def _handle_delete_archive(self, request: web.Request) -> web.Response:
+        """Delete an entire archive ZIP: every clip record stored in it,
+        their Google Drive backups (best-effort), and the ZIP file itself.
+
+        Mirrors _handle_delete_clip's per-item resilience style (a Drive
+        failure logs a warning and continues rather than blocking the
+        rest of the deletion), just fanned out over every clip sharing
+        one archive_path instead of a single clip id.
+        """
+        archive_path = request.rel_url.query.get("archive_path", "")
+        if not archive_path:
+            raise web.HTTPBadRequest(text="archive_path is required")
+
+        clips = await self._db.get_clips_by_archive_path(archive_path)
+        if not clips:
+            raise web.HTTPNotFound(text=_ARCHIVE_NOT_FOUND)
+
+        gdrive_deleted = 0
+        if self._gdrive_client:
+            for clip in clips:
+                if not clip.get("gdrive_file_id"):
+                    continue
+                try:
+                    if await self._gdrive_client.delete_file(clip["gdrive_file_id"]):
+                        gdrive_deleted += 1
+                except Exception as exc:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Could not remove Google Drive backup for clip %s: %s",
+                        clip.get("id"),
+                        exc,
+                    )
+
+        zip_path = Path(archive_path)
+        if zip_path.exists():
+            try:
+                zip_path.unlink()
+            except OSError as exc:
+                _LOGGER.warning("Could not delete archive file %s: %s", zip_path, exc)
+
+        deleted_clips = await self._db.delete_clips_by_archive_path(archive_path)
+        return web.json_response(
+            {"deleted_clips": deleted_clips, "gdrive_deleted": gdrive_deleted}
+        )
 
     # ------------------------------------------------------------------
     # Storage tab: Google Drive backup

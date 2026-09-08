@@ -10,7 +10,7 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import { fmtSize, fmtTs } from '../../api/constants'
 import { deleteClip, getCameras } from '../../api/clips'
-import { getArchiveClips, getArchiveGroups, runArchiveNow } from '../../api/storage'
+import { deleteArchive, getArchiveClips, getArchiveGroups, runArchiveNow } from '../../api/storage'
 import type { ArchiveGroup, ClipListItem } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useRefreshStore } from '../../stores/refresh'
@@ -49,6 +49,7 @@ const expandedArchives = ref<Set<string>>(new Set())
 const filterGeneration = ref(0)
 let groupsRequestSeq = 0
 const deletingId = ref<string | null>(null)
+const deletingArchivePath = ref<string | null>(null)
 const archivingNow = ref(false)
 
 async function loadGroups() {
@@ -272,6 +273,24 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
     deletingId.value = null
   }
 }
+
+async function removeArchive(group: ArchiveGroup) {
+  const clipWord = group.clip_count === 1 ? 'clip' : 'clips'
+  const question =
+    `Delete this entire archive? This permanently removes all ${group.clip_count} ${clipWord} in ` +
+    `${archiveLabel(group.archive_path)}, including any Google Drive backups. This cannot be undone.`
+  if (!(await confirm(question, 'Delete archive?'))) return
+  deletingArchivePath.value = group.archive_path
+  try {
+    await deleteArchive(group.archive_path)
+    toast.show('Archive deleted')
+    allGroups.value = allGroups.value.filter((g) => g.archive_path !== group.archive_path)
+  } catch {
+    toast.show('Could not delete archive', true)
+  } finally {
+    deletingArchivePath.value = null
+  }
+}
 </script>
 
 <template>
@@ -334,35 +353,53 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
         @update:collapsed="() => toggleArchive(group.archive_path)"
       >
         <template #header>
-          <!-- NOSONAR: prose explaining a deliberate design choice below,
-            not commented-out code.
-            PrimeVue's own toggle button (rendered after this #header slot,
-            as a sibling — see p-panel-header-actions) only wires *itself*
-            up as clickable, not the rest of the header — clicking anywhere
-            else in the header row would otherwise silently do nothing.
-            role="button" + the click/keydown handlers here make the whole
-            row toggle, which is what people actually expect to be able to
-            click; the real toggle button still works independently since
-            it isn't nested inside this element. A real <button> can't be
-            used for the whole row without nesting an interactive element
-            inside another (invalid HTML) once PrimeVue's own toggle
-            button renders alongside it.
-          -->
-          <div
-            class="archive-panel-header"
-            role="button"
-            tabindex="0"
-            :aria-expanded="expandedArchives.has(group.archive_path)"
-            @click="toggleArchive(group.archive_path)"
-            @keydown.enter="toggleArchive(group.archive_path)"
-            @keydown.space.prevent="toggleArchive(group.archive_path)"
-          >
-            <Tag severity="secondary" value="ZIP" />
-            <span class="archive-name">{{ archiveLabel(group.archive_path) }}</span>
-            <span class="archive-meta"
-              >{{ group.clip_count }} clip{{ group.clip_count === 1 ? '' : 's' }} ·
-              {{ fmtSize(group.total_size) }}</span
+          <div class="archive-panel-header-row">
+            <!-- NOSONAR: prose explaining a deliberate design choice below,
+              not commented-out code.
+              PrimeVue's own toggle button (rendered after this #header slot,
+              as a sibling — see p-panel-header-actions) only wires *itself*
+              up as clickable, not the rest of the header — clicking anywhere
+              else in the header row would otherwise silently do nothing.
+              role="button" + the click/keydown handlers here make the whole
+              row toggle, which is what people actually expect to be able to
+              click; the real toggle button still works independently since
+              it isn't nested inside this element. A real <button> can't be
+              used for the whole row without nesting an interactive element
+              inside another (invalid HTML) once PrimeVue's own toggle
+              button renders alongside it. The delete button below is a
+              sibling of this element, not a child of it, for the same
+              reason: nesting it inside this role="button" div would make
+              its aria-label bleed into this div's own name-from-content
+              accessible name (per the ARIA accname algorithm), announcing
+              a confusing "...Delete archive" on the toggle itself.
+            -->
+            <div
+              class="archive-panel-header"
+              role="button"
+              tabindex="0"
+              :aria-expanded="expandedArchives.has(group.archive_path)"
+              @click="toggleArchive(group.archive_path)"
+              @keydown.enter="toggleArchive(group.archive_path)"
+              @keydown.space.prevent="toggleArchive(group.archive_path)"
             >
+              <Tag severity="secondary" value="ZIP" />
+              <span class="archive-name">{{ archiveLabel(group.archive_path) }}</span>
+              <span class="archive-meta"
+                >{{ group.clip_count }} clip{{ group.clip_count === 1 ? '' : 's' }} ·
+                {{ fmtSize(group.total_size) }}</span
+              >
+            </div>
+            <Button
+              size="small"
+              severity="danger"
+              text
+              icon="pi pi-trash"
+              aria-label="Delete archive"
+              class="archive-delete-btn"
+              :loading="deletingArchivePath === group.archive_path"
+              :disabled="deletingArchivePath === group.archive_path"
+              @click="removeArchive(group)"
+            />
           </div>
         </template>
 
@@ -518,6 +555,20 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
   border-radius: var(--radius-sm);
 }
 
+.archive-panel-header-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  /* Stretches this row to fill the space PrimeVue's own header layout
+     leaves next to its collapse/expand toggle (a sibling rendered outside
+     this row -- see the NOSONAR comment above) -- otherwise this element
+     is only as wide as its own content, leaving .archive-delete-btn's
+     margin-left: auto below nothing to push against. */
+  flex: 1;
+  min-width: 0;
+}
+
 .archive-panel-header {
   display: flex;
   align-items: center;
@@ -531,6 +582,14 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
 .archive-panel-header:hover,
 .archive-panel-header:focus-visible {
   background: var(--card-hover);
+}
+
+.archive-delete-btn {
+  /* Pushes the button to the end of the header row, right next to
+     PrimeVue's own collapse/expand toggle, keeping it visually grouped
+     with that row-level control rather than crowding the ZIP tag/name/
+     meta cluster on the left. */
+  margin-left: auto;
 }
 
 .camera-group-header {
