@@ -44,3 +44,36 @@ test('Refresh bumps the cross-tab refresh signal, and Sync triggers a real downl
   await page.getByRole('button', { name: 'Sync', exact: true }).click()
   await expect(page.getByText('Download triggered — clips appear shortly')).toBeVisible()
 })
+
+// The three tests below exercise useKeyboardShortcuts.ts's global `?`/Esc
+// handling directly via the keyboard, rather than the help button's own
+// @click -- a separate code path (see the button test above, which never
+// touches onKeydown at all).
+
+test('the ? key opens the keyboard shortcuts overlay', async ({ page }) => {
+  await page.keyboard.press('?')
+  const overlay = page.locator('.modal-bg.open')
+  await expect(overlay.locator('.modal-title')).toContainText('Keyboard Shortcuts')
+})
+
+test('the Escape key closes the keyboard shortcuts overlay', async ({ page }) => {
+  await page.getByRole('button', { name: 'Keyboard shortcuts' }).click()
+  const overlay = page.locator('.modal-bg.open')
+  await expect(overlay.locator('.modal-title')).toContainText('Keyboard Shortcuts')
+
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.modal-bg.open')).toHaveCount(0)
+})
+
+test('typing ? into a text field does not open the keyboard shortcuts overlay', async ({ page }) => {
+  // onKeydown excludes INPUT/TEXTAREA/SELECT/contenteditable specifically so
+  // a real '?' keystroke while filtering the Library search box (or the
+  // Vehicles description, or any other text field) doesn't hijack it.
+  // locator.press (unlike .fill, which sets the value directly with no real
+  // keydown event) dispatches a genuine keydown on the focused element, so
+  // this actually exercises the tagName guard rather than trivially passing.
+  const search = page.locator('#search')
+  await search.press('?')
+  await expect(search).toHaveValue('?')
+  await expect(page.locator('.modal-bg.open')).toHaveCount(0)
+})
