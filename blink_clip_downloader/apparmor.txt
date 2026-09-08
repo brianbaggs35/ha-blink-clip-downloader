@@ -8,6 +8,24 @@ profile blink_clip_downloader flags=(attach_disconnected,mediate_deleted) {
   capability,
   signal (send) set=(kill,term,int,hup,cont),
 
+  # Network - s6-overlay 3.x uses Unix domain sockets for its own internal
+  # process supervision (s6-ipcserver-socketbinder) regardless of what the
+  # app itself does over the network, so `network unix stream` is required
+  # just to let services start at all under a confined profile - without
+  # it every s6-ipcserver-socketbinder call fails with "Permission denied"
+  # and nothing in the container (not just the app) ever actually starts,
+  # even though the container process itself keeps running. Confirmed via
+  # Supervisor's own apparmor profile (version.home-assistant.io/apparmor.txt),
+  # which carries the identical rule for the identical reason. inet/inet6
+  # stream+dgram cover the media server's own TCP listener (port 8099),
+  # the bundled PostgreSQL server, DNS resolution, and every outbound
+  # HTTPS call this add-on makes (Blink API, AI providers, Google Drive).
+  network unix stream,
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+
   # S6-Overlay
   /init ix,
   /bin/** ix,
