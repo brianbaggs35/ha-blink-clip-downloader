@@ -54,8 +54,21 @@ cmd_prepare_addon_copy() {
   # here is scoped to this ephemeral CI container only and must never
   # touch the real apparmor.txt/config.yaml a real user's install
   # actually gets.
+  #
+  # Only git-tracked files -- mirroring exactly what a real user's git
+  # checkout actually contains, and (found the hard way locally,
+  # 2026-09-08) NOT a blanket `cp -a`, which also drags in local dev
+  # scratch data (local-test/, .venv, node_modules, __pycache__, built
+  # frontend static/ output, ...): wasteful on a disk-constrained runner,
+  # irrelevant to what Supervisor's own build needs (it builds static/
+  # fresh from frontend/ source via the Dockerfile regardless), and once
+  # even left root-owned PostgreSQL data-directory files behind that
+  # couldn't be cleaned up locally without sudo.
   rm -rf "$dest"
-  cp -a "$src" "$dest"
+  mkdir -p "$dest"
+  git ls-files -z -- "$src" |
+    sed -z "s|^${src}/||" |
+    rsync -a --files-from=- --from0 "$src/" "$dest/"
   if grep -q '^apparmor:' "$dest/config.yaml"; then
     sed -i 's/^apparmor:.*/apparmor: false/' "$dest/config.yaml"
   else
@@ -152,12 +165,23 @@ cmd_wait_core() {
 }
 
 cmd_discover() {
-  ha_cli store reload
-  # #3976-class flakiness mitigation: an explicit reload plus a generous
-  # poll, rather than trusting discovery happened automatically the moment
-  # the add-on directory was bind-mounted.
-  poll "add-on '${ADDON_SLUG}' discovered in the local store" 90 3 \
-    bash -c "docker exec '$CONTAINER_NAME' ha store apps --raw-json | grep -q '\"${ADDON_SLUG}\"'"
+  # #3976-class flakiness mitigation. The reload runs *inside* the polled
+  # command, not once upfront -- a single reload can race Supervisor's own
+  # internal readiness (a separate subsystem from Core, whose readiness
+  # wait-core already confirmed) and silently no-op if called too early,
+  # which previously meant polling a store-apps result that nothing ever
+  # refreshed again for the rest of the timeout. Retrying the reload on
+  # every attempt costs nothing (a lightweight repository re-scan) and
+  # gives it repeated chances to actually take effect instead of just
+  # re-reading a stale answer. Confirmed empirically to still fail
+  # intermittently even with a working, verified add-on copy in place
+  # (2026-09-08) -- this is upstream discovery flakiness, not a copy-
+  # mechanism bug. Timeout widened from 90s to 150s after observing it
+  # fail right around the 90s mark on 3 of 4 local runs that same day --
+  # genuine variance in how long Supervisor takes, not just a
+  # reload-timing issue the retry above already addresses.
+  poll "add-on '${ADDON_SLUG}' discovered in the local store" 150 3 \
+    bash -c "docker exec '$CONTAINER_NAME' ha store reload >/dev/null 2>&1; docker exec '$CONTAINER_NAME' ha store apps --raw-json | grep -q '\"${ADDON_SLUG}\"'"
 }
 
 cmd_install() {
