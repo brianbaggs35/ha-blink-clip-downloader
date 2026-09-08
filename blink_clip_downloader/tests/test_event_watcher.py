@@ -296,6 +296,31 @@ async def test_start_reconnects_after_graceful_close_with_no_exception(
     assert len(sleep_calls) == 1
 
 
+async def test_start_exception_while_already_stopping_skips_warning_log(
+    monkeypatch,
+) -> None:
+    """Coverage: the except-Exception branch's own self._running check
+    (line 65) -- a concurrent stop() can flip _running False in the same
+    instant _connect_and_watch() raises (e.g. a shutdown racing a dropped
+    connection), and the warning log -- which would misleadingly suggest
+    an unexpected disconnect -- is skipped in that case."""
+    import asyncio
+
+    async def fake_sleep(_):
+        pass
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    w, _, _ = _make_watcher()
+
+    async def fake_connect_and_watch():
+        w._running = False
+        raise ConnectionRefusedError("ws refused during shutdown")
+
+    w._connect_and_watch = fake_connect_and_watch
+    await w.start()  # must not raise
+
+
 # ------------------------------------------------------------------
 # _connect_and_watch — WebSocket integration
 # ------------------------------------------------------------------
@@ -430,6 +455,22 @@ async def test_connect_and_watch_ws_error_breaks_loop() -> None:
     await w._connect_and_watch()
 
 
+async def test_connect_and_watch_ws_ends_with_no_messages() -> None:
+    """Coverage: the async-for loop's zero-message exit (line 135) -- the
+    server can close the socket right after a successful auth/subscribe
+    with no ERROR/CLOSE frame ever arriving, same as any other graceful
+    disconnect this function must return from cleanly rather than hang."""
+    fake_ws = _FakeWS(
+        receive_jsons=[{"type": "auth_required"}, {"type": "auth_ok"}],
+        ws_messages=[],
+    )
+    w, _, _ = _make_watcher()
+    w._running = True
+    w._session = _mock_session(fake_ws)
+
+    await w._connect_and_watch()  # must return without raising
+
+
 def test_handle_ws_message_ignores_unrecognized_type() -> None:
     """A message type that's neither TEXT nor ERROR/CLOSE/CLOSED (e.g. PING)
     is ignored — the connection stays open and the loop keeps consuming."""
@@ -437,6 +478,19 @@ def test_handle_ws_message_ignores_unrecognized_type() -> None:
 
     w, _, _ = _make_watcher()
     msg = _make_ws_message(aiohttp.WSMsgType.PING)
+    assert w._handle_ws_message(msg) is False
+
+
+def test_handle_ws_message_ignores_non_event_json_type() -> None:
+    """A TEXT message whose JSON payload "type" isn't "event" (e.g. a
+    stray result/pong frame) is ignored -- _handle_state_changed is never
+    reached for it, unlike test_handle_ws_message_ignores_unrecognized_type
+    above (which is about msg.type, the WS frame kind, not this JSON
+    field)."""
+    import aiohttp
+
+    w, _, _ = _make_watcher()
+    msg = _make_ws_message(aiohttp.WSMsgType.TEXT, {"type": "pong"})
     assert w._handle_ws_message(msg) is False
 
 

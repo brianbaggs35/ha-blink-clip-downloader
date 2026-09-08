@@ -201,6 +201,16 @@ async def test_close_closes_session():
 
 
 # ---------------------------------------------------------------------------
+# Coverage: close() with no session ever opened (line 39)
+# ---------------------------------------------------------------------------
+
+
+async def test_close_with_no_session_is_a_noop():
+    notifier = HANotifier("tok", enabled=True, title="T")
+    await notifier.close()  # must not raise
+
+
+# ---------------------------------------------------------------------------
 # Coverage: update_sensor with no token (line 67)
 # ---------------------------------------------------------------------------
 
