@@ -23,6 +23,19 @@
 # call to that same REST API. A failure in any of these is the exact class
 # of bug this job exists to catch and must fail the job, not be routed
 # around.
+#
+# One deliberate exception, scoped narrowly: cmd_prepare_addon_copy below
+# disables AppArmor confinement (`apparmor: false`) for a separate copy
+# of the add-on only (under github.workspace, deliberately not
+# runner.temp -- see ha-integration.yaml's own comment on this step for a
+# real, `act`-specific reason that distinction matters), never the
+# checked-out repo's real config.yaml/
+# apparmor.txt. See the "Prepare CI-only add-on copy" step in
+# ha-integration.yaml for the full why -- short version, AppArmor
+# confinement inside this nested Docker-in-Docker CI environment does not
+# reliably reflect real Home Assistant OS host behavior, and this job's
+# actual purpose (Supervisor discovery/build/install/start + real ingress)
+# is a separate concern from AppArmor policy correctness.
 
 set -uo pipefail
 
@@ -30,6 +43,25 @@ CONTAINER_NAME="${CONTAINER_NAME:?CONTAINER_NAME must be set}"
 ADDON_SLUG="${ADDON_SLUG:?ADDON_SLUG must be set}"
 HA_PORT="${HA_PORT:?HA_PORT must be set}"
 ADDON_PORT="${ADDON_PORT:?ADDON_PORT must be set}"
+
+cmd_prepare_addon_copy() {
+  local src="blink_clip_downloader"
+  local dest="${ADDON_COPY_DIR:?ADDON_COPY_DIR must be set}"
+  # A separate copy of the add-on under $ADDON_COPY_DIR (github.workspace,
+  # not runner.temp -- see the long comment on this step in
+  # ha-integration.yaml for why that distinction actually matters), never
+  # the checked-out repo path itself -- disabling AppArmor confinement
+  # here is scoped to this ephemeral CI container only and must never
+  # touch the real apparmor.txt/config.yaml a real user's install
+  # actually gets.
+  rm -rf "$dest"
+  cp -a "$src" "$dest"
+  if grep -q '^apparmor:' "$dest/config.yaml"; then
+    sed -i 's/^apparmor:.*/apparmor: false/' "$dest/config.yaml"
+  else
+    printf '\napparmor: false\n' >>"$dest/config.yaml"
+  fi
+}
 
 ha_cli() {
   docker exec "$CONTAINER_NAME" ha "$@"
@@ -178,6 +210,11 @@ cmd_diagnostics() {
   # below assumes at least the `ha` CLI's target containers exist.
   docker exec "$CONTAINER_NAME" cat /var/log/supervisor_run.log \
     >"$out_dir/supervisor_run.log" 2>&1
+  # Confirms what was actually installed -- specifically whether the
+  # AppArmor-disabled CI-only copy (see cmd_prepare_addon_copy) really
+  # took effect, without needing to re-derive that from first principles
+  # during a future debugging session.
+  cp "${ADDON_COPY_DIR}/config.yaml" "$out_dir/installed_config.yaml" 2>&1 || true
   # Inner dockerd health/process list - distinguishes "dockerd itself never
   # came up" from "dockerd is fine but supervisor_run failed for some other
   # reason", without which the supervisor_run.log above could still leave
@@ -203,6 +240,7 @@ cmd_diagnostics() {
 }
 
 case "${1:-}" in
+  prepare-addon-copy) cmd_prepare_addon_copy ;;
   wait-docker) cmd_wait_docker ;;
   wait-core) cmd_wait_core ;;
   discover) cmd_discover ;;
@@ -214,7 +252,7 @@ case "${1:-}" in
     cmd_diagnostics "$@"
     ;;
   *)
-    echo "Usage: $0 {wait-docker|wait-core|discover|install|start|enable-ingress-panel|diagnostics <dir>}" >&2
+    echo "Usage: $0 {prepare-addon-copy|wait-docker|wait-core|discover|install|start|enable-ingress-panel|diagnostics <dir>}" >&2
     exit 64
     ;;
 esac

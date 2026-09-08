@@ -28,3 +28,6 @@ lcov.info
 .scannerwork/
 .sonar/
 .act-ci.*.yaml
+.ha-integration-addon-copy/
+ha-integration-diagnostics/
+e2e/ha-integration-failure-*.png
