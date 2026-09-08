@@ -17,6 +17,16 @@ export function providerLabel(provider?: string): string {
   return PROVIDER_LABELS[provider as AiProvider] ?? provider
 }
 
+/** Blink's battery_state is normalized lowercase by the backend ("ok",
+ * "low"), but treat anything other than exactly "low" as normal rather
+ * than allow-listing "ok" specifically — an unrecognized future value from
+ * Blink should read as "nothing to worry about", not silently render as
+ * the alarming state. Shared by the Status tab's BatteryStatusStrip and
+ * the Sync Module tab's SyncModuleCameraCard. */
+export function isBatteryLow(state: string | null | undefined): boolean {
+  return state === 'low'
+}
+
 export function fmtNum(n: number | null | undefined): string {
   if (n == null || n === 0) return '0'
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M'

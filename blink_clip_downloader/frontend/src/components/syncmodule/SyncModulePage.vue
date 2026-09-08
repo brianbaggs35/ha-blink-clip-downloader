@@ -87,7 +87,16 @@ const systemArmed = computed(
 // A disarmed sync module makes every one of its cameras stop recording
 // regardless of their own motion-detection flag, so "fully disarmed" is
 // still purely module-level -- camera state is irrelevant here.
-const systemDisarmed = computed(() => syncModules.value.length > 0 && syncModules.value.every((m) => !m.armed))
+//
+// m.armed === false specifically (not just falsy): blinkpy's own `arm`
+// property returns null, not false, whenever network_info hasn't been
+// populated/parsed yet (e.g. right after a reconnect) -- a bare `!m.armed`
+// would count that unknown state as "confirmed disarmed" and claim the
+// system is unprotected when the real state simply isn't known yet.
+// systemStatusLabel's "Partially Armed" fallback (with its warning-
+// triangle icon) is what a module in that state falls into instead, which
+// correctly signals "needs a look" rather than a false "all clear".
+const systemDisarmed = computed(() => syncModules.value.length > 0 && syncModules.value.every((m) => m.armed === false))
 const systemStatusLabel = computed(() => {
   if (systemArmed.value) return 'System Armed'
   if (systemDisarmed.value) return 'Disarmed'

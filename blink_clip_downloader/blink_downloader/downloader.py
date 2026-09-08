@@ -484,17 +484,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         sync = self._get_sync_module(name)
         if sync is None:
             return None
-        try:
-            await sync.async_arm(armed)
-        except Exception as exc:  # noqa: BLE001 - see docstring
-            _LOGGER.warning(
-                "Could not %s sync module %r: %s",
-                "arm" if armed else "disarm",
-                name,
-                exc,
-            )
-            return False
-        return True
+        return await self._set_armed(sync, "sync module", name, armed)
 
     async def set_camera_armed(self, name: str, armed: bool) -> bool | None:
         """Arm or disarm motion detection for the single camera named
@@ -505,12 +495,26 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         camera = self.get_camera(name)
         if camera is None:
             return None
+        return await self._set_armed(camera, "camera", name, armed)
+
+    async def _set_armed(self, obj: Any, noun: str, name: str, armed: bool) -> bool:
+        """Shared arm/disarm-and-log body for set_sync_module_armed and
+        set_camera_armed.
+
+        *obj* is the already-resolved sync module or camera — both share
+        blinkpy's arm/async_arm interface (see _get_sync_module's
+        docstring), so one implementation covers either caller. Returns
+        False (never raises) if blinkpy's own arm/disarm call itself
+        fails; the two docstrings above cover the None-vs-False contract
+        this feeds into.
+        """
         try:
-            await camera.async_arm(armed)
-        except Exception as exc:  # noqa: BLE001 - see docstring
+            await obj.async_arm(armed)
+        except Exception as exc:  # noqa: BLE001
             _LOGGER.warning(
-                "Could not %s camera %r: %s",
+                "Could not %s %s %r: %s",
                 "arm" if armed else "disarm",
+                noun,
                 name,
                 exc,
             )

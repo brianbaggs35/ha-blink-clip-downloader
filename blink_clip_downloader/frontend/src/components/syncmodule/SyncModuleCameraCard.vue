@@ -2,19 +2,12 @@
 import ProgressSpinner from 'primevue/progressspinner'
 import ToggleSwitch from 'primevue/toggleswitch'
 import Tag from 'primevue/tag'
+import { isBatteryLow as isLow } from '../../api/constants'
 import type { SyncModuleCamera } from '../../api/types'
 import AppIcon from '../icons/AppIcon.vue'
 
 defineProps<{ camera: SyncModuleCamera; pending: boolean }>()
 const emit = defineEmits<{ 'update:armed': [armed: boolean] }>()
-
-// Blink's battery_state is normalized lowercase by the backend ("ok", "low")
-// — same convention/reasoning as BatteryStatusStrip.vue's isLow(): treat
-// anything other than exactly "low" as normal rather than allow-listing
-// "ok" specifically.
-function isLow(state: string | null): boolean {
-  return state === 'low'
-}
 </script>
 
 <template>
