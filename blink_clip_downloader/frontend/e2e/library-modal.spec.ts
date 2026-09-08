@@ -64,6 +64,67 @@ test('adding a tag from the modal persists and is visible on the card after relo
   await expect(page.locator('.clip-card[data-id="e2e-scratch-tag"] .tag-pill')).toHaveText('e2e-added-tag')
 })
 
+// The four tests below all reuse e2e-scratch-tag like the "adding a tag"
+// test above, but each adds/removes its own uniquely-named tag rather than
+// touching "e2e-added-tag" -- self-contained regardless of what order these
+// tests (or the one above) happen to run in.
+
+test('adding the same tag twice does not duplicate it', async ({ page }) => {
+  await page.locator('.clip-card[data-id="e2e-scratch-tag"]').click()
+  const modal = openModal(page)
+  const input = modal.locator('#clip-tag-input')
+
+  await input.fill('e2e-dup-test')
+  await input.press('Enter')
+  await input.fill('e2e-dup-test')
+  await input.press('Enter')
+
+  await expect(modal.locator('.tag-item', { hasText: 'e2e-dup-test' })).toHaveCount(1)
+})
+
+test('tag text is normalized to lowercase, hyphenated, alphanumeric', async ({ page }) => {
+  await page.locator('.clip-card[data-id="e2e-scratch-tag"]').click()
+  const modal = openModal(page)
+  const input = modal.locator('#clip-tag-input')
+
+  await input.fill('E2E Normalize Test!')
+  await input.press('Enter')
+
+  await expect(modal.locator('.tag-item', { hasText: 'e2e-normalize-test' })).toBeVisible()
+  await expect(modal.locator('.tag-item', { hasText: 'E2E Normalize Test!' })).toHaveCount(0)
+})
+
+test('removing a tag asks for confirmation, and declining leaves it', async ({ page }) => {
+  await page.locator('.clip-card[data-id="e2e-scratch-tag"]').click()
+  const modal = openModal(page)
+  const input = modal.locator('#clip-tag-input')
+  await input.fill('e2e-remove-test')
+  await input.press('Enter')
+  const tag = modal.locator('.tag-item', { hasText: 'e2e-remove-test' })
+  await expect(tag).toBeVisible()
+
+  await tag.locator('.rm').click()
+  await expect(page.getByText('Remove tag "e2e-remove-test" from this clip?')).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel' }).click()
+  await expect(tag).toBeVisible()
+
+  await tag.locator('.rm').click()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+  await expect(modal.locator('.tag-item', { hasText: 'e2e-remove-test' })).toHaveCount(0)
+})
+
+test('Escape blurs the tag input instead of closing the modal', async ({ page }) => {
+  await page.locator('.clip-card[data-id="e2e-scratch-tag"]').click()
+  const modal = openModal(page)
+  const input = modal.locator('#clip-tag-input')
+  await input.click()
+  await expect(input).toBeFocused()
+
+  await page.keyboard.press('Escape')
+  await expect(input).not.toBeFocused()
+  await expect(modal).toBeVisible()
+})
+
 test('Escape closes the modal', async ({ page }) => {
   await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
   await expect(openModal(page)).toBeVisible()

@@ -505,3 +505,167 @@ test('shows a failure toast when saving Vehicles camera settings fails', async (
   await page.getByRole('button', { name: 'Save Camera Settings' }).click()
   await expect(page.getByText('Failed to save camera settings')).toBeVisible()
 })
+
+test('shows a failure toast when saving Security Feed settings fails', async ({ page }) => {
+  await page.route('**/api/security-feed/settings', async (route) => {
+    if (route.request().method() !== 'PUT') {
+      await route.fallback()
+      return
+    }
+    await fulfillJson(route, { error: 'mocked unavailable' }, 500)
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="securityfeed"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="securityfeed"]')
+
+  await page.getByRole('button', { name: 'Customize' }).click()
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByText('Could not save Security Feed settings')).toBeVisible()
+})
+
+// The standalone server's seeded data has no suspicious clips at all (no
+// analysis_results row is ever seeded with is_suspicious=true), so
+// SuspiciousFeed.vue's item list, feedback buttons, and period filter are
+// otherwise unreachable in this environment -- route-mock the read/write
+// endpoints it hits, same "mock only what's unavailable, let everything
+// else hit the real backend" approach as the rest of this file. clip_id
+// 'e2e-clip-000' is a real distribution clip (library-modal.spec.ts's
+// "opening a clip shows its real seeded metadata" already asserts its
+// title/source/duration) so clicking through to the real clip modal shows
+// genuine data, not a placeholder.
+
+test('suspicious activity feed renders a mocked item and opens the real clip modal on click', async ({ page }) => {
+  await page.route('**/api/ai/suspicious**', async (route) => {
+    await fulfillJson(route, {
+      items: [
+        {
+          clip_id: 'e2e-clip-000',
+          camera: 'Front Door',
+          confidence: 0.92,
+          summary: 'A person lingered at the front door for several minutes.',
+          analyzed_at: '2026-01-01T12:00:00Z',
+        },
+      ],
+      total: 1,
+    })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  const item = page.locator('.card', { hasText: 'Front Door' }).filter({ hasText: '92%' })
+  await expect(item).toContainText('A person lingered at the front door for several minutes.')
+
+  await item.click()
+  const modal = page.locator('.modal-bg.open')
+  await expect(modal.locator('.modal-title')).toContainText('Front Door')
+})
+
+test('quick feedback on a suspicious item shows a thanks message and hides the buttons', async ({ page }) => {
+  await page.route('**/api/ai/suspicious**', async (route) => {
+    await fulfillJson(route, {
+      items: [
+        {
+          clip_id: 'e2e-clip-001',
+          camera: 'Backyard',
+          confidence: 0.55,
+          summary: 'Movement detected near the fence line.',
+          analyzed_at: '2026-01-01T12:00:00Z',
+        },
+      ],
+      total: 1,
+    })
+  })
+  await page.route('**/api/ai/feedback/e2e-clip-001', async (route) => {
+    await fulfillJson(route, { saved: true })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  const item = page.locator('.card', { hasText: 'Backyard' })
+  await item.locator('button[title="Correct"]').click()
+  await expect(item.getByText('Thanks!')).toBeVisible()
+  await expect(item.locator('button[title="Correct"]')).toHaveCount(0)
+  await expect(item.locator('button[title="Incorrect"]')).toHaveCount(0)
+})
+
+test('changing the suspicious feed period re-fetches with the selected period', async ({ page }) => {
+  const requestedPeriods: (string | null)[] = []
+  await page.route('**/api/ai/suspicious**', async (route) => {
+    const url = new URL(route.request().url())
+    requestedPeriods.push(url.searchParams.get('period'))
+    await fulfillJson(route, { items: [], total: 0 })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect.poll(() => requestedPeriods.length).toBeGreaterThan(0)
+  expect(requestedPeriods.at(-1)).toBeNull()
+
+  await page.locator('#suspicious-period-filter').click()
+  await page.getByRole('option', { name: 'This week' }).click()
+
+  await expect.poll(() => requestedPeriods.at(-1)).toBe('week')
+})
+
+// FaceBypassActivityCard's non-empty state (bypass totals/by-name tags/
+// recent list, plus the separate reported-accuracy-issues feedback list) is
+// otherwise unreachable here: the standalone server's face recognition is
+// real (not mocked) and genuinely reports "no face detected" for every
+// enrollment attempt (see biometrics.spec.ts's own note), so the bypass
+// count can never actually become nonzero and no feedback report ever gets
+// filed. Route-mock the two GETs this card makes; the Biometrics tab itself
+// needs no extra unlocking here since standalone_server.py's
+// is_face_recognition_available() patch applies globally, not per test.
+test('face-bypass activity card renders bypass totals, by-name tags, and reported accuracy issues', async ({
+  page,
+}) => {
+  await page.route('**/api/ai/faces/bypass-stats', async (route) => {
+    await fulfillJson(route, {
+      total_bypassed: 3,
+      by_name: [
+        { name: 'Alex E2E', count: 2 },
+        { name: 'Jordan E2E', count: 1 },
+      ],
+      recent: [
+        {
+          clip_id: 'e2e-clip-000',
+          camera: 'Front Door',
+          face_bypass_names: 'Alex E2E',
+          analyzed_at: '2026-01-01T12:00:00Z',
+        },
+      ],
+    })
+  })
+  await page.route('**/api/ai/faces/feedback', async (route) => {
+    await fulfillJson(route, [
+      {
+        clip_id: 'e2e-clip-001',
+        camera: 'Backyard',
+        report_type: 'false_positive',
+        note: 'That was the mail carrier, not Alex.',
+        person_name: 'Alex E2E',
+        created_at: '2026-01-01T13:00:00Z',
+      },
+    ])
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="biometrics"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="biometrics"]')
+
+  const card = page.locator('.bypass-activity-card')
+  await expect(card.locator('.bypass-total')).toHaveText('3')
+  await expect(card.getByText('Alex E2E × 2')).toBeVisible()
+  await expect(card.getByText('Jordan E2E × 1')).toBeVisible()
+  await expect(card).toContainText('Alex E2E')
+  await expect(card).toContainText('Front Door')
+
+  await expect(card.getByText('Wrong match')).toBeVisible()
+  await expect(card).toContainText('That was the mail carrier, not Alex.')
+})
