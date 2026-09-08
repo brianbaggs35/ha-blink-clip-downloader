@@ -261,6 +261,41 @@ async def test_start_reconnects_on_exception(monkeypatch) -> None:
     assert call_count == 2
 
 
+async def test_start_reconnects_after_graceful_close_with_no_exception(
+    monkeypatch,
+) -> None:
+    """_connect_and_watch() returning normally -- not raising -- must still
+    back off before reconnecting. This is the real shape of a graceful HA
+    WebSocket close: _handle_ws_message() returns True (not an exception)
+    for an ERROR/CLOSE/CLOSED message, so `async for msg in ws: ... break`
+    just falls out of _connect_and_watch() normally. Only the except-
+    Exception branch used to apply the reconnect delay, so this path used
+    to busy-loop full reconnect+auth attempts with zero delay."""
+    import asyncio
+
+    sleep_calls = []
+
+    async def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    w, _, _ = _make_watcher()
+    call_count = 0
+
+    async def fake_connect_and_watch():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return  # graceful close: returns normally, no exception raised
+        w._running = False
+
+    w._connect_and_watch = fake_connect_and_watch
+    await w.start()
+    assert call_count == 2
+    assert len(sleep_calls) == 1
+
+
 # ------------------------------------------------------------------
 # _connect_and_watch — WebSocket integration
 # ------------------------------------------------------------------

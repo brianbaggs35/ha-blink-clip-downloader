@@ -63,12 +63,21 @@ class HAEventWatcher:
                 raise
             except Exception as exc:  # noqa: BLE001
                 if self._running:
-                    _LOGGER.warning(
-                        "Event watcher disconnected (%s) — reconnecting in %ds",
-                        exc,
-                        _RECONNECT_DELAY,
-                    )
-                    await asyncio.sleep(_RECONNECT_DELAY)
+                    _LOGGER.warning("Event watcher disconnected (%s)", exc)
+
+            # _connect_and_watch() can also return normally with no
+            # exception at all -- _handle_ws_message() treats an
+            # ERROR/CLOSE/CLOSED WebSocket message as a clean break out of
+            # its receive loop, which is exactly what happens when HA Core
+            # sends a graceful close frame instead of just dropping the TCP
+            # connection (routine on a HA Core restart: config reload,
+            # add-on update, automation edit -- not a rare edge case). The
+            # backoff below must apply to *that* path too, or it busy-loops
+            # full reconnect+auth handshakes against the Supervisor with no
+            # delay at all until a real exception eventually interrupts it.
+            if self._running:
+                _LOGGER.warning("Reconnecting to HA WebSocket in %ds", _RECONNECT_DELAY)
+                await asyncio.sleep(_RECONNECT_DELAY)
 
         _LOGGER.info("HA event watcher stopped")
 

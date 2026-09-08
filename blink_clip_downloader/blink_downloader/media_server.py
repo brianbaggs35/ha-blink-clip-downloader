@@ -1115,6 +1115,23 @@ class MediaServer:
                 )
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.debug("Could not read Security Feed settings file: %s", exc)
+        # Same fix as _handle_battery_status/_handle_ai_camera_configs_get: a
+        # camera renamed without this add-on directly observing the rename
+        # (see ClipDatabase.rename_camera) has nothing to migrate this
+        # curated selection away from, so a stale name would otherwise sit
+        # in it forever -- invisible in the Customize picker (built from the
+        # live list) but still silently narrowing displayedCameras below
+        # what the user actually asked for, with no fallback since the
+        # *other* selected cameras keep the filtered list non-empty. Only
+        # filter when the live list is non-empty, so a startup window
+        # before Blink has connected yet can't be misread as "every
+        # selected camera is gone" and wipe the selection.
+        live_names = self._list_camera_names() if self._list_camera_names else []
+        if live_names and settings["cameras"]:
+            live_names_lower = {str(n).lower() for n in live_names}
+            settings["cameras"] = [
+                c for c in settings["cameras"] if str(c).lower() in live_names_lower
+            ]
         return settings
 
     async def _handle_security_feed_settings_get(  # NOSONAR

@@ -8000,6 +8000,65 @@ async def test_security_feed_settings_get_reads_existing_file(
         await tc.close()
 
 
+async def test_security_feed_settings_get_excludes_a_camera_no_longer_on_the_account(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A camera renamed/removed without this add-on observing the rename
+    (see ClipDatabase.rename_camera) has nothing to migrate this curated
+    selection away from -- same bug class/fix as
+    test_ai_camera_configs_get_excludes_a_stale_camera_that_has_clip_history
+    and _handle_battery_status, applied here so a stale name doesn't
+    silently and permanently narrow the Security Feed grid below what the
+    user actually selected.
+    """
+    settings_file = tmp_path / "security_feed_settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {"cameras": ["Front Door", "Backyard"], "columns": 2, "refresh_seconds": 30}
+        )
+    )
+    server = MediaServer(
+        db=db, port=0, list_camera_names=lambda: ["Backyard", "Garage"]
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=settings_file,
+        ):
+            resp = await tc.get("/api/security-feed/settings")
+        data = await resp.json()
+        assert data["cameras"] == ["Backyard"]
+    finally:
+        await tc.close()
+
+
+async def test_security_feed_settings_get_keeps_selection_when_live_list_is_empty(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A startup window before Blink has connected yet (list_camera_names()
+    briefly []) must not be misread as "every selected camera is gone" and
+    wipe the whole selection -- same guard as the sibling endpoints."""
+    settings_file = tmp_path / "security_feed_settings.json"
+    settings_file.write_text(
+        json.dumps({"cameras": ["Front Door"], "columns": 2, "refresh_seconds": 30})
+    )
+    server = MediaServer(db=db, port=0, list_camera_names=list)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE",
+            new=settings_file,
+        ):
+            resp = await tc.get("/api/security-feed/settings")
+        data = await resp.json()
+        assert data["cameras"] == ["Front Door"]
+    finally:
+        await tc.close()
+
+
 async def test_security_feed_settings_get_unreadable_file_falls_back_to_defaults(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
