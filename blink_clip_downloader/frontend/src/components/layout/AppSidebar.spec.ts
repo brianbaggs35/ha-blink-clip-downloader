@@ -22,7 +22,14 @@ function mountSidebar(modelValue: TabName = 'library') {
 }
 
 function findByText(wrapper: ReturnType<typeof mountSidebar>, text: string) {
-  return wrapper.findAll('button').find((b) => b.text().includes(text))!
+  // Excludes nav-tab buttons (class app-nav-tab, tested via their own
+  // [data-tab] selector elsewhere in this file) so a substring match like
+  // 'Sync' can't accidentally resolve to the "Sync Module" nav tab instead
+  // of the bottom "Sync" (download-now) action button.
+  return wrapper
+    .findAll('button')
+    .filter((b) => !b.classes('app-nav-tab'))
+    .find((b) => b.text().includes(text))!
 }
 
 // PrimeVue's Dialog teleports to <body> by default (same pattern as

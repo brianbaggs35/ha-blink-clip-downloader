@@ -1500,7 +1500,8 @@ h3 {
 #page-biometrics,
 #page-storage,
 #page-liveview,
-#page-securityfeed {
+#page-securityfeed,
+#page-syncmodule {
   overflow-y: auto;
 }
 

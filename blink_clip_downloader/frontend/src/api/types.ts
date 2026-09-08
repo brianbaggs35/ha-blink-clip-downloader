@@ -506,6 +506,41 @@ export interface LiveViewCamerasResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Sync Module — arm/disarm the whole system or an individual camera
+// ---------------------------------------------------------------------------
+
+export interface SyncModuleCamera {
+  name: string
+  /** Per-camera arm state (blinkpy's motion_enabled) — whether this camera
+   * records on motion while the system is armed. */
+  armed: boolean
+  online: boolean
+  /** Normalized lowercase ("ok"/"low"), or null for a wired camera with no
+   * battery at all (still shown — it can still be armed/disarmed). */
+  battery_state: string | null
+  battery_level: number | null
+  wifi_strength: number | null
+  /** blinkpy's product_type, e.g. "catalina" (Blink Outdoor), "owl" (Mini),
+   * "lotus" (newer doorbell) — shown as a small badge, not otherwise used. */
+  type: string | null
+}
+
+export interface SyncModuleInfo {
+  name: string
+  network_id: number | string | null
+  serial: string | null
+  /** Sync module firmware version, e.g. "2.13.30". */
+  version: string | null
+  status: string
+  online: boolean
+  /** Whole-system arm state for this sync module. */
+  armed: boolean | null
+  region_id: string | null
+  local_storage: boolean
+  cameras: SyncModuleCamera[]
+}
+
+// ---------------------------------------------------------------------------
 // Security Feed — grid of near-live camera snapshot tiles
 // ---------------------------------------------------------------------------
 

@@ -2929,6 +2929,248 @@ def test_get_battery_snapshot_passes_through_none_level_and_voltage(
 
 
 # ---------------------------------------------------------------------------
+# Sync Module tab: get_sync_module_snapshot / set_sync_module_armed /
+# set_camera_armed
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_sync_module(**overrides: object) -> MagicMock:
+    sync = MagicMock()
+    sync.network_id = 12345
+    sync.serial = "ABCDEF123"
+    sync.version = "2.13.30"
+    sync.status = "online"
+    sync.online = True
+    sync.arm = True
+    sync.region_id = "u001"
+    sync.local_storage = False
+    sync.cameras = CaseInsensitiveDict({})
+    sync.async_arm = AsyncMock()
+    for key, value in overrides.items():
+        setattr(sync, key, value)
+    return sync
+
+
+def _make_fake_sync_camera(**overrides: object) -> MagicMock:
+    camera = MagicMock()
+    camera.arm = True
+    camera.online = True
+    camera.battery_state = "ok"
+    camera.battery_level = 3
+    camera.wifi_strength = -55
+    camera.product_type = "catalina"
+    camera.async_arm = AsyncMock()
+    for key, value in overrides.items():
+        setattr(camera, key, value)
+    return camera
+
+
+def test_get_sync_module_snapshot_empty_before_connect(dl: BlinkDownloader) -> None:
+    assert dl.get_sync_module_snapshot() == []
+
+
+def test_get_sync_module_snapshot_empty_when_no_sync_modules(
+    dl: BlinkDownloader,
+) -> None:
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({})
+    dl._blink = fake_blink
+
+    assert dl.get_sync_module_snapshot() == []
+
+
+def test_get_sync_module_snapshot_returns_info_and_cameras(
+    dl: BlinkDownloader,
+) -> None:
+    camera = _make_fake_sync_camera()
+    sync = _make_fake_sync_module(cameras=CaseInsensitiveDict({"Front Door": camera}))
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Home": sync})
+    dl._blink = fake_blink
+
+    snapshot = dl.get_sync_module_snapshot()
+
+    assert snapshot == [
+        {
+            "name": "Home",
+            "network_id": 12345,
+            "serial": "ABCDEF123",
+            "version": "2.13.30",
+            "status": "online",
+            "online": True,
+            "armed": True,
+            "region_id": "u001",
+            "local_storage": False,
+            "cameras": [
+                {
+                    "name": "Front Door",
+                    "armed": True,
+                    "online": True,
+                    "battery_state": "ok",
+                    "battery_level": 3,
+                    "wifi_strength": -55,
+                    "type": "catalina",
+                }
+            ],
+        }
+    ]
+
+
+def test_get_sync_module_snapshot_includes_multiple_sync_modules(
+    dl: BlinkDownloader,
+) -> None:
+    home = _make_fake_sync_module(cameras=CaseInsensitiveDict({}))
+    garage = _make_fake_sync_module(cameras=CaseInsensitiveDict({}), arm=False)
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Home": home, "Garage": garage})
+    dl._blink = fake_blink
+
+    snapshot = dl.get_sync_module_snapshot()
+
+    by_name = {s["name"]: s for s in snapshot}
+    assert by_name["Home"]["armed"] is True
+    assert by_name["Garage"]["armed"] is False
+
+
+def test_get_sync_module_snapshot_normalizes_camera_battery_state_casing(
+    dl: BlinkDownloader,
+) -> None:
+    camera = _make_fake_sync_camera(battery_state=" OK ")
+    sync = _make_fake_sync_module(cameras=CaseInsensitiveDict({"Front Door": camera}))
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Home": sync})
+    dl._blink = fake_blink
+
+    snapshot = dl.get_sync_module_snapshot()
+    assert snapshot[0]["cameras"][0]["battery_state"] == "ok"
+
+
+def test_get_sync_module_snapshot_keeps_wired_camera_with_no_battery(
+    dl: BlinkDownloader,
+) -> None:
+    """Unlike get_battery_snapshot, a wired camera with no battery must not
+    be excluded here -- it can still be armed/disarmed like any other."""
+    camera = _make_fake_sync_camera(battery_state=None, battery_level=None)
+    sync = _make_fake_sync_module(cameras=CaseInsensitiveDict({"Wired Mini": camera}))
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Home": sync})
+    dl._blink = fake_blink
+
+    cameras = dl.get_sync_module_snapshot()[0]["cameras"]
+    assert cameras == [
+        {
+            "name": "Wired Mini",
+            "armed": True,
+            "online": True,
+            "battery_state": None,
+            "battery_level": None,
+            "wifi_strength": -55,
+            "type": "catalina",
+        }
+    ]
+
+
+async def test_set_sync_module_armed_returns_none_before_connect(
+    dl: BlinkDownloader,
+) -> None:
+    assert await dl.set_sync_module_armed("Home", True) is None
+
+
+async def test_set_sync_module_armed_returns_none_when_not_found(
+    dl: BlinkDownloader,
+) -> None:
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({})
+    dl._blink = fake_blink
+
+    assert await dl.set_sync_module_armed("Home", True) is None
+
+
+async def test_set_sync_module_armed_arms_and_returns_true(
+    dl: BlinkDownloader,
+) -> None:
+    sync = _make_fake_sync_module()
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Home": sync})
+    dl._blink = fake_blink
+
+    assert await dl.set_sync_module_armed("Home", True) is True
+    sync.async_arm.assert_awaited_once_with(True)
+
+
+async def test_set_sync_module_armed_disarms_and_returns_true(
+    dl: BlinkDownloader,
+) -> None:
+    sync = _make_fake_sync_module()
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Home": sync})
+    dl._blink = fake_blink
+
+    assert await dl.set_sync_module_armed("Home", False) is True
+    sync.async_arm.assert_awaited_once_with(False)
+
+
+async def test_set_sync_module_armed_returns_false_on_blinkpy_error(
+    dl: BlinkDownloader,
+) -> None:
+    sync = _make_fake_sync_module()
+    sync.async_arm = AsyncMock(side_effect=RuntimeError("blink is down"))
+    fake_blink = MagicMock()
+    fake_blink.sync = CaseInsensitiveDict({"Home": sync})
+    dl._blink = fake_blink
+
+    assert await dl.set_sync_module_armed("Home", True) is False
+
+
+async def test_set_camera_armed_returns_none_before_connect(
+    dl: BlinkDownloader,
+) -> None:
+    assert await dl.set_camera_armed("Front Door", True) is None
+
+
+async def test_set_camera_armed_returns_none_when_not_found(
+    dl: BlinkDownloader,
+) -> None:
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({})
+    dl._blink = fake_blink
+
+    assert await dl.set_camera_armed("Front Door", True) is None
+
+
+async def test_set_camera_armed_arms_and_returns_true(dl: BlinkDownloader) -> None:
+    camera = _make_fake_sync_camera()
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    assert await dl.set_camera_armed("Front Door", True) is True
+    camera.async_arm.assert_awaited_once_with(True)
+
+
+async def test_set_camera_armed_disarms_and_returns_true(dl: BlinkDownloader) -> None:
+    camera = _make_fake_sync_camera()
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    assert await dl.set_camera_armed("Front Door", False) is True
+    camera.async_arm.assert_awaited_once_with(False)
+
+
+async def test_set_camera_armed_returns_false_on_blinkpy_error(
+    dl: BlinkDownloader,
+) -> None:
+    camera = _make_fake_sync_camera()
+    camera.async_arm = AsyncMock(side_effect=RuntimeError("blink is down"))
+    fake_blink = MagicMock()
+    fake_blink.cameras = CaseInsensitiveDict({"Front Door": camera})
+    dl._blink = fake_blink
+
+    assert await dl.set_camera_armed("Front Door", True) is False
+
+
+# ---------------------------------------------------------------------------
 # get_camera_snapshot (Security Feed)
 # ---------------------------------------------------------------------------
 
