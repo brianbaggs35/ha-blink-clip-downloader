@@ -25,6 +25,14 @@
 - Added support for Spanish language for configuration.
 - Added support for the Russian language for configuration.
 - Added support for the Chinese language for configuration.
+- Added the ability to delete an entire archive from the Storage tab, not
+  just one clip at a time within it: each archive panel's header now has
+  a "Delete archive" button (next to the collapse toggle) that removes
+  every clip stored in that ZIP, their Google Drive backups, and the ZIP
+  file itself, after confirming through the same shared confirmation
+  dialog used elsewhere in the app. A Drive-backup failure for one clip
+  doesn't block the rest of the deletion (logged and skipped, matching
+  the existing per-clip delete's resilience style).
 
 ### Bug Fixes
 

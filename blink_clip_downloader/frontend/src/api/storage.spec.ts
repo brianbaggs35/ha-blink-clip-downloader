@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getArchiveClips, getArchiveGroups, runArchiveNow } from './storage'
+import { deleteArchive, getArchiveClips, getArchiveGroups, runArchiveNow } from './storage'
 
 function jsonResponse(body: unknown) {
   return {
@@ -101,5 +101,20 @@ describe('storage api', () => {
       body: undefined,
     })
     expect(result).toEqual({ archived: 5 })
+  })
+
+  it('deleteArchive()', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ deleted_clips: 3, gdrive_deleted: 1 }))
+    const result = await deleteArchive('/data/archives/2026-06.zip')
+    expect(fetch).toHaveBeenCalledWith('/api/storage/archive?archive_path=%2Fdata%2Farchives%2F2026-06.zip', {
+      method: 'DELETE',
+    })
+    expect(result).toEqual({ deleted_clips: 3, gdrive_deleted: 1 })
+  })
+
+  it('deleteArchive() encodes special characters in the archive path', async () => {
+    await deleteArchive('/data/archives/blink archive 2026-06.zip')
+    const url = vi.mocked(fetch).mock.calls[0][0] as string
+    expect(url).toBe('/api/storage/archive?archive_path=%2Fdata%2Farchives%2Fblink%20archive%202026-06.zip')
   })
 })

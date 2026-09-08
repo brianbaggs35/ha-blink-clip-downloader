@@ -62,12 +62,17 @@ interface Routes {
   clips?: Record<string, ClipListItem[]>
   clipsFail?: Record<string, boolean>
   deleteFail?: boolean
+  deleteArchiveFail?: boolean
   runNowArchived?: number
   runNowFail?: boolean
 }
 
 function routedFetch(routes: Routes) {
   return vi.fn((url: string, opts?: RequestInit) => {
+    if (opts?.method === 'DELETE' && url.startsWith('/api/storage/archive?')) {
+      if (routes.deleteArchiveFail) return Promise.reject(new Error('down'))
+      return Promise.resolve(jsonResponse({ deleted_clips: 1, gdrive_deleted: 0 }))
+    }
     if (opts?.method === 'DELETE') {
       if (routes.deleteFail) return Promise.reject(new Error('down'))
       return Promise.resolve(jsonResponse({ deleted: true, gdrive_deleted: null }))
@@ -561,6 +566,151 @@ describe('ArchivedClipsSection', () => {
     confirm.settle(false)
     await clickPromise
     await flushPromises()
+  })
+
+  it('asks for confirmation with the clip count, archive name, and a Google Drive note before deleting an archive', async () => {
+    vi.stubGlobal('fetch', routedFetch({ groups: [makeGroup({ clip_count: 5 })] }))
+    const wrapper = mountSection()
+    await flushPromises()
+
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.find('[aria-label="Delete archive"]').trigger('click')
+    await flushPromises()
+
+    expect(confirm.title).toBe('Delete archive?')
+    expect(confirm.message).toContain('all 5 clips in')
+    expect(confirm.message).toContain('2026-06.zip')
+    expect(confirm.message).toContain('Google Drive')
+    confirm.settle(false)
+    await clickPromise
+  })
+
+  it('singularizes the clip count in the archive delete confirmation for a one-clip archive', async () => {
+    vi.stubGlobal('fetch', routedFetch({ groups: [makeGroup({ clip_count: 1 })] }))
+    const wrapper = mountSection()
+    await flushPromises()
+
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.find('[aria-label="Delete archive"]').trigger('click')
+    await flushPromises()
+
+    expect(confirm.message).toContain('all 1 clip in')
+    expect(confirm.message).not.toContain('1 clips')
+    confirm.settle(false)
+    await clickPromise
+  })
+
+  it('deletes an entire archive after confirmation and removes its panel', async () => {
+    const groups = [makeGroup(), makeGroup({ archive_path: '/data/archives/2026-07.zip' })]
+    const fetchMock = routedFetch({ groups })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+    expect(wrapper.findAll('.archive-panel')).toHaveLength(2)
+
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.findAll('[aria-label="Delete archive"]')[0].trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/storage/archive?archive_path=${encodeURIComponent(groups[0].archive_path)}`,
+      { method: 'DELETE' },
+    )
+    expect(useToastStore().message).toBe('Archive deleted')
+    expect(wrapper.findAll('.archive-panel')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('2026-06.zip')
+    expect(wrapper.text()).toContain('2026-07.zip')
+  })
+
+  it('does not delete the archive when the confirmation is declined', async () => {
+    const fetchMock = routedFetch({ groups: [makeGroup()] })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.find('[aria-label="Delete archive"]').trigger('click')
+    await flushPromises()
+    confirm.settle(false)
+    await clickPromise
+    await flushPromises()
+
+    expect(
+      fetchMock.mock.calls.some(
+        (c) => (c[0] as string).startsWith('/api/storage/archive?') && (c[1] as RequestInit)?.method === 'DELETE',
+      ),
+    ).toBe(false)
+    expect(wrapper.findAll('.archive-panel')).toHaveLength(1)
+  })
+
+  it('shows an error toast when deleting an archive fails, and keeps the panel', async () => {
+    vi.stubGlobal('fetch', routedFetch({ groups: [makeGroup()], deleteArchiveFail: true }))
+    const wrapper = mountSection()
+    await flushPromises()
+
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.find('[aria-label="Delete archive"]').trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+
+    expect(useToastStore().message).toBe('Could not delete archive')
+    expect(useToastStore().isError).toBe(true)
+    expect(wrapper.findAll('.archive-panel')).toHaveLength(1)
+  })
+
+  it('disables the delete-archive button while the deletion is in flight', async () => {
+    const group = makeGroup()
+    let resolveDelete: (v: Response) => void = () => {}
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      if (opts?.method === 'DELETE') {
+        return new Promise<Response>((resolve) => {
+          resolveDelete = resolve
+        })
+      }
+      if (url.startsWith('/api/storage/archives')) return Promise.resolve(jsonResponse([group]))
+      return Promise.resolve(jsonResponse([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountSection()
+    await flushPromises()
+
+    const confirm = useConfirmStore()
+    const deleteBtn = wrapper.find('[aria-label="Delete archive"]')
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await flushPromises()
+
+    expect(deleteBtn.attributes('disabled')).toBeDefined()
+
+    resolveDelete(jsonResponse({ deleted_clips: 2, gdrive_deleted: 0 }))
+    await clickPromise
+    await flushPromises()
+
+    expect(wrapper.findAll('.archive-panel')).toHaveLength(0)
+  })
+
+  it('deleting an archive does not also toggle its panel open (click does not bubble to the header)', async () => {
+    const group = makeGroup()
+    vi.stubGlobal('fetch', routedFetch({ groups: [group], clips: { [group.archive_path]: [makeClip()] } }))
+    const wrapper = mountSection()
+    await flushPromises()
+
+    const header = wrapper.find('.archive-panel-header')
+    expect(header.attributes('aria-expanded')).toBe('false')
+
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.find('[aria-label="Delete archive"]').trigger('click')
+    await flushPromises()
+
+    expect(header.attributes('aria-expanded')).toBe('false')
+    confirm.settle(false)
+    await clickPromise
   })
 
   it('hides the paginator at or below one page of groups', async () => {

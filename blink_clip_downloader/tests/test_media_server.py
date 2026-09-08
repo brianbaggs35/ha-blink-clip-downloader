@@ -6429,6 +6429,140 @@ async def test_storage_archive_clips_invalid_pagination_uses_defaults(
 
 
 # ---------------------------------------------------------------------------
+# Storage tab: delete entire archive
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_archive_requires_archive_path(client: TestClient) -> None:
+    resp = await client.delete("/api/storage/archive")
+    assert resp.status == 400
+
+
+async def test_delete_archive_not_found(client: TestClient) -> None:
+    resp = await client.delete(
+        "/api/storage/archive", params={"archive_path": "/no/such/archive.zip"}
+    )
+    assert resp.status == 404
+
+
+async def test_delete_archive_removes_all_clips_and_zip_file(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    zip_path.write_bytes(b"fake zip")
+    await db.add_clip(_make_clip("a1", camera="Front Door"))
+    await db.add_clip(_make_clip("a2", camera="Backyard"))
+    await db.add_clip(_make_clip("other"))
+    await db.mark_archived("a1", str(zip_path))
+    await db.mark_archived("a2", str(zip_path))
+    await db.mark_archived("other", "/archives/keep.zip")
+
+    resp = await client.delete(
+        "/api/storage/archive", params={"archive_path": str(zip_path)}
+    )
+
+    assert resp.status == 200
+    data = await resp.json()
+    assert data == {"deleted_clips": 2, "gdrive_deleted": 0}
+    assert await db.get_clip("a1") is None
+    assert await db.get_clip("a2") is None
+    assert await db.get_clip("other") is not None
+    assert not zip_path.exists()
+
+
+async def test_delete_archive_missing_zip_file_still_deletes_clips(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The ZIP may already be gone (e.g. manually removed) — the DB rows
+    must still be cleaned up rather than getting stuck forever."""
+    missing_zip = tmp_path / "already-gone.zip"
+    await db.add_clip(_make_clip("a1"))
+    await db.mark_archived("a1", str(missing_zip))
+
+    resp = await client.delete(
+        "/api/storage/archive", params={"archive_path": str(missing_zip)}
+    )
+
+    assert resp.status == 200
+    data = await resp.json()
+    assert data == {"deleted_clips": 1, "gdrive_deleted": 0}
+    assert await db.get_clip("a1") is None
+
+
+async def test_delete_archive_zip_unlink_oserror_is_logged(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    zip_path.write_bytes(b"fake zip")
+    await db.add_clip(_make_clip("a1"))
+    await db.mark_archived("a1", str(zip_path))
+
+    with patch.object(Path, "unlink", side_effect=OSError("permission denied")):
+        resp = await client.delete(
+            "/api/storage/archive", params={"archive_path": str(zip_path)}
+        )
+
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["deleted_clips"] == 1
+    assert await db.get_clip("a1") is None
+
+
+async def test_delete_archive_trashes_gdrive_backups(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    await db.add_clip(_make_clip("a1"))
+    await db.add_clip(_make_clip("a2"))
+    await db.mark_archived("a1", str(zip_path))
+    await db.mark_archived("a2", str(zip_path))
+    await db.mark_gdrive_uploaded("a1", "drive-file-1")
+    # a2 is left without a Drive backup -- proves a clip with no
+    # gdrive_file_id is skipped rather than calling delete_file with one.
+    gdrive_client = MagicMock()
+    gdrive_client.delete_file = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.delete(
+            "/api/storage/archive", params={"archive_path": str(zip_path)}
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data == {"deleted_clips": 2, "gdrive_deleted": 1}
+        gdrive_client.delete_file.assert_awaited_once_with("drive-file-1")
+    finally:
+        await tc.close()
+
+
+async def test_delete_archive_gdrive_trash_failure_still_deletes_locally(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A Drive-side failure must not block the local/DB delete — matches
+    archiver.py's per-step resilience philosophy (log-and-continue)."""
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    await db.add_clip(_make_clip("a1"))
+    await db.mark_archived("a1", str(zip_path))
+    await db.mark_gdrive_uploaded("a1", "drive-file-1")
+    gdrive_client = MagicMock()
+    gdrive_client.delete_file = AsyncMock(side_effect=RuntimeError("Drive is down"))
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.delete(
+            "/api/storage/archive", params={"archive_path": str(zip_path)}
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data == {"deleted_clips": 1, "gdrive_deleted": 0}
+        assert await db.get_clip("a1") is None
+    finally:
+        await tc.close()
+
+
+# ---------------------------------------------------------------------------
 # Storage tab: Google Drive backup
 # ---------------------------------------------------------------------------
 
