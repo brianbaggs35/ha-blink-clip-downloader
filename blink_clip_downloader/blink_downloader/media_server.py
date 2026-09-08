@@ -42,6 +42,7 @@ _INVALID_JSON_BODY = "Invalid JSON body"
 _INVALID_REQUEST_BODY = "Invalid request body"
 _LIVE_VIEW_NOT_AVAILABLE = "Live View is not available"
 _GDRIVE_NOT_AVAILABLE = "Google Drive backup is not available"
+_SYNC_MODULES_NOT_AVAILABLE = "Not connected to Blink"
 _NOTIFICATIONS_NOT_CONFIGURED = "Notifications not configured"
 _FINETUNE_REQUIRES_MOONDREAM_CLOUD = "Fine-tuning requires ai_provider=moondream_cloud"
 _CAMERA_CONFIGS_SAVE_ERROR = "Could not save camera configs: %s"
@@ -195,6 +196,9 @@ class MediaServer:
         list_camera_names: Callable[[], list[str]] | None = None,
         get_camera_snapshot: Callable[[str], Awaitable[bytes | None]] | None = None,
         update_auto_analysis_cameras: Callable[[set[str]], None] | None = None,
+        get_sync_module_snapshot: Callable[[], list[dict[str, Any]]] | None = None,
+        arm_sync_module: Callable[[str, bool], Awaitable[bool | None]] | None = None,
+        arm_camera: Callable[[str, bool], Awaitable[bool | None]] | None = None,
     ) -> None:
         self._db = db
         self._port = port
@@ -216,6 +220,10 @@ class MediaServer:
         self._list_camera_names = list_camera_names
         self._get_camera_snapshot = get_camera_snapshot
         self._update_auto_analysis_cameras = update_auto_analysis_cameras
+        # Same narrow-callable DI idiom, for the Sync Module tab.
+        self._get_sync_module_snapshot = get_sync_module_snapshot
+        self._arm_sync_module = arm_sync_module
+        self._arm_camera = arm_camera
         # Used only to stand up a MoondreamFineTuneManager for the Fine-Tuning
         # API/panel when provider == "moondream_cloud" — see _handle_finetune_*.
         self._moondream_api_key = moondream_api_key
@@ -345,6 +353,14 @@ class MediaServer:
         app.router.add_put("/api/vehicle/zone/{camera}", self._handle_vehicle_zone_put)
         app.router.add_delete(
             "/api/vehicle/zone/{camera}", self._handle_vehicle_zone_delete
+        )
+        app.router.add_get("/api/sync-modules", self._handle_sync_modules_get)
+        app.router.add_post(
+            "/api/sync-modules/{name}/arm", self._handle_sync_module_arm
+        )
+        app.router.add_post(
+            "/api/sync-modules/cameras/{camera}/arm",
+            self._handle_sync_module_camera_arm,
         )
         app.router.add_get(
             "/api/vehicle/zone-snapshot/{camera}",
@@ -2102,6 +2118,53 @@ class MediaServer:
         self._legacy_vehicle_zone_snapshot_path(camera).unlink(missing_ok=True)
 
         return web.json_response({"saved": True})
+
+    async def _handle_sync_modules_get(self, _request: web.Request) -> web.Response:
+        """Every sync module on the account, with its own info/armed state
+        and each of its cameras' armed/online/battery state — the Sync
+        Module tab's one and only read endpoint.
+        """
+        if self._get_sync_module_snapshot is None:
+            return web.json_response([])
+        return web.json_response(self._get_sync_module_snapshot())
+
+    async def _handle_sync_module_arm(self, request: web.Request) -> web.Response:
+        name = request.match_info["name"]
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        armed = bool(body.get("armed"))
+        if self._arm_sync_module is None:
+            raise web.HTTPServiceUnavailable(text=_SYNC_MODULES_NOT_AVAILABLE)
+        result = await self._arm_sync_module(name, armed)
+        if result is None:
+            raise web.HTTPNotFound(text=f'Sync module "{name}" not found')
+        if not result:
+            raise web.HTTPBadGateway(
+                text=f"Blink did not accept the {'arm' if armed else 'disarm'} request — try again"
+            )
+        return web.json_response({"armed": armed})
+
+    async def _handle_sync_module_camera_arm(
+        self, request: web.Request
+    ) -> web.Response:
+        camera = request.match_info["camera"]
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        armed = bool(body.get("armed"))
+        if self._arm_camera is None:
+            raise web.HTTPServiceUnavailable(text=_SYNC_MODULES_NOT_AVAILABLE)
+        result = await self._arm_camera(camera, armed)
+        if result is None:
+            raise web.HTTPNotFound(text=f'Camera "{camera}" not found')
+        if not result:
+            raise web.HTTPBadGateway(
+                text=f"Blink did not accept the {'arm' if armed else 'disarm'} request — try again"
+            )
+        return web.json_response({"armed": armed})
 
     async def _handle_vehicle_zone_snapshot_get(
         self, request: web.Request

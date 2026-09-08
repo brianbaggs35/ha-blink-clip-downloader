@@ -367,6 +367,60 @@ async def _camera_snapshot(camera: str) -> bytes | None:
 # real: the camera picker, selecting a camera, the "starting" state, and a
 # genuine (not mocked) LiveViewError being caught and surfaced as a toast,
 # through live_view.py's real _create_session code path.
+# Sync Module tab: MediaServer's get_sync_module_snapshot/arm_sync_module/
+# arm_camera are the same narrow-callable DI idiom as list_camera_names/
+# get_camera_snapshot above. State persists on this instance (mutated by
+# its own arm methods and read back by snapshot()), the same idiom
+# _FakeBlinkAuth already uses in this file -- so a Playwright test's
+# arm/disarm click is reflected on the very next GET /api/sync-modules,
+# same as the real add-on backed by a real blinkpy sync module would.
+# Reuses _CAMERAS (rather than inventing new names) so the tab's data
+# reads as part of the same fake account as every other tab.
+class _FakeSyncModule:
+    def __init__(self) -> None:
+        self.armed = True
+        self.camera_armed: dict[str, bool] = dict.fromkeys(_CAMERAS, True)
+
+    def snapshot(self) -> list[dict]:
+        return [
+            {
+                "name": "Home",
+                "network_id": 10,
+                "serial": "E2E-SYNC-0001",
+                "version": "2.13.30",
+                "status": "online",
+                "online": True,
+                "armed": self.armed,
+                "region_id": "e2e",
+                "local_storage": False,
+                "cameras": [
+                    {
+                        "name": camera,
+                        "armed": self.camera_armed[camera],
+                        "online": camera != _SECURITY_FEED_NO_SNAPSHOT_CAMERA,
+                        "battery_state": "low" if camera == "Backyard" else "ok",
+                        "battery_level": 1 if camera == "Backyard" else 3,
+                        "wifi_strength": -60,
+                        "type": "catalina",
+                    }
+                    for camera in _CAMERAS
+                ],
+            }
+        ]
+
+    async def arm_module(self, name: str, armed: bool) -> bool | None:
+        if name != "Home":
+            return None
+        self.armed = armed
+        return True
+
+    async def arm_camera(self, name: str, armed: bool) -> bool | None:
+        if name not in self.camera_armed:
+            return None
+        self.camera_armed[name] = armed
+        return True
+
+
 class _FakeLiveViewCamera:
     async def init_livestream(self) -> None:
         # A small, deliberate delay — a real blinkpy call to Blink's cloud
@@ -560,6 +614,7 @@ async def _main() -> None:
     # Google) stays unreachable without both a client id and secret saved,
     # which nothing here does.
     gdrive = GDriveClient()
+    sync_module = _FakeSyncModule()
     server = MediaServer(
         db=db,
         port=port,
@@ -571,6 +626,9 @@ async def _main() -> None:
         get_camera_snapshot=_camera_snapshot,
         live_view=live_view,
         gdrive_client=gdrive,
+        get_sync_module_snapshot=sync_module.snapshot,
+        arm_sync_module=sync_module.arm_module,
+        arm_camera=sync_module.arm_camera,
     )
     await server.start()
     print(f"Standalone e2e server ready on http://localhost:{port}/", flush=True)

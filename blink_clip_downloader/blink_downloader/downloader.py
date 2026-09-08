@@ -400,6 +400,123 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             )
         return snapshot
 
+    def _get_sync_module(self, name: str) -> Any | None:
+        """Return the live blinkpy sync-module object for *name*, or None.
+
+        Mirrors get_camera's None-on-either-cause contract: nothing has
+        connected yet, or *name* doesn't match any sync module on the
+        account. Lookup is case-insensitive (self._blink.sync is a
+        CaseInsensitiveDict). The return type is Any rather than
+        BlinkSyncModule because blinkpy also stores BlinkOwl/BlinkLotus
+        instances (sync-less Minis/newer doorbells) in the same dict — both
+        subclass BlinkSyncModule and share its arm/async_arm/attributes
+        interface, so callers don't need to tell them apart.
+        """
+        if self._blink is None:
+            return None
+        return self._blink.sync.get(name)
+
+    def get_sync_module_snapshot(self) -> list[dict[str, Any]]:
+        """Return every sync module on the account, with its own info/armed
+        state and each of its cameras' armed/online/battery state, as of the
+        last refresh_camera_state() call.
+
+        Like get_battery_snapshot, this is a pure read of state blinkpy
+        already refreshes every poll cycle (Blink.refresh() calls
+        sync_module.refresh() for every entry in self._blink.sync, which
+        updates network_info/arm and every camera's motion_enabled/battery)
+        — no extra Blink API calls here. Every blinkpy property read below
+        (``online``, ``arm``) already catches its own KeyError/TypeError and
+        returns a safe False/None internally, so no extra try/except is
+        needed at this layer. Returns [] before the first successful
+        connect().
+        """
+        if self._blink is None:
+            return []
+        snapshot: list[dict[str, Any]] = []
+        for name, sync in self._blink.sync.items():
+            cameras: list[dict[str, Any]] = []
+            for camera_name, camera in sync.cameras.items():
+                cameras.append(
+                    {
+                        "name": camera_name,
+                        "armed": camera.arm,
+                        "online": camera.online,
+                        "battery_state": (
+                            str(camera.battery_state).strip().lower()
+                            if camera.battery_state
+                            else None
+                        ),
+                        "battery_level": camera.battery_level,
+                        "wifi_strength": camera.wifi_strength,
+                        "type": camera.product_type,
+                    }
+                )
+            snapshot.append(
+                {
+                    "name": name,
+                    "network_id": sync.network_id,
+                    "serial": sync.serial,
+                    "version": sync.version,
+                    "status": sync.status,
+                    "online": sync.online,
+                    "armed": sync.arm,
+                    "region_id": sync.region_id,
+                    "local_storage": sync.local_storage,
+                    "cameras": cameras,
+                }
+            )
+        return snapshot
+
+    async def set_sync_module_armed(self, name: str, armed: bool) -> bool | None:
+        """Arm or disarm the whole sync module named *name*.
+
+        Returns None (never raises) when *name* doesn't match any sync
+        module on the account — this can legitimately happen if the module
+        was renamed/removed between the web UI loading its snapshot and the
+        user clicking arm/disarm, same class of race
+        list_camera_names()/get_camera already guard against elsewhere.
+        Returns False if blinkpy's own arm/disarm API call itself fails
+        (e.g. a transient Blink outage); media_server.py's handler maps
+        None to 404 and False to a 502-style "try again" response, since
+        those are genuinely different situations for a caller to react to.
+        """
+        sync = self._get_sync_module(name)
+        if sync is None:
+            return None
+        try:
+            await sync.async_arm(armed)
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            _LOGGER.warning(
+                "Could not %s sync module %r: %s",
+                "arm" if armed else "disarm",
+                name,
+                exc,
+            )
+            return False
+        return True
+
+    async def set_camera_armed(self, name: str, armed: bool) -> bool | None:
+        """Arm or disarm motion detection for the single camera named
+        *name* (Blink's per-camera equivalent of set_sync_module_armed).
+
+        Same None-vs-False contract as set_sync_module_armed.
+        """
+        camera = self.get_camera(name)
+        if camera is None:
+            return None
+        try:
+            await camera.async_arm(armed)
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            _LOGGER.warning(
+                "Could not %s camera %r: %s",
+                "arm" if armed else "disarm",
+                name,
+                exc,
+            )
+            return False
+        return True
+
     async def refresh_camera_state(self) -> bool:
         """Refresh Blink's own per-camera state (images, motion, battery,
         online status, ...) from the cloud.

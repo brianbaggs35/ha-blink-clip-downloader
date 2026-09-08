@@ -193,8 +193,8 @@ removed in 5.0.0.
   clips its content with no scrollbar. The Storage tab shipped without this
   once; it only surfaced via live browser testing under a real Home
   Assistant OS install, not any automated test. Current nav order: Library,
-  Live View, Security Feed, Automations, Status, AI, AI Usage, Models,
-  Vehicles, Biometrics, Storage.
+  Live View, Security Feed, Automations, Sync Module, Status, AI, AI Usage,
+  Models, Vehicles, Biometrics, Storage.
 - **API client**: every backend call goes through `api/<area>.ts` modules
   built on `api/client.ts`'s `apiGet`/`apiPost`/`apiPut`/`apiPatch`/`apiDelete`
   helpers (thin `fetch` wrappers, ingress-path-aware via `env.ts`). Add new
@@ -258,10 +258,11 @@ removed in 5.0.0.
   place). Covers Library
   (filter/star/tag/modal, including the clip modal's theater mode/autoplay/
   loop/prev-next-nav/download-link/AI-panel-analyze-now), Vehicles, Status,
-  AI (including Test Analysis) + AI Usage, Automations, Models, Security
-  Feed, and Storage (Archived Clips list/expand/camera-filter/delete — all
-  DB-backed; Google Drive only as far as its disconnected/not-configured
-  state, since exercising a real connection needs actual OAuth credentials)
+  AI (including Test Analysis) + AI Usage, Automations, Sync Module,
+  Models, Security Feed, and Storage (Archived Clips list/expand/
+  camera-filter/delete — all DB-backed; Google Drive only as far as its
+  disconnected/not-configured state, since exercising a real connection
+  needs actual OAuth credentials)
   — also Live View and Biometrics, each via its own unlock trick (below);
   neither is a mock in the sense of faking application logic, just a fake
   data source feeding the real code paths. Security Feed is
@@ -522,11 +523,12 @@ CI's `frontend-e2e` job runs `npm run test:e2e:coverage` (Playwright, see
 `smoke-test`, this one *is* practical to run locally (no Docker: just a
 reachable Postgres, the same prerequisite `pytest` already needs) — worth
 doing whenever a change touches Library, Vehicles, Status, AI, AI Usage,
-Automations, or Models (their page components, their API routes, or
-`media_server.py`'s handlers for them), since that's this suite's coverage
-so far. Plain `npm run test:e2e` (no coverage instrumentation, and it
-reuses an existing `npm run build` instead of always rebuilding) is faster
-for a quick local check; CI always runs the coverage variant.
+Automations, Sync Module, or Models (their page components, their API
+routes, or `media_server.py`'s handlers for them), since that's this
+suite's coverage so far. Plain `npm run test:e2e` (no coverage
+instrumentation, and it reuses an existing `npm run build` instead of
+always rebuilding) is faster for a quick local check; CI always runs the
+coverage variant.
 
 ## Versioning
 

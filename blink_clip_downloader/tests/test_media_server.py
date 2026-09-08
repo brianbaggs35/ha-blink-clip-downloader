@@ -7650,6 +7650,183 @@ async def test_liveview_hls_unknown_session_returns_404(db: ClipDatabase) -> Non
         await tc.close()
 
 
+# ---------------------------------------------------------------------------
+# Sync Module tab
+# ---------------------------------------------------------------------------
+
+
+def _make_sync_module_snapshot() -> list[dict]:
+    return [
+        {
+            "name": "Home",
+            "network_id": 12345,
+            "serial": "ABCDEF123",
+            "version": "2.13.30",
+            "status": "online",
+            "online": True,
+            "armed": True,
+            "region_id": "u001",
+            "local_storage": False,
+            "cameras": [
+                {
+                    "name": "Front Door",
+                    "armed": True,
+                    "online": True,
+                    "battery_state": "ok",
+                    "battery_level": 3,
+                    "wifi_strength": -55,
+                    "type": "catalina",
+                }
+            ],
+        }
+    ]
+
+
+async def test_sync_modules_get_empty_without_snapshot_callable(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/api/sync-modules")
+    assert resp.status == 200
+    assert await resp.json() == []
+
+
+async def test_sync_modules_get_returns_snapshot(db: ClipDatabase) -> None:
+    snapshot = _make_sync_module_snapshot()
+    server = MediaServer(db=db, port=0, get_sync_module_snapshot=lambda: snapshot)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.get("/api/sync-modules")
+        assert resp.status == 200
+        assert await resp.json() == snapshot
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_arm_unavailable_without_callable(
+    client: TestClient,
+) -> None:
+    resp = await client.post("/api/sync-modules/Home/arm", json={"armed": True})
+    assert resp.status == 503
+
+
+async def test_sync_module_arm_invalid_json(db: ClipDatabase) -> None:
+    server = MediaServer(db=db, port=0, arm_sync_module=AsyncMock(return_value=True))
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/sync-modules/Home/arm",
+            data="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_arm_not_found(db: ClipDatabase) -> None:
+    arm_sync_module = AsyncMock(return_value=None)
+    server = MediaServer(db=db, port=0, arm_sync_module=arm_sync_module)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/sync-modules/Nonexistent/arm", json={"armed": True})
+        assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_arm_blink_failure(db: ClipDatabase) -> None:
+    arm_sync_module = AsyncMock(return_value=False)
+    server = MediaServer(db=db, port=0, arm_sync_module=arm_sync_module)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/sync-modules/Home/arm", json={"armed": True})
+        assert resp.status == 502
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_arm_happy_path(db: ClipDatabase) -> None:
+    arm_sync_module = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, arm_sync_module=arm_sync_module)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/sync-modules/Home/arm", json={"armed": True})
+        assert resp.status == 200
+        assert await resp.json() == {"armed": True}
+        arm_sync_module.assert_awaited_once_with("Home", True)
+
+        resp2 = await tc.post("/api/sync-modules/Home/arm", json={"armed": False})
+        assert resp2.status == 200
+        assert await resp2.json() == {"armed": False}
+        arm_sync_module.assert_awaited_with("Home", False)
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_camera_arm_unavailable_without_callable(
+    client: TestClient,
+) -> None:
+    resp = await client.post(
+        "/api/sync-modules/cameras/Front Door/arm", json={"armed": True}
+    )
+    assert resp.status == 503
+
+
+async def test_sync_module_camera_arm_invalid_json(db: ClipDatabase) -> None:
+    server = MediaServer(db=db, port=0, arm_camera=AsyncMock(return_value=True))
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/sync-modules/cameras/Front Door/arm",
+            data="not json",
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status == 400
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_camera_arm_not_found(db: ClipDatabase) -> None:
+    arm_camera = AsyncMock(return_value=None)
+    server = MediaServer(db=db, port=0, arm_camera=arm_camera)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/sync-modules/cameras/Nonexistent/arm", json={"armed": True}
+        )
+        assert resp.status == 404
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_camera_arm_blink_failure(db: ClipDatabase) -> None:
+    arm_camera = AsyncMock(return_value=False)
+    server = MediaServer(db=db, port=0, arm_camera=arm_camera)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/sync-modules/cameras/Front Door/arm", json={"armed": True}
+        )
+        assert resp.status == 502
+    finally:
+        await tc.close()
+
+
+async def test_sync_module_camera_arm_happy_path(db: ClipDatabase) -> None:
+    arm_camera = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, arm_camera=arm_camera)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post(
+            "/api/sync-modules/cameras/Front Door/arm", json={"armed": False}
+        )
+        assert resp.status == 200
+        assert await resp.json() == {"armed": False}
+        arm_camera.assert_awaited_once_with("Front Door", False)
+    finally:
+        await tc.close()
+
+
 @pytest.mark.parametrize(
     "filename",
     [

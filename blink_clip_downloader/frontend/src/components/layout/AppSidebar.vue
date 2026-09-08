@@ -20,6 +20,7 @@ export type TabName =
   | 'liveview'
   | 'securityfeed'
   | 'automations'
+  | 'syncmodule'
   | 'status'
   | 'ai'
   | 'usage'
@@ -33,6 +34,7 @@ const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'liveview', label: 'Live View', icon: 'tab-liveview' },
   { name: 'securityfeed', label: 'Security Feed', icon: 'tab-securityfeed' },
   { name: 'automations', label: 'Automations', icon: 'tab-automations' },
+  { name: 'syncmodule', label: 'Sync Module', icon: 'tab-syncmodule' },
   { name: 'status', label: 'Status', icon: 'tab-status' },
   { name: 'ai', label: 'AI', icon: 'tab-ai' },
   { name: 'usage', label: 'AI Usage', icon: 'tab-usage' },
@@ -335,7 +337,7 @@ onUnmounted(() => {
       v-model:visible="showAbout"
       modal
       dismissable-mask
-      header="About Blink Clips 5.4.9"
+      header="About Blink Clips 5.5.0"
       :style="{ width: '26rem' }"
       :draggable="false"
     >
