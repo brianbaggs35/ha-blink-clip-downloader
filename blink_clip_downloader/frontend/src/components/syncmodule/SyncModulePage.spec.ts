@@ -140,6 +140,21 @@ describe('SyncModulePage', () => {
     expect(wrapper.find('.system-hero').classes()).toContain('system-hero-disarmed')
   })
 
+  it('shows "Partially Armed", not "Disarmed", when a module\'s armed state is unknown (null)', async () => {
+    // blinkpy's own `arm` property returns null (not false) whenever
+    // network_info hasn't been populated/parsed yet -- a module in that
+    // state must not be reported as confirmed-disarmed, which would
+    // falsely tell the user their home is unprotected.
+    vi.stubGlobal(
+      'fetch',
+      routedFetch(() => Promise.resolve(jsonResponse([makeModule({ armed: null })]))),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.find('.system-hero-title').text()).toBe('Partially Armed')
+    expect(wrapper.find('.system-hero').classes()).toContain('system-hero-mixed')
+  })
+
   it('does not count a disarmed module\'s cameras toward "armed" in the subtitle, even though their own motion-detection flag is untouched', async () => {
     // A disarmed module stops every one of its cameras from recording
     // regardless of their own armed flag -- makeModule()'s default cameras

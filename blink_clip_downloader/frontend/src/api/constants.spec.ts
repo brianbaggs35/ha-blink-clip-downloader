@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fmtCost, fmtDur, fmtNum, fmtRelative, fmtSize, fmtTs, providerLabel } from './constants'
+import { fmtCost, fmtDur, fmtNum, fmtRelative, fmtSize, fmtTs, isBatteryLow, providerLabel } from './constants'
 
 describe('providerLabel', () => {
   it('maps known providers to their display label', () => {
@@ -108,6 +108,22 @@ describe('fmtSize', () => {
     expect(fmtSize(2048)).toBe('2 KB')
     expect(fmtSize(5 * 1_048_576)).toBe('5.0 MB')
     expect(fmtSize(2 * 1_073_741_824)).toBe('2.00 GB')
+  })
+})
+
+describe('isBatteryLow', () => {
+  it('is true only for exactly "low"', () => {
+    expect(isBatteryLow('low')).toBe(true)
+  })
+
+  it('treats "ok" and any other/unrecognized value as not low', () => {
+    expect(isBatteryLow('ok')).toBe(false)
+    expect(isBatteryLow('critical')).toBe(false)
+  })
+
+  it('treats null/undefined as not low', () => {
+    expect(isBatteryLow(null)).toBe(false)
+    expect(isBatteryLow(undefined)).toBe(false)
   })
 })
 
