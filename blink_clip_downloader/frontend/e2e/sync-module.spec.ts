@@ -64,6 +64,15 @@ test('disarming the entire system requires confirmation, and does nothing if dec
   await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
 })
 
+test('pressing Escape on the disarm confirmation also declines, same as Cancel', async ({ page }) => {
+  await page.getByRole('button', { name: 'Disarm Entire System' }).click()
+  await expect(page.getByRole('button', { name: 'Confirm' })).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: 'Confirm' })).toHaveCount(0)
+  await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
+})
+
 test('disarming and re-arming the entire system via the hero button', async ({ page }) => {
   await page.getByRole('button', { name: 'Disarm Entire System' }).click()
   await page.getByRole('button', { name: 'Confirm' }).click()

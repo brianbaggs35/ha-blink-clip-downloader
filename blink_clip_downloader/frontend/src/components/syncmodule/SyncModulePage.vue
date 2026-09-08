@@ -170,8 +170,13 @@ async function onModuleToggle(name: string, armed: boolean) {
   // the very card that could have called this with it, before a real click
   // could ever originate from it. Verified empirically (a captured
   // component reference from before such a reload really is inert
-  // afterward, not just stale data) rather than assumed.
+  // afterward, not just stale data) rather than assumed — genuinely
+  // unreachable through the real component boundary, not merely untested,
+  // so this is excluded from coverage rather than exercised through an
+  // artificial direct call that wouldn't reflect how this is ever actually
+  // invoked.
   const module = syncModules.value.find((m) => m.name === name)
+  /* v8 ignore next */
   if (!module) return
   if (!armed && wouldFullyDisarmSystem(name)) {
     if (!(await confirm(DISARM_CONFIRM_MESSAGE, 'Disarm the entire system?'))) return

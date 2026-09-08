@@ -27,3 +27,9 @@ test('sending a test Discord message with no webhook configured fails gracefully
   await page.getByRole('button', { name: 'Send test message' }).click()
   await expect(page.getByText('Test Discord message failed')).toBeVisible()
 })
+
+test('copying a code block shows a confirmation toast', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.locator('.code-block').first().getByRole('button', { name: 'Copy' }).click()
+  await expect(page.getByText('Copied to clipboard')).toBeVisible()
+})
