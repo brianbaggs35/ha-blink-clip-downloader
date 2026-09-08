@@ -72,6 +72,11 @@ env:
   # it's what a real user (and this job's Playwright check) actually
   # clicks in the HA sidebar.
   ADDON_PANEL_TITLE: Blink Clips
+  # Must match blink_clip_downloader/config.yaml's name field exactly -
+  # what a real user sees in Settings > Apps and on the add-on's own
+  # info/log pages (a different HA surface than the sidebar ingress
+  # panel above, hence the separate value).
+  ADDON_NAME: Blink Clip Downloader
   # HA is reached via hassio_observer, Supervisor's stable entry point
   # (container port 80) - NOT Core's own 8123, which redirects direct
   # access there once it detects it's running under Supervisor (confirmed
@@ -211,11 +216,11 @@ jobs:
       - name: Enable the add-on's ingress panel
         run: scripts/ci/ha_integration_setup.sh enable-ingress-panel
 
-      - name: Verify through Home Assistant (onboarding, login, real ingress)
+      - name: Verify through Home Assistant (onboarding, login, ingress, HA API, logs)
         working-directory: e2e
         run: >-
           node ha_integration_smoke.mjs
-          "http://127.0.0.1:${HA_PORT}" "$ADDON_SLUG" "$ADDON_PANEL_TITLE"
+          "http://127.0.0.1:${HA_PORT}" "$ADDON_SLUG" "$ADDON_PANEL_TITLE" "$ADDON_NAME"
 
       - name: Collect diagnostics
         if: failure()

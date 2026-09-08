@@ -536,8 +536,12 @@ add-on into a *real* Home Assistant Supervisor + Core (the official
 of the built image) and drives the real ingress-proxied UI with
 Playwright — the only CI coverage of the actual app↔Home Assistant
 integration boundary (Supervisor discovery/build/install/start, the
-ingress panel, real ingress routing), which `build`/`smoke-test` above
-don't touch at all. Deliberately separate from `ci.yaml` and
+ingress panel, real ingress routing, a real round trip through Home
+Assistant's own API via the Automations tab's "Send test HA notification"
+button, and Supervisor-captured logs rendering on HA's own Settings > Apps
+> Log page — see `e2e/ha_integration_smoke.mjs`'s `checkHaNotification`/
+`checkAddonLogTab`), which `build`/`smoke-test` above don't touch at all.
+Deliberately separate from `ci.yaml` and
 informational-only (not required/blocking), since it depends on
 Supervisor/devcontainer infrastructure this repo doesn't control — see
 that workflow file's own header comment for the specific known upstream
