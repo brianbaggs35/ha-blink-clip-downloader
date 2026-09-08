@@ -581,23 +581,10 @@ class MediaServer:
         if not clip:
             raise web.HTTPNotFound(text=_CLIP_NOT_FOUND)
 
-        gdrive_deleted: bool | None = None
-        if clip.get("gdrive_file_id") and self._gdrive_client:
-            # Trash the Drive copy first, in its own try/except — matches
-            # archiver.py's per-step resilience style (log-and-continue): a
-            # Drive failure here must not block the local/DB delete below,
-            # which proceeds regardless of whether this succeeded.
-            try:
-                gdrive_deleted = await self._gdrive_client.delete_file(
-                    clip["gdrive_file_id"]
-                )
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Could not remove Google Drive backup for clip %s: %s",
-                    clip_id,
-                    exc,
-                )
-                gdrive_deleted = False
+        # Trash the Drive copy first — a Drive failure here must not block
+        # the local/DB delete below, which proceeds regardless of whether
+        # this succeeded.
+        gdrive_deleted = await self._delete_gdrive_backup(clip)
 
         file_path = Path(clip["file_path"])
         if file_path.exists():
@@ -610,6 +597,30 @@ class MediaServer:
                 _LOGGER.warning("Could not delete file %s: %s", file_path, exc)
         await self._db.delete_clip(clip_id)
         return web.json_response({"deleted": True, "gdrive_deleted": gdrive_deleted})
+
+    async def _delete_gdrive_backup(self, clip: dict[str, Any]) -> bool | None:
+        """Best-effort delete of one clip's Google Drive backup, if any.
+
+        Shared by _handle_delete_clip and _handle_delete_archive. Returns
+        None when there was nothing to delete (no gdrive_file_id, or no
+        client configured) — matching the "was any deletion even attempted"
+        signal _handle_delete_clip's response already exposes. A Drive
+        failure logs a warning and returns False rather than raising,
+        matching archiver.py's per-step resilience style
+        (log-and-continue): the caller's own local/DB cleanup must proceed
+        regardless of whether this succeeded.
+        """
+        if not clip.get("gdrive_file_id") or not self._gdrive_client:
+            return None
+        try:
+            return await self._gdrive_client.delete_file(clip["gdrive_file_id"])
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Could not remove Google Drive backup for clip %s: %s",
+                clip.get("id"),
+                exc,
+            )
+            return False
 
     async def _handle_star_clip(self, request: web.Request) -> web.Response:
         clip_id = request.match_info["id"]
@@ -2147,43 +2158,47 @@ class MediaServer:
             return web.json_response([])
         return web.json_response(self._get_sync_module_snapshot())
 
-    async def _handle_sync_module_arm(self, request: web.Request) -> web.Response:
-        name = request.match_info["name"]
+    async def _handle_arm_request(
+        self,
+        request: web.Request,
+        match_key: str,
+        label: str,
+        arm_fn: Callable[[str, bool], Awaitable[bool | None]] | None,
+    ) -> web.Response:
+        """Shared body for _handle_sync_module_arm/_handle_sync_module_camera_arm.
+
+        *match_key* is the route's match_info key ("name" for a sync
+        module, "camera" for a camera); *label* is the noun used in the
+        404 message.
+        """
+        name = request.match_info[match_key]
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
             raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
         armed = bool(body.get("armed"))
-        if self._arm_sync_module is None:
+        if arm_fn is None:
             raise web.HTTPServiceUnavailable(text=_SYNC_MODULES_NOT_AVAILABLE)
-        result = await self._arm_sync_module(name, armed)
+        result = await arm_fn(name, armed)
         if result is None:
-            raise web.HTTPNotFound(text=f'Sync module "{name}" not found')
+            raise web.HTTPNotFound(text=f'{label} "{name}" not found')
         if not result:
             raise web.HTTPBadGateway(
                 text=f"Blink did not accept the {'arm' if armed else 'disarm'} request — try again"
             )
         return web.json_response({"armed": armed})
 
+    async def _handle_sync_module_arm(self, request: web.Request) -> web.Response:
+        return await self._handle_arm_request(
+            request, "name", "Sync module", self._arm_sync_module
+        )
+
     async def _handle_sync_module_camera_arm(
         self, request: web.Request
     ) -> web.Response:
-        camera = request.match_info["camera"]
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
-        armed = bool(body.get("armed"))
-        if self._arm_camera is None:
-            raise web.HTTPServiceUnavailable(text=_SYNC_MODULES_NOT_AVAILABLE)
-        result = await self._arm_camera(camera, armed)
-        if result is None:
-            raise web.HTTPNotFound(text=f'Camera "{camera}" not found')
-        if not result:
-            raise web.HTTPBadGateway(
-                text=f"Blink did not accept the {'arm' if armed else 'disarm'} request — try again"
-            )
-        return web.json_response({"armed": armed})
+        return await self._handle_arm_request(
+            request, "camera", "Camera", self._arm_camera
+        )
 
     async def _handle_vehicle_zone_snapshot_get(
         self, request: web.Request
@@ -2293,10 +2308,13 @@ class MediaServer:
         """Delete an entire archive ZIP: every clip record stored in it,
         their Google Drive backups (best-effort), and the ZIP file itself.
 
-        Mirrors _handle_delete_clip's per-item resilience style (a Drive
-        failure logs a warning and continues rather than blocking the
-        rest of the deletion), just fanned out over every clip sharing
-        one archive_path instead of a single clip id.
+        Shares _handle_delete_clip's per-item Drive-delete resilience via
+        _delete_gdrive_backup (a Drive failure logs a warning and continues
+        rather than blocking the rest of the deletion), fanned out
+        concurrently over every clip sharing one archive_path — an archive
+        can hold many clips, and each delete is its own Drive API round
+        trip, so running them one at a time would make handler latency
+        scale with clip count instead of the slowest single call.
         """
         archive_path = request.rel_url.query.get("archive_path", "")
         if not archive_path:
@@ -2308,18 +2326,10 @@ class MediaServer:
 
         gdrive_deleted = 0
         if self._gdrive_client:
-            for clip in clips:
-                if not clip.get("gdrive_file_id"):
-                    continue
-                try:
-                    if await self._gdrive_client.delete_file(clip["gdrive_file_id"]):
-                        gdrive_deleted += 1
-                except Exception as exc:  # noqa: BLE001
-                    _LOGGER.warning(
-                        "Could not remove Google Drive backup for clip %s: %s",
-                        clip.get("id"),
-                        exc,
-                    )
+            results = await asyncio.gather(
+                *(self._delete_gdrive_backup(clip) for clip in clips)
+            )
+            gdrive_deleted = sum(1 for result in results if result)
 
         zip_path = Path(archive_path)
         if zip_path.exists():

@@ -81,6 +81,17 @@
   normally and skipped it entirely, hammering the Supervisor with repeated
   full reconnect+auth handshakes until a real failure finally interrupted
   the loop.
+- Fixed the Sync Module tab's headline status showing "Disarmed" for a
+  sync module whose true arm state is actually unknown, not confirmed
+  off. blinkpy's own `arm` property returns `null` (not `false`) right
+  after a reconnect or a transient state-parse failure, but the status
+  logic treated any falsy value the same way — misleadingly implying the
+  home was unprotected. That module now falls into the existing
+  "Partially Armed" status (with its warning-triangle icon) instead,
+  which correctly signals "needs a look" rather than a false all-clear.
+  Found during the 5.5.0 pre-release review; the fully-armed logic
+  already handled this correctly, only the fully-disarmed check needed
+  the fix.
 
 ## 5.4.9
 
