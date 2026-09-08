@@ -1,0 +1,177 @@
+---
+name: HA Supervisor Integration Test
+
+# Deliberately separate from ci.yaml: this exercises real Home Assistant
+# Supervisor + Core (not just a bare `docker run` of the built image), so
+# it's much slower and depends on infrastructure this repo doesn't control
+# (see the two known upstream issues linked below) - informational only for
+# now, not a required/blocking check. It does not touch ci.yaml, its
+# existing Docker smoke-test job, or any branch protection settings.
+#
+# What ci.yaml's build/smoke-test jobs cannot catch, and this job exists
+# specifically to catch: whether Home Assistant Supervisor can actually
+# discover this add-on as a local app, build it through Supervisor's own
+# build mechanism (not `home-assistant/builder`), install and start it,
+# register its ingress panel in the HA sidebar, and serve real content
+# through that real ingress proxy - the actual app<->Home Assistant
+# integration boundary, not just "the container runs."
+#
+# Known upstream risk factors this job is built to tolerate, not eliminate
+# (see scripts/ci/ha_integration_setup.sh for the specific mitigations):
+# https://github.com/home-assistant/supervisor/issues/3976 (local add-on
+# discovery, closed "not planned") and
+# https://github.com/home-assistant/supervisor/issues/5991 (a build
+# regression tied to Supervisor's beta channel - this job pins `stable`).
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ha-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # ghcr.io/home-assistant/devcontainer:6-apps, pinned by digest so an
+  # unrelated upstream image update can't silently change this job's
+  # behavior between runs.
+  #
+  # Upgrading the HA test environment (do this deliberately, not
+  # accidentally): resolve the new digest for the tag below, update
+  # DEVCONTAINER_IMAGE, then validate locally with
+  # `scripts/run-act-ha-integration.sh` before merging the bump.
+  #   docker pull ghcr.io/home-assistant/devcontainer:6-apps
+  #   docker inspect ghcr.io/home-assistant/devcontainer:6-apps \
+  #     --format '{{index .RepoDigests 0}}'
+  DEVCONTAINER_IMAGE: >-
+    ghcr.io/home-assistant/devcontainer@sha256:91cfc04eaf96b4844b397418781413e2dc4dd8b6f0d6669bb754fa8497b289fc
+  CONTAINER_NAME: ha-integration-test
+  ADDON_SLUG: local_blink_clip_downloader
+  # Must match blink_clip_downloader/config.yaml's panel_title exactly -
+  # it's what a real user (and this job's Playwright check) actually
+  # clicks in the HA sidebar.
+  ADDON_PANEL_TITLE: Blink Clips
+  # HA is reached via hassio_observer, Supervisor's stable entry point
+  # (container port 80) - NOT Core's own 8123, which redirects direct
+  # access there once it detects it's running under Supervisor (confirmed
+  # empirically; see ha_integration_setup.sh's cmd_wait_core). Mapped to
+  # host 8123 purely for the familiar number.
+  HA_PORT: "8123"
+  # The add-on's own direct-access port (config.yaml's ports: 8099/tcp) -
+  # used only as a secondary startup-readiness probe. Never used to prove
+  # ingress works; see e2e/ha_integration_smoke.mjs's assertRealIngress().
+  ADDON_PORT: "8099"
+
+jobs:
+  ha-integration-test:
+    name: HA Supervisor Integration Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      # Real nested Docker-in-Docker (this container runs its own dockerd
+      # against the volumes below, not a socket-passthrough to the
+      # runner's daemon) - --privileged is required for that, same as the
+      # official devcontainer's own .devcontainer.json specifies.
+      - name: Start Home Assistant devcontainer (Supervisor + Core)
+        run: |
+          docker run -d --name "$CONTAINER_NAME" --privileged \
+            -e SUPERVISOR_CHANNEL=stable \
+            -e WORKSPACE_DIRECTORY=/mnt/supervisor/apps/local/blink_clip_downloader \
+            -p "${HA_PORT}:80" \
+            -p "${ADDON_PORT}:${ADDON_PORT}" \
+            -v /var/lib/docker \
+            -v /var/lib/containerd \
+            -v /mnt/supervisor \
+            --tmpfs /tmp \
+            -v "${{ github.workspace }}/blink_clip_downloader:/mnt/supervisor/apps/local/blink_clip_downloader" \
+            "$DEVCONTAINER_IMAGE"
+
+      - name: Bootstrap devcontainer
+        run: docker exec -u vscode "$CONTAINER_NAME" bash devcontainer_bootstrap
+
+      # The outer container's own init system starts an inner dockerd as
+      # one of its managed services - not necessarily ready the instant
+      # `docker run -d` above returns. supervisor_run (next step) has
+      # `set -e` and dies silently and immediately if it can't reach that
+      # daemon yet, with nothing surfacing the failure until the full
+      # Core-readiness wait times out - confirmed as a real failure on a
+      # real runner, not just a theoretical race. Waiting for it
+      # explicitly here, before supervisor_run ever runs, is the fix.
+      - name: Wait for inner Docker daemon
+        run: scripts/ci/ha_integration_setup.sh wait-docker
+
+      - name: Start Supervisor
+        run: |
+          docker exec -d "$CONTAINER_NAME" \
+            bash -c "supervisor_run > /var/log/supervisor_run.log 2>&1"
+
+      - name: Wait for Home Assistant Core
+        run: scripts/ci/ha_integration_setup.sh wait-core
+
+      - name: Discover the add-on as a local app
+        run: scripts/ci/ha_integration_setup.sh discover
+
+      - name: Install the add-on through Supervisor
+        run: scripts/ci/ha_integration_setup.sh install
+
+      # Reclaim disk before Playwright/the browser do any more work of
+      # their own - Supervisor's own image set plus this add-on's build
+      # (Debian + bundled PostgreSQL 17 + a full npm frontend build)
+      # together leave meaningfully less headroom than a typical job in
+      # this repo's other CI workflows.
+      - name: Prune build cache
+        run: docker exec "$CONTAINER_NAME" docker builder prune -f
+
+      - name: Start the add-on
+        run: scripts/ci/ha_integration_setup.sh start
+
+      - name: Enable the add-on's ingress panel
+        run: scripts/ci/ha_integration_setup.sh enable-ingress-panel
+
+      - name: Verify through Home Assistant (onboarding, login, real ingress)
+        working-directory: e2e
+        run: >-
+          node ha_integration_smoke.mjs
+          "http://127.0.0.1:${HA_PORT}" "$ADDON_SLUG" "$ADDON_PANEL_TITLE"
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          scripts/ci/ha_integration_setup.sh diagnostics ha-integration-diagnostics || true
+
+      - name: Upload diagnostics
+        if: ${{ !env.ACT && failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ha-integration-diagnostics
+          path: |
+            ha-integration-diagnostics
+            e2e/ha-integration-failure-*.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Stop and remove the devcontainer
+        if: always()
+        run: docker rm -f "$CONTAINER_NAME" || true
