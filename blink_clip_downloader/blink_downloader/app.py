@@ -199,6 +199,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             list_camera_names=self._downloader.list_camera_names,
             get_camera_snapshot=self._downloader.get_camera_snapshot,
             update_auto_analysis_cameras=self._set_auto_analysis_disabled_cameras,
+            get_sync_module_snapshot=self._downloader.get_sync_module_snapshot,
+            arm_sync_module=self._downloader.set_sync_module_armed,
+            arm_camera=self._downloader.set_camera_armed,
         )
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,

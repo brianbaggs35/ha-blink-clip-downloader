@@ -63,6 +63,12 @@ const TAB_CHECKS = {
     loadedText: "HA Automation Examples",
     loadingSelector: null,
   },
+  syncmodule: {
+    // No real Blink connection in this container, so blink.sync is empty -
+    // same "no data yet" bar as every other data-driven tab.
+    loadedText: "No sync modules found",
+    loadingSelector: ".loading-indicator",
+  },
   status: {
     loadedText: "Blink Connection",
     loadingSelector: ".loading-indicator",

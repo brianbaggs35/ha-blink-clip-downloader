@@ -41,6 +41,11 @@ export const ICONS = {
     paths: ['M12 2 2 7l10 5 10-5-10-5z', 'M2 12l10 5 10-5', 'M2 17l10 5 10-5'],
   },
   'tab-automations': { filled: true, paths: ['M13 2 4 14h6l-1 8 9-12h-6l1-8z'] },
+  'tab-syncmodule': {
+    // Shield outline (armed/protected) with a checkmark, distinct from
+    // tab-biometrics' shield-corners shape.
+    paths: ['M12 3 5 6v5c0 4.5 3 8 7 9 4-1 7-4.5 7-9V6l-7-3z', 'M9 12l2 2 4-4'],
+  },
   'tab-ai': {
     paths: ['M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3'],
     rects: [

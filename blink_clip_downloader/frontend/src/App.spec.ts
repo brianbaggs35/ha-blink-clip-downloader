@@ -45,7 +45,14 @@ describe('App', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((url: string) => {
-        const arrayEndpoints = ['/api/cameras', '/api/activity', '/api/clips', '/api/tags', '/api/ai/camera-configs']
+        const arrayEndpoints = [
+          '/api/cameras',
+          '/api/activity',
+          '/api/clips',
+          '/api/tags',
+          '/api/ai/camera-configs',
+          '/api/sync-modules',
+        ]
         let body: unknown = { state: 'connected', enabled: false }
         if (arrayEndpoints.some((p) => url.startsWith(p))) body = []
         else if (url.startsWith('/api/liveview/cameras')) body = { cameras: [] }
@@ -164,6 +171,16 @@ describe('App', () => {
     await flushPromises()
     expect(wrapper.find('#page-securityfeed').classes()).toContain('active')
     expect(wrapper.text()).toContain('Security Feed')
+    wrapper.unmount()
+  })
+
+  it('switches to the Sync Module tab and mounts SyncModulePage', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="syncmodule"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-syncmodule').classes()).toContain('active')
+    expect(wrapper.text()).toContain('Sync Module')
     wrapper.unmount()
   })
 

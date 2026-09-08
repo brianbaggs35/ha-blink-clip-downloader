@@ -1,9 +1,25 @@
 # Changelog
 
-## 5.5.0 (unreleased)
+## 5.5.0
 
 ### Added
 
+- Added a new Sync Module tab, between Automations and Status, built
+  around blinkpy's real sync-module/camera arm capabilities: a large
+  "Arm/Disarm Entire System" hero button (with a confirmation prompt
+  before disarming, since that stops every camera from recording on
+  motion), one card per sync module with its own arm switch and info
+  (firmware version, serial, online/local-storage status), and a card per
+  camera with its own arm switch and battery status. The headline status
+  (System Armed / Partially Armed / Disarmed, each with its own PrimeIcon
+  and color-coded card border) tracks both sync-module and per-camera
+  armed state — arming requires every sync module *and* every one of
+  their cameras to be armed, so disarming even a single camera drops the
+  system to "Partially Armed" until it's re-armed. Every arm/disarm
+  action shows immediate loading feedback (a spinner and disabled
+  control) and guards against a double-click firing the request twice.
+  Fully covered by pytest, Vitest, and Playwright e2e tests, and added to
+  the addon-container smoke test.
 - Added configuration description for battery_alerts_enabled.
 - Added support for French language for configuration.
 - Added support for Spanish language for configuration.
