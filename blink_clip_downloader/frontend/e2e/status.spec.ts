@@ -111,3 +111,58 @@ test('clicking a battery tile opens its history with state transitions and how l
   await dialog.getByRole('button', { name: 'Close' }).click()
   await expect(dialog).not.toBeVisible()
 })
+
+test('shows the Storage card with quota usage and a Frames Analyzed card when both are reported', async ({ page }) => {
+  // stats.disk only ever comes from app.py's real poll loop (StorageManager.
+  // disk_stats(), set on MediaServer.extra_status) -- standalone_server.py
+  // never runs that loop, so this card is unreachable without patching the
+  // real /api/stats response. Same story for analysis_stats.total_frames_analyzed
+  // on /api/ai/status -- the real seeded analyzer never runs the frame-level
+  // vision pipeline. beforeEach already navigated before this test's routes
+  // exist, so a reload is needed to apply them.
+  await page.route('**/api/stats', async (route) => {
+    const response = await route.fetch()
+    const stats = (await response.json()) as Record<string, unknown>
+    await route.fulfill({
+      response,
+      json: {
+        ...stats,
+        disk: {
+          used_bytes: 9_500_000_000,
+          used_mb: 9500.0,
+          free_bytes: 500_000_000,
+          free_gb: 0.47,
+          total_bytes: 10_000_000_000,
+          total_gb: 9.31,
+          quota_bytes: 10_000_000_000,
+          quota_gb: 9.31,
+        },
+      },
+    })
+  })
+  await page.route('**/api/ai/status', async (route) => {
+    const response = await route.fetch()
+    const status = (await response.json()) as { analysis_stats?: Record<string, unknown> }
+    await route.fulfill({
+      response,
+      json: {
+        ...status,
+        analysis_stats: { ...status.analysis_stats, total_frames_analyzed: 42, frames_analyzed_today: 3 },
+      },
+    })
+  })
+
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="status"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="status"]')
+
+  const storageCard = page.locator('.status-card', { hasText: 'Storage' })
+  await expect(storageCard.locator('.status-row', { hasText: 'Used' })).toContainText('9500')
+  await expect(storageCard.locator('.status-row', { hasText: 'Quota' })).toContainText('9.31')
+  // Usage is 95% of quota -- the "danger" (>90%) threshold, not just any non-null one.
+  await expect(storageCard.locator('.val.danger')).toHaveCount(1)
+
+  const framesCard = page.locator('.status-card', { hasText: 'Frames Analyzed' })
+  await expect(framesCard.locator('.status-row', { hasText: 'Total frames' })).toContainText('42')
+  await expect(framesCard.locator('.status-row', { hasText: 'Today' })).toContainText('3')
+})
