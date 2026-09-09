@@ -969,6 +969,63 @@ async def test_moondream_local_call_model_skips_empty_and_unparseable_responses(
     assert result == "not valid json"
 
 
+async def test_moondream_local_call_model_later_unparseable_frame_does_not_overwrite_earlier_result() -> (
+    None
+):
+    """The mirror image of the fallback test above: once a real description
+    has already won, a later frame's unparseable response must not replace
+    it with the raw-text placeholder."""
+    mock_model = MagicMock()
+    mock_model.detect.return_value = {
+        "objects": [{"x_min": 0.2, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    }
+    mock_model.caption.return_value = {"caption": "A person stands in the yard."}
+    mock_model.query.side_effect = [
+        {
+            "answer": '{"suspicious": false, "confidence": 0.4, "description": "Person in yard"}'
+        },
+        {"answer": "not valid json"},
+    ]
+
+    a = MoondreamLocalAnalyzer(prompt="Analyze.")
+    a._md_model = mock_model
+    a._model_ready = True
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "Analyze this scene.")
+
+    assert "Person in yard" in result
+
+
+async def test_moondream_local_call_model_worse_later_frame_does_not_overwrite_better_earlier_one() -> (
+    None
+):
+    """A later frame that _is_better_frame_result rejects (lower confidence,
+    same suspicious status) must not overwrite the already-winning frame."""
+    mock_model = MagicMock()
+    mock_model.detect.return_value = {
+        "objects": [{"x_min": 0.2, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    }
+    mock_model.caption.return_value = {"caption": "A person stands in the yard."}
+    mock_model.query.side_effect = [
+        {
+            "answer": '{"suspicious": true, "confidence": 0.9, "description": "Person breaking in"}'
+        },
+        {
+            "answer": '{"suspicious": true, "confidence": 0.2, "description": "Person nearby"}'
+        },
+    ]
+
+    a = MoondreamLocalAnalyzer(prompt="Analyze.")
+    a._md_model = mock_model
+    a._model_ready = True
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG], "Analyze this scene.")
+
+    assert "Person breaking in" in result
+
+
 async def test_moondream_local_call_model_no_frames() -> None:
     a = MoondreamLocalAnalyzer(prompt="test")
     a._model_ready = True
@@ -1152,6 +1209,25 @@ def test_analyze_frame_sync_non_car_camera_vehicle_gets_query() -> None:
     prompt_arg = mock_model.query.call_args[0][1]
     assert "INTERNAL VEHICLE HINT" in prompt_arg
     assert "Vehicle 1 is in the" in prompt_arg
+
+
+def test_analyze_frame_sync_empty_caption_skips_caption_grounding_block() -> None:
+    """When _local_caption comes back empty (e.g. the local model's caption
+    call failed), the prompt is not augmented with an empty/broken
+    [INTERNAL SCENE CAPTION] block."""
+    vehicle_boxes = [{"x_min": 0.2, "y_min": 0.3, "x_max": 0.6, "y_max": 0.8}]
+    query_answer = '{"suspicious": false, "confidence": 0.3, "description": "A car drove up the street."}'
+    mock_model = _make_local_model({"vehicle": vehicle_boxes}, query_answer, caption="")
+
+    a = MoondreamLocalAnalyzer(prompt="p")
+    a._md_model = mock_model
+
+    with patch("PIL.Image.open", return_value=MagicMock()):
+        result = a._analyze_frame_sync(_FAKE_JPEG, "p", car_applies=False)
+
+    assert "A car drove up the street" in result
+    prompt_arg = mock_model.query.call_args[0][1]
+    assert "INTERNAL SCENE CAPTION" not in prompt_arg
 
 
 def test_analyze_frame_sync_non_car_camera_animal_gets_query() -> None:
@@ -1824,6 +1900,31 @@ async def test_anthropic_call_model_success(monkeypatch: pytest.MonkeyPatch) -> 
     assert "Intruder" in result or "suspicious" in result.lower()
     assert a._last_prompt_tokens == 300
     assert a._last_completion_tokens == 60
+
+
+async def test_anthropic_call_model_success_with_no_usage_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response with no usage block (falsy) skips token tracking, not crashes."""
+    import sys
+
+    resp = _make_anthropic_response()
+    resp.usage = None
+    mock_mod = _make_anthropic_module(response=resp)
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="Analyze.")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    a._last_prompt_tokens = 999
+    a._last_completion_tokens = 999
+
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        result = await a._call_model([_FAKE_JPEG], "Analyze this scene.")
+
+    assert "Empty scene" in result
+    # Untouched -- no usage block means no new token counts to record.
+    assert a._last_prompt_tokens == 999
+    assert a._last_completion_tokens == 999
 
 
 async def test_anthropic_call_model_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3381,6 +3482,17 @@ async def test_openai_call_model_uses_json_object_for_gpt4_turbo(
     assert kwargs["response_format"] == {"type": "json_object"}
 
 
+def test_build_openai_create_kwargs_omits_response_format_for_legacy_model() -> None:
+    """A model that's neither Structured-Outputs-eligible nor gpt-4-turbo
+
+    (plain "gpt-4", predating both) gets no response_format override at
+    all — it relies on the prompt's own OUTPUT RULES instead.
+    """
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4", prompt="test")
+    kwargs = a._build_openai_create_kwargs([_FAKE_JPEG], "prompt", "gpt-4")
+    assert "response_format" not in kwargs
+
+
 async def test_openai_call_model_uses_structured_outputs_for_gpt5_and_o4_mini(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3913,6 +4025,18 @@ def test_select_frames_by_motion_falls_back_when_gap_constraint_underfills() -> 
     result = ClipAnalyzer._select_frames_by_motion(frames, diffs, 6)
 
     assert len(result) == 6
+
+
+def test_select_frames_by_motion_no_diffs_skips_peak_and_relaxed_loop() -> None:
+    """With no motion diffs at all (diffs=[]) there's no peak frame to add
+    and nothing in `ranked` to fill remaining slots with -- selection falls
+    back to just the first and last frame, even though target_count asks
+    for more."""
+    frames = [f"frame{i}".encode() for i in range(8)]
+
+    result = ClipAnalyzer._select_frames_by_motion(frames, [], 6)
+
+    assert result == [frames[0], frames[-1]]
 
 
 def test_select_frames_evenly_spaced_single_target_returns_first_frame() -> None:
@@ -5739,6 +5863,34 @@ async def test_analyze_sequentially_empty_frames() -> None:
 
 
 @pytest.mark.asyncio
+async def test_generate_response_sequential_no_escalation_frame_skips_escalation() -> (
+    None
+):
+    """_generate_response (not _analyze_sequentially directly) with no frames
+
+    to analyze gets no escalation_frame back, so it must return the (empty)
+    response as-is without ever calling _maybe_escalate.
+    """
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="sequential",
+    )
+    escalate_called = False
+
+    async def fake_maybe_escalate(frames: list, prompt: str, response: str) -> str:
+        nonlocal escalate_called
+        escalate_called = True
+        return response
+
+    analyzer._maybe_escalate = fake_maybe_escalate  # type: ignore[method-assign]
+    result = await analyzer._generate_response([], "prompt")
+    assert result == ""
+    assert escalate_called is False
+
+
+@pytest.mark.asyncio
 async def test_analyze_sequentially_skips_empty_responses() -> None:
     analyzer = ClipAnalyzer(
         ollama_url="http://localhost:11434",
@@ -5785,6 +5937,35 @@ async def test_analyze_sequentially_malformed_frame_kept_only_as_last_resort() -
     )
     assert "Person at car door" in result
     assert frame == _FAKE_JPEG_2
+
+
+@pytest.mark.asyncio
+async def test_analyze_sequentially_later_malformed_frame_does_not_overwrite_earlier_good_one() -> (
+    None
+):
+    """The mirror image of the malformed-then-good test above: once a real
+    description has already won, a later frame with no parseable
+    description must not replace it with the malformed placeholder."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="sequential",
+    )
+    good = json.dumps(
+        {"suspicious": False, "confidence": 0.6, "description": "Clear driveway"}
+    )
+    malformed = "not valid json"
+
+    async def fake_call_model(frames: list, prompt: str) -> str:
+        return good if frames[0] == _FAKE_JPEG else malformed
+
+    analyzer._call_model = fake_call_model  # type: ignore[method-assign]
+    result, frame = await analyzer._analyze_sequentially(
+        [_FAKE_JPEG, _FAKE_JPEG_2], "p"
+    )
+    assert "Clear driveway" in result
+    assert frame == _FAKE_JPEG
 
 
 @pytest.mark.asyncio
@@ -6926,6 +7107,20 @@ def test_vehicle_hint_content() -> None:
 
 
 # ------------------------------------------------------------------
+# _augment_noncar_prompt
+# ------------------------------------------------------------------
+
+
+def test_augment_noncar_prompt_no_subjects_returns_prompt_unchanged() -> None:
+    """With no persons/animals/vehicles detected at all, there's no position
+    hint to build and no lone vehicle to flag -- the prompt passes through
+    untouched rather than picking up an empty hint block."""
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
+    result = a._augment_noncar_prompt("Base prompt.", [], [], [])
+    assert result == "Base prompt."
+
+
+# ------------------------------------------------------------------
 # _no_subject_response
 # ------------------------------------------------------------------
 
@@ -7465,6 +7660,44 @@ async def test_moondream_cloud_call_model_falls_back_to_raw_response_when_descri
         result = await a._call_model([_FAKE_JPEG], "base prompt")
 
     assert result == query_answer
+
+
+async def test_moondream_cloud_call_model_later_empty_description_does_not_overwrite_earlier_result() -> (
+    None
+):
+    """The mirror image of the fallback test above: once an earlier frame
+    already produced a real description, a later frame's no-description
+    response must not replace it with the raw-JSON placeholder."""
+    person_boxes = [{"x_min": 0.2, "y_min": 0.1, "x_max": 0.4, "y_max": 0.9}]
+    good_answer = (
+        '{"suspicious": true, "confidence": 0.7, "description": "Person at the door."}'
+    )
+    no_desc_answer = '{"suspicious": false, "confidence": 0.3}'
+    call_count = {"query": 0}
+
+    def detect(obj: str) -> list[dict[str, float]]:
+        return person_boxes if obj == "person" else []
+
+    def side_effect(url, **kwargs):
+        if "/query" in url:
+            call_count["query"] += 1
+            answer = good_answer if call_count["query"] == 1 else no_desc_answer
+            return _dispatch_moondream(url, kwargs, detect=detect, query_answer=answer)
+        return _dispatch_moondream(url, kwargs, detect=detect, query_answer=good_answer)
+
+    session = MagicMock()
+    session.post = MagicMock(side_effect=side_effect)
+    session.closed = False
+
+    a = MoondreamCloudAnalyzer(api_key="key", prompt="base prompt")
+    a._session = session
+    a._current_camera = "Front Door"
+
+    with patch("asyncio.sleep", new_callable=AsyncMock):
+        result = await a._call_model([_FAKE_JPEG, _FAKE_JPEG_2], "base prompt")
+
+    assert result == good_answer
+    assert call_count["query"] == 2
 
 
 async def test_moondream_cloud_call_model_skips_frame_with_no_query_response() -> None:
@@ -8108,6 +8341,27 @@ async def test_train_step_sft_mode_uses_first_rollout_as_target() -> None:
     assert group["target"] == "A person is walking."
 
 
+async def test_train_step_sft_mode_with_no_rollouts_omits_target() -> None:
+    """sft mode with an empty rollouts list has nothing to use as a target,
+    so the group is sent without a "target" key rather than crashing on
+    rollouts[0]."""
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(return_value=_make_ft_resp(200, {"ok": True}))
+    )
+    await m.train_step(
+        finetune_id="ft-1",
+        request={"skill": "query", "question": "Describe."},
+        rollouts=[],
+        mode="sft",
+    )
+    call_kwargs = m._session.post.call_args
+    payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json", {})
+    group = payload["groups"][0]
+    assert group["mode"] == "sft"
+    assert "target" not in group
+
+
 async def test_train_step_rl_includes_rewards() -> None:
     m = MoondreamFineTuneManager(api_key="key")
     m._session = _mock_session(post=MagicMock(return_value=_make_ft_resp(200, {})))
@@ -8205,6 +8459,32 @@ async def test_train_from_examples_continues_after_one_failure() -> None:
     assert result["steps_completed"] == 1
     # Only the second example (index 1) actually completed a training step —
     # the first was skipped for lack of rollouts and must not be marked trained.
+    assert result["successful_indices"] == [1]
+
+
+async def test_train_from_examples_continues_after_train_step_http_error() -> None:
+    """Unlike the "no rollouts" skip above, this failure happens one step
+    later: rollouts generate fine but the train_step call itself comes back
+    HTTP 500 (-> falsy {}). That example must be left out of the results
+    without aborting the rest of the batch."""
+    rollout_ok = _make_ft_resp(200, {"rollouts": ["r"]})
+    train_step_failed = _make_ft_resp(500)
+    train_step_ok = _make_ft_resp(200, {"ok": True})
+    m = MoondreamFineTuneManager(api_key="key")
+    m._session = _mock_session(
+        post=MagicMock(
+            side_effect=[rollout_ok, train_step_failed, rollout_ok, train_step_ok]
+        )
+    )
+
+    result = await m.train_from_examples(
+        "ft-1",
+        [
+            {"image": _FAKE_JPEG, "question": "q1", "ground_truth": "{}"},
+            {"image": _FAKE_JPEG, "question": "q2", "ground_truth": "{}"},
+        ],
+    )
+    assert result["steps_completed"] == 1
     assert result["successful_indices"] == [1]
 
 
