@@ -49,6 +49,17 @@ test('filtering by camera narrows both the archive list and its counts', async (
   await expect(panels).toHaveCount(3)
 })
 
+test('shows an error toast when Run Archiving Now fails', async ({ page }) => {
+  // Mocked, so nothing actually archives -- doesn't disturb the panel
+  // counts the tests below (and the real "Run Archiving Now" test at the
+  // end of this file) depend on.
+  await page.route('**/api/storage/archive/run-now', (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
+  )
+  await page.getByRole('button', { name: 'Run Archiving Now' }).click()
+  await expect(page.getByText('Could not run archiving')).toBeVisible()
+})
+
 // Runs before the solo-archive delete test below so that test's own "back
 // down to 1 panel" assertion doesn't need to change to account for this
 // archive too -- see _ARCHIVE_PATH_BULK_DELETE's comment in
@@ -133,6 +144,18 @@ test('saving Google Drive settings persists them and survives a reload', async (
   await page.reload()
   await page.locator('.app-nav-tab[data-tab="storage"]').click()
   await expect(page.locator('#gdrive-client-id')).toHaveValue('123.apps.googleusercontent.com')
+})
+
+test('shows an error toast when saving Google Drive settings fails', async ({ page }) => {
+  // Mocked, so the settings from the test above (or the seeded default)
+  // are never actually overwritten -- doesn't disturb later tests.
+  await page.route('**/api/storage/gdrive/settings', (route) => {
+    if (route.request().method() !== 'PUT') return route.fallback()
+    return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) })
+  })
+  await page.locator('#gdrive-client-id').fill('999.apps.googleusercontent.com')
+  await page.getByRole('button', { name: 'Save Setup' }).click()
+  await expect(page.getByText('Could not save Google Drive settings')).toBeVisible()
 })
 
 // Must run after every test above: it archives standalone_server.py's
