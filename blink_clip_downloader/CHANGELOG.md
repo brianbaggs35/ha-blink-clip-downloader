@@ -112,6 +112,18 @@
   hints now prefer whichever detected vehicle is nearest that zone; a
   camera with no zone drawn is unaffected (falls back to the previous
   behavior, correct when only one vehicle is ever in frame).
+- Fixed two-tier AI escalation letting a tier-2 "clear" verdict silently
+  overturn a tier-1 "suspicious" catch on an asset-protection camera
+  (one with a protected vehicle configured). The documented policy for
+  these cameras is that either tier flagging something suspicious should
+  win — already true when tier 1 said clear and tier 2 caught something
+  it missed, but not the other way around: a tier-1 catch was being
+  treated exactly like a normal camera's tier-2-is-authoritative rule,
+  so a disagreeing tier 2 could erase it. This is exactly the kind of
+  missed contact/proximity event against a protected vehicle this
+  high-recall mode exists to prevent. Now symmetric: a tier-1 suspicious
+  verdict on these cameras survives a disagreeing tier 2, just as a
+  tier-2 suspicious verdict already survived a disagreeing tier 1.
 
 ## 5.4.9
 

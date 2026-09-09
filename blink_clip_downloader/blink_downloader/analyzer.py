@@ -1308,9 +1308,12 @@ class BaseAnalyzer(abc.ABC):
         - **Asset-protection cameras** always get a tier-2 double-check,
           even when tier 1 said "clear". A missed contact/proximity event
           against a protected vehicle is worse than one extra API call, so
-          tier 1's "clear" is not trusted on its own here — only a tier-2
-          confirmation of "clear" is. If either tier says suspicious, that
-          verdict wins (see below).
+          neither tier's "clear" is trusted alone here — only agreement is.
+          If either tier says suspicious, that verdict wins, symmetrically:
+          a tier-2 suspicious catch overrides a tier-1 "clear" just as much
+          as a tier-1 suspicious catch survives a tier-2 "clear" — this
+          mode exists specifically so one tier's disagreement can never
+          silently erase the other's catch.
         - **Every other camera** keeps the original, cost-optimized
           behavior: tier 2 is only consulted to confirm/refute a tier-1
           suspicious call, and its well-formed response is authoritative. A
@@ -1371,13 +1374,22 @@ class BaseAnalyzer(abc.ABC):
         self._last_escalation_prompt_tokens = tier2.last_prompt_tokens
         self._last_escalation_completion_tokens = tier2.last_completion_tokens
 
-        if high_recall and not suspicious:
-            # Tier 1 said clear on a protected-vehicle camera — only trust
-            # that if tier 2 agrees. A tier-2 suspicious verdict caught
-            # something tier 1 missed and must win; two "clear" agreements
-            # keep tier 1's own response rather than swap in an equivalent
-            # one and lose its already-recorded frame/description pairing.
+        if high_recall:
+            # Asset-protection camera: "if either tier says suspicious,
+            # that verdict wins" applies symmetrically, not just to the
+            # "tier 1 said clear" direction it was originally written for.
+            # A tier-1 suspicious catch on a protected-vehicle camera must
+            # not be silently erased just because tier 2 happened to
+            # disagree — that would be exactly the missed contact/
+            # proximity event this whole high-recall mode exists to catch,
+            # the same failure mode already guarded against below when the
+            # tiers disagree the other way around. Agreement (both
+            # suspicious or both clear) keeps tier 1's own response rather
+            # than swap in an equivalent one and lose its already-recorded
+            # frame/description pairing.
             tier2_suspicious, _, _ = self._try_parse_json(escalated)
+            if suspicious == tier2_suspicious:
+                return response
             return escalated if tier2_suspicious else response
 
         return escalated

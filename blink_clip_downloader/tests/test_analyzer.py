@@ -3681,6 +3681,65 @@ async def test_car_camera_clear_verdict_stays_clear_when_tier2_agrees() -> None:
     assert a._last_escalation_provider == "anthropic"
 
 
+async def test_car_camera_suspicious_verdict_survives_tier2_disagreement() -> None:
+    """A tier-1 suspicious catch on a protected-vehicle camera must not be
+    silently erased just because tier 2 happened to disagree — the same
+    "either tier says suspicious wins" policy that lets a tier-2 catch
+    override a tier-1 "clear" (see the test above) must protect a tier-1
+    catch from a tier-2 "clear" just as much, or this high-recall mode
+    would miss exactly the kind of contact event it exists to catch."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="test",
+        car_description="Silver Honda Civic",
+        car_cameras=["Driveway"],
+    )
+    a._current_camera = "Driveway"
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.85, "description": "Person leaning against car"}'
+    )
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.6, "description": "Person pauses near car"}'
+    )
+    a.set_escalation_analyzer(tier2)
+
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
+    tier2._call_model.assert_awaited_once()
+    assert "leaning against car" in result
+    assert a._last_escalation_provider == "anthropic"
+
+
+async def test_car_camera_suspicious_verdict_kept_when_tier2_agrees() -> None:
+    """Both tiers suspicious keeps tier 1's own response/description
+    pairing, mirroring the both-clear-agree case rather than swapping in
+    tier 2's equivalent text for no benefit."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="test",
+        car_description="Silver Honda Civic",
+        car_cameras=["Driveway"],
+    )
+    a._current_camera = "Driveway"
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.85, "description": "Person leaning against car"}'
+    )
+    tier2 = AnthropicAnalyzer(api_key="key", model="claude-opus-4-5", prompt="test")
+    tier2._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": true, "confidence": 0.9, "description": "Contact with vehicle confirmed"}'
+    )
+    a.set_escalation_analyzer(tier2)
+
+    result = await a._call_model_with_escalation([_FAKE_JPEG], "prompt")
+
+    tier2._call_model.assert_awaited_once()
+    assert "leaning against car" in result
+    assert a._last_escalation_provider == "anthropic"
+
+
 async def test_non_car_camera_clear_verdict_never_escalates() -> None:
     """A camera not in car_cameras keeps the cost-optimized behavior even
     when a protected vehicle exists elsewhere on the property."""
