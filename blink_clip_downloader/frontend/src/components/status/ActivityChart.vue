@@ -18,8 +18,14 @@ const days = computed<DayBar[]>(() => {
     byDate.set(date, (byDate.get(date) ?? 0) + count)
   }
   const dates = [...byDate.keys()].sort().reverse()
+  // Every `d`/`date` below comes from byDate's own keys(), so .get() always
+  // returns the defined count that was just set for it -- the `?? 0`
+  // fallbacks are unreachable in practice, kept only for type narrowing
+  // (Map#get's return type is always `T | undefined`).
+  /* v8 ignore next */
   const maxCount = Math.max(...dates.map((d) => byDate.get(d) ?? 0), 1)
   return dates.map((date) => {
+    /* v8 ignore next */
     const total = byDate.get(date) ?? 0
     const label = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
       weekday: 'short',

@@ -218,7 +218,13 @@ onMounted(() => {
   cameraPollTimer = setInterval(pollCameras, CONNECTION_POLL_INTERVAL_MS)
 })
 onUnmounted(() => {
+  // Both timers are always assigned synchronously inside onMounted before
+  // any unmount can occur, so the falsy branch here is unreachable -- kept
+  // only as a defensive guard against a future refactor that might change
+  // that ordering.
+  /* v8 ignore next */
   if (connectionPollTimer) clearInterval(connectionPollTimer)
+  /* v8 ignore next */
   if (cameraPollTimer) clearInterval(cameraPollTimer)
 })
 </script>

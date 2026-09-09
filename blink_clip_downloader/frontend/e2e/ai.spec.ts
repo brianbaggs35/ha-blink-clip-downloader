@@ -26,6 +26,32 @@ test('AI tab shows the configured (offline) provider and lets you edit per-camer
   await expect(page.locator('#cam-desc-Garage')).toHaveValue(description)
 })
 
+test('AI Analysis Configuration dialog toggles automatic analysis per camera and persists it', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  await expect(page.getByText('cameras enabled for automatic analysis')).toBeVisible()
+  await page.getByRole('button', { name: 'Configure Cameras' }).click()
+  const dialog = page.getByRole('dialog', { name: 'AI Analysis Configuration' })
+  await expect(dialog.getByText('Automatic analysis applies only to newly downloaded clips')).toBeVisible()
+
+  const garageRow = dialog.locator('.camera-row', { has: page.locator('label[for="ai-analysis-garage"]') })
+  await expect(garageRow).toContainText('Automatic analysis enabled')
+  await page.locator('#ai-analysis-garage').click()
+  await expect(garageRow).toContainText('Automatic analysis disabled')
+
+  await dialog.getByRole('button', { name: 'Save Settings' }).click()
+  await expect(page.getByText('AI analysis settings saved')).toBeVisible()
+
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.getByRole('button', { name: 'Configure Cameras' }).click()
+  await expect(page.locator('.camera-row', { has: page.locator('label[for="ai-analysis-garage"]') })).toContainText(
+    'Automatic analysis disabled',
+  )
+})
+
 test('AI Usage tab shows the configured provider with zero usage recorded', async ({ page }) => {
   await page.goto('/')
   await page.locator('.app-nav-tab[data-tab="usage"]').click()

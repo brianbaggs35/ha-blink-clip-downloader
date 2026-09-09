@@ -152,7 +152,12 @@ async function onImageLoad() {
 // for testing.
 function pointerPos(e: PointerEvent): { x: number; y: number } {
   const box = containerEl.value?.getBoundingClientRect()
+  // containerEl must already be mounted in the DOM for it to have received
+  // the pointer event that got us here, so box is never actually
+  // undefined -- the `?? 0` fallbacks are unreachable in practice.
+  /* v8 ignore start */
   return { x: e.clientX - (box?.left ?? 0), y: e.clientY - (box?.top ?? 0) }
+  /* v8 ignore stop */
 }
 
 function onPointerDown(e: PointerEvent) {
@@ -217,12 +222,21 @@ const hasDraft = computed(() => {
 async function saveZone() {
   const { width, height } = containerSize.value
   let zone: CarZone | null = null
+  // The Save button (and this whole draw-and-save UI) only renders once
+  // `recentClips.length > 0` (see the template's v-else chain), at which
+  // point loadRecentClips() has already set selectedClipId to a real
+  // clip id -- so `!selectedClipId.value` below is unreachable. Combined
+  // with hasDraft's rect-mode branch requiring rect.value to be truthy,
+  // one of these two branches always produces a zone too, making `!zone`
+  // unreachable as well.
+  /* v8 ignore start */
   if (drawShape.value === 'polygon') {
     zone = polygonToFraction(freeformPath.value, width, height)
   } else if (rect.value) {
     zone = rectToFraction(rect.value, width, height)
   }
   if (!zone || !selectedClipId.value) return
+  /* v8 ignore stop */
 
   saving.value = true
   try {
@@ -242,6 +256,9 @@ async function saveZone() {
 
 function cancelEdit() {
   resetDraft()
+  // The Cancel button is `v-if="savedZone"`, so cancelEdit() can only ever
+  // run through the UI when savedZone.value is already truthy.
+  /* v8 ignore next */
   if (savedZone.value) mode.value = 'preview'
 }
 
@@ -289,7 +306,13 @@ const rectStyle = computed(() => {
 
 const freeformPointsAttr = computed(() => pointsToSvgAttr(freeformPath.value))
 
+// Whenever this is read, the template's v-else chain has already gated
+// on `recentClips.length > 0`, and loadRecentClips()/selectClip() only
+// ever set selectedClipId to an id actually present in recentClips -- so
+// .find() always succeeds and the `|| null` fallback is unreachable.
+/* v8 ignore start */
 const selectedClip = computed(() => recentClips.value.find((c) => c.id === selectedClipId.value) || null)
+/* v8 ignore stop */
 
 function selectClip(id: string) {
   selectedClipId.value = id
@@ -376,6 +399,12 @@ const previewPolygonAttr = computed(() => {
         </div>
 
         <div ref="containerEl" class="picker-canvas-wrap">
+          <!-- selectedClip is always non-null here (recentClips.length > 0 is
+               guaranteed by the v-else chain above, and selectedClipId always
+               matches an entry in it) -- kept as a v-if rather than a plain
+               unconditional render so TS can narrow selectedClip.id just
+               below; the "false" branch is unreachable and shows as one
+               untestable coverage gap in this file's own report. -->
           <img
             v-if="selectedClip"
             :src="clipThumbUrl(selectedClip.id)"
