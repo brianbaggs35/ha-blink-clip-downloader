@@ -333,6 +333,135 @@ test('shows the unsupported-architecture state for mocked local Moondream', asyn
   await expect(page.getByText('moondream_local is not available on this architecture.')).toBeVisible()
 })
 
+test('completes a mocked Moondream local install through installing and installed states', async ({ page }) => {
+  await patchAiStatus(page, {
+    provider: 'moondream_local',
+    moondream_arch_supported: true,
+    moondream_installed: false,
+  })
+  // The component polls install-status once on mount (before any click), so
+  // the mock must stay "not installed" until install is actually triggered
+  // -- otherwise the initial "package not installed" state never renders.
+  let installStarted = false
+  await page.route('**/api/ai/moondream/install', (route) => {
+    installStarted = true
+    return fulfillJson(route, { status: 'installing' })
+  })
+  await page.route('**/api/ai/moondream/install-status', async (route) => {
+    if (installStarted) {
+      // A deliberate delay: startInstall() sets the optimistic "installing"
+      // state, then immediately awaits this same endpoint again -- without
+      // a delay here, both resolve fast enough that "installing" never
+      // stays on screen long enough for the assertion below to catch it.
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      await fulfillJson(route, { installed: true, arch_supported: true, install_state: { status: 'installed' } })
+      return
+    }
+    await fulfillJson(route, { installed: false, arch_supported: true, install_state: { status: 'idle' } })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect(page.getByText('⚠ moondream package not installed')).toBeVisible()
+
+  await page.getByRole('button', { name: '⬇ Install Moondream 0.5B' }).click()
+  await expect(page.getByText('⏳ Installing… please wait')).toBeVisible()
+  await expect(page.getByText('✓ moondream installed')).toBeVisible()
+})
+
+test('shows the failed state for a mocked local Moondream install, and Retry re-attempts it', async ({ page }) => {
+  await patchAiStatus(page, {
+    provider: 'moondream_local',
+    moondream_arch_supported: true,
+    moondream_installed: false,
+  })
+  // Same mount-time-poll consideration as the test above: stay "idle" until
+  // install is actually triggered, then report the failure. A short delay
+  // (same reasoning as the "installed" test above) keeps the optimistic
+  // "installing" state on screen long enough for the retry assertion below
+  // to reliably catch it, rather than racing past it.
+  let installStarted = false
+  await page.route('**/api/ai/moondream/install', (route) => {
+    installStarted = true
+    return fulfillJson(route, { status: 'installing' })
+  })
+  await page.route('**/api/ai/moondream/install-status', async (route) => {
+    if (installStarted) {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      await fulfillJson(route, {
+        installed: false,
+        arch_supported: true,
+        install_state: { status: 'failed', log: 'pip install moondream\nERROR: mocked failure' },
+      })
+      return
+    }
+    await fulfillJson(route, { installed: false, arch_supported: true, install_state: { status: 'idle' } })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  await page.getByRole('button', { name: '⬇ Install Moondream 0.5B' }).click()
+  await expect(page.getByText('✗ Installation failed')).toBeVisible()
+  await expect(page.getByText('ERROR: mocked failure')).toBeVisible()
+
+  await page.getByRole('button', { name: '↺ Retry Install' }).click()
+  await expect(page.getByText('⏳ Installing… please wait')).toBeVisible()
+})
+
+test('shows the escalation model as online, and a failed Test Analysis attempt', async ({ page }) => {
+  await patchAiStatus(page, {
+    escalation_provider: 'ollama',
+    escalation_model: 'llava:escalation',
+    escalation_online: true,
+  })
+  await page.route('**/api/ai/analyze/*', (route) => fulfillJson(route, { error: 'mocked analysis failure' }, 500))
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect(page.getByText('🟢 online')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Test Analysis' }).click()
+  await expect(page.getByText('Test failed — check AI provider settings and connection')).toBeVisible()
+})
+
+test('shows "(escalated)" next to a mocked escalated model row in the AI Usage breakdown', async ({ page }) => {
+  await page.route('**/api/ai/usage', (route) =>
+    fulfillJson(route, {
+      enabled: true,
+      provider: 'ollama',
+      model: 'llava',
+      total_analyses: 2,
+      total_tokens_prompt: 80,
+      total_tokens_completion: 20,
+      total_tokens: 100,
+      total_escalations: 1,
+      total_escalation_tokens: 50,
+      total_estimated_cost: 0.01,
+      by_model: [
+        { model: 'llava', analyses: 1, tokens_prompt: 40, tokens_completion: 10, escalated: false, cost: 0.005 },
+        {
+          model: 'llava:escalation',
+          analyses: 1,
+          tokens_prompt: 40,
+          tokens_completion: 10,
+          escalated: true,
+          cost: 0.005,
+        },
+      ],
+      daily: [],
+    }),
+  )
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="usage"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="usage"]')
+  await expect(page.getByText('(escalated)')).toBeVisible()
+})
+
 test('covers AI analysis configuration load-error, retry, and empty states', async ({ page }) => {
   let cameraConfigReads = 0
   await page.route('**/api/ai/camera-configs', async (route) => {
