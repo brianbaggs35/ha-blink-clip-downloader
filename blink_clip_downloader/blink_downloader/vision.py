@@ -386,9 +386,11 @@ class ObjectDetector:
                 _LOGGER.exception("Failed to load YOLO model")
                 return False
 
-    def _detect_in_frame(self, img: Any, idx: int) -> list[DetectedObject]:
+    def _detect_in_frame(
+        self, img: Any, idx: int, persist: bool
+    ) -> list[DetectedObject]:
         results = self._model.track(
-            img, persist=True, tracker="bytetrack.yaml", verbose=False
+            img, persist=persist, tracker="bytetrack.yaml", verbose=False
         )
         if not results:
             return []
@@ -421,12 +423,29 @@ class ObjectDetector:
         import numpy as np
 
         detections: list[DetectedObject] = []
+        # persist=False on the first successfully-decoded frame of *this*
+        # call forces Ultralytics to build fresh ByteTrack state
+        # (ultralytics.trackers.track.on_predict_start: `if
+        # hasattr(predictor, "trackers") and persist: return` — a call with
+        # persist=False falls through and rebuilds the tracker even when
+        # one already exists) instead of silently continuing whatever
+        # tracker state this shared, long-lived model instance was left in
+        # by the previous clip it analyzed (see this class's own
+        # docstring: the model is reused across clips, potentially from a
+        # completely different camera or hours/days apart). Without this,
+        # track IDs — and therefore _build_tracking_hint's "same person
+        # lingers across most sampled frames" signal — could spuriously
+        # continue across an unrelated clip boundary. persist=True for
+        # every later frame in *this* call preserves the intended
+        # continuity across this one clip's own sampled frames.
+        persist = False
         for idx, frame in enumerate(frames):
             arr = np.frombuffer(frame, dtype=np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             if img is None:
                 continue
-            detections.extend(self._detect_in_frame(img, idx))
+            detections.extend(self._detect_in_frame(img, idx, persist))
+            persist = True
         return detections
 
     async def detect(self, frames: list[bytes]) -> list[DetectedObject] | None:
@@ -474,8 +493,49 @@ def _proximity_label(gap: float, vehicle_width: float) -> str:
     return "well away from the detected vehicle"
 
 
+def _car_zone_pixel_box(
+    zone: dict[str, Any], frame: bytes
+) -> tuple[float, float, float, float] | None:
+    """Convert a normalized (0-1) ``car_zone`` dict — a rectangle or a
+    freeform polygon, see ``media_server.py``'s ``_normalize_car_zone`` —
+    into a pixel-space ``(x1, y1, x2, y2)`` box sized to *frame*'s actual
+    resolution, for disambiguating which YOLO vehicle detection is the
+    protected car (see :func:`_best_subject_vehicle_pair`). A polygon is
+    reduced to its axis-aligned bounding box — the same approximation
+    ``analyzer.py``'s own ``_car_zone_bbox`` already makes for the same
+    reason: this is a coarse "which detected box is nearest the configured
+    zone" comparison, not exact geometry. None if *frame* fails to decode
+    or the zone has no usable points.
+    """
+    with _native_import_lock:
+        import cv2  # type: ignore[import-not-found]
+        import numpy as np
+
+    arr = np.frombuffer(frame, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    height, width = img.shape[:2]
+
+    if zone.get("shape") == "polygon":
+        points = zone.get("points") or []
+        if not points:
+            return None
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+    else:
+        x_min = zone.get("x_min", 0.0)
+        y_min = zone.get("y_min", 0.0)
+        x_max = zone.get("x_max", 1.0)
+        y_max = zone.get("y_max", 1.0)
+    return (x_min * width, y_min * height, x_max * width, y_max * height)
+
+
 def _best_subject_vehicle_pair(
     detections: list[DetectedObject],
+    zone_box: tuple[float, float, float, float] | None = None,
 ) -> tuple[DetectedObject, DetectedObject, int] | None:
     """Return the (subject, vehicle, frame_index) pair with the smallest gap.
 
@@ -485,6 +545,18 @@ def _best_subject_vehicle_pair(
     Used to pick which single frame/box-pair the heavier depth and contact
     stages spend their budget refining. None if no sampled frame contains
     both a subject and a vehicle detection.
+
+    *zone_box* (see :func:`_car_zone_pixel_box`), when given, disambiguates
+    which detected vehicle is actually "the protected car" whenever a frame
+    has more than one vehicle-class detection (a driveway camera that also
+    sees the street, a second household vehicle, a neighbor's parked car,
+    ...): only the one nearest the configured zone is considered as a
+    candidate for that frame. Without this, a person standing next to an
+    unrelated car could "win" the smallest-gap pairing below just because
+    they're closer to it than anyone is to the actual protected vehicle,
+    producing a depth/contact/proximity hint about the wrong car entirely.
+    A single vehicle detection in a frame is left alone either way — there
+    is nothing to disambiguate.
     """
     best: tuple[DetectedObject, DetectedObject, int] | None = None
     best_gap: float | None = None
@@ -494,6 +566,8 @@ def _best_subject_vehicle_pair(
     for frame_idx, items in by_frame.items():
         subjects = [d for d in items if d.label in _SUBJECT_CLASSES]
         vehicles = [d for d in items if d.label in _VEHICLE_CLASSES]
+        if zone_box is not None and len(vehicles) > 1:
+            vehicles = [min(vehicles, key=lambda v: _box_gap(v.box, zone_box))]
         for s in subjects:
             for v in vehicles:
                 gap = _box_gap(s.box, v.box)
@@ -504,7 +578,9 @@ def _best_subject_vehicle_pair(
 
 
 def _build_detection_hint(
-    detections: list[DetectedObject], car_description: str
+    detections: list[DetectedObject],
+    car_description: str,
+    zone_box: tuple[float, float, float, float] | None = None,
 ) -> str | None:
     """Render detections into an OBJECT DETECTION prompt hint, or None if empty.
 
@@ -512,14 +588,17 @@ def _build_detection_hint(
     protected-vehicle rules (see :meth:`VisionPipeline.process_clip`) — the
     detected-classes line is still useful generically, but the
     vehicle-distance estimate is skipped since there's no protected vehicle
-    for it to be relevant to on this camera.
+    for it to be relevant to on this camera. *zone_box* is forwarded to
+    :func:`_best_subject_vehicle_pair` unchanged, so this hint's distance
+    estimate always agrees with the depth/contact stages about which
+    vehicle is "the" protected one.
     """
     if not detections:
         return None
     labels = sorted({d.label for d in detections})
     lines = [f"Detected object classes across sampled frames: {', '.join(labels)}."]
 
-    pair = _best_subject_vehicle_pair(detections) if car_description else None
+    pair = _best_subject_vehicle_pair(detections, zone_box) if car_description else None
     if pair is not None:
         subject, vehicle, _ = pair
         vehicle_width = vehicle.box[2] - vehicle.box[0]
@@ -1233,6 +1312,7 @@ class VisionPipeline:
         car_description: str = "",
         car_protection_applies: bool = False,
         face_recognition_frames: list[bytes] | None = None,
+        car_zone: dict[str, Any] | None = None,
     ) -> VisionHints:
         """Run every enabled stage against *frames* and return the resulting hints.
 
@@ -1244,6 +1324,15 @@ class VisionPipeline:
         a camera that doesn't view the protected vehicle never generates
         vehicle-proximity hints just because it happened to detect an
         unrelated car and a person in frame.
+
+        *car_zone*, when given (the same normalized rect/polygon a user
+        draws on the Vehicles tab, see ``analyzer.py``'s ``_car_zones``),
+        disambiguates *which* detected vehicle is the protected one on a
+        camera that can see more than one (see
+        :func:`_best_subject_vehicle_pair`) — without it, this pipeline can
+        only fall back to "whichever detected vehicle a subject happens to
+        be closest to," which is wrong whenever an unrelated car is also in
+        frame.
 
         *face_recognition_frames*, when given, is used for face recognition
         instead of *frames* — see the comment where it's consumed below for
@@ -1278,6 +1367,20 @@ class VisionPipeline:
             hints.enhanced_frames = frames
 
             detections = await self._detector.detect(frames)
+
+            # Only decoded when actually useful: disambiguating which
+            # detected vehicle is the protected one only matters on a
+            # camera under protected-vehicle rules that also has a
+            # specific zone drawn (see _car_zone_pixel_box and
+            # _best_subject_vehicle_pair) — most cameras have neither, so
+            # this stays None and every call below behaves exactly as it
+            # did before car_zone existed.
+            zone_box = (
+                _car_zone_pixel_box(car_zone, frames[0])
+                if detections and car_protection_applies and car_zone
+                else None
+            )
+
             if detections:
                 # Vehicle-distance language (and the depth/contact stages
                 # below) is only relevant on a camera actually designated to
@@ -1286,12 +1389,14 @@ class VisionPipeline:
                 # is described elsewhere on the property, so those cameras
                 # stay properly isolated (see BaseAnalyzer._car_protection_applies).
                 hints.detection_hint = _build_detection_hint(
-                    detections, car_description if car_protection_applies else ""
+                    detections,
+                    car_description if car_protection_applies else "",
+                    zone_box,
                 )
                 hints.tracking_hint = _build_tracking_hint(detections, len(frames))
 
             pair = (
-                _best_subject_vehicle_pair(detections)
+                _best_subject_vehicle_pair(detections, zone_box)
                 if detections and car_protection_applies
                 else None
             )

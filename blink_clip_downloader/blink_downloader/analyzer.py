@@ -1221,6 +1221,7 @@ class BaseAnalyzer(abc.ABC):
             car_description=self._car_description,
             car_protection_applies=self._car_protection_applies(camera),
             face_recognition_frames=raw_frames,
+            car_zone=self._car_zones.get(camera),
         )
         if vision_hints.enhanced_frames is not None:
             frames = vision_hints.enhanced_frames

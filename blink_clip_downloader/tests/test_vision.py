@@ -44,6 +44,7 @@ from blink_downloader.vision import (
     _build_detection_hint,
     _build_recognition_hint,
     _build_tracking_hint,
+    _car_zone_pixel_box,
     _is_huggingface_auth_error,
     _proximity_label,
     cosine_similarity,
@@ -552,6 +553,113 @@ def test_best_subject_vehicle_pair_considers_animals() -> None:
     assert frame_idx == 0
 
 
+def test_best_subject_vehicle_pair_zone_box_disambiguates_multiple_vehicles() -> None:
+    """Two vehicle-class detections in one frame (the protected car, plus an
+    unrelated car the person happens to be standing right next to) - the
+    one nearest the configured zone must be treated as "the" vehicle,
+    not whichever one wins on raw subject-proximity alone."""
+    detections = [
+        DetectedObject("person", 0.9, (0, 0, 2, 2), None, 0),
+        DetectedObject(
+            "car", 0.9, (2, 2, 4, 4), None, 0
+        ),  # unrelated, touching the person
+        DetectedObject(
+            "car", 0.9, (100, 100, 110, 110), None, 0
+        ),  # the actual protected car
+    ]
+    zone_box = (95.0, 95.0, 115.0, 115.0)
+    pair = _best_subject_vehicle_pair(detections, zone_box)
+    assert pair is not None
+    _subject, vehicle, _frame_idx = pair
+    assert vehicle.box == (100, 100, 110, 110)
+
+
+def test_best_subject_vehicle_pair_without_zone_box_keeps_naive_smallest_gap() -> None:
+    """Same ambiguous scene as above but with no zone_box - must fall back
+    to the pre-existing "closest vehicle wins" behavior unchanged."""
+    detections = [
+        DetectedObject("person", 0.9, (0, 0, 2, 2), None, 0),
+        DetectedObject("car", 0.9, (2, 2, 4, 4), None, 0),
+        DetectedObject("car", 0.9, (100, 100, 110, 110), None, 0),
+    ]
+    pair = _best_subject_vehicle_pair(detections)
+    assert pair is not None
+    _subject, vehicle, _frame_idx = pair
+    assert vehicle.box == (2, 2, 4, 4)
+
+
+def test_best_subject_vehicle_pair_zone_box_ignored_with_single_vehicle() -> None:
+    """A single vehicle-class detection is unambiguous - zone_box only
+    disambiguates *between* candidates, it must not gate whether pairing
+    happens at all, even when the zone is far from that one detection."""
+    detections = [
+        DetectedObject("person", 0.9, (0, 0, 2, 2), None, 0),
+        DetectedObject("car", 0.9, (2, 2, 4, 4), None, 0),
+    ]
+    zone_box = (500.0, 500.0, 600.0, 600.0)
+    pair = _best_subject_vehicle_pair(detections, zone_box)
+    assert pair is not None
+    _subject, vehicle, _frame_idx = pair
+    assert vehicle.box == (2, 2, 4, 4)
+
+
+# ------------------------------------------------------------------
+# _car_zone_pixel_box
+# ------------------------------------------------------------------
+
+
+def test_car_zone_pixel_box_converts_rect_to_pixel_coords(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros(
+        (20, 40, 3), dtype=np.uint8
+    )  # height=20, width=40
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    zone = {"shape": "rect", "x_min": 0.25, "y_min": 0.5, "x_max": 0.75, "y_max": 1.0}
+    assert _car_zone_pixel_box(zone, b"frame") == (10.0, 10.0, 30.0, 20.0)
+
+
+def test_car_zone_pixel_box_reduces_polygon_to_bounding_box(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    zone = {
+        "shape": "polygon",
+        "points": [[0.1, 0.1], [0.5, 0.0], [0.9, 0.9], [0.2, 0.8]],
+    }
+    assert _car_zone_pixel_box(zone, b"frame") == (1.0, 0.0, 9.0, 9.0)
+
+
+def test_car_zone_pixel_box_none_on_decode_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = None
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    zone = {"shape": "rect", "x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+    assert _car_zone_pixel_box(zone, b"frame") is None
+
+
+def test_car_zone_pixel_box_none_for_polygon_with_no_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    assert _car_zone_pixel_box({"shape": "polygon", "points": []}, b"frame") is None
+
+
 def test_build_detection_hint_empty_detections_returns_none() -> None:
     assert _build_detection_hint([], "Silver Kia") is None
 
@@ -875,6 +983,44 @@ async def test_object_detector_detect_skips_frame_with_empty_track_results(
     detector = ObjectDetector()
     detections = await detector.detect([b"frame0"])
     assert detections == []
+
+
+async def test_object_detector_detect_resets_tracker_persist_per_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """persist=False must be passed on the first successfully-decoded frame
+    of every detect() call, forcing Ultralytics to rebuild fresh ByteTrack
+    state (see _detect_sync's own comment for the exact mechanism) even
+    though this model instance is reused across many unrelated clips over
+    the app's lifetime - persist=True for every later frame within that
+    same call preserves the intended continuity across just this one
+    clip's own sampled frames."""
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    boxes = _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(0.0, 0.0, 1.0, 1.0)], ids=[1])
+    fake_model = MagicMock()
+    fake_model.track.return_value = [_FakeYoloResult(boxes, {0: "person"})]
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+    detector = ObjectDetector()
+    await detector.detect([b"frame0", b"frame1", b"frame2"])
+    persist_values = [
+        call.kwargs["persist"] for call in fake_model.track.call_args_list
+    ]
+    assert persist_values == [False, True, True]
+
+    # A second, unrelated detect() call (e.g. a completely different clip
+    # analyzed later on this same shared, long-lived detector instance)
+    # must reset again - never carry over persist=True from the previous
+    # call's last frame.
+    fake_model.track.reset_mock()
+    await detector.detect([b"frame0"])
+    assert fake_model.track.call_args.kwargs["persist"] is False
 
 
 # ------------------------------------------------------------------
@@ -1873,6 +2019,93 @@ async def test_vision_pipeline_dog_vehicle_contact_detected(
     assert hints.detection_hint is not None
     assert "dog" in hints.detection_hint
     assert "distance estimate" in hints.detection_hint
+
+
+async def test_vision_pipeline_car_zone_disambiguates_protected_vehicle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two vehicle-class detections in frame (the protected car, and an
+    unrelated car much closer to the person) - car_zone must steer the
+    hint toward the vehicle actually near the configured zone, not
+    whichever one the person happens to be standing next to."""
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((200, 200, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    boxes = _FakeBoxes(
+        cls=[0, 2, 2],
+        conf=[0.9, 0.9, 0.9],
+        xyxy=[
+            (0.0, 0.0, 2.0, 2.0),  # person
+            (2.0, 2.0, 4.0, 4.0),  # unrelated car, touching the person
+            (100.0, 100.0, 110.0, 110.0),  # the actual protected car, near the zone
+        ],
+        ids=None,
+    )
+    fake_model = MagicMock()
+    fake_model.track.return_value = [_FakeYoloResult(boxes, {0: "person", 2: "car"})]
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+    # Depth/contact are irrelevant to this hint and unavailable either way;
+    # keeps this test focused on the OBJECT DETECTION hint's own wording.
+    monkeypatch.setitem(sys.modules, "transformers", None)
+
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+        car_zone={
+            "shape": "rect",
+            "x_min": 0.475,
+            "y_min": 0.475,
+            "x_max": 0.575,
+            "y_max": 0.575,
+        },
+    )
+    assert hints.detection_hint is not None
+    assert "well away from the detected vehicle" in hints.detection_hint
+
+
+async def test_vision_pipeline_without_car_zone_falls_back_to_closest_vehicle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same ambiguous scene as the zone-disambiguation test above but with
+    no car_zone configured for this camera - confirms the pre-existing
+    "closest vehicle wins" behavior is still the fallback, not a
+    regression introduced by adding zone-awareness."""
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((200, 200, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    boxes = _FakeBoxes(
+        cls=[0, 2, 2],
+        conf=[0.9, 0.9, 0.9],
+        xyxy=[
+            (0.0, 0.0, 2.0, 2.0),
+            (2.0, 2.0, 4.0, 4.0),
+            (100.0, 100.0, 110.0, 110.0),
+        ],
+        ids=None,
+    )
+    fake_model = MagicMock()
+    fake_model.track.return_value = [_FakeYoloResult(boxes, {0: "person", 2: "car"})]
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+    monkeypatch.setitem(sys.modules, "transformers", None)
+
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+    )
+    assert hints.detection_hint is not None
+    assert "overlapping the detected vehicle's outline" in hints.detection_hint
 
 
 async def test_vision_pipeline_tracking_hint_across_multiple_frames(
