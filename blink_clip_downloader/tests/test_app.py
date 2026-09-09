@@ -316,6 +316,21 @@ async def test_poll_cycle_retention_removes_orphaned_db_rows(app):
     app._db.delete_clip_by_path.assert_awaited_once_with("/share/blink-clips/old.mp4")
 
 
+async def test_poll_cycle_retention_skips_db_cleanup_when_library_db_disabled(app):
+    """With enable_library_db=False, there's no library DB row to clean up
+    at all -- retention-deleted files must not trigger a delete_clip_by_path
+    call in that mode."""
+    app._config.enable_library_db = False
+    app._db.delete_clip_by_path = AsyncMock(return_value=True)
+    app._storage.apply_retention_policy_paths = MagicMock(
+        return_value=[Path("/share/blink-clips/old.mp4")]
+    )
+
+    await app._poll_cycle()
+
+    app._db.delete_clip_by_path.assert_not_awaited()
+
+
 async def test_poll_cycle_logs_when_archiver_compresses_clips(app):
     app._archiver.run = AsyncMock(
         return_value=[
@@ -967,6 +982,31 @@ async def test_wait_returns_early_when_fast_poll_activated_mid_sleep(app, monkey
     assert sleep_calls == 1
 
 
+async def test_wait_loops_normally_to_completion_when_fast_poll_never_activates(
+    app, monkeypatch
+):
+    """The ordinary case: fast-poll is never activated during the wait, so
+    the re-check on every loop iteration keeps coming back false and the
+    loop just runs out its own remaining-time countdown, rather than either
+    of the two early-return paths (trigger file, fast-poll activated
+    mid-sleep)."""
+    app._config.poll_interval = 5
+    app._fast_poll_until = 0.0
+    app._running = True
+
+    sleep_calls = 0
+
+    async def _fake_sleep(_delay):
+        nonlocal sleep_calls
+        sleep_calls += 1
+
+    monkeypatch.setattr("blink_downloader.app.asyncio.sleep", _fake_sleep)
+
+    await app._wait_with_trigger_check()
+
+    assert sleep_calls == 1
+
+
 # ---------------------------------------------------------------------------
 # Shutdown
 # ---------------------------------------------------------------------------
@@ -1062,6 +1102,47 @@ async def test_shutdown_closes_escalation_analyzer_when_present(app):
 
     app._analyzer.close.assert_awaited_once()
     app._analyzer.escalation_analyzer.close.assert_awaited_once()
+
+
+async def test_shutdown_skips_alert_dispatcher_close_when_absent(app):
+    """_alert_dispatcher is normally constructed unconditionally in
+    __init__, but the shutdown step still guards on it defensively -- must
+    not crash if it's ever unset."""
+    app._tracker.save = MagicMock()
+    app._alert_dispatcher = None
+
+    await app._shutdown()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _reimport_library
+# ---------------------------------------------------------------------------
+
+
+async def test_reimport_library_logs_when_clips_imported(app):
+    with (
+        patch("blink_downloader.app.migrate_legacy_sqlite", new=AsyncMock()),
+        patch(
+            "blink_downloader.app.import_existing_clips",
+            new=AsyncMock(return_value=3),
+        ) as mock_import,
+    ):
+        await app._reimport_library()
+
+    mock_import.assert_awaited_once()
+
+
+async def test_reimport_library_no_log_when_nothing_imported(app):
+    with (
+        patch("blink_downloader.app.migrate_legacy_sqlite", new=AsyncMock()),
+        patch(
+            "blink_downloader.app.import_existing_clips",
+            new=AsyncMock(return_value=0),
+        ) as mock_import,
+    ):
+        await app._reimport_library()  # must not raise either way
+
+    mock_import.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

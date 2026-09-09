@@ -129,3 +129,40 @@ test('Fetch Models finds none on the unreachable Ollama server, and Copy require
   await page.getByRole('button', { name: '⟳ Fetch Models' }).click()
   await expect(page.getByText('No vision models found on this Ollama server')).toBeVisible()
 })
+
+test('AI Usage tab shows the right explanatory note for each remaining provider', async ({ page }) => {
+  // Every other provider's own AI Usage test (above, and in
+  // mocked-integrations.spec.ts) mounts with provider 'ollama' or
+  // 'moondream_cloud' — this is the only place the other four providers'
+  // ProviderNote.vue text blocks get exercised at all.
+  const providers = ['ollama_cloud', 'anthropic', 'openai', 'moondream_local']
+  const expectedText: Record<string, string> = {
+    ollama_cloud: 'hosted Ollama service',
+    anthropic: 'Anthropic (Claude) charges per token',
+    openai: 'OpenAI charges per token',
+    moondream_local: 'Moondream Local runs entirely on-device',
+  }
+
+  for (const provider of providers) {
+    await page.route('**/api/ai/usage', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          enabled: true,
+          provider,
+          model: 'test-model',
+          total_analyses: 1,
+          total_tokens: 0,
+          total_escalations: 0,
+          by_model: [],
+          daily: [],
+        }),
+      }),
+    )
+    await page.goto('/')
+    await page.locator('.app-nav-tab[data-tab="usage"]').click()
+    await page.waitForSelector('.app-nav-tab.active[data-tab="usage"]')
+    await expect(page.getByText(expectedText[provider])).toBeVisible()
+  }
+})

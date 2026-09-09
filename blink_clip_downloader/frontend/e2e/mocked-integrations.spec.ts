@@ -411,6 +411,31 @@ test('shows the failed state for a mocked local Moondream install, and Retry re-
   await expect(page.getByText('⏳ Installing… please wait')).toBeVisible()
 })
 
+test('AI tab Schedule card shows Active/Waiting for a configured schedule window', async ({ page }) => {
+  // Every other AI-tab test leaves `queue.schedule_start`/`schedule_end`
+  // unset, which renders AiStatusCards.vue's "Always active (no schedule
+  // set)" string branch -- this is the only place the object-shaped
+  // scheduleText branch (a configured window, both in and out of it) gets
+  // exercised at all.
+  const queueBase = { pending: 0, processing: 0, completed: 0, failed: 0 }
+  await patchAiStatus(page, {
+    queue: { ...queueBase, schedule_start: '08:00', schedule_end: '22:00', in_schedule: true },
+  })
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect(page.getByText('08:00 – 22:00')).toBeVisible()
+  await expect(page.getByText('🟢 Active')).toBeVisible()
+
+  await patchAiStatus(page, {
+    queue: { ...queueBase, schedule_start: '08:00', schedule_end: '22:00', in_schedule: false },
+  })
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect(page.getByText('🔴 Waiting')).toBeVisible()
+})
+
 test('shows the escalation model as online, and a failed Test Analysis attempt', async ({ page }) => {
   await patchAiStatus(page, {
     escalation_provider: 'ollama',

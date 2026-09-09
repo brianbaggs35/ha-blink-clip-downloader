@@ -261,6 +261,25 @@ def test_resolve_url_fallback_when_no_blink(dl):
     assert "immedia-semi.com" in result
 
 
+def test_resolve_url_fallback_when_blink_has_no_urls(dl):
+    """blink._blink.urls itself is falsy (e.g. not populated yet, before a
+    successful start()) -- falls back the same as if blink were None."""
+    mock_blink = MagicMock()
+    mock_blink.urls = None
+    dl._blink = mock_blink
+    result = dl._resolve_url("/clip.mp4")
+    assert "immedia-semi.com" in result
+
+
+def test_resolve_url_fallback_when_base_url_missing(dl):
+    """blink.urls exists but has no base_url set -- falls back the same way."""
+    mock_blink = MagicMock()
+    mock_blink.urls.base_url = None
+    dl._blink = mock_blink
+    result = dl._resolve_url("/clip.mp4")
+    assert "immedia-semi.com" in result
+
+
 def test_resolve_url_falls_back_when_urls_check_raises_attributeerror(dl):
     """getattr(obj, name, default) already swallows an AttributeError raised
     while resolving `urls`/`base_url` themselves — the outer except only
@@ -686,6 +705,30 @@ async def test_backfill_thumbnails_respects_limit(dl, tmp_path):
     assert mock_gen.await_count == 2
 
 
+async def test_backfill_thumbnails_continues_past_a_generation_failure(dl, tmp_path):
+    """One video whose thumbnail generation fails (corrupt file, ffmpeg
+    error, ...) must not stop the backfill from generating the rest."""
+    dl._config.download_thumbnails = True
+
+    bad_video = tmp_path / "bad.mp4"
+    bad_video.write_bytes(b"video")
+    good_video = tmp_path / "good.mp4"
+    good_video.write_bytes(b"video")
+
+    dl._db = AsyncMock()
+    dl._db.get_all_file_paths = AsyncMock(
+        return_value={str(bad_video), str(good_video)}
+    )
+
+    async def fake_generate(video_path: Path, thumb_path: Path) -> bool:
+        return video_path != bad_video
+
+    with patch.object(dl, "_generate_thumbnail", side_effect=fake_generate):
+        generated = await dl.backfill_thumbnails(10)
+
+    assert generated == 1
+
+
 # ---------------------------------------------------------------------------
 # download_new_clips
 # ---------------------------------------------------------------------------
@@ -815,6 +858,29 @@ async def test_download_new_clips_logs_and_skips_failed_clip(dl, sample_clip):
     async def _fake_download(clip, sem):
         if clip["id"] == 1:
             raise RuntimeError("network blip")
+        return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=clips)),
+        patch.object(dl, "_download_clip", side_effect=_fake_download),
+    ):
+        results = await dl.download_new_clips()
+
+    assert len(results) == 1
+    assert results[0]["id"] == "2"
+
+
+async def test_download_new_clips_skips_clip_that_resolves_to_none(dl, sample_clip):
+    """A clip _download_clip legitimately skips (e.g. no media URL, or over
+    quota -- see its own early `return None`s) is neither an Exception nor a
+    dict; it must be silently left out of the batch's results, not raise or
+    get appended as-is."""
+    dl._blink = MagicMock()
+    clips = [{**sample_clip, "id": 1}, {**sample_clip, "id": 2}]
+
+    async def _fake_download(clip, sem):
+        if clip["id"] == 1:
+            return None
         return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
 
     with (
@@ -1621,6 +1687,42 @@ async def test_connect_cached_credentials_do_not_override_config(dl, tmp_path):
     assert call_kwargs["login_data"]["token"] == "cached_token"
 
 
+async def test_connect_retries_with_fresh_credentials_when_cached_tokens_invalid(
+    dl, tmp_path
+):
+    """Invalid/expired cached tokens (account_id stays unset after start())
+    trigger one retry with fresh credentials -- and since _get_session()
+    already ran once before this point without ever needing a real session
+    close, self._session is still None here, so there's nothing to close
+    before the retry."""
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(json.dumps({"token": "stale_token", "host": "rest-us"}))
+
+    mock_blink = AsyncMock()
+    mock_blink.auth = MagicMock()
+    mock_blink.auth.login_attributes = {"token": "stale_token"}
+    call_count = {"start": 0}
+
+    async def fake_start() -> bool:
+        call_count["start"] += 1
+        mock_blink.account_id = None if call_count["start"] == 1 else 99
+        return True
+
+    mock_blink.start = fake_start
+
+    assert dl._session is None
+    with (
+        patch("blink_downloader.downloader.AUTH_FILE", auth_file),
+        patch("blink_downloader.downloader.Blink", return_value=mock_blink),
+        patch("blink_downloader.downloader.Auth"),
+        patch.object(dl, "_get_session", return_value=MagicMock(closed=False)),
+    ):
+        await dl.connect()
+
+    assert call_count["start"] == 2
+    assert dl._session is None
+
+
 # ---------------------------------------------------------------------------
 # connect() — failed login on a fresh (non-cached) login
 # ---------------------------------------------------------------------------
@@ -2052,6 +2154,18 @@ def test_persist_auth_does_not_leave_tmp_file_behind(dl, tmp_path):
 
     assert auth_path.exists()
     assert not (tmp_path / "auth.json.tmp").exists()
+
+
+def test_persist_auth_no_op_when_not_connected(dl, tmp_path):
+    """Before a successful connect(), self._blink is None -- _persist_auth()
+    must be a safe no-op rather than assuming a blink/auth object exists."""
+    auth_path = tmp_path / "auth.json"
+    dl._blink = None
+
+    with patch("blink_downloader.downloader.AUTH_FILE", auth_path):
+        dl._persist_auth()  # no exception
+
+    assert not auth_path.exists()
 
 
 def test_persist_auth_handles_exception(dl):
