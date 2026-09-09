@@ -15,22 +15,26 @@
 // (ha_integration_setup.sh's cmd_start), never here as proof ingress
 // itself works.
 //
-// Two further checks exist specifically because nothing else in this
-// repo's CI can exercise them - neither e2e/smoke.mjs (bare docker run,
-// no Supervisor at all) nor frontend/e2e/'s standalone-server suite (no
-// real HA Core to talk to) can reach either code path:
+// Further checks exist specifically because nothing else in this repo's CI
+// can exercise them - neither e2e/smoke.mjs (bare docker run, no Supervisor
+// at all) nor frontend/e2e/'s standalone-server suite (no real HA Core to
+// talk to) can reach any of these code paths:
 //   1. checkHaNotification() - clicks the Automations tab's real "Send
 //      test HA notification" button and confirms Home Assistant's own
 //      API actually accepted it. This is the add-on's homeassistant_api
 //      integration (config.yaml's `homeassistant_api: true`, backed by a
 //      real Supervisor-issued token) genuinely round-tripping through
 //      Supervisor to Core, not a mock.
-//   2. checkAddonLogTab() - navigates to Home Assistant's OWN Settings >
-//      Apps > <this add-on> > Log page (not the app's ingress UI at all)
-//      and confirms real container log output renders there. Proves
-//      Supervisor is actually capturing this add-on's logs and Core's
-//      frontend can fetch/display them - the same surface a real user
-//      would check first when troubleshooting a broken install.
+//   2. checkAddonSupervisorTabs() - navigates to Home Assistant's OWN
+//      Settings > Apps > <this add-on> page (not the app's ingress UI at
+//      all) and checks its Info, Configuration, and Log tabs. Proves
+//      Supervisor's own per-app UI - the surface a real user actually
+//      installs/configures/troubleshoots this add-on through - genuinely
+//      reflects this add-on's real state: a real "Running" status plus
+//      working Open Web UI/Stop controls (Info), config.yaml's real
+//      options schema rendering as a real form (Configuration, added
+//      2026-09-09 - previously only the Log tab was checked here), and
+//      real captured container log output (Log).
 // Both selectors/URLs below were confirmed by hand against a real running
 // instance, not guessed from documentation - see CLAUDE.md's note on this
 // workflow for why that matters here specifically (HA's frontend is
@@ -54,16 +58,17 @@ if (!baseUrl || !addonSlug || !panelTitle || !addonName) {
   process.exit(1);
 }
 
-// A representative subset of TAB_CHECKS, not the full set smoke.mjs
-// covers - this job exists to prove ingress + the app work, not to
-// re-run the whole per-tab data-rendering audit a second time. Picked to
-// span the shapes TAB_CHECKS distinguishes: always-mounted/no fetch
-// (library), a data-driven tab with its own loading state (status), one
-// of this add-on's Supervisor/Blink-API-touching tabs (syncmodule), and
-// automations (static content, but also where checkHaNotification()
-// below needs to be - listed last so that check can assume it's already
-// the active tab).
-const TABS_TO_VERIFY = ["library", "status", "syncmodule", "automations"];
+// The full TAB_CHECKS set, not just a representative subset - this used to
+// be four tabs on the theory that smoke.mjs's own bare-docker-run check
+// already proves each tab's content is correct, so re-asserting that here
+// too would just be redundant. That reasoning covers *content* correctness,
+// but not this job's own actual purpose: proving every tab still renders
+// real content specifically *through Supervisor's real ingress proxy*
+// (iframe + auth + path rewriting), which is a materially different code
+// path smoke.mjs's bare-port access never touches at all. "automations"
+// must stay last - checkHaNotification() below assumes it's already the
+// active tab.
+const TABS_TO_VERIFY = Object.keys(TAB_CHECKS).filter((tab) => tab !== "automations").concat("automations");
 
 const OWNER = {
   name: "CI Integration Test",
@@ -179,7 +184,7 @@ try {
 
   // Escapes the ingress iframe entirely - everything from here on is
   // Home Assistant's own top-level UI, not the app's.
-  await checkAddonLogTab(page, baseUrl, addonSlug, addonName, issues);
+  await checkAddonSupervisorTabs(page, baseUrl, addonSlug, addonName, issues);
 
   if (issues.length > 0) {
     await saveFailureArtifacts("issues");
@@ -190,8 +195,9 @@ try {
 
   console.log(
     "Home Assistant integration check passed: onboarded, logged in, opened the real ingress panel, " +
-      "confirmed real app content through it, verified a real round trip through Home Assistant's " +
-      "own API, and confirmed Supervisor-captured logs render in HA's own Settings UI.",
+      "confirmed real app content through it for every tab, verified a real round trip through Home " +
+      "Assistant's own API, and confirmed Supervisor's own Info/Configuration/Log pages for this add-on " +
+      "all render real content.",
   );
 } catch (err) {
   console.error(`Integration check failed: ${err.message}`);
@@ -260,16 +266,19 @@ async function checkHaNotification(frame, issuesList) {
 }
 
 /**
- * Home Assistant's OWN Settings > Apps > <add-on> > Log page - not the
- * app's ingress UI at all. Proves Supervisor is genuinely capturing this
- * add-on's container output and that Core's frontend can fetch and
- * render it, the same place a real user facing a broken install would
- * look first. Navigation confirmed by hand against a real running
- * instance (see this file's header comment) - notably, this HA frontend
- * version labels the add-ons section "Apps", not "Add-ons".
+ * Home Assistant's OWN Settings > Apps > <add-on> page - not the app's
+ * ingress UI at all. Checks Supervisor's own Info, Configuration, and Log
+ * tabs for this add-on, the actual surface a real user installs/configures/
+ * troubleshoots it through (and the one nothing else in this repo's CI ever
+ * renders). Each of the three is independently try/caught - one tab's
+ * content going missing shouldn't hide problems on the other two, matching
+ * this script's general soft-fail-and-collect design. Navigation and every
+ * selector below confirmed by hand against a real running instance (see
+ * this file's header comment) - notably, this HA frontend version labels
+ * the add-ons section "Apps", not "Add-ons".
  */
-async function checkAddonLogTab(page, baseUrl, addonSlug, addonName, issuesList) {
-  console.log(`Checking Home Assistant's own Settings > Apps > "${addonName}" > Log page...`);
+async function checkAddonSupervisorTabs(page, baseUrl, addonSlug, addonName, issuesList) {
+  console.log(`Checking Home Assistant's own Settings > Apps > "${addonName}" pages...`);
   try {
     await page.goto(baseUrl, { waitUntil: "load", timeout: 15000 });
     await page.waitForURL(/\/home\//, { timeout: 15000 });
@@ -281,6 +290,53 @@ async function checkAddonLogTab(page, baseUrl, addonSlug, addonName, issuesList)
     await page.waitForURL(new RegExp(`/config/app/${addonSlug}/info`), {
       timeout: 10000,
     });
+  } catch (err) {
+    issuesList.push(
+      `Could not reach Home Assistant's Settings > Apps > "${addonName}" page at all (${err.message}) - ` +
+        `Supervisor's Info/Configuration/Log tab checks were skipped entirely.`,
+    );
+    return;
+  }
+
+  // --- Info tab: already active immediately after the navigation above.
+  // "Running" is this add-on's real Supervisor-reported state (set by the
+  // "Start the add-on" workflow step, confirmed already up by "start"'s own
+  // poll before this script ever runs) - Open Web UI/Stop are real controls
+  // wired to this exact add-on slug, not placeholder chrome.
+  try {
+    await page.getByText("Running", { exact: true }).waitFor({ state: "visible", timeout: 10000 });
+    await page.getByRole("button", { name: "Open Web UI" }).waitFor({ state: "visible", timeout: 5000 });
+    await page.getByRole("button", { name: "Stop" }).waitFor({ state: "visible", timeout: 5000 });
+    console.log("  Info tab: confirmed real running state and controls rendered.");
+  } catch (err) {
+    issuesList.push(
+      `Home Assistant's Settings > Apps > "${addonName}" > Info tab didn't show the expected running ` +
+        `state/controls (${err.message}) - Supervisor's own per-app Info page may be broken.`,
+    );
+  }
+
+  // --- Configuration tab: Supervisor renders this as a real form generated
+  // straight from config.yaml's options/schema - asserting on "Blink
+  // Username"/"Blink Password" (this add-on's two required credential
+  // fields) proves that schema is actually reaching Supervisor's UI intact,
+  // not just that *some* form rendered.
+  try {
+    await page.getByRole("link", { name: "Configuration" }).click();
+    await page.waitForURL(new RegExp(`/config/app/${addonSlug}/config`), { timeout: 10000 });
+    await page.getByText("Blink Username", { exact: false }).waitFor({ state: "visible", timeout: 10000 });
+    await page.getByText("Blink Password", { exact: false }).waitFor({ state: "visible", timeout: 5000 });
+    console.log("  Configuration tab: confirmed the real options schema rendered.");
+  } catch (err) {
+    issuesList.push(
+      `Home Assistant's Settings > Apps > "${addonName}" > Configuration tab didn't render the expected ` +
+        `options form (${err.message}) - config.yaml's options schema may not be reaching Supervisor's UI.`,
+    );
+  }
+
+  // --- Log tab: proves Supervisor is genuinely capturing this add-on's
+  // container output and Core's frontend can fetch/render it, the same
+  // place a real user facing a broken install would look first.
+  try {
     await page.getByRole("link", { name: "Log" }).click();
     await page.waitForURL(new RegExp(`/config/app/${addonSlug}/logs`), {
       timeout: 10000,
@@ -293,9 +349,7 @@ async function checkAddonLogTab(page, baseUrl, addonSlug, addonName, issuesList)
       .getByText("blink_downloader", { exact: false })
       .first()
       .waitFor({ state: "visible", timeout: 15000 });
-    console.log(
-      "  confirmed: real container log output rendered in Home Assistant's own Log tab.",
-    );
+    console.log("  Log tab: confirmed real container log output rendered.");
   } catch (err) {
     issuesList.push(
       `Home Assistant's Settings > Apps > "${addonName}" > Log page never showed real log content ` +
