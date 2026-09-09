@@ -249,6 +249,73 @@ describe('GoogleDriveFolderBrowser', () => {
     expect(wrapper.emitted('select')).toEqual([[{ id: 'f1', name: 'Blink Clips' }]])
   })
 
+  it('ignores a stale, superseded folder listing that resolves after a newer navigation', async () => {
+    // Simulate: user clicks into "Deep" (slow response), then before it
+    // resolves, clicks the Home breadcrumb (fast response) to jump back to
+    // root. The stale "Deep" response arriving last must not clobber the
+    // root listing that's already on screen.
+    let resolveDeep!: (v: unknown) => void
+    const deepPromise = new Promise((resolve) => {
+      resolveDeep = resolve
+    })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ folders: [{ id: 'deep', name: 'Deep', modified_time: '' }] }))
+      .mockImplementationOnce(() => deepPromise)
+      .mockResolvedValueOnce(jsonResponse({ folders: [{ id: 'root-child', name: 'Root Child', modified_time: '' }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountBrowser()
+    await flushPromises()
+
+    await wrapper.find('.folder-name-btn').trigger('click') // into Deep (request in flight)
+    await flushPromises()
+    expect(wrapper.text()).toContain('Loading')
+
+    const breadcrumb = wrapper.findComponent(Breadcrumb)
+    const home = breadcrumb.props('home') as { command: () => void }
+    home.command() // jump back to root before Deep's request resolves
+    await flushPromises()
+    expect(wrapper.text()).toContain('Root Child')
+
+    resolveDeep(jsonResponse({ folders: [{ id: 'stale', name: 'Stale Folder', modified_time: '' }] }))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Root Child')
+    expect(wrapper.text()).not.toContain('Stale Folder')
+    const modelAfter = breadcrumb.props('model') as { label: string }[]
+    expect(modelAfter).toHaveLength(0)
+  })
+
+  it('ignores a stale load error that resolves after a newer, successful navigation', async () => {
+    let rejectDeep!: (e: unknown) => void
+    const deepPromise = new Promise((_resolve, reject) => {
+      rejectDeep = reject
+    })
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ folders: [{ id: 'deep', name: 'Deep', modified_time: '' }] }))
+      .mockImplementationOnce(() => deepPromise)
+      .mockResolvedValueOnce(jsonResponse({ folders: [] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountBrowser()
+    await flushPromises()
+
+    await wrapper.find('.folder-name-btn').trigger('click') // into Deep (request in flight)
+    await flushPromises()
+
+    const breadcrumb = wrapper.findComponent(Breadcrumb)
+    const home = breadcrumb.props('home') as { command: () => void }
+    home.command() // jump back to root before Deep's request rejects
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Could not load')
+
+    rejectDeep(new Error('stale failure'))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Could not load Google Drive folders.')
+    expect(wrapper.text()).toContain('No subfolders here yet')
+  })
+
   it('emits select with the current folder when "Use This Folder" is clicked', async () => {
     vi.stubGlobal(
       'fetch',

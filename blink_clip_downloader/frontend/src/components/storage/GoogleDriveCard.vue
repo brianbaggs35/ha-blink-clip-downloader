@@ -344,6 +344,10 @@ onUnmounted(stopConnectPolling)
             <ProgressBar v-if="quotaPercent !== null" :value="quotaPercent" />
             <p class="muted-note">
               {{
+                // quotaPercent is only non-null when quota.limit is truthy (see its
+                // own computed guard), so the "?? 0" fallback below is unreachable
+                // whenever this branch renders.
+                /* v8 ignore next */
                 quotaPercent === null
                   ? 'Unlimited storage'
                   : `${fmtSize(quota.usage)} of ${fmtSize(quota.limit ?? 0)} used`

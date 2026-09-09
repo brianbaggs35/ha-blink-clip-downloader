@@ -124,6 +124,15 @@
   high-recall mode exists to prevent. Now symmetric: a tier-1 suspicious
   verdict on these cameras survives a disagreeing tier 2, just as a
   tier-2 suspicious verdict already survived a disagreeing tier 1.
+- Fixed the Google Drive folder browser (used by both the Storage tab's
+  "Change Folder" and the Library's "Upload to Drive" dialog) showing a
+  stale folder listing if a slower, superseded request resolved after a
+  faster one — e.g. clicking into a folder, then clicking a breadcrumb
+  entry to jump back before the first request finished, could leave the
+  view showing the deeper folder's contents even though the breadcrumb
+  said otherwise. Found during a full frontend audit; now guarded with
+  the same request-sequencing pattern already used everywhere else in the
+  app that loads a list asynchronously.
 
 ## 5.4.9
 

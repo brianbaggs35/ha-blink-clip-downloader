@@ -2447,7 +2447,14 @@ class BaseAnalyzer(abc.ABC):
         for sentence in sentences:
             sentence = sentence.strip()
             if not sentence:
-                continue
+                # Defensive only: every piece re.split produces here either ends
+                # in one of [.!?] (required by the pattern's lookbehind, so it
+                # can't strip to empty) or is the final leftover, which can't be
+                # all-whitespace either since `text` was already stripped above.
+                # Verified by exhaustively brute-forcing every string up to
+                # length 6 over {.!?, space/tab/newline, a letter} with no
+                # empty piece found.
+                continue  # pragma: no cover
             normalized = re.sub(r"[^a-z0-9]+", " ", sentence.lower()).strip()
             if normalized in seen:
                 break

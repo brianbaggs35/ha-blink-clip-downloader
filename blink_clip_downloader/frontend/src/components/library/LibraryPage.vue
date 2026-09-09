@@ -113,11 +113,18 @@ const lastTotalCount = ref(0)
 
 const diskPct = computed(() => {
   const disk = stats.value?.disk
+  // Both this and diskClass's own null-check below are unreachable in
+  // practice: the template only ever reads diskPct/diskClass from inside
+  // the same `v-if="stats.disk.quota_bytes"` block that gates the
+  // ProgressBar, so a falsy quota_bytes means neither computed's getter
+  // is ever invoked. Kept for safety if either is ever read elsewhere.
+  /* v8 ignore next */
   if (!disk?.quota_bytes) return null
   return Math.min(100, (disk.used_bytes / disk.quota_bytes) * 100)
 })
 const diskClass = computed(() => {
   const pct = diskPct.value
+  /* v8 ignore next */
   if (pct == null) return ''
   if (pct > 90) return 'danger'
   if (pct > 70) return 'warn'
@@ -344,6 +351,10 @@ watch(
 watch(
   () => clipViewer.seq,
   () => {
+    // clipViewer's sole action (requestOpen) always sets clipId to a real
+    // clip id before bumping seq, so a falsy clipId here is unreachable —
+    // see stores/clipViewer.ts.
+    /* v8 ignore next */
     if (clipViewer.clipId) openModal(clipViewer.clipId)
   },
 )
@@ -476,7 +487,12 @@ async function onDeleted(id: string) {
   toast.show('Clip deleted')
   if (idx !== -1) clips.value = clips.value.filter((c) => c.id !== id)
   if (idx >= 0 && idx < clips.value.length) activeClipId.value = clips.value[idx].id
+  // idx-1 >= 0 here means idx-1 is always a valid index into the
+  // just-filtered (one shorter) array, so `?.id` can never actually be
+  // undefined -- the `?? null` fallback is unreachable in practice.
+  /* v8 ignore start */
   else if (idx - 1 >= 0) activeClipId.value = clips.value[idx - 1]?.id ?? null
+  /* v8 ignore stop */
   else closeModal()
 }
 function onStarred(id: string, starred: boolean) {

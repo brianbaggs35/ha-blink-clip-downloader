@@ -58,6 +58,10 @@ function previousFrames() {
   frameOffset.value = Math.max(0, frameOffset.value - FRAMES_PAGE_SIZE)
 }
 function nextFrames() {
+  // The Next button is `:disabled="!hasNextFrames"`, and a disabled native
+  // button never fires its click handler, so this can only run when
+  // hasNextFrames is already true.
+  /* v8 ignore next */
   if (hasNextFrames.value) frameOffset.value += FRAMES_PAGE_SIZE
 }
 

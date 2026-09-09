@@ -30,6 +30,7 @@ const loadError = ref(false)
 const showNewFolderDialog = ref(false)
 const newFolderName = ref('')
 const creatingFolder = ref(false)
+let loadSeq = 0
 
 const currentParentId = computed(() => path.value[path.value.length - 1].id)
 const currentFolderName = computed(() => path.value[path.value.length - 1].name)
@@ -40,15 +41,17 @@ const breadcrumbItems = computed(() =>
 )
 
 async function load() {
+  const seq = ++loadSeq
   loading.value = true
   loadError.value = false
   try {
     const res = await listGDriveFolders(currentParentId.value)
+    if (seq !== loadSeq) return
     folders.value = res.folders
   } catch {
-    loadError.value = true
+    if (seq === loadSeq) loadError.value = true
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 onMounted(load)

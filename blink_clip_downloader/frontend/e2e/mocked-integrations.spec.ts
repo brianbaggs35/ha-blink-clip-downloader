@@ -582,6 +582,10 @@ test('covers connected Google Drive, folder management, retries, and library upl
   await newFolderDialog.getByRole('button', { name: 'Create' }).click()
   await expect(page.getByText('Created folder "New E2E Folder"')).toBeVisible()
   await folderDialog.getByRole('button', { name: 'New E2E Folder' }).click()
+  await expect(folderDialog.getByRole('navigation')).toContainText('New E2E Folder')
+  await folderDialog.getByRole('link', { name: 'My Drive' }).click()
+  await expect(folderDialog.getByRole('navigation')).not.toContainText('New E2E Folder')
+  await folderDialog.getByRole('button', { name: 'New E2E Folder' }).click()
   await folderDialog.getByRole('button', { name: 'Use This Folder' }).click()
   await expect(page.getByText('Backup folder: New E2E Folder')).toBeVisible()
 

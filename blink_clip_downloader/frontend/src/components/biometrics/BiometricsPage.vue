@@ -262,6 +262,10 @@ const groupedPeople = computed<PersonGroup[]>(() => {
       photoCount: rows.length,
       approved: rows.every((r) => r.approved),
       mixedApproval: rows.some((r) => r.approved) && rows.some((r) => !r.approved),
+      // `rows` always has at least the entry that created this group (see
+      // the push right above `byName.set`), and FaceEnrollment.created_at
+      // is a required string, so `.sort()[0]` is never actually undefined.
+      /* v8 ignore next */
       createdAt: rows.map((r) => r.created_at).sort()[0] ?? '',
     }))
     .sort((a, b) => a.name.localeCompare(b.name))
