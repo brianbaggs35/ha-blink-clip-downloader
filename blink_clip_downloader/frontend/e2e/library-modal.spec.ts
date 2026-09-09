@@ -296,3 +296,23 @@ test('expanding the AI panel and clicking Analyze Now shows a real analysis resu
   await expect(page.getByText('Thanks, reported — visible on the Biometrics activity card')).toBeVisible()
   await expect(modal.getByText('✓ Reported — thanks')).toBeVisible()
 })
+
+test('shows an error toast when deleting a clip from the modal fails, and keeps the clip', async ({ page }) => {
+  // The DELETE call is mocked to fail, so nothing is actually removed --
+  // safe to use any seeded clip, including a "distribution" one whose
+  // exact count other spec files depend on (library-filters.spec.ts).
+  await page.route('**/api/clips/e2e-clip-002', (route) => {
+    if (route.request().method() !== 'DELETE') return route.fallback()
+    return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) })
+  })
+
+  await page.locator('.clip-card[data-id="e2e-clip-002"]').click()
+  const modal = openModal(page)
+  await modal.getByRole('button', { name: '🗑 Delete' }).click()
+  await expect(page.getByText('Delete this clip permanently?')).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+
+  await expect(page.getByText('Failed to delete clip')).toBeVisible()
+  await expect(modal).toBeVisible()
+  await expect(page.locator('.clip-card[data-id="e2e-clip-002"]')).toHaveCount(1)
+})

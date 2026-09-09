@@ -44,6 +44,25 @@ test('clicking a camera filters the grid to just that camera, and "All Cameras" 
   await expect(page.locator('.clip-card')).toHaveCount(TOTAL_CLIPS)
 })
 
+test('shows an error toast when the clip list fails to load', async ({ page }) => {
+  // A camera-filter click (not the initial page load, which beforeEach
+  // already completed against the real backend) triggers a fresh,
+  // non-silent loadClips() call -- unlike the 60s auto-refresh/"Refresh
+  // library" button, which both pass silent:true and never show this toast.
+  let clipsShouldFail = true
+  await page.route('**/api/clips*', (route) => {
+    if (!clipsShouldFail) return route.fallback()
+    return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) })
+  })
+
+  await page.locator('.app-nav-cam[data-camera="Front Door"]').click()
+  await expect(page.getByText('Failed to load clips')).toBeVisible()
+
+  clipsShouldFail = false
+  await page.locator('.app-nav-cam[data-camera="all"]').click()
+  await expect(page.locator('.clip-card')).toHaveCount(TOTAL_CLIPS)
+})
+
 test('source filter shows only clips recorded from that source', async ({ page }) => {
   await page.locator('#source-filter').click()
   await page.getByRole('option', { name: 'Motion (PIR)' }).click()
