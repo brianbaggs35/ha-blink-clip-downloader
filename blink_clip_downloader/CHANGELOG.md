@@ -92,6 +92,26 @@
   Found during the 5.5.0 pre-release review; the fully-armed logic
   already handled this correctly, only the fully-disarmed check needed
   the fix.
+- Fixed the computer-vision pipeline's YOLO object tracker (the TRACKING
+  hint's "same person lingers across most sampled frames" signal) silently
+  continuing tracking state from whichever clip — a different camera,
+  hours or days earlier — happened to be analyzed most recently on the
+  shared, long-lived detector model, instead of starting fresh for each
+  new clip. Ultralytics only rebuilds its ByteTrack state when a call
+  explicitly passes `persist=False`; every frame was passed `persist=True`
+  regardless of clip boundaries, so track IDs (and therefore the
+  lingering/passing-through hint) could be corrupted by an unrelated
+  clip's leftover state. Now resets on the first frame of every clip.
+- Fixed the vehicle-protection depth/contact/object-detection hints
+  picking whichever detected vehicle a person or animal happened to be
+  standing closest to, on a camera that can see more than one vehicle
+  (a driveway that also faces the street, a second household car, a
+  neighbor's parked car, ...) — potentially reporting distance/contact
+  analysis about the wrong vehicle entirely instead of the actual
+  protected one. When a car zone is drawn on the Vehicles tab, these
+  hints now prefer whichever detected vehicle is nearest that zone; a
+  camera with no zone drawn is unaffected (falls back to the previous
+  behavior, correct when only one vehicle is ever in frame).
 
 ## 5.4.9
 
