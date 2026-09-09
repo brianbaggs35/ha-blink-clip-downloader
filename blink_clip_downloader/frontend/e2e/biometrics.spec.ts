@@ -39,6 +39,36 @@ test('the mode toggle switches between the clip picker and the photo upload UI',
   await expect(page.locator('#biometrics-camera-select')).toBeVisible()
 })
 
+test('enrolling from an uploaded photo gracefully reports no face detected, and Clear removes the preview', async ({
+  page,
+}) => {
+  // Same real, already-handled "no face detected" response as the
+  // clip-frame enroll test below (facenet_pytorch genuinely isn't
+  // installed here) -- this exercises the *other* entry point into
+  // enrollFace() (enrollFromPhoto, via a real FileReader-encoded upload),
+  // not a mocked one.
+  await page.getByRole('button', { name: 'Upload a photo' }).click()
+
+  // A minimal valid 1x1 JPEG, supplied in-memory -- no fixture file needed.
+  const tinyJpeg = Buffer.from(
+    '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMDAwMDAwQEBAQFBQUFBgcGBgYHCAgICAgICQoKCQoJCQoKDA0MDAwMDA0NDQ4ODg4ODw8PEBAQEBERERISEhX/2wBDAQQEBAUFBQYGBgYHBwcICAgICQoKCQoJCQoKDA0MDAwMDA0NDQ4ODg4ODw8PEBAQEBERERISEhX/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEBAAA/AP/Z',
+    'base64',
+  )
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'test-face.jpg',
+    mimeType: 'image/jpeg',
+    buffer: tinyJpeg,
+  })
+  await expect(page.locator('.preview-thumb')).toBeVisible()
+
+  await page.locator('#biometrics-name').fill('e2e nobody photo')
+  await page.getByRole('button', { name: '+ Enroll' }).click()
+  await expect(page.getByText('Enrollment failed:')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Clear' }).click()
+  await expect(page.locator('.preview-thumb')).toHaveCount(0)
+})
+
 test('selecting an existing person from the dropdown enables Add to person', async ({ page }) => {
   const addBtn = page.getByRole('button', { name: '➕ Add to person' })
   await expect(addBtn).toBeDisabled()
@@ -65,11 +95,36 @@ test('enrolling from a real extracted frame gracefully reports no face detected'
   await expect(frames).toHaveCount(3)
   await frames.first().click()
   await expect(frames.first()).toHaveClass(/selected/)
+  // Clicking a selected frame again deselects it (toggleFrame's other
+  // branch) -- re-select it before enrolling below.
+  await frames.first().click()
+  await expect(frames.first()).not.toHaveClass(/selected/)
+  await frames.first().click()
+  await expect(frames.first()).toHaveClass(/selected/)
 
   await page.locator('#biometrics-name').fill('e2e nobody')
   await page.getByRole('button', { name: /Enroll 1 selected frame/ }).click()
 
   await expect(page.getByText('Enrollment failed for every selected frame — no clear face detected')).toBeVisible()
+})
+
+test('shows an error when extracting frames from a clip fails', async ({ page }) => {
+  await page.route('**/api/clips/*/frames*', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
+  )
+  // A reload is required here (unlike some other mocked-route tests in this
+  // suite) -- registering the route without one let the real, successful
+  // frame-extraction request through regardless, for reasons not fully
+  // pinned down; reloading reliably applies it.
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="biometrics"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="biometrics"]')
+
+  await page.locator('#biometrics-camera-select').click()
+  await page.getByRole('option', { name: 'Test Scratch' }).click()
+  await page.locator('.thumb-strip-item').first().click()
+
+  await expect(page.getByText('Failed to extract frames.')).toBeVisible()
 })
 
 test('narrowing the lookback window filters out the clip and shows the empty state', async ({ page }) => {
