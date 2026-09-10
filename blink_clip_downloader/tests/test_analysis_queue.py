@@ -179,6 +179,50 @@ async def test_process_pending_analyzes_clips(db: ClipDatabase) -> None:
     assert counts["pending"] == 0
 
 
+async def test_process_pending_saves_detected_objects(db: ClipDatabase) -> None:
+    """A successful analysis must persist the vision pipeline's detections
+    (see database.py's detected_objects table), not just the analysis_results
+    row — this is what feeds the clip modal's object-detection chips."""
+    from blink_downloader.vision import DetectedObject
+
+    detections = [
+        DetectedObject(
+            label="person",
+            confidence=0.9,
+            box=(0.0, 0.0, 5.0, 5.0),
+            track_id=1,
+            frame_index=0,
+        )
+    ]
+    analyzer = _make_analyzer_mock(
+        result=AnalysisResult(
+            clip_id="c1",
+            camera="Front Door",
+            model="llava",
+            response_text="Person detected",
+            is_suspicious=False,
+            confidence=0.3,
+            summary="A person walked by.",
+            frame_count=3,
+            analysis_duration=2.0,
+            analyzed_at="2024-06-01T09:00:00+00:00",
+            detected_objects=detections,
+        )
+    )
+    queue = _make_queue(analyzer, db)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    summary = await db.get_detected_objects_summary("c1")
+    assert summary == [
+        {"label": "person", "count": 1, "max_confidence": pytest.approx(0.9)}
+    ]
+
+
 async def test_process_pending_skips_when_empty(db: ClipDatabase) -> None:
     analyzer = _make_analyzer_mock()
     queue = _make_queue(analyzer, db)

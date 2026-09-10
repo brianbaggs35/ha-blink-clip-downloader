@@ -102,6 +102,38 @@ describe('ClipAiPanel', () => {
     expect(wrapper.text()).toContain('Was this verdict correct?')
   })
 
+  it('shows a compact chip for each detected object label', async () => {
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        detected_objects: [
+          { label: 'person', count: 2, max_confidence: 0.91 },
+          { label: 'zebra', count: 1, max_confidence: 0.8 },
+        ],
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    const chips = wrapper.findAll('.detection-chip')
+    expect(chips).toHaveLength(2)
+    expect(chips[0].text()).toContain('🧍')
+    expect(chips[0].text()).toContain('2')
+    // An unmapped label falls back to the generic box emoji instead of
+    // silently dropping the chip.
+    expect(chips[1].text()).toContain('📦')
+    expect(chips[1].text()).toContain('1')
+  })
+
+  it('does not render the detection chip row when nothing was detected', async () => {
+    mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.detection-chip').exists()).toBe(false)
+  })
+
   it('shows existing feedback verdict instead of the prompt buttons', async () => {
     mockFetch({
       '/api/ai/results/c1': RESULT,

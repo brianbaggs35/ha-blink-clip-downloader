@@ -16,6 +16,7 @@ from blink_downloader.database import (
     _local_day_bounds,
     _row_to_dict,
 )
+from blink_downloader.vision import DetectedObject
 from tests.conftest import TEST_DB_DSN
 
 
@@ -1522,6 +1523,146 @@ async def test_add_face_recognition_feedback_without_init_is_noop() -> None:
     await d.add_face_recognition_feedback(
         clip_id="c1", camera="Front Door", report_type="false_positive"
     )  # should not raise
+
+
+async def test_save_and_get_detected_objects_summary(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="person",
+                confidence=0.9,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=1,
+                frame_index=0,
+            ),
+            DetectedObject(
+                label="person",
+                confidence=0.7,
+                box=(1.0, 1.0, 6.0, 6.0),
+                track_id=1,
+                frame_index=1,
+            ),
+            DetectedObject(
+                label="car",
+                confidence=0.95,
+                box=(10.0, 10.0, 20.0, 20.0),
+                track_id=None,
+                frame_index=0,
+            ),
+        ],
+    )
+
+    summary = await db.get_detected_objects_summary("c1")
+    by_label = {row["label"]: row for row in summary}
+    assert by_label["person"]["count"] == 2
+    assert by_label["person"]["max_confidence"] == pytest.approx(0.9)
+    assert by_label["car"]["count"] == 1
+    assert by_label["car"]["max_confidence"] == pytest.approx(0.95)
+    # Most-frequent label first.
+    assert summary[0]["label"] == "person"
+
+
+async def test_save_detected_objects_replaces_not_accumulates(
+    db: ClipDatabase,
+) -> None:
+    """A re-analyze must leave exactly the latest detection set behind, not
+    pile detections from every past run on top of each other — unlike
+    analysis_results, which is kept as history on purpose."""
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="person",
+                confidence=0.9,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=1,
+                frame_index=0,
+            )
+        ],
+    )
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="dog",
+                confidence=0.8,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=None,
+                frame_index=0,
+            )
+        ],
+    )
+
+    summary = await db.get_detected_objects_summary("c1")
+    assert len(summary) == 1
+    assert summary[0]["label"] == "dog"
+
+
+async def test_save_detected_objects_empty_list_clears_stale_rows(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="person",
+                confidence=0.9,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=1,
+                frame_index=0,
+            )
+        ],
+    )
+    await db.save_detected_objects("c1", [])
+    assert await db.get_detected_objects_summary("c1") == []
+
+
+async def test_get_detected_objects_summary_empty(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    assert await db.get_detected_objects_summary("c1") == []
+
+
+async def test_detected_objects_deleted_when_clip_deleted(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="person",
+                confidence=0.9,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=1,
+                frame_index=0,
+            )
+        ],
+    )
+    await db.delete_clip("c1")
+    assert await db.get_detected_objects_summary("c1") == []
+
+
+async def test_save_detected_objects_without_init_is_noop() -> None:
+    d = ClipDatabase()
+    await d.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="person",
+                confidence=0.9,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=1,
+                frame_index=0,
+            )
+        ],
+    )  # should not raise
+
+
+async def test_get_detected_objects_summary_without_init_returns_empty() -> None:
+    d = ClipDatabase()
+    assert await d.get_detected_objects_summary("c1") == []
 
 
 # ------------------------------------------------------------------

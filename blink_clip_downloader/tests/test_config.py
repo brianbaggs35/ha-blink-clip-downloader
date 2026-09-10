@@ -632,7 +632,8 @@ def test_ai_prompt_debug_enabled_can_be_turned_on():
 def test_cv_pipeline_options_default_disabled():
     cfg = _parse_config({"username": "u", "password": "p"})
     assert cfg.ai_enhanced_detection_enabled is False
-    assert cfg.ai_object_detection_model == "yolo11n.pt"
+    assert cfg.ai_object_detection_model == "yolo26n.pt"
+    assert cfg.ai_depth_estimation_model == "depth-anything/Depth-Anything-V2-Small-hf"
     assert cfg.ai_face_recognition_enabled is False
     assert cfg.hf_token == ""
 
@@ -644,11 +645,13 @@ def test_cv_pipeline_options_can_all_be_enabled():
             "password": "p",
             "ai_enhanced_detection_enabled": True,
             "ai_object_detection_model": "yolo11s.pt",
+            "ai_depth_estimation_model": "depth-anything/Depth-Anything-V2-Base-hf",
             "ai_face_recognition_enabled": True,
         }
     )
     assert cfg.ai_enhanced_detection_enabled is True
     assert cfg.ai_object_detection_model == "yolo11s.pt"
+    assert cfg.ai_depth_estimation_model == "depth-anything/Depth-Anything-V2-Base-hf"
     assert cfg.ai_face_recognition_enabled is True
 
 
@@ -663,7 +666,14 @@ def test_ai_object_detection_model_blank_falls_back_to_default():
     cfg = _parse_config(
         {"username": "u", "password": "p", "ai_object_detection_model": ""}
     )
-    assert cfg.ai_object_detection_model == "yolo11n.pt"
+    assert cfg.ai_object_detection_model == "yolo26n.pt"
+
+
+def test_ai_depth_estimation_model_blank_falls_back_to_default():
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "ai_depth_estimation_model": ""}
+    )
+    assert cfg.ai_depth_estimation_model == "depth-anything/Depth-Anything-V2-Small-hf"
 
 
 def test_ai_max_frames_clamped():

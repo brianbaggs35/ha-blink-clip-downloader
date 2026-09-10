@@ -447,13 +447,29 @@ configuration:
   ai_object_detection_model:
     name: Objekterkennungsmodell
     description: >-
-      Ultralytics-Modelldatei, die die obige Erkennungsstufe verwendet
-      — gib genau eines der folgenden ein: yolo11n.pt (nano — am
-      schnellsten/leichtesten, empfohlener Startpunkt auf reiner
-      CPU-Hardware), yolo11s.pt (klein), yolo11m.pt (mittel), yolo11l.pt
-      (groß) oder yolo11x.pt (extra groß — am genauesten, deutlich
-      langsamer). Wird beim ersten Gebrauch automatisch heruntergeladen;
-      Standard ist yolo11n.pt.
+      Ultralytics-Modelldatei, die die obige Erkennungsstufe verwendet.
+      YOLO26 (yolo26n/s/m/l/x.pt) ist die aktuelle Generation —
+      Ende-zu-Ende-Inferenz, leichter und genauer als YOLO11 in jeder
+      Größe — und die empfohlene Standardeinstellung; yolo11n/s/m/l/x.pt
+      bleiben zur Kompatibilität mit bestehenden Konfigurationen
+      weiterhin wählbar. "n" (nano) ist am schnellsten/leichtesten und
+      empfohlen auf reiner CPU-Hardware; "s"/"m"/"l"/"x" tauschen
+      Geschwindigkeit gegen Genauigkeit, wobei "x" (extra groß) am
+      genauesten und deutlich langsamer ist. Wird beim ersten Gebrauch
+      automatisch heruntergeladen.
+  ai_depth_estimation_model:
+    name: Tiefenschätzungsmodell
+    description: >-
+      Depth-Anything-V2-Checkpoint, den die obige Tiefenschätzungsstufe
+      verwendet. "Small" (Standard) ist am schnellsten/leichtesten und
+      Apache-2.0-lizenziert; "Base"/"Large" sind genauer, aber
+      langsamer/aufwendiger — und vom Herausgeber unter CC-BY-NC-4.0
+      lizenziert (nur nicht-kommerzielle Nutzung), anders als "Small"
+      mit Apache-2.0. Für die typische private
+      Heimsicherheits-Nutzung dieses Add-ons unproblematisch, aber prüfe
+      vor der Wahl von "Base" oder "Large", ob diese Lizenz zu deiner
+      eigenen Situation passt. Wird beim ersten Gebrauch automatisch
+      heruntergeladen.
   ai_face_recognition_enabled:
     name: Lokale Gesichtserkennung aktivieren
     description: >-
