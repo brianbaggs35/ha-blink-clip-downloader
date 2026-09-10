@@ -109,6 +109,9 @@ jobs:
           cache: npm
           cache-dependency-path: e2e/package-lock.json
 
+      - name: Update npm
+        run: npm install -g npm@12.0.2
+
       - name: Install e2e dependencies
         working-directory: e2e
         run: npm ci
