@@ -2,6 +2,10 @@
 
 ## 5.5.1
 
+### Dependency Updates
+
+- Updated to primeicons 8.0.1
+
 ### Bug Fixes
 
 - Fixed a camera that has never had a clip downloaded by this add-on yet
