@@ -463,6 +463,102 @@ describe('AppSidebar', () => {
     })
   })
 
+  describe('sidebar collapse', () => {
+    it('defaults to expanded with no stored preference', () => {
+      const wrapper = mountSidebar()
+      expect(wrapper.find('.app-nav').classes()).not.toContain('collapsed')
+      expect(wrapper.find('.app-nav-brand-text').exists()).toBe(true)
+      expect(wrapper.find('[data-tab="library"] span').exists()).toBe(true)
+    })
+
+    it('toggling the button collapses the sidebar and persists the preference', async () => {
+      const wrapper = mountSidebar()
+      const toggle = wrapper.find('[data-testid="nav-collapse-toggle"]')
+      expect(toggle.attributes('title')).toBe('Collapse sidebar')
+
+      await toggle.trigger('click')
+
+      expect(wrapper.find('.app-nav').classes()).toContain('collapsed')
+      expect(localStorage.getItem('blink_nav_collapsed')).toBe('1')
+      expect(wrapper.find('[data-testid="nav-collapse-toggle"]').attributes('title')).toBe('Expand sidebar')
+    })
+
+    it('starts collapsed when a prior session left it collapsed', () => {
+      localStorage.setItem('blink_nav_collapsed', '1')
+      const wrapper = mountSidebar()
+      expect(wrapper.find('.app-nav').classes()).toContain('collapsed')
+    })
+
+    it('hides tab labels but keeps icons and data-tab, so nav-by-click still works', async () => {
+      const wrapper = mountSidebar()
+      await wrapper.find('[data-testid="nav-collapse-toggle"]').trigger('click')
+
+      const statusTab = wrapper.find('[data-tab="status"]')
+      expect(statusTab.find('span').exists()).toBe(false)
+      expect(statusTab.findComponent({ name: 'AppIcon' }).exists()).toBe(true)
+      expect(statusTab.attributes('title')).toBe('Status')
+
+      await statusTab.trigger('click')
+      expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['status'])
+    })
+
+    it('hides the brand text and the camera list while collapsed', async () => {
+      const library = useLibraryStore()
+      library.setCameras([{ camera: 'Front Door', total: 5, size_bytes: 0, today: 0, this_week: 0, last_seen: '' }])
+      const wrapper = mountSidebar()
+      await wrapper.find('[data-testid="nav-collapse-toggle"]').trigger('click')
+
+      expect(wrapper.find('.app-nav-brand-text').exists()).toBe(false)
+      expect(wrapper.find('.app-nav-cameras').exists()).toBe(false)
+    })
+
+    it('drops the Refresh/Sync button labels while collapsed, keeping their icons', async () => {
+      const wrapper = mountSidebar()
+      await wrapper.find('[data-testid="nav-collapse-toggle"]').trigger('click')
+
+      const refreshButton = wrapper.findAll('.app-nav-action-row .p-button')[0]
+      expect(refreshButton.findComponent({ name: 'AppIcon' }).exists()).toBe(true)
+      expect(refreshButton.find('.p-button-label').exists()).toBe(false)
+    })
+
+    it('replaces the connection Tag with a colored dot while collapsed', async () => {
+      const wrapper = mountSidebar()
+      const connection = useConnectionStore()
+      connection.setConnected(true)
+      await wrapper.vm.$nextTick()
+
+      await wrapper.find('[data-testid="nav-collapse-toggle"]').trigger('click')
+
+      expect(wrapper.findComponent({ name: 'Tag' }).exists()).toBe(false)
+      const dot = wrapper.find('.app-nav-conn-dot')
+      expect(dot.exists()).toBe(true)
+      expect(dot.classes()).toContain('success')
+      expect(dot.attributes('title')).toBe('Connected')
+    })
+
+    it('shows a gray dot for the unknown connection state while collapsed', async () => {
+      const wrapper = mountSidebar()
+      await wrapper.find('[data-testid="nav-collapse-toggle"]').trigger('click')
+
+      const dot = wrapper.find('.app-nav-conn-dot')
+      expect(dot.classes()).toContain('secondary')
+      expect(dot.attributes('title')).toBe('Unknown')
+    })
+
+    it('shows a red dot for the disconnected state while collapsed', async () => {
+      const wrapper = mountSidebar()
+      const connection = useConnectionStore()
+      connection.setConnected(false)
+      await wrapper.vm.$nextTick()
+
+      await wrapper.find('[data-testid="nav-collapse-toggle"]').trigger('click')
+
+      const dot = wrapper.find('.app-nav-conn-dot')
+      expect(dot.classes()).toContain('danger')
+      expect(dot.attributes('title')).toBe('Disconnected')
+    })
+  })
+
   describe('About dialog', () => {
     it('is not shown until the About button is clicked', () => {
       mountSidebar()

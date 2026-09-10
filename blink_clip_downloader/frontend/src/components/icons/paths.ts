@@ -136,6 +136,13 @@ export const ICONS = {
       { x: 21, y: 10, width: 2, height: 4, rx: 1 },
     ],
   },
+  // Nav collapse/expand toggle — a two-state pair (shape differs, not just
+  // rotation), matching the theme-light/theme-dark and notif-on/notif-off
+  // precedent above rather than one icon flipped via CSS. Double chevrons
+  // pointing toward the edge the sidebar collapses to (left) and back out
+  // (right).
+  'nav-collapse': { paths: ['M11 17l-5-5 5-5', 'M18 17l-5-5 5-5'] },
+  'nav-expand': { paths: ['M6 17l5-5-5-5', 'M13 17l5-5-5-5'] },
 } satisfies Record<string, IconDef>
 
 // keyof typeof ICONS only yields the real literal union of icon names (not

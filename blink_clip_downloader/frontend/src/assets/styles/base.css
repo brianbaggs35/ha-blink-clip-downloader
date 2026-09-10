@@ -427,6 +427,40 @@ h3 {
   justify-content: center;
 }
 
+/* Collapsed (icon-only) sidebar — see stores/navCollapsed.ts. --nav-w is
+   redefined on body.nav-collapsed (not here) so every consumer of the
+   variable, including .auth-error-banner's centering calc in a totally
+   different component, stays in sync automatically via the cascade
+   instead of each needing its own copy of the collapsed width. */
+body.nav-collapsed {
+  --nav-w: 72px;
+}
+.app-nav.collapsed .app-nav-tab {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+.app-nav.collapsed .app-nav-brand {
+  justify-content: center;
+  padding: 0;
+}
+.app-nav-conn-dot {
+  align-self: center;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.app-nav-conn-dot.success {
+  background: var(--success);
+}
+.app-nav-conn-dot.danger {
+  background: var(--danger);
+}
+.app-nav-conn-dot.secondary {
+  background: var(--muted);
+}
+
 .btn {
   background: var(--accent);
   color: var(--btn-text);

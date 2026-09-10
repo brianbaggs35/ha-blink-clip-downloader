@@ -22,6 +22,7 @@ import PromptOverlay from './components/layout/PromptOverlay.vue'
 import { useThemeStore } from './stores/theme'
 import { useAuthStore } from './stores/auth'
 import { useDateFilterStore } from './stores/dateFilter'
+import { useNavCollapsedStore } from './stores/navCollapsed'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
 
 const activeTab = ref<TabName>('library')
@@ -30,6 +31,7 @@ const helpOpen = ref(false)
 const theme = useThemeStore()
 const auth = useAuthStore()
 const dateFilter = useDateFilterStore()
+const nav = useNavCollapsedStore()
 
 // The Status tab's activity-chart drill-down requests a switch to Library
 // filtered to a specific day — see stores/dateFilter.ts.
@@ -46,6 +48,13 @@ watch(
 watchEffect(() => {
   document.body.classList.toggle('dark', theme.isDark)
   document.body.classList.toggle('light', !theme.isDark)
+})
+
+// Same reasoning as the theme classes above — .auth-error-banner is a
+// fixed-position overlay outside #app's flex layout that also needs the
+// narrower --nav-w this class redefines (see base.css).
+watchEffect(() => {
+  document.body.classList.toggle('nav-collapsed', nav.collapsed)
 })
 
 useKeyboardShortcuts(helpOpen)

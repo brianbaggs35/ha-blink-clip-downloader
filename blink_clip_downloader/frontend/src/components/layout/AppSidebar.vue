@@ -11,6 +11,7 @@ import { useConnectionStore } from '../../stores/connection'
 import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { useCapabilitiesStore } from '../../stores/capabilities'
+import { useNavCollapsedStore } from '../../stores/navCollapsed'
 import { apiPost } from '../../api/client'
 import { getCameras, getStats } from '../../api/clips'
 import { listFaces } from '../../api/ai'
@@ -53,6 +54,7 @@ const connection = useConnectionStore()
 const library = useLibraryStore()
 const refresh = useRefreshStore()
 const capabilities = useCapabilitiesStore()
+const nav = useNavCollapsedStore()
 
 // Biometrics is the one tab that's entirely unusable when face recognition
 // can't run (a Raspberry Pi 4's Cortex-A72 CPU, missing dependencies, ...)
@@ -232,10 +234,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <nav class="app-nav">
+  <nav class="app-nav" :class="{ collapsed: nav.collapsed }">
     <div class="app-nav-brand">
       <span class="app-nav-brand-mark"><AppIcon name="brand" /></span>
-      <span class="app-nav-brand-text">Blink <strong>Clips</strong></span>
+      <span v-if="!nav.collapsed" class="app-nav-brand-text">Blink <strong>Clips</strong></span>
     </div>
 
     <div class="app-nav-tabs">
@@ -246,14 +248,15 @@ onUnmounted(() => {
         class="app-nav-tab"
         :class="{ active: activeTab === tab.name }"
         :data-tab="tab.name"
+        :title="nav.collapsed ? tab.label : undefined"
         @click="activeTab = tab.name"
       >
         <AppIcon :name="tab.icon" />
-        <span>{{ tab.label }}</span>
+        <span v-if="!nav.collapsed">{{ tab.label }}</span>
       </button>
     </div>
 
-    <template v-if="library.cameras.length">
+    <template v-if="!nav.collapsed && library.cameras.length">
       <div class="app-nav-section-label">Cameras</div>
       <div class="app-nav-cameras">
         <button
@@ -284,8 +287,35 @@ onUnmounted(() => {
     <div class="app-nav-spacer" />
 
     <div class="app-nav-utility">
-      <Tag :severity="connSeverity" :value="connLabel" :icon="connIcon" rounded class="app-nav-conn-tag" />
+      <Tag
+        v-if="!nav.collapsed"
+        :severity="connSeverity"
+        :value="connLabel"
+        :icon="connIcon"
+        rounded
+        class="app-nav-conn-tag"
+      />
+      <span
+        v-else
+        class="app-nav-conn-dot"
+        :class="connSeverity"
+        :title="connLabel"
+        role="status"
+        :aria-label="connLabel"
+      />
       <div class="app-nav-icon-row">
+        <Button
+          text
+          rounded
+          size="small"
+          severity="secondary"
+          :title="nav.collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          :aria-label="nav.collapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          data-testid="nav-collapse-toggle"
+          @click="nav.toggle()"
+        >
+          <template #icon><AppIcon :name="nav.collapsed ? 'nav-expand' : 'nav-collapse'" /></template>
+        </Button>
         <Button
           text
           rounded
@@ -332,10 +362,23 @@ onUnmounted(() => {
         />
       </div>
       <div class="app-nav-action-row">
-        <Button size="small" severity="secondary" outlined label="Refresh" title="Refresh" @click="onRefreshClick">
+        <Button
+          size="small"
+          severity="secondary"
+          outlined
+          :label="nav.collapsed ? undefined : 'Refresh'"
+          title="Refresh"
+          @click="onRefreshClick"
+        >
           <template #icon><AppIcon name="refresh" /></template>
         </Button>
-        <Button size="small" :label="syncing ? 'Syncing…' : 'Sync'" title="Sync" :disabled="syncing" @click="sync">
+        <Button
+          size="small"
+          :label="nav.collapsed ? undefined : syncing ? 'Syncing…' : 'Sync'"
+          title="Sync"
+          :disabled="syncing"
+          @click="sync"
+        >
           <template #icon><AppIcon name="sync" /></template>
         </Button>
       </div>

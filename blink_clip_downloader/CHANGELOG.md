@@ -4,12 +4,13 @@
 
 The v6.0.0 upgrade series so far: a Python floor bump, a full dependency
 refresh, a vision-pipeline model upgrade with a genuinely new capability
-(persisted, queryable object detections), and two rounds of AI-analysis-
+(persisted, queryable object detections), two rounds of AI-analysis-
 pipeline work — a full correctness review, the object-detection
 clip-modal feature, sharper vehicle/zone-proximity intelligence,
-automatic retry of transiently-failed analyses, and reliability/cost
-improvements to the Anthropic and OpenAI request paths. More parts land
-here before this version ships.
+automatic retry of transiently-failed analyses, reliability/cost
+improvements to the Anthropic and OpenAI request paths, and a
+frame-selection pipeline review — and a collapsible nav sidebar. More
+parts land here before this version ships.
 
 ### Added
 
@@ -32,6 +33,11 @@ here before this version ships.
   attempts) instead of being marked permanently failed — a genuine
   misconfiguration (bad API key, unsupported model) still surfaces
   immediately without retrying, since that never resolves on its own.
+- The nav sidebar can now be collapsed to icon-only (a new toggle button
+  above the theme/help/notification row) — every tab keeps its existing
+  icon, and the connection status badge becomes a single green/red/gray
+  dot instead of a text tag. The preference persists across reloads and
+  defaults to expanded.
 
 ### Changed
 
