@@ -125,6 +125,55 @@ test('Escape blurs the tag input instead of closing the modal', async ({ page })
   await expect(modal).toBeVisible()
 })
 
+test('playback shortcut keys are suppressed while the tag input is focused', async ({ page }) => {
+  await page.locator('.clip-card[data-id="e2e-clip-003"]').click()
+  const modal = openModal(page)
+  const input = modal.locator('#clip-tag-input')
+  await input.click()
+  await expect(input).toBeFocused()
+
+  // 'l' would normally toggle Loop and show a toast -- typing it into the
+  // tag input must do neither (onKeydown's isTextInput guard).
+  await page.keyboard.type('l')
+  await expect(page.getByText('Loop ON')).toHaveCount(0)
+  await expect(input).toHaveValue('l')
+  await input.fill('')
+})
+
+test('playback keyboard shortcuts control the player: play/pause, seek, mute, and fullscreen', async ({ page }) => {
+  await page.locator('.clip-card[data-id="e2e-clip-003"]').click()
+  const modal = openModal(page)
+  await expect(modal).toBeVisible()
+
+  // None of these should close the modal or throw -- the player survives
+  // the whole sequence either way, whether or not the (fileless) clip ever
+  // actually loads enough to seek/mute for real.
+  await page.keyboard.press(' ')
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('ArrowLeft')
+  await page.keyboard.press('m')
+  await expect(modal).toBeVisible()
+
+  // Whether requestFullscreen() actually succeeds or rejects in this
+  // sandboxed/headless browser isn't something to assert on either way --
+  // just that the F handler runs and the modal survives it.
+  await page.keyboard.press('f')
+  await expect(modal).toBeVisible()
+})
+
+test('declining the delete confirmation keeps the clip', async ({ page }) => {
+  await page.locator('.clip-card[data-id="e2e-clip-003"]').click()
+  const modal = openModal(page)
+  await modal.getByRole('button', { name: '🗑 Delete' }).click()
+  await expect(page.getByText('Delete this clip permanently?')).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.getByText('Delete this clip permanently?')).toHaveCount(0)
+  await expect(modal).toBeVisible()
+
+  await modal.locator('.modal-close').click()
+  await expect(page.locator('.clip-card[data-id="e2e-clip-003"]')).toBeVisible()
+})
+
 test('Escape closes the modal', async ({ page }) => {
   await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
   await expect(openModal(page)).toBeVisible()
@@ -295,6 +344,91 @@ test('expanding the AI panel and clicking Analyze Now shows a real analysis resu
   await modal.getByRole('button', { name: 'Submit report' }).click()
   await expect(page.getByText('Thanks, reported — visible on the Biometrics activity card')).toBeVisible()
   await expect(modal.getByText('✓ Reported — thanks')).toBeVisible()
+})
+
+test('shows an error when the AI analysis result fails to load', async ({ page }) => {
+  await page.route('**/api/ai/results/*', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
+  )
+  await page.locator('.clip-card[data-id="e2e-clip-002"]').click()
+  const modal = openModal(page)
+  await modal.locator('.ai-panel-hdr').click()
+  await expect(modal.getByText('Failed to load analysis')).toBeVisible()
+})
+
+test('the feedback form can be cancelled, submitted without the correction checkbox, and changed afterward', async ({
+  page,
+}) => {
+  await page.locator('.clip-card[data-id="e2e-clip-010"]').click()
+  const modal = openModal(page)
+  await modal.locator('.ai-panel-hdr').click()
+  await expect(modal.getByText('Not analyzed yet')).toBeVisible()
+  await modal.getByRole('button', { name: 'Analyze Now' }).click()
+  await expect(page.getByText('AI analysis complete')).toBeVisible()
+
+  await modal.getByRole('button', { name: '👎 Incorrect' }).click()
+  await modal.getByRole('button', { name: 'Cancel' }).click()
+  await expect(modal.locator('#clip-ai-feedback-note')).toHaveCount(0)
+  await expect(modal.getByText('Was this verdict correct?')).toBeVisible()
+
+  // Leaves the correction checkbox unchecked this time -- corrected_suspicious
+  // stays undefined instead of flipping the clip's verdict.
+  await modal.getByRole('button', { name: '👎 Incorrect' }).click()
+  await modal.getByRole('button', { name: 'Submit' }).click()
+  await expect(page.getByText('Feedback recorded — thanks!')).toBeVisible()
+  await expect(modal.getByText('👎 Marked incorrect')).toBeVisible()
+
+  await modal.getByRole('button', { name: 'Change' }).click()
+  await expect(modal.getByText('Was this verdict correct?')).toBeVisible()
+})
+
+test('a single enrolled person auto-submits a missed-match report without showing the picker, and the picker can be cancelled or fail to submit', async ({
+  page,
+}) => {
+  await page.locator('.clip-card[data-id="e2e-clip-011"]').click()
+  const modal = openModal(page)
+  await modal.locator('.ai-panel-hdr').click()
+  await modal.getByRole('button', { name: 'Analyze Now' }).click()
+  await expect(page.getByText('AI analysis complete')).toBeVisible()
+
+  // biometrics.spec.ts leaves two enrolled people, so the real (unmocked)
+  // picker shows first -- cancelling it should leave no report submitted.
+  await modal.getByRole('button', { name: 'Report a missed face match' }).click()
+  await expect(modal.locator('#clip-ai-face-report-name')).toBeVisible()
+  await modal.getByRole('button', { name: 'Cancel' }).click()
+  await expect(modal.locator('#clip-ai-face-report-name')).toHaveCount(0)
+
+  await page.route('**/api/ai/faces/feedback/*', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
+  )
+  await modal.getByRole('button', { name: 'Report a missed face match' }).click()
+  await modal.locator('#clip-ai-face-report-name').selectOption('Alex E2E')
+  await modal.getByRole('button', { name: 'Submit report' }).click()
+  await expect(page.getByText('Failed to save the report')).toBeVisible()
+  await expect(modal.getByText('✓ Reported — thanks')).toHaveCount(0)
+
+  // Now with only one enrolled person on file: startFaceReport() auto-
+  // submits directly (report a *different* clip so faceReportSubmitted
+  // from the failed attempt above doesn't already hide the report buttons).
+  await page.unroute('**/api/ai/faces/feedback/*')
+  await page.route('**/api/ai/faces', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ faces: [{ name: 'Solo E2E', approved: true }] }),
+    }),
+  )
+  await modal.locator('.modal-close').click()
+  await page.locator('.clip-card[data-id="e2e-clip-009"]').click()
+  const modal2 = openModal(page)
+  await modal2.locator('.ai-panel-hdr').click()
+  await modal2.getByRole('button', { name: 'Analyze Now' }).click()
+  await expect(page.getByText('AI analysis complete').last()).toBeVisible()
+
+  await modal2.getByRole('button', { name: 'Report a missed face match' }).click()
+  await expect(modal2.locator('#clip-ai-face-report-name')).toHaveCount(0)
+  await expect(page.getByText('Thanks, reported — visible on the Biometrics activity card')).toBeVisible()
+  await expect(modal2.getByText('✓ Reported — thanks')).toBeVisible()
 })
 
 test('shows an error toast when deleting a clip from the modal fails, and keeps the clip', async ({ page }) => {

@@ -62,6 +62,7 @@ function nextFrames() {
   // button never fires its click handler, so this can only run when
   // hasNextFrames is already true.
   /* v8 ignore next */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
   if (hasNextFrames.value) frameOffset.value += FRAMES_PAGE_SIZE
 }
 

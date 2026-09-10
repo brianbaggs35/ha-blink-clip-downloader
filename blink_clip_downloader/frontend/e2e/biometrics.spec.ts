@@ -186,3 +186,66 @@ test('renaming then removing a person updates and clears their card', async ({ p
   await expect(page.getByText('Removed Casey Renamed E2E')).toBeVisible()
   await expect(page.locator('.person-card', { hasText: 'Casey Renamed E2E' })).toHaveCount(0)
 })
+
+test('enrolling from a clip or a photo requires both a name and a selection', async ({ page }) => {
+  // Default mode is 'clip' -- 0 selected frames keeps the button reading
+  // plain "+ Enroll" (see its label ternary), so this exercises the name
+  // guard first, then the frame-count guard once a name is filled.
+  await page.getByRole('button', { name: '+ Enroll', exact: true }).click()
+  await expect(page.getByText('Enter a name')).toBeVisible()
+
+  await page.locator('#biometrics-name').fill('e2e validation clip')
+  await page.getByRole('button', { name: '+ Enroll', exact: true }).click()
+  await expect(page.getByText('Select at least one frame that shows the face clearly')).toBeVisible()
+
+  await page.locator('#biometrics-name').fill('')
+  await page.getByRole('button', { name: 'Upload a photo' }).click()
+  await page.getByRole('button', { name: '+ Enroll', exact: true }).click()
+  // .last(): toasts stack rather than replacing each other, and the first
+  // "Enter a name" toast above may still be showing.
+  await expect(page.getByText('Enter a name').last()).toBeVisible()
+
+  await page.locator('#biometrics-name').fill('e2e validation photo')
+  await page.getByRole('button', { name: '+ Enroll', exact: true }).click()
+  await expect(page.getByText('Choose a photo')).toBeVisible()
+})
+
+test('Add to person enrolls additional frames under an existing name', async ({ page }) => {
+  await page.locator('#biometrics-camera-select').click()
+  await page.getByRole('option', { name: 'Test Scratch' }).click()
+  await page.locator('.thumb-strip-item').first().click()
+  await page.locator('.frame-item').first().click()
+
+  await page.locator('#biometrics-add-to-existing').click()
+  await page.getByRole('option', { name: 'Jordan E2E' }).click()
+  await page.getByRole('button', { name: '➕ Add to person' }).click()
+
+  // Same environment constraint as every other enroll test here --
+  // facenet_pytorch's real embedding step never detects a face in these
+  // synthetic frames, so enrollToExisting()'s own call into
+  // enrollFromClipFrames() genuinely reaches its all-failed branch.
+  await expect(page.getByText('Enrollment failed for every selected frame — no clear face detected')).toBeVisible()
+})
+
+test('renaming can be cancelled, and an empty name is rejected', async ({ page }) => {
+  // Position-based (.last()), not text-based: groupedPeople is sorted by
+  // name and Jordan sorts last whether or not Casey (removed by the
+  // earlier rename/remove test, in a full-file run) is still present —
+  // and a text-filtered locator stops matching the instant rename mode
+  // opens, since the name text is then an <input>'s *value*, not part of
+  // the card's own text content (same gotcha the rename/remove test above
+  // already documents).
+  const jordan = page.locator('.person-card').last()
+  await expect(jordan).toContainText('Jordan E2E')
+  await jordan.locator('button[title="Rename"]').click()
+  const input = jordan.locator('.rename-input')
+  await input.fill('Should not save')
+  await jordan.getByRole('button', { name: 'Cancel' }).click()
+  await expect(input).toHaveCount(0)
+  await expect(jordan).toContainText('Jordan E2E')
+
+  await jordan.locator('button[title="Rename"]').click()
+  await jordan.locator('.rename-input').fill('   ')
+  await jordan.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByText('Name cannot be empty')).toBeVisible()
+})

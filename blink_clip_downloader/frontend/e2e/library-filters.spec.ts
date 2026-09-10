@@ -113,3 +113,28 @@ test('notified and recognized filters narrow the grid, and Refresh library confi
   await page.getByRole('button', { name: 'Refresh library' }).click()
   await expect(page.getByText('Library refreshed')).toBeVisible()
 })
+
+test('non-critical data (stats, cameras, tags, AI status, Google Drive status) failing to load degrades silently', async ({
+  page,
+}) => {
+  // loadAll()'s other five loaders are each independently wrapped in a
+  // try/catch that swallows the failure -- unlike loadClips()'s own
+  // failure (tested above), none of these show a toast or otherwise
+  // block the rest of the page from rendering; Refresh itself still
+  // reports success since refreshLibrary() only awaits the combined
+  // Promise.all(), which never rejects on account of these.
+  for (const url of [
+    '**/api/stats',
+    '**/api/cameras',
+    '**/api/tags',
+    '**/api/ai/status',
+    '**/api/storage/gdrive/status',
+  ]) {
+    await page.route(url, (route) =>
+      route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
+    )
+  }
+  await page.getByRole('button', { name: 'Refresh library' }).click()
+  await expect(page.getByText('Library refreshed')).toBeVisible()
+  await expect(page.locator('.clip-card')).toHaveCount(TOTAL_CLIPS)
+})

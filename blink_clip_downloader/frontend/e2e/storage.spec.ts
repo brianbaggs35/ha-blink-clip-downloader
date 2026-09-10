@@ -49,6 +49,94 @@ test('filtering by camera narrows both the archive list and its counts', async (
   await expect(panels).toHaveCount(3)
 })
 
+test('declining the delete-archive confirmation leaves the archive untouched', async ({ page }) => {
+  const multiPanel = page.locator('.archive-panel', { hasText: '2024-01-e2e.zip' })
+  await multiPanel.getByRole('button', { name: 'Delete archive' }).click()
+  await expect(page.getByText('Delete archive?')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Cancel' }).click()
+
+  await expect(page.getByText('Delete archive?')).toHaveCount(0)
+  await expect(page.locator('.archive-panel')).toHaveCount(3)
+  await expect(multiPanel).toContainText('2 clips')
+})
+
+test('shows an error message when archived clips fail to load', async ({ page }) => {
+  await page.route('**/api/storage/archives*', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
+  )
+  // The initial load already happened (successfully) during beforeEach's
+  // navigation -- Refresh is what re-runs loadGroups() against the
+  // now-mocked-failing endpoint, same trigger app-sidebar.spec.ts uses for
+  // its own "bumps the cross-tab refresh signal" test.
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByText('Failed to load archived clips.')).toBeVisible()
+})
+
+test('the camera filter dropdown degrades silently when its camera list fails to load', async ({ page }) => {
+  await page.route('**/api/cameras', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
+  )
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  // loadCameras()'s own try/catch is independent of loadGroups() above --
+  // archives still render fine, the camera filter just has only "All
+  // cameras" to offer.
+  await expect(page.locator('.archive-panel')).toHaveCount(3)
+  await expect(page.getByRole('combobox', { name: 'Filter by camera' })).toContainText('All cameras')
+})
+
+test('a date range with no matching archives shows the filtered-empty state, and Clear filters restores the list', async ({
+  page,
+}) => {
+  const panels = page.locator('.archive-panel')
+  const today = new Date().toISOString().slice(0, 10)
+
+  // Every seeded archived clip is over a week old, so filtering to just
+  // today (since-only, "that calendar day" per archiveDateFilters' own
+  // comment) matches nothing.
+  await page.getByLabel('From date').fill(today)
+  await expect(page.getByText('No archives match these filters.')).toBeVisible()
+  await expect(panels).toHaveCount(0)
+
+  // Adding an end date too (still today) exercises the since+until branch
+  // of archiveDateFilters rather than the since-only fallback above.
+  await page.getByLabel('To date').fill(today)
+  await expect(page.getByText('No archives match these filters.')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Clear filters' }).click()
+  await expect(panels).toHaveCount(3)
+})
+
+// Deliberately reuses the shared 2024-01 archive (rather than a new
+// dedicated fixture) specifically *because* it already has two clips on two
+// different cameras -- this is the only remaining test that needs it intact
+// beforehand, and nothing after this point in the file (or in any other
+// spec file -- see standalone_server.py's _ARCHIVE_CLIPS comment) depends
+// on 2024-01 still having both. Must run after the three tests above that
+// do still need it at its original 2-clip state (list/expand/filter).
+test('deleting one clip from a multi-clip archive keeps the group, decrementing its count', async ({ page }) => {
+  const multiPanel = page.locator('.archive-panel', { hasText: '2024-01-e2e.zip' })
+  await multiPanel.locator('.archive-panel-header').click()
+
+  const deleteButtons = multiPanel.getByRole('button', { name: 'Delete', exact: true })
+  await expect(deleteButtons).toHaveCount(2)
+  // sortedForGrouping sorts by camera name ascending ("Backyard" < "Front
+  // Door"), so the last row/button is Front Door's.
+  await deleteButtons.last().click()
+
+  await expect(page.getByText('Delete this clip?')).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+
+  await expect(page.getByText('Clip deleted')).toBeVisible()
+  await expect(multiPanel).toContainText('1 clip')
+  await expect(multiPanel.getByText('Front Door (1 clip)')).toHaveCount(0)
+  await expect(multiPanel.getByText('Backyard (1 clip)')).toBeVisible()
+  await expect(deleteButtons).toHaveCount(1)
+  // The panel itself survives (unlike the solo-archive delete test below) --
+  // one clip remains, so clip_count never reaches 0.
+  await expect(page.locator('.archive-panel')).toHaveCount(3)
+})
+
 test('shows an error toast when Run Archiving Now fails', async ({ page }) => {
   // Mocked, so nothing actually archives -- doesn't disturb the panel
   // counts the tests below (and the real "Run Archiving Now" test at the

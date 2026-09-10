@@ -186,6 +186,7 @@ async function onModuleToggle(name: string, armed: boolean) {
   // invoked.
   const module = syncModules.value.find((m) => m.name === name)
   /* v8 ignore next */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
   if (!module) return
   if (!armed && wouldFullyDisarmSystem(name)) {
     if (!(await confirm(DISARM_CONFIRM_MESSAGE, 'Disarm the entire system?'))) return

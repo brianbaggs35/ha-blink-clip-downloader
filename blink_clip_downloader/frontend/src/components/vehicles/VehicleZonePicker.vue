@@ -156,6 +156,7 @@ function pointerPos(e: PointerEvent): { x: number; y: number } {
   // the pointer event that got us here, so box is never actually
   // undefined -- the `?? 0` fallbacks are unreachable in practice.
   /* v8 ignore start */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branches */
   return { x: e.clientX - (box?.left ?? 0), y: e.clientY - (box?.top ?? 0) }
   /* v8 ignore stop */
 }
@@ -230,11 +231,13 @@ async function saveZone() {
   // one of these two branches always produces a zone too, making `!zone`
   // unreachable as well.
   /* v8 ignore start */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branches */
   if (drawShape.value === 'polygon') {
     zone = polygonToFraction(freeformPath.value, width, height)
   } else if (rect.value) {
     zone = rectToFraction(rect.value, width, height)
   }
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branches */
   if (!zone || !selectedClipId.value) return
   /* v8 ignore stop */
 
@@ -259,6 +262,7 @@ function cancelEdit() {
   // The Cancel button is `v-if="savedZone"`, so cancelEdit() can only ever
   // run through the UI when savedZone.value is already truthy.
   /* v8 ignore next */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
   if (savedZone.value) mode.value = 'preview'
 }
 
@@ -311,6 +315,7 @@ const freeformPointsAttr = computed(() => pointsToSvgAttr(freeformPath.value))
 // ever set selectedClipId to an id actually present in recentClips -- so
 // .find() always succeeds and the `|| null` fallback is unreachable.
 /* v8 ignore start */
+/* istanbul ignore next -- see v8-ignore comment above; same dead branch */
 const selectedClip = computed(() => recentClips.value.find((c) => c.id === selectedClipId.value) || null)
 /* v8 ignore stop */
 

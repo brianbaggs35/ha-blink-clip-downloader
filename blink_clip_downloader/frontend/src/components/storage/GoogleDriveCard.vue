@@ -348,6 +348,7 @@ onUnmounted(stopConnectPolling)
                 // own computed guard), so the "?? 0" fallback below is unreachable
                 // whenever this branch renders.
                 /* v8 ignore next */
+                /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
                 quotaPercent === null
                   ? 'Unlimited storage'
                   : `${fmtSize(quota.usage)} of ${fmtSize(quota.limit ?? 0)} used`

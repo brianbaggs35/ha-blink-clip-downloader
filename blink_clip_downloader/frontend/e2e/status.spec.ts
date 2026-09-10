@@ -166,3 +166,97 @@ test('shows the Storage card with quota usage and a Frames Analyzed card when bo
   await expect(framesCard.locator('.status-row', { hasText: 'Total frames' })).toContainText('42')
   await expect(framesCard.locator('.status-row', { hasText: 'Today' })).toContainText('3')
 })
+
+test('shows the warn disk threshold, and the AI queue pending / suspicious counts, when reported', async ({ page }) => {
+  await page.route('**/api/stats', async (route) => {
+    const response = await route.fetch()
+    const stats = (await response.json()) as Record<string, unknown>
+    await route.fulfill({
+      response,
+      json: {
+        ...stats,
+        disk: {
+          used_bytes: 7_500_000_000,
+          used_mb: 7500.0,
+          free_bytes: 2_500_000_000,
+          free_gb: 2.33,
+          total_bytes: 10_000_000_000,
+          total_gb: 9.31,
+          quota_bytes: 10_000_000_000,
+          quota_gb: 9.31,
+        },
+      },
+    })
+  })
+  await page.route('**/api/ai/status', async (route) => {
+    const response = await route.fetch()
+    const status = (await response.json()) as {
+      analysis_stats?: Record<string, unknown>
+      queue?: Record<string, unknown>
+    }
+    await route.fulfill({
+      response,
+      json: {
+        ...status,
+        queue: { ...status.queue, pending: 3 },
+        analysis_stats: { ...status.analysis_stats, suspicious_count: 2 },
+      },
+    })
+  })
+
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="status"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="status"]')
+
+  // 75% usage -- the "warn" (>70%, <=90%) threshold, distinct from "danger".
+  const storageCard = page.locator('.status-card', { hasText: 'Storage' })
+  await expect(storageCard.locator('.val.warn')).toHaveCount(1)
+  await expect(storageCard.locator('.val.danger')).toHaveCount(0)
+
+  const aiCard = page.locator('.status-card', { hasText: 'AI Analysis' })
+  await expect(aiCard.locator('.status-row', { hasText: 'Pending' })).toContainText('3')
+  await expect(aiCard.locator('.status-row', { hasText: 'Suspicious' })).toContainText('2')
+})
+
+test('shows the ok disk threshold when usage is comfortably under both warn and danger', async ({ page }) => {
+  await page.route('**/api/stats', async (route) => {
+    const response = await route.fetch()
+    const stats = (await response.json()) as Record<string, unknown>
+    await route.fulfill({
+      response,
+      json: {
+        ...stats,
+        disk: {
+          used_bytes: 3_000_000_000,
+          used_mb: 3000.0,
+          free_bytes: 7_000_000_000,
+          free_gb: 6.52,
+          total_bytes: 10_000_000_000,
+          total_gb: 9.31,
+          quota_bytes: 10_000_000_000,
+          quota_gb: 9.31,
+        },
+      },
+    })
+  })
+
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="status"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="status"]')
+
+  const storageCard = page.locator('.status-card', { hasText: 'Storage' })
+  await expect(storageCard.locator('.val.ok')).toHaveCount(1)
+  await expect(storageCard.locator('.val.warn')).toHaveCount(0)
+  await expect(storageCard.locator('.val.danger')).toHaveCount(0)
+})
+
+test('shows an error message when the status data fails to load', async ({ page }) => {
+  await page.route('**/api/stats', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
+  )
+  // Same trigger as storage.spec.ts's equivalent test: the initial load
+  // already succeeded during beforeEach, so Refresh is what re-runs load()
+  // against the now-mocked-failing endpoint.
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByText('Failed to load status.')).toBeVisible()
+})
