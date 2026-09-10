@@ -5,7 +5,9 @@ import { fmtDur, fmtSize, fmtTs } from '../../api/constants'
 import type { ClipListItem } from '../../api/types'
 import AppIcon from '../icons/AppIcon.vue'
 
-defineProps<{ clip: ClipListItem; selected: boolean }>()
+withDefaults(defineProps<{ clip: ClipListItem; selected: boolean; selectable?: boolean }>(), {
+  selectable: true,
+})
 defineEmits<{ click: []; check: [] }>()
 
 const thumbFailed = ref(false)
@@ -22,6 +24,7 @@ const thumbFailed = ref(false)
       <div v-if="clip.notified" class="notified-badge">🔔</div>
       <div v-if="clip.face_recognized" class="face-badge" title="An enrolled household member was recognized">👤</div>
       <input
+        v-if="selectable"
         type="checkbox"
         class="sel-check"
         :checked="selected"

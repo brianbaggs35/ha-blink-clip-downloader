@@ -2,9 +2,11 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
+import { listClips } from '../../api/clips'
 import { armCamera, armSyncModule, getSyncModules } from '../../api/syncModule'
-import type { SyncModuleInfo } from '../../api/types'
+import type { ClipListItem, SyncModuleInfo } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
+import { useClipViewerStore } from '../../stores/clipViewer'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
@@ -20,11 +22,21 @@ const POLL_INTERVAL_MS = 30_000
 const toast = useToastStore()
 const refresh = useRefreshStore()
 const confirm = useConfirm()
+const clipViewer = useClipViewerStore()
 const DISARM_CONFIRM_MESSAGE = 'No camera will record on motion until you arm it again.'
 
 const loading = ref(true)
 const loadError = ref(false)
 const syncModules = ref<SyncModuleInfo[]>([])
+// Clips downloaded from a Sync Module 2's local USB storage (see
+// download_local_storage in the add-on's Configuration tab) — already
+// flow into the same clip database/API as every other clip, tagged
+// source=local_storage (GET /api/clips?source=local_storage), just not
+// surfaced anywhere in this tab until now. Fetched once for the whole
+// page (the clips API filters by one camera at a time, not a list, and
+// there's no sync-module-scoped filter to reach for instead) and grouped
+// client-side per module below.
+const localStorageClips = ref<ClipListItem[]>([])
 const armingAll = ref(false)
 // Captured at the moment the hero button is clicked so the in-flight label
 // ("Arming…"/"Disarming…") reflects the action actually underway, rather
@@ -46,6 +58,7 @@ async function load() {
     const result = await getSyncModules()
     if (seq !== loadSeq) return
     syncModules.value = result
+    void loadLocalStorageClips(result)
   } catch {
     if (seq === loadSeq) loadError.value = true
   } finally {
@@ -62,6 +75,7 @@ async function silentReload() {
     const result = await getSyncModules()
     if (seq === loadSeq) {
       syncModules.value = result
+      void loadLocalStorageClips(result)
       // Also clears the initial spinner if this call wins the race against
       // onMounted's own load() (e.g. a refresh.tick from another tab lands
       // before the very first fetch does) -- load()'s own seq check would
@@ -73,6 +87,38 @@ async function silentReload() {
   } catch {
     // Transient — keep showing whatever's already on screen.
   }
+}
+
+// Skips the fetch entirely for a household with no Sync Module 2 / no
+// local storage active anywhere — the common case — rather than always
+// spending a request on a list that would just come back empty. Failures
+// are non-fatal (same as loadTags/loadAiStatus in LibraryPage): this is a
+// supplementary view, not core to the arm/disarm page, so it silently
+// leaves the previous (or empty) list in place rather than surfacing an
+// error state of its own.
+async function loadLocalStorageClips(modules: SyncModuleInfo[]) {
+  if (!modules.some((m) => m.local_storage)) {
+    localStorageClips.value = []
+    return
+  }
+  try {
+    localStorageClips.value = await listClips({ source: 'local_storage' })
+  } catch {
+    // Transient — keep showing whatever's already on screen.
+  }
+}
+
+function clipsForModule(mod: SyncModuleInfo): ClipListItem[] {
+  const cameraNames = new Set(mod.cameras.map((c) => c.name))
+  return localStorageClips.value.filter((c) => cameraNames.has(c.camera))
+}
+
+// Opens the clip in the Library tab's own modal without switching tabs —
+// the same cross-tab bridge the AI tab's suspicious-activity feed already
+// uses (see stores/clipViewer.ts) — rather than duplicating ClipModal's
+// video/star/tag/AI-panel wiring in this page too.
+function onClipClick(clip: ClipListItem) {
+  clipViewer.requestOpen(clip.id)
 }
 
 // "Armed" requires every sync module itself armed *and* every one of their
@@ -296,8 +342,10 @@ watch(
           :module="mod"
           :pending="pendingModules.has(mod.name)"
           :pending-cameras="pendingCameras"
+          :local-storage-clips="clipsForModule(mod)"
           @toggle-module="(armed) => onModuleToggle(mod.name, armed)"
           @toggle-camera="onCameraToggle"
+          @clip-click="onClipClick"
         />
       </div>
     </template>

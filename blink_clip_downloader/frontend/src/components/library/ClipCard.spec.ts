@@ -94,4 +94,14 @@ describe('ClipCard', () => {
     expect(checkbox.attributes('type')).toBe('checkbox')
     expect(checkbox.attributes('aria-label')).toBeTruthy()
   })
+
+  it('defaults to showing the selection checkbox when selectable is omitted', () => {
+    const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false } })
+    expect(wrapper.find('.sel-check').exists()).toBe(true)
+  })
+
+  it('hides the selection checkbox when selectable is false, e.g. in a read-only clip grid', () => {
+    const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false, selectable: false } })
+    expect(wrapper.find('.sel-check').exists()).toBe(false)
+  })
 })
