@@ -436,6 +436,33 @@ test('AI tab Schedule card shows Active/Waiting for a configured schedule window
   await expect(page.getByText('🔴 Waiting')).toBeVisible()
 })
 
+test("AI tab model picker marks OpenAI's recommended model as Best, not just the first result", async ({ page }) => {
+  // No other e2e test ever sets provider to 'anthropic' or 'openai' on the
+  // AI tab itself (only the AI Usage tab's ProviderNote gets those two
+  // elsewhere) -- so isBestModel's openai-specific branch (by name, not by
+  // list position) never runs at all otherwise.
+  await patchAiStatus(page, { provider: 'openai', model: 'gpt-5.4-nano' })
+  await page.route('**/api/ai/models', (route) =>
+    fulfillJson(route, {
+      enabled: true,
+      models: [
+        { name: 'gpt-4o-mini', size: 0 },
+        { name: 'gpt-5.4-nano', size: 0 },
+      ],
+    }),
+  )
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect(page.getByText('Provider:')).toContainText('OpenAI')
+
+  await page.getByRole('button', { name: '⟳ Fetch Models' }).click()
+  const picker = page.locator('#ai-model-picker')
+  await expect(picker.locator('option', { hasText: 'gpt-5.4-nano' })).toHaveText(/⭐ Best/)
+  await expect(picker.locator('option', { hasText: 'gpt-4o-mini' })).not.toHaveText(/⭐ Best/)
+})
+
 test('shows the escalation model as online, and a failed Test Analysis attempt', async ({ page }) => {
   await patchAiStatus(page, {
     escalation_provider: 'ollama',

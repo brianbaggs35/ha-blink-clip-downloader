@@ -365,7 +365,7 @@ describe('AiAnalysisConfigCard', () => {
 
     useRefreshStore().bump()
     await flushPromises()
-    expect(fetchMock.mock.calls.length).toBe(callsBeforeTick)
+    expect(fetchMock.mock.calls).toHaveLength(callsBeforeTick)
   })
 
   it('declines to guess a rename when the server list changed ambiguously (two unmatched cameras on each side)', async () => {

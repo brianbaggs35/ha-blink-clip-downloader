@@ -65,6 +65,44 @@ test('the Escape key closes the keyboard shortcuts overlay', async ({ page }) =>
   await expect(page.locator('.modal-bg.open')).toHaveCount(0)
 })
 
+test('the connection badge shows Unknown while the first stats poll is still in flight', async ({ page }) => {
+  // connSeverity/connLabel/connIcon's `connection.connected === null` branch
+  // is the ref's initial value, before pollConnection()'s first getStats()
+  // call resolves -- normally too fast for any test to observe, so this
+  // delays that one response to make the transient state assertable. Never
+  // resolved: the point is just to observe the transient state itself, not
+  // the (already well-covered elsewhere) transition out of it.
+  await page.route('**/api/stats', async () => {
+    await new Promise(() => {})
+  })
+
+  await page.goto('/')
+  await expect(page.locator('.app-nav-conn-tag')).toContainText('Unknown')
+})
+
+test('enabling browser notifications shows a toast, and denied permission shows a different one', async ({
+  page,
+  context,
+}) => {
+  const toggle = page.getByRole('button', { name: 'Enable browser notifications' })
+
+  // Headless Chromium auto-resolves a permission request with no explicit
+  // grant to "denied" -- no CDP override needed for this branch.
+  await toggle.click()
+  await expect(page.getByText('Notification permission denied')).toBeVisible()
+  await expect(toggle).toBeVisible()
+
+  await context.grantPermissions(['notifications'])
+  await toggle.click()
+  await expect(page.getByText('Browser notifications enabled')).toBeVisible()
+  const onToggle = page.getByRole('button', { name: 'Notifications on' })
+  await expect(onToggle).toBeVisible()
+
+  await onToggle.click()
+  await expect(page.getByText('Notifications disabled')).toBeVisible()
+  await expect(toggle).toBeVisible()
+})
+
 test('typing ? into a text field does not open the keyboard shortcuts overlay', async ({ page }) => {
   // onKeydown excludes INPUT/TEXTAREA/SELECT/contenteditable specifically so
   // a real '?' keystroke while filtering the Library search box (or the
