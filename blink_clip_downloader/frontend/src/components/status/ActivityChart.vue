@@ -23,9 +23,11 @@ const days = computed<DayBar[]>(() => {
   // fallbacks are unreachable in practice, kept only for type narrowing
   // (Map#get's return type is always `T | undefined`).
   /* v8 ignore next */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
   const maxCount = Math.max(...dates.map((d) => byDate.get(d) ?? 0), 1)
   return dates.map((date) => {
     /* v8 ignore next */
+    /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
     const total = byDate.get(date) ?? 0
     const label = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
       weekday: 'short',

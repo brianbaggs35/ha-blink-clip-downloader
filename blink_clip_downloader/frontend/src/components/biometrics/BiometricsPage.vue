@@ -266,7 +266,10 @@ const groupedPeople = computed<PersonGroup[]>(() => {
       // the push right above `byName.set`), and FaceEnrollment.created_at
       // is a required string, so `.sort()[0]` is never actually undefined.
       /* v8 ignore next */
-      createdAt: rows.map((r) => r.created_at).sort()[0] ?? '',
+      createdAt:
+        /* istanbul ignore next -- see v8-ignore comment above; same dead branch */ rows
+          .map((r) => r.created_at)
+          .sort()[0] ?? '',
     }))
     .sort((a, b) => a.name.localeCompare(b.name))
 })

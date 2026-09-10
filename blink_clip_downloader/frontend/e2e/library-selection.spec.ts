@@ -31,6 +31,27 @@ test('sort order and date range selectors change which clips load', async ({ pag
   await expect(page.locator('.clip-card')).not.toHaveCount(0)
 })
 
+test('the Yesterday and This month date ranges both load without error', async ({ page }) => {
+  // "Yesterday" is the only date-range option with both a since *and* an
+  // until (a bounded single calendar day -- see untilDate() in
+  // LibraryPage.vue); "This month" exercises a different sinceDate() branch
+  // than "week" (the default). Deliberately not asserting a specific
+  // resulting count for "Yesterday": whether any of the seeded 0-11-hour-old
+  // distribution clips fall on yesterday's vs today's calendar date depends
+  // on what wall-clock time the suite happens to run at, the same
+  // timezone-dependent trap status.spec.ts's own "Today" counts are
+  // documented to avoid -- this only proves the request round-trips
+  // successfully, which is what exercises the branch either way.
+  await page.locator('#date-range').click()
+  await page.getByRole('option', { name: 'Yesterday' }).click()
+  await expect(page.locator('#clip-grid .p-progress-spinner')).toHaveCount(0)
+  await expect(page.getByText('Failed to load clips')).toHaveCount(0)
+
+  await page.locator('#date-range').click()
+  await page.getByRole('option', { name: 'This month' }).click()
+  await expect(page.locator('.clip-card')).not.toHaveCount(0)
+})
+
 test('selecting a clip checkbox enters select mode and shows a live count', async ({ page }) => {
   await expect(page.locator('#bulk-bar')).toHaveCount(0)
 
@@ -62,6 +83,28 @@ test('Select all selects every currently loaded clip', async ({ page }) => {
   await page.getByRole('button', { name: `Select all ${total}` }).click()
   await expect(page.locator('#sel-count')).toHaveText(`${total} selected`)
   await expect(page.locator('.clip-card.selected')).toHaveCount(total)
+
+  await page.getByRole('button', { name: '✕ Cancel' }).click()
+})
+
+test('bulk action buttons are no-ops with nothing selected', async ({ page }) => {
+  // None of BulkBar's own buttons are disabled based on count (only Select
+  // all is conditionally rendered) -- each bulk* handler in LibraryPage.vue
+  // guards itself instead (`if (!selectedIds.value.size) return`), reachable
+  // by clicking straight through them right after entering select mode.
+  await page.getByRole('button', { name: 'Select', exact: true }).click()
+  await expect(page.locator('#sel-count')).toHaveText('0 selected')
+
+  await page.getByRole('button', { name: '★ Star selected' }).click()
+  await page.getByRole('button', { name: '🗑 Delete selected' }).click()
+  await page.getByRole('button', { name: '⬇ ZIP' }).click()
+  await page.getByRole('button', { name: '🔬 Analyze selected' }).click()
+
+  // Still in select mode with nothing selected and no confirm dialog/toast
+  // from any of the above -- each one returned immediately.
+  await expect(page.locator('#bulk-bar')).toBeVisible()
+  await expect(page.locator('#sel-count')).toHaveText('0 selected')
+  await expect(page.locator('.p-dialog')).toHaveCount(0)
 
   await page.getByRole('button', { name: '✕ Cancel' }).click()
 })
@@ -127,6 +170,36 @@ test('bulk-analyzing selected clips runs a real analysis on each and reports how
   // AI panel test already exercises from a different entry point.
   await expect(page.getByText('Analyzed 2/2 clip(s)')).toBeVisible()
   await expect(page.locator('#bulk-bar')).toHaveCount(0)
+})
+
+test('declining the bulk delete or bulk analyze confirmation leaves the selection untouched', async ({ page }) => {
+  // Any clip works here -- declining never mutates anything, so this
+  // doesn't need one of the dedicated scratch/isolation clips the mutating
+  // tests above and below use.
+  const card = page.locator('.clip-card[data-id="e2e-clip-006"]')
+  await card.locator('.sel-check').click()
+
+  await page.getByRole('button', { name: '🗑 Delete selected' }).click()
+  await expect(page.getByText('Delete 1 clip(s) permanently?')).toBeVisible()
+  // exact: true -- BulkBar's own "✕ Cancel" button is still visible behind
+  // the confirm dialog, and a non-exact match matches both.
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.getByText('Delete 1 clip(s) permanently?')).toHaveCount(0)
+  await expect(card).toHaveClass(/selected/)
+  await expect(page.locator('#bulk-bar')).toBeVisible()
+
+  await page.getByRole('button', { name: '🔬 Analyze selected' }).click()
+  await expect(
+    page.getByText('Analyze 1 clip(s) with AI? This uses real API tokens and may take a while.'),
+  ).toBeVisible()
+  // exact: true -- BulkBar's own "✕ Cancel" button is still visible behind
+  // the confirm dialog, and a non-exact match matches both.
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.getByText(/Analyze 1 clip\(s\) with AI/)).toHaveCount(0)
+  await expect(card).toHaveClass(/selected/)
+  await expect(page.locator('#bulk-bar')).toBeVisible()
+
+  await page.getByRole('button', { name: '✕ Cancel' }).click()
 })
 
 test('bulk delete removes the selected clip after confirmation', async ({ page }) => {
