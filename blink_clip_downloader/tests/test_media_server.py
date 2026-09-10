@@ -92,7 +92,7 @@ def _make_analyzer(provider: str = "ollama", **overrides) -> MagicMock:
 @pytest.fixture
 async def client(
     db: ClipDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> AsyncGenerator[TestClient, None]:
+) -> AsyncGenerator[TestClient]:
     # Stand in for the Vue build's output (see vite.config.ts's outDir and
     # the Dockerfile's frontend-builder stage, neither of which run as part
     # of the Python test suite) so _handle_index/_handle_favicon and the
