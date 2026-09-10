@@ -434,6 +434,25 @@ _ANTHROPIC_FALLBACK_MODELS: list[str] = [
 _ANTHROPIC_DATED_SNAPSHOT_RE = re.compile(r"-\d{8}$")
 
 
+def _anthropic_supports_structured_output(model: str) -> bool:
+    """Whether *model* is a recognized Claude model generation that
+    supports schema-constrained ``output_config`` (see
+    :meth:`AnthropicAnalyzer._build_anthropic_create_kwargs`).
+
+    Structured outputs are documented as supported on Claude 4.5+
+    generation models, not older 3.x snapshots — verified live against
+    Anthropic's docs 2026-09-10, not assumed. Reuses
+    :data:`_ANTHROPIC_MODEL_PRICING`'s keys as the "recognized
+    current-generation model" allowlist rather than maintaining a
+    parallel list — every model in that table is already 4.5 or newer.
+    An unrecognized or older model id (e.g. a legacy pasted-in snapshot)
+    safely falls back to the existing prompt-only JSON instructions
+    instead of risking a request the API might reject.
+    """
+    lower = (model or "").lower()
+    return any(prefix in lower for prefix in _ANTHROPIC_MODEL_PRICING)
+
+
 def lookup_model_pricing(model: str) -> tuple[float, float] | None:
     """Best-effort (input, output) $/1M-token pricing lookup for *model*.
 
@@ -4819,6 +4838,32 @@ class AnthropicAnalyzer(BaseAnalyzer):
         except Exception as exc:  # noqa: BLE001
             return self._handle_anthropic_error(_anthropic, exc)
 
+    def _prompt_cache_prefix(self) -> str:
+        """The camera-scoped static portion of the analysis prompt (base
+        prompt + camera context) — mirrors the first two segments
+        ``BaseAnalyzer._build_prompt`` unconditionally appends before any
+        per-clip content, so this reconstructs (not re-derives from a
+        shared call) exactly the same text.
+
+        ``_call_model``/``_build_anthropic_create_kwargs`` only ever see
+        the already-flattened prompt string ``_build_prompt`` returns, not
+        the per-clip parameters that built it — restructuring that shared
+        signature so every provider's ``_call_model`` could receive the
+        pieces separately would touch all 6 providers' request-building
+        for a benefit only this one can use. Reconstructing the known-
+        static prefix here instead keeps prompt caching entirely
+        contained to Anthropic's own request construction, at the cost of
+        only being able to cache this leading portion (not the
+        car-protection/output-rules segments further down the prompt,
+        which aren't contiguous with it) — still typically the largest
+        single static block, since it's the full configured/per-camera
+        ``ai_prompt`` text.
+        """
+        camera = getattr(self, "_current_camera", "")
+        return self._camera_prompts.get(
+            camera, self._base_prompt
+        ) + self._camera_context_segment(camera)
+
     def _build_anthropic_create_kwargs(
         self, frames: list[bytes], prompt: str
     ) -> dict[str, Any]:
@@ -4834,17 +4879,61 @@ class AnthropicAnalyzer(BaseAnalyzer):
             }
             for frame in resized
         ]
-        content.append({"type": "text", "text": prompt})
+
+        # Prompt caching: when the given prompt actually starts with the
+        # reconstructed static prefix (it always will in real use — see
+        # _prompt_cache_prefix's docstring for why this can't be verified
+        # more directly — but a test double or an unexpected future prompt
+        # shape safely falls through to today's single uncached block),
+        # split it into a cached prefix block and an uncached per-clip
+        # remainder instead of one flat block. Anthropic's server-side
+        # ephemeral cache is keyed on the exact byte sequence up to a
+        # cache_control breakpoint, so repeat analyses on the same camera
+        # reuse it at a fraction of the input-token cost — multiple text
+        # blocks in one content array read as simple concatenation, so
+        # this changes nothing about what the model actually sees.
+        cache_prefix = self._prompt_cache_prefix()
+        if (
+            cache_prefix
+            and prompt.startswith(cache_prefix)
+            and len(cache_prefix) < len(prompt)
+        ):
+            content.append(
+                {
+                    "type": "text",
+                    "text": cache_prefix,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            )
+            content.append({"type": "text", "text": prompt[len(cache_prefix) :]})
+        else:
+            content.append({"type": "text", "text": prompt})
 
         # System prompt keeps the role and output format instructions
         # separate from user content, improving JSON compliance and
         # preventing the model from leaking internal analysis terms.
-        return {
+        kwargs: dict[str, Any] = {
             "model": self._model,
             "max_tokens": 512,
             "system": _VISION_SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": content}],
         }
+        # Schema-constrained structured output (see
+        # _anthropic_supports_structured_output) — the same reliability
+        # benefit _OPENAI_STRUCTURED_OUTPUT_SCHEMA already gives OpenAI,
+        # reusing its exact schema (Anthropic's output_config.format takes
+        # just the schema, not OpenAI's separate name/strict fields).
+        # parse_response()'s existing JSON parsing stays the shared path
+        # either way — this only makes malformed/truncated output far less
+        # likely on models that support it, never a required contract.
+        if _anthropic_supports_structured_output(self._model):
+            kwargs["output_config"] = {
+                "format": {
+                    "type": "json_schema",
+                    "schema": _OPENAI_STRUCTURED_OUTPUT_SCHEMA["schema"],
+                }
+            }
+        return kwargs
 
     def _extract_anthropic_response_text(self, response: Any) -> str:
         if response.usage:
