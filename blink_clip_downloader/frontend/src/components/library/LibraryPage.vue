@@ -47,6 +47,7 @@ const SOURCE_OPTIONS = [
   { label: 'Motion (PIR)', value: 'pir' },
   { label: 'Liveview', value: 'liveview' },
   { label: 'Snapshot', value: 'snapshot' },
+  { label: 'Local Storage', value: 'local_storage' },
 ]
 const SORT_OPTIONS = [
   { label: '⬆ Newest', value: 'newest' },

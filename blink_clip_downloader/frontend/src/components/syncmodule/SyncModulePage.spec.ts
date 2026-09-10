@@ -978,4 +978,113 @@ describe('SyncModulePage', () => {
     expect(wrapper.text()).toContain('1 of 1 camera armed')
     expect(wrapper.text()).not.toContain('1 of 1 cameras armed')
   })
+
+  describe('local storage clips', () => {
+    function clip(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'c1',
+        camera: 'Front Door',
+        file_path: '/data/clips/front.mp4',
+        timestamp: '2026-01-05T10:00:00Z',
+        size_bytes: 5_000_000,
+        duration: 65,
+        source: 'local_storage',
+        network_id: 1,
+        starred: false,
+        tags: [],
+        downloaded_at: '2026-01-05T10:01:00Z',
+        archived: false,
+        archive_path: '',
+        gdrive_backed_up: false,
+        gdrive_file_id: '',
+        gdrive_uploaded_at: '',
+        notified: false,
+        face_recognized: false,
+        ...overrides,
+      }
+    }
+
+    it('never requests clips when no module has local storage active', async () => {
+      const fetchMock = routedFetch(() => Promise.resolve(jsonResponse([makeModule({ local_storage: false })])))
+      vi.stubGlobal('fetch', fetchMock)
+      mountPage()
+      await flushPromises()
+      expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('/api/clips'))).toBe(false)
+    })
+
+    it('fetches local-storage clips once local storage is active, and passes each module only its own cameras', async () => {
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url) => {
+          if (url === '/api/sync-modules') return Promise.resolve(jsonResponse([makeModule({ local_storage: true })]))
+          if (url === '/api/clips?source=local_storage') {
+            return Promise.resolve(
+              jsonResponse([clip({ id: 'c1', camera: 'Front Door' }), clip({ id: 'c2', camera: 'Someone Elses Cam' })]),
+            )
+          }
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+
+      const card = wrapper.findComponent(SyncModuleCard)
+      const clips = card.props('localStorageClips') as { id: string }[]
+      expect(clips.map((c) => c.id)).toEqual(['c1'])
+    })
+
+    it('opens the clip in the Library tab via the clipViewer bridge when a clip is clicked', async () => {
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url) => {
+          if (url === '/api/sync-modules') return Promise.resolve(jsonResponse([makeModule({ local_storage: true })]))
+          if (url === '/api/clips?source=local_storage') return Promise.resolve(jsonResponse([clip()]))
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+
+      const { useClipViewerStore } = await import('../../stores/clipViewer')
+      const clipViewer = useClipViewerStore()
+      wrapper.findComponent(SyncModuleCard).vm.$emit('clip-click', clip())
+      expect(clipViewer.clipId).toBe('c1')
+    })
+
+    it('re-fetches local-storage clips on a refresh.tick, alongside the module list', async () => {
+      let clipsCallCount = 0
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url) => {
+          if (url === '/api/sync-modules') return Promise.resolve(jsonResponse([makeModule({ local_storage: true })]))
+          if (url === '/api/clips?source=local_storage') {
+            clipsCallCount++
+            return Promise.resolve(jsonResponse([clip()]))
+          }
+          return undefined
+        }),
+      )
+      mountPage()
+      await flushPromises()
+      expect(clipsCallCount).toBe(1)
+
+      useRefreshStore().bump()
+      await flushPromises()
+      expect(clipsCallCount).toBe(2)
+    })
+
+    it('leaves the clip list empty (not broken) when the clips request fails', async () => {
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url) => {
+          if (url === '/api/sync-modules') return Promise.resolve(jsonResponse([makeModule({ local_storage: true })]))
+          if (url === '/api/clips?source=local_storage') return Promise.reject(new Error('down'))
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+      expect(wrapper.findComponent(SyncModuleCard).props('localStorageClips')).toEqual([])
+    })
+  })
 })

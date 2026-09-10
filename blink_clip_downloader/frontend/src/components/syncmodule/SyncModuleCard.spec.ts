@@ -3,7 +3,29 @@ import { mount } from '@vue/test-utils'
 import PrimeVue from 'primevue/config'
 import SyncModuleCard from './SyncModuleCard.vue'
 import SyncModuleCameraCard from './SyncModuleCameraCard.vue'
-import type { SyncModuleInfo } from '../../api/types'
+import ClipCard from '../library/ClipCard.vue'
+import type { ClipListItem, SyncModuleInfo } from '../../api/types'
+
+const CLIP: ClipListItem = {
+  id: 'c1',
+  camera: 'Front Door',
+  file_path: '/data/clips/front.mp4',
+  timestamp: '2026-01-05T10:00:00Z',
+  size_bytes: 5_000_000,
+  duration: 65,
+  source: 'local_storage',
+  network_id: 1,
+  starred: false,
+  tags: [],
+  downloaded_at: '2026-01-05T10:01:00Z',
+  archived: false,
+  archive_path: '',
+  gdrive_backed_up: false,
+  gdrive_file_id: '',
+  gdrive_uploaded_at: '',
+  notified: false,
+  face_recognized: false,
+}
 
 function makeModule(overrides: Partial<SyncModuleInfo> = {}): SyncModuleInfo {
   return {
@@ -31,9 +53,14 @@ function makeModule(overrides: Partial<SyncModuleInfo> = {}): SyncModuleInfo {
   }
 }
 
-function mountCard(module: SyncModuleInfo, pending = false, pendingCameras = new Set<string>()) {
+function mountCard(
+  module: SyncModuleInfo,
+  pending = false,
+  pendingCameras = new Set<string>(),
+  localStorageClips: ClipListItem[] = [],
+) {
   return mount(SyncModuleCard, {
-    props: { module, pending, pendingCameras },
+    props: { module, pending, pendingCameras, localStorageClips },
     global: { plugins: [PrimeVue] },
   })
 }
@@ -153,5 +180,35 @@ describe('SyncModuleCard', () => {
     const cards = wrapper.findAllComponents(SyncModuleCameraCard)
     expect(cards[0]!.props('pending')).toBe(false)
     expect(cards[1]!.props('pending')).toBe(true)
+  })
+
+  describe('local storage clips panel', () => {
+    it('is not rendered at all when the module has no local storage', () => {
+      const wrapper = mountCard(makeModule({ local_storage: false }))
+      expect(wrapper.findComponent({ name: 'Panel' }).exists()).toBe(false)
+    })
+
+    it('shows an empty-state hint mentioning the config option when there are no clips yet', () => {
+      const wrapper = mountCard(makeModule({ local_storage: true }), false, new Set(), [])
+      expect(wrapper.text()).toContain('Local Storage Clips (0)')
+      expect(wrapper.text()).toContain('No local-storage clips found yet')
+      expect(wrapper.text()).toContain('download_local_storage')
+      expect(wrapper.findComponent(ClipCard).exists()).toBe(false)
+    })
+
+    it('renders one non-selectable ClipCard per clip, with the count in the header', () => {
+      const clips = [CLIP, { ...CLIP, id: 'c2', camera: 'Backyard' }]
+      const wrapper = mountCard(makeModule({ local_storage: true }), false, new Set(), clips)
+      expect(wrapper.text()).toContain('Local Storage Clips (2)')
+      const cards = wrapper.findAllComponents(ClipCard)
+      expect(cards).toHaveLength(2)
+      expect(cards[0]!.props('selectable')).toBe(false)
+    })
+
+    it('emits clip-click with the clip when a card is clicked', async () => {
+      const wrapper = mountCard(makeModule({ local_storage: true }), false, new Set(), [CLIP])
+      await wrapper.findComponent(ClipCard).vm.$emit('click')
+      expect(wrapper.emitted('clip-click')).toEqual([[CLIP]])
+    })
   })
 })

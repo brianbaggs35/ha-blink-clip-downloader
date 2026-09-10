@@ -1,19 +1,23 @@
 <script setup lang="ts">
 import Card from 'primevue/card'
+import Panel from 'primevue/panel'
 import ProgressSpinner from 'primevue/progressspinner'
 import Tag from 'primevue/tag'
 import ToggleSwitch from 'primevue/toggleswitch'
-import type { SyncModuleInfo } from '../../api/types'
+import ClipCard from '../library/ClipCard.vue'
+import type { ClipListItem, SyncModuleInfo } from '../../api/types'
 import SyncModuleCameraCard from './SyncModuleCameraCard.vue'
 
 defineProps<{
   module: SyncModuleInfo
   pending: boolean
   pendingCameras: Set<string>
+  localStorageClips: ClipListItem[]
 }>()
 const emit = defineEmits<{
   'toggle-module': [armed: boolean]
   'toggle-camera': [camera: string, armed: boolean]
+  'clip-click': [clip: ClipListItem]
 }>()
 </script>
 
@@ -63,6 +67,29 @@ const emit = defineEmits<{
           @update:armed="(armed) => emit('toggle-camera', cam.name, armed)"
         />
       </div>
+
+      <Panel
+        v-if="module.local_storage"
+        :header="`Local Storage Clips (${localStorageClips.length})`"
+        toggleable
+        collapsed
+        class="sm-local-storage-panel"
+      >
+        <p v-if="!localStorageClips.length" class="muted-note">
+          No local-storage clips found yet. Make sure the add-on's <code>download_local_storage</code> Configuration
+          option is enabled if this Sync Module has USB storage you'd like to sync.
+        </p>
+        <div v-else class="clip-grid">
+          <ClipCard
+            v-for="clip in localStorageClips"
+            :key="clip.id"
+            :clip="clip"
+            :selected="false"
+            :selectable="false"
+            @click="emit('clip-click', clip)"
+          />
+        </div>
+      </Panel>
     </template>
   </Card>
 </template>
@@ -137,5 +164,9 @@ const emit = defineEmits<{
 .muted-note {
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.sm-local-storage-panel {
+  margin-top: 1rem;
 }
 </style>
