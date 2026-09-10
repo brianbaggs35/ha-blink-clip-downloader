@@ -101,7 +101,7 @@ describe('CameraConfigsSection', () => {
 
     useRefreshStore().bump()
     await flushPromises()
-    expect(fetchMock.mock.calls.length).toBe(callsBeforeTick)
+    expect(fetchMock.mock.calls).toHaveLength(callsBeforeTick)
   })
 
   it('falls back to the local auto_analyze preference when the server omits it', async () => {

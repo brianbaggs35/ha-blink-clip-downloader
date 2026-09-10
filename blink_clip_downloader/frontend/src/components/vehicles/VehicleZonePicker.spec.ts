@@ -811,6 +811,7 @@ describe('VehicleZonePicker', () => {
       wrapper.unmount()
       await loadPromise
       await flushPromises()
+      expect(wrapper.exists()).toBe(false)
     })
   })
 })

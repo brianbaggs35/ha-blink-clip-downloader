@@ -2149,10 +2149,18 @@ class MediaServer:
 
         return web.json_response({"saved": True})
 
-    async def _handle_sync_modules_get(self, _request: web.Request) -> web.Response:
+    async def _handle_sync_modules_get(  # NOSONAR
+        self, _request: web.Request
+    ) -> web.Response:
         """Every sync module on the account, with its own info/armed state
         and each of its cameras' armed/online/battery state — the Sync
         Module tab's one and only read endpoint.
+
+        No `await` here: `_get_sync_module_snapshot` just reads blinkpy's
+        already-cached in-memory state (kept fresh by the regular poll
+        cycle's `refresh_camera_state()`, not by this endpoint), so there's
+        genuinely nothing to await. `async def` is required anyway — aiohttp
+        rejects a plain sync callable as a route handler.
         """
         if self._get_sync_module_snapshot is None:
             return web.json_response([])

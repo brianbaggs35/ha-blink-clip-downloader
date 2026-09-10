@@ -230,7 +230,7 @@ describe('GoogleDriveCard', () => {
     const callsBeforeTick = fetchMock.mock.calls.length
     await vi.advanceTimersByTimeAsync(3000)
     await flushPromises()
-    expect(fetchMock.mock.calls.length).toBe(callsBeforeTick)
+    expect(fetchMock.mock.calls).toHaveLength(callsBeforeTick)
   })
 
   it('resumes polling on mount if a connect was already in flight', async () => {

@@ -101,7 +101,7 @@ describe('VehiclesPage', () => {
     useRefreshStore().bump()
     await flushPromises()
 
-    expect(vi.mocked(fetch).mock.calls.length).toBe(callsBeforeTick)
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBeforeTick)
     expect(wrapper.find('.vehicle-zone-picker').exists()).toBe(true)
   })
 

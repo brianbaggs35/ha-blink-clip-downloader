@@ -134,6 +134,15 @@
   the same request-sequencing pattern already used everywhere else in the
   app that loads a list asynchronously.
 
+### Code Quality
+
+- Addressed a SonarCloud pre-release pass on this release's PR: a Sync
+  Module read endpoint marked `async` for aiohttp's routing contract but
+  with nothing to actually await (documented rather than silenced
+  incorrectly), a test with no assertion, and four tests using a generic
+  `.length`-based equality check instead of Vitest's dedicated
+  `toHaveLength()` matcher. No user-facing behavior changes.
+
 ## 5.4.9
 
 ### Bug Fixes
