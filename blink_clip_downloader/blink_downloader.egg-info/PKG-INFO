@@ -14,7 +14,7 @@ Requires-Dist: aiosmtplib>=5.1.3
 Requires-Dist: Pillow>=12.3.0
 Requires-Dist: anthropic>=1.4.0
 Requires-Dist: openai>=3.11.0
-Requires-Dist: numpy>=2.5.2
+Requires-Dist: numpy>=2.5.3
 Provides-Extra: test
 Requires-Dist: pytest>=9.1.1; extra == "test"
 Requires-Dist: pytest-asyncio>=1.4.0; extra == "test"

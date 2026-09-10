@@ -19,7 +19,7 @@ dependencies = [
     "Pillow>=12.3.0",
     "anthropic>=1.4.0",
     "openai>=3.11.0",
-    "numpy>=2.5.2",
+    "numpy>=2.5.3",
 ]
 
 [project.optional-dependencies]
