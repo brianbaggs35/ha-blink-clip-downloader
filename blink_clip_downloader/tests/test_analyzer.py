@@ -1783,6 +1783,27 @@ def test_anthropic_model_pricing_opus() -> None:
     assert out == 25.00
 
 
+def test_anthropic_model_pricing_opus_5() -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-opus-5", prompt="test")
+    inp, out = a.model_pricing()
+    assert inp == 5.00
+    assert out == 25.00
+
+
+def test_anthropic_model_pricing_fable_and_mythos_dotted_releases() -> None:
+    """claude-fable-5 is itself a substring of claude-fable-5-1 (same for
+    mythos) — the dotted release must be listed first in
+    _ANTHROPIC_MODEL_PRICING or lookup would silently match the older,
+    shorter entry instead. Both happen to be priced the same today, so this
+    only catches a real bug once the two prices diverge — assert against
+    the model actually requested, not just a price that happens to match
+    either way."""
+    fable = AnthropicAnalyzer(api_key="key", model="claude-fable-5-1", prompt="test")
+    assert fable.model_pricing() == (10.00, 50.00)
+    mythos = AnthropicAnalyzer(api_key="key", model="claude-mythos-5-1", prompt="test")
+    assert mythos.model_pricing() == (10.00, 50.00)
+
+
 def test_anthropic_model_pricing_sonnet() -> None:
     a = AnthropicAnalyzer(api_key="key", model="claude-sonnet-4-6", prompt="test")
     inp, out = a.model_pricing()
@@ -2756,6 +2777,9 @@ def test_openai_model_default() -> None:
         ("gpt-5.4-mini", 0.75, 4.50),
         ("gpt-5.4-nano", 0.20, 1.25),
         ("gpt-5.5", 5.00, 30.00),
+        ("gpt-5.6-sol", 4.00, 20.00),
+        ("gpt-5.6-terra", 2.00, 12.00),
+        ("gpt-5.6-luna", 0.20, 1.20),
     ],
 )
 def test_openai_model_pricing(
@@ -2816,6 +2840,9 @@ def test_is_openai_vision_model_gpt5_family() -> None:
     assert is_openai_vision_model("gpt-5.4-mini") is True
     assert is_openai_vision_model("gpt-5.4-nano") is True
     assert is_openai_vision_model("gpt-5.5") is True
+    assert is_openai_vision_model("gpt-5.6-sol") is True
+    assert is_openai_vision_model("gpt-5.6-terra") is True
+    assert is_openai_vision_model("gpt-5.6-luna") is True
 
 
 def test_is_openai_vision_model_excludes_pro_suffix() -> None:
@@ -3016,8 +3043,8 @@ async def test_openai_fetch_models_sorted_newest_first(
 def test_openai_model_rank_unknown_model_sorts_last() -> None:
     """A model id this add-on doesn't recognize yet must rank after every
     known model rather than raising or sorting first."""
-    assert _openai_model_rank("gpt-5.6") == len(_OPENAI_MODEL_DISPLAY_ORDER)
-    assert _openai_model_rank("gpt-4-turbo") < _openai_model_rank("gpt-5.6")
+    assert _openai_model_rank("gpt-5.7") == len(_OPENAI_MODEL_DISPLAY_ORDER)
+    assert _openai_model_rank("gpt-4-turbo") < _openai_model_rank("gpt-5.7")
 
 
 async def test_openai_fetch_models_unknown_model_sorts_after_known_ones(
@@ -3028,7 +3055,10 @@ async def test_openai_fetch_models_unknown_model_sorts_after_known_ones(
     known = MagicMock()
     known.id = "gpt-4-turbo"
     unknown = MagicMock()
-    unknown.id = "gpt-5.6"  # not yet in _OPENAI_MODEL_DISPLAY_ORDER
+    # Vision-prefixed (contains "gpt-5", passes is_openai_vision_model) but
+    # not an exact entry in _OPENAI_MODEL_DISPLAY_ORDER, so it still shows
+    # up in results while ranking last.
+    unknown.id = "gpt-5.7"
 
     mock_mod = _make_openai_module(models_data=[unknown, known])
     monkeypatch.setitem(sys.modules, "openai", mock_mod)
@@ -3038,7 +3068,7 @@ async def test_openai_fetch_models_unknown_model_sorts_after_known_ones(
     with patch.dict(sys.modules, {"openai": mock_mod}):
         models = await a.fetch_models()
 
-    assert [m["name"] for m in models] == ["gpt-4-turbo", "gpt-5.6"]
+    assert [m["name"] for m in models] == ["gpt-4-turbo", "gpt-5.7"]
 
 
 async def test_openai_fetch_models_excludes_dated_snapshots(
@@ -3080,7 +3110,7 @@ async def test_openai_fetch_models_entries_are_bare_ids() -> None:
 def test_openai_fallback_models_newest_first() -> None:
     """gpt-4-turbo (oldest) must be last, not first — see
     test_openai_fetch_models_sorted_newest_first for the live-API version."""
-    assert _OPENAI_FALLBACK_MODELS[0] == "gpt-5.5"
+    assert _OPENAI_FALLBACK_MODELS[0] == "gpt-5.6-sol"
     assert _OPENAI_FALLBACK_MODELS[-1] == "gpt-4-turbo"
 
 

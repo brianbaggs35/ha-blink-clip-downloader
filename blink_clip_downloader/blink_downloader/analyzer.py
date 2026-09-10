@@ -238,6 +238,13 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     "o1": (15.00, 60.00),
     "o3": (2.00, 8.00),
     "gpt-4-turbo": (10.00, 30.00),
+    # GPT-5.6 (released 2026-07-09): three tiers — Sol (flagship), Terra
+    # (mid), Luna (budget) — replacing the old size-suffix naming. Prices
+    # verified live against the pricing page 2026-09-10, post the 2026-07-30
+    # Luna/Terra price cuts.
+    "gpt-5.6-sol": (4.00, 20.00),
+    "gpt-5.6-terra": (2.00, 12.00),
+    "gpt-5.6-luna": (0.20, 1.20),
     "gpt-5.4-nano": (0.20, 1.25),  # NOSONAR
     "gpt-5.4-mini": (0.75, 4.50),  # NOSONAR
     "gpt-5-nano": (0.05, 0.40),
@@ -302,6 +309,9 @@ _OPENAI_STRUCTURED_OUTPUT_SCHEMA: dict[str, Any] = {
 # purely because '-' sorts before '.' in ASCII, which looked like a
 # recommendation for the oldest, most expensive model in the lineup.
 _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
@@ -328,6 +338,9 @@ _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
 # model ids a user needs to paste into the add-on's Configuration tab, in
 # the same newest-to-oldest order as _OPENAI_MODEL_DISPLAY_ORDER above.
 _OPENAI_FALLBACK_MODELS: list[str] = [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
@@ -377,14 +390,25 @@ def is_openai_vision_model(model_id: str) -> bool:
 # Anthropic model pricing: (input_$/1M_tokens, output_$/1M_tokens)
 # Source: https://platform.claude.com/docs/en/about-claude/pricing
 _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    # More specific ids before their shorter prefix (same convention as
+    # _OPENAI_MODEL_PRICING above) — "claude-fable-5" is itself a substring
+    # of "claude-fable-5-1", so the dotted release must be listed first or
+    # lookup_model_pricing() would silently match the older entry instead.
+    "claude-fable-5-1": (10.00, 50.00),
+    "claude-mythos-5-1": (10.00, 50.00),
     "claude-fable-5": (10.00, 50.00),
     "claude-mythos-5": (10.00, 50.00),
+    "claude-opus-5": (5.00, 25.00),
     "claude-opus-4-8": (5.00, 25.00),
     "claude-opus-4-7": (5.00, 25.00),
     "claude-opus-4-6": (5.00, 25.00),
     "claude-opus-4-5": (5.00, 25.00),
-    # Rate through 2026-08-31; rises to (3.00, 15.00) on 2026-09-01 per the
-    # pricing page above — bump this when that date arrives.
+    # $2/$10 was announced at launch as introductory pricing through
+    # 2026-08-31, originally scheduled to rise to $3/$15 on 2026-09-01 —
+    # Anthropic since cancelled that increase and made $2/$10 the permanent
+    # standard price instead (see the pricing page's own note on this).
+    # Verified live against the pricing page 2026-09-10; the number below
+    # was already correct, only this comment was stale.
     "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4-5": (3.00, 15.00),
@@ -394,7 +418,7 @@ _ANTHROPIC_MODEL_PRICING: dict[str, tuple[float, float]] = {
 # Fallback model list when the Anthropic API cannot be reached — just the
 # bare model ids a user needs to paste into the add-on's Configuration tab.
 _ANTHROPIC_FALLBACK_MODELS: list[str] = [
-    "claude-opus-4-8",
+    "claude-opus-5",
     "claude-sonnet-5",
     "claude-sonnet-4-6",
     "claude-sonnet-4-5",
