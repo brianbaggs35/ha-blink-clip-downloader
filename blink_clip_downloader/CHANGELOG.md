@@ -2,6 +2,10 @@
 
 ## 5.5.2
 
+### Dependency Updates
+
+- Updated eslint-plugin-vue to 10.11.0
+
 ### Bug Fixes
 
 - Fixed Live View reliably failing with a browser-level "the media could not
