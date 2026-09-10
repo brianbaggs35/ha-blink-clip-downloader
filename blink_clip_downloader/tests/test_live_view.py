@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -974,6 +976,98 @@ async def test_ffmpeg_crash_error_survives_one_full_sweep_tick_before_teardown(
     await mgr._sweep_once()
     assert mgr.get_status().active is False
     assert not hls_dir.exists()
+
+
+async def test_ffmpeg_exit_finalizes_the_playlist_for_a_still_buffering_player(
+    camera_registry: dict[str, Any],
+) -> None:
+    """Regression test: when ffmpeg exits (crash or a clean, expected end --
+    Blink's own live-view sessions run for a limited duration regardless of
+    anything this add-on controls, so an "unexpected" exit here is the
+    normal way a healthy session ends too), the manifest it left behind
+    must gain a terminal #EXT-X-ENDLIST. Without it, a browser player still
+    watching has no way to tell "buffering, more is coming" from "this is
+    over" -- it keeps re-requesting a next segment that will never arrive
+    until Video.js gives up and raises a generic "the media could not be
+    loaded" error, even though the recording itself completed successfully
+    (see _finalize_playlist's own docstring for the full mechanism)."""
+    camera_registry["Front Door"] = _make_camera()
+    proc = _FakeProcess()
+    mgr = LiveViewManager(
+        get_camera=_get_camera_from(camera_registry),
+        list_camera_names=lambda: list(camera_registry),
+        idle_timeout=999,
+        max_session_duration=999,
+        startup_timeout=999,
+    )
+    with _mock_exec(proc):
+        status = await mgr.start_session("Front Door")
+    assert status.session_id
+    hls_dir = mgr.get_hls_dir(status.session_id)
+    assert hls_dir is not None
+
+    # A live, healthy manifest -- omit_endlist means ffmpeg never writes
+    # this tag itself while the session is still healthy.
+    (hls_dir / "seg_00000.ts").write_bytes(b"segment")
+    (hls_dir / "stream.m3u8").write_text("#EXTM3U\n#EXTINF:2.0,\nseg_00000.ts\n")
+
+    proc.crash(code=0)  # a clean exit code -- Blink's side just stopped sending
+    await asyncio.sleep(0.05)  # let _watch_ffmpeg observe the exit
+
+    manifest_text = (hls_dir / "stream.m3u8").read_text()
+    assert "#EXT-X-ENDLIST" in manifest_text
+    # The original content is preserved (appended to), not replaced.
+    assert "seg_00000.ts" in manifest_text
+
+    await mgr.stop_session(status.session_id)
+
+
+async def test_finalize_playlist_is_idempotent_and_tolerates_a_missing_manifest(
+    tmp_path: Path,
+) -> None:
+    """Calling it twice must not duplicate the tag, and a manifest that was
+    never written (ffmpeg crashed before producing anything) must not
+    raise -- both real paths _watch_ffmpeg can reach it from."""
+    await LiveViewManager._finalize_playlist(tmp_path)  # no manifest at all
+    assert not (tmp_path / "stream.m3u8").exists()
+
+    (tmp_path / "stream.m3u8").write_text("#EXTM3U\n#EXTINF:2.0,\nseg_00000.ts\n")
+    await LiveViewManager._finalize_playlist(tmp_path)
+    await LiveViewManager._finalize_playlist(tmp_path)
+
+    text = (tmp_path / "stream.m3u8").read_text()
+    assert text.count("#EXT-X-ENDLIST") == 1
+
+
+async def test_finalize_playlist_adds_a_newline_before_the_tag_if_missing(
+    tmp_path: Path,
+) -> None:
+    """ffmpeg always writes a trailing newline in practice, but the append
+    must not glue the tag onto the same line as whatever came before it if
+    it ever doesn't."""
+    (tmp_path / "stream.m3u8").write_text("#EXTM3U\n#EXTINF:2.0,\nseg_00000.ts")
+
+    await LiveViewManager._finalize_playlist(tmp_path)
+
+    lines = (tmp_path / "stream.m3u8").read_text().splitlines()
+    assert lines[-2] == "seg_00000.ts"
+    assert lines[-1] == "#EXT-X-ENDLIST"
+
+
+async def test_finalize_playlist_tolerates_a_write_failure(tmp_path: Path) -> None:
+    """A permission error (or anything else) writing the finalized manifest
+    back out must not raise -- this runs from _watch_ffmpeg, which has
+    nothing useful to do with that failure beyond leaving the stream as
+    still-technically-live, no worse than before this fix existed."""
+    playlist = tmp_path / "stream.m3u8"
+    playlist.write_text("#EXTM3U\n#EXTINF:2.0,\nseg_00000.ts\n")
+    os.chmod(playlist, 0o444)  # read-only
+    try:
+        await LiveViewManager._finalize_playlist(tmp_path)
+    finally:
+        os.chmod(playlist, 0o644)  # restore so tmp_path cleanup can remove it
+
+    assert "#EXT-X-ENDLIST" not in playlist.read_text()
 
 
 async def test_sweep_once_noop_when_nothing_active(manager: LiveViewManager) -> None:

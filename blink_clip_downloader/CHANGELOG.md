@@ -4,6 +4,25 @@
 
 ### Bug Fixes
 
+- Fixed Live View reliably failing with a browser-level "the media could not
+  be loaded, either because the server or network failed or because the
+  format is not supported" error, even when the underlying stream itself
+  was actually working (confirmed by a real, playable clip — source
+  `liveview` — still landing in the library from the same session). Root
+  cause: ffmpeg is run with the `omit_endlist` HLS flag so Video.js treats
+  a *healthy* session as genuinely live, but that also means the manifest
+  it writes never gains a terminal `#EXT-X-ENDLIST` tag on its own —
+  including when the relay ends for an entirely mundane reason, since
+  Blink's own live-view sessions run for a limited duration regardless of
+  anything this add-on controls, and blinkpy's relay just stops delivering
+  bytes once Blink's side closes the connection. A browser still watching
+  had no way to tell "buffering, more is coming" from "this is over": it
+  kept re-requesting a next segment that would never arrive until Video.js
+  gave up with that generic error, even though the recording itself had
+  completed successfully. `live_view.py`'s `_watch_ffmpeg` now appends the
+  end-of-stream marker to the manifest itself once ffmpeg has fully exited
+  (whether from a genuine crash or the upstream simply ending), so any
+  player still buffering finishes cleanly instead.
 - Silenced a confusing blinkpy log line (`blinkpy.blinkpy: network = {...}`,
   logged once per connect/reconnect) that dumps the raw response of Blink's
   own cloud "camera/usage" API at INFO level. Despite the name, these
