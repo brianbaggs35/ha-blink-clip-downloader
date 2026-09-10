@@ -21,7 +21,7 @@ Before architectural changes, inspect existing code/tests.
 * Do not remove, weaken, or bypass tests to make changes pass.
 * Do not upgrade unrelated dependencies.
 * Preserve Home Assistant compatibility and amd64/aarch64 support.
-* Python 3.12 is the project baseline; do not raise the minimum version for unrelated work.
+* Python 3.13 is the project baseline; do not raise the minimum version for unrelated work.
 * Do not use semicolons at the end of lines.
 * Add focused tests for behavioral changes.
 * When uncertain, inspect the repository rather than guessing.
@@ -225,7 +225,7 @@ scripts/run-act.sh
 
 for locally compatible GitHub Actions jobs.
 
-The script limits local CI to **Python 3.12 and AMD64**, since native GitHub ARM runners are unavailable locally, and excludes integrations requiring GitHub services.
+The script limits local CI to **Python 3.13 and AMD64**, since native GitHub ARM runners are unavailable locally, and excludes integrations requiring GitHub services.
 
 It selects a free host port, rewrites the temporary PostgreSQL service mapping, passes matching DSNs to test steps, and cleans up the temporary workflow. ONLY use act if I ask for it!!!
 

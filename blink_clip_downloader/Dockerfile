@@ -172,7 +172,7 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 # add-on still builds and runs — the affected config toggles simply report
 # themselves unavailable at runtime (see vision.py's is_*_available() checks).
 RUN ( \
-        pip3 install --no-cache-dir "torch>=2.4,<3" "torchvision>=0.19,<1" \
+        pip3 install --no-cache-dir "torch>=2.14,<3" "torchvision>=0.29,<1" \
             --index-url https://download.pytorch.org/whl/cpu \
         # torch's own install pulls in a pinned, older setuptools/wheel as a
         # transitive build dependency (visible via `pip show`, not declared
