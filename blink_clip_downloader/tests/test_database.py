@@ -1855,6 +1855,29 @@ async def test_enqueue_and_get_pending(db: ClipDatabase) -> None:
     assert len(pending) == 1
     assert pending[0]["clip_id"] == "c1"
     assert pending[0]["status"] == "pending"
+    assert pending[0]["retry_count"] == 0
+
+
+async def test_requeue_for_retry(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await db.update_queue_status("c1", "processing")
+
+    await db.requeue_for_retry("c1", retry_count=1, error="connection reset")
+
+    counts = await db.get_queue_counts()
+    assert counts["pending"] == 1
+    assert counts["processing"] == 0
+    pending = await db.get_pending_analysis()
+    assert pending[0]["retry_count"] == 1
+    assert pending[0]["error_message"] == "connection reset"
+    # Requeuing must not mark the clip completed - it hasn't finished.
+    assert pending[0]["completed_at"] == ""
+
+
+async def test_requeue_for_retry_without_init() -> None:
+    d = ClipDatabase()
+    await d.requeue_for_retry("c1", retry_count=1)  # must not raise
 
 
 async def test_enqueue_duplicate_ignored(db: ClipDatabase) -> None:

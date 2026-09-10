@@ -594,6 +594,12 @@ class BaseAnalyzer(abc.ABC):
         # re-attempting each remaining clip, all doomed to hit the same
         # limit. Reset to False at the start of each analyze_clip() call.
         self._last_rate_limited: bool = False
+        # Whether the most recent _call_model() failure (if any) looks
+        # retry-worthy rather than a fixed, permanent misconfiguration —
+        # see the transient_error property below for the full contract.
+        # Defaults True (retry-favoring); reset at the start of each
+        # analyze_clip() call.
+        self._last_transient_error: bool = True
         # Set only by _maybe_escalate() when a tier-1 verdict escalates to a
         # tier-2 analyzer. Left at their defaults (empty/0) when no escalation
         # analyzer is attached, and reset at the start of each analyze_clip()
@@ -888,6 +894,26 @@ class BaseAnalyzer(abc.ABC):
         """
         return self._last_rate_limited
 
+    @property
+    def transient_error(self) -> bool:
+        """Whether the most recent failed _call_model() call looks
+        retry-worthy (network/timeout/rate-limit/unrecognized) rather than
+        a fixed, permanent misconfiguration (bad API key, no model access,
+        a malformed request).
+
+        Checked by ``AnalysisQueue._process_one`` to decide whether a
+        failed clip gets automatically requeued (bounded retries) instead
+        of marked permanently ``failed``. Defaults True: only the specific
+        provider error handlers that recognize a genuinely permanent
+        failure class (Anthropic/OpenAI auth, permission, and bad-request
+        errors; Moondream Cloud's HTTP 401) set this False. Everything
+        else — including a failure this doesn't specifically
+        recognize — is treated as worth retrying a bounded number of
+        times: incorrectly giving up on a real security event is worse
+        than a few wasted retry attempts.
+        """
+        return self._last_transient_error
+
     async def run_tier_call(self, frames: list[bytes], prompt: str) -> str:
         """Public entry point for another analyzer to use this one as its tier 2.
 
@@ -1180,6 +1206,7 @@ class BaseAnalyzer(abc.ABC):
         self._last_prompt_tokens = 0
         self._last_completion_tokens = 0
         self._last_rate_limited = False
+        self._last_transient_error = True
         self._last_escalation_model = ""
         self._last_escalation_provider = ""
         self._last_escalation_prompt_tokens = 0
@@ -3470,6 +3497,7 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
                     _LOGGER.warning("Moondream Cloud: rate limit hit")
                     return ""
                 if resp.status == 401:
+                    self._last_transient_error = False
                     _LOGGER.error("Moondream Cloud: invalid API key (HTTP 401)")
                     return ""
                 if resp.status != 200:
@@ -4829,11 +4857,13 @@ class AnthropicAnalyzer(BaseAnalyzer):
 
     def _handle_anthropic_error(self, _anthropic: Any, exc: Exception) -> str:
         if isinstance(exc, _anthropic.AuthenticationError):
+            self._last_transient_error = False
             _LOGGER.error(
                 "Anthropic: invalid API key (AuthenticationError) — "
                 "check your anthropic_api_key in the add-on settings"
             )
         elif isinstance(exc, _anthropic.PermissionDeniedError):
+            self._last_transient_error = False
             _LOGGER.error(
                 "Anthropic: permission denied — "
                 "check that your API key has access to model '%s'",
@@ -4846,6 +4876,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
                 "analysis will resume on the next cycle"
             )
         elif isinstance(exc, _anthropic.BadRequestError):
+            self._last_transient_error = False
             _LOGGER.exception(
                 "Anthropic: bad request (HTTP 400) — %s; "
                 "check that the selected model supports vision",
@@ -5166,11 +5197,13 @@ class OpenAIAnalyzer(BaseAnalyzer):
 
     def _handle_openai_error(self, _openai: Any, exc: Exception, model: str) -> str:
         if isinstance(exc, _openai.AuthenticationError):
+            self._last_transient_error = False
             _LOGGER.error(
                 "OpenAI: invalid API key (AuthenticationError) — "
                 "check your openai_api_key in the add-on settings"
             )
         elif isinstance(exc, _openai.PermissionDeniedError):
+            self._last_transient_error = False
             _LOGGER.error(
                 "OpenAI: permission denied — "
                 "check that your API key has access to model '%s'",
@@ -5183,6 +5216,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
                 "analysis will resume on the next cycle"
             )
         elif isinstance(exc, _openai.BadRequestError):
+            self._last_transient_error = False
             _LOGGER.exception(
                 "OpenAI: bad request (HTTP 400) — %s; "
                 "check that the selected model supports vision",
