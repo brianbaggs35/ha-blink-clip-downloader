@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1054,18 +1053,27 @@ async def test_finalize_playlist_adds_a_newline_before_the_tag_if_missing(
     assert lines[-1] == "#EXT-X-ENDLIST"
 
 
-async def test_finalize_playlist_tolerates_a_write_failure(tmp_path: Path) -> None:
+async def test_finalize_playlist_tolerates_a_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A permission error (or anything else) writing the finalized manifest
     back out must not raise -- this runs from _watch_ffmpeg, which has
     nothing useful to do with that failure beyond leaving the stream as
-    still-technically-live, no worse than before this fix existed."""
+    still-technically-live, no worse than before this fix existed.
+
+    Mocks Path.write_text directly rather than chmod-ing the file
+    read-only: chmod-based failure injection is silently bypassed when the
+    test process runs as root (e.g. act's Docker containers default to
+    root, unlike real GitHub Actions' non-root runner) -- root ignores
+    standard Unix permission bits, so the "failure" would never actually
+    happen and this test would pass for the wrong reason."""
     playlist = tmp_path / "stream.m3u8"
     playlist.write_text("#EXTM3U\n#EXTINF:2.0,\nseg_00000.ts\n")
-    os.chmod(playlist, 0o444)  # read-only
-    try:
-        await LiveViewManager._finalize_playlist(tmp_path)
-    finally:
-        os.chmod(playlist, 0o644)  # restore so tmp_path cleanup can remove it
+    monkeypatch.setattr(
+        Path, "write_text", MagicMock(side_effect=PermissionError("read-only"))
+    )
+
+    await LiveViewManager._finalize_playlist(tmp_path)
 
     assert "#EXT-X-ENDLIST" not in playlist.read_text()
 
