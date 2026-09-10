@@ -117,10 +117,18 @@ if [[ -d "$PLAYWRIGHT_CACHE" ]]; then
   ACT_ARGS+=(--container-options "-v ${PLAYWRIGHT_CACHE}:/root/.cache/ms-playwright")
 fi
 
-for job in "${JOBS[@]}"; do
-  ACT_ARGS+=(--job "$job")
-done
-
 echo "Running act jobs: ${JOBS[*]}"
 echo "Using temporary Postgres host port: $ACT_POSTGRES_PORT"
-act "${ACT_ARGS[@]}"
+# act's --job flag selects exactly one job per invocation: passing it
+# multiple times (as this script used to, once per requested job) doesn't
+# accumulate a job list -- silently only the LAST --job wins, confirmed via
+# `act --job a --job b --list` showing only "b" selected, and there is no
+# native multi-job selection in act at all (nektos/act#2250, still open as
+# of 2026-09-10). Looping and invoking act separately per job is the only
+# way every requested job actually runs, instead of silently only the last
+# one named on the command line -- e.g. `run-act.sh lint test` used to run
+# only `test`, never `lint`, with no error or warning either way.
+for job in "${JOBS[@]}"; do
+  echo "=== act job: $job ==="
+  act "${ACT_ARGS[@]}" --job "$job"
+done
