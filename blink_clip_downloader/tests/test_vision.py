@@ -486,21 +486,39 @@ def test_proximity_label_touching() -> None:
     assert _proximity_label(-1.0, 100.0) == "overlapping the detected vehicle's outline"
 
 
-def test_proximity_label_immediately_adjacent() -> None:
-    assert "immediately adjacent" in _proximity_label(5.0, 100.0)
+def test_proximity_label_well_under_one_foot() -> None:
+    # vehicle_width=60px calibrates 10px/ft (a typical ~6ft-wide vehicle);
+    # gap=5px -> 0.5ft
+    assert _proximity_label(5.0, 60.0) == "well under 1 ft from the detected vehicle"
 
 
-def test_proximity_label_close() -> None:
-    assert _proximity_label(20.0, 100.0) == "close to the detected vehicle"
+def test_proximity_label_one_foot_boundary_is_approximately() -> None:
+    # gap=10px -> exactly 1.0ft: the < 1.0 branch must NOT fire at the boundary
+    assert (
+        _proximity_label(10.0, 60.0) == "approximately 1 ft from the detected vehicle"
+    )
 
 
-def test_proximity_label_far() -> None:
-    assert _proximity_label(80.0, 100.0) == "well away from the detected vehicle"
+def test_proximity_label_between_one_and_three_feet() -> None:
+    # gap=20px -> 2.0ft
+    assert (
+        _proximity_label(20.0, 60.0) == "approximately 2 ft from the detected vehicle"
+    )
 
 
-def test_proximity_label_zero_width_vehicle_uses_raw_gap() -> None:
-    # vehicle_width <= 0 falls back to treating the raw gap as the ratio
-    assert _proximity_label(0.05, 0.0) == "immediately adjacent to the detected vehicle"
+def test_proximity_label_three_foot_boundary_is_well_away() -> None:
+    # gap=30px -> exactly 3.0ft: the < 3.0 branch must NOT fire at the boundary
+    assert _proximity_label(30.0, 60.0) == (
+        "well away from the detected vehicle (roughly 3 ft or more)"
+    )
+
+
+def test_proximity_label_zero_width_vehicle_is_indeterminate() -> None:
+    # vehicle_width <= 0 can't calibrate a scale, so no feet estimate is given
+    assert (
+        _proximity_label(5.0, 0.0)
+        == "at an indeterminate distance from the detected vehicle"
+    )
 
 
 def test_best_subject_vehicle_pair_picks_smallest_gap() -> None:
@@ -1216,13 +1234,29 @@ async def test_depth_estimator_compare_returns_none_on_exception(
 
 
 def test_build_depth_hint_similar() -> None:
-    hint = _build_depth_hint(DepthComparison(True, 10.0, 11.0))
+    hint = _build_depth_hint(DepthComparison(True, 10.0, 11.0), "dog")
     assert "roughly the same distance" in hint
+    assert "detected dog" in hint
 
 
-def test_build_depth_hint_different() -> None:
-    hint = _build_depth_hint(DepthComparison(False, 10.0, 200.0))
+def test_build_depth_hint_different_subject_nearer() -> None:
+    # Depth Anything: larger region value = nearer the camera (see
+    # _build_depth_hint's own comment) - subject_depth > vehicle_depth
+    # means the subject is on the near/same side, in plain view.
+    hint = _build_depth_hint(DepthComparison(False, 200.0, 10.0), "person")
     assert "noticeably different distances" in hint
+    assert "nearer to the camera than the vehicle" in hint
+    assert "near/same side" in hint
+
+
+def test_build_depth_hint_different_subject_farther() -> None:
+    # subject_depth < vehicle_depth means the subject is farther from the
+    # camera than the vehicle - the far/occluded side.
+    hint = _build_depth_hint(DepthComparison(False, 10.0, 200.0), "cat")
+    assert "noticeably different distances" in hint
+    assert "farther from the camera than" in hint
+    assert "far side" in hint
+    assert "deserves extra scrutiny" in hint
 
 
 # ------------------------------------------------------------------
@@ -1493,13 +1527,15 @@ async def test_contact_segmenter_returns_none_on_exception(
 
 
 def test_build_contact_hint_touching() -> None:
-    hint = _build_contact_hint(ContactResult(True, 0.0))
+    hint = _build_contact_hint(ContactResult(True, 0.0), "dog")
     assert "touch or overlap" in hint
+    assert "dog's" in hint
 
 
 def test_build_contact_hint_not_touching() -> None:
-    hint = _build_contact_hint(ContactResult(False, 21.0))
+    hint = _build_contact_hint(ContactResult(False, 21.0), "person")
     assert "21 pixels" in hint
+    assert "person's" in hint
 
 
 # ------------------------------------------------------------------
