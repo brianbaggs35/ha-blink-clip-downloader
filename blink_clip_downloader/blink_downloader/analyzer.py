@@ -81,9 +81,12 @@ _SCENE_BASELINE_SUSPICION_CONFIDENCE_THRESHOLD: float = 0.5
 _SHORT_EVENT_DURATION_SECONDS: float = 10.0
 
 # Motion-trajectory hint ("smart brain" movement reasoning) — see
-# BaseAnalyzer._compute_motion_trajectory_hint(). Reuses the same 64x64
-# grayscale thumbnail size _select_best_frames() already computes for its
-# motion-diff scoring, applied to the frames actually selected for analysis.
+# BaseAnalyzer._compute_motion_trajectory_hint() and
+# BaseAnalyzer._zone_motion_fraction(), which share one grayscale-thumbnail
+# pass at this size (see _grayscale_thumbnails/_maybe_compute_motion_thumbnails)
+# over the frames actually selected for analysis. _select_best_frames()'s own
+# motion-diff scoring (over the larger, pre-down-selection frame pool) uses
+# the same 64x64 size but is a separate computation, not sharable with these.
 _MOTION_TRAJECTORY_THUMB_SIZE: tuple[int, int] = (64, 64)
 # Fewer than this many selected frames makes entry/peak/exit direction too
 # noisy to trust — no hint is emitted below this count.
@@ -94,8 +97,9 @@ _MOTION_TRAJECTORY_MIN_FRAMES: int = 3
 # re-encoding noise between near-identical frames.
 _MOTION_TRAJECTORY_DIFF_FLOOR: float = 3.0
 # A lateral centroid shift of at least this fraction of the thumbnail width
-# between the first and last frame pair is required to call a left/right
-# direction — smaller shifts are treated as noise.
+# is required to call a left/right direction (between the first and last
+# frame) or a reversal/pacing pattern (between any two points in the
+# sequence — see _has_lateral_reversal) — smaller shifts are treated as noise.
 _MOTION_TRAJECTORY_LATERAL_SHIFT_FRACTION: float = 0.15
 # Ratio between the second half's and first half's average diff magnitude
 # required to call an intensity trend (approaching/retreating proxy).
@@ -736,6 +740,32 @@ class BaseAnalyzer(abc.ABC):
         """
         self._car_zones = dict(car_zones)
 
+    @staticmethod
+    def _car_zone_bbox(zone: dict[str, Any]) -> dict[str, float]:
+        """Reduce a ``car_zone`` (rectangle or freeform polygon) to a plain
+        ``x_min``/``y_min``/``x_max``/``y_max`` box.
+
+        Used by :class:`_MoondreamDetectionMixin` (with
+        :meth:`_bbox_gap`/:meth:`_bbox_min_gap`, which only understand
+        this shape — a rough fallback proximity reference used only when
+        per-frame car detection found no box at all, not exact geometry)
+        and by :meth:`_downselect_frames`'s zone-aware frame selection
+        (converting the same normalized zone into thumbnail-space
+        coordinates for :func:`_frame_motion_diffs`). For a polygon this
+        is its axis-aligned bounding box — an approximation, but every
+        current caller already only needs a coarse reference, not exact
+        geometry. A rectangle zone already has the right keys and is
+        returned unchanged.
+        """
+        if zone.get("shape") != "polygon":
+            return zone
+        points = zone.get("points") or []
+        if not points:
+            return {"x_min": 0.0, "y_min": 0.0, "x_max": 0.0, "y_max": 0.0}
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        return {"x_min": min(xs), "y_min": min(ys), "x_max": max(xs), "y_max": max(ys)}
+
     def update_car_description(self, description: str) -> None:
         """Replace the protected-vehicle description at runtime without restart.
 
@@ -1077,12 +1107,17 @@ class BaseAnalyzer(abc.ABC):
         # pool (see _apply_vision_pipeline), everything else still runs
         # against the down-selected set below.
         raw_frame_pool = frames
-        frames = self._downselect_frames(frames, clip_duration)
+        frames = await self._downselect_frames(frames, clip_duration, camera)
         frames, vision_hints = await self._apply_vision_pipeline(
             frames, camera, raw_frames=raw_frame_pool
         )
 
-        zone_motion_fraction = self._maybe_compute_zone_motion(frames, camera)
+        # Shared precomputation for the two motion hints below — see
+        # _maybe_compute_motion_thumbnails's own docstring for why this
+        # replaced each of them independently redoing the same PIL work.
+        motion_thumbs = await self._maybe_compute_motion_thumbnails(frames, camera)
+
+        zone_motion_fraction = self._maybe_compute_zone_motion(motion_thumbs, camera)
         # The car-zone box drawn in the Vehicles tab only ever showed up as
         # a difference in the AI's final prompt text — nothing logged
         # whether a zone was even found for this camera, let alone what
@@ -1103,7 +1138,7 @@ class BaseAnalyzer(abc.ABC):
         # unless-you-read-a-stored-prompt problem as the car-zone check
         # above — this is the only place that ever showed its actual
         # per-clip output.
-        trajectory_hint = self._compute_motion_trajectory_hint(frames)
+        trajectory_hint = self._compute_motion_trajectory_hint(motion_thumbs)
         _LOGGER.debug(
             "Motion-trajectory hint for camera=%r: %s",
             camera,
@@ -1253,8 +1288,8 @@ class BaseAnalyzer(abc.ABC):
         )
         return scene_thumbnail, scene_deviation
 
-    def _downselect_frames(
-        self, frames: list[bytes], clip_duration: float
+    async def _downselect_frames(
+        self, frames: list[bytes], clip_duration: float, camera: str
     ) -> list[bytes]:
         """Down-select the oversampled pool to the frames actually sent to the AI.
 
@@ -1265,6 +1300,16 @@ class BaseAnalyzer(abc.ABC):
         early slice of the clip. Clips longer than
         _LONG_CLIP_THRESHOLD_SECONDS get their frame budget doubled — see
         _target_frame_count().
+
+        When a car zone is configured for *camera* and protected-vehicle
+        rules actually apply to it (the same gating
+        :meth:`_maybe_compute_zone_motion` already uses), motion-weighted
+        selection is biased toward motion concentrated inside that zone
+        rather than the whole frame — see :meth:`_select_best_frames`'s
+        own docstring for why. The actual selection is CPU-bound (PIL
+        decode + per-pixel diffing), so it runs in a thread executor
+        rather than blocking the event loop, matching every CPU-bound
+        stage in vision.py.
         """
         target_frame_count = self._target_frame_count(
             len(frames), clip_duration=clip_duration
@@ -1273,7 +1318,21 @@ class BaseAnalyzer(abc.ABC):
             return frames
         if self._frame_strategy == "uniform":
             return self._select_uniform_frames(frames, target_frame_count)
-        return self._select_best_frames(frames, target_frame_count)
+
+        zone_box: tuple[float, float, float, float] | None = None
+        if self._car_zones.get(camera) and self._car_protection_applies(camera):
+            bbox = self._car_zone_bbox(self._car_zones[camera])
+            zone_box = (
+                bbox.get("x_min", 0.0),
+                bbox.get("y_min", 0.0),
+                bbox.get("x_max", 1.0),
+                bbox.get("y_max", 1.0),
+            )
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._select_best_frames, frames, target_frame_count, zone_box
+        )
 
     async def _apply_vision_pipeline(
         self, frames: list[bytes], camera: str, raw_frames: list[bytes] | None = None
@@ -1307,7 +1366,7 @@ class BaseAnalyzer(abc.ABC):
         return frames, vision_hints
 
     def _maybe_compute_zone_motion(
-        self, frames: list[bytes], camera: str
+        self, thumbs: list[bytes] | None, camera: str
     ) -> float | None:
         """Only computed when protected-vehicle rules actually apply to
         *camera* (see :meth:`_car_protection_applies`) — the emitted
@@ -1315,11 +1374,42 @@ class BaseAnalyzer(abc.ABC):
         usual spot" (see :meth:`_zone_motion_segment`), so it must not fire
         just because a zone is configured while ``ai_car_description`` is
         still unset, matching every other car-zone code path in this class.
+
+        *thumbs* are precomputed by :meth:`_maybe_compute_motion_thumbnails`.
         """
         car_zone = self._car_zones.get(camera)
         if car_zone and self._car_protection_applies(camera):
-            return self._zone_motion_fraction(frames, car_zone)
+            return self._zone_motion_fraction(thumbs, car_zone)
         return None
+
+    async def _maybe_compute_motion_thumbnails(
+        self, frames: list[bytes], camera: str
+    ) -> list[bytes] | None:
+        """Precompute the grayscale thumbnails :meth:`_maybe_compute_zone_motion`
+        and :meth:`_compute_motion_trajectory_hint` both need, once, so
+        neither independently repeats the same PIL decode/grayscale/resize
+        work for the same frame set — see :meth:`_grayscale_thumbnails`.
+        Runs in a thread executor since this is CPU-bound, matching every
+        CPU-bound stage in vision.py.
+
+        Returns ``None`` without doing any work when neither caller would
+        actually use the result (no configured car zone for *camera*, and
+        too few frames for a trajectory hint) — the common case for most
+        cameras — or if the decode itself fails; both callers already
+        treat ``None`` as "no hint available", matching their behavior
+        before this shared precomputation existed.
+        """
+        zone_motion_possible = bool(
+            self._car_zones.get(camera) and self._car_protection_applies(camera)
+        )
+        trajectory_possible = len(frames) >= _MOTION_TRAJECTORY_MIN_FRAMES
+        if not zone_motion_possible and not trajectory_possible:
+            return None
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self._grayscale_thumbnails, frames)
+        except Exception:  # noqa: BLE001
+            return None
 
     async def _generate_response(self, frames: list[bytes], prompt: str) -> str:
         if self._frame_strategy == "sequential":
@@ -1598,7 +1688,11 @@ class BaseAnalyzer(abc.ABC):
             return None
 
     @staticmethod
-    def _select_best_frames(frames: list[bytes], target_count: int) -> list[bytes]:
+    def _select_best_frames(
+        frames: list[bytes],
+        target_count: int,
+        zone_box: tuple[float, float, float, float] | None = None,
+    ) -> list[bytes]:
         """Pick the *target_count* most informative frames using motion scoring.
 
         Strategy:
@@ -1612,13 +1706,24 @@ class BaseAnalyzer(abc.ABC):
           other (e.g. three consecutive frames of the same door swinging
           open) which wastes frame budget on near-duplicates.
 
+        *zone_box* (a normalized 0-1 ``x1, y1, x2, y2`` rectangle — see
+        :meth:`_downselect_frames`), when given, restricts the motion
+        score each frame pair is ranked by to pixels inside that zone
+        instead of the whole frame. Without this, a camera that also sees
+        a busy street can let background traffic dominate every
+        candidate's raw motion score, starving the down-selected set of
+        the frame(s) actually showing activity at the protected vehicle —
+        this makes selection agree with what :func:`_build_prompt`'s ZONE
+        MOTION hint already tells the model about *after* selection has
+        already happened.
+
         Falls back to even-spaced selection if PIL is unavailable.
         """
         if len(frames) <= target_count:
             return frames
 
         try:
-            diffs = BaseAnalyzer._frame_motion_diffs(frames)
+            diffs = BaseAnalyzer._frame_motion_diffs(frames, zone_box)
             return BaseAnalyzer._select_frames_by_motion(frames, diffs, target_count)
         except Exception:  # noqa: BLE001
             # PIL unavailable or processing error — fall back to even spacing
@@ -1626,8 +1731,19 @@ class BaseAnalyzer(abc.ABC):
             return BaseAnalyzer._select_frames_evenly_spaced(frames, target_count)
 
     @staticmethod
-    def _frame_motion_diffs(frames: list[bytes]) -> list[float]:
-        """Per-pixel inter-frame absolute difference for each consecutive pair."""
+    def _frame_motion_diffs(
+        frames: list[bytes],
+        zone_box: tuple[float, float, float, float] | None = None,
+    ) -> list[float]:
+        """Per-pixel inter-frame absolute difference for each consecutive pair.
+
+        *zone_box* (see :meth:`_select_best_frames`), when given, sums
+        only the pixels that fall inside it rather than the whole
+        thumbnail — a polygon zone must already be reduced to its
+        bounding box by the caller (see :meth:`_car_zone_bbox`), the same
+        coarse approximation used everywhere else a zone feeds a ranking/
+        proximity signal rather than exact geometry.
+        """
         import io as _io
 
         from PIL import Image as _Image
@@ -1643,12 +1759,27 @@ class BaseAnalyzer(abc.ABC):
             for f in frames
         ]
 
-        # Inter-frame absolute difference (normalised per pixel)
-        pixels = _THUMB[0] * _THUMB[1]
-        return [
-            sum(abs(a - b) for a, b in zip(thumbs[i - 1], thumbs[i])) / pixels
-            for i in range(1, len(thumbs))
-        ]
+        width, height = _THUMB
+        pixels = width * height
+        if zone_box is None:
+            return [
+                sum(abs(a - b) for a, b in zip(thumbs[i - 1], thumbs[i])) / pixels
+                for i in range(1, len(thumbs))
+            ]
+
+        zx1 = max(0, min(width - 1, round(zone_box[0] * width)))
+        zy1 = max(0, min(height - 1, round(zone_box[1] * height)))
+        zx2 = max(zx1 + 1, min(width, round(zone_box[2] * width)))
+        zy2 = max(zy1 + 1, min(height, round(zone_box[3] * height)))
+        diffs: list[float] = []
+        for i in range(1, len(thumbs)):
+            total = 0
+            for idx, (a, b) in enumerate(zip(thumbs[i - 1], thumbs[i])):
+                x, y = idx % width, idx // width
+                if zx1 <= x < zx2 and zy1 <= y < zy2:
+                    total += abs(a - b)
+            diffs.append(total / pixels)
+        return diffs
 
     @staticmethod
     def _select_frames_by_motion(
@@ -1704,31 +1835,34 @@ class BaseAnalyzer(abc.ABC):
         return [frames[i] for i in sorted(anchored)[:target_count]]
 
     @staticmethod
-    def _compute_motion_trajectory_hint(frames: list[bytes]) -> str | None:
-        """Classify a coarse movement direction/intensity trend across *frames*.
+    def _compute_motion_trajectory_hint(thumbs: list[bytes] | None) -> str | None:
+        """Classify a coarse movement direction/intensity trend across a
+        clip's frames, given their precomputed grayscale thumbnails (see
+        :meth:`_grayscale_thumbnails`, computed once by
+        :meth:`_maybe_compute_motion_thumbnails` and shared with
+        :meth:`_zone_motion_fraction` rather than each recomputing its own).
 
-        Reuses the same grayscale-thumbnail-diff approach as
-        :meth:`_select_best_frames`'s motion scoring, applied to the frames
-        actually selected for analysis (whatever the frame strategy). For
-        each consecutive frame pair, computes the diff mask's weighted x
-        centroid in addition to the overall diff magnitude already used for
-        motion scoring — a shift in that centroid's x position across the
-        sequence is a coarse "moving across frame" signal; a rising diff
-        magnitude trend (the moving region occupies more pixels as it nears
-        the camera) is a coarse "may be approaching" proxy. Deliberately
-        coarse and conservative — returns ``None`` (no hint) far more often
-        than not, since :meth:`_build_prompt` frames whatever is returned as
-        a rough estimate, not a precise tracked path.
+        For each consecutive frame pair, computes the diff mask's weighted
+        x centroid in addition to the overall diff magnitude — a shift in
+        that centroid's x position across the sequence is a coarse
+        "moving across frame" signal (including reversing direction at
+        least once, a pacing/casing pattern a simple first-vs-last
+        comparison would miss entirely); a rising diff magnitude trend
+        (the moving region occupies more pixels as it nears the camera)
+        is a coarse "may be approaching" proxy. Deliberately coarse and
+        conservative — returns ``None`` (no hint) far more often than
+        not, since :meth:`_build_prompt` frames whatever is returned as a
+        rough estimate, not a precise tracked path.
 
         Returns ``None`` when there are too few frames, no clear motion
-        signal, or PIL is unavailable.
+        signal, thumbnails weren't available, or PIL is unavailable.
         """
-        if len(frames) < _MOTION_TRAJECTORY_MIN_FRAMES:
+        if thumbs is None or len(thumbs) < _MOTION_TRAJECTORY_MIN_FRAMES:
             return None
 
         try:
             diff_magnitudes, centroids_x = (
-                BaseAnalyzer._frame_diff_magnitudes_and_centroids(frames)
+                BaseAnalyzer._frame_diff_magnitudes_and_centroids(thumbs)
             )
             if (
                 not diff_magnitudes
@@ -1746,22 +1880,37 @@ class BaseAnalyzer(abc.ABC):
             return None
 
     @staticmethod
-    def _frame_diff_magnitudes_and_centroids(
-        frames: list[bytes],
-    ) -> tuple[list[float], list[float]]:
-        """Per-frame-pair diff magnitude and weighted-x centroid of the diff mask."""
+    def _grayscale_thumbnails(frames: list[bytes]) -> list[bytes]:
+        """Decode, grayscale, and resize each frame to
+        :data:`_MOTION_TRAJECTORY_THUMB_SIZE`, returning raw ``L``-mode
+        pixel bytes per frame (1 byte/pixel). Shared by
+        :meth:`_frame_diff_magnitudes_and_centroids` and
+        :meth:`_zone_motion_fraction`, which both need this identical
+        transform on the identical (already down-selected, already
+        vision-enhanced) frame set — see
+        :meth:`_maybe_compute_motion_thumbnails`, which computes this once
+        per clip instead of each of those recomputing its own copy.
+        """
         import io as _io
 
         from PIL import Image as _Image
 
-        width, height = _MOTION_TRAJECTORY_THUMB_SIZE
-        thumbs: list[bytes] = [
+        return [
             _Image.open(_io.BytesIO(f))
             .convert("L")
-            .resize((width, height), _Image.Resampling.LANCZOS)
+            .resize(_MOTION_TRAJECTORY_THUMB_SIZE, _Image.Resampling.LANCZOS)
             .tobytes()
             for f in frames
         ]
+
+    @staticmethod
+    def _frame_diff_magnitudes_and_centroids(
+        thumbs: list[bytes],
+    ) -> tuple[list[float], list[float]]:
+        """Per-frame-pair diff magnitude and weighted-x centroid of the diff
+        mask, given precomputed grayscale thumbnails (see
+        :meth:`_grayscale_thumbnails`)."""
+        width, height = _MOTION_TRAJECTORY_THUMB_SIZE
         pixels = width * height
 
         diff_magnitudes: list[float] = []
@@ -1784,14 +1933,44 @@ class BaseAnalyzer(abc.ABC):
         valid_centroids = [cx for cx in centroids_x if cx >= 0]
         if len(valid_centroids) < 2:
             return None
+        threshold = width * _MOTION_TRAJECTORY_LATERAL_SHIFT_FRACTION
+        if BaseAnalyzer._has_lateral_reversal(valid_centroids, threshold):
+            return "moving back and forth across the frame (may be pacing)"
         first_x, last_x = valid_centroids[0], valid_centroids[-1]
-        if abs(last_x - first_x) < width * _MOTION_TRAJECTORY_LATERAL_SHIFT_FRACTION:
+        if abs(last_x - first_x) < threshold:
             return None
         return (
             "moving left to right across the frame"
             if last_x > first_x
             else "moving right to left across the frame"
         )
+
+    @staticmethod
+    def _has_lateral_reversal(centroids: list[float], threshold: float) -> bool:
+        """True if the centroid sequence moves past *threshold* in one
+        direction and then past *threshold* back the other way — genuine
+        back-and-forth motion (e.g. someone pacing while casing a
+        property), not just sensor noise around a roughly stationary
+        point or one smooth pass in a single direction. Requires two
+        separate excursions past the threshold in opposite directions,
+        each measured from where the previous one ended, not from the
+        clip's very first frame — comparing only the first and last
+        centroid (the previous approach) misses this pattern entirely
+        whenever the sequence happens to end up back near where it
+        started.
+        """
+        last_sign = 0
+        reference = centroids[0]
+        for cx in centroids[1:]:
+            delta = cx - reference
+            if abs(delta) < threshold:
+                continue
+            sign = 1 if delta > 0 else -1
+            if last_sign != 0 and sign != last_sign:
+                return True
+            last_sign = sign
+            reference = cx
+        return False
 
     @staticmethod
     def _classify_intensity_trend(diff_magnitudes: list[float]) -> str | None:
@@ -1831,7 +2010,7 @@ class BaseAnalyzer(abc.ABC):
 
     @staticmethod
     def _zone_motion_fraction(
-        frames: list[bytes], zone: dict[str, Any]
+        thumbs: list[bytes] | None, zone: dict[str, Any]
     ) -> float | None:
         """Return the fraction (0.0-1.0) of this clip's total pixel motion
         that fell inside *zone* — either a normalised ``x_min``/``y_min``/
@@ -1839,9 +2018,11 @@ class BaseAnalyzer(abc.ABC):
         ``{"shape": "polygon", "points": [[x, y], ...]}`` freeform outline
         (fractional 0-1 coordinates) — e.g. a user-drawn "car zone".
 
-        Reuses the same grayscale-thumbnail-diff approach as
-        :meth:`_compute_motion_trajectory_hint`, but instead of
-        characterising direction, buckets each diff pixel's magnitude into
+        *thumbs* are precomputed grayscale thumbnails (see
+        :meth:`_grayscale_thumbnails`, shared with
+        :meth:`_compute_motion_trajectory_hint` via
+        :meth:`_maybe_compute_motion_thumbnails` rather than each
+        recomputing its own). Buckets each diff pixel's magnitude into
         "inside the zone" vs. "outside" and reports what share of the
         clip's total motion energy fell inside it. This gives
         :meth:`_build_prompt` a code-computed, structured signal —
@@ -1849,26 +2030,15 @@ class BaseAnalyzer(abc.ABC):
         zone barely moved; the motion is background activity elsewhere" —
         instead of asking the model to judge that from raw pixels alone.
 
-        Returns ``None`` when there are fewer than 2 frames, *zone* is
-        empty, PIL is unavailable, or the clip has too little overall
+        Returns ``None`` when *thumbs* is unavailable or has fewer than 2
+        frames, *zone* is empty, or the clip has too little overall
         motion to attribute meaningfully.
         """
-        if len(frames) < 2 or not zone:
+        if thumbs is None or len(thumbs) < 2 or not zone:
             return None
 
         try:
-            import io as _io
-
-            from PIL import Image as _Image
-
             width, height = _MOTION_TRAJECTORY_THUMB_SIZE
-            thumbs: list[bytes] = [
-                _Image.open(_io.BytesIO(f))
-                .convert("L")
-                .resize((width, height), _Image.Resampling.LANCZOS)
-                .tobytes()
-                for f in frames
-            ]
 
             is_polygon = zone.get("shape") == "polygon"
             poly_px: list[tuple[float, float]] = []
@@ -2863,27 +3033,6 @@ class _MoondreamDetectionMixin:
         # Same SonarQube caveat as that pattern too (see its comment).
         stripped = re.sub(r"\s*(?>,\s*){2}", ", ", stripped).strip(" ,.-")  # NOSONAR
         return stripped or car_description
-
-    @staticmethod
-    def _car_zone_bbox(zone: dict[str, Any]) -> dict[str, float]:
-        """Reduce a ``car_zone`` (rectangle or freeform polygon) to a plain
-        ``x_min``/``y_min``/``x_max``/``y_max`` box for use with
-        :meth:`_bbox_gap`/:meth:`_bbox_min_gap`, which only understand that
-        shape. For a polygon this is its axis-aligned bounding box — an
-        approximation, but this call site is already just a rough fallback
-        proximity reference (used only when per-frame car detection found no
-        box at all), not exact geometry, so the same tolerance that was
-        already implicit for a rectangle zone applies here too. A rectangle
-        zone already has the right keys and is returned unchanged.
-        """
-        if zone.get("shape") != "polygon":
-            return zone
-        points = zone.get("points") or []
-        if not points:
-            return {"x_min": 0.0, "y_min": 0.0, "x_max": 0.0, "y_max": 0.0}
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        return {"x_min": min(xs), "y_min": min(ys), "x_max": max(xs), "y_max": max(ys)}
 
     @staticmethod
     def _bbox_gap(a: dict[str, float], b: dict[str, float]) -> float:
