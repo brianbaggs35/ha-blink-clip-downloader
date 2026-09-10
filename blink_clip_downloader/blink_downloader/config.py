@@ -316,10 +316,19 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # motion-diff-based zone/trajectory hints alone.
     ai_enhanced_detection_enabled: bool = False
     # Which Ultralytics YOLO model the object-detection stage above runs.
-    # "n" (nano) models are the fastest/lightest and the recommended
-    # starting point on CPU-only hardware; larger models (s/m/l/x) are more
-    # accurate but much slower.
-    ai_object_detection_model: str = "yolo11n.pt"
+    # YOLO26 (yolo26n/s/m/l/x.pt) is the current generation and the
+    # default; yolo11n/s/m/l/x.pt remain selectable for compatibility with
+    # existing configurations. "n" (nano) models are the fastest/lightest
+    # and the recommended starting point on CPU-only hardware; larger
+    # models (s/m/l/x) are more accurate but much slower.
+    ai_object_detection_model: str = "yolo26n.pt"
+    # Which Depth Anything V2 checkpoint the depth-estimation stage above
+    # runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed;
+    # "Base"/"Large" are more accurate but slower/heavier, and are licensed
+    # CC-BY-NC-4.0 (non-commercial use only) by their publisher — fine for
+    # this add-on's typical personal home-security use, but confirm that
+    # licensing fits your own situation before choosing either.
+    ai_depth_estimation_model: str = "depth-anything/Depth-Anything-V2-Small-hf"
     # Local-only face recognition to suppress alerts for enrolled household
     # members. Kept as its own toggle (rather than folded into
     # ai_enhanced_detection_enabled above) since it's a meaningfully
@@ -663,7 +672,11 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
         "ai_object_detection_model": str(
             data.get("ai_object_detection_model", "") or ""
         ).strip()
-        or "yolo11n.pt",
+        or "yolo26n.pt",
+        "ai_depth_estimation_model": str(
+            data.get("ai_depth_estimation_model", "") or ""
+        ).strip()
+        or "depth-anything/Depth-Anything-V2-Small-hf",
         "ai_face_recognition_enabled": bool(
             data.get("ai_face_recognition_enabled", False)
         ),

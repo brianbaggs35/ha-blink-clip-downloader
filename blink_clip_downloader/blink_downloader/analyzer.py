@@ -21,7 +21,7 @@ import logging
 import math
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +29,7 @@ import aiohttp
 
 if TYPE_CHECKING:
     from .database import ClipDatabase
-    from .vision import VisionHints, VisionPipeline
+    from .vision import DetectedObject, VisionHints, VisionPipeline
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -484,6 +484,14 @@ class AnalysisResult:
     # face-recognized badge; face_bypass_applied above stays narrowly
     # about the safety bypass itself for the Biometrics audit card.
     approved_faces_seen: bool = False
+    # Raw per-object detections from the optional computer-vision pipeline
+    # (see vision.py's ObjectDetector), when enabled and something was
+    # found. Deliberately excluded from to_dict() below — that dict is the
+    # analysis_results row/JSON contract, while detections are persisted
+    # separately (see database.py's detected_objects table and
+    # save_detected_objects) and served to the clip modal pre-aggregated
+    # via get_detected_objects_summary, not as this raw per-box list.
+    detected_objects: list[DetectedObject] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1141,6 +1149,7 @@ class BaseAnalyzer(abc.ABC):
             face_bypass_applied=face_bypass_applied,
             face_bypass_names=face_bypass_names,
             approved_faces_seen=bypass_condition_met,
+            detected_objects=(vision_hints.detections or []) if vision_hints else [],
         )
 
     def _reset_analysis_state(self, camera: str) -> None:

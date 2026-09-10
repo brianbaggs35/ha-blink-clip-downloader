@@ -356,6 +356,56 @@ test('shows an error when the AI analysis result fails to load', async ({ page }
   await expect(modal.getByText('Failed to load analysis')).toBeVisible()
 })
 
+test('shows a compact object-detection chip summary when the backend reports detections', async ({ page }) => {
+  // The seeded e2e clips have no real video file on disk, so a genuine
+  // Analyze Now always fails frame extraction before the vision pipeline
+  // (and its heavy, not-installed-here torch/ultralytics stack) ever runs
+  // — see the "shows a real analysis result" test above. Mocking the
+  // /api/ai/results response instead follows the same "mock the API
+  // layer, not the application" approach live-view.spec.ts and
+  // mocked-integrations.spec.ts use for equally hard-to-reach real state,
+  // and is enough to prove ClipAiPanel's own rendering of the
+  // detected_objects field media_server.py now returns.
+  await page.route('**/api/ai/results/e2e-clip-004', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        clip_id: 'e2e-clip-004',
+        camera: 'Front Door',
+        model: 'test-model',
+        response_text: '',
+        is_suspicious: false,
+        confidence: 0.2,
+        summary: 'A person walks by.',
+        frame_count: 3,
+        analysis_duration: 1.0,
+        analyzed_at: '2024-06-01T09:00:00+00:00',
+        tokens_prompt: 0,
+        tokens_completion: 0,
+        anomaly_score: 0,
+        escalation_model: '',
+        escalation_tokens_prompt: 0,
+        escalation_tokens_completion: 0,
+        escalation_provider: '',
+        face_bypass_applied: false,
+        face_bypass_names: '',
+        detected_objects: [
+          { label: 'person', count: 2, max_confidence: 0.91 },
+          { label: 'car', count: 1, max_confidence: 0.8 },
+        ],
+      }),
+    }),
+  )
+  await page.locator('.clip-card[data-id="e2e-clip-004"]').click()
+  const modal = openModal(page)
+  await modal.locator('.ai-panel-hdr').click()
+  const chips = modal.locator('.detection-chip')
+  await expect(chips).toHaveCount(2)
+  await expect(chips.nth(0)).toContainText('2')
+  await expect(chips.nth(1)).toContainText('1')
+})
+
 test('the feedback form can be cancelled, submitted without the correction checkbox, and changed afterward', async ({
   page,
 }) => {

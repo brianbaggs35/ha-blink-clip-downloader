@@ -436,12 +436,28 @@ configuration:
     name: Modelo de detección de objetos
     description: >-
       Archivo de modelo de Ultralytics que ejecuta la etapa de
-      detección de arriba — introduce exactamente uno de estos:
-      yolo11n.pt (nano — el más rápido/ligero, punto de partida
-      recomendado en hardware sin GPU), yolo11s.pt (pequeño), yolo11m.pt
-      (mediano), yolo11l.pt (grande), o yolo11x.pt (extragrande — el
-      más preciso, mucho más lento). Se descarga automáticamente la
-      primera vez que se usa; por defecto yolo11n.pt.
+      detección de arriba. YOLO26 (yolo26n/s/m/l/x.pt) es la generación
+      actual — inferencia de extremo a extremo, más ligero y preciso
+      que YOLO11 en todos los tamaños — y es el valor predeterminado
+      recomendado; yolo11n/s/m/l/x.pt siguen disponibles por
+      compatibilidad con configuraciones existentes. "n" (nano) es el
+      más rápido/ligero, recomendado en hardware solo con CPU;
+      "s"/"m"/"l"/"x" cambian velocidad por precisión, siendo "x"
+      (extragrande) el más preciso y mucho más lento. Se descarga
+      automáticamente la primera vez que se usa.
+  ai_depth_estimation_model:
+    name: Modelo de estimación de profundidad
+    description: >-
+      Checkpoint de Depth Anything V2 que ejecuta la etapa de
+      estimación de profundidad de arriba. "Small" (predeterminado) es
+      el más rápido/ligero y tiene licencia Apache-2.0; "Base"/"Large"
+      son más precisos pero más lentos/pesados, y su editor los
+      licencia bajo CC-BY-NC-4.0 (solo uso no comercial), a diferencia
+      de la licencia Apache-2.0 de "Small". Esto no supone un problema
+      para el uso doméstico personal típico de este add-on, pero
+      confirma que esa licencia encaja con tu propia situación antes
+      de elegir "Base" o "Large". Se descarga automáticamente la
+      primera vez que se usa.
   ai_face_recognition_enabled:
     name: Activar reconocimiento facial local
     description: >-

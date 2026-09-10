@@ -1399,6 +1399,9 @@ class MediaServer:
             # feature was previously on must not leak its stored prompt_text
             # once the admin has turned this back off.
             result.pop("prompt_text", None)
+        result["detected_objects"] = await self._db.get_detected_objects_summary(
+            clip_id
+        )
         return web.json_response(result)
 
     async def _handle_ai_suspicious(self, request: web.Request) -> web.Response:
@@ -1435,6 +1438,7 @@ class MediaServer:
                 clip_duration=float(clip.get("duration") or 0),
             )
             await self._db.add_analysis_result(result.to_dict())
+            await self._db.save_detected_objects(clip_id, result.detected_objects)
             return web.json_response(result.to_dict())
         except Exception as exc:  # noqa: BLE001
             # Mirrors _handle_ai_test's error handling — without this, an
@@ -1465,6 +1469,7 @@ class MediaServer:
                 clip_duration=float(clip.get("duration") or 0),
             )
             await self._db.add_analysis_result(result.to_dict())
+            await self._db.save_detected_objects(clip["id"], result.detected_objects)
             return web.json_response(
                 {"success": True, "clip_id": clip["id"], **result.to_dict()}
             )

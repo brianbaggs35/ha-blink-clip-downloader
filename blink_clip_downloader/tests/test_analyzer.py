@@ -4999,6 +4999,104 @@ async def test_analyze_clip_approved_faces_seen_even_when_not_suspicious() -> No
     assert result.approved_faces_seen is True
 
 
+async def test_analyze_clip_populates_detected_objects_from_vision_hints() -> None:
+    """AnalysisResult.detected_objects must carry through the vision
+    pipeline's raw per-object detections (for database.py's
+    save_detected_objects), not just the rendered hint text."""
+    from blink_downloader.vision import DetectedObject, VisionHints
+
+    detections = [
+        DetectedObject(
+            label="person",
+            confidence=0.9,
+            box=(0.0, 0.0, 5.0, 5.0),
+            track_id=1,
+            frame_index=0,
+        )
+    ]
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(detections=detections)
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.2, "description": "Nothing."}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.detected_objects == detections
+
+
+async def test_analyze_clip_detected_objects_empty_without_vision_pipeline() -> None:
+    """No vision pipeline attached at all (the common case for most
+    installs) must yield an empty list, never None."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.2, "description": "Nothing."}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.detected_objects == []
+
+
+def test_analysis_result_detected_objects_excluded_from_to_dict() -> None:
+    """detected_objects is persisted separately (database.py's
+    detected_objects table) — the to_dict() JSON/row contract must not
+    carry the raw per-box list."""
+    from blink_downloader.vision import DetectedObject
+
+    result = AnalysisResult(
+        clip_id="c1",
+        camera="Driveway",
+        model="m",
+        response_text="",
+        is_suspicious=False,
+        confidence=0.0,
+        summary="",
+        frame_count=1,
+        analysis_duration=0.1,
+        analyzed_at="2024-06-01T08:00:00+00:00",
+        detected_objects=[
+            DetectedObject(
+                label="person",
+                confidence=0.9,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=1,
+                frame_index=0,
+            )
+        ],
+    )
+    assert "detected_objects" not in result.to_dict()
+
+
+def test_analysis_result_detected_objects_defaults_empty() -> None:
+    result = AnalysisResult(
+        clip_id="c1",
+        camera="Driveway",
+        model="m",
+        response_text="",
+        is_suspicious=False,
+        confidence=0.0,
+        summary="",
+        frame_count=1,
+        analysis_duration=0.1,
+        analyzed_at="2024-06-01T08:00:00+00:00",
+    )
+    assert result.detected_objects == []
+
+
 async def test_analyze_clip_stays_suspicious_when_stranger_also_present() -> None:
     """This is the adversarial case that must never regress: an approved
     household member AND an unrecognized stranger both appear — the clip

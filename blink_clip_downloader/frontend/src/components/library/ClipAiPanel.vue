@@ -192,6 +192,26 @@ function showPrompt() {
 }
 
 const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
+
+// One emoji per label the backend's object-detection stage can report
+// (vision.py's _RELEVANT_CLASSES) — a fallback covers any future/unknown
+// label so a chip still renders instead of silently disappearing.
+const DETECTION_EMOJI: Record<string, string> = {
+  person: '🧍',
+  car: '🚗',
+  truck: '🚚',
+  bus: '🚌',
+  motorcycle: '🏍️',
+  bicycle: '🚲',
+  dog: '🐕',
+  cat: '🐈',
+  bird: '🐦',
+  horse: '🐴',
+  backpack: '🎒',
+  handbag: '👜',
+  suitcase: '🧳',
+}
+const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
 </script>
 
 <template>
@@ -234,6 +254,19 @@ const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
               &nbsp;·&nbsp; {{ new Date(result.analyzed_at).toLocaleString() }}</template
             >
             <template v-if="result.frame_count"> &nbsp;·&nbsp; {{ result.frame_count }} frame(s) analyzed</template>
+          </div>
+          <div
+            v-if="result.detected_objects?.length"
+            style="display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.4rem"
+          >
+            <span
+              v-for="obj in result.detected_objects"
+              :key="obj.label"
+              class="detection-chip"
+              :title="`${obj.label} · up to ${Math.round(obj.max_confidence * 100)}% confidence`"
+            >
+              {{ detectionEmoji(obj.label) }} {{ obj.count }}
+            </span>
           </div>
           <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap">
             <button type="button" class="btn sm ghost" :disabled="analyzing" @click="analyzeNow">↺ Re-analyze</button>

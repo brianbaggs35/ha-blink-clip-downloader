@@ -329,10 +329,20 @@ configuration:
   ai_object_detection_model:
     name: 物体检测模型
     description: >-
-      上方检测阶段所使用的 Ultralytics 模型文件——请准确输入以下之一：yolo11n.pt
-      （nano——最快/最轻量，推荐作为纯 CPU 硬件的起点）、yolo11s.pt（small）、
-      yolo11m.pt（medium）、yolo11l.pt（large）或 yolo11x.pt（extra-large——最
-      精确，但速度慢得多）。首次使用时会自动下载；默认值为 yolo11n.pt。
+      上方检测阶段所使用的 Ultralytics 模型文件。YOLO26
+      （yolo26n/s/m/l/x.pt）是当前代际——端到端推理，在每个尺寸上都比 YOLO11
+      更轻量、更精确——是推荐的默认选项；yolo11n/s/m/l/x.pt
+      仍可选择，以兼容现有配置。"n"（nano）最快/最轻量，推荐作为纯 CPU
+      硬件的起点；"s"/"m"/"l"/"x"
+      以速度换取精度，其中"x"（extra-large）最精确但速度慢得多。首次使用时会自动下载。
+  ai_depth_estimation_model:
+    name: 深度估计模型
+    description: >-
+      上方深度估计阶段所使用的 Depth Anything V2 检查点。"Small"
+      （默认）最快/最轻量，采用 Apache-2.0 许可；"Base"/"Large"
+      更精确但更慢/更重——且发布者将其许可为 CC-BY-NC-4.0
+      （仅限非商业用途），不同于"Small"的 Apache-2.0。对于本插件典型的个人家庭安防用途来说这不成问题，
+      但在选择"Base"或"Large"之前，请确认该许可证符合你自己的使用场景。首次使用时会自动下载。
   ai_face_recognition_enabled:
     name: 启用本地人脸识别
     description: >-

@@ -1083,6 +1083,29 @@ async def test_depth_estimator_passes_huggingface_token(
     assert mock_transformers.pipeline.call_args.kwargs["token"] == "hf_test_token"
 
 
+async def test_depth_estimator_passes_custom_model_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ai_depth_estimation_model (Small/Base/Large) must reach the
+    transformers pipeline() call, mirroring ObjectDetector's own
+    model_name pass-through."""
+    mock_transformers = MagicMock()
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+    estimator = DepthEstimator(model_id="depth-anything/Depth-Anything-V2-Large-hf")
+
+    assert await estimator.ensure_ready() is True
+
+    assert (
+        mock_transformers.pipeline.call_args.kwargs["model"]
+        == "depth-anything/Depth-Anything-V2-Large-hf"
+    )
+
+
+def test_depth_estimator_defaults_to_small_model_id() -> None:
+    estimator = DepthEstimator()
+    assert estimator._model_id == "depth-anything/Depth-Anything-V2-Small-hf"
+
+
 async def test_depth_estimator_handles_invalid_huggingface_token(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1820,6 +1843,7 @@ async def test_vision_pipeline_all_disabled_returns_empty_hints() -> None:
     assert hints.depth_hint is None
     assert hints.contact_hint is None
     assert hints.recognized_resident_hint is None
+    assert hints.detections is None
 
 
 async def test_vision_pipeline_empty_frames_short_circuits() -> None:
@@ -1845,6 +1869,7 @@ async def test_vision_pipeline_enhanced_detection_all_deps_missing(
         assert hints.enhanced_frames == [b"frame"]
         assert hints.detection_hint is None
         assert hints.depth_hint is None
+        assert hints.detections is None
 
 
 async def test_vision_pipeline_full_stack(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1899,6 +1924,8 @@ async def test_vision_pipeline_full_stack(monkeypatch: pytest.MonkeyPatch) -> No
     assert "distance estimate" in hints.detection_hint
     assert hints.depth_hint is not None
     assert hints.contact_hint is not None
+    assert hints.detections is not None
+    assert sorted(d.label for d in hints.detections) == ["car", "person"]
 
 
 async def test_vision_pipeline_depth_hint_unset_when_compare_returns_none(
@@ -2247,6 +2274,50 @@ def test_vision_pipeline_update_config_reloads_huggingface_stages_on_token_chang
     assert pipeline._segmenter is not original_segmenter
     assert pipeline._depth._hf_token == "new_token"
     assert pipeline._segmenter._hf_token == "new_token"
+
+
+def test_vision_pipeline_passes_depth_model_from_config() -> None:
+    pipeline = VisionPipeline(
+        VisionConfig(depth_estimation_model="depth-anything/Depth-Anything-V2-Base-hf")
+    )
+    assert pipeline._depth._model_id == "depth-anything/Depth-Anything-V2-Base-hf"
+
+
+def test_vision_pipeline_update_config_reloads_depth_on_model_change_alone() -> None:
+    """depth_estimation_model changing, with hf_token unchanged, must still
+    recreate DepthEstimator — the pre-existing check only looked at
+    hf_token, which would have silently kept serving the old model size."""
+    pipeline = VisionPipeline(
+        VisionConfig(depth_estimation_model="depth-anything/Depth-Anything-V2-Small-hf")
+    )
+    original_depth = pipeline._depth
+    original_segmenter = pipeline._segmenter
+
+    pipeline.update_config(
+        VisionConfig(depth_estimation_model="depth-anything/Depth-Anything-V2-Large-hf")
+    )
+
+    assert pipeline._depth is not original_depth
+    assert pipeline._depth._model_id == "depth-anything/Depth-Anything-V2-Large-hf"
+    # The segmenter has no depth-model concept of its own and must be
+    # untouched by a depth-only config change.
+    assert pipeline._segmenter is original_segmenter
+
+
+def test_vision_pipeline_update_config_reuses_depth_when_fully_unchanged() -> None:
+    config = VisionConfig(
+        hf_token="tok",
+        depth_estimation_model="depth-anything/Depth-Anything-V2-Small-hf",
+    )
+    pipeline = VisionPipeline(config)
+    original_depth = pipeline._depth
+    pipeline.update_config(
+        VisionConfig(
+            hf_token="tok",
+            depth_estimation_model="depth-anything/Depth-Anything-V2-Small-hf",
+        )
+    )
+    assert pipeline._depth is original_depth
 
 
 def test_huggingface_auth_error_status_code_is_detected() -> None:
