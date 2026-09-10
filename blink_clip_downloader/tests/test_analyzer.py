@@ -6034,6 +6034,34 @@ def test_select_best_frames_always_includes_first_and_last() -> None:
     assert result[-1] == frames[-1]
 
 
+def test_select_best_frames_threads_zone_box_to_frame_motion_diffs() -> None:
+    frames = [_real_jpeg_with_bar(x) for x in (2, 18, 34, 50, 2, 18)]
+    zone_box = (0.5, 0.0, 1.0, 1.0)
+    with patch.object(
+        BaseAnalyzer, "_frame_motion_diffs", wraps=BaseAnalyzer._frame_motion_diffs
+    ) as mock_diffs:
+        BaseAnalyzer._select_best_frames(frames, 3, zone_box)
+    assert mock_diffs.call_args[0][1] == zone_box
+
+
+def test_frame_motion_diffs_zone_box_restricts_to_zone() -> None:
+    """A zone covering only the destination side of the bar's motion
+    captures less total diff than the unrestricted whole-frame score —
+    confirms the zone actually restricts which pixels count, not just
+    threads the parameter through unused."""
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    full_diffs = BaseAnalyzer._frame_motion_diffs(frames)
+    zone_diffs = BaseAnalyzer._frame_motion_diffs(frames, (38 / 64, 0.0, 1.0, 1.0))
+    assert 0 < zone_diffs[0] < full_diffs[0]
+
+
+def test_frame_motion_diffs_zone_box_none_matches_default() -> None:
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    assert BaseAnalyzer._frame_motion_diffs(frames) == BaseAnalyzer._frame_motion_diffs(
+        frames, None
+    )
+
+
 def test_select_uniform_frames_returns_all_if_under_target() -> None:
     frames = [_FAKE_JPEG, _FAKE_JPEG_2]
     result = ClipAnalyzer._select_uniform_frames(frames, 5)
@@ -9600,14 +9628,26 @@ def _real_jpeg_with_bar(
 # ---------------------------------------------------------------------------
 
 
+def _thumbs(frames: list[bytes]) -> list[bytes]:
+    """Test helper: precompute grayscale thumbnails the same way
+    _maybe_compute_motion_thumbnails does in production, since
+    _compute_motion_trajectory_hint/_zone_motion_fraction now take
+    precomputed thumbnails rather than raw frame bytes."""
+    return BaseAnalyzer._grayscale_thumbnails(frames)
+
+
 def test_motion_trajectory_hint_insufficient_frames() -> None:
     frames = [_real_jpeg(100), _real_jpeg(100)]
-    assert BaseAnalyzer._compute_motion_trajectory_hint(frames) is None
+    assert BaseAnalyzer._compute_motion_trajectory_hint(_thumbs(frames)) is None
+
+
+def test_motion_trajectory_hint_none_thumbs() -> None:
+    assert BaseAnalyzer._compute_motion_trajectory_hint(None) is None
 
 
 def test_motion_trajectory_hint_no_motion() -> None:
     frames = [_real_jpeg(100)] * 4
-    assert BaseAnalyzer._compute_motion_trajectory_hint(frames) is None
+    assert BaseAnalyzer._compute_motion_trajectory_hint(_thumbs(frames)) is None
 
 
 def test_motion_trajectory_hint_left_to_right() -> None:
@@ -9617,7 +9657,7 @@ def test_motion_trajectory_hint_left_to_right() -> None:
         _real_jpeg_with_bar(34),
         _real_jpeg_with_bar(50),
     ]
-    hint = BaseAnalyzer._compute_motion_trajectory_hint(frames)
+    hint = BaseAnalyzer._compute_motion_trajectory_hint(_thumbs(frames))
     assert hint == "moving left to right across the frame"
 
 
@@ -9628,8 +9668,29 @@ def test_motion_trajectory_hint_right_to_left() -> None:
         _real_jpeg_with_bar(18),
         _real_jpeg_with_bar(2),
     ]
-    hint = BaseAnalyzer._compute_motion_trajectory_hint(frames)
+    hint = BaseAnalyzer._compute_motion_trajectory_hint(_thumbs(frames))
     assert hint == "moving right to left across the frame"
+
+
+def test_motion_trajectory_hint_oscillating() -> None:
+    """A bar that moves right across several steps, then reverses back
+    left in one big jump, is a distinct pacing/casing signal a simple
+    first-vs-last centroid comparison would miss: each step's centroid is
+    the *midpoint* of that step's travel, not the bar's raw position, so
+    the sequence must actually rise then fall to be detected as a
+    reversal (a naive there-and-back-through-identical-positions test
+    produces identical midpoints for every leg and no signal at all —
+    this uses different waypoints on the way out vs. the way back so the
+    midpoint sequence itself reverses)."""
+    frames = [
+        _real_jpeg_with_bar(2),
+        _real_jpeg_with_bar(18),
+        _real_jpeg_with_bar(34),
+        _real_jpeg_with_bar(50),
+        _real_jpeg_with_bar(2),
+    ]
+    hint = BaseAnalyzer._compute_motion_trajectory_hint(_thumbs(frames))
+    assert hint == "moving back and forth across the frame (may be pacing)"
 
 
 def test_motion_trajectory_hint_intensity_increasing() -> None:
@@ -9639,7 +9700,7 @@ def test_motion_trajectory_hint_intensity_increasing() -> None:
         _real_jpeg_with_bar(27, fg=160),
         _real_jpeg_with_bar(27, fg=230),
     ]
-    hint = BaseAnalyzer._compute_motion_trajectory_hint(frames)
+    hint = BaseAnalyzer._compute_motion_trajectory_hint(_thumbs(frames))
     assert hint == "movement intensity increasing over time (may be approaching)"
 
 
@@ -9650,15 +9711,42 @@ def test_motion_trajectory_hint_intensity_decreasing() -> None:
         _real_jpeg_with_bar(27, fg=100),
         _real_jpeg_with_bar(27, fg=60),
     ]
-    hint = BaseAnalyzer._compute_motion_trajectory_hint(frames)
+    hint = BaseAnalyzer._compute_motion_trajectory_hint(_thumbs(frames))
     assert hint == "movement intensity decreasing over time (may be retreating)"
 
 
-def test_motion_trajectory_hint_returns_none_on_pil_error() -> None:
-    """Non-decodable frames (e.g. PIL unavailable/corrupt JPEG) return None
-    rather than raising."""
-    frames = [_FAKE_JPEG, _FAKE_JPEG_2, _FAKE_JPEG_3]
-    assert BaseAnalyzer._compute_motion_trajectory_hint(frames) is None
+def test_motion_trajectory_hint_returns_none_on_processing_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A processing error after thumbnails are already in hand (e.g. a
+    corrupted thumbnail list) returns None rather than raising - the
+    try/except inside _compute_motion_trajectory_hint stays as a
+    defensive safety net even though the PIL decode itself now happens
+    earlier, in _grayscale_thumbnails."""
+    monkeypatch.setattr(
+        BaseAnalyzer,
+        "_frame_diff_magnitudes_and_centroids",
+        staticmethod(lambda thumbs: (_ for _ in ()).throw(ValueError("boom"))),
+    )
+    frames = [_real_jpeg(100)] * 4
+    assert BaseAnalyzer._compute_motion_trajectory_hint(_thumbs(frames)) is None
+
+
+def test_grayscale_thumbnails_returns_thumbnail_per_frame() -> None:
+    frames = [_real_jpeg(100), _real_jpeg_with_bar(20)]
+    thumbs = BaseAnalyzer._grayscale_thumbnails(frames)
+    assert len(thumbs) == 2
+    width, height = 64, 64
+    assert all(len(t) == width * height for t in thumbs)
+
+
+def test_grayscale_thumbnails_raises_on_undecodable_frame() -> None:
+    """Non-decodable frames (e.g. corrupt JPEG) raise here rather than
+    silently returning garbage - the caller
+    (_maybe_compute_motion_thumbnails) is what's responsible for turning
+    that into a graceful None."""
+    with pytest.raises(Exception):  # noqa: B017
+        BaseAnalyzer._grayscale_thumbnails([_FAKE_JPEG, _FAKE_JPEG_2, _FAKE_JPEG_3])
 
 
 # ---------------------------------------------------------------------------
@@ -9670,7 +9758,7 @@ def test_zone_motion_fraction_concentrated_in_zone() -> None:
     """A zone covering the whole frame captures ~100% of the clip's motion."""
     frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
     zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
-    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    fraction = BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone)
     assert fraction == pytest.approx(1.0, abs=0.02)
 
 
@@ -9678,7 +9766,7 @@ def test_zone_motion_fraction_outside_zone() -> None:
     """A zone that never overlaps either bar position captures ~0% of motion."""
     frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
     zone = {"x_min": 20 / 64, "y_min": 0.0, "x_max": 40 / 64, "y_max": 1.0}
-    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    fraction = BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone)
     assert fraction == pytest.approx(0.0, abs=0.02)
 
 
@@ -9687,30 +9775,48 @@ def test_zone_motion_fraction_partial_overlap() -> None:
     half the motion — the leading and trailing edges are similar in size."""
     frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
     zone = {"x_min": 44 / 64, "y_min": 0.0, "x_max": 60 / 64, "y_max": 1.0}
-    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    fraction = BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone)
     assert fraction is not None
     assert 0.3 < fraction < 0.7
 
 
+def test_zone_motion_fraction_none_thumbs() -> None:
+    assert BaseAnalyzer._zone_motion_fraction(None, {"x_min": 0}) is None
+
+
 def test_zone_motion_fraction_insufficient_frames() -> None:
-    assert BaseAnalyzer._zone_motion_fraction([_real_jpeg(100)], {"x_min": 0}) is None
+    assert (
+        BaseAnalyzer._zone_motion_fraction(_thumbs([_real_jpeg(100)]), {"x_min": 0})
+        is None
+    )
 
 
 def test_zone_motion_fraction_empty_zone() -> None:
     frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
-    assert BaseAnalyzer._zone_motion_fraction(frames, {}) is None
+    assert BaseAnalyzer._zone_motion_fraction(_thumbs(frames), {}) is None
 
 
 def test_zone_motion_fraction_no_motion() -> None:
     frames = [_real_jpeg(100)] * 3
     zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
-    assert BaseAnalyzer._zone_motion_fraction(frames, zone) is None
+    assert BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone) is None
 
 
-def test_zone_motion_fraction_returns_none_on_pil_error() -> None:
-    frames = [_FAKE_JPEG, _FAKE_JPEG_2]
-    zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
-    assert BaseAnalyzer._zone_motion_fraction(frames, zone) is None
+def test_zone_motion_fraction_returns_none_on_processing_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A processing error after thumbnails are already in hand returns
+    None rather than raising - the try/except inside
+    _zone_motion_fraction stays as a defensive safety net even though the
+    PIL decode itself now happens earlier, in _grayscale_thumbnails."""
+    monkeypatch.setattr(
+        BaseAnalyzer,
+        "_point_in_polygon",
+        staticmethod(lambda x, y, points: (_ for _ in ()).throw(ValueError("boom"))),
+    )
+    frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
+    zone = {"shape": "polygon", "points": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]}
+    assert BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone) is None
 
 
 def test_zone_motion_fraction_rect_zone_with_no_shape_key_still_works() -> None:
@@ -9719,7 +9825,7 @@ def test_zone_motion_fraction_rect_zone_with_no_shape_key_still_works() -> None:
     frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
     zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
     assert "shape" not in zone
-    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    fraction = BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone)
     assert fraction == pytest.approx(1.0, abs=0.02)
 
 
@@ -9731,7 +9837,7 @@ def test_zone_motion_fraction_polygon_covering_whole_frame() -> None:
         "shape": "polygon",
         "points": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
     }
-    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    fraction = BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone)
     assert fraction == pytest.approx(1.0, abs=0.02)
 
 
@@ -9748,7 +9854,7 @@ def test_zone_motion_fraction_polygon_outside_motion() -> None:
             [20 / 64, 1.0],
         ],
     }
-    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    fraction = BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone)
     assert fraction == pytest.approx(0.0, abs=0.02)
 
 
@@ -9761,7 +9867,7 @@ def test_zone_motion_fraction_polygon_triangle_partial_overlap() -> None:
         "shape": "polygon",
         "points": [[40 / 64, 0.0], [60 / 64, 0.0], [50 / 64, 1.0]],
     }
-    fraction = BaseAnalyzer._zone_motion_fraction(frames, zone)
+    fraction = BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone)
     assert fraction is not None
     assert 0.0 <= fraction <= 1.0
 
@@ -9772,7 +9878,7 @@ def test_zone_motion_fraction_polygon_empty_points_returns_none() -> None:
     the broad except) rather than crash the whole analysis."""
     frames = [_real_jpeg_with_bar(5), _real_jpeg_with_bar(45)]
     zone = {"shape": "polygon", "points": []}
-    assert BaseAnalyzer._zone_motion_fraction(frames, zone) is None
+    assert BaseAnalyzer._zone_motion_fraction(_thumbs(frames), zone) is None
 
 
 # ---------------------------------------------------------------------------
@@ -9875,7 +9981,7 @@ def test_maybe_compute_zone_motion_requires_car_description() -> None:
         car_description="",
         car_zones={"Driveway": zone},
     )
-    assert a._maybe_compute_zone_motion(frames, "Driveway") is None
+    assert a._maybe_compute_zone_motion(_thumbs(frames), "Driveway") is None
 
 
 def test_maybe_compute_zone_motion_runs_once_car_description_set() -> None:
@@ -9888,7 +9994,116 @@ def test_maybe_compute_zone_motion_runs_once_car_description_set() -> None:
         car_description="Silver Kia",
         car_zones={"Driveway": zone},
     )
-    assert a._maybe_compute_zone_motion(frames, "Driveway") is not None
+    assert a._maybe_compute_zone_motion(_thumbs(frames), "Driveway") is not None
+
+
+# ---------------------------------------------------------------------------
+# _downselect_frames / _maybe_compute_motion_thumbnails
+# ---------------------------------------------------------------------------
+
+
+async def test_downselect_frames_computes_zone_box_when_zone_applies() -> None:
+    zone = {"x_min": 0.1, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9}
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="Silver Kia",
+        car_zones={"Driveway": zone},
+        max_frames=2,
+    )
+    frames = [_real_jpeg_with_bar(x) for x in (2, 18, 34, 50, 2, 18)]
+    with patch.object(
+        BaseAnalyzer, "_select_best_frames", wraps=BaseAnalyzer._select_best_frames
+    ) as mock_select:
+        result = await a._downselect_frames(
+            frames, clip_duration=0.0, camera="Driveway"
+        )
+    assert mock_select.call_args[0][2] == (0.1, 0.1, 0.9, 0.9)
+    assert len(result) <= len(frames)
+
+
+async def test_downselect_frames_zone_box_none_without_car_description() -> None:
+    """A car zone alone isn't enough — car protection must actually apply
+    (ai_car_description set), matching every other car-zone gate."""
+    zone = {"x_min": 0.1, "y_min": 0.1, "x_max": 0.9, "y_max": 0.9}
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="",
+        car_zones={"Driveway": zone},
+        max_frames=2,
+    )
+    frames = [_real_jpeg_with_bar(x) for x in (2, 18, 34, 50, 2, 18)]
+    with patch.object(
+        BaseAnalyzer, "_select_best_frames", wraps=BaseAnalyzer._select_best_frames
+    ) as mock_select:
+        await a._downselect_frames(frames, clip_duration=0.0, camera="Driveway")
+    assert mock_select.call_args[0][2] is None
+
+
+async def test_downselect_frames_uniform_strategy_ignores_zone() -> None:
+    """The "uniform" strategy never consults motion scoring at all, zone
+    or otherwise — _select_uniform_frames takes no zone_box param."""
+    zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="Silver Kia",
+        car_zones={"Driveway": zone},
+        max_frames=2,
+        frame_strategy="uniform",
+    )
+    frames = [_real_jpeg_with_bar(x) for x in (2, 18, 34, 50, 2, 18)]
+    result = await a._downselect_frames(frames, clip_duration=0.0, camera="Driveway")
+    assert len(result) <= len(frames)
+
+
+async def test_maybe_compute_motion_thumbnails_skips_when_not_needed() -> None:
+    """No car zone, and too few frames for a trajectory hint — returns
+    None without doing any PIL work at all."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    frames = [_real_jpeg(100), _real_jpeg(100)]
+    with patch.object(BaseAnalyzer, "_grayscale_thumbnails") as mock_thumbs:
+        result = await a._maybe_compute_motion_thumbnails(frames, "Driveway")
+    assert result is None
+    mock_thumbs.assert_not_called()
+
+
+async def test_maybe_compute_motion_thumbnails_runs_for_trajectory_hint() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    frames = [_real_jpeg_with_bar(x) for x in (2, 18, 34)]
+    result = await a._maybe_compute_motion_thumbnails(frames, "Driveway")
+    assert result is not None
+    assert len(result) == len(frames)
+
+
+async def test_maybe_compute_motion_thumbnails_runs_for_zone_motion() -> None:
+    """Even with too few frames for a trajectory hint, a configured
+    applicable car zone alone is enough to trigger the computation."""
+    zone = {"x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        car_description="Silver Kia",
+        car_zones={"Driveway": zone},
+    )
+    frames = [_real_jpeg(100), _real_jpeg(100)]
+    result = await a._maybe_compute_motion_thumbnails(frames, "Driveway")
+    assert result is not None
+
+
+async def test_maybe_compute_motion_thumbnails_returns_none_on_error() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    frames = [_real_jpeg_with_bar(x) for x in (2, 18, 34)]
+    with patch.object(
+        BaseAnalyzer, "_grayscale_thumbnails", side_effect=ValueError("boom")
+    ):
+        result = await a._maybe_compute_motion_thumbnails(frames, "Driveway")
+    assert result is None
 
 
 def test_build_prompt_includes_movement_hint() -> None:
