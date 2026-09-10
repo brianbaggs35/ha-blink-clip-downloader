@@ -1,5 +1,21 @@
 # Changelog
 
+## 5.5.2
+
+### Bug Fixes
+
+- Silenced a confusing blinkpy log line (`blinkpy.blinkpy: network = {...}`,
+  logged once per connect/reconnect) that dumps the raw response of Blink's
+  own cloud "camera/usage" API at INFO level. Despite the name, these
+  per-camera numbers are cumulative footage-seconds counted toward Blink's
+  cloud plan, not a clip-count or activity signal — and the endpoint
+  silently omits Mini/Doorbell-type cameras entirely. blinkpy itself only
+  ever reads `name`/`id` back out of the response; this add-on reads none
+  of it. Left at INFO, it made a genuinely busy camera look nearly idle
+  (and an idle one look busy) with no way to act on it. Now capped at
+  WARNING, matching the existing `blinkpy.helpers.util` suppression right
+  above it.
+
 ## 5.5.1
 
 ### Dependency Updates
