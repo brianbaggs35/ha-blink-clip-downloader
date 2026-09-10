@@ -1,5 +1,69 @@
 # Changelog
 
+## 6.0.0
+
+The first part of the v6.0.0 upgrade series: a Python floor bump, a full
+dependency refresh, a vision-pipeline model upgrade with a genuinely new
+capability (persisted, queryable object detections), a full correctness
+review of the AI analysis pipeline, and the requested object-detection
+clip-modal feature. More parts land here before this version ships.
+
+### Added
+
+- The clip modal's AI panel now shows a compact chip summary of detected
+  objects (e.g. "🧍 2 🚗 1") when the optional computer-vision pipeline
+  (`ai_enhanced_detection_enabled`) found something — one emoji per label,
+  invisible when nothing was detected or the pipeline is off, no
+  bounding-box overlay. Backed by a new `detected_objects` database table
+  (replace-not-accumulate semantics on re-analyze, unlike the
+  append-only `analysis_results` history) and a `GET /api/ai/results/{id}`
+  field.
+- `ai_depth_estimation_model`: the depth-estimation stage's checkpoint
+  (Small/Base/Large) is now configurable the same way as the object-
+  detection model, instead of hardcoded to Small. Base/Large are more
+  accurate but licensed CC-BY-NC-4.0 (non-commercial use only) by their
+  publisher, unlike Small's Apache-2.0 — documented in the option itself
+  and in all six translation files.
+
+### Changed
+
+- Default object-detection model switched to YOLO26 (`yolo26n.pt`) — the
+  current Ultralytics generation: end-to-end inference (no separate NMS
+  step), lighter and more accurate than YOLO11 at every size. Verified
+  against ultralytics' own model configs and GitHub-assets allowlist
+  (same 80-class COCO output, same `.track()`/`Results` API as YOLO11).
+  `yolo11n/s/m/l/x.pt` remain selectable for existing configurations.
+- Python floor raised from 3.12 to 3.13 (CI matrix, pyright target, and
+  the local `act` script all moved to match) — the add-on's own Docker
+  image was already running Python 3.13 at container runtime via its
+  Debian trixie base, so this brings the declared floor in line with
+  actual runtime behavior rather than changing it.
+
+### AI Analysis Pipeline
+
+- Full line-by-line review of `analyzer.py` (all six providers, the
+  Moondream detect/caption/query pipelines, escalation logic, frame
+  selection, and response parsing) found no new correctness bugs — the
+  escalation-truncation, duplicate-row, and high-recall-asymmetry fixes
+  from earlier reviews are all still correctly in place.
+- Refreshed the Anthropic and OpenAI model/pricing tables against both
+  providers' current pricing pages: added `claude-opus-5`,
+  `claude-fable-5-1`, `claude-mythos-5-1`, and OpenAI's new GPT-5.6
+  generation (`gpt-5.6-sol`/`gpt-5.6-terra`/`gpt-5.6-luna`, released
+  2026-07-09). Corrected a stale code comment that predicted a Claude
+  Sonnet 5 price increase Anthropic has since cancelled — the stored
+  price was already correct, only the comment was misleading. Default
+  models (`claude-haiku-4-5`, `gpt-4o-mini`) deliberately left unchanged —
+  still the most cost-effective vision-capable choice for each provider.
+
+### Dependency Updates
+
+- Updated python-slugify to 9.0.0, ultralytics to 8.4.146, transformers to
+  5.17.0, torch/torchvision to 2.14/0.29 (Dockerfile CPU-wheel install),
+  and the pinned ruff version to 0.16.6.
+- Updated `actions/checkout`, `actions/setup-python`, and
+  `actions/setup-node` to v7; `@types/node` to 26.5.1.
+
 ## 5.5.2
 
 ### Dependency Updates
