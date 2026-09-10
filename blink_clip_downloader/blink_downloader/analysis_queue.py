@@ -14,6 +14,12 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Bounded retry cap for a clip whose analysis failed for a transient reason
+# (see BaseAnalyzer.transient_error) — after this many retries it's marked
+# 'failed' for real instead of requeued again, so a genuine misconfiguration
+# still surfaces rather than retrying forever.
+_MAX_ANALYSIS_RETRIES = 3
+
 
 class AnalysisQueue:
     """Manages a queue of clips awaiting AI analysis.
@@ -169,6 +175,21 @@ class AnalysisQueue:
             self._log_result(clip_id, result)
 
         except Exception as exc:  # noqa: BLE001
+            retry_count = int(item.get("retry_count") or 0)
+            if self._analyzer.transient_error and retry_count < _MAX_ANALYSIS_RETRIES:
+                retry_count += 1
+                _LOGGER.info(
+                    "Transient failure analyzing clip %s (retry %d/%d): %s — "
+                    "requeuing for the next cycle",
+                    clip_id,
+                    retry_count,
+                    _MAX_ANALYSIS_RETRIES,
+                    exc,
+                )
+                await self._db.requeue_for_retry(
+                    clip_id, retry_count, error=str(exc)[:500]
+                )
+                return
             _LOGGER.warning("Failed to analyze clip %s: %s", clip_id, exc)
             await self._db.update_queue_status(clip_id, "failed", error=str(exc)[:500])
             return
