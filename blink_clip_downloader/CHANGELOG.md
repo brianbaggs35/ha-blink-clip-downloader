@@ -6,6 +6,7 @@
 
 - Updated eslint-plugin-vue to 10.11.0
 - Updated typescript-eslint to 8.70.0
+- Updated vite to 8.3.0
 
 ### Bug Fixes
 
