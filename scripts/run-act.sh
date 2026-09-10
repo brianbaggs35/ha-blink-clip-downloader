@@ -97,6 +97,20 @@ ACT_ARGS=(
   --matrix arch:amd64
   --concurrent-jobs "$CONCURRENT_JOBS"
   --rm
+  # Required for the smoke-test job specifically: its "Create smoke-test
+  # data directories" step writes files under ${{ github.workspace }},
+  # and a later step bind-mounts that same path into `docker run -v` for
+  # the addon container. Without --bind, act's default checkout is a
+  # one-time `docker cp` snapshot into the job's own container filesystem
+  # — writes there never reach the real host path the -v mount source
+  # string resolves against (the docker.sock passthrough dispatches that
+  # `docker run` to the real host daemon), so the addon container silently
+  # gets an empty auto-created directory instead of the seeded
+  # options.json, and starts in web-only mode. --bind makes the workspace
+  # a live two-way mount of this real directory instead, the same fix
+  # scripts/run-act-ha-integration.sh already uses for an analogous
+  # mid-job-directory visibility gap — see that script's own comment.
+  --bind
 )
 
 if [[ -d "$PLAYWRIGHT_CACHE" ]]; then
