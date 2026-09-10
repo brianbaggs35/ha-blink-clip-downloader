@@ -23,6 +23,9 @@ def _make_analyzer_mock(**kwargs: Any) -> MagicMock:
     # getter), which AnalysisQueue._process_pending's new early-break
     # check would misread as "rate limited" after every single clip.
     m.rate_limited = kwargs.get("rate_limited", False)
+    # Same gotcha for transient_error - default True to match the real
+    # property's own retry-favoring default.
+    m.transient_error = kwargs.get("transient_error", True)
     m.analyze_clip = AsyncMock(
         return_value=kwargs.get(
             "result",
@@ -233,7 +236,11 @@ async def test_process_pending_skips_when_empty(db: ClipDatabase) -> None:
 
 
 async def test_process_pending_handles_analysis_failure(db: ClipDatabase) -> None:
-    analyzer = _make_analyzer_mock()
+    # transient_error=False: a permanent failure (bad API key, malformed
+    # request, ...) must be marked failed immediately, never retried - see
+    # test_process_pending_requeues_transient_failure below for the
+    # retry-worthy case.
+    analyzer = _make_analyzer_mock(transient_error=False)
     analyzer.analyze_clip = AsyncMock(side_effect=RuntimeError("boom"))
     queue = _make_queue(analyzer, db)
     queue._running = True
@@ -245,6 +252,50 @@ async def test_process_pending_handles_analysis_failure(db: ClipDatabase) -> Non
 
     counts = await db.get_queue_counts()
     assert counts["failed"] == 1
+
+
+async def test_process_pending_requeues_transient_failure(db: ClipDatabase) -> None:
+    """A transient failure (network blip, timeout, rate limit, ...) must be
+    requeued as pending with retry_count incremented, not permanently
+    failed - see BaseAnalyzer.transient_error and
+    AnalysisQueue._process_one."""
+    analyzer = _make_analyzer_mock(transient_error=True)
+    analyzer.analyze_clip = AsyncMock(side_effect=RuntimeError("connection reset"))
+    queue = _make_queue(analyzer, db)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    counts = await db.get_queue_counts()
+    assert counts["failed"] == 0
+    assert counts["pending"] == 1
+    pending = await db.get_pending_analysis()
+    assert pending[0]["clip_id"] == "c1"
+    assert pending[0]["retry_count"] == 1
+
+
+async def test_process_pending_marks_failed_after_retry_cap_exceeded(
+    db: ClipDatabase,
+) -> None:
+    """Once a clip has already hit the retry cap, a further transient
+    failure marks it failed for real instead of requeuing indefinitely."""
+    analyzer = _make_analyzer_mock(transient_error=True)
+    analyzer.analyze_clip = AsyncMock(side_effect=RuntimeError("still down"))
+    queue = _make_queue(analyzer, db)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await db.requeue_for_retry("c1", retry_count=3, error="prior failures")
+
+    await queue._process_pending()
+
+    counts = await db.get_queue_counts()
+    assert counts["failed"] == 1
+    assert counts["pending"] == 0
 
 
 async def test_process_pending_dispatches_suspicious(db: ClipDatabase) -> None:

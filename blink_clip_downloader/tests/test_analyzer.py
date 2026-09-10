@@ -1961,6 +1961,8 @@ async def test_anthropic_call_model_auth_error(monkeypatch: pytest.MonkeyPatch) 
         result = await a._call_model([_FAKE_JPEG], "Analyze")
 
     assert result == ""
+    # A bad API key is a permanent misconfiguration - retrying won't help.
+    assert a.transient_error is False
 
 
 async def test_anthropic_call_model_permission_denied(
@@ -1978,6 +1980,8 @@ async def test_anthropic_call_model_permission_denied(
         result = await a._call_model([_FAKE_JPEG], "Analyze")
 
     assert result == ""
+    # No API access to this model is also a permanent misconfiguration.
+    assert a.transient_error is False
 
 
 async def test_anthropic_call_model_api_status_error(
@@ -1995,6 +1999,9 @@ async def test_anthropic_call_model_api_status_error(
         result = await a._call_model([_FAKE_JPEG], "Analyze")
 
     assert result == ""
+    # A generic APIStatusError (e.g. a 5xx not matched by a more specific
+    # subclass above) is worth retrying - stays at the retry-favoring default.
+    assert a.transient_error is True
 
 
 async def test_anthropic_call_model_no_frames() -> None:
@@ -2019,6 +2026,7 @@ async def test_anthropic_call_model_timeout(monkeypatch: pytest.MonkeyPatch) -> 
         result = await a._call_model([_FAKE_JPEG], "Analyze")
 
     assert result == ""
+    assert a.transient_error is True
 
 
 async def test_anthropic_fetch_models_from_api(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2354,6 +2362,8 @@ async def test_moondream_cloud_call_api_frame_429_sets_rate_limited() -> None:
     assert a.rate_limited is False
     assert await a._call_api_frame(_FAKE_JPEG, "prompt") == ""
     assert a.rate_limited is True
+    # A rate limit is transient - it clears on its own, worth retrying.
+    assert a.transient_error is True
 
 
 async def test_moondream_cloud_call_api_frame_401() -> None:
@@ -2364,6 +2374,8 @@ async def test_moondream_cloud_call_api_frame_401() -> None:
     a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
     a._session = _mock_session(post=MagicMock(return_value=mock_resp))
     assert await a._call_api_frame(_FAKE_JPEG, "prompt") == ""
+    # A bad API key is a permanent misconfiguration - retrying won't help.
+    assert a.transient_error is False
 
 
 async def test_moondream_cloud_call_api_frame_500() -> None:
@@ -2598,6 +2610,8 @@ async def test_anthropic_call_model_rate_limit_error() -> None:
     with patch.dict(sys.modules, {"anthropic": mock_mod}):
         assert await a._call_model([_FAKE_JPEG], "prompt") == ""
     assert a.rate_limited is True
+    # A rate limit is transient - it clears on its own, worth retrying.
+    assert a.transient_error is True
 
 
 async def test_anthropic_call_model_bad_request_error() -> None:
@@ -2613,6 +2627,8 @@ async def test_anthropic_call_model_bad_request_error() -> None:
     a._client = mock_mod.AsyncAnthropic.return_value
     with patch.dict(sys.modules, {"anthropic": mock_mod}):
         assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+    # A malformed request (wrong model, etc.) won't fix itself on retry.
+    assert a.transient_error is False
 
 
 async def test_anthropic_call_model_api_connection_error() -> None:
@@ -2626,6 +2642,7 @@ async def test_anthropic_call_model_api_connection_error() -> None:
     a._client = mock_mod.AsyncAnthropic.return_value
     with patch.dict(sys.modules, {"anthropic": mock_mod}):
         assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+    assert a.transient_error is True
 
 
 async def test_anthropic_call_model_generic_exception() -> None:
@@ -2639,6 +2656,8 @@ async def test_anthropic_call_model_generic_exception() -> None:
     a._client = mock_mod.AsyncAnthropic.return_value
     with patch.dict(sys.modules, {"anthropic": mock_mod}):
         assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+    # An unrecognized exception is treated as retry-worthy by default.
+    assert a.transient_error is True
 
 
 # ------------------------------------------------------------------
@@ -3230,6 +3249,7 @@ async def test_openai_call_model_auth_error(monkeypatch: pytest.MonkeyPatch) -> 
     with patch.dict(sys.modules, {"openai": mock_mod}):
         result = await a._call_model([_FAKE_JPEG], "Analyze")
     assert result == ""
+    assert a.transient_error is False
 
 
 async def test_openai_call_model_permission_denied(
@@ -3245,6 +3265,7 @@ async def test_openai_call_model_permission_denied(
     with patch.dict(sys.modules, {"openai": mock_mod}):
         result = await a._call_model([_FAKE_JPEG], "Analyze")
     assert result == ""
+    assert a.transient_error is False
 
 
 async def test_openai_call_model_rate_limit_error(
@@ -3262,6 +3283,7 @@ async def test_openai_call_model_rate_limit_error(
         result = await a._call_model([_FAKE_JPEG], "Analyze")
     assert result == ""
     assert a.rate_limited is True
+    assert a.transient_error is True
 
 
 async def test_openai_call_model_bad_request_error(
@@ -3281,6 +3303,7 @@ async def test_openai_call_model_bad_request_error(
     a._client = mock_mod.AsyncOpenAI.return_value
     with patch.dict(sys.modules, {"openai": mock_mod}):
         assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+    assert a.transient_error is False
 
 
 async def test_openai_call_model_api_status_error(
@@ -3296,6 +3319,7 @@ async def test_openai_call_model_api_status_error(
     with patch.dict(sys.modules, {"openai": mock_mod}):
         result = await a._call_model([_FAKE_JPEG], "Analyze")
     assert result == ""
+    assert a.transient_error is True
 
 
 async def test_openai_call_model_api_connection_error(
@@ -3313,6 +3337,7 @@ async def test_openai_call_model_api_connection_error(
     a._client = mock_mod.AsyncOpenAI.return_value
     with patch.dict(sys.modules, {"openai": mock_mod}):
         assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+    assert a.transient_error is True
 
 
 async def test_openai_call_model_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

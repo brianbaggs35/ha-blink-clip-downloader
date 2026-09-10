@@ -130,7 +130,13 @@ CREATE TABLE IF NOT EXISTS analysis_queue (
     status        TEXT    DEFAULT 'pending',
     queued_at     TEXT    NOT NULL,
     completed_at  TEXT    DEFAULT '',
-    error_message TEXT    DEFAULT ''
+    error_message TEXT    DEFAULT '',
+    -- Bumped each time a transient provider failure (timeout, connection
+    -- drop, rate limit) requeues this clip as 'pending' instead of marking
+    -- it 'failed' outright — see AnalysisQueue._process_one and
+    -- BaseAnalyzer.transient_error in analyzer.py. Left at 0 for a clip
+    -- that has never been retried.
+    retry_count   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_queue_status ON analysis_queue (status);
 
@@ -286,6 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_clips_gdrive_backed_up ON clips (gdrive_backed_up
 ALTER TABLE gdrive_upload_queue ADD COLUMN IF NOT EXISTS folder_id TEXT DEFAULT '';
 DROP INDEX IF EXISTS idx_battery_history_camera;
 CREATE INDEX IF NOT EXISTS idx_battery_history_camera ON battery_history (camera, id DESC);
+ALTER TABLE analysis_queue ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -2579,6 +2586,31 @@ class ClipDatabase:
             ),
             status,
             completed,
+            error,
+            clip_id,
+        )
+
+    async def requeue_for_retry(
+        self, clip_id: str, retry_count: int, error: str = ""
+    ) -> None:
+        """Requeue a transiently-failed clip as 'pending' with an incremented
+        retry_count, instead of marking it 'failed' outright — see
+        AnalysisQueue._process_one, which decides between this and
+        update_queue_status(..., "failed", ...) based on
+        BaseAnalyzer.transient_error and a bounded retry cap.
+        completed_at is left blank since the clip hasn't actually finished.
+        """
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm(
+                """
+                UPDATE analysis_queue
+                SET status='pending', retry_count=?, error_message=?
+                WHERE clip_id=?
+                """
+            ),
+            retry_count,
             error,
             clip_id,
         )
