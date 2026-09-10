@@ -15,6 +15,7 @@ from blink_downloader.analyzer import (
     _ANTHROPIC_FALLBACK_MODELS,
     _OPENAI_FALLBACK_MODELS,
     _OPENAI_MODEL_DISPLAY_ORDER,
+    _OPENAI_STRUCTURED_OUTPUT_SCHEMA,
     AnalysisResult,
     AnthropicAnalyzer,
     BaseAnalyzer,
@@ -24,6 +25,7 @@ from blink_downloader.analyzer import (
     MoondreamLocalAnalyzer,
     OllamaCloudAnalyzer,
     OpenAIAnalyzer,
+    _anthropic_supports_structured_output,
     _openai_model_rank,
     _vision_model_score,
     create_analyzer,
@@ -2586,6 +2588,109 @@ def test_anthropic_resize_frame_skips_small_image() -> None:
     img.save(buf, format="JPEG")
     original = buf.getvalue()
     assert AnthropicAnalyzer._resize_frame(original) == original
+
+
+def test_anthropic_supports_structured_output_recognized_model() -> None:
+    assert _anthropic_supports_structured_output("claude-haiku-4-5") is True
+    assert _anthropic_supports_structured_output("claude-opus-5") is True
+
+
+def test_anthropic_supports_structured_output_unrecognized_model() -> None:
+    # A legacy Claude 3.x snapshot isn't in _ANTHROPIC_MODEL_PRICING and
+    # Anthropic docs don't support structured outputs on that generation.
+    assert _anthropic_supports_structured_output("claude-3-5-sonnet-20241022") is False
+
+
+def test_anthropic_supports_structured_output_empty_model() -> None:
+    assert _anthropic_supports_structured_output("") is False
+
+
+def test_anthropic_create_kwargs_includes_structured_output_for_supported_model() -> (
+    None
+):
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    kwargs = a._build_anthropic_create_kwargs([_FAKE_JPEG], "Analyze")
+    assert kwargs["output_config"] == {
+        "format": {
+            "type": "json_schema",
+            "schema": _OPENAI_STRUCTURED_OUTPUT_SCHEMA["schema"],
+        }
+    }
+
+
+def test_anthropic_create_kwargs_omits_structured_output_for_unrecognized_model() -> (
+    None
+):
+    a = AnthropicAnalyzer(
+        api_key="key", model="claude-3-5-sonnet-20241022", prompt="test"
+    )
+    kwargs = a._build_anthropic_create_kwargs([_FAKE_JPEG], "Analyze")
+    assert "output_config" not in kwargs
+
+
+def test_anthropic_prompt_cache_prefix_uses_current_camera() -> None:
+    a = AnthropicAnalyzer(
+        api_key="key",
+        model="claude-haiku-4-5",
+        prompt="Base rules text.",
+        camera_descriptions={"Front Door": "Watches the front entrance."},
+    )
+    a._current_camera = "Front Door"
+    prefix = a._prompt_cache_prefix()
+    assert prefix.startswith("Base rules text.")
+    assert "Front Door" in prefix
+    assert "Watches the front entrance." in prefix
+
+
+def test_anthropic_create_kwargs_splits_cache_prefix_when_prompt_matches() -> None:
+    """The static base+camera-context prefix gets its own cache_control text
+    block, separate from the per-clip dynamic remainder - see
+    _prompt_cache_prefix's docstring for why this reconstructs the prefix
+    rather than receiving it directly."""
+    a = AnthropicAnalyzer(
+        api_key="key", model="claude-haiku-4-5", prompt="Base rules text."
+    )
+    a._current_camera = "Front Door"
+    cache_prefix = a._prompt_cache_prefix()
+    full_prompt = cache_prefix + "\n\nDynamic per-clip content here."
+
+    kwargs = a._build_anthropic_create_kwargs([_FAKE_JPEG], full_prompt)
+
+    content = kwargs["messages"][0]["content"]
+    text_blocks = [b for b in content if b["type"] == "text"]
+    assert len(text_blocks) == 2
+    assert text_blocks[0]["text"] == cache_prefix
+    assert text_blocks[0]["cache_control"] == {"type": "ephemeral"}
+    assert text_blocks[1]["text"] == "\n\nDynamic per-clip content here."
+    assert "cache_control" not in text_blocks[1]
+
+
+def test_anthropic_create_kwargs_no_split_when_prompt_does_not_match_prefix() -> None:
+    """A prompt that doesn't start with the reconstructed static prefix (the
+    normal case for a test double, and the safety fallback if this ever
+    stops holding in real use) gets one plain text block, exactly like
+    before prompt caching existed."""
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    kwargs = a._build_anthropic_create_kwargs([_FAKE_JPEG], "Analyze")
+    content = kwargs["messages"][0]["content"]
+    text_blocks = [b for b in content if b["type"] == "text"]
+    assert text_blocks == [{"type": "text", "text": "Analyze"}]
+
+
+def test_anthropic_create_kwargs_no_split_when_prompt_equals_prefix_exactly() -> None:
+    """No dynamic remainder to put in a second block - stay single-block
+    rather than emit a degenerate empty text block."""
+    a = AnthropicAnalyzer(
+        api_key="key", model="claude-haiku-4-5", prompt="Base rules text."
+    )
+    a._current_camera = "Front Door"
+    cache_prefix = a._prompt_cache_prefix()
+
+    kwargs = a._build_anthropic_create_kwargs([_FAKE_JPEG], cache_prefix)
+
+    content = kwargs["messages"][0]["content"]
+    text_blocks = [b for b in content if b["type"] == "text"]
+    assert text_blocks == [{"type": "text", "text": cache_prefix}]
 
 
 async def test_anthropic_call_model_import_error() -> None:

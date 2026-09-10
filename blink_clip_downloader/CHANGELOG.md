@@ -2,11 +2,14 @@
 
 ## 6.0.0
 
-The first part of the v6.0.0 upgrade series: a Python floor bump, a full
-dependency refresh, a vision-pipeline model upgrade with a genuinely new
-capability (persisted, queryable object detections), a full correctness
-review of the AI analysis pipeline, and the requested object-detection
-clip-modal feature. More parts land here before this version ships.
+The v6.0.0 upgrade series so far: a Python floor bump, a full dependency
+refresh, a vision-pipeline model upgrade with a genuinely new capability
+(persisted, queryable object detections), and two rounds of AI-analysis-
+pipeline work — a full correctness review, the object-detection
+clip-modal feature, sharper vehicle/zone-proximity intelligence,
+automatic retry of transiently-failed analyses, and reliability/cost
+improvements to the Anthropic and OpenAI request paths. More parts land
+here before this version ships.
 
 ### Added
 
@@ -24,8 +27,31 @@ clip-modal feature. More parts land here before this version ships.
   accurate but licensed CC-BY-NC-4.0 (non-commercial use only) by their
   publisher, unlike Small's Apache-2.0 — documented in the option itself
   and in all six translation files.
+- A clip that fails AI analysis for a transient reason (timeout,
+  connection drop, rate limit) is now automatically retried (up to 3
+  attempts) instead of being marked permanently failed — a genuine
+  misconfiguration (bad API key, unsupported model) still surfaces
+  immediately without retrying, since that never resolves on its own.
 
 ### Changed
+
+- The vehicle-protection depth/contact hints now name the actual detected
+  subject ("dog", "cat", "person", ...) instead of always saying "person"
+  — sharpens cases like a pet making contact with a protected vehicle.
+  The depth-estimation hint also now tells the AI model whether a subject
+  appears on the vehicle's near/same side or its far, partly-occluded
+  side, and the object-detection distance hint now gives an approximate
+  feet estimate (calibrated off the detected vehicle's own pixel width)
+  aligned to the same 1 ft / 3 ft thresholds the written protection rules
+  already use, instead of two independently-chosen scales.
+- `AnthropicAnalyzer` now uses Anthropic's schema-constrained structured
+  output (`output_config`) on Claude 4.5+ generation models — the same
+  reliability guarantee `OpenAIAnalyzer` already had — and Anthropic
+  prompt caching for the static, per-camera portion of the analysis
+  prompt, cutting repeat-analysis input-token cost on that portion for
+  cameras analyzed often. Both fall back safely (no structured output; a
+  single uncached prompt block) for an older/unrecognized model or a
+  prompt shape that doesn't match the expected static prefix.
 
 - Default object-detection model switched to YOLO26 (`yolo26n.pt`) — the
   current Ultralytics generation: end-to-end inference (no separate NMS
