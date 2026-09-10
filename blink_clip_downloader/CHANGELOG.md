@@ -9,6 +9,7 @@
 - Updated vite to 8.3.0
 - Updated aiosmtplib to 5.1.3
 - Updated openai to 3.11.0
+- Updated numpy to 2.5.3
 
 ### Bug Fixes
 
