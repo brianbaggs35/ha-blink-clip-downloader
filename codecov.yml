@@ -25,4 +25,15 @@ coverage:
           - e2e
     patch:
       default:
+        # Same scoping (and same reason) as project.default above — without
+        # an explicit flags: key here, Codecov pools the e2e/Istanbul flag
+        # into patch coverage too. Istanbul doesn't understand this repo's
+        # `v8 ignore` comments (Vitest/v8's own exclusion syntax) and can
+        # diverge from v8 on line-vs-branch exclusion scope for the exact
+        # same frontend/src files, so a line already correctly excluded from
+        # Vitest's 100% can still show as a "patch" gap purely from e2e's
+        # unrelated, informational-only coverage data.
         target: 80%
+        flags:
+          - backend
+          - frontend
