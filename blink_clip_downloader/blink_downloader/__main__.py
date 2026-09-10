@@ -24,6 +24,17 @@ def _setup_logging(level: str) -> None:
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
     logging.getLogger("aiohttp.client").setLevel(logging.WARNING)
     logging.getLogger("blinkpy.helpers.util").setLevel(logging.WARNING)
+    # blinkpy logs the raw response of Blink's own cloud "camera/usage" API
+    # (id/name/lv_seconds/clip_seconds per camera) at INFO on every connect
+    # (setup_camera_list() -> request_camera_usage()) -- it only ever reads
+    # name/id back out of that response, and this add-on reads none of it.
+    # The numbers are cumulative footage-seconds toward Blink's own cloud
+    # plan, not a clip-count/activity signal, and the endpoint silently
+    # omits Mini/Doorbell-type cameras entirely -- so a genuinely busy
+    # camera can show near-zero "usage" while an idle one shows a lot. Easy
+    # to misread as a bug; it's just Blink's own data, verbatim, and not
+    # something a user can act on.
+    logging.getLogger("blinkpy.blinkpy").setLevel(logging.WARNING)
     # At DEBUG level specifically, the openai SDK logs the entire outgoing
     # request body — including every frame's full base64 image data and
     # the complete prompt text — on every single analysis call, and
