@@ -223,8 +223,10 @@ onUnmounted(() => {
   // only as a defensive guard against a future refactor that might change
   // that ordering.
   /* v8 ignore next */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
   if (connectionPollTimer) clearInterval(connectionPollTimer)
   /* v8 ignore next */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
   if (cameraPollTimer) clearInterval(cameraPollTimer)
 })
 </script>

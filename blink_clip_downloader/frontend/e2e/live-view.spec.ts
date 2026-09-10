@@ -47,6 +47,123 @@ test('selecting a different camera after a failed start attempts a fresh session
   await expect(page.getByText('Select a camera above to start watching.')).toBeVisible()
 })
 
+test('shows a toast when the camera list fails to load', async ({ page }) => {
+  await page.route('**/api/liveview/cameras', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
+  )
+  // beforeEach's own navigation already loaded cameras successfully before
+  // this route existed -- Refresh (the shared refresh.tick LiveViewPage
+  // also watches) is what re-runs loadCameras() against the now-mocked
+  // endpoint, same trigger status.spec.ts/storage.spec.ts use for theirs.
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByText('Failed to load cameras')).toBeVisible()
+})
+
+test('shows the no-cameras message when the account has none', async ({ page }) => {
+  await page.route('**/api/liveview/cameras', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ cameras: [] }) }),
+  )
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(
+    page.getByText('No cameras found — make sure Blink is connected and your account has at least one camera.'),
+  ).toBeVisible()
+})
+
+test('adopts an already-active session on mount, without needing a camera click', async ({ page }) => {
+  await page.route('**/api/liveview/**', async (route) => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/liveview/cameras') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ cameras: ['Front Door'] }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/status') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ active: true, session_id: 'already-running', camera: 'Front Door', state: 'live' }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/heartbeat' && route.request().method() === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
+      return
+    }
+    if (url.pathname.startsWith('/api/liveview/hls/')) {
+      await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
+      return
+    }
+    await route.fallback()
+  })
+
+  // A fresh navigation (not just beforeEach's, which already happened
+  // before these routes existed) so onMounted's own initial status check
+  // -- not a later poll -- is what adopts this pre-existing session.
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="liveview"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="liveview"]')
+
+  await expect(page.getByRole('button', { name: '■ Stop' })).toBeVisible()
+  await expect(page.locator('#page-liveview .video-js-wrap')).not.toHaveClass(/video-hidden/)
+})
+
+test('shows a toast when stopping the live view session fails', async ({ page }) => {
+  await page.route('**/api/liveview/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const method = request.method()
+
+    if (url.pathname === '/api/liveview/cameras') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ cameras: ['Front Door'] }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/status') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ active: false }) })
+      return
+    }
+    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ active: true, session_id: 'mock-session', camera: 'Front Door', state: 'live' }),
+      })
+      return
+    }
+    if (url.pathname === '/api/liveview/stop' && method === 'POST') {
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) })
+      return
+    }
+    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
+      return
+    }
+    if (url.pathname.startsWith('/api/liveview/hls/')) {
+      await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
+      return
+    }
+    await route.fallback()
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="liveview"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="liveview"]')
+  await page.getByRole('button', { name: 'Front Door', exact: true }).click()
+  await expect(page.getByRole('button', { name: '■ Stop' })).toBeVisible()
+
+  // The component sets status to inactive locally before the backend call
+  // even resolves (see stop() in LiveViewPage.vue), so the picker resets
+  // either way -- the failure only shows up as this extra toast.
+  await page.getByRole('button', { name: '■ Stop' }).click()
+  await expect(page.getByText('Failed to stop live view')).toBeVisible()
+})
+
 test('renders and stops a mocked live session without a real Blink account', async ({ page }) => {
   let active = false
   await page.route('**/api/liveview/**', async (route) => {

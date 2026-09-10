@@ -166,3 +166,62 @@ test('AI Usage tab shows the right explanatory note for each remaining provider'
     await expect(page.getByText(expectedText[provider])).toBeVisible()
   }
 })
+
+// AiConnectionCard's escalation (tier 2) block only renders when the
+// mounted status has an escalation_provider — the real standalone-server
+// analyzer has none configured, so every test above (and the AI tab's
+// default state) never touches it. Mocking /api/ai/status is the only way
+// to reach it without a second real analyzer. (The online case, plus
+// escalation fetch/copy, are already covered by mocked-integrations.spec.ts
+// — "shows the escalation model as online..." and the fetch/copy steps
+// inside "covers AI configuration, feedback, email alerts..." — so only the
+// offline/fallback state is added here.)
+test('the escalation tier shows the unreachable fallback note when offline', async ({ page }) => {
+  await page.route('**/api/ai/status', async (route) => {
+    const response = await route.fetch()
+    const status = (await response.json()) as Record<string, unknown>
+    await route.fulfill({
+      response,
+      json: { ...status, escalation_provider: 'anthropic', escalation_model: 'claude-test', escalation_online: false },
+    })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  await expect(page.getByText('🔴 unreachable — falling back to tier 1')).toBeVisible()
+})
+
+// The unsupported-architecture state and the full idle->installing->failed/
+// installed install flow are already covered by mocked-integrations.spec.ts
+// ("shows the unsupported-architecture state...", "completes a mocked
+// Moondream local install...", "shows the failed state..."). This is the one
+// moondream scenario neither of those hits: arriving with the package
+// already installed, which takes a genuinely different code path (the
+// immediate provider watcher's `props.status.moondream_installed ? ... `
+// branch) rather than pollMoondreamStatus()'s `if (s.installed)` branch the
+// install-flow tests exercise instead.
+test('moondream_local shows installed when already installed', async ({ page }) => {
+  await page.route('**/api/ai/status', async (route) => {
+    const response = await route.fetch()
+    const status = (await response.json()) as Record<string, unknown>
+    await route.fulfill({
+      response,
+      json: { ...status, provider: 'moondream_local', moondream_installed: true },
+    })
+  })
+  await page.route('**/api/ai/moondream/install-status', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ arch_supported: true, installed: true }),
+    }),
+  )
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  await expect(page.getByText('✓ moondream installed')).toBeVisible()
+})

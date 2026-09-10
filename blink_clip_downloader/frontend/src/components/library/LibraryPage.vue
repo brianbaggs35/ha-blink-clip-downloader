@@ -119,12 +119,14 @@ const diskPct = computed(() => {
   // ProgressBar, so a falsy quota_bytes means neither computed's getter
   // is ever invoked. Kept for safety if either is ever read elsewhere.
   /* v8 ignore next */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
   if (!disk?.quota_bytes) return null
   return Math.min(100, (disk.used_bytes / disk.quota_bytes) * 100)
 })
 const diskClass = computed(() => {
   const pct = diskPct.value
   /* v8 ignore next */
+  /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
   if (pct == null) return ''
   if (pct > 90) return 'danger'
   if (pct > 70) return 'warn'
@@ -355,6 +357,7 @@ watch(
     // clip id before bumping seq, so a falsy clipId here is unreachable —
     // see stores/clipViewer.ts.
     /* v8 ignore next */
+    /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
     if (clipViewer.clipId) openModal(clipViewer.clipId)
   },
 )
@@ -491,7 +494,9 @@ async function onDeleted(id: string) {
   // just-filtered (one shorter) array, so `?.id` can never actually be
   // undefined -- the `?? null` fallback is unreachable in practice.
   /* v8 ignore start */
+  /* istanbul ignore start -- see v8-ignore comment above; same dead branch, "ignore next" doesn't take effect before an else-if */
   else if (idx - 1 >= 0) activeClipId.value = clips.value[idx - 1]?.id ?? null
+  /* istanbul ignore stop */
   /* v8 ignore stop */
   else closeModal()
 }
