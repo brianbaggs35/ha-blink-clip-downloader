@@ -9,8 +9,9 @@ pipeline work — a full correctness review, the object-detection
 clip-modal feature, sharper vehicle/zone-proximity intelligence,
 automatic retry of transiently-failed analyses, reliability/cost
 improvements to the Anthropic and OpenAI request paths, and a
-frame-selection pipeline review — and a collapsible nav sidebar. More
-parts land here before this version ships.
+frame-selection pipeline review — a collapsible nav sidebar, and viewing
+Sync Module local-storage clips from the Sync Module tab. More parts land
+here before this version ships.
 
 ### Added
 
@@ -38,6 +39,12 @@ parts land here before this version ships.
   icon, and the connection status badge becomes a single green/red/gray
   dot instead of a text tag. The preference persists across reloads and
   defaults to expanded.
+- The Sync Module tab now shows a collapsible "Local Storage Clips" panel
+  per module with local storage enabled, listing that module's clips
+  pulled from local (USB) storage — click one to open it in the same
+  clip modal the Library tab uses, without switching tabs. The Library
+  tab's own source filter also gained a "Local Storage" option, matching
+  a filter the backend already supported but the UI didn't expose.
 
 ### Changed
 
@@ -78,6 +85,25 @@ parts land here before this version ships.
   selection, and response parsing) found no new correctness bugs — the
   escalation-truncation, duplicate-row, and high-recall-asymmetry fixes
   from earlier reviews are all still correctly in place.
+- Frame selection for a protected-vehicle camera now biases toward
+  frames with motion concentrated inside the configured car zone rather
+  than ranking purely by whole-frame motion — a busy background (street
+  traffic, for example) can no longer starve the down-selected frame set
+  of the frame(s) actually showing activity at the vehicle. Cameras with
+  no car zone configured are unaffected.
+  Also detects lateral pacing (someone moving back and forth across the
+  frame) as its own trajectory hint instead of reporting no clear
+  direction, which is what a first/last-centroid-only comparison
+  produced whenever the back-and-forth happened to end near where it
+  started.
+- The frame-selection/motion-analysis work that runs per clip
+  (down-selecting frames, the motion-trajectory hint, zone-motion
+  scoring) now runs in a thread executor like every other CPU-bound
+  stage in the vision pipeline, instead of blocking the event loop
+  inline — matters most for clips with many frames on a loaded system.
+  The trajectory-hint and zone-motion stages also no longer each
+  independently redo the same grayscale-thumbnail decode of the same
+  frame set.
 - Refreshed the Anthropic and OpenAI model/pricing tables against both
   providers' current pricing pages: added `claude-opus-5`,
   `claude-fable-5-1`, `claude-mythos-5-1`, and OpenAI's new GPT-5.6

@@ -1428,6 +1428,11 @@ describe('LibraryPage', () => {
     await flushPromises()
     expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).toContain('source=pir')
 
+    await selectOption(wrapper, 'source-filter', 'Local Storage')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.at(-1)?.[0] as string).toContain('source=local_storage')
+
     await selectOption(wrapper, 'tag-filter', '#delivery')
     await vi.advanceTimersByTimeAsync(400)
     await flushPromises()
