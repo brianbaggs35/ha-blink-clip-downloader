@@ -15,10 +15,13 @@ import json
 import logging
 import os
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import asyncpg
 from asyncpg.pool import PoolConnectionProxy
+
+if TYPE_CHECKING:
+    from .vision import DetectedObject
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -89,6 +92,26 @@ CREATE TABLE IF NOT EXISTS analysis_results (
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
 CREATE INDEX IF NOT EXISTS idx_analysis_notified ON analysis_results (clip_id, is_suspicious, confidence);
+
+-- Per-object detections from the optional computer-vision pipeline's
+-- ObjectDetector (see vision.py, ai_enhanced_detection_enabled) — powers
+-- the clip modal's object-detection chip summary. Replace, not accumulate,
+-- semantics: unlike analysis_results (kept as history), a re-analyze
+-- deletes and re-inserts this clip's rows (see save_detected_objects)
+-- rather than piling up every past run's detections.
+CREATE TABLE IF NOT EXISTS detected_objects (
+    id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    clip_id       TEXT    NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    label         TEXT    NOT NULL,
+    confidence    DOUBLE PRECISION DEFAULT 0.0,
+    box_x1        DOUBLE PRECISION DEFAULT 0.0,
+    box_y1        DOUBLE PRECISION DEFAULT 0.0,
+    box_x2        DOUBLE PRECISION DEFAULT 0.0,
+    box_y2        DOUBLE PRECISION DEFAULT 0.0,
+    track_id      INTEGER,
+    frame_index   INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_detected_objects_clip ON detected_objects (clip_id);
 
 -- Single-row marker for the AI Usage tab's "Clear Stats" button: usage
 -- queries only aggregate analysis_results rows analyzed after reset_at,
@@ -1612,6 +1635,78 @@ class ClipDatabase:
                 """
             ),
             limit,
+        )
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Detected objects (see vision.py's ObjectDetector)
+    # ------------------------------------------------------------------
+
+    async def save_detected_objects(
+        self, clip_id: str, detections: list[DetectedObject]
+    ) -> None:
+        """Replace the stored object-detection results for *clip_id*.
+
+        Replace, not accumulate — see detected_objects' own schema comment.
+        Deletes any existing rows for this clip first (a no-op the first
+        time) so a re-analyze always leaves exactly the latest detection
+        set behind, then bulk-inserts *detections* in the same
+        transaction. A clip analyzed with detection disabled, or where
+        nothing was detected, simply clears any stale rows from a previous
+        run and inserts nothing.
+        """
+        if self._pool is None:
+            return
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                _qm("DELETE FROM detected_objects WHERE clip_id=?"), clip_id
+            )
+            if detections:
+                await conn.executemany(
+                    _qm(
+                        """
+                            INSERT INTO detected_objects
+                              (clip_id, label, confidence, box_x1, box_y1,
+                               box_x2, box_y2, track_id, frame_index)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """
+                    ),
+                    [
+                        (
+                            clip_id,
+                            d.label,
+                            d.confidence,
+                            d.box[0],
+                            d.box[1],
+                            d.box[2],
+                            d.box[3],
+                            d.track_id,
+                            d.frame_index,
+                        )
+                        for d in detections
+                    ],
+                )
+
+    async def get_detected_objects_summary(self, clip_id: str) -> list[dict[str, Any]]:
+        """Detections for *clip_id*, aggregated by label — {label, count,
+        max_confidence} per distinct label, most-frequent first. This is
+        all the clip modal's compact chip summary needs; per-detection
+        boxes/frame indices stay in the database for now. Empty if
+        detection was never enabled for this clip or nothing was found.
+        """
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT label, COUNT(*) AS count, MAX(confidence) AS max_confidence
+                FROM detected_objects
+                WHERE clip_id=?
+                GROUP BY label
+                ORDER BY count DESC, label ASC
+                """
+            ),
+            clip_id,
         )
         return [dict(r) for r in rows]
 

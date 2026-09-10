@@ -3286,6 +3286,68 @@ async def test_ai_clip_result_found(client: TestClient, db: ClipDatabase) -> Non
     assert data["clip_id"] == "ar1"
 
 
+async def test_ai_clip_result_includes_detected_objects_summary(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    from blink_downloader.vision import DetectedObject
+
+    await db.add_clip(_make_clip("ar4"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "ar4",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    await db.save_detected_objects(
+        "ar4",
+        [
+            DetectedObject(
+                label="person",
+                confidence=0.9,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=1,
+                frame_index=0,
+            )
+        ],
+    )
+    resp = await client.get("/api/ai/results/ar4")
+    data = await resp.json()
+    assert data["detected_objects"] == [
+        {"label": "person", "count": 1, "max_confidence": pytest.approx(0.9)}
+    ]
+
+
+async def test_ai_clip_result_detected_objects_empty_when_none_detected(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("ar5"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "ar5",
+            "camera": "Front Door",
+            "model": "llava",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+        }
+    )
+    resp = await client.get("/api/ai/results/ar5")
+    data = await resp.json()
+    assert data["detected_objects"] == []
+
+
 async def test_ai_clip_result_omits_prompt_text_when_debug_disabled(
     client: TestClient, db: ClipDatabase
 ) -> None:
@@ -3513,6 +3575,37 @@ async def test_ai_analyze_now_success(db: ClipDatabase, tmp_path: Path) -> None:
         await tc.close()
 
 
+async def test_ai_analyze_now_saves_detected_objects(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    from blink_downloader.vision import DetectedObject
+
+    await db.add_clip(_make_clip("an3"))
+    result = _make_analysis_result("an3")
+    result.detected_objects = [
+        DetectedObject(
+            label="dog",
+            confidence=0.85,
+            box=(0.0, 0.0, 5.0, 5.0),
+            track_id=None,
+            frame_index=0,
+        )
+    ]
+    analyzer = _make_analyzer(analyze_result=result)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/ai/analyze/an3")
+        assert resp.status == 200
+        summary = await db.get_detected_objects_summary("an3")
+        assert summary == [
+            {"label": "dog", "count": 1, "max_confidence": pytest.approx(0.85)}
+        ]
+    finally:
+        await tc.close()
+
+
 async def test_ai_analyze_now_exception_returns_500(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
@@ -3571,6 +3664,35 @@ async def test_ai_test_success(db: ClipDatabase, tmp_path: Path) -> None:
         assert data["success"] is True
         assert data["clip_id"] == "at1"
         assert analyzer.analyze_clip.call_args.kwargs["clip_duration"] == 52.0
+    finally:
+        await tc.close()
+
+
+async def test_ai_test_saves_detected_objects(db: ClipDatabase, tmp_path: Path) -> None:
+    from blink_downloader.vision import DetectedObject
+
+    await db.add_clip(_make_clip("at3"))
+    result = _make_analysis_result("at3")
+    result.detected_objects = [
+        DetectedObject(
+            label="car",
+            confidence=0.77,
+            box=(0.0, 0.0, 5.0, 5.0),
+            track_id=None,
+            frame_index=0,
+        )
+    ]
+    analyzer = _make_analyzer(analyze_result=result)
+    server = MediaServer(db=db, port=0, analyzer=analyzer)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.post("/api/ai/test")
+        assert resp.status == 200
+        summary = await db.get_detected_objects_summary("at3")
+        assert summary == [
+            {"label": "car", "count": 1, "max_confidence": pytest.approx(0.77)}
+        ]
     finally:
         await tc.close()
 

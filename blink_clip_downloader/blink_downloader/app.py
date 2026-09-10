@@ -554,6 +554,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 VisionConfig(
                     enhanced_detection_enabled=config.ai_enhanced_detection_enabled,
                     object_detection_model=config.ai_object_detection_model,
+                    depth_estimation_model=config.ai_depth_estimation_model,
                     face_recognition_enabled=config.ai_face_recognition_enabled,
                     hf_token=config.hf_token,
                 ),

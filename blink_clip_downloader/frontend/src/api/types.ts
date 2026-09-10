@@ -152,6 +152,16 @@ export interface AnalysisResultDict {
   prompt_text?: string
   face_bypass_applied: boolean
   face_bypass_names: string
+  detected_objects?: DetectedObjectSummary[]
+}
+
+// One label's aggregate from the optional computer-vision object-detection
+// stage (see vision.py's ObjectDetector, ai_enhanced_detection_enabled) —
+// absent/empty unless that pipeline was on and found something.
+export interface DetectedObjectSummary {
+  label: string
+  count: number
+  max_confidence: number
 }
 
 export type SuspiciousClip = AnalysisResultDict & {

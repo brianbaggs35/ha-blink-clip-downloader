@@ -311,7 +311,7 @@ class ObjectDetector:
     substitute for true continuous tracking.
     """
 
-    def __init__(self, model_name: str = "yolo11n.pt") -> None:
+    def __init__(self, model_name: str = "yolo26n.pt") -> None:
         self._model_name = model_name
         self._model: Any = None
         self._lock: asyncio.Lock | None = None
@@ -709,12 +709,17 @@ class DepthEstimator:
     "noticeably different distances"), never a physical measurement.
     """
 
+    # Default/fallback checkpoint — see ai_depth_estimation_model in
+    # config.yaml for the other selectable sizes (and their licensing:
+    # this default is Apache-2.0, the larger Base/Large options are
+    # CC-BY-NC-4.0/non-commercial — see that option's own comment).
     _MODEL_ID = "depth-anything/Depth-Anything-V2-Small-hf"
 
     # Empty default means no token configured; it is not a credential.
-    def __init__(self, hf_token: str = "") -> None:  # nosec B107
+    def __init__(self, hf_token: str = "", model_id: str = _MODEL_ID) -> None:  # nosec B107
         self._pipe: Any = None
         self._hf_token = hf_token
+        self._model_id = model_id
         self._lock: asyncio.Lock | None = None
 
     def _get_lock(self) -> asyncio.Lock:
@@ -731,10 +736,10 @@ class DepthEstimator:
         with _native_import_lock:
             from transformers import pipeline  # type: ignore[import-not-found]
 
-            _LOGGER.info("Loading depth-estimation model '%s'", self._MODEL_ID)
+            _LOGGER.info("Loading depth-estimation model '%s'", self._model_id)
             self._pipe = pipeline(
                 task="depth-estimation",
-                model=self._MODEL_ID,
+                model=self._model_id,
                 device="cpu",
                 token=self._hf_token or None,
             )
@@ -1261,7 +1266,8 @@ class VisionConfig:
     """
 
     enhanced_detection_enabled: bool = False
-    object_detection_model: str = "yolo11n.pt"
+    object_detection_model: str = "yolo26n.pt"
+    depth_estimation_model: str = "depth-anything/Depth-Anything-V2-Small-hf"
     face_recognition_enabled: bool = False
     hf_token: str = ""
 
@@ -1277,6 +1283,11 @@ class VisionHints:
     contact_hint: str | None = None
     recognized_resident_hint: str | None = None
     face_recognition: FaceRecognitionResult | None = None
+    # Raw per-object detections from ObjectDetector, kept alongside the
+    # rendered detection_hint text above so callers (analyzer.py) can
+    # persist structured results — see database.py's detected_objects
+    # table — rather than only ever having the flattened prompt string.
+    detections: list[DetectedObject] | None = None
 
 
 class VisionPipeline:
@@ -1293,7 +1304,7 @@ class VisionPipeline:
         self._config = config
         self._db = db
         self._detector = ObjectDetector(config.object_detection_model)
-        self._depth = DepthEstimator(config.hf_token)
+        self._depth = DepthEstimator(config.hf_token, config.depth_estimation_model)
         self._segmenter = ContactSegmenter(config.hf_token)
         self._face_embedder = FaceEmbedder()
 
@@ -1301,8 +1312,12 @@ class VisionPipeline:
         """Replace the active config at runtime (e.g. after an options reload)."""
         if config.object_detection_model != self._config.object_detection_model:
             self._detector = ObjectDetector(config.object_detection_model)
+        if (
+            config.hf_token != self._config.hf_token
+            or config.depth_estimation_model != self._config.depth_estimation_model
+        ):
+            self._depth = DepthEstimator(config.hf_token, config.depth_estimation_model)
         if config.hf_token != self._config.hf_token:
-            self._depth = DepthEstimator(config.hf_token)
             self._segmenter = ContactSegmenter(config.hf_token)
         self._config = config
 
@@ -1367,6 +1382,7 @@ class VisionPipeline:
             hints.enhanced_frames = frames
 
             detections = await self._detector.detect(frames)
+            hints.detections = detections
 
             # Only decoded when actually useful: disambiguating which
             # detected vehicle is the protected one only matters on a

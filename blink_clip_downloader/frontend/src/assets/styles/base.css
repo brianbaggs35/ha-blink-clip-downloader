@@ -1222,6 +1222,17 @@ h3 {
 .tag-item .rm:hover {
   opacity: 1;
 }
+.detection-chip {
+  background: var(--tag-bg);
+  color: var(--tag-text);
+  border-radius: 6px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
 .kbd {
   background: var(--card2);
   border: 1px solid var(--border);

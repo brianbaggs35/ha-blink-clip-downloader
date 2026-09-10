@@ -2261,6 +2261,7 @@ def test_init_wires_vision_pipeline_from_config(
         None,
         ai_enhanced_detection_enabled=True,
         ai_object_detection_model="yolo11s.pt",
+        ai_depth_estimation_model="depth-anything/Depth-Anything-V2-Base-hf",
         ai_face_recognition_enabled=True,
         hf_token="hf_test_token",
     )
@@ -2272,6 +2273,7 @@ def test_init_wires_vision_pipeline_from_config(
     config = pipeline._config
     assert config.enhanced_detection_enabled is True
     assert config.object_detection_model == "yolo11s.pt"
+    assert config.depth_estimation_model == "depth-anything/Depth-Anything-V2-Base-hf"
     assert config.face_recognition_enabled is True
     assert config.hf_token == "hf_test_token"
 

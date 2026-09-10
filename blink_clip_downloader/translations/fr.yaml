@@ -444,12 +444,28 @@ configuration:
     name: Modèle de détection d'objets
     description: >-
       Fichier de modèle Ultralytics utilisé par l'étape de détection
-      ci-dessus — saisissez exactement l'un des éléments suivants :
-      yolo11n.pt (nano — le plus rapide/léger, point de départ
-      recommandé sur du matériel sans GPU), yolo11s.pt (petit),
-      yolo11m.pt (moyen), yolo11l.pt (grand), ou yolo11x.pt (très grand
-      — le plus précis, beaucoup plus lent). Téléchargé automatiquement
-      lors de la première utilisation ; par défaut yolo11n.pt.
+      ci-dessus. YOLO26 (yolo26n/s/m/l/x.pt) est la génération actuelle
+      — inférence de bout en bout, plus léger et plus précis que
+      YOLO11 à toutes les tailles — et constitue la valeur par défaut
+      recommandée ; yolo11n/s/m/l/x.pt restent sélectionnables par
+      compatibilité avec les configurations existantes. "n" (nano) est
+      le plus rapide/léger, recommandé sur du matériel sans GPU ;
+      "s"/"m"/"l"/"x" échangent la vitesse contre la précision, "x"
+      (très grand) étant le plus précis et beaucoup plus lent.
+      Téléchargé automatiquement lors de la première utilisation.
+  ai_depth_estimation_model:
+    name: Modèle d'estimation de profondeur
+    description: >-
+      Checkpoint Depth Anything V2 utilisé par l'étape d'estimation de
+      profondeur ci-dessus. "Small" (par défaut) est le plus
+      rapide/léger et sous licence Apache-2.0 ; "Base"/"Large" sont
+      plus précis mais plus lents/lourds — et sous licence CC-BY-NC-4.0
+      (usage non commercial uniquement) de la part de leur éditeur,
+      contrairement à la licence Apache-2.0 de "Small". Cela ne pose
+      pas de problème pour l'usage domestique personnel habituel de cet
+      add-on, mais vérifiez que cette licence convient à votre propre
+      situation avant de choisir "Base" ou "Large". Téléchargé
+      automatiquement lors de la première utilisation.
   ai_face_recognition_enabled:
     name: Activer la reconnaissance faciale locale
     description: >-
