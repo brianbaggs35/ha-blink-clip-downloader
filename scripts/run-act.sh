@@ -93,7 +93,7 @@ ACT_ARGS=(
   --env "ACT_POSTGRES_PORT=$ACT_POSTGRES_PORT"
   --env "ACT_TEST_DATABASE_DSN=postgresql://postgres:postgres@localhost:${ACT_POSTGRES_PORT}/blink_clips_test"
   --env "ACT_E2E_DATABASE_DSN=postgresql://postgres:postgres@localhost:${ACT_POSTGRES_PORT}/blink_clips_e2e"
-  --matrix python-version:3.12
+  --matrix python-version:3.13
   --matrix arch:amd64
   --concurrent-jobs "$CONCURRENT_JOBS"
   --rm

@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  PYTHON_VERSION: "3.12"
+  PYTHON_VERSION: "3.13"
   # Built and loaded locally within this same workflow run only (never
   # pushed to a registry) — a fixed lowercase name avoids "repository name
   # must be lowercase" failures when github.repository_owner has uppercase
@@ -31,17 +31,17 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.13", "3.14"]
 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -50,7 +50,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e "blink_clip_downloader[test]"
-          pip install pyright yamllint "ruff==0.16.2" "bandit[toml]"
+          pip install pyright yamllint "ruff==0.16.6" "bandit[toml]"
 
       - name: Run Home Assistant add-on linter
         uses: frenck/action-addon-linter@v2
@@ -71,38 +71,38 @@ jobs:
         run: pyright --project pyrightconfig.json
 
       # Bandit's findings don't vary by Python version, so scan once on the
-      # 3.12 leg (same pattern as the frontend checks below).
+      # 3.13 leg (same pattern as the frontend checks below).
       - name: Run Bandit security scan
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         run: bandit -c blink_clip_downloader/pyproject.toml -r blink_clip_downloader
 
       # Frontend checks don't depend on the Python matrix leg, so they only
-      # need to run once — pinned to the 3.12 leg to avoid running twice.
+      # need to run once — pinned to the 3.13 leg to avoid running twice.
       - name: Set up Node.js
-        if: matrix.python-version == '3.12'
-        uses: actions/setup-node@v6
+        if: matrix.python-version == '3.13'
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Install frontend dependencies
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm ci
 
       - name: Run ESLint
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm run lint
 
       - name: Check frontend formatting with Prettier
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm run format:check
 
       - name: Run Vue/TypeScript type checks
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm run type-check
 
@@ -112,7 +112,7 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.13", "3.14"]
 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
@@ -140,10 +140,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -174,14 +174,14 @@ jobs:
         # causing "Invalid token specified: missing part #2"). `act` sets
         # ACT=true for every job, so skip this step there — the artifact
         # isn't needed for a local `act` run anyway.
-        if: ${{ !env.ACT && matrix.python-version == '3.12' }}
+        if: ${{ !env.ACT && matrix.python-version == '3.13' }}
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage.xml
 
       - name: Upload coverage reports to Codecov
-        if: ${{ !env.ACT && matrix.python-version == '3.12' }}
+        if: ${{ !env.ACT && matrix.python-version == '3.13' }}
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -190,27 +190,27 @@ jobs:
           fail_ci_if_error: false
 
       # Frontend tests don't depend on the Python matrix leg, so they only
-      # need to run once — pinned to the 3.12 leg to avoid running twice.
+      # need to run once — pinned to the 3.13 leg to avoid running twice.
       - name: Set up Node.js
-        if: matrix.python-version == '3.12'
-        uses: actions/setup-node@v6
+        if: matrix.python-version == '3.13'
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Install frontend dependencies
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm ci
 
       - name: Run Vitest with coverage
-        if: matrix.python-version == '3.12'
+        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm run test:coverage
 
       - name: Upload Vitest coverage to Codecov
-        if: ${{ !env.ACT && matrix.python-version == '3.12' }}
+        if: ${{ !env.ACT && matrix.python-version == '3.13' }}
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -219,7 +219,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload frontend coverage artifact
-        if: ${{ !env.ACT && matrix.python-version == '3.12' }}
+        if: ${{ !env.ACT && matrix.python-version == '3.13' }}
         uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage-report
@@ -255,10 +255,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -269,7 +269,7 @@ jobs:
           pip install -e "blink_clip_downloader[test]"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -346,7 +346,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Full history, not the default shallow clone - SonarCloud uses it
           # for blame data (issue age/author) and new-code-since-baseline
@@ -361,7 +361,7 @@ jobs:
       # job's node_modules carries over), so it needs its own install --
       # same version/cache convention as the test job's frontend steps.
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -404,7 +404,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build add-on image with Home Assistant builder
         uses: home-assistant/builder/actions/build-image@2026.06.0
@@ -484,10 +484,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm

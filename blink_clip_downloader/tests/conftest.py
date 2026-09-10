@@ -35,7 +35,7 @@ _ALL_TABLES = (
 
 
 @pytest.fixture
-async def db() -> AsyncGenerator[ClipDatabase, None]:
+async def db() -> AsyncGenerator[ClipDatabase]:
     d = ClipDatabase(TEST_DB_DSN)
     await d.init()
     assert d._pool is not None
