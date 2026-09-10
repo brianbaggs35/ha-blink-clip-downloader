@@ -30,7 +30,7 @@ test('the help button opens the keyboard shortcuts overlay', async ({ page }) =>
 
 test('the About dialog shows the repo links', async ({ page }) => {
   await page.getByRole('button', { name: 'About this app' }).click()
-  const dialog = page.getByRole('dialog', { name: 'About Blink Clips 5.5.2' })
+  const dialog = page.getByRole('dialog', { name: 'About Blink Clips 6.0.0' })
   await expect(dialog).toContainText('Built by Brian Baggs.')
   await expect(dialog.getByRole('link', { name: /ha-blink-clip-downloader/ })).toBeVisible()
 })
