@@ -343,7 +343,7 @@ onUnmounted(() => {
       v-model:visible="showAbout"
       modal
       dismissable-mask
-      header="About Blink Clips 5.5.0"
+      header="About Blink Clips 5.5.1"
       :style="{ width: '26rem' }"
       :draggable="false"
     >

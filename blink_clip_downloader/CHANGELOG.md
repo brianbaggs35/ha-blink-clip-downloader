@@ -1,5 +1,28 @@
 # Changelog
 
+## 5.5.1
+
+### Bug Fixes
+
+- Fixed a camera that has never had a clip downloaded by this add-on yet
+  (freshly added to the account, or one whose very first clip just hasn't
+  downloaded yet — a per-camera tracker cursor only looks forward once a
+  camera is first seen, so real pre-existing footage already on Blink's
+  side does not retroactively populate local clip history) being
+  completely invisible on the AI tab's Camera Configurations section, the
+  Vehicles tab, and the AI Analysis Configuration modal — with no way to
+  turn on automatic analysis, mark it as a protected-vehicle camera, or
+  configure anything else for it until its first clip happened to
+  download. `/api/ai/camera-configs` built its camera list from only two
+  sources (recent clip history, and a previously-saved config entry) — a
+  real, currently-live camera with neither had no way to appear, even
+  though the sibling `/api/cameras` endpoint (the Library nav sidebar)
+  already unions in exactly this case, and this function's own comments
+  incorrectly assumed it did the same. Reported as a regression right
+  after releasing 5.5.0; confirmed via the account's actual Blink topology
+  log that the affected camera was fully real and active — not new, just
+  never yet downloaded from.
+
 ## 5.5.0
 
 ### Added
