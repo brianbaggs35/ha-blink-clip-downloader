@@ -481,16 +481,36 @@ def _box_gap(
     return math.hypot(dx, dy)
 
 
+# Reference real-world vehicle width (feet) used to convert a detected
+# vehicle's pixel width into an implicit scale for turning a pixel gap into
+# an approximate distance estimate — the same "a typical car is about 6
+# feet wide" reference analyzer.py's _car_protection_segment already gives
+# the AI model, so this code-computed hint and the model's own written
+# distance rules (1 ft / 3 ft thresholds) reason about one consistent
+# scale instead of two independently-chosen ones.
+_TYPICAL_VEHICLE_WIDTH_FEET = 6.0
+
+
 def _proximity_label(gap: float, vehicle_width: float) -> str:
-    """Categorize a box gap (see :func:`_box_gap`) relative to vehicle width."""
+    """Categorize a box gap (see :func:`_box_gap`) relative to vehicle width.
+
+    Converts the pixel gap to an approximate feet estimate using the
+    detected vehicle's own pixel width as scale, with tier language aligned
+    to _car_protection_segment's own 1 ft / 3 ft behavioral thresholds so
+    the two reinforce each other. Falls back to a qualitative-only label
+    when vehicle_width isn't usable (a malformed/degenerate box — real YOLO
+    detections always have positive width, so this is defensive only).
+    """
     if gap <= 0:
         return "overlapping the detected vehicle's outline"
-    ratio = gap / vehicle_width if vehicle_width > 0 else gap
-    if ratio < 0.1:
-        return "immediately adjacent to the detected vehicle"
-    if ratio < 0.4:
-        return "close to the detected vehicle"
-    return "well away from the detected vehicle"
+    if vehicle_width <= 0:
+        return "at an indeterminate distance from the detected vehicle"
+    feet = (gap / vehicle_width) * _TYPICAL_VEHICLE_WIDTH_FEET
+    if feet < 1.0:
+        return "well under 1 ft from the detected vehicle"
+    if feet < 3.0:
+        return f"approximately {feet:.0f} ft from the detected vehicle"
+    return f"well away from the detected vehicle (roughly {feet:.0f} ft or more)"
 
 
 def _car_zone_pixel_box(
@@ -826,21 +846,53 @@ class DepthEstimator:
             return None
 
 
-def _build_depth_hint(result: DepthComparison) -> str:
+def _build_depth_hint(result: DepthComparison, subject_label: str) -> str:
+    """Render a depth comparison into a DEPTH ESTIMATE prompt hint.
+
+    *subject_label* is the actual detected class ("person", "dog", "cat",
+    ...) from :class:`DetectedObject` — named explicitly rather than the
+    generic "person/animal" this used to say unconditionally, since the
+    depth/contact pairing already treats animals as valid subjects (see
+    :data:`_SUBJECT_CLASSES`) and the hint text should match.
+    """
     if result.similar_depth:
         body = (
-            "the detected person/animal and detected vehicle appear to be "
+            f"the detected {subject_label} and detected vehicle appear to be "
             "at roughly the same distance from the camera — consistent "
             "with them actually being near the vehicle in 3D space, not "
             "just overlapping it in the 2D frame"
         )
     else:
+        # Depth Anything's output is inverse depth/disparity (verified
+        # against the installed transformers pipeline source, whose
+        # postprocess() min-max-normalizes predicted_depth without
+        # inverting it, plus the model's own documented convention): a
+        # LARGER region value means CLOSER to the camera. subject_depth >
+        # vehicle_depth therefore means the subject is nearer the camera
+        # than the vehicle (the near/same side, in plain view); the
+        # reverse means the subject is farther away than the vehicle from
+        # the camera's viewpoint — consistent with standing on the
+        # vehicle's far side, partly hidden behind it from this camera's
+        # angle, which is worth flagging as extra-scrutiny-worthy on its
+        # own, distinct from simple overlap-in-2D ambiguity.
+        if result.subject_depth > result.vehicle_depth:
+            side = (
+                f"the {subject_label} appears nearer to the camera than the "
+                "vehicle — the near/same side, in plain view"
+            )
+        else:
+            side = (
+                f"the {subject_label} appears farther from the camera than "
+                "the vehicle — consistent with being on the vehicle's far "
+                "side, partly out of this camera's clear view, which "
+                "deserves extra scrutiny"
+            )
         body = (
-            "the detected person/animal and detected vehicle appear to be "
-            "at noticeably different distances from the camera — they may "
-            "only appear close together because one is in front of the "
-            "other from this camera's angle, not because they're actually "
-            "near the vehicle"
+            f"the detected {subject_label} and detected vehicle appear to be "
+            f"at noticeably different distances from the camera: {side}. "
+            "They may only appear close together because one is in front "
+            "of the other from this camera's angle, not because they're "
+            "actually near the vehicle"
         )
     return (
         "\n\nDEPTH ESTIMATE: A monocular depth model estimates that "
@@ -866,8 +918,9 @@ class ContactResult:
 class ContactSegmenter:
     """Precise pixel-level contact detection (SAM2) via transformers.
 
-    Requires object detection to also be enabled. Given a person box and a
-    vehicle box already found by :class:`ObjectDetector`, this segments
+    Requires object detection to also be enabled. Given a subject (person
+    or animal) box and a vehicle box already found by
+    :class:`ObjectDetector`, this segments
     both objects' actual visible outlines (not just their rectangular
     bounding boxes) and checks whether those outlines touch — a much
     stronger signal for genuine physical contact than a bounding-box
@@ -1010,12 +1063,15 @@ class ContactSegmenter:
             return None
 
 
-def _build_contact_hint(result: ContactResult) -> str:
+def _build_contact_hint(result: ContactResult, subject_label: str) -> str:
+    """Render a contact-segmentation result into a CONTACT ANALYSIS prompt
+    hint. *subject_label* is the actual detected class ("person", "dog",
+    "cat", ...) — see :func:`_build_depth_hint`'s docstring for why."""
     if result.touching:
-        body = "the person's and vehicle's precise segmented outlines appear to touch or overlap"
+        body = f"the {subject_label}'s and vehicle's precise segmented outlines appear to touch or overlap"
     else:
         body = (
-            "the person's and vehicle's precise segmented outlines are "
+            f"the {subject_label}'s and vehicle's precise segmented outlines are "
             f"separated by roughly {result.mask_gap_pixels:.0f} pixels — not touching"
         )
     return (
@@ -1423,13 +1479,15 @@ class VisionPipeline:
                     frames[frame_idx], subject.box, vehicle.box
                 )
                 if depth_result is not None:
-                    hints.depth_hint = _build_depth_hint(depth_result)
+                    hints.depth_hint = _build_depth_hint(depth_result, subject.label)
 
                 contact_result = await self._segmenter.check_contact(
                     frames[frame_idx], subject.box, vehicle.box
                 )
                 if contact_result is not None:
-                    hints.contact_hint = _build_contact_hint(contact_result)
+                    hints.contact_hint = _build_contact_hint(
+                        contact_result, subject.label
+                    )
 
         if self._config.face_recognition_enabled and self._db is not None:
             recognizer = FaceRecognizer(self._face_embedder, self._db)
