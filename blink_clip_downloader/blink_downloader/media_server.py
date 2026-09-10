@@ -1679,6 +1679,32 @@ class MediaServer:
                     "auto_analyze": entry.get("auto_analyze", True) is not False,
                 }
             )
+        # Also include a live camera that has neither clip history nor a
+        # saved config entry yet -- e.g. one just added to the account, or
+        # one this add-on has only just started seeing clips for but hasn't
+        # downloaded any of yet (a fresh per-camera tracker cursor only
+        # looks forward, so real pre-existing footage on Blink's side does
+        # not retroactively populate local clip history). Without this, a
+        # perfectly real, currently-live camera stays invisible on the AI
+        # tab's Camera Configurations section, the Vehicles tab, and the AI
+        # Analysis Configuration modal until its first clip happens to
+        # download -- mirrors _handle_cameras's identical union, which this
+        # function's own comments above already assumed existed here too.
+        result_names_lower = {str(r["camera"]).lower() for r in result}
+        for name in live_names:
+            if name.lower() in result_names_lower:
+                continue
+            result.append(
+                {
+                    "camera": name,
+                    "description": "",
+                    "custom_prompt": "",
+                    "is_car_camera": False,
+                    "car_zone": None,
+                    "auto_analyze": True,
+                }
+            )
+            result_names_lower.add(name.lower())
         return web.json_response(
             result,
             headers={

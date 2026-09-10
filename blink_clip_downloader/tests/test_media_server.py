@@ -1958,6 +1958,49 @@ async def test_ai_camera_configs_get_keeps_stale_entries_without_a_live_camera_l
     assert {c["camera"] for c in data} == {"Outdoor 4 - JTU8"}
 
 
+async def test_ai_camera_configs_get_includes_live_camera_with_no_clips_or_config(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """A real, currently-live camera that has neither downloaded clip
+    history nor a saved camera_configs.json entry yet (freshly added to the
+    account, or one whose first clip just hasn't downloaded yet -- a fresh
+    per-camera tracker cursor only looks forward, so real pre-existing
+    footage on Blink's side does not retroactively populate local clip
+    history) must still appear here with default settings -- mirrors
+    _handle_cameras's identical union for the exact same reason. Regression
+    test for a live report: a 5th camera ("Inside House 2", confirmed via
+    blinkpy's own topology log to have real recorded footage on Blink's
+    side) was completely invisible on the AI tab's Camera Configurations
+    section, the Vehicles tab, and the AI Analysis Configuration modal --
+    neither of this function's two passes (clip-history-based, or saved-
+    config-based) had any way to surface it.
+    """
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    cfg_file = tmp_path / "camera_configs.json"  # never written
+    server = MediaServer(
+        db=db,
+        port=0,
+        list_camera_names=lambda: ["Front Door", "Inside House 2"],
+    )
+    with patch.object(server, "_CAMERA_CONFIGS_FILE", cfg_file):
+        tc = TestClient(TestServer(server._build_app()))
+        await tc.start_server()
+        try:
+            resp = await tc.get("/api/ai/camera-configs")
+            data = await resp.json()
+        finally:
+            await tc.close()
+
+    names = [c["camera"] for c in data]
+    assert "Inside House 2" in names
+    fresh = next(c for c in data if c["camera"] == "Inside House 2")
+    assert fresh["description"] == ""
+    assert fresh["custom_prompt"] == ""
+    assert fresh["is_car_camera"] is False
+    assert fresh["car_zone"] is None
+    assert fresh["auto_analyze"] is True
+
+
 async def test_rename_camera_migrates_persisted_settings(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
