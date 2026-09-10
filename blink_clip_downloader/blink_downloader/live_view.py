@@ -550,10 +550,60 @@ class LiveViewManager:
                     f"ffmpeg exited unexpectedly (code {returncode}) — the "
                     "camera may have gone offline or the stream ended."
                 )
+        # ffmpeg has now fully exited (we're past its own .wait() above), so
+        # it can never rewrite the manifest again — safe to permanently mark
+        # it finished. See _finalize_playlist's own docstring for why this
+        # matters; it must not run any earlier than this, or ffmpeg's own
+        # next periodic manifest rewrite would silently clobber it.
+        await self._finalize_playlist(session.hls_dir)
         # No reason to keep the upstream Blink connection open once ffmpeg
         # can no longer consume it.
         session.stream.stop()
         await self._cancel_task(session.feed_task)
+
+    @staticmethod
+    async def _finalize_playlist(hls_dir: Path) -> None:
+        """Mark the HLS manifest as finished once ffmpeg has exited.
+
+        ffmpeg is run with ``omit_endlist`` (see ``_spawn_ffmpeg``) so
+        Video.js treats a *healthy* session as genuinely live — but that
+        means the manifest never gains a terminal ``#EXT-X-ENDLIST`` tag on
+        its own, including when the session ends for a completely mundane
+        reason (Blink's own live-view sessions run for a limited duration
+        regardless of anything this add-on controls; blinkpy's relay just
+        stops delivering bytes once Blink's side closes the connection,
+        which surfaces here as an "unexpected" ffmpeg exit even though
+        nothing actually crashed). Without this, a browser still watching
+        has no way to distinguish "buffering, more is coming" from "this is
+        over" — it just keeps re-requesting a next segment that will never
+        arrive until Video.js gives up and raises a generic, unhelpful
+        "the media could not be loaded" error instead of cleanly finishing
+        playback of what was actually a complete, successful recording.
+        Appending the end marker to whatever ffmpeg last published lets any
+        currently-buffering player finish normally instead.
+
+        Best-effort: the manifest may not exist yet if ffmpeg crashed
+        before writing anything, in which case there is nothing to
+        finalize and nothing here can help regardless.
+        """
+        playlist = hls_dir / _HLS_PLAYLIST_NAME
+
+        def _append() -> None:
+            try:
+                text = playlist.read_text(errors="ignore")
+            except OSError:
+                return
+            if "#EXT-X-ENDLIST" in text:
+                return
+            if not text.endswith("\n"):
+                text += "\n"
+            text += "#EXT-X-ENDLIST\n"
+            try:
+                playlist.write_text(text)
+            except OSError:
+                pass
+
+        await asyncio.to_thread(_append)
 
     # ------------------------------------------------------------------
     # Sweep loop
