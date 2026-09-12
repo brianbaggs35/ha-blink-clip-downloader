@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import Select from 'primevue/select'
 import EnrollFromClipPicker from './EnrollFromClipPicker.vue'
 import type { CameraStat, ClipListItem } from '../../api/types'
@@ -67,7 +66,7 @@ function mountPicker(modelValue: string[] = []) {
       selectedFrames: modelValue,
       'onUpdate:selectedFrames': (val: string[]) => wrapper.setProps({ selectedFrames: val }),
     },
-    global: { plugins: [PrimeVue] },
+    global: {},
   })
   return wrapper
 }
@@ -178,7 +177,7 @@ describe('EnrollFromClipPicker', () => {
     stubRoutedFetch({ cameras: [] })
     const wrapper = mount(EnrollFromClipPicker, {
       props: { selectedFrames: [], 'onUpdate:selectedFrames': () => {} },
-      global: { plugins: [PrimeVue] },
+      global: {},
     })
     await flushPromises()
     await wrapper.findAllComponents(Select)[1]!.vm.$emit('update:modelValue', 24 * 7)

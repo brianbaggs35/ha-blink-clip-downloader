@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 
 // LibraryPage teleports <ClipModal> to <body> (see LibraryPage.vue) so it
 // stays visible when another tab is active — VTU's wrapper.find() doesn't
@@ -53,7 +52,7 @@ import { useToastStore } from '../../stores/toast'
 import { useClipViewerStore } from '../../stores/clipViewer'
 
 function mountLibrary() {
-  return mount(LibraryPage, { global: { plugins: [PrimeVue] } })
+  return mount(LibraryPage)
 }
 
 function findByText(wrapper: ReturnType<typeof mountLibrary>, text: string) {

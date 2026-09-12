@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import FileUpload from 'primevue/fileupload'
 import Select from 'primevue/select'
 import BiometricsPage from './BiometricsPage.vue'
@@ -24,7 +23,7 @@ function faceEnrollment(overrides: Partial<FaceEnrollment> = {}): FaceEnrollment
 }
 
 function mountPage() {
-  return mount(BiometricsPage, { global: { plugins: [PrimeVue] } })
+  return mount(BiometricsPage)
 }
 
 function stubFileReader(result = 'data:image/jpeg;base64,AAAA') {

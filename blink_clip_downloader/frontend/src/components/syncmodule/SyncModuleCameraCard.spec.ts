@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
-import PrimeVue from 'primevue/config'
 import SyncModuleCameraCard from './SyncModuleCameraCard.vue'
 import type { SyncModuleCamera } from '../../api/types'
 
@@ -20,7 +19,7 @@ function makeCamera(overrides: Partial<SyncModuleCamera> = {}): SyncModuleCamera
 function mountCard(camera: SyncModuleCamera, pending = false) {
   return mount(SyncModuleCameraCard, {
     props: { camera, pending },
-    global: { plugins: [PrimeVue] },
+    global: {},
   })
 }
 

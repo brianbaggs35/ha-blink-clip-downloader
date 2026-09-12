@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { DOMWrapper, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { useConfirmStore } from '../../stores/confirm'
 
@@ -13,7 +12,7 @@ function body() {
 }
 
 function mountDialog() {
-  return mount(ConfirmDialog, { global: { plugins: [PrimeVue] } })
+  return mount(ConfirmDialog)
 }
 
 describe('ConfirmDialog', () => {

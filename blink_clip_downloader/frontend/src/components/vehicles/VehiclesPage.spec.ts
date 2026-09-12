@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import VehiclesPage from './VehiclesPage.vue'
 import VehicleZonePicker from './VehicleZonePicker.vue'
 import type { CameraConfig } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
 
 function mountPage() {
-  return mount(VehiclesPage, { global: { plugins: [PrimeVue] } })
+  return mount(VehiclesPage)
 }
 
 function jsonResponse(body: unknown, ok = true, headers: HeadersInit = {}) {

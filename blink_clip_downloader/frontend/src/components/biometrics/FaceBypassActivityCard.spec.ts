@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import FaceBypassActivityCard from './FaceBypassActivityCard.vue'
 import { useRefreshStore } from '../../stores/refresh'
 
@@ -31,7 +30,7 @@ function mockFetch(routes: Record<string, unknown>) {
 }
 
 function mountCard() {
-  return mount(FaceBypassActivityCard, { global: { plugins: [PrimeVue] } })
+  return mount(FaceBypassActivityCard)
 }
 
 describe('FaceBypassActivityCard', () => {
