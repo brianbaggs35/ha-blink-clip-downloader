@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import Dialog from 'primevue/dialog'
 import AiAnalysisConfigCard from './AiAnalysisConfigCard.vue'
 import { useToastStore } from '../../stores/toast'
@@ -38,7 +37,7 @@ const CAMERA_CONFIGS = [
 ]
 
 function mountCard() {
-  return mount(AiAnalysisConfigCard, { global: { plugins: [PrimeVue] } })
+  return mount(AiAnalysisConfigCard)
 }
 
 describe('AiAnalysisConfigCard', () => {

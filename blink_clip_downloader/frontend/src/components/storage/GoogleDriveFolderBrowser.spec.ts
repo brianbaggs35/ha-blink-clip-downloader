@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import Breadcrumb from 'primevue/breadcrumb'
 import GoogleDriveFolderBrowser from './GoogleDriveFolderBrowser.vue'
 
@@ -16,7 +15,7 @@ function jsonResponse(body: unknown, ok = true) {
 }
 
 function mountBrowser() {
-  return mount(GoogleDriveFolderBrowser, { global: { plugins: [PrimeVue] } })
+  return mount(GoogleDriveFolderBrowser)
 }
 
 describe('GoogleDriveFolderBrowser', () => {

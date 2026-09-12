@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import StatusPage from './StatusPage.vue'
 import BatteryHistoryModal from './BatteryHistoryModal.vue'
 import { useConnectionStore } from '../../stores/connection'
@@ -149,7 +148,7 @@ describe('StatusPage', () => {
   })
 
   it('closes the battery history modal when it emits close', async () => {
-    const wrapper = mount(StatusPage, { global: { plugins: [PrimeVue] } })
+    const wrapper = mount(StatusPage)
     await flushPromises()
     await wrapper.find('.battery-tile').trigger('click')
     await flushPromises()
@@ -408,7 +407,7 @@ describe('StatusPage', () => {
   })
 
   it('opens the battery history modal when a tile is clicked, showing its history', async () => {
-    const wrapper = mount(StatusPage, { global: { plugins: [PrimeVue] } })
+    const wrapper = mount(StatusPage)
     await flushPromises()
     const back = wrapper.findAll('.battery-tile').find((t) => t.text().includes('Backyard'))!
     await back.trigger('click')
