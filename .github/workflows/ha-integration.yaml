@@ -10,8 +10,8 @@ name: HA Supervisor Integration Test
 #
 # What ci.yaml's build/smoke-test jobs cannot catch, and this job exists
 # specifically to catch: whether Home Assistant Supervisor can actually
-# discover this add-on as a local app, build it through Supervisor's own
-# build mechanism (not `home-assistant/builder`), install and start it,
+# discover this add-on as a local app, pull the licensed image through
+# Supervisor, install and start it,
 # register its ingress panel in the HA sidebar, and serve real content
 # through that real ingress proxy - the actual app<->Home Assistant
 # integration boundary, not just "the container runs."
@@ -113,8 +113,12 @@ jobs:
       - name: Set integration image
         id: integration-image
         run: |
-          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/blink_clip_downloader:ha-integration-${GITHUB_SHA}" \
+          # Supervisor appends config.yaml's version to the image repository
+          # itself; the image field must not contain a tag.
+          VERSION=$(grep '^version:' blink_clip_downloader/config.yaml | awk '{print $2}' | tr -d '"')
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/blink_clip_downloader-ha-integration-${GITHUB_SHA}" \
             >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -138,7 +142,7 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
-          tags: ${{ steps.integration-image.outputs.image }}
+          tags: ${{ steps.integration-image.outputs.image }}:${{ steps.integration-image.outputs.version }}
           secrets: |
             primevue_license_key=${{ secrets.PRIMEVUE_LICENSE_KEY }}
 
