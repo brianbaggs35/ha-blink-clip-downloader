@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import Paginator from 'primevue/paginator'
 import Select from 'primevue/select'
 import ArchivedClipsSection from './ArchivedClipsSection.vue'
@@ -114,7 +113,7 @@ function routedFetch(routes: Routes) {
 }
 
 function mountSection() {
-  return mount(ArchivedClipsSection, { global: { plugins: [PrimeVue] } })
+  return mount(ArchivedClipsSection)
 }
 
 async function expandFirstArchive(wrapper: VueWrapper) {

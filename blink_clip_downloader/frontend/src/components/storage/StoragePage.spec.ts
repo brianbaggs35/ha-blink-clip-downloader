@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import StoragePage from './StoragePage.vue'
 
 function jsonResponse(body: unknown) {
@@ -38,14 +37,14 @@ describe('StoragePage', () => {
   })
 
   it('renders both the archived clips and Google Drive sections', async () => {
-    const wrapper = mount(StoragePage, { global: { plugins: [PrimeVue] } })
+    const wrapper = mount(StoragePage)
     await flushPromises()
     expect(wrapper.text()).toContain('Archived Clips')
     expect(wrapper.text()).toContain('Google Drive Backup')
   })
 
   it('shows the Google trademark disclaimer', async () => {
-    const wrapper = mount(StoragePage, { global: { plugins: [PrimeVue] } })
+    const wrapper = mount(StoragePage)
     await flushPromises()
     expect(wrapper.text()).toContain('Google Drive is a trademark of Google LLC')
     expect(wrapper.text()).toContain('not affiliated with, endorsed by, or sponsored by Google')

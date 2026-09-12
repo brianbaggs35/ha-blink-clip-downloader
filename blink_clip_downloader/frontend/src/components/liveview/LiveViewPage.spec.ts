@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import SelectButton from 'primevue/selectbutton'
 
 let errorHandler: (() => void) | undefined
@@ -77,7 +76,7 @@ function routedFetch(routes: Routes) {
 }
 
 function mountPage() {
-  return mount(LiveViewPage, { global: { plugins: [PrimeVue] } })
+  return mount(LiveViewPage)
 }
 
 describe('LiveViewPage', () => {

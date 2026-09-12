@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import AiPage from './AiPage.vue'
 import { useRefreshStore } from '../../stores/refresh'
 
 // SuspiciousFeed's period filter is a PrimeVue Select, which throws on a
 // missing $primevue injection without this plugin — see CLAUDE.md.
 function mountAiPage() {
-  return mount(AiPage, { global: { plugins: [PrimeVue] } })
+  return mount(AiPage)
 }
 
 function jsonResponse(body: unknown, ok = true) {

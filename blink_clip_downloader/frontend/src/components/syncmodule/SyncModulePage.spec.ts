@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import SyncModulePage from './SyncModulePage.vue'
 import SyncModuleCard from './SyncModuleCard.vue'
 import SyncModuleCameraCard from './SyncModuleCameraCard.vue'
@@ -62,7 +61,7 @@ function routedFetch(extra: (url: string, init?: RequestInit) => Promise<Respons
 }
 
 function mountPage() {
-  return mount(SyncModulePage, { global: { plugins: [PrimeVue] } })
+  return mount(SyncModulePage)
 }
 
 describe('SyncModulePage', () => {

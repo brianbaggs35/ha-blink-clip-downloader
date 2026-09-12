@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import InputNumber from 'primevue/inputnumber'
 import MultiSelect from 'primevue/multiselect'
 import SelectButton from 'primevue/selectbutton'
@@ -51,7 +50,7 @@ function routedFetch(routes: Routes) {
 }
 
 function mountPage() {
-  return mount(SecurityFeedPage, { global: { plugins: [PrimeVue] } })
+  return mount(SecurityFeedPage)
 }
 
 describe('SecurityFeedPage', () => {

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import GoogleDriveCard from './GoogleDriveCard.vue'
 import { useConfirmStore } from '../../stores/confirm'
 import { useToastStore } from '../../stores/toast'
@@ -90,7 +89,7 @@ function routedFetch(routes: Routes) {
 }
 
 function mountCard() {
-  return mount(GoogleDriveCard, { global: { plugins: [PrimeVue] } })
+  return mount(GoogleDriveCard)
 }
 
 describe('GoogleDriveCard', () => {

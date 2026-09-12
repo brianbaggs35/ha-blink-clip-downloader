@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import GoogleDriveFailedUploads from './GoogleDriveFailedUploads.vue'
 import { useRefreshStore } from '../../stores/refresh'
 
@@ -21,7 +20,7 @@ const FAILED = [
 ]
 
 function mountComponent() {
-  return mount(GoogleDriveFailedUploads, { global: { plugins: [PrimeVue] } })
+  return mount(GoogleDriveFailedUploads)
 }
 
 describe('GoogleDriveFailedUploads', () => {

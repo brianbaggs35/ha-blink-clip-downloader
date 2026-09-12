@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import Paginator from 'primevue/paginator'
 import Select from 'primevue/select'
 import SuspiciousFeed from './SuspiciousFeed.vue'
@@ -43,7 +42,7 @@ const ITEM = {
 }
 
 function mountFeed() {
-  return mount(SuspiciousFeed, { global: { plugins: [PrimeVue] } })
+  return mount(SuspiciousFeed)
 }
 
 describe('SuspiciousFeed', () => {

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { DOMWrapper, mount } from '@vue/test-utils'
-import PrimeVue from 'primevue/config'
 import GoogleDriveSetupHelp from './GoogleDriveSetupHelp.vue'
 
 // PrimeVue's Dialog teleports to <body> by default — see AppSidebar.spec.ts's
@@ -10,7 +9,7 @@ function body() {
 }
 
 function mountHelp() {
-  return mount(GoogleDriveSetupHelp, { global: { plugins: [PrimeVue] } })
+  return mount(GoogleDriveSetupHelp)
 }
 
 describe('GoogleDriveSetupHelp', () => {

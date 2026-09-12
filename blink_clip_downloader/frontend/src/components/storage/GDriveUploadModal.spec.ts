@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import GDriveUploadModal from './GDriveUploadModal.vue'
 
 function jsonResponse(body: unknown, ok = true) {
@@ -15,7 +14,7 @@ function jsonResponse(body: unknown, ok = true) {
 }
 
 function mountModal(clipIds = ['c1', 'c2']) {
-  return mount(GDriveUploadModal, { props: { clipIds }, global: { plugins: [PrimeVue] } })
+  return mount(GDriveUploadModal, { props: { clipIds } })
 }
 
 describe('GDriveUploadModal', () => {

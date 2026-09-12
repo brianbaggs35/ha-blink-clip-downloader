@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import AppSidebar, { type TabName } from './AppSidebar.vue'
 import { useThemeStore } from '../../stores/theme'
 import { useConnectionStore } from '../../stores/connection'
@@ -17,7 +16,7 @@ function jsonResponse(body: unknown, ok = true) {
 function mountSidebar(modelValue: TabName = 'library') {
   return mount(AppSidebar, {
     props: { modelValue },
-    global: { plugins: [PrimeVue] },
+    global: {},
   })
 }
 

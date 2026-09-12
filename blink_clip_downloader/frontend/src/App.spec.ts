@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import ToastService from 'primevue/toastservice'
 import App from './App.vue'
 import { useDateFilterStore } from './stores/dateFilter'
 
 function mountApp() {
-  return mount(App, { global: { plugins: [createPinia(), PrimeVue, ToastService] } })
+  return mount(App, { global: { plugins: [createPinia(), ToastService] } })
 }
 
 describe('App', () => {

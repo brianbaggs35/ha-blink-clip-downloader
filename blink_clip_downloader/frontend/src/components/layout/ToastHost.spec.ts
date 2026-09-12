@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { DOMWrapper, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import ToastService from 'primevue/toastservice'
 import ToastHost from './ToastHost.vue'
 import { useToastStore } from '../../stores/toast'
@@ -13,7 +12,7 @@ function body() {
 
 function mountHost() {
   return mount(ToastHost, {
-    global: { plugins: [PrimeVue, ToastService] },
+    global: { plugins: [ToastService] },
   })
 }
 

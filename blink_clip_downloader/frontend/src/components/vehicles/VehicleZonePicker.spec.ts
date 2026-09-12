@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import PrimeVue from 'primevue/config'
 import SelectButton from 'primevue/selectbutton'
 import VehicleZonePicker from './VehicleZonePicker.vue'
 import { useConfirmStore } from '../../stores/confirm'
@@ -87,7 +86,7 @@ describe('VehicleZonePicker', () => {
   function mountPicker(modelValue: CarZone | null = null) {
     return mount(VehicleZonePicker, {
       props: { camera: 'Driveway', modelValue },
-      global: { plugins: [PrimeVue] },
+      global: {},
     })
   }
 

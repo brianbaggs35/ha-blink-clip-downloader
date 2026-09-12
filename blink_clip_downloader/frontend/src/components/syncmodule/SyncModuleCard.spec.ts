@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
-import PrimeVue from 'primevue/config'
 import SyncModuleCard from './SyncModuleCard.vue'
 import SyncModuleCameraCard from './SyncModuleCameraCard.vue'
 import ClipCard from '../library/ClipCard.vue'
@@ -61,7 +60,7 @@ function mountCard(
 ) {
   return mount(SyncModuleCard, {
     props: { module, pending, pendingCameras, localStorageClips },
-    global: { plugins: [PrimeVue] },
+    global: {},
   })
 }
 

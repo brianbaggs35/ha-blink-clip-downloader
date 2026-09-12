@@ -1,3 +1,11 @@
+import { config } from '@vue/test-utils'
+import PrimeVue from 'primevue/config'
+import { primeVueOptions } from './theme'
+
+// Match the production PrimeVue bootstrap so component tests register the
+// license before any spec-specific PrimeVue plugin installation runs.
+config.global.plugins = [[PrimeVue, primeVueOptions]]
+
 // jsdom doesn't implement matchMedia — PrimeVue's Select (and other overlay
 // components) call it internally to react to viewport orientation, which
 // throws in every test that mounts one without this polyfill.

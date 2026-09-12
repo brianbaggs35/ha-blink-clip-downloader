@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
-import PrimeVue from 'primevue/config'
 import BatteryHistoryModal from './BatteryHistoryModal.vue'
 
 function jsonResponse(body: unknown) {
@@ -14,7 +13,7 @@ function jsonResponse(body: unknown) {
 }
 
 function mountModal(camera = 'Backyard') {
-  return mount(BatteryHistoryModal, { props: { camera }, global: { plugins: [PrimeVue] } })
+  return mount(BatteryHistoryModal, { props: { camera } })
 }
 
 describe('BatteryHistoryModal', () => {
