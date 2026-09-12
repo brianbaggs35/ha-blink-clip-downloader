@@ -15,6 +15,7 @@
 #   ACT_PLATFORM_IMAGE=...             # override the act runner image
 #   ACT_POSTGRES_PORT=...              # override the dynamically selected host port
 #   ACT_PLAYWRIGHT_CACHE=...           # override the host Playwright browser cache
+#   VITE_PRIMEVUE_LICENSE_KEY=...      # PrimeVue key for build/E2E jobs
 
 set -euo pipefail
 
@@ -112,6 +113,27 @@ ACT_ARGS=(
   # mid-job-directory visibility gap — see that script's own comment.
   --bind
 )
+
+needs_primevue_license=false
+for job in "${JOBS[@]}"; do
+  case "$job" in
+    build|frontend-e2e)
+      needs_primevue_license=true
+      ;;
+  esac
+done
+
+if [[ "$needs_primevue_license" == true ]]; then
+  if [[ -z "${VITE_PRIMEVUE_LICENSE_KEY:-}" ]] && [[ -n "${PRIMEVUE_LICENSE_KEY:-}" ]]; then
+    VITE_PRIMEVUE_LICENSE_KEY="$PRIMEVUE_LICENSE_KEY"
+    export VITE_PRIMEVUE_LICENSE_KEY
+  fi
+  if [[ -z "${VITE_PRIMEVUE_LICENSE_KEY:-}" ]]; then
+    echo "Set VITE_PRIMEVUE_LICENSE_KEY before running build or frontend-e2e under act." >&2
+    exit 1
+  fi
+  ACT_ARGS+=(--secret "PRIMEVUE_LICENSE_KEY=${VITE_PRIMEVUE_LICENSE_KEY}")
+fi
 
 if [[ -d "$PLAYWRIGHT_CACHE" ]]; then
   ACT_ARGS+=(--container-options "-v ${PLAYWRIGHT_CACHE}:/root/.cache/ms-playwright")

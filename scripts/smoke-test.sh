@@ -11,6 +11,10 @@
 # Usage:
 #   scripts/smoke-test.sh [image-tag]
 #
+# When the image tag is omitted, set VITE_PRIMEVUE_LICENSE_KEY (or the
+# repository secret's PRIMEVUE_LICENSE_KEY name) before running this script.
+# The key is required because the frontend bundle is built inside the image.
+#
 # If image-tag is omitted, builds one from blink_clip_downloader/ tagged
 # blink-clip-downloader:smoke-test-local.
 
@@ -47,8 +51,20 @@ cleanup() {
 trap cleanup EXIT
 
 if [ -z "${1:-}" ]; then
+  if [ -z "${VITE_PRIMEVUE_LICENSE_KEY:-}" ] && [ -n "${PRIMEVUE_LICENSE_KEY:-}" ]; then
+    VITE_PRIMEVUE_LICENSE_KEY="$PRIMEVUE_LICENSE_KEY"
+    export VITE_PRIMEVUE_LICENSE_KEY
+  fi
+  if [ -z "${VITE_PRIMEVUE_LICENSE_KEY:-}" ]; then
+    echo "Set VITE_PRIMEVUE_LICENSE_KEY before building the smoke-test image." >&2
+    exit 1
+  fi
   echo "No image tag given; building ${IMAGE} from blink_clip_downloader/ ..."
-  docker build --pull -t "$IMAGE" "$REPO_ROOT/blink_clip_downloader"
+  DOCKER_BUILDKIT=1 docker build \
+    --pull \
+    --secret id=primevue_license_key,env=VITE_PRIMEVUE_LICENSE_KEY \
+    -t "$IMAGE" \
+    "$REPO_ROOT/blink_clip_downloader"
 fi
 
 mkdir -p "$WORKDIR/data" "$WORKDIR/share"

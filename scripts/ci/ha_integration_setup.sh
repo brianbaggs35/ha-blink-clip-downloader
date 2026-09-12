@@ -74,6 +74,17 @@ cmd_prepare_addon_copy() {
   else
     printf '\napparmor: false\n' >>"$dest/config.yaml"
   fi
+
+  # Supervisor cannot forward the PrimeVue BuildKit secret into its nested
+  # Docker build. The integration workflow publishes a licensed image first
+  # and supplies its tag here so this copy uses the pull-image path instead.
+  if [[ -n "${INTEGRATION_IMAGE:-}" ]]; then
+    if grep -q '^image:' "$dest/config.yaml"; then
+      sed -i "s|^image:.*|image: \"${INTEGRATION_IMAGE}\"|" "$dest/config.yaml"
+    else
+      printf 'image: "%s"\n' "$INTEGRATION_IMAGE" >>"$dest/config.yaml"
+    fi
+  fi
 }
 
 ha_cli() {

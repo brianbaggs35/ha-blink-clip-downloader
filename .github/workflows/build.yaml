@@ -90,20 +90,11 @@ jobs:
             BUILD_ARCH=${{ matrix.arch }}
             BUILD_VERSION=${{ steps.tags.outputs.version }}
 
-          # PrimeVue 5 / PrimeUI license key.
-          # Pass the GitHub Actions secret to BuildKit as a secret rather
-          # than a Docker ARG so the license key is not persisted in the
-          # image configuration or Docker layer metadata.
+          # PrimeVue's client-side license is intentionally embedded in the
+          # generated frontend bundle. BuildKit keeps the input out of build
+          # args, logs, image metadata, and intermediate environment layers.
           secrets: |
             primevue_license_key=${{ secrets.PRIMEVUE_LICENSE_KEY }}
-
-          # GitHub Actions BuildKit cache — scoped per architecture since
-          # both matrix legs run in parallel and would otherwise share
-          # the same default scope, letting one job's cache-to contend
-          # with (and undermine) the other's, which defeats the point for
-          # the slow, emulated aarch64 leg specifically.
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
   manifest:
     name: Create multi-arch manifest
