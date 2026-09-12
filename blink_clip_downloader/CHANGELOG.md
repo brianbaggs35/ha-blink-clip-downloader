@@ -121,6 +121,7 @@ here before this version ships.
   and the pinned ruff version to 0.16.6.
 - Updated `actions/checkout`, `actions/setup-python`, and
   `actions/setup-node` to v7; `@types/node` to 26.5.1.
+- Updated primevue to 5.0.1
 
 ## 5.5.2
 
