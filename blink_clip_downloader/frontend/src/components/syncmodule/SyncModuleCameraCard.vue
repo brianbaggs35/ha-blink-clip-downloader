@@ -27,7 +27,7 @@ const emit = defineEmits<{ 'update:armed': [armed: boolean] }>()
 
     <div class="sm-cam-footer">
       <span v-if="pending" class="sm-cam-pending-label">
-        <ProgressSpinner class="sm-cam-spinner" stroke-width="8" />
+        <ProgressSpinner class="sm-cam-spinner" :stroke-width="8" />
         Updating…
       </span>
       <Tag
