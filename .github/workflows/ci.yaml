@@ -35,6 +35,7 @@ jobs:
 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
+      VITE_PRIMEVUE_LICENSE_KEY: ${{ secrets.PRIMEVUE_LICENSE_KEY }}
 
     steps:
       - name: Checkout repository
@@ -120,6 +121,7 @@ jobs:
 
     env:
       PYTHON_VERSION: ${{ matrix.python-version }}
+      VITE_PRIMEVUE_LICENSE_KEY: ${{ secrets.PRIMEVUE_LICENSE_KEY }}
 
     # Matches the Postgres major version bundled in the add-on's own image
     # (see Dockerfile) — tests/conftest.py's `db` fixture connects to this
@@ -240,6 +242,8 @@ jobs:
   frontend-e2e:
     name: Frontend E2E Tests (Playwright)
     runs-on: ubuntu-latest
+    env:
+      VITE_PRIMEVUE_LICENSE_KEY: ${{ secrets.PRIMEVUE_LICENSE_KEY }}
     # Fork pull requests cannot receive the PrimeVue license secret. Skip this
     # job there rather than building a deliberately invalid client bundle.
     if: >-
@@ -320,7 +324,6 @@ jobs:
           E2E_DATABASE_DSN: >-
             ${{ env.ACT && env.ACT_E2E_DATABASE_DSN ||
             'postgresql://postgres:postgres@localhost:5432/blink_clips_e2e' }}
-          VITE_PRIMEVUE_LICENSE_KEY: ${{ secrets.PRIMEVUE_LICENSE_KEY }}
         run: npm run test:e2e:coverage
 
       - name: Upload Playwright report
