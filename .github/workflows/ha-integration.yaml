@@ -116,9 +116,12 @@ jobs:
           # Supervisor appends config.yaml's version to the image repository
           # itself; the image field must not contain a tag.
           VERSION=$(grep '^version:' blink_clip_downloader/config.yaml | awk '{print $2}' | tr -d '"')
-          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/blink_clip_downloader-ha-integration-${GITHUB_SHA}" \
-            >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          PACKAGE="blink_clip_downloader-ha-integration-${GITHUB_SHA}"
+          {
+            echo "package=${PACKAGE}"
+            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${PACKAGE}"
+            echo "version=${VERSION}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -298,3 +301,13 @@ jobs:
       - name: Stop and remove the devcontainer
         if: always()
         run: docker rm -f "$CONTAINER_NAME" || true
+
+      - name: Delete temporary integration image package
+        if: always()
+        continue-on-error: true
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ steps.integration-image.outputs.package }}
+          package-type: container
+          min-versions-to-keep: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
