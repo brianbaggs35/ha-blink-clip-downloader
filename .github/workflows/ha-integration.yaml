@@ -168,6 +168,8 @@ jobs:
           docker run -d --name "$CONTAINER_NAME" --privileged \
             -e SUPERVISOR_CHANNEL=stable \
             -e WORKSPACE_DIRECTORY=/mnt/supervisor/apps/local/blink_clip_downloader \
+            -e PRIMEVUE_LICENSE_KEY="${{ secrets.PRIMEVUE_LICENSE_KEY }}" \
+            -e VITE_PRIMEVUE_LICENSE_KEY="${{ secrets.PRIMEVUE_LICENSE_KEY }}" \
             -p "${HA_PORT}:80" \
             -p "${ADDON_PORT}:${ADDON_PORT}" \
             -v /var/lib/docker \
