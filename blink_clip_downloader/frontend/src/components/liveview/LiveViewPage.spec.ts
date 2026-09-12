@@ -5,6 +5,7 @@ import SelectButton from 'primevue/selectbutton'
 
 let errorHandler: (() => void) | undefined
 let fakePlayerErrorValue: { message: string } | null = null
+const mountedWrappers: Array<ReturnType<typeof mount>> = []
 
 const fakePlayerError = vi.fn(() => fakePlayerErrorValue)
 
@@ -76,7 +77,9 @@ function routedFetch(routes: Routes) {
 }
 
 function mountPage() {
-  return mount(LiveViewPage)
+  const wrapper = mount(LiveViewPage)
+  mountedWrappers.push(wrapper)
+  return wrapper
 }
 
 describe('LiveViewPage', () => {
@@ -84,6 +87,9 @@ describe('LiveViewPage', () => {
     setActivePinia(createPinia())
   })
   afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) {
+      if (wrapper.exists()) wrapper.unmount()
+    }
     vi.unstubAllGlobals()
     vi.useRealTimers()
     vi.clearAllMocks()
