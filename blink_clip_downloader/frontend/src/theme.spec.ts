@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AppTheme } from './theme'
+import { AppTheme, primeVueOptions } from './theme'
 
 // definePreset()'s return type is intentionally loose (it merges an
 // arbitrary override object into Aura's preset), so this file's own custom
@@ -22,5 +22,15 @@ describe('AppTheme', () => {
   it('overrides dark/light surface palettes', () => {
     expect(theme.semantic.colorScheme.dark.surface[950]).toBe('#08090f')
     expect(theme.semantic.colorScheme.light.surface[0]).toBe('#ffffff')
+  })
+
+  it('configures PrimeVue with the license and app dark-mode selector', () => {
+    expect(primeVueOptions).toMatchObject({
+      license: import.meta.env.VITE_PRIMEVUE_LICENSE_KEY,
+      theme: {
+        preset: AppTheme,
+        options: { darkModeSelector: '.dark' },
+      },
+    })
   })
 })
