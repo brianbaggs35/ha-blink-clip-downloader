@@ -219,10 +219,11 @@ removed in 5.0.0.
   `test-setup.ts` polyfills jsdom gaps PrimeVue components hit
   (`matchMedia`, `ResizeObserver`) — add to it rather than working around
   the crash per-test. Mounting anything using a PrimeVue form component
-  (`Select`, `Textarea`, `ToggleSwitch`, `FileUpload`, ...) needs
-  `global: { plugins: [PrimeVue] }` (`import PrimeVue from 'primevue/config'`)
-  or it throws on a missing `$primevue` injection. For a component's own
-  `v-model`/`defineModel`, wire a real two-way test harness (pass
+  (`Select`, `Textarea`, `ToggleSwitch`, `FileUpload`, ...) receives the
+  shared licensed PrimeVue plugin from `src/test-setup.ts`; do not install
+  `PrimeVue` again in individual specs or Vue warns that the plugin was
+  already applied. For a component's own `v-model`/`defineModel`, wire a real
+  two-way test harness (pass
   `'onUpdate:x': (v) => wrapper.setProps({ x: v })`) rather than a no-op
   handler — the no-op silently breaks any test that expects selections to
   accumulate across multiple interactions. `PointerEvent`/`MouseEvent`

@@ -130,7 +130,7 @@ jobs:
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ env.GHCR_USERNAME || github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Supervisor's nested Docker build does not expose a way to forward
@@ -146,6 +146,9 @@ jobs:
           push: true
           provenance: false
           tags: ${{ steps.integration-image.outputs.image }}:${{ steps.integration-image.outputs.version }}
+          build-args: |
+            BUILD_ARCH=amd64
+            BUILD_VERSION=${{ steps.integration-image.outputs.version }}
           secrets: |
             primevue_license_key=${{ secrets.PRIMEVUE_LICENSE_KEY }}
 
@@ -243,10 +246,11 @@ jobs:
       - name: Log in to GHCR from Supervisor's Docker daemon
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ env.GHCR_USERNAME || github.actor }}
         run: |
           printf '%s' "$GHCR_TOKEN" | \
             docker exec -i "$CONTAINER_NAME" docker login ghcr.io \
-              -u "${{ github.actor }}" --password-stdin
+              -u "$GHCR_USERNAME" --password-stdin
 
       - name: Start Supervisor
         run: |

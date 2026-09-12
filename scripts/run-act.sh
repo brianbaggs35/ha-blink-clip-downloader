@@ -43,6 +43,7 @@ ACT_POSTGRES_PORT="${ACT_POSTGRES_PORT:-$(python3 -c 'import socket; s=socket.so
 PLAYWRIGHT_CACHE="${ACT_PLAYWRIGHT_CACHE:-${HOME}/.cache/ms-playwright}"
 EVENT_FILE=""
 WORKFLOW_FILE=""
+SECRET_FILE=""
 declare -A EXISTING_ACT_CONTAINERS=()
 
 while IFS=$'\t' read -r container_id container_name; do
@@ -65,6 +66,7 @@ cleanup() {
   )
   [[ -z "$EVENT_FILE" ]] || rm -f "$EVENT_FILE"
   [[ -z "$WORKFLOW_FILE" ]] || rm -f "$WORKFLOW_FILE"
+  [[ -z "$SECRET_FILE" ]] || rm -f "$SECRET_FILE"
 }
 trap cleanup EXIT
 
@@ -117,7 +119,7 @@ ACT_ARGS=(
 needs_primevue_license=false
 for job in "${JOBS[@]}"; do
   case "$job" in
-    build|frontend-e2e)
+    build|frontend-e2e|smoke-test)
       needs_primevue_license=true
       ;;
   esac
@@ -129,10 +131,13 @@ if [[ "$needs_primevue_license" == true ]]; then
     export VITE_PRIMEVUE_LICENSE_KEY
   fi
   if [[ -z "${VITE_PRIMEVUE_LICENSE_KEY:-}" ]]; then
-    echo "Set VITE_PRIMEVUE_LICENSE_KEY before running build or frontend-e2e under act." >&2
+    echo "Set VITE_PRIMEVUE_LICENSE_KEY before running build, frontend-e2e, or smoke-test under act." >&2
     exit 1
   fi
-  ACT_ARGS+=(--secret "PRIMEVUE_LICENSE_KEY=${VITE_PRIMEVUE_LICENSE_KEY}")
+  SECRET_FILE="$(mktemp)"
+  chmod 600 "$SECRET_FILE"
+  printf 'PRIMEVUE_LICENSE_KEY=%s\n' "$VITE_PRIMEVUE_LICENSE_KEY" >"$SECRET_FILE"
+  ACT_ARGS+=(--secret-file "$SECRET_FILE")
 fi
 
 if [[ -d "$PLAYWRIGHT_CACHE" ]]; then
