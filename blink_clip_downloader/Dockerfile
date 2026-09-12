@@ -11,13 +11,24 @@
 # bundles identically to Node 22, same asset output shape/sizes.
 FROM node:24-bookworm-slim AS frontend-builder
 WORKDIR /frontend
+
 # Pinned to match ci.yaml's own npm pin, rather than whatever version
 # the base image happens to bundle.
 RUN npm install -g npm@12.0.2
+
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
+
 COPY frontend/ ./
-RUN npm run build
+
+# PrimeVue 5 / PrimeUI license key.
+#
+# The license is supplied through a BuildKit secret so that
+# VITE_PRIMEVUE_LICENSE_KEY is available to Vite during the production
+# build without storing the license key in a Docker ARG, ENV, image
+# configuration, or persistent Docker layer.
+RUN --mount=type=secret,id=primevue_license_key,env=VITE_PRIMEVUE_LICENSE_KEY \
+    npm run build
 
 # A single multi-platform manifest, not a per-arch ARG BUILD_FROM — HA's
 # base images now publish one tag covering both linux/amd64 and
@@ -89,8 +100,7 @@ ENV HF_HOME=/data/model_cache/hf
 # https://packages.debian.org/trixie/postgresql-17), so no extra apt
 # repository is needed to pin this exact major version. Was postgresql-16
 # through 5.0.0; bumped because Debian trixie's archive stopped carrying
-# postgresql-16 (this stage started failing with "Unable to locate package
-# postgresql-16" — trixie now only ships -17). No data-migration step needed
+# postgresql-16 (trixie now only ships -17). No data-migration step needed
 # since the data directory path itself is versioned
 # (/data/postgresql/<major>/main, see 01-postgres-init.sh) and this had not
 # shipped in a tagged release yet.
@@ -102,9 +112,9 @@ RUN apt-get update \
     # builds, security patches for packages it already contains may already
     # be sitting in the same suite it's already pointed at — no new apt
     # source/repo is added here, this just catches the base image up to
-    # what it's already configured to see. Safe on a stable release
-    # (trixie): apt-get upgrade never adds/removes packages, only bumps
-    # existing ones within the same suite.
+    # what's already configured to see. Safe on a stable release (trixie):
+    # apt-get upgrade never adds/removes packages, only bumps existing ones
+    # within the same suite.
     && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y \
         python3 python3-pip python3-dev build-essential \
@@ -146,10 +156,10 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 # gigabytes of NVIDIA runtime libraries that are useless here (this add-on
 # never has GPU access) and would roughly double the final image size.
 # Installing the CPU wheel first means the packages below (which merely
-# require *some* compatible torch) reuse it instead of pulling the CUDA
+# require some compatible torch) reuse it instead of pulling the CUDA
 # build in as a transitive dependency.
 #
-# torchvision must *also* come from the CPU wheel index, not default PyPI —
+# torchvision must also come from the CPU wheel index, not default PyPI —
 # ultralytics depends on it, and a torchvision built against mainline
 # (CUDA-targeted) torch is ABI-incompatible with the "+cpu" torch build
 # above despite both satisfying the same version range on paper. Installing
@@ -189,19 +199,19 @@ RUN ( \
         # cleanly uninstalls the old version first. That matters here beyond
         # just the CVE fix itself: setuptools vendors its own bundled copies
         # of jaraco.context/wheel/packaging under setuptools/_vendor, and a
-        # clean uninstall removes the *old* vendor bundle along with the
+        # clean uninstall removes the old vendor bundle along with the
         # rest of the old version's files — an --ignore-installed install
         # (as used for wheel below) would instead leave the old vendor
         # bundle on disk alongside the new one, still on disk and still
         # flagged by a CVE scan even though nothing imports it anymore.
-        && pip3 install --no-cache-dir --upgrade "setuptools>=78.1.1" \
+        #
         # wheel is different: Debian's python3-pip apt package (installed
         # above) hard-depends on python3-wheel, which ships to
         # /usr/lib/python3/dist-packages with no RECORD file (dpkg tracks
         # its files itself, not pip) — a plain --upgrade can't cleanly
         # uninstall it first ("Cannot uninstall wheel: no RECORD file"), and
         # that failure isn't caught by this block's own `|| echo` fallback
-        # below since it's chained with `&&` *inside* the parens, so it
+        # below since it's chained with `&&` inside the parens, so it
         # silently skipped every package after it (ultralytics/opencv/
         # transformers/facenet-pytorch) the first time this was tried.
         # --ignore-installed installs the patched version into /usr/local's
@@ -211,11 +221,11 @@ RUN ( \
         # would still surface as a CVE finding (Docker Scout's Python-
         # ecosystem detection walks for *.dist-info regardless of whether
         # apt or pip put it there), so it's deleted directly below instead
-        # of just being shadowed. Removing apt's copy of a *file*, not the
-        # apt *package* (python3-wheel is never `apt-get remove`d — that
-        # would take python3-pip down with it, since pip hard-depends on
-        # it): safe because nothing after this point in the build re-runs
-        # apt-get against it.
+        # of just being shadowed. Removing apt's copy of a file, not the apt
+        # package (python3-wheel is never `apt-get remove`d — that would take
+        # python3-pip down with it): safe because nothing after this point in
+        # the build re-runs apt-get against it.
+        && pip3 install --no-cache-dir --upgrade "setuptools>=78.1.1" \
         && pip3 install --no-cache-dir --upgrade --ignore-installed "wheel>=0.46.2" \
         && rm -rf /usr/lib/python3/dist-packages/wheel \
             /usr/lib/python3/dist-packages/wheel-*.dist-info \
@@ -232,7 +242,7 @@ RUN ( \
             # to work but undesirable in production: it depends on outbound
             # network access being available at that exact moment (which a
             # user's network policy may not guarantee), and its own log
-            # output warns the *current* process may need restarting for
+            # output warns the current process may need restarting for
             # the newly installed package to actually take effect.
             "lap>=0.5.12" \
             "opencv-python-headless>=5.0.0.93,<6" \
@@ -248,8 +258,8 @@ RUN ( \
             # transformers bump below.
             # Floor raised from 4.56 to 5.5 to clear two HIGH-severity CVEs
             # (2026-4372 RCE, 2026-5241 arbitrary code execution via
-            # trust_remote_code) that the 4.x line never fixed — found via a
-            # trivy image scan. Verified by hand before bumping: the pinned
+            # trust_remote_code) that the 4.x line never fixed — found via
+            # a trivy image scan. Verified by hand before bumping: the pinned
             # depth-estimation model (VisionPipeline._DepthEstimator in
             # vision.py, "depth-anything/Depth-Anything-V2-Small-hf") loads
             # and runs identically under transformers 5.14 in an isolated
@@ -270,10 +280,10 @@ and related toggles will report unavailable"
 # the historical blocker was musllinux (Alpine) having no wheels for
 # moondream's torch/kestrel dependencies, not the architecture itself; torch
 # has published manylinux aarch64 wheels for a long time. Deliberately placed
-# *after* the computer-vision block above so moondream's own (unpinned)
-# torch requirement is satisfied by the CPU-only build already installed
-# there instead of pulling in a second, much larger CUDA-enabled torch as a
-# fresh transitive dependency.
+# after the computer-vision block above so moondream's own (unpinned) torch
+# requirement is satisfied by the CPU-only build already installed there
+# instead of pulling in a second, much larger CUDA-enabled torch as a fresh
+# transitive dependency.
 # Local ("Photon") inference itself still requires an NVIDIA GPU (relevant
 # for Jetson-class aarch64 boards, not typical Pi-class ones) or Apple
 # Silicon regardless of architecture — see analyzer.py's
@@ -304,14 +314,17 @@ RUN pip3 install --no-cache-dir "kestrel>=0.4.2,<0.5" \
 # metadata, while preserving the Pillow version required by this project.
 COPY pyproject.toml /app/pyproject.toml
 COPY blink_downloader/ /app/blink_downloader/
+
 # Built Vue app (see frontend-builder stage above) — media_server.py's
 # _handle_index/_STATIC_DIR serve this instead of an embedded HTML string.
 COPY --from=frontend-builder /blink_downloader/static /app/blink_downloader/static
+
 RUN pip3 install --no-cache-dir --no-deps /app \
     && rm -rf /app
 
 # Copy rootfs overlay (services.d service definitions + cont-init.d)
 COPY rootfs /
+
 # Belt-and-suspenders chmod — git already tracks 100755, but some CI/CD
 # pipelines don't preserve git file modes through COPY.
 RUN chmod a+x /etc/services.d/blink-downloader/run \
@@ -320,7 +333,7 @@ RUN chmod a+x /etc/services.d/blink-downloader/run \
     && chmod a+x /etc/cont-init.d/01-postgres-init.sh
 
 # No ENTRYPOINT override — the base image's ENTRYPOINT ["/init"] starts
-# s6-overlay exactly once.  Any override here (including a wrapper that
+# s6-overlay exactly once. Any override here (including a wrapper that
 # exec-s /init) causes s6-svscan to be started a second time, producing
 # the "another instance already running" crash loop.
 
@@ -330,6 +343,7 @@ RUN chmod a+x /etc/services.d/blink-downloader/run \
 # Supervisor pull only the changed application layer.
 ARG BUILD_ARCH
 ARG BUILD_VERSION=6.0.0
+
 LABEL \
     org.opencontainers.image.title="Blink Clip Downloader" \
     org.opencontainers.image.description="Home Assistant add-on for saving and viewing Blink camera clips, with AI analysis and facial recognition" \
