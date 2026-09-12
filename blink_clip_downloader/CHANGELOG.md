@@ -123,6 +123,17 @@ here before this version ships.
   `actions/setup-node` to v7; `@types/node` to 26.5.1.
 - Updated primevue to 5.0.1
 
+### Bug Fixes
+
+- Completed the PrimeVue 5 migration by using the PrimeUI license format
+  expected by PrimeVue 5.0.1, binding numeric `ProgressSpinner` props
+  correctly, and documenting the `VITE_PRIMEVUE_LICENSE_KEY` development
+  environment variable.
+- Published-image installs now pull the licensed multi-architecture image
+  instead of attempting a Supervisor-local frontend build that cannot receive
+  the BuildKit license secret. CI's Supervisor integration test uses the same
+  licensed-image path.
+
 ## 5.5.2
 
 ### Dependency Updates

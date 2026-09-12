@@ -240,6 +240,11 @@ jobs:
   frontend-e2e:
     name: Frontend E2E Tests (Playwright)
     runs-on: ubuntu-latest
+    # Fork pull requests cannot receive the PrimeVue license secret. Skip this
+    # job there rather than building a deliberately invalid client bundle.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
 
     # Real interaction tests (frontend/e2e/) against a real standalone
     # MediaServer + seeded Postgres (scripts/standalone_server.py) — not
@@ -407,6 +412,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+    # Fork pull requests cannot receive the PrimeVue license secret required
+    # by the Dockerfile's frontend-builder stage.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
 
     strategy:
       fail-fast: false
@@ -443,18 +453,11 @@ jobs:
             BUILD_ARCH=${{ matrix.arch }}
             BUILD_VERSION=${{ env.TAG }}
 
-          # PrimeVue's license is provided to the Docker build as a
-          # BuildKit secret. The Dockerfile exposes it only to the
-          # frontend production-build RUN instruction as
-          # VITE_PRIMEVUE_LICENSE_KEY. It is not stored in an ARG,
-          # ENV, image layer, or Docker build metadata.
+          # PrimeVue's client-side license is intentionally embedded in the
+          # generated frontend bundle. BuildKit keeps the input out of build
+          # args, logs, image metadata, and intermediate environment layers.
           secrets: |
             primevue_license_key=${{ secrets.PRIMEVUE_LICENSE_KEY }}
-
-          # act cannot provide the GitHub Actions cache runtime token; keep
-          # BuildKit's GHA cache enabled on hosted runners.
-          cache-from: ${{ !env.ACT && format('type=gha,scope={0}', matrix.arch) || '' }}
-          cache-to: ${{ !env.ACT && format('type=gha,mode=max,scope={0}', matrix.arch) || '' }}
 
       - name: Verify built image
         run: |

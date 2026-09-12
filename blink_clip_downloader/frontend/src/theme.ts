@@ -296,7 +296,10 @@ export const AppTheme = definePreset(Aura, {
 })
 
 export const primeVueOptions = {
-  license: { key: licenseKey },
+  // PrimeVue 5.0.1 passes this value to @primeui/license-manager as the
+  // `primeui` license string. It is intentionally not wrapped in `{ key }`;
+  // that shape is treated as a malformed token by the installed manager.
+  license: licenseKey,
   theme: {
     preset: AppTheme,
     options: {

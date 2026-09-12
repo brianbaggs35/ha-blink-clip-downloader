@@ -14,6 +14,8 @@
 # Environment:
 #   ACT_PLATFORM_IMAGE=...        # override the act runner image
 #   ACT_PLAYWRIGHT_CACHE=...      # override the host Playwright browser cache
+#   VITE_PRIMEVUE_LICENSE_KEY=... # PrimeVue key used by the licensed image build
+#   GHCR_TOKEN=...                # token with package read/write access for act
 #
 # Note: unlike run-act.sh's jobs, this one leaves real, uniquely-named
 # containers/images on your host Docker daemon on both success and failure
@@ -44,6 +46,19 @@ fi
 RUNNER_IMAGE="${ACT_PLATFORM_IMAGE:-catthehacker/ubuntu:act-latest}"
 PLAYWRIGHT_CACHE="${ACT_PLAYWRIGHT_CACHE:-${HOME}/.cache/ms-playwright}"
 
+if [[ -z "${VITE_PRIMEVUE_LICENSE_KEY:-}" ]] && [[ -n "${PRIMEVUE_LICENSE_KEY:-}" ]]; then
+  VITE_PRIMEVUE_LICENSE_KEY="$PRIMEVUE_LICENSE_KEY"
+  export VITE_PRIMEVUE_LICENSE_KEY
+fi
+if [[ -z "${VITE_PRIMEVUE_LICENSE_KEY:-}" ]]; then
+  echo "Set VITE_PRIMEVUE_LICENSE_KEY before running HA integration under act." >&2
+  exit 1
+fi
+if [[ -z "${GHCR_TOKEN:-}" ]]; then
+  echo "Set GHCR_TOKEN before running HA integration under act." >&2
+  exit 1
+fi
+
 # A stale container from a previous local run (this script's or a manual
 # one) would make the "Start Home Assistant devcontainer" step's `docker
 # run --name ha-integration-test` fail with a name conflict before act
@@ -65,6 +80,8 @@ ACT_ARGS=(
   --env ACT=true
   --job ha-integration-test
   --rm
+  --secret "PRIMEVUE_LICENSE_KEY=${VITE_PRIMEVUE_LICENSE_KEY}"
+  --secret "GITHUB_TOKEN=${GHCR_TOKEN}"
   # Required for this specific job: without --bind, act's job container
   # gets a one-time `docker cp` snapshot of the repo, not a live view of
   # it - so the "Prepare CI-only add-on copy" step's freshly-created
