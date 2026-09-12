@@ -77,7 +77,8 @@ cmd_prepare_addon_copy() {
 
   # Supervisor cannot forward the PrimeVue BuildKit secret into its nested
   # Docker build. The integration workflow publishes a licensed image first
-  # and supplies its tag here so this copy uses the pull-image path instead.
+  # and supplies its untagged repository here; Supervisor appends the app
+  # version from config.yaml when it pulls the image.
   if [[ -n "${INTEGRATION_IMAGE:-}" ]]; then
     if grep -q '^image:' "$dest/config.yaml"; then
       sed -i "s|^image:.*|image: \"${INTEGRATION_IMAGE}\"|" "$dest/config.yaml"
@@ -104,7 +105,7 @@ ha_cli() {
 supervisor_api() {
   local method="$1" path="$2" body="${3:-}"
   docker exec "$CONTAINER_NAME" docker exec hassio_cli sh -c "
-    curl -sf -X '$method' 'http://supervisor$path' \
+    curl -sf --max-time 30 -X '$method' 'http://supervisor$path' \
       -H \"Authorization: Bearer \$SUPERVISOR_TOKEN\" \
       -H 'Content-Type: application/json' \
       ${body:+-d '$body'}
@@ -176,31 +177,26 @@ cmd_wait_core() {
 }
 
 cmd_discover() {
-  # #3976-class flakiness mitigation. The reload runs *inside* the polled
-  # command, not once upfront -- a single reload can race Supervisor's own
-  # internal readiness (a separate subsystem from Core, whose readiness
-  # wait-core already confirmed) and silently no-op if called too early,
-  # which previously meant polling a store-apps result that nothing ever
-  # refreshed again for the rest of the timeout. Retrying the reload on
-  # every attempt costs nothing (a lightweight repository re-scan) and
-  # gives it repeated chances to actually take effect instead of just
-  # re-reading a stale answer. Confirmed empirically to still fail
-  # intermittently even with a working, verified add-on copy in place
-  # (2026-09-08) -- this is upstream discovery flakiness, not a copy-
-  # mechanism bug. Timeout widened from 90s to 150s after observing it
-  # fail right around the 90s mark on 3 of 4 local runs that same day --
-  # genuine variance in how long Supervisor takes, not just a
-  # reload-timing issue the retry above already addresses.
+  # #3976-class flakiness mitigation. Reload the store through Supervisor's
+  # store API rather than the `ha store reload` wrapper, which can wait
+  # indefinitely while Supervisor is still settling and hides the useful
+  # failure behind the wrapper's suppressed output. The request itself has a
+  # 30-second timeout, and the reload is retried inside the bounded poll.
+  discover_store_app() {
+    supervisor_api POST "/store/reload" >/dev/null
+    local apps
+    apps="$(timeout 30s docker exec "$CONTAINER_NAME" ha store apps --raw-json)" || return 1
+    grep -q "\"${ADDON_SLUG}\"" <<<"$apps"
+  }
+
   poll "add-on '${ADDON_SLUG}' discovered in the local store" 150 3 \
-    bash -c "docker exec '$CONTAINER_NAME' ha store reload >/dev/null 2>&1; docker exec '$CONTAINER_NAME' ha store apps --raw-json | grep -q '\"${ADDON_SLUG}\"'"
+    discover_store_app
 }
 
 cmd_install() {
-  # This is what makes Supervisor build the add-on from its own Dockerfile
-  # via Supervisor's own internal `docker buildx build` call (confirmed by
-  # reading the Supervisor log line this actually emits: "Running command
-  # ['docker', 'buildx', 'build', ...]"). No manual `docker build` fallback
-  # exists anywhere in this script, on purpose.
+  # The CI-only config copy points at the licensed image published by the
+  # workflow. Supervisor pulls that image here instead of attempting a local
+  # Dockerfile build that cannot receive the PrimeVue BuildKit secret.
   ha_cli store apps install "$ADDON_SLUG" --raw-json
 }
 
