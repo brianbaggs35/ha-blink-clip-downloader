@@ -1,6 +1,8 @@
 import { definePreset } from '@primeuix/themes'
 import Aura from '@primeuix/themes/aura'
 
+const licenseKey = import.meta.env.VITE_PRIMEVUE_LICENSE_KEY
+
 // Aura's own Card/InputText/Select/Textarea/FileUpload/Checkbox/Dialog
 // presets reference semantic tokens (content.*, form.field.*,
 // overlay.modal.*) directly on a single flat `root` (or `icon`) object,
@@ -292,3 +294,17 @@ export const AppTheme = definePreset(Aura, {
     },
   },
 })
+
+export const primeVueOptions = {
+  license: licenseKey,
+  theme: {
+    preset: AppTheme,
+    options: {
+      // Reuses the existing theme store's body.dark/body.light toggle
+      // (see stores/theme.ts) instead of PrimeVue's own default
+      // `.p-dark`/media-query strategy, so there's a single source of
+      // truth for dark/light across hand-rolled and PrimeVue components.
+      darkModeSelector: '.dark',
+    },
+  },
+}

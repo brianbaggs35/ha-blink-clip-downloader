@@ -3,7 +3,7 @@ import { createPinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import ConfirmationService from 'primevue/confirmationservice'
 import ToastService from 'primevue/toastservice'
-import { AppTheme } from './theme'
+import { primeVueOptions } from './theme'
 import 'primeicons/primeicons.css'
 // Self-hosted (bundled by Vite, not a Google Fonts CDN request) so this
 // doesn't need the CSP script/style/font-src loosening a <link> to Google
@@ -19,16 +19,7 @@ import App from './App.vue'
 
 createApp(App)
   .use(createPinia())
-  .use(PrimeVue, {
-    theme: {
-      preset: AppTheme,
-      // Reuses the existing theme store's body.dark/body.light toggle
-      // (see stores/theme.ts) instead of PrimeVue's own default
-      // `.p-dark`/media-query strategy, so there's a single source of
-      // truth for dark/light across hand-rolled and PrimeVue components.
-      options: { darkModeSelector: '.dark' },
-    },
-  })
+  .use(PrimeVue, primeVueOptions)
   .use(ConfirmationService)
   .use(ToastService)
   .mount('#app')
