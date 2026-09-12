@@ -38,7 +38,7 @@ const emit = defineEmits<{
         </div>
         <div class="sm-module-arm">
           <span v-if="pending" class="sm-module-pending-label">
-            <ProgressSpinner class="sm-module-spinner" stroke-width="8" />
+            <ProgressSpinner class="sm-module-spinner" :stroke-width="8" />
             Updating…
           </span>
           <Tag v-else :severity="module.armed ? 'success' : 'danger'" :value="module.armed ? 'Armed' : 'Disarmed'" />

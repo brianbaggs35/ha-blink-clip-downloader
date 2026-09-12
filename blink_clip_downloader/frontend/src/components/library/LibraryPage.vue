@@ -689,7 +689,7 @@ onUnmounted(() => {
             color: var(--muted);
           "
         >
-          <ProgressSpinner style="width: 2.5rem; height: 2.5rem" stroke-width="4" />
+          <ProgressSpinner style="width: 2.5rem; height: 2.5rem" :stroke-width="4" />
           <span style="font-size: 0.85rem">Loading clips…</span>
         </div>
         <div v-else-if="!clips.length" class="empty">
