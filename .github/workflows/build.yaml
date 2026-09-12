@@ -54,17 +54,17 @@ jobs:
       - name: Set image tags
         id: tags
         run: |
-          VERSION=$(grep '^version:' \
+          VERSION="$(grep '^version:' \
             blink_clip_downloader/config.yaml | \
-            awk '{print $2}' | tr -d '"')
+            awk '{print $2}' | tr -d '"')"
 
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
 
           TAG_VER="${{ env.REGISTRY }}/${OWNER}/${{ env.IMAGE_NAME }}"
           TAG_VER="${TAG_VER}:${VERSION}-${{ matrix.arch }}"
 
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "tag_version=${TAG_VER}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_version=${TAG_VER}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v7
@@ -96,6 +96,13 @@ jobs:
           secrets: |
             primevue_license_key=${{ secrets.PRIMEVUE_LICENSE_KEY }}
 
+          # Keep the architecture-scoped cache for the large runtime layers,
+          # but rebuild the secret-dependent frontend stage so a rotated key
+          # cannot reuse an old licensed bundle.
+          no-cache-filters: frontend-builder
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
   manifest:
     name: Create multi-arch manifest
     runs-on: ubuntu-latest
@@ -116,13 +123,13 @@ jobs:
 
       - name: Create and push multi-arch manifest
         run: |
-          VERSION=${{ needs.build.outputs.version }}
+          VERSION="${{ needs.build.outputs.version }}"
 
-          REGISTRY=${{ env.REGISTRY }}
+          REGISTRY="${{ env.REGISTRY }}"
 
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
 
-          IMAGE=${{ env.IMAGE_NAME }}
+          IMAGE="${{ env.IMAGE_NAME }}"
 
           IMAGE_BASE="${REGISTRY}/${OWNER}/${IMAGE}"
 
@@ -138,13 +145,13 @@ jobs:
           docker buildx imagetools create \
             --annotation "index:org.opencontainers.image.description=${DESC}" \
             --annotation "index:org.opencontainers.image.source=${SRC}" \
-            -t ${IMAGE_BASE}:${VERSION} \
-            ${IMAGE_BASE}:${VERSION}-amd64 \
-            ${IMAGE_BASE}:${VERSION}-aarch64
+            -t "${IMAGE_BASE}:${VERSION}" \
+            "${IMAGE_BASE}:${VERSION}-amd64" \
+            "${IMAGE_BASE}:${VERSION}-aarch64"
 
           docker buildx imagetools create \
             --annotation "index:org.opencontainers.image.description=${DESC}" \
             --annotation "index:org.opencontainers.image.source=${SRC}" \
-            -t ${IMAGE_BASE}:latest \
-            ${IMAGE_BASE}:${VERSION}-amd64 \
-            ${IMAGE_BASE}:${VERSION}-aarch64
+            -t "${IMAGE_BASE}:latest" \
+            "${IMAGE_BASE}:${VERSION}-amd64" \
+            "${IMAGE_BASE}:${VERSION}-aarch64"

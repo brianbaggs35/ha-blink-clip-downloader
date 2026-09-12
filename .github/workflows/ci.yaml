@@ -462,6 +462,13 @@ jobs:
           secrets: |
             primevue_license_key=${{ secrets.PRIMEVUE_LICENSE_KEY }}
 
+          # Keep the architecture-scoped cache for the large runtime layers,
+          # but rebuild the secret-dependent frontend stage so a rotated key
+          # cannot reuse an old licensed bundle.
+          no-cache-filters: frontend-builder
+          cache-from: ${{ !env.ACT && format('type=gha,scope={0}', matrix.arch) || '' }}
+          cache-to: ${{ !env.ACT && format('type=gha,mode=max,scope={0}', matrix.arch) || '' }}
+
       - name: Verify built image
         run: |
           docker image inspect \
