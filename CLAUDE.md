@@ -156,7 +156,7 @@ only until that file is first written.
 
 ## Web UI (`frontend/`)
 
-The web UI is a **Vue 3 + PrimeVue 4 + Pinia** single-page app, a separate
+The web UI is a **Vue 3 + PrimeVue 5 + Pinia** single-page app, a separate
 npm project at `frontend/` (its own `package.json`, `node_modules`,
 `vite.config.ts`, `eslint.config.js`). It is **not** an embedded string in
 `media_server.py` — an earlier version of this add-on worked that way, but

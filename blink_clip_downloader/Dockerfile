@@ -23,12 +23,18 @@ COPY frontend/ ./
 
 # PrimeVue 5 / PrimeUI license key.
 #
-# The license is supplied through a BuildKit secret so that
-# VITE_PRIMEVUE_LICENSE_KEY is available to Vite during the production
-# build without storing the license key in a Docker ARG, ENV, image
-# configuration, or persistent Docker layer.
+# This is a client-side license and is intentionally embedded in the generated
+# JavaScript by Vite. The BuildKit secret keeps it out of Docker build
+# arguments, logs, image metadata, and intermediate environment layers; it
+# cannot prevent a user who receives the frontend from inspecting the bundle.
+# Supervisor builds cannot provide this secret, so the HA integration workflow
+# builds and publishes a licensed image first and makes Supervisor pull it.
 RUN --mount=type=secret,id=primevue_license_key,env=VITE_PRIMEVUE_LICENSE_KEY \
-    npm run build
+    sh -eu -c 'if [ -z "${VITE_PRIMEVUE_LICENSE_KEY:-}" ]; then \
+      echo "VITE_PRIMEVUE_LICENSE_KEY is required to build the PrimeVue frontend" >&2; \
+      exit 1; \
+    fi; \
+    npm run build'
 
 # A single multi-platform manifest, not a per-arch ARG BUILD_FROM — HA's
 # base images now publish one tag covering both linux/amd64 and

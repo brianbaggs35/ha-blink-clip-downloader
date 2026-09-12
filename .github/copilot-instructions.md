@@ -141,7 +141,7 @@ Frontend stack:
 * Vue 3
 * TypeScript
 * Vite
-* PrimeVue 4
+* PrimeVue 5
 * Pinia
 * Video.js
 
@@ -193,7 +193,7 @@ Follow existing Vue component/page organization.
 
 For new UI:
 
-* Prefer existing PrimeVue 4 components and project styling.
+* Prefer existing PrimeVue 5 components and project styling.
 * Reuse existing components/utilities/patterns.
 * Do not introduce another UI framework.
 * Keep layouts responsive and avoid fixed-width overflow.
