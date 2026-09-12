@@ -16,6 +16,7 @@
 #   ACT_PLAYWRIGHT_CACHE=...      # override the host Playwright browser cache
 #   VITE_PRIMEVUE_LICENSE_KEY=... # PrimeVue key used by the licensed image build
 #   GHCR_TOKEN=...                # token with package read/write access for act
+#   GHCR_USERNAME=...             # GitHub username associated with GHCR_TOKEN
 #
 # Note: unlike run-act.sh's jobs, this one leaves real, uniquely-named
 # containers/images on your host Docker daemon on both success and failure
@@ -58,6 +59,10 @@ if [[ -z "${GHCR_TOKEN:-}" ]]; then
   echo "Set GHCR_TOKEN before running HA integration under act." >&2
   exit 1
 fi
+if [[ -z "${GHCR_USERNAME:-}" ]]; then
+  echo "Set GHCR_USERNAME to the GitHub account that owns GHCR_TOKEN." >&2
+  exit 1
+fi
 
 # A stale container from a previous local run (this script's or a manual
 # one) would make the "Start Home Assistant devcontainer" step's `docker
@@ -66,10 +71,14 @@ fi
 docker rm -f ha-integration-test >/dev/null 2>&1 || true
 
 EVENT_FILE="$(mktemp)"
-trap 'rm -f "$EVENT_FILE"' EXIT
+SECRET_FILE="$(mktemp)"
+chmod 600 "$SECRET_FILE"
+trap 'rm -f "$EVENT_FILE" "$SECRET_FILE"' EXIT
 printf '%s\n' \
   '{"ref":"refs/heads/main","repository":{"full_name":"local/ha-blink-clip-downloader","default_branch":"main"},"sender":{"login":"local"}}' \
   >"$EVENT_FILE"
+printf 'PRIMEVUE_LICENSE_KEY=%s\nGITHUB_TOKEN=%s\n' \
+  "$VITE_PRIMEVUE_LICENSE_KEY" "$GHCR_TOKEN" >"$SECRET_FILE"
 
 ACT_ARGS=(
   --workflows .github/workflows/ha-integration.yaml
@@ -78,10 +87,10 @@ ACT_ARGS=(
   --platform "ubuntu-latest=$RUNNER_IMAGE"
   --actor nektos/act
   --env ACT=true
+  --env "GHCR_USERNAME=${GHCR_USERNAME}"
   --job ha-integration-test
   --rm
-  --secret "PRIMEVUE_LICENSE_KEY=${VITE_PRIMEVUE_LICENSE_KEY}"
-  --secret "GITHUB_TOKEN=${GHCR_TOKEN}"
+  --secret-file "$SECRET_FILE"
   # Required for this specific job: without --bind, act's job container
   # gets a one-time `docker cp` snapshot of the repo, not a live view of
   # it - so the "Prepare CI-only add-on copy" step's freshly-created
