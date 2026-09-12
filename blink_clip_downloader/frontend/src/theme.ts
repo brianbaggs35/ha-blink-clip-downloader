@@ -296,7 +296,7 @@ export const AppTheme = definePreset(Aura, {
 })
 
 export const primeVueOptions = {
-  license: licenseKey,
+  license: { key: licenseKey },
   theme: {
     preset: AppTheme,
     options: {
