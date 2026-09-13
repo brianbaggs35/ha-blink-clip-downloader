@@ -29,17 +29,17 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('shows disconnected (no live Blink session) and the seeded library totals', async ({ page }) => {
-  const connectionCard = page.locator('.status-card', { hasText: 'Blink Connection' })
+  const connectionCard = page.locator('.p-card', { hasText: 'Blink Connection' })
   await expect(connectionCard.getByText('Disconnected')).toBeVisible()
 
-  const libraryCard = page.locator('.status-card', { hasText: 'Clip Library' })
+  const libraryCard = page.locator('.p-card', { hasText: 'Clip Library' })
   await expect(libraryCard).toContainText('Total clips')
   await expect(libraryCard.locator('.status-row', { hasText: 'Total clips' })).toContainText('17')
   await expect(libraryCard.locator('.status-row', { hasText: 'Archived' })).toContainText('5')
 })
 
 test('shows every seeded camera with its total clip count', async ({ page }) => {
-  const camerasCard = page.locator('.status-card', { hasText: 'Cameras (4)' })
+  const camerasCard = page.locator('.p-card', { hasText: 'Cameras (4)' })
   await expect(camerasCard).toBeVisible()
   await expect(camerasCard.locator('.status-row', { hasText: 'Front Door' })).toContainText('4 clips')
   await expect(camerasCard.locator('.status-row', { hasText: 'Backyard' })).toContainText('4 clips')
@@ -48,7 +48,7 @@ test('shows every seeded camera with its total clip count', async ({ page }) => 
 })
 
 test('shows the configured (but unreachable) AI provider as offline', async ({ page }) => {
-  const aiCard = page.locator('.status-card', { hasText: 'AI Analysis' })
+  const aiCard = page.locator('.p-card', { hasText: 'AI Analysis' })
   await expect(aiCard.getByText('Offline')).toBeVisible()
   await expect(aiCard.locator('.status-row', { hasText: 'Provider' })).toContainText('Ollama (Local/LAN)')
   await expect(aiCard.locator('.status-row', { hasText: 'Model' })).toContainText('llava')
@@ -156,13 +156,13 @@ test('shows the Storage card with quota usage and a Frames Analyzed card when bo
   await page.locator('.app-nav-tab[data-tab="status"]').click()
   await page.waitForSelector('.app-nav-tab.active[data-tab="status"]')
 
-  const storageCard = page.locator('.status-card', { hasText: 'Storage' })
+  const storageCard = page.locator('.p-card', { hasText: 'Storage' })
   await expect(storageCard.locator('.status-row', { hasText: 'Used' })).toContainText('9500')
   await expect(storageCard.locator('.status-row', { hasText: 'Quota' })).toContainText('9.31')
   // Usage is 95% of quota -- the "danger" (>90%) threshold, not just any non-null one.
   await expect(storageCard.locator('.val.danger')).toHaveCount(1)
 
-  const framesCard = page.locator('.status-card', { hasText: 'Frames Analyzed' })
+  const framesCard = page.locator('.p-card', { hasText: 'Frames Analyzed' })
   await expect(framesCard.locator('.status-row', { hasText: 'Total frames' })).toContainText('42')
   await expect(framesCard.locator('.status-row', { hasText: 'Today' })).toContainText('3')
 })
@@ -209,11 +209,11 @@ test('shows the warn disk threshold, and the AI queue pending / suspicious count
   await page.waitForSelector('.app-nav-tab.active[data-tab="status"]')
 
   // 75% usage -- the "warn" (>70%, <=90%) threshold, distinct from "danger".
-  const storageCard = page.locator('.status-card', { hasText: 'Storage' })
+  const storageCard = page.locator('.p-card', { hasText: 'Storage' })
   await expect(storageCard.locator('.val.warn')).toHaveCount(1)
   await expect(storageCard.locator('.val.danger')).toHaveCount(0)
 
-  const aiCard = page.locator('.status-card', { hasText: 'AI Analysis' })
+  const aiCard = page.locator('.p-card', { hasText: 'AI Analysis' })
   await expect(aiCard.locator('.status-row', { hasText: 'Pending' })).toContainText('3')
   await expect(aiCard.locator('.status-row', { hasText: 'Suspicious' })).toContainText('2')
 })
@@ -244,7 +244,7 @@ test('shows the ok disk threshold when usage is comfortably under both warn and 
   await page.locator('.app-nav-tab[data-tab="status"]').click()
   await page.waitForSelector('.app-nav-tab.active[data-tab="status"]')
 
-  const storageCard = page.locator('.status-card', { hasText: 'Storage' })
+  const storageCard = page.locator('.p-card', { hasText: 'Storage' })
   await expect(storageCard.locator('.val.ok')).toHaveCount(1)
   await expect(storageCard.locator('.val.warn')).toHaveCount(0)
   await expect(storageCard.locator('.val.danger')).toHaveCount(0)

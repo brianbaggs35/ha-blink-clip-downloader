@@ -590,6 +590,18 @@ body.nav-collapsed {
   margin: 0.75rem 1.5rem 0;
   flex-shrink: 0;
 }
+/* PrimeVue's own .p-panel-header-actions (the row holding a Panel's #icons
+   slot content plus its toggle button) isn't itself a flex container in
+   this theme — its children just sit in normal inline flow, so buttons of
+   different heights (e.g. a labelled "Select" button next to an icon-only
+   Refresh button, both shorter than the toggle button's rounded-text
+   variant) align by text baseline instead of by center, visibly
+   misaligning them. Not scoped to .lib-filters-panel specifically since
+   any future Panel #icons usage would hit the same PrimeVue behavior. */
+.p-panel-header-actions {
+  display: flex;
+  align-items: center;
+}
 /* Mobile-only — see the @media(max-width:600px) block below, which swaps
    which of .lib-filters-desktop/.lib-filters-mobile is visible. Desktop
    keeps its filters always fully expanded with no Panel chrome at all,
