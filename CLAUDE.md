@@ -510,9 +510,19 @@ frontend build — and a Playwright e2e smoke check in `e2e/`; those aren't
 practical to run per-change but are worth being aware of if a change touches
 `Dockerfile`, `rootfs/run.sh`, `frontend/vite.config.ts`, or add-on startup
 behavior. The `build` job also Trivy-scans the built image on both arches,
-gated to HIGH/CRITICAL vulnerabilities **with a fix available** — if it
-fails, a rebuild usually picks up the fixed Debian package; only add a
-`.trivyignore` entry as a last resort with a dated justification comment.
+gated to HIGH/CRITICAL vulnerabilities **with a fix available**. The
+Dockerfile's OS-package layer (`apt-get update && apt-get upgrade -y &&
+...`) re-runs against current Debian security patches at most once per
+UTC day via its `APT_CACHE_BUST` build-arg (fed by a small step in both
+`ci.yaml` and `build.yaml`) — without it, CI's Buildx cache (`type=gha`,
+scoped only by architecture, shared across every branch/PR/release) would
+otherwise reuse that layer's first-ever-build package versions forever,
+since the RUN instruction's own text never changes. So a genuine Trivy
+failure on an already-fixed CVE should now resolve itself on the next
+build after a UTC day boundary with no action needed; only add a
+`.trivyignore` entry as a last resort (no fix available yet upstream, or
+a finding that's a genuine false positive) with a dated justification
+comment.
 CI also runs a `sonarqube` job (`SonarSource/sonarqube-scan-action`,
 config at the repo root's `sonar-project.properties`) against SonarCloud —
 informational only, doesn't gate merges, and isn't practical to run
