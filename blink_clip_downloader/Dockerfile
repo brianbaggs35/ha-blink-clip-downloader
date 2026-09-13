@@ -110,7 +110,26 @@ ENV HF_HOME=/data/model_cache/hf
 # since the data directory path itself is versioned
 # (/data/postgresql/<major>/main, see 01-postgres-init.sh) and this had not
 # shipped in a tagged release yet.
-RUN apt-get update \
+# CI's Buildx cache (ci.yaml/build.yaml, both `type=gha,scope=<arch>`) is
+# shared across every branch/PR/release for a given architecture with no
+# other invalidation signal — this RUN's own text never changes between
+# builds, so once it's cached, `apt-get upgrade` below silently stops
+# doing anything: the layer is reused verbatim with whatever package
+# versions happened to be current the first time it was ever built.
+# That's exactly how already-Debian-patched CVEs (gzip/glib/mbedtls/perl,
+# all seen failing PR #204's Trivy scan on 2026-09-13 despite every one
+# having a fixed version sitting in trixie's own suite) can keep failing
+# CI indefinitely on whatever branch happens to run the scan next, with
+# no code change of its own at fault. Referencing this ARG inside the
+# RUN below forces Docker to fold its value into that layer's cache key,
+# so a value that changes daily (ci.yaml/build.yaml pass today's UTC
+# date) makes the layer — and unavoidably everything after it, since
+# Docker's layer cache is strictly sequential — rebuild at most once per
+# calendar day. Bounded, predictable cost for actually keeping OS-level
+# CVE patches current instead of frozen at first-build state forever.
+ARG APT_CACHE_BUST=0
+RUN : "apt cache bust: ${APT_CACHE_BUST}" \
+    && apt-get update \
     # Patch already-installed base-image packages (e.g. curl, libtasn1-6) to
     # whatever the base image's own preconfigured apt sources currently
     # offer, before installing anything new below. The base image is built
