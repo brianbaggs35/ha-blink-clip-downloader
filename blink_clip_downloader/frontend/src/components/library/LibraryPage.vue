@@ -5,8 +5,9 @@ import Checkbox from 'primevue/checkbox'
 import IconField from 'primevue/iconfield'
 import InputIcon from 'primevue/inputicon'
 import InputText from 'primevue/inputtext'
+import Panel from 'primevue/panel'
 import ProgressBar from 'primevue/progressbar'
-import ProgressSpinner from 'primevue/progressspinner'
+import ScrollTop from 'primevue/scrolltop'
 import Select from 'primevue/select'
 import {
   deleteClip,
@@ -30,6 +31,7 @@ import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import AppIcon from '../icons/AppIcon.vue'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import GDriveUploadModal from '../storage/GDriveUploadModal.vue'
 import BulkBar from './BulkBar.vue'
 import ClipCard from './ClipCard.vue'
@@ -77,6 +79,18 @@ const sortOrder = ref<'newest' | 'oldest' | 'camera' | 'size' | 'duration'>('new
 const starredOnly = ref(false)
 const notifiedOnly = ref(false)
 const recognizedOnly = ref(false)
+
+// Collapsed by default so the clip grid gets the vertical space back on
+// first load (the reported mobile complaint: the stats/filters rows ate
+// over half the viewport before any clip was visible) — remembered
+// per-browser afterward, same simple localStorage-ref shape AppSidebar
+// uses for notifEnabled rather than a Pinia store, since nothing outside
+// this page needs to read it.
+const FILTERS_COLLAPSED_KEY = 'blink_lib_filters_collapsed'
+const filtersCollapsed = ref(localStorage.getItem(FILTERS_COLLAPSED_KEY) !== '0')
+watch(filtersCollapsed, (collapsed) => {
+  localStorage.setItem(FILTERS_COLLAPSED_KEY, collapsed ? '1' : '0')
+})
 
 const tags = ref<string[]>([])
 const tagOptions = computed(() => [
@@ -576,80 +590,84 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="lib-filters">
-      <IconField class="lib-search">
-        <InputIcon><AppIcon name="tab-library" style="width: 15px; height: 15px" /></InputIcon>
-        <label for="search" class="sr-only">Search clips</label>
-        <InputText id="search" v-model="search" size="small" placeholder="Search clips…" fluid />
-      </IconField>
-      <label for="date-range" class="sr-only">Date range</label>
-      <Select
-        id="date-range"
-        v-model="dateRange"
-        size="small"
-        :options="DATE_RANGE_OPTIONS"
-        option-label="label"
-        option-value="value"
-      />
-      <label for="source-filter" class="sr-only">Source</label>
-      <Select
-        id="source-filter"
-        v-model="sourceFilter"
-        size="small"
-        :options="SOURCE_OPTIONS"
-        option-label="label"
-        option-value="value"
-        placeholder="All sources"
-      />
-      <label for="tag-filter" class="sr-only">Tag</label>
-      <Select
-        id="tag-filter"
-        v-model="tagFilter"
-        size="small"
-        :options="tagOptions"
-        option-label="label"
-        option-value="value"
-        placeholder="All tags"
-      />
-      <label for="sort-order" class="sr-only">Sort order</label>
-      <Select
-        id="sort-order"
-        v-model="sortOrder"
-        size="small"
-        :options="SORT_OPTIONS"
-        option-label="label"
-        option-value="value"
-      />
-      <label for="lib-filter-starred" class="lib-check">
-        <Checkbox v-model="starredOnly" input-id="lib-filter-starred" binary /> ★ Starred
-      </label>
-      <label for="lib-filter-notified" class="lib-check">
-        <Checkbox v-model="notifiedOnly" input-id="lib-filter-notified" binary /> 🔔 Notified
-      </label>
-      <label v-if="capabilities.faceRecognitionAvailable !== false" for="lib-filter-recognized" class="lib-check">
-        <Checkbox v-model="recognizedOnly" input-id="lib-filter-recognized" binary /> 👤 Recognized
-      </label>
-      <Button
-        size="small"
-        :severity="selectMode ? 'primary' : 'secondary'"
-        :outlined="!selectMode"
-        @click="toggleSelectMode(!selectMode)"
-      >
-        {{ selectMode ? 'Selecting…' : 'Select' }}
-      </Button>
-      <Button
-        size="small"
-        severity="secondary"
-        outlined
-        :loading="refreshing"
-        :disabled="refreshing"
-        title="Refresh library"
-        aria-label="Refresh library"
-        @click="refreshLibrary"
-      >
-        <template #icon><AppIcon name="refresh" /></template>
-      </Button>
-    </div>
+    <Panel v-model:collapsed="filtersCollapsed" toggleable header="Search &amp; Filters" class="lib-filters-panel">
+      <template #icons>
+        <Button
+          size="small"
+          :severity="selectMode ? 'primary' : 'secondary'"
+          :outlined="!selectMode"
+          @click="toggleSelectMode(!selectMode)"
+        >
+          {{ selectMode ? 'Selecting…' : 'Select' }}
+        </Button>
+        <Button
+          size="small"
+          severity="secondary"
+          outlined
+          :loading="refreshing"
+          :disabled="refreshing"
+          title="Refresh library"
+          aria-label="Refresh library"
+          @click="refreshLibrary"
+        >
+          <template #icon><AppIcon name="refresh" /></template>
+        </Button>
+      </template>
+      <div class="lib-filters">
+        <IconField class="lib-search">
+          <InputIcon><AppIcon name="tab-library" style="width: 15px; height: 15px" /></InputIcon>
+          <label for="search" class="sr-only">Search clips</label>
+          <InputText id="search" v-model="search" size="small" placeholder="Search clips…" fluid />
+        </IconField>
+        <label for="date-range" class="sr-only">Date range</label>
+        <Select
+          id="date-range"
+          v-model="dateRange"
+          size="small"
+          :options="DATE_RANGE_OPTIONS"
+          option-label="label"
+          option-value="value"
+        />
+        <label for="source-filter" class="sr-only">Source</label>
+        <Select
+          id="source-filter"
+          v-model="sourceFilter"
+          size="small"
+          :options="SOURCE_OPTIONS"
+          option-label="label"
+          option-value="value"
+          placeholder="All sources"
+        />
+        <label for="tag-filter" class="sr-only">Tag</label>
+        <Select
+          id="tag-filter"
+          v-model="tagFilter"
+          size="small"
+          :options="tagOptions"
+          option-label="label"
+          option-value="value"
+          placeholder="All tags"
+        />
+        <label for="sort-order" class="sr-only">Sort order</label>
+        <Select
+          id="sort-order"
+          v-model="sortOrder"
+          size="small"
+          :options="SORT_OPTIONS"
+          option-label="label"
+          option-value="value"
+        />
+        <label for="lib-filter-starred" class="lib-check">
+          <Checkbox v-model="starredOnly" input-id="lib-filter-starred" binary /> ★ Starred
+        </label>
+        <label for="lib-filter-notified" class="lib-check">
+          <Checkbox v-model="notifiedOnly" input-id="lib-filter-notified" binary /> 🔔 Notified
+        </label>
+        <label v-if="capabilities.faceRecognitionAvailable !== false" for="lib-filter-recognized" class="lib-check">
+          <Checkbox v-model="recognizedOnly" input-id="lib-filter-recognized" binary /> 👤 Recognized
+        </label>
+      </div>
+    </Panel>
 
     <GDriveUploadModal
       v-if="showUploadModal"
@@ -677,20 +695,8 @@ onUnmounted(() => {
 
     <main class="lib-main">
       <div id="clip-grid" class="clip-grid">
-        <div
-          v-if="loadingInitial"
-          style="
-            grid-column: 1 / -1;
-            padding: 2.5rem;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 0.6rem;
-            color: var(--muted);
-          "
-        >
-          <ProgressSpinner style="width: 2.5rem; height: 2.5rem" :stroke-width="4" />
-          <span style="font-size: 0.85rem">Loading clips…</span>
+        <div v-if="loadingInitial" style="grid-column: 1 / -1; padding: 2.5rem">
+          <LoadingIndicator label="Loading clips…" />
         </div>
         <div v-else-if="!clips.length" class="empty">
           <AppIcon name="empty-box" />
@@ -711,6 +717,7 @@ onUnmounted(() => {
       <div class="load-more-row">
         <Button v-if="hasMore" outlined size="small" @click="loadClips(currentPage + 1)">Load more…</Button>
       </div>
+      <ScrollTop target="parent" :threshold="400" icon="pi pi-arrow-up" />
     </main>
   </div>
 

@@ -620,69 +620,79 @@ body.nav-collapsed {
 }
 .lib-stats-row {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
   align-items: stretch;
   justify-content: center;
-  padding: 1.1rem 1.5rem 0;
+  padding: 0.75rem 1.5rem 0;
   flex-shrink: 0;
 }
+/* Compact single-line "label value" pill, replacing the earlier taller
+   stacked-card layout — frees up vertical room for the clip grid below,
+   per the mobile scrolling complaint this stats row (together with
+   .lib-filters, now collapsible below) was contributing to. */
 .lib-stat {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.65rem 1.1rem;
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.75rem;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 0.2rem;
+  gap: 0.4rem;
   box-shadow: var(--shadow-sm);
-  min-width: 100px;
 }
 .lib-stat-label {
   font-size: 0.72rem;
   color: var(--muted);
   white-space: nowrap;
-  text-align: center;
 }
 .lib-stat-value {
-  font-size: 1.3rem;
+  font-size: 1rem;
   font-weight: 700;
   color: var(--text);
-  text-align: center;
+  white-space: nowrap;
 }
 .lib-stat-storage {
-  /* Matches the other stat cards' compact label/value layout instead of a
-     wide sentence-plus-bar card, so it fits on the same row as the others
-     (top-right) rather than always wrapping onto its own row below and
-     eating into the clip grid's scroll area. Free-disk-space detail moved
-     to the card's title attribute (hover tooltip) — there's no room for a
-     second line of text at this width. */
+  /* The only stat with a third element (the quota bar below the value),
+     so it keeps its own compact column layout instead of the single-line
+     row the simpler count-only stats use above. Free-disk-space detail
+     moved to the card's title attribute (hover tooltip) — there's no room
+     for a second line of text at this width. */
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
   min-width: 128px;
 }
 .lib-stat-storage-value {
-  /* Slightly smaller than the plain-number .lib-stat-value (1.3rem) since
+  /* Slightly smaller than the plain-number .lib-stat-value (1rem) since
      "560.1 MB / 10 GB" is meaningfully longer than "147". */
-  font-size: 1.05rem;
+  font-size: 0.82rem;
 }
 /* the progress bar needs an explicit full-width override or it collapses
-   to PrimeVue's intrinsic default instead of spanning the card (see
-   .lib-stat's align-items:center). Height trimmed well below Aura's
-   1.25rem default: a bar this size only needs to read as a slim quota
-   meter under the value above it, not compete visually with it. */
+   to PrimeVue's intrinsic default instead of spanning the card. Height
+   trimmed well below Aura's 1.25rem default: a bar this size only needs to
+   read as a slim quota meter under the value above it, not compete
+   visually with it. */
 .lib-stat-storage .p-progressbar {
   width: 100%;
   height: 0.3rem;
   margin-top: 0.15rem;
 }
+/* Wraps what used to be the bare .lib-filters row — collapsed by default
+   (see LibraryPage.vue's filtersCollapsed ref) so the clip grid gets that
+   space back on first load; Select/Refresh live in the panel's #icons
+   slot instead of the filter row itself so they stay reachable without
+   expanding it. Margin (not padding) mirrors .lib-stats-row's own side
+   padding so it lines up with the row above it. */
+.lib-filters-panel {
+  margin: 0.75rem 1.5rem 0;
+  flex-shrink: 0;
+}
 .lib-filters {
-  padding: 1rem 1.5rem;
   display: flex;
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
-  flex-shrink: 0;
 }
 .lib-search {
   min-width: 220px;
@@ -708,6 +718,15 @@ body.nav-collapsed {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   padding: 0.5rem 1.5rem 1.5rem;
+}
+/* ScrollTop's target="parent" mode renders position:sticky (not fixed) so
+   it stays pinned within .lib-main's own scrollport rather than covering
+   fixed viewport space on tabs where the grid isn't even visible — it
+   just needs an inset to actually engage the sticky behavior, and
+   right-alignment already comes from PrimeVue's own .p-scrolltop-sticky
+   rule (margin-inline-start: auto). */
+.lib-main .p-scrolltop {
+  bottom: 0.75rem;
 }
 
 /* ── Clip grid ────────────────────────────────────────── */
@@ -858,17 +877,14 @@ body.nav-collapsed {
   flex-wrap: wrap;
   align-items: center;
 }
-.src-pill {
-  background: var(--card2);
-  border-radius: 5px;
-  padding: 0.06rem 0.35rem;
-}
+/* .src-pill/.tag-pill are now PrimeVue Tag components (see ClipCard.vue) —
+   these just shrink Tag's own default sizing to fit the tight .clip-meta
+   row instead of redefining its color/shape, which now comes from Tag's
+   own severity-based theming like every other Tag in the app. */
+.src-pill,
 .tag-pill {
-  background: var(--tag-bg);
-  color: var(--tag-text);
-  border-radius: 5px;
-  padding: 0.06rem 0.35rem;
-  font-weight: 600;
+  font-size: 0.68rem;
+  padding: 0.06rem 0.45rem;
 }
 
 /* ── Bulk bar ─────────────────────────────────────────── */
@@ -1914,25 +1930,27 @@ body.nav-collapsed {
     display: none;
   }
 
-  /* Library: the stats row + filters row together ate over half the
-     viewport height on a phone (measured ~53% at 390x844) before any
+  /* Library: the stats row + filters row together used to eat over half
+     the viewport height on a phone (measured ~53% at 390x844) before any
      clip was visible, leaving barely one card's worth of room to scroll
-     within — tightening both rows here gives .lib-main meaningfully more
-     of the screen without removing anything from either row. */
+     within. Both rows are already more compact by default now (see
+     .lib-stat's single-line layout and .lib-filters-panel's collapsed-by-
+     default panel above) — this tightens their side spacing further to
+     match the narrower viewport, and — together with the narrower
+     .clip-grid floor below — is what actually lets a phone show 2 clip
+     columns side by side instead of 1. */
   .lib-stats-row {
     padding: 0.6rem 0.75rem 0;
-    gap: 0.5rem;
+    gap: 0.4rem;
   }
   .lib-stat {
-    padding: 0.4rem 0.7rem;
-    min-width: 76px;
+    padding: 0.3rem 0.55rem;
   }
   .lib-stat-value {
-    font-size: 1.05rem;
+    font-size: 0.92rem;
   }
-  .lib-filters {
-    padding: 0.6rem 0.75rem;
-    gap: 0.4rem;
+  .lib-filters-panel {
+    margin: 0.6rem 0.75rem 0;
   }
   .lib-search {
     /* Desktop's 220px min-width alone exceeds half a phone's width,
@@ -1940,5 +1958,20 @@ body.nav-collapsed {
        chance to share it. */
     min-width: 140px;
     flex-basis: 140px;
+  }
+  .lib-main {
+    /* Matches the tightened stats/filters side spacing above instead of
+       keeping the desktop-width 1.5rem gutter, which alone already ruled
+       out a second clip-card column on most phone widths. */
+    padding: 0.5rem 0.5rem 1.5rem;
+  }
+  .clip-grid {
+    /* Desktop's 232px floor never leaves room for a second column below
+       ~480px wide — halving it (ClipCard's camera-name/timestamp text
+       already truncates with an ellipsis, so it stays legible narrower)
+       is what actually answers "only one clip thumbnail visible at a
+       time", on top of the extra height freed up above. */
+    grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr));
+    gap: 0.6rem;
   }
 }

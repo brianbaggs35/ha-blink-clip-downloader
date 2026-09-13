@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import Chip from 'primevue/chip'
+import Tag from 'primevue/tag'
 import {
   analyzeClipNow,
   deleteFeedback,
@@ -239,8 +241,8 @@ const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
         </template>
         <div v-else-if="result" class="ai-result-box">
           <div style="display: flex; align-items: center; gap: 0.55rem; margin-bottom: 0.4rem">
-            <span v-if="result.is_suspicious" class="ai-badge-suspicious">⚠ Suspicious</span>
-            <span v-else class="ai-badge-clean">✓ Clear</span>
+            <Tag v-if="result.is_suspicious" severity="danger" value="⚠ Suspicious" class="ai-badge-suspicious" />
+            <Tag v-else severity="success" value="✓ Clear" class="ai-badge-clean" />
             <span style="font-weight: 600" :style="{ color: result.is_suspicious ? 'var(--danger)' : 'var(--success)' }"
               >{{ confPct(result) }}% confidence</span
             >
@@ -259,14 +261,13 @@ const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
             v-if="result.detected_objects?.length"
             style="display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.4rem"
           >
-            <span
+            <Chip
               v-for="obj in result.detected_objects"
               :key="obj.label"
+              :label="`${detectionEmoji(obj.label)} ${obj.count}`"
               class="detection-chip"
               :title="`${obj.label} · up to ${Math.round(obj.max_confidence * 100)}% confidence`"
-            >
-              {{ detectionEmoji(obj.label) }} {{ obj.count }}
-            </span>
+            />
           </div>
           <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap">
             <button type="button" class="btn sm ghost" :disabled="analyzing" @click="analyzeNow">↺ Re-analyze</button>
