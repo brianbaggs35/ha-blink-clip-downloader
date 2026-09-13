@@ -9,9 +9,10 @@ pipeline work — a full correctness review, the object-detection
 clip-modal feature, sharper vehicle/zone-proximity intelligence,
 automatic retry of transiently-failed analyses, reliability/cost
 improvements to the Anthropic and OpenAI request paths, and a
-frame-selection pipeline review — a collapsible nav sidebar, and viewing
-Sync Module local-storage clips from the Sync Module tab. More parts land
-here before this version ships.
+frame-selection pipeline review — a collapsible nav sidebar, viewing
+Sync Module local-storage clips from the Sync Module tab, and a mobile-
+focused Library scrolling fix plus a small PrimeVue-5 consistency pass.
+More parts land here before this version ships.
 
 ### Added
 
@@ -133,6 +134,25 @@ here before this version ships.
   instead of attempting a Supervisor-local frontend build that cannot receive
   the BuildKit license secret. CI's Supervisor integration test uses the same
   licensed-image path.
+
+### Web UI
+
+- Fixed a reported mobile issue where the Library tab could only show one
+  clip thumbnail at a time, making it hard to scroll through: the search/
+  filter row now lives in a collapsible panel (collapsed by default,
+  remembered per-browser) instead of always being expanded, the stats row
+  above it is now a more compact single-line strip, and the clip grid now
+  shows 2 columns on a phone-width screen instead of 1. A new scroll-to-top
+  control also appears once you've scrolled down the grid. These changes
+  apply on desktop too, not just mobile.
+- Adopted a couple of PrimeVue 5 components not previously used anywhere in
+  the app: `ScrollTop` (above) and `Chip` (the clip modal's detected-object
+  summary). The clip grid's source/tag pills and the clip modal's AI
+  suspicious/clear badges now use PrimeVue `Tag`, matching the `Tag`
+  vocabulary already used elsewhere (Sync Module, Storage's archive list,
+  Biometrics) instead of one-off hand-rolled pill markup.
+- Added the page header the Status tab was missing — every other tab opens
+  with one, Status was the one exception.
 
 ## 5.5.2
 
