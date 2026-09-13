@@ -66,6 +66,10 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag_version=${TAG_VER}" >> "$GITHUB_OUTPUT"
 
+          # Feeds the Dockerfile's APT_CACHE_BUST arg (see its own comment
+          # there) — see ci.yaml's identical step for why this exists.
+          echo "apt_cache_bust=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -89,6 +93,7 @@ jobs:
           build-args: |
             BUILD_ARCH=${{ matrix.arch }}
             BUILD_VERSION=${{ steps.tags.outputs.version }}
+            APT_CACHE_BUST=${{ steps.tags.outputs.apt_cache_bust }}
 
           # PrimeVue's client-side license is intentionally embedded in the
           # generated frontend bundle. BuildKit keeps the input out of build

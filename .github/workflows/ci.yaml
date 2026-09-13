@@ -439,6 +439,15 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      # Feeds the Dockerfile's APT_CACHE_BUST arg (see its own comment
+      # there) — a value that changes once per UTC day so the shared,
+      # architecture-scoped Buildx cache can't freeze apt-get upgrade's
+      # effect at whatever packages were current the first time that
+      # layer was ever built.
+      - name: Compute daily apt cache-bust value
+        id: apt_cache_bust
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       - name: Build add-on image
         uses: docker/build-push-action@v7
         with:
@@ -455,6 +464,7 @@ jobs:
           build-args: |
             BUILD_ARCH=${{ matrix.arch }}
             BUILD_VERSION=${{ env.TAG }}
+            APT_CACHE_BUST=${{ steps.apt_cache_bust.outputs.date }}
 
           # PrimeVue's client-side license is intentionally embedded in the
           # generated frontend bundle. BuildKit keeps the input out of build
