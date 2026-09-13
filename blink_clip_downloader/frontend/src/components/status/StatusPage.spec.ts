@@ -115,8 +115,13 @@ describe('StatusPage', () => {
 
   it('shows a loading state, then renders all cards once data resolves', async () => {
     const wrapper = mount(StatusPage)
+    // The page header, unlike every other tab, used to be missing entirely —
+    // it must show regardless of loading/error/loaded state, not just once
+    // data resolves.
+    expect(wrapper.find('h2').text()).toBe('Status')
     expect(wrapper.text()).toContain('Loading')
     await flushPromises()
+    expect(wrapper.find('h2').text()).toBe('Status')
     expect(wrapper.text()).toContain('Connected')
     expect(wrapper.text()).toContain('acct-1')
     expect(wrapper.text()).toContain('42')

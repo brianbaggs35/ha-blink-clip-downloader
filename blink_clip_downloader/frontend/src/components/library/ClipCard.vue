@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import Tag from 'primevue/tag'
 import { clipThumbUrl } from '../../api/clips'
 import { fmtDur, fmtSize, fmtTs } from '../../api/constants'
 import type { ClipListItem } from '../../api/types'
@@ -36,10 +37,10 @@ const thumbFailed = ref(false)
       <div class="clip-camera">{{ clip.camera }}</div>
       <div class="clip-time">{{ fmtTs(clip.timestamp) }}</div>
       <div class="clip-meta">
-        <span v-if="clip.source" class="src-pill">{{ clip.source }}</span>
+        <Tag v-if="clip.source" severity="secondary" :value="clip.source" class="src-pill" />
         <span v-if="clip.duration">⏱ {{ fmtDur(clip.duration) }}</span>
         <span>{{ fmtSize(clip.size_bytes) }}</span>
-        <span v-for="tag in clip.tags" :key="tag" class="tag-pill">{{ tag }}</span>
+        <Tag v-for="tag in clip.tags" :key="tag" :value="tag" class="tag-pill" />
       </div>
     </div>
   </div>

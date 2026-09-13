@@ -178,6 +178,38 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('starts with the search & filters panel collapsed, with Select still usable', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    expect(wrapper.find('.p-panel-toggle-button').attributes('aria-expanded')).toBe('false')
+    // Select/Refresh live in the panel's header (#icons slot), not its
+    // collapsible content, so they must stay reachable without expanding.
+    await findByText(wrapper, 'Select').trigger('click')
+    expect(wrapper.text()).toContain('Selecting…')
+    wrapper.unmount()
+  })
+
+  it('expanding/collapsing the search & filters panel persists the choice across a remount', async () => {
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await wrapper.find('.p-panel-toggle-button').trigger('click')
+    expect(wrapper.find('.p-panel-toggle-button').attributes('aria-expanded')).toBe('true')
+    wrapper.unmount()
+
+    const expandedRemount = mountLibrary()
+    await flushPromises()
+    expect(expandedRemount.find('.p-panel-toggle-button').attributes('aria-expanded')).toBe('true')
+    await expandedRemount.find('.p-panel-toggle-button').trigger('click')
+    expandedRemount.unmount()
+
+    const collapsedRemount = mountLibrary()
+    await flushPromises()
+    expect(collapsedRemount.find('.p-panel-toggle-button').attributes('aria-expanded')).toBe('false')
+    collapsedRemount.unmount()
+  })
+
   it('debounces filter changes before reloading clips', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch()
