@@ -1,10 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ClipAiPanel from './ClipAiPanel.vue'
 import { usePromptOverlayStore } from '../../stores/promptOverlay'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
+
+// PrimeVue's Select opens a teleported (to <body>) overlay on click and
+// selects an option on `mousedown` (not `click`) — see primevue/select's
+// option template, and LibraryPage.spec.ts's identical helper.
+async function selectFaceReportName(wrapper: ReturnType<typeof mount>, optionLabel: string) {
+  await wrapper.find('#clip-ai-face-report-name .p-select-label').trigger('click')
+  await flushPromises()
+  const opt = [...document.body.querySelectorAll('[role="option"]')].find(
+    (el) => el.getAttribute('aria-label') === optionLabel,
+  ) as HTMLElement
+  await new DOMWrapper(opt).trigger('mousedown')
+  await flushPromises()
+}
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -852,11 +865,19 @@ describe('ClipAiPanel', () => {
       await flushPromises()
       // Not submitted yet — a picker with both names should be showing instead.
       expect(posted).toBeUndefined()
-      const select = wrapper.find('select#clip-ai-face-report-name')
-      expect(select.exists()).toBe(true)
-      expect(select.text()).toContain('Brian')
-      expect(select.text()).toContain('Casey')
-      await select.setValue('Casey')
+      expect(wrapper.find('#clip-ai-face-report-name').exists()).toBe(true)
+      await wrapper.find('#clip-ai-face-report-name .p-select-label').trigger('click')
+      await flushPromises()
+      const optionLabels = [...document.body.querySelectorAll('[role="option"]')].map((el) =>
+        el.getAttribute('aria-label'),
+      )
+      expect(optionLabels).toContain('Brian')
+      expect(optionLabels).toContain('Casey')
+      const casey = [...document.body.querySelectorAll('[role="option"]')].find(
+        (el) => el.getAttribute('aria-label') === 'Casey',
+      ) as HTMLElement
+      await new DOMWrapper(casey).trigger('mousedown')
+      await flushPromises()
       await wrapper
         .findAll('button')
         .find((b) => b.text().includes('Submit report'))!
@@ -928,9 +949,8 @@ describe('ClipAiPanel', () => {
       // Not submitted yet — a picker with both names should be showing instead.
       expect(posted).toBeUndefined()
       expect(wrapper.text()).toContain('Who was wrongly matched?')
-      const select = wrapper.find('select#clip-ai-face-report-name')
-      expect(select.exists()).toBe(true)
-      await select.setValue('Casey')
+      expect(wrapper.find('#clip-ai-face-report-name').exists()).toBe(true)
+      await selectFaceReportName(wrapper, 'Casey')
       await wrapper
         .findAll('button')
         .find((b) => b.text().includes('Submit report'))!
@@ -960,12 +980,12 @@ describe('ClipAiPanel', () => {
         .find((b) => b.text().includes('Report a missed face match'))!
         .trigger('click')
       await flushPromises()
-      expect(wrapper.find('select#clip-ai-face-report-name').exists()).toBe(true)
+      expect(wrapper.find('#clip-ai-face-report-name').exists()).toBe(true)
       await wrapper
         .findAll('button')
         .find((b) => b.text() === 'Cancel')!
         .trigger('click')
-      expect(wrapper.find('select#clip-ai-face-report-name').exists()).toBe(false)
+      expect(wrapper.find('#clip-ai-face-report-name').exists()).toBe(false)
       expect(wrapper.text()).toContain('Report a missed face match')
     })
 

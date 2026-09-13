@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import Button from 'primevue/button'
+import Card from 'primevue/card'
 import Paginator, { type PageState } from 'primevue/paginator'
 import Select from 'primevue/select'
 import { getSuspiciousClips, submitFeedback } from '../../api/ai'
@@ -111,40 +113,52 @@ async function quickFeedback(clipId: string, correct: boolean) {
         No suspicious activity detected {{ period === 'all' ? 'yet' : 'for this period' }}.
       </div>
       <template v-else>
-        <div
-          v-for="item in items"
-          :key="item.clip_id"
-          class="card"
-          style="padding: 0.8rem; display: flex; align-items: center; gap: 1rem; cursor: pointer"
-          @click="openClip(item.clip_id)"
-        >
-          <div style="font-size: 1.3rem">⚠️</div>
-          <div style="flex: 1; min-width: 0">
-            <div style="font-weight: 600; font-size: 0.85rem">{{ item.camera }}</div>
-            <div style="font-size: 0.78rem; color: var(--muted)">{{ new Date(item.analyzed_at).toLocaleString() }}</div>
-            <div style="font-size: 0.82rem; margin-top: 0.3rem">{{ item.summary || '' }}</div>
-          </div>
-          <div style="text-align: center; min-width: 50px">
-            <div
-              style="font-size: 1.1rem; font-weight: 700"
-              :style="{ color: confPct(item) > 70 ? 'var(--danger)' : 'var(--warn)' }"
-            >
-              {{ confPct(item) }}%
+        <Card v-for="item in items" :key="item.clip_id" style="cursor: pointer" @click="openClip(item.clip_id)">
+          <template #content>
+            <div style="display: flex; align-items: center; gap: 1rem">
+              <div style="font-size: 1.3rem">⚠️</div>
+              <div style="flex: 1; min-width: 0">
+                <div style="font-weight: 600; font-size: 0.85rem">{{ item.camera }}</div>
+                <div style="font-size: 0.78rem; color: var(--muted)">
+                  {{ new Date(item.analyzed_at).toLocaleString() }}
+                </div>
+                <div style="font-size: 0.82rem; margin-top: 0.3rem">{{ item.summary || '' }}</div>
+              </div>
+              <div style="text-align: center; min-width: 50px">
+                <div
+                  style="font-size: 1.1rem; font-weight: 700"
+                  :style="{ color: confPct(item) > 70 ? 'var(--danger)' : 'var(--warn)' }"
+                >
+                  {{ confPct(item) }}%
+                </div>
+                <div style="font-size: 0.65rem; color: var(--muted)">confidence</div>
+              </div>
+              <div style="display: flex; gap: 0.25rem" @click.stop>
+                <span v-if="thanked.has(item.clip_id)" style="font-size: 0.72rem; color: var(--muted)">Thanks!</span>
+                <template v-else>
+                  <Button
+                    size="small"
+                    severity="secondary"
+                    outlined
+                    title="Correct"
+                    @click="quickFeedback(item.clip_id, true)"
+                  >
+                    👍
+                  </Button>
+                  <Button
+                    size="small"
+                    severity="secondary"
+                    outlined
+                    title="Incorrect"
+                    @click="quickFeedback(item.clip_id, false)"
+                  >
+                    👎
+                  </Button>
+                </template>
+              </div>
             </div>
-            <div style="font-size: 0.65rem; color: var(--muted)">confidence</div>
-          </div>
-          <div style="display: flex; gap: 0.25rem" @click.stop>
-            <span v-if="thanked.has(item.clip_id)" style="font-size: 0.72rem; color: var(--muted)">Thanks!</span>
-            <template v-else>
-              <button type="button" class="btn sm ghost" title="Correct" @click="quickFeedback(item.clip_id, true)">
-                👍
-              </button>
-              <button type="button" class="btn sm ghost" title="Incorrect" @click="quickFeedback(item.clip_id, false)">
-                👎
-              </button>
-            </template>
-          </div>
-        </div>
+          </template>
+        </Card>
       </template>
     </div>
     <Paginator

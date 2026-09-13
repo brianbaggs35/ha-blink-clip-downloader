@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import videojs from 'video.js'
 import type Player from 'video.js/dist/types/player'
 import 'video.js/dist/video-js.css'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
 import { clipStreamUrl, clipThumbUrl, getClip, setClipTags, starClip } from '../../api/clips'
 import { fmtDur, fmtRelative, fmtSize, fmtTs } from '../../api/constants'
 import type { ClipDetail } from '../../api/types'
@@ -303,7 +305,9 @@ onUnmounted(() => {
           <img :src="clipThumbUrl(clipId)" alt="" class="video-fallback-thumb" />
           <div class="video-fallback-msg">
             <p>Video preview isn't available for this clip.</p>
-            <a class="btn sm outline" :href="clipStreamUrl(clipId)" :download="downloadName()">⬇ Download instead</a>
+            <Button as="a" :href="clipStreamUrl(clipId)" :download="downloadName()" size="small" outlined
+              >⬇ Download instead</Button
+            >
           </div>
         </div>
         <div class="vid-nav">
@@ -328,26 +332,30 @@ onUnmounted(() => {
           <span>{{ fmtRelative(clip.downloaded_at) }}</span>
         </div>
         <div class="modal-actions">
-          <button
-            type="button"
-            class="btn sm outline"
-            :style="starred ? 'color: var(--starred)' : ''"
-            @click="toggleStar"
-          >
+          <Button size="small" outlined :style="starred ? 'color: var(--starred)' : ''" @click="toggleStar">
             {{ starred ? '★ Starred' : '☆ Star' }}
-          </button>
-          <a v-if="clipId" class="btn sm ghost" :href="clipStreamUrl(clipId)" :download="downloadName()">⬇ Download</a>
-          <button type="button" class="btn sm ghost" @click="copyPath">📋 Path</button>
-          <button type="button" class="btn sm ghost" title="Theater mode" @click="toggleTheater">
+          </Button>
+          <Button
+            v-if="clipId"
+            as="a"
+            :href="clipStreamUrl(clipId)"
+            :download="downloadName()"
+            size="small"
+            severity="secondary"
+            outlined
+            >⬇ Download</Button
+          >
+          <Button size="small" severity="secondary" outlined @click="copyPath">📋 Path</Button>
+          <Button size="small" severity="secondary" outlined title="Theater mode" @click="toggleTheater">
             {{ theater ? '⊡ Normal' : '⊞ Theater' }}
-          </button>
-          <button type="button" class="btn sm danger" style="margin-left: auto" @click="handleDelete">🗑 Delete</button>
+          </Button>
+          <Button size="small" severity="danger" style="margin-left: auto" @click="handleDelete">🗑 Delete</Button>
         </div>
         <div>
           <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem">
             <div style="position: relative">
               <label for="clip-tag-input" class="sr-only">Add tag</label>
-              <input
+              <InputText
                 id="clip-tag-input"
                 v-model="tagInput"
                 class="tag-input"

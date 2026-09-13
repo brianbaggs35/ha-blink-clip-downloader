@@ -1,9 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import FineTuneCard from './FineTuneCard.vue'
 import { useConfirmStore } from '../../stores/confirm'
 import { useToastStore } from '../../stores/toast'
+
+async function selectOption(
+  wrapper: ReturnType<typeof mount<typeof FineTuneCard>>,
+  selectId: string,
+  optionLabel: string,
+) {
+  await wrapper.find(`#${selectId} .p-select-label`).trigger('click')
+  await flushPromises()
+  const opt = [...document.body.querySelectorAll('[role="option"]')].find(
+    (el) => el.getAttribute('aria-label') === optionLabel,
+  ) as HTMLElement
+  await new DOMWrapper(opt).trigger('mousedown')
+  await flushPromises()
+}
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -184,7 +198,10 @@ describe('FineTuneCard', () => {
       .trigger('click')
     await flushPromises()
     expect(wrapper.emitted('activated')).toHaveLength(1)
-    await wrapper.find('button.btn.sm.ghost').trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Back to fine-tunes'))!
+      .trigger('click')
   })
 
   it('shows a toast when create fails', async () => {
@@ -447,7 +464,7 @@ describe('FineTuneCard', () => {
     const wrapper = mount(FineTuneCard)
     await flushPromises()
     await wrapper.find('input.tag-input').setValue('Fresh')
-    await wrapper.find('select#finetune-new-rank').setValue('32')
+    await selectOption(wrapper, 'finetune-new-rank', 'Rank 32')
     await wrapper
       .findAll('button')
       .find((b) => b.text().includes('New Fine-tune'))!

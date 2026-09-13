@@ -119,7 +119,9 @@ describe('StatusPage', () => {
     // it must show regardless of loading/error/loaded state, not just once
     // data resolves.
     expect(wrapper.find('h2').text()).toBe('Status')
-    expect(wrapper.text()).toContain('Loading')
+    // Skeleton placeholders, not real data, while the initial load is in flight.
+    expect(wrapper.findAllComponents({ name: 'Skeleton' }).length).toBeGreaterThan(0)
+    expect(wrapper.text()).not.toContain('Connected')
     await flushPromises()
     expect(wrapper.find('h2').text()).toBe('Status')
     expect(wrapper.text()).toContain('Connected')

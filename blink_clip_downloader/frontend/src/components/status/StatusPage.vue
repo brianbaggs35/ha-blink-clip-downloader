@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import Card from 'primevue/card'
+import Skeleton from 'primevue/skeleton'
 import { getActivity, getCameras, getStats } from '../../api/clips'
 import { getAiStatus } from '../../api/ai'
 import { getBatteryStatus } from '../../api/battery'
@@ -11,7 +13,6 @@ import BatteryStatusStrip from './BatteryStatusStrip.vue'
 import { useConnectionStore } from '../../stores/connection'
 import { useDateFilterStore } from '../../stores/dateFilter'
 import { useRefreshStore } from '../../stores/refresh'
-import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
 const loading = ref(true)
 const error = ref(false)
@@ -75,7 +76,18 @@ watch(() => refresh.tick, load)
 <template>
   <div class="status-page">
     <h2>Status</h2>
-    <div v-if="loading" style="padding: 2rem; width: 100%"><LoadingIndicator /></div>
+    <div v-if="loading" id="status-grid" class="status-grid" style="width: 100%">
+      <Card v-for="i in 4" :key="i">
+        <template #title><Skeleton width="55%" height="1.1rem" /></template>
+        <template #content>
+          <div style="display: flex; flex-direction: column; gap: 0.5rem">
+            <Skeleton height="0.85rem" />
+            <Skeleton height="0.85rem" />
+            <Skeleton height="0.85rem" width="70%" />
+          </div>
+        </template>
+      </Card>
+    </div>
     <div v-else-if="error" style="padding: 2rem; width: 100%; color: var(--danger)">Failed to load status.</div>
     <div v-else id="status-page-content">
       <BatteryStatusStrip
@@ -84,123 +96,142 @@ watch(() => refresh.tick, load)
         @select-camera="selectedBatteryCamera = $event"
       />
       <div id="status-grid" class="status-grid">
-        <div class="status-card">
-          <h3>📡 Blink Connection</h3>
-          <div class="status-row">
-            <span class="lbl">Status</span>
-            <span class="val" :class="stats?.connected ? 'ok' : 'err'">{{
-              stats?.connected ? 'Connected' : 'Disconnected'
-            }}</span>
-          </div>
-          <div v-if="stats?.account_id" class="status-row">
-            <span class="lbl">Account ID</span>
-            <span class="val">{{ stats.account_id }}</span>
-          </div>
-          <div v-if="stats?.last_download" class="status-row">
-            <span class="lbl">Last download</span>
-            <span class="val wrap">{{ fmtTs(stats.last_download) }}</span>
-          </div>
-        </div>
-
-        <div class="status-card">
-          <h3>📚 Clip Library</h3>
-          <div class="status-row">
-            <span class="lbl">Total clips</span>
-            <span class="val">{{ stats?.total_count ?? 0 }}</span>
-          </div>
-          <div class="status-row">
-            <span class="lbl">Today</span>
-            <span class="val">{{ stats?.today_count ?? 0 }}</span>
-          </div>
-          <div class="status-row">
-            <span class="lbl">This week</span>
-            <span class="val">{{ stats?.week_count ?? 0 }}</span>
-          </div>
-          <div class="status-row">
-            <span class="lbl">Starred</span>
-            <span class="val">{{ stats?.starred_count ?? 0 }}</span>
-          </div>
-          <div class="status-row">
-            <span class="lbl">Archived</span>
-            <span class="val">{{ stats?.archived_count ?? 0 }}</span>
-          </div>
-        </div>
-
-        <div v-if="stats?.disk" class="status-card">
-          <h3>💾 Storage</h3>
-          <div class="status-row">
-            <span class="lbl">Used</span>
-            <span class="val" :class="diskClass">{{ stats.disk.used_mb }} MB</span>
-          </div>
-          <div class="status-row">
-            <span class="lbl">Free (disk)</span>
-            <span class="val">{{ stats.disk.free_gb }} GB</span>
-          </div>
-          <template v-if="stats.disk.quota_bytes">
+        <Card>
+          <template #title><h3 style="margin: 0; font: inherit; color: inherit">📡 Blink Connection</h3></template>
+          <template #content>
             <div class="status-row">
-              <span class="lbl">Quota</span>
-              <span class="val">{{ stats.disk.quota_gb }} GB</span>
+              <span class="lbl">Status</span>
+              <span class="val" :class="stats?.connected ? 'ok' : 'err'">{{
+                stats?.connected ? 'Connected' : 'Disconnected'
+              }}</span>
             </div>
-            <div class="prog-bar">
-              <div class="prog-fill" :class="diskClass" :style="{ width: `${(diskPct || 0).toFixed(1)}%` }"></div>
+            <div v-if="stats?.account_id" class="status-row">
+              <span class="lbl">Account ID</span>
+              <span class="val">{{ stats.account_id }}</span>
+            </div>
+            <div v-if="stats?.last_download" class="status-row">
+              <span class="lbl">Last download</span>
+              <span class="val wrap">{{ fmtTs(stats.last_download) }}</span>
             </div>
           </template>
-        </div>
+        </Card>
 
-        <div v-if="frameStats?.total_frames_analyzed" class="status-card">
-          <h3>🖼️ Frames Analyzed</h3>
-          <div class="status-row">
-            <span class="lbl">Total frames</span>
-            <span class="val">{{ frameStats.total_frames_analyzed }}</span>
-          </div>
-          <div class="status-row">
-            <span class="lbl">Today</span>
-            <span class="val">{{ frameStats.frames_analyzed_today || 0 }}</span>
-          </div>
-        </div>
+        <Card>
+          <template #title><h3 style="margin: 0; font: inherit; color: inherit">📚 Clip Library</h3></template>
+          <template #content>
+            <div class="status-row">
+              <span class="lbl">Total clips</span>
+              <span class="val">{{ stats?.total_count ?? 0 }}</span>
+            </div>
+            <div class="status-row">
+              <span class="lbl">Today</span>
+              <span class="val">{{ stats?.today_count ?? 0 }}</span>
+            </div>
+            <div class="status-row">
+              <span class="lbl">This week</span>
+              <span class="val">{{ stats?.week_count ?? 0 }}</span>
+            </div>
+            <div class="status-row">
+              <span class="lbl">Starred</span>
+              <span class="val">{{ stats?.starred_count ?? 0 }}</span>
+            </div>
+            <div class="status-row">
+              <span class="lbl">Archived</span>
+              <span class="val">{{ stats?.archived_count ?? 0 }}</span>
+            </div>
+          </template>
+        </Card>
 
-        <div v-if="cameras.length" class="status-card">
-          <h3>📷 Cameras ({{ cameras.length }})</h3>
-          <div v-for="cam in cameras" :key="cam.camera" class="status-row">
-            <span class="lbl">{{ cam.camera }}</span>
-            <span class="val">{{ cam.total || 0 }} clips — {{ cam.today || 0 }} today</span>
-          </div>
-        </div>
+        <Card v-if="stats?.disk">
+          <template #title><h3 style="margin: 0; font: inherit; color: inherit">💾 Storage</h3></template>
+          <template #content>
+            <div class="status-row">
+              <span class="lbl">Used</span>
+              <span class="val" :class="diskClass">{{ stats.disk.used_mb }} MB</span>
+            </div>
+            <div class="status-row">
+              <span class="lbl">Free (disk)</span>
+              <span class="val">{{ stats.disk.free_gb }} GB</span>
+            </div>
+            <template v-if="stats.disk.quota_bytes">
+              <div class="status-row">
+                <span class="lbl">Quota</span>
+                <span class="val">{{ stats.disk.quota_gb }} GB</span>
+              </div>
+              <div class="prog-bar">
+                <div class="prog-fill" :class="diskClass" :style="{ width: `${(diskPct || 0).toFixed(1)}%` }"></div>
+              </div>
+            </template>
+          </template>
+        </Card>
 
-        <div v-if="aiStatus?.enabled" class="status-card">
-          <h3>🤖 AI Analysis</h3>
-          <div class="status-row">
-            <span class="lbl">Status</span>
-            <span class="val" :class="aiStatus.ai_online ? 'ok' : 'err'">{{
-              aiStatus.ai_online ? 'Online' : 'Offline'
-            }}</span>
-          </div>
-          <div class="status-row">
-            <span class="lbl">Provider</span>
-            <span class="val">{{ providerLabel(aiStatus.provider) }}</span>
-          </div>
-          <div class="status-row">
-            <span class="lbl">Model</span>
-            <span class="val">{{ aiStatus.model || '—' }}</span>
-          </div>
-          <div v-if="aiStatus.queue?.pending !== undefined" class="status-row">
-            <span class="lbl">Pending</span>
-            <span class="val">{{ aiStatus.queue.pending || 0 }}</span>
-          </div>
-          <div v-if="frameStats?.total_analyzed" class="status-row">
-            <span class="lbl">Analyzed</span>
-            <span class="val">{{ frameStats.total_analyzed }}</span>
-          </div>
-          <div v-if="frameStats?.suspicious_count" class="status-row">
-            <span class="lbl">Suspicious</span>
-            <span class="val" style="color: var(--danger)">{{ frameStats.suspicious_count }}</span>
-          </div>
-        </div>
+        <Card v-if="frameStats?.total_frames_analyzed">
+          <template #title><h3 style="margin: 0; font: inherit; color: inherit">🖼️ Frames Analyzed</h3></template>
+          <template #content>
+            <div class="status-row">
+              <span class="lbl">Total frames</span>
+              <span class="val">{{ frameStats.total_frames_analyzed }}</span>
+            </div>
+            <div class="status-row">
+              <span class="lbl">Today</span>
+              <span class="val">{{ frameStats.frames_analyzed_today || 0 }}</span>
+            </div>
+          </template>
+        </Card>
 
-        <div class="status-card" style="grid-column: 1 / -1">
-          <h3>📅 Activity — last 7 days</h3>
-          <ActivityChart :rows="activity" @select-date="onSelectDate" />
-        </div>
+        <Card v-if="cameras.length">
+          <template #title
+            ><h3 style="margin: 0; font: inherit; color: inherit">📷 Cameras ({{ cameras.length }})</h3></template
+          >
+
+          <template #content>
+            <div v-for="cam in cameras" :key="cam.camera" class="status-row">
+              <span class="lbl">{{ cam.camera }}</span>
+              <span class="val">{{ cam.total || 0 }} clips — {{ cam.today || 0 }} today</span>
+            </div>
+          </template>
+        </Card>
+
+        <Card v-if="aiStatus?.enabled">
+          <template #title><h3 style="margin: 0; font: inherit; color: inherit">🤖 AI Analysis</h3></template>
+          <template #content>
+            <div class="status-row">
+              <span class="lbl">Status</span>
+              <span class="val" :class="aiStatus.ai_online ? 'ok' : 'err'">{{
+                aiStatus.ai_online ? 'Online' : 'Offline'
+              }}</span>
+            </div>
+            <div class="status-row">
+              <span class="lbl">Provider</span>
+              <span class="val">{{ providerLabel(aiStatus.provider) }}</span>
+            </div>
+            <div class="status-row">
+              <span class="lbl">Model</span>
+              <span class="val">{{ aiStatus.model || '—' }}</span>
+            </div>
+            <div v-if="aiStatus.queue?.pending !== undefined" class="status-row">
+              <span class="lbl">Pending</span>
+              <span class="val">{{ aiStatus.queue.pending || 0 }}</span>
+            </div>
+            <div v-if="frameStats?.total_analyzed" class="status-row">
+              <span class="lbl">Analyzed</span>
+              <span class="val">{{ frameStats.total_analyzed }}</span>
+            </div>
+            <div v-if="frameStats?.suspicious_count" class="status-row">
+              <span class="lbl">Suspicious</span>
+              <span class="val" style="color: var(--danger)">{{ frameStats.suspicious_count }}</span>
+            </div>
+          </template>
+        </Card>
+
+        <Card style="grid-column: 1 / -1">
+          <template #title
+            ><h3 style="margin: 0; font: inherit; color: inherit">📅 Activity — last 7 days</h3></template
+          >
+          <template #content>
+            <ActivityChart :rows="activity" @select-date="onSelectDate" />
+          </template>
+        </Card>
       </div>
     </div>
   </div>

@@ -10,9 +10,10 @@ clip-modal feature, sharper vehicle/zone-proximity intelligence,
 automatic retry of transiently-failed analyses, reliability/cost
 improvements to the Anthropic and OpenAI request paths, and a
 frame-selection pipeline review — a collapsible nav sidebar, viewing
-Sync Module local-storage clips from the Sync Module tab, and a mobile-
-focused Library scrolling fix plus a small PrimeVue-5 consistency pass.
-More parts land here before this version ships.
+Sync Module local-storage clips from the Sync Module tab, a mobile-focused
+Library scrolling fix, and a broader PrimeVue-5 UI/UX consistency pass
+across the AI, Status, AI Usage, and Models tabs. More parts land here
+before this version ships.
 
 ### Added
 
@@ -138,21 +139,43 @@ More parts land here before this version ships.
 ### Web UI
 
 - Fixed a reported mobile issue where the Library tab could only show one
-  clip thumbnail at a time, making it hard to scroll through: the search/
-  filter row now lives in a collapsible panel (collapsed by default,
-  remembered per-browser) instead of always being expanded, the stats row
-  above it is now a more compact single-line strip, and the clip grid now
-  shows 2 columns on a phone-width screen instead of 1. A new scroll-to-top
-  control also appears once you've scrolled down the grid. These changes
-  apply on desktop too, not just mobile.
-- Adopted a couple of PrimeVue 5 components not previously used anywhere in
-  the app: `ScrollTop` (above) and `Chip` (the clip modal's detected-object
-  summary). The clip grid's source/tag pills and the clip modal's AI
-  suspicious/clear badges now use PrimeVue `Tag`, matching the `Tag`
-  vocabulary already used elsewhere (Sync Module, Storage's archive list,
-  Biometrics) instead of one-off hand-rolled pill markup.
-- Added the page header the Status tab was missing — every other tab opens
-  with one, Status was the one exception.
+  clip thumbnail at a time, making it hard to scroll through: on phone-width
+  screens, the search/filter row now lives in a collapsible panel (collapsed
+  by default, remembered per-browser) instead of always being expanded, the
+  stats row above it is more compact, and the clip grid shows 2 columns
+  instead of 1. A new scroll-to-top control also appears once you've
+  scrolled down the grid. Desktop keeps its filters and stats exactly as
+  they were — the space-saving changes are mobile-only, chosen automatically
+  by screen width, not a setting.
+- A broader pass adopting more of PrimeVue 5's component set for
+  consistency across the whole app, now that the add-on has been on
+  PrimeVue 5 for a full version:
+  - The AI tab's per-camera settings list is now a collapsible `Accordion`
+    (each camera collapsed by default, with an at-a-glance "Configured"
+    badge) instead of an ever-growing flat list — the bigger the camera
+    count, the more this helps, especially on mobile.
+  - Four different hand-rolled "card" container styles across the AI,
+    Status, AI Usage, and Models tabs are now all the same PrimeVue `Card`,
+    and the Status/AI Usage tabs' hand-rolled loading spinners over their
+    card grids are now shaped `Skeleton` placeholders.
+  - Every hand-rolled `<button>` styled to look like a button, plus the
+    remaining native `<select>`/`<input>` form fields outside the Library
+    tab, are now real PrimeVue `Button`/`Select`/`InputText` components —
+    consistent focus/hover/disabled states everywhere, and one shared place
+    (the theme) to restyle them from in the future instead of dozens.
+  - Three near-identical "nothing here yet" messages (Library, AI tab, AI
+    Usage tab) are now one shared empty-state component.
+  - The clip grid's source/tag pills and the clip modal's AI
+    suspicious/clear badges now use PrimeVue `Tag`, and the clip modal's
+    detected-object summary uses `Chip` — both previously unused anywhere
+    in the app.
+  - Added the page header the Status tab was missing — every other tab
+    opens with one, Status was the one exception.
+  - Fixed a real, unrelated bug found while doing this conversion: the 2FA
+    verification overlay's code field lost its autofocus-on-open behavior
+    the moment its `<input>` became a PrimeVue `InputText` (a component ref
+    isn't the DOM element) — now fixed and covered by a real
+    focus-assertion test, not just a rendering check.
 
 ## 5.5.2
 
