@@ -461,83 +461,6 @@ body.nav-collapsed {
   background: var(--muted);
 }
 
-.btn {
-  background: var(--accent);
-  color: var(--btn-text);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  padding: 0.44rem 0.95rem;
-  font-size: 0.84rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    filter 0.15s var(--ease),
-    transform 0.1s var(--ease),
-    box-shadow 0.15s var(--ease);
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  box-shadow: var(--shadow-sm);
-}
-.btn .icon {
-  width: 15px;
-  height: 15px;
-}
-.btn:hover:not(:disabled) {
-  filter: brightness(1.1);
-  box-shadow: 0 2px 12px var(--accent-glow);
-}
-.btn:active:not(:disabled) {
-  transform: translateY(1px);
-}
-.btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-.btn.sm {
-  padding: 0.32rem 0.68rem;
-  font-size: 0.78rem;
-}
-.btn.outline {
-  background: transparent;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-}
-.btn.outline:hover:not(:disabled) {
-  background: var(--accent-glow);
-  filter: none;
-}
-.btn.ghost {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  box-shadow: none;
-}
-.btn.ghost:hover:not(:disabled) {
-  color: var(--text);
-  border-color: var(--border-strong);
-  background: var(--card);
-  filter: none;
-  box-shadow: none;
-}
-.btn.danger {
-  background: var(--danger);
-  color: #fff;
-}
-.btn.danger:hover:not(:disabled) {
-  box-shadow: 0 2px 12px rgba(240, 85, 90, 0.35);
-}
-.btn.icon {
-  padding: 0.4rem;
-  width: 34px;
-  height: 34px;
-  font-size: 1rem;
-  border-radius: var(--radius-sm);
-  justify-content: center;
-}
-
 .badge {
   display: inline-flex;
   align-items: center;
@@ -578,25 +501,6 @@ body.nav-collapsed {
   display: flex;
 }
 
-/* Still used by tabs not yet redesigned onto PrimeVue form components (AI
-   tab's model picker, fine-tune rank picker) — Library's own selects moved
-   to PrimeVue's Select above. Remove once every tab is redesigned. */
-.sel {
-  background: var(--card2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.4rem 0.65rem;
-  color: var(--text);
-  font-size: 0.81rem;
-  cursor: pointer;
-  transition: border-color 0.15s var(--ease);
-}
-.sel:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
-}
-
 /* ── Library layout ───────────────────────────────────── */
 #page-library {
   flex-direction: column;
@@ -620,53 +524,51 @@ body.nav-collapsed {
 }
 .lib-stats-row {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
   align-items: stretch;
   justify-content: center;
-  padding: 0.75rem 1.5rem 0;
+  padding: 1.1rem 1.5rem 0;
   flex-shrink: 0;
 }
-/* Compact single-line "label value" pill, replacing the earlier taller
-   stacked-card layout — frees up vertical room for the clip grid below,
-   per the mobile scrolling complaint this stats row (together with
-   .lib-filters, now collapsible below) was contributing to. */
 .lib-stat {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius);
+  padding: 0.65rem 1.1rem;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.2rem;
   box-shadow: var(--shadow-sm);
+  min-width: 100px;
 }
 .lib-stat-label {
   font-size: 0.72rem;
   color: var(--muted);
   white-space: nowrap;
+  text-align: center;
 }
 .lib-stat-value {
-  font-size: 1rem;
+  font-size: 1.3rem;
   font-weight: 700;
   color: var(--text);
-  white-space: nowrap;
+  text-align: center;
 }
 .lib-stat-storage {
-  /* The only stat with a third element (the quota bar below the value),
-     so it keeps its own compact column layout instead of the single-line
-     row the simpler count-only stats use above. Free-disk-space detail
-     moved to the card's title attribute (hover tooltip) — there's no room
-     for a second line of text at this width. */
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.1rem;
+  /* Matches the other stat cards' compact label/value layout instead of a
+     wide sentence-plus-bar card, so it fits on the same row as the others
+     (top-right) rather than always wrapping onto its own row below and
+     eating into the clip grid's scroll area. Free-disk-space detail moved
+     to the card's title attribute (hover tooltip) — there's no room for a
+     second line of text at this width. */
   min-width: 128px;
 }
 .lib-stat-storage-value {
-  /* Slightly smaller than the plain-number .lib-stat-value (1rem) since
+  /* Slightly smaller than the plain-number .lib-stat-value (1.3rem) since
      "560.1 MB / 10 GB" is meaningfully longer than "147". */
-  font-size: 0.82rem;
+  font-size: 1.05rem;
 }
 /* the progress bar needs an explicit full-width override or it collapses
    to PrimeVue's intrinsic default instead of spanning the card. Height
@@ -688,11 +590,27 @@ body.nav-collapsed {
   margin: 0.75rem 1.5rem 0;
   flex-shrink: 0;
 }
+/* Mobile-only — see the @media(max-width:600px) block below, which swaps
+   which of .lib-filters-desktop/.lib-filters-mobile is visible. Desktop
+   keeps its filters always fully expanded with no Panel chrome at all,
+   matching the original (pre-collapsible) design. The compound selector
+   (not just .lib-filters-panel) is required here: PrimeVue's own
+   dynamically-injected `.p-panel { display: block }` base style loads
+   after this bundled stylesheet, so a same-specificity single-class
+   selector loses that cascade tie and the Panel stays visible even at
+   desktop widths — matching `.p-panel.lib-filters-panel` outranks it. */
+.p-panel.lib-filters-panel {
+  display: none;
+}
 .lib-filters {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+.lib-filters-desktop {
+  padding: 1rem 1.5rem;
+  flex-shrink: 0;
 }
 .lib-search {
   min-width: 220px;
@@ -1312,21 +1230,6 @@ body.nav-collapsed {
   accent-color: var(--accent);
 }
 
-/* ── Generic card (AI tab panels, suspicious-feed rows) ─ */
-.card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  transition:
-    border-color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease);
-}
-.card:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow);
-}
-
 /* ── Status page ──────────────────────────────────────── */
 #page-status {
   overflow-y: auto;
@@ -1404,33 +1307,6 @@ body.nav-collapsed {
   max-width: 1080px;
   margin: 0 auto;
   min-width: 0;
-}
-.status-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.1rem 1.25rem;
-  box-shadow: var(--shadow-sm);
-  transition:
-    border-color 0.18s var(--ease),
-    box-shadow 0.18s var(--ease);
-}
-.status-card:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow);
-}
-.status-card h3 {
-  font-size: 0.87rem;
-  font-weight: 700;
-  margin-bottom: 0.8rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.status-card h3 .icon {
-  width: 16px;
-  height: 16px;
-  color: var(--accent);
 }
 .status-row {
   display: flex;
@@ -1933,21 +1809,53 @@ body.nav-collapsed {
   /* Library: the stats row + filters row together used to eat over half
      the viewport height on a phone (measured ~53% at 390x844) before any
      clip was visible, leaving barely one card's worth of room to scroll
-     within. Both rows are already more compact by default now (see
-     .lib-stat's single-line layout and .lib-filters-panel's collapsed-by-
-     default panel above) — this tightens their side spacing further to
-     match the narrower viewport, and — together with the narrower
-     .clip-grid floor below — is what actually lets a phone show 2 clip
-     columns side by side instead of 1. */
+     within. Desktop keeps its original taller stat cards — this mobile-
+     only override switches them to a compact single-line "label value"
+     row instead, and (together with .lib-filters-panel's collapsed-by-
+     default panel and the narrower .clip-grid floor below) is what
+     actually lets a phone show 2 clip columns side by side instead of 1. */
   .lib-stats-row {
     padding: 0.6rem 0.75rem 0;
     gap: 0.4rem;
   }
   .lib-stat {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.4rem;
     padding: 0.3rem 0.55rem;
+    min-width: 0;
+  }
+  .lib-stat-label,
+  .lib-stat-value {
+    text-align: left;
   }
   .lib-stat-value {
     font-size: 0.92rem;
+  }
+  .lib-stat-storage {
+    /* Unlike the simpler count-only stats above, this one still has a
+       third element (the quota bar below the value) that can't share a
+       single row with the label/value text — keep it column-stacked
+       instead of inheriting .lib-stat's row layout at this width. */
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+    min-width: 0;
+  }
+  .lib-stat-storage-value {
+    font-size: 0.78rem;
+  }
+  /* Swap which of the two filter-row renders is visible — desktop's plain
+     always-expanded row hides, the mobile collapsible Panel (collapsed by
+     default) takes over. Both share the same live refs via
+     LibraryFilterFields, so nothing about filtering itself changes,
+     just which markup renders it. */
+  .lib-filters-desktop {
+    display: none;
+  }
+  .p-panel.lib-filters-panel {
+    display: block;
   }
   .lib-filters-panel {
     margin: 0.6rem 0.75rem 0;

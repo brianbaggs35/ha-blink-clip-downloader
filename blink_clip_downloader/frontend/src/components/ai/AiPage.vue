@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { getAiStatus } from '../../api/ai'
 import type { AiStatus } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
+import EmptyState from '../layout/EmptyState.vue'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import AdaptiveLearningCard from './AdaptiveLearningCard.vue'
 import AiAnalysisConfigCard from './AiAnalysisConfigCard.vue'
@@ -59,12 +60,9 @@ watch(
   <div class="auto-content">
     <h2>AI Video Analysis</h2>
     <div v-if="loading" style="padding: 2rem"><LoadingIndicator /></div>
-    <div v-else-if="!status?.enabled" class="card" style="padding: 2rem; text-align: center; color: var(--muted)">
-      <p style="font-size: 1.2rem; margin-bottom: 0.8rem">🤖 AI Analysis Not Configured</p>
-      <p>
-        Enable AI analysis in the add-on settings and select a provider (Ollama, Moondream Cloud, or Moondream Local).
-      </p>
-    </div>
+    <EmptyState v-else-if="!status?.enabled" title="🤖 AI Analysis Not Configured">
+      Enable AI analysis in the add-on settings and select a provider (Ollama, Moondream Cloud, or Moondream Local).
+    </EmptyState>
     <template v-else>
       <div
         style="

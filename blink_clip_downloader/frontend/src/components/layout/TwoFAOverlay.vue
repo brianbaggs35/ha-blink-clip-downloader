@@ -1,17 +1,27 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
 import { useAuthStore } from '../../stores/auth'
 
 const auth = useAuthStore()
 const code = ref('')
-const inputEl = ref<HTMLInputElement>()
+const inputEl = ref<InstanceType<typeof InputText>>()
+
+// InputText's declared type doesn't expose `$el` (it's a real property on
+// every Vue component instance at runtime, just not part of the narrow
+// props/slots/emits type PrimeVue exports) — go through the actual DOM
+// <input> it renders as its root element to focus it.
+function focusCodeInput() {
+  ;(inputEl.value as unknown as { $el?: HTMLInputElement } | undefined)?.$el?.focus()
+}
 
 watch(
   () => auth.needsTwoFA,
   (needs, wasNeeding) => {
     if (needs && !wasNeeding) {
       code.value = ''
-      void nextTick(() => inputEl.value?.focus())
+      void nextTick(focusCodeInput)
     }
   },
 )
@@ -23,7 +33,7 @@ watch(
   (submitting, wasSubmitting) => {
     if (!submitting && wasSubmitting && auth.twoFAMessageIsError) {
       code.value = ''
-      void nextTick(() => inputEl.value?.focus())
+      void nextTick(focusCodeInput)
     }
   },
 )
@@ -49,7 +59,7 @@ function submit() {
         </p>
         <div style="display: flex; gap: 0.5rem; align-items: stretch">
           <label for="two-fa-code" class="sr-only">Verification code</label>
-          <input
+          <InputText
             id="two-fa-code"
             ref="inputEl"
             v-model="code"
@@ -71,13 +81,7 @@ function submit() {
             "
             @keydown="onKeydown"
           />
-          <button
-            type="button"
-            class="btn"
-            style="font-size: 0.9rem; padding: 0.6rem 1.1rem"
-            :disabled="auth.twoFASubmitting"
-            @click="submit"
-          >
+          <Button style="font-size: 0.9rem; padding: 0.6rem 1.1rem" :disabled="auth.twoFASubmitting" @click="submit">
             {{
               auth.twoFAPhase === 'verifying'
                 ? '⏳ Verifying…'
@@ -85,7 +89,7 @@ function submit() {
                   ? '✓ Submitted'
                   : 'Verify'
             }}
-          </button>
+          </Button>
         </div>
         <div
           style="margin-top: 0.75rem; font-size: 0.83rem; min-height: 1.3rem; line-height: 1.4"

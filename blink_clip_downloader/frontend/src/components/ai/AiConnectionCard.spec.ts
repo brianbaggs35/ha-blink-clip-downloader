@@ -1,9 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, DOMWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AiConnectionCard from './AiConnectionCard.vue'
 import { useToastStore } from '../../stores/toast'
 import type { AiStatus } from '../../api/types'
+
+// PrimeVue's Select opens a teleported (to <body>) overlay on click and
+// selects an option on `mousedown` (not `click`) — see primevue/select's
+// option template.
+async function selectOption(
+  wrapper: ReturnType<typeof mount<typeof AiConnectionCard>>,
+  selectId: string,
+  optionLabel: string,
+) {
+  await wrapper.find(`#${selectId} .p-select-label`).trigger('click')
+  await flushPromises()
+  const opt = [...document.body.querySelectorAll('[role="option"]')].find(
+    (el) => el.getAttribute('aria-label') === optionLabel,
+  ) as HTMLElement
+  await new DOMWrapper(opt).trigger('mousedown')
+  await flushPromises()
+}
 
 function jsonResponse(body: unknown, ok = true) {
   return {
@@ -113,13 +130,19 @@ describe('AiConnectionCard', () => {
     await flushPromises()
     const select = wrapper.find('#ai-escalation-model-picker')
     expect(select.exists()).toBe(true)
-    const options = select.findAll('option')
-    expect(options.some((o) => o.text().includes('claude-haiku-4-5'))).toBe(true)
-    expect(options.some((o) => o.text().includes('claude-opus-4-8'))).toBe(true)
+    await wrapper.find('#ai-escalation-model-picker .p-select-label').trigger('click')
+    await flushPromises()
+    const options = [...document.body.querySelectorAll('[role="option"]')]
+    expect(options.some((o) => o.textContent?.includes('claude-haiku-4-5'))).toBe(true)
+    expect(options.some((o) => o.textContent?.includes('claude-opus-4-8'))).toBe(true)
     // Regression test for the JSON-blob bug: an option's rendered text must
     // never be the object's own JSON stringification (Vue's default
     // interpolation for a non-primitive value) — only ever the plain name.
-    expect(options.some((o) => o.text().includes('{'))).toBe(false)
+    expect(options.some((o) => o.textContent?.includes('{'))).toBe(false)
+    // Unmount so this test's still-open teleported overlay (and its option
+    // nodes named after these same models) doesn't linger in document.body
+    // and get matched by a later test's own document-wide overlay query.
+    wrapper.unmount()
   })
 
   it('updates the selected escalation model when a different option is picked', async () => {
@@ -137,8 +160,7 @@ describe('AiConnectionCard', () => {
     const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
     await fetchBtn.trigger('click')
     await flushPromises()
-    const select = wrapper.find('#ai-escalation-model-picker')
-    await select.setValue('claude-opus-4-8')
+    await selectOption(wrapper, 'ai-escalation-model-picker', 'claude-opus-4-8')
 
     const copyBtn = wrapper
       .findAll('button')
@@ -165,11 +187,16 @@ describe('AiConnectionCard', () => {
     const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
     await fetchBtn.trigger('click')
     await flushPromises()
-    const options = wrapper.find('#ai-escalation-model-picker').findAll('option')
-    const best = options.find((o) => o.text().includes('gpt-5.4-mini'))!
-    expect(best.text()).toContain('⭐ Best')
-    expect(options.find((o) => o.text().includes('gpt-5.5'))!.text()).not.toContain('⭐ Best')
-    expect(options.find((o) => o.text().includes('gpt-4-turbo'))!.text()).not.toContain('⭐ Best')
+    await wrapper.find('#ai-escalation-model-picker .p-select-label').trigger('click')
+    await flushPromises()
+    const options = [...document.body.querySelectorAll('[role="option"]')]
+    const best = options.find((o) => o.textContent?.includes('gpt-5.4-mini'))!
+    expect(best.textContent).toContain('⭐ Best')
+    expect(options.find((o) => o.textContent?.includes('gpt-5.5'))!.textContent).not.toContain('⭐ Best')
+    expect(options.find((o) => o.textContent?.includes('gpt-4-turbo'))!.textContent).not.toContain('⭐ Best')
+    // Unmount so this test's still-open teleported overlay doesn't linger in
+    // document.body and get matched by a later test's own overlay query.
+    wrapper.unmount()
   })
 
   it('shows the escalation error message when no models are found', async () => {
@@ -185,7 +212,12 @@ describe('AiConnectionCard', () => {
     const fetchBtn = wrapper.findAll('button').find((b) => b.text().includes('Fetch Escalation Models'))!
     await fetchBtn.trigger('click')
     await flushPromises()
-    expect(wrapper.find('#ai-escalation-model-picker option').exists()).toBe(true)
+    await wrapper.find('#ai-escalation-model-picker .p-select-label').trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[role="option"]')).toBeTruthy()
+    // Unmount so this test's still-open teleported overlay doesn't linger in
+    // document.body and get matched by a later test's own overlay query.
+    wrapper.unmount()
   })
 
   it('treats a missing models/error fields as no models and a generic toast message', async () => {
@@ -281,13 +313,22 @@ describe('AiConnectionCard', () => {
       ),
     )
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
-    expect(wrapper.find('select.sel').exists()).toBe(true)
+    expect(wrapper.find('#ai-model-picker').exists()).toBe(true)
     await wrapper.find('button').trigger('click')
     await flushPromises()
-    const options = wrapper.findAll('option')
+    await wrapper.find('#ai-model-picker .p-select-label').trigger('click')
+    await flushPromises()
+    const options = [...document.body.querySelectorAll('[role="option"]')]
     expect(
-      options.some((o) => o.text().includes('model-a') && o.text().includes('4.0 GB') && o.text().includes('Best')),
+      options.some(
+        (o) =>
+          o.textContent?.includes('model-a') && o.textContent?.includes('4.0 GB') && o.textContent?.includes('Best'),
+      ),
     ).toBe(true)
+    // Unmount so this test's still-open teleported overlay (and its
+    // 'model-a'/'model-b' option nodes) doesn't linger in document.body and
+    // get matched by a later test's own overlay query.
+    wrapper.unmount()
   })
 
   it('marks gpt-5.4-nano as best in the primary picker for openai, regardless of position', async () => {
@@ -305,11 +346,16 @@ describe('AiConnectionCard', () => {
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'openai' }) } })
     await wrapper.find('button').trigger('click')
     await flushPromises()
-    const options = wrapper.findAll('option')
-    const best = options.find((o) => o.text().includes('gpt-5.4-nano'))!
-    expect(best.text()).toContain('⭐ Best')
-    expect(options.find((o) => o.text().includes('gpt-5.5'))!.text()).not.toContain('⭐ Best')
-    expect(options.find((o) => o.text().includes('gpt-4-turbo'))!.text()).not.toContain('⭐ Best')
+    await wrapper.find('#ai-model-picker .p-select-label').trigger('click')
+    await flushPromises()
+    const options = [...document.body.querySelectorAll('[role="option"]')]
+    const best = options.find((o) => o.textContent?.includes('gpt-5.4-nano'))!
+    expect(best.textContent).toContain('⭐ Best')
+    expect(options.find((o) => o.textContent?.includes('gpt-5.5'))!.textContent).not.toContain('⭐ Best')
+    expect(options.find((o) => o.textContent?.includes('gpt-4-turbo'))!.textContent).not.toContain('⭐ Best')
+    // Unmount so this test's still-open teleported overlay doesn't linger in
+    // document.body and get matched by a later test's own overlay query.
+    wrapper.unmount()
   })
 
   it('keeps the fetch button and the select+copy row in a stable stacked layout', () => {
@@ -326,7 +372,7 @@ describe('AiConnectionCard', () => {
     const row = picker.find('.model-picker__row')
     expect(fetchBtn.exists()).toBe(true)
     expect(row.exists()).toBe(true)
-    expect(row.find('select.model-picker__select').exists()).toBe(true)
+    expect(row.find('.model-picker__select').exists()).toBe(true)
     expect(row.find('.model-picker__copy').exists()).toBe(true)
   })
 
@@ -338,7 +384,7 @@ describe('AiConnectionCard', () => {
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
     await wrapper.find('button').trigger('click')
     await flushPromises()
-    expect(wrapper.find('select.sel').exists()).toBe(true)
+    expect(wrapper.find('#ai-model-picker').exists()).toBe(true)
   })
 
   it('treats a missing models field in the response as no models, rather than crashing', async () => {
@@ -349,7 +395,7 @@ describe('AiConnectionCard', () => {
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
     await wrapper.find('button').trigger('click')
     await flushPromises()
-    expect(wrapper.find('select.sel').exists()).toBe(true)
+    expect(wrapper.find('#ai-model-picker').exists()).toBe(true)
   })
 
   it('re-fetching models does not clobber an already-selected model', async () => {
@@ -361,10 +407,10 @@ describe('AiConnectionCard', () => {
     const fetchBtn = wrapper.find('button')
     await fetchBtn.trigger('click')
     await flushPromises()
-    await wrapper.find('select.sel').setValue('model-b')
+    await selectOption(wrapper, 'ai-model-picker', 'model-b')
     await fetchBtn.trigger('click')
     await flushPromises()
-    expect((wrapper.find('select.sel').element as HTMLSelectElement).value).toBe('model-b')
+    expect(wrapper.find('#ai-model-picker .p-select-label').text()).toBe('model-b')
   })
 
   it('copies the selected model id to the clipboard', async () => {
@@ -400,12 +446,12 @@ describe('AiConnectionCard', () => {
 
   it('hides the model picker for moondream providers', () => {
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'moondream_cloud' }) } })
-    expect(wrapper.find('select.sel').exists()).toBe(false)
+    expect(wrapper.find('#ai-model-picker').exists()).toBe(false)
   })
 
   it('hides the model picker when provider is not set', () => {
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: undefined }) } })
-    expect(wrapper.find('select.sel').exists()).toBe(false)
+    expect(wrapper.find('#ai-model-picker').exists()).toBe(false)
   })
 
   it('moondream_local: shows the install prompt when not installed', async () => {
@@ -784,7 +830,7 @@ describe('AiConnectionCard', () => {
     const wrapper = mount(AiConnectionCard, { props: { status: baseStatus({ provider: 'ollama' }) } })
     await wrapper.find('button').trigger('click')
     await flushPromises()
-    await wrapper.find('select.sel').setValue('model-b')
+    await selectOption(wrapper, 'ai-model-picker', 'model-b')
     const copyBtn = wrapper.findAll('button').find((b) => b.text().includes('Copy'))!
     await copyBtn.trigger('click')
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('model-b')

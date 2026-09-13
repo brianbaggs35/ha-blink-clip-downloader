@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import Button from 'primevue/button'
+import Card from 'primevue/card'
+import Select from 'primevue/select'
 import {
   fetchAiModels,
   fetchEscalationModels,
@@ -43,6 +46,11 @@ function modelLabel(m: AiModelEntry, index: number, provider: string | undefined
   return `${m.name}${gb}${star}`
 }
 
+// PrimeVue's Select needs a {label, value} options array rather than <option>
+// children — the placeholder keeps the same "Select a model…" first entry
+// the native <select> used to have.
+const PLACEHOLDER_MODEL_OPTION = { label: 'Select a model…', value: '' }
+
 // ── Model picker (tier 1) ──────────────────────────────────
 const models = ref<AiModelEntry[]>([])
 const selectedModel = ref('')
@@ -79,6 +87,11 @@ async function copyModelId() {
   }
 }
 
+const primaryModelOptions = computed(() => [
+  PLACEHOLDER_MODEL_OPTION,
+  ...models.value.map((m, i) => ({ label: modelLabel(m, i, props.status.provider, 'primary'), value: m.name })),
+])
+
 // ── Escalation (tier 2) model picker — mirrors the tier-1 picker above,
 // but targets whichever provider is configured as ai_escalation_provider.
 // Same limitation as tier 1: only works once escalation is actually
@@ -109,6 +122,14 @@ async function fetchEscalationModelsList() {
     fetchingEscalationModels.value = false
   }
 }
+
+const escalationModelOptions = computed(() => [
+  PLACEHOLDER_MODEL_OPTION,
+  ...escalationModels.value.map((m, i) => ({
+    label: modelLabel(m, i, props.status.escalation_provider, 'escalation'),
+    value: m.name,
+  })),
+])
 
 async function copyEscalationModelId() {
   if (!selectedEscalationModel.value) {
@@ -220,199 +241,215 @@ function confPct(r: AnalysisResultDict): number {
 </script>
 
 <template>
-  <div class="card" style="padding: 1.2rem">
-    <h3 style="margin-bottom: 0.8rem">AI Connection</h3>
-    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem">
-      <span
-        class="badge"
-        style="font-size: 0.85rem"
-        :style="{ color: status.ai_online ? 'var(--success)' : 'var(--danger)' }"
-        >●</span
-      >
-      <span style="font-size: 0.85rem">{{ status.ai_online ? 'Connected' : 'Offline' }}</span>
-    </div>
-    <div class="ai-tier-label">🎯 Tier 1 · Primary Model</div>
-    <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.4rem">
-      Provider: <strong>{{ providerLabel(status.provider) }}</strong>
-    </div>
-    <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.6rem">
-      Model: <strong>{{ status.model || '—' }}</strong>
-    </div>
-
-    <div v-if="showModelPicker()" class="model-picker">
-      <button type="button" class="btn sm model-picker__fetch" :disabled="fetchingModels" @click="fetchModels">
-        {{ fetchingModels ? '⏳ Loading…' : '⟳ Fetch Models' }}
-      </button>
-      <div class="model-picker__row">
-        <label for="ai-model-picker" class="sr-only">Vision model</label>
-        <select id="ai-model-picker" v-model="selectedModel" class="sel model-picker__select">
-          <option value="">Select a model…</option>
-          <option v-for="(m, i) in models" :key="m.name" :value="m.name">
-            {{ modelLabel(m, i, status.provider, 'primary') }}
-          </option>
-        </select>
-        <button
-          type="button"
-          class="btn sm ghost model-picker__copy"
-          title="Copy the selected model id, then paste it into this add-on's configuration (OpenAI Model / Anthropic Model / Ollama Vision Model)"
-          @click="copyModelId"
+  <Card>
+    <template #title><h3 style="margin: 0; font: inherit; color: inherit">AI Connection</h3></template>
+    <template #content>
+      <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem">
+        <span
+          class="badge"
+          style="font-size: 0.85rem"
+          :style="{ color: status.ai_online ? 'var(--success)' : 'var(--danger)' }"
+          >●</span
         >
-          📋 Copy
-        </button>
+        <span style="font-size: 0.85rem">{{ status.ai_online ? 'Connected' : 'Offline' }}</span>
       </div>
-    </div>
-    <p v-if="showModelPicker()" style="font-size: 0.72rem; color: var(--muted); margin-top: 0.35rem">
-      Selecting a model here does not change the running configuration — copy the id and paste it into the add-on's
-      <strong>Configuration</strong> tab, then restart the add-on.
-    </p>
-
-    <div v-if="status.provider === 'moondream_local'" style="margin-top: 0.75rem">
-      <div v-if="!archSupported">
-        <p style="font-size: 0.8rem; color: var(--muted)">
-          moondream_local is not available on this architecture.<br />Use <strong>moondream_cloud</strong> or
-          <strong>ollama</strong> instead.
-        </p>
-      </div>
-      <div v-else-if="installState.status === 'installed'">
-        <p style="font-size: 0.8rem; color: var(--success)">✓ moondream installed</p>
-        <p style="font-size: 0.73rem; color: var(--muted)">
-          Model (~430 MB) downloads automatically on first health check
-        </p>
-      </div>
-      <div v-else-if="installState.status === 'installing'">
-        <p style="font-size: 0.8rem; color: var(--warn); margin-bottom: 0.35rem">⏳ Installing… please wait</p>
-        <div
-          style="
-            font-size: 0.7rem;
-            font-family: monospace;
-            color: var(--muted);
-            background: var(--card2);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 0.3rem 0.5rem;
-            max-height: 70px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-          "
-        >
-          {{ installState.log || '' }}
-        </div>
-      </div>
-      <div v-else-if="installState.status === 'failed'">
-        <p style="font-size: 0.8rem; color: var(--danger); margin-bottom: 0.3rem">✗ Installation failed</p>
-        <div
-          style="
-            font-size: 0.7rem;
-            font-family: monospace;
-            color: var(--muted);
-            background: var(--card2);
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            padding: 0.3rem 0.5rem;
-            max-height: 70px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-            margin-bottom: 0.4rem;
-          "
-        >
-          {{ installState.log || '' }}
-        </div>
-        <button type="button" class="btn sm ghost" @click="startInstall">↺ Retry Install</button>
-      </div>
-      <div v-else>
-        <p style="font-size: 0.8rem; color: var(--warn); margin-bottom: 0.45rem">⚠ moondream package not installed</p>
-        <button type="button" class="btn sm" @click="startInstall">⬇ Install Moondream 0.5B</button>
-        <p style="font-size: 0.73rem; color: var(--muted); margin-top: 0.35rem">
-          Package + model ~430 MB, may take several minutes
-        </p>
-      </div>
-    </div>
-
-    <template v-if="status.escalation_provider">
-      <div class="ai-tier-label" style="margin-top: 0.9rem">🪜 Tier 2 · Escalation Model</div>
+      <div class="ai-tier-label">🎯 Tier 1 · Primary Model</div>
       <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.4rem">
-        Provider: <strong>{{ PROVIDER_LABELS[status.escalation_provider] || status.escalation_provider }}</strong>
+        Provider: <strong>{{ providerLabel(status.provider) }}</strong>
       </div>
       <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.6rem">
-        Model: <strong>{{ status.escalation_model || '—' }}</strong>
-        <span :style="{ color: status.escalation_online ? 'var(--success)' : 'var(--danger)' }">
-          {{ status.escalation_online ? ' 🟢 online' : ' 🔴 unreachable — falling back to tier 1' }}
-        </span>
+        Model: <strong>{{ status.model || '—' }}</strong>
       </div>
 
-      <div class="model-picker">
-        <button
-          type="button"
-          class="btn sm model-picker__fetch"
-          :disabled="fetchingEscalationModels"
-          @click="fetchEscalationModelsList"
-        >
-          {{ fetchingEscalationModels ? '⏳ Loading…' : '⟳ Fetch Escalation Models' }}
-        </button>
+      <div v-if="showModelPicker()" class="model-picker">
+        <Button size="small" class="model-picker__fetch" :disabled="fetchingModels" @click="fetchModels">
+          {{ fetchingModels ? '⏳ Loading…' : '⟳ Fetch Models' }}
+        </Button>
         <div class="model-picker__row">
-          <label for="ai-escalation-model-picker" class="sr-only">Escalation model</label>
-          <select id="ai-escalation-model-picker" v-model="selectedEscalationModel" class="sel model-picker__select">
-            <option value="">Select a model…</option>
-            <option v-for="(m, i) in escalationModels" :key="m.name" :value="m.name">
-              {{ modelLabel(m, i, status.escalation_provider, 'escalation') }}
-            </option>
-          </select>
-          <button
-            type="button"
-            class="btn sm ghost model-picker__copy"
-            title="Copy the selected model id, then paste it into this add-on's configuration (AI Escalation Model)"
-            @click="copyEscalationModelId"
+          <label for="ai-model-picker" class="sr-only">Vision model</label>
+          <Select
+            id="ai-model-picker"
+            v-model="selectedModel"
+            :options="primaryModelOptions"
+            option-label="label"
+            option-value="value"
+            size="small"
+            class="model-picker__select"
+          />
+          <Button
+            size="small"
+            severity="secondary"
+            outlined
+            class="model-picker__copy"
+            title="Copy the selected model id, then paste it into this add-on's configuration (OpenAI Model / Anthropic Model / Ollama Vision Model)"
+            @click="copyModelId"
           >
             📋 Copy
-          </button>
+          </Button>
+        </div>
+      </div>
+      <p v-if="showModelPicker()" style="font-size: 0.72rem; color: var(--muted); margin-top: 0.35rem">
+        Selecting a model here does not change the running configuration — copy the id and paste it into the add-on's
+        <strong>Configuration</strong> tab, then restart the add-on.
+      </p>
+
+      <div v-if="status.provider === 'moondream_local'" style="margin-top: 0.75rem">
+        <div v-if="!archSupported">
+          <p style="font-size: 0.8rem; color: var(--muted)">
+            moondream_local is not available on this architecture.<br />Use <strong>moondream_cloud</strong> or
+            <strong>ollama</strong> instead.
+          </p>
+        </div>
+        <div v-else-if="installState.status === 'installed'">
+          <p style="font-size: 0.8rem; color: var(--success)">✓ moondream installed</p>
+          <p style="font-size: 0.73rem; color: var(--muted)">
+            Model (~430 MB) downloads automatically on first health check
+          </p>
+        </div>
+        <div v-else-if="installState.status === 'installing'">
+          <p style="font-size: 0.8rem; color: var(--warn); margin-bottom: 0.35rem">⏳ Installing… please wait</p>
+          <div
+            style="
+              font-size: 0.7rem;
+              font-family: monospace;
+              color: var(--muted);
+              background: var(--card2);
+              border: 1px solid var(--border);
+              border-radius: 4px;
+              padding: 0.3rem 0.5rem;
+              max-height: 70px;
+              overflow-y: auto;
+              white-space: pre-wrap;
+            "
+          >
+            {{ installState.log || '' }}
+          </div>
+        </div>
+        <div v-else-if="installState.status === 'failed'">
+          <p style="font-size: 0.8rem; color: var(--danger); margin-bottom: 0.3rem">✗ Installation failed</p>
+          <div
+            style="
+              font-size: 0.7rem;
+              font-family: monospace;
+              color: var(--muted);
+              background: var(--card2);
+              border: 1px solid var(--border);
+              border-radius: 4px;
+              padding: 0.3rem 0.5rem;
+              max-height: 70px;
+              overflow-y: auto;
+              white-space: pre-wrap;
+              margin-bottom: 0.4rem;
+            "
+          >
+            {{ installState.log || '' }}
+          </div>
+          <Button size="small" severity="secondary" outlined @click="startInstall">↺ Retry Install</Button>
+        </div>
+        <div v-else>
+          <p style="font-size: 0.8rem; color: var(--warn); margin-bottom: 0.45rem">⚠ moondream package not installed</p>
+          <Button size="small" @click="startInstall">⬇ Install Moondream 0.5B</Button>
+          <p style="font-size: 0.73rem; color: var(--muted); margin-top: 0.35rem">
+            Package + model ~430 MB, may take several minutes
+          </p>
+        </div>
+      </div>
+
+      <template v-if="status.escalation_provider">
+        <div class="ai-tier-label" style="margin-top: 0.9rem">🪜 Tier 2 · Escalation Model</div>
+        <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.4rem">
+          Provider: <strong>{{ PROVIDER_LABELS[status.escalation_provider] || status.escalation_provider }}</strong>
+        </div>
+        <div style="font-size: 0.82rem; color: var(--muted); margin-bottom: 0.6rem">
+          Model: <strong>{{ status.escalation_model || '—' }}</strong>
+          <span :style="{ color: status.escalation_online ? 'var(--success)' : 'var(--danger)' }">
+            {{ status.escalation_online ? ' 🟢 online' : ' 🔴 unreachable — falling back to tier 1' }}
+          </span>
+        </div>
+
+        <div class="model-picker">
+          <Button
+            size="small"
+            class="model-picker__fetch"
+            :disabled="fetchingEscalationModels"
+            @click="fetchEscalationModelsList"
+          >
+            {{ fetchingEscalationModels ? '⏳ Loading…' : '⟳ Fetch Escalation Models' }}
+          </Button>
+          <div class="model-picker__row">
+            <label for="ai-escalation-model-picker" class="sr-only">Escalation model</label>
+            <Select
+              id="ai-escalation-model-picker"
+              v-model="selectedEscalationModel"
+              :options="escalationModelOptions"
+              option-label="label"
+              option-value="value"
+              size="small"
+              class="model-picker__select"
+            />
+            <Button
+              size="small"
+              severity="secondary"
+              outlined
+              class="model-picker__copy"
+              title="Copy the selected model id, then paste it into this add-on's configuration (AI Escalation Model)"
+              @click="copyEscalationModelId"
+            >
+              📋 Copy
+            </Button>
+          </div>
+        </div>
+      </template>
+
+      <div style="margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.6rem">
+        <Button size="small" severity="secondary" outlined :disabled="testing" @click="runTest">
+          {{ testing ? '⏳ Testing…' : '🔬 Test Analysis' }}
+        </Button>
+        <p style="font-size: 0.73rem; color: var(--muted); margin: 0.3rem 0 0">
+          Analyzes a recent clip to verify AI is working
+        </p>
+        <div v-if="testResult" style="margin-top: 0.45rem">
+          <span v-if="!testResult.ok" style="color: var(--warn); font-size: 0.8rem">{{ testResult.message }}</span>
+          <div
+            v-else-if="testResult.detail"
+            style="
+              background: var(--card2);
+              border: 1px solid var(--border);
+              border-radius: var(--radius);
+              padding: 0.6rem 0.8rem;
+              font-size: 0.82rem;
+              margin-top: 0.3rem;
+            "
+          >
+            <div style="color: var(--success); font-weight: 700; margin-bottom: 0.35rem">✓ AI is working!</div>
+            <div>
+              Camera: <strong>{{ testResult.detail.camera }}</strong>
+            </div>
+            <div>
+              Result:
+              <span
+                :style="{
+                  color: testResult.detail.is_suspicious ? 'var(--danger)' : 'var(--success)',
+                  fontWeight: 600,
+                }"
+              >
+                {{ testResult.detail.is_suspicious ? '⚠ Suspicious' : '✓ Clear' }}
+              </span>
+              ({{ confPct(testResult.detail) }}% confidence)
+            </div>
+            <div v-if="testResult.detail.summary" style="color: var(--muted); margin-top: 0.3rem">
+              {{ testResult.detail.summary }}
+            </div>
+            <div style="color: var(--muted); font-size: 0.74rem; margin-top: 0.3rem">
+              Model: {{ testResult.detail.model || '—' }} &nbsp;·&nbsp;
+              {{ testResult.detail.frame_count || 0 }} frame(s) &nbsp;·&nbsp;
+              {{ (testResult.detail.analysis_duration || 0).toFixed(1) }}s
+            </div>
+          </div>
         </div>
       </div>
     </template>
-
-    <div style="margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.6rem">
-      <button type="button" class="btn sm ghost" :disabled="testing" @click="runTest">
-        {{ testing ? '⏳ Testing…' : '🔬 Test Analysis' }}
-      </button>
-      <p style="font-size: 0.73rem; color: var(--muted); margin: 0.3rem 0 0">
-        Analyzes a recent clip to verify AI is working
-      </p>
-      <div v-if="testResult" style="margin-top: 0.45rem">
-        <span v-if="!testResult.ok" style="color: var(--warn); font-size: 0.8rem">{{ testResult.message }}</span>
-        <div
-          v-else-if="testResult.detail"
-          style="
-            background: var(--card2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 0.6rem 0.8rem;
-            font-size: 0.82rem;
-            margin-top: 0.3rem;
-          "
-        >
-          <div style="color: var(--success); font-weight: 700; margin-bottom: 0.35rem">✓ AI is working!</div>
-          <div>
-            Camera: <strong>{{ testResult.detail.camera }}</strong>
-          </div>
-          <div>
-            Result:
-            <span
-              :style="{ color: testResult.detail.is_suspicious ? 'var(--danger)' : 'var(--success)', fontWeight: 600 }"
-            >
-              {{ testResult.detail.is_suspicious ? '⚠ Suspicious' : '✓ Clear' }}
-            </span>
-            ({{ confPct(testResult.detail) }}% confidence)
-          </div>
-          <div v-if="testResult.detail.summary" style="color: var(--muted); margin-top: 0.3rem">
-            {{ testResult.detail.summary }}
-          </div>
-          <div style="color: var(--muted); font-size: 0.74rem; margin-top: 0.3rem">
-            Model: {{ testResult.detail.model || '—' }} &nbsp;·&nbsp; {{ testResult.detail.frame_count || 0 }} frame(s)
-            &nbsp;·&nbsp; {{ (testResult.detail.analysis_duration || 0).toFixed(1) }}s
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+  </Card>
 </template>
 
 <style scoped>

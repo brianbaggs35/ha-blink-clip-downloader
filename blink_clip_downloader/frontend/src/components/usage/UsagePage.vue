@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import Button from 'primevue/button'
+import Card from 'primevue/card'
 import { clearAiUsage, getAiUsage } from '../../api/ai'
 import { fmtCost, fmtNum, providerLabel } from '../../api/constants'
 import type { AiUsage } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
+import EmptyState from '../layout/EmptyState.vue'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import ProviderNote from './ProviderNote.vue'
 
@@ -80,15 +83,14 @@ async function clearUsage() {
   <div class="auto-content">
     <h2 style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
       <span>AI Token Usage</span>
-      <button type="button" class="btn sm danger" @click="clearUsage">🗑 Clear Stats</button>
+      <Button size="small" severity="danger" @click="clearUsage">🗑 Clear Stats</Button>
     </h2>
 
     <div v-if="loading" style="padding: 2rem"><LoadingIndicator /></div>
     <template v-else-if="usage">
-      <div v-if="showDisabledMsg" class="status-card" style="padding: 2rem; text-align: center; color: var(--muted)">
-        <p style="font-size: 1.2rem; margin-bottom: 0.8rem">📊 No AI Usage Data</p>
-        <p>Enable AI analysis in the add-on settings. Usage statistics will appear after the first analysis run.</p>
-      </div>
+      <EmptyState v-if="showDisabledMsg" title="📊 No AI Usage Data">
+        Enable AI analysis in the add-on settings. Usage statistics will appear after the first analysis run.
+      </EmptyState>
       <div v-else>
         <div class="usage-grid">
           <div class="usage-stat">
@@ -129,16 +131,18 @@ async function clearUsage() {
           </div>
         </div>
 
-        <div class="status-card" style="margin-bottom: 1.2rem">
-          <h3 style="margin-bottom: 0.75rem">Current Provider</h3>
-          <div class="status-row">
-            <span class="lbl">Provider</span><span class="val">{{ providerLabel(usage.provider) }}</span>
-          </div>
-          <div class="status-row">
-            <span class="lbl">Model</span><span class="val">{{ usage.model || '—' }}</span>
-          </div>
-          <ProviderNote :provider="usage.provider" :show-escalation-note="showEscalationNote" />
-        </div>
+        <Card style="margin-bottom: 1.2rem">
+          <template #title><h3 style="margin: 0; font: inherit; color: inherit">Current Provider</h3></template>
+          <template #content>
+            <div class="status-row">
+              <span class="lbl">Provider</span><span class="val">{{ providerLabel(usage.provider) }}</span>
+            </div>
+            <div class="status-row">
+              <span class="lbl">Model</span><span class="val">{{ usage.model || '—' }}</span>
+            </div>
+            <ProviderNote :provider="usage.provider" :show-escalation-note="showEscalationNote" />
+          </template>
+        </Card>
 
         <h3 style="margin-bottom: 0.6rem">Per-Model Breakdown</h3>
         <div class="table-scroll">

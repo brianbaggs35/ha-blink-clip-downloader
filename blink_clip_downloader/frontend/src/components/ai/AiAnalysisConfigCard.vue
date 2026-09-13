@@ -123,7 +123,7 @@ watch(
 
 <template>
   <Card class="analysis-config-card">
-    <template #title>AI Analysis Configuration</template>
+    <template #title><h3 style="margin: 0; font: inherit; color: inherit">AI Analysis Configuration</h3></template>
     <template #subtitle>
       Choose which cameras automatically use AI analysis to reduce token usage. Manual Analyze Now remains available for
       every clip.

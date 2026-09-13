@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import Button from 'primevue/button'
+import Card from 'primevue/card'
+
 interface ProviderInfo {
   key: string
   name: string
@@ -112,32 +115,56 @@ const PROVIDERS: ProviderInfo[] = [
         margin: 1.2rem 0 1.5rem;
       "
     >
-      <div v-for="p in PROVIDERS" :key="p.key" class="card" style="padding: 1.2rem">
-        <h3 style="margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem">
-          {{ p.name }}
-          <code style="font-size: 0.72rem; font-weight: 400; color: var(--muted)">{{ p.key }}</code>
-        </h3>
-        <p style="font-size: 0.85rem; color: var(--text); margin-bottom: 0.6rem; line-height: 1.5">{{ p.tagline }}</p>
-        <ul
-          v-if="p.configFields.length"
-          style="font-size: 0.8rem; color: var(--muted); margin: 0 0 0.6rem 1.1rem; line-height: 1.6"
-        >
-          <li v-for="field in p.configFields" :key="field">{{ field }}</li>
-        </ul>
-        <p
-          v-for="note in p.notes"
-          :key="note"
-          style="font-size: 0.78rem; color: var(--muted); margin-bottom: 0.6rem; line-height: 1.5"
-        >
-          {{ note }}
-        </p>
-        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
-          <a :href="p.link.href" target="_blank" rel="noopener" class="btn sm ghost">↗ {{ p.link.label }}</a>
-          <a :href="p.secondaryLink.href" target="_blank" rel="noopener" class="btn sm ghost">
-            {{ p.secondaryLink.kind === 'pricing' ? '💲 Pricing' : '📖 Documentation' }}
-          </a>
-        </div>
-      </div>
+      <Card v-for="p in PROVIDERS" :key="p.key">
+        <template #title>
+          <h3 style="margin: 0; font: inherit; color: inherit; display: flex; align-items: center; gap: 0.5rem">
+            {{ p.name }}
+            <code style="font-size: 0.72rem; font-weight: 400; color: var(--muted)">{{ p.key }}</code>
+          </h3>
+        </template>
+        <template #content>
+          <p style="font-size: 0.85rem; color: var(--text); margin-bottom: 0.6rem; line-height: 1.5">
+            {{ p.tagline }}
+          </p>
+          <ul
+            v-if="p.configFields.length"
+            style="font-size: 0.8rem; color: var(--muted); margin: 0 0 0.6rem 1.1rem; line-height: 1.6"
+          >
+            <li v-for="field in p.configFields" :key="field">{{ field }}</li>
+          </ul>
+          <p
+            v-for="note in p.notes"
+            :key="note"
+            style="font-size: 0.78rem; color: var(--muted); margin-bottom: 0.6rem; line-height: 1.5"
+          >
+            {{ note }}
+          </p>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
+            <Button
+              as="a"
+              :href="p.link.href"
+              target="_blank"
+              rel="noopener"
+              size="small"
+              severity="secondary"
+              outlined
+            >
+              ↗ {{ p.link.label }}
+            </Button>
+            <Button
+              as="a"
+              :href="p.secondaryLink.href"
+              target="_blank"
+              rel="noopener"
+              size="small"
+              severity="secondary"
+              outlined
+            >
+              {{ p.secondaryLink.kind === 'pricing' ? '💲 Pricing' : '📖 Documentation' }}
+            </Button>
+          </div>
+        </template>
+      </Card>
     </div>
 
     <h3 style="margin-bottom: 0.75rem">🪜 Two-tier escalation (any provider)</h3>

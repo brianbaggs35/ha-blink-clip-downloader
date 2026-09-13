@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import Button from 'primevue/button'
 import Chip from 'primevue/chip'
+import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import {
   analyzeClipNow,
@@ -214,6 +217,11 @@ const DETECTION_EMOJI: Record<string, string> = {
   suitcase: '🧳',
 }
 const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
+
+const faceReportNameOptions = computed(() => [
+  { label: 'Not sure / someone else', value: '' },
+  ...enrolledNames.value.map((n) => ({ label: n, value: n })),
+])
 </script>
 
 <template>
@@ -235,9 +243,9 @@ const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
         <span v-else-if="loadError" style="color: var(--danger); font-size: 0.8rem">Failed to load analysis</span>
         <template v-else-if="loaded && !result">
           <div style="color: var(--muted); font-size: 0.8rem; margin-bottom: 0.45rem">Not analyzed yet</div>
-          <button type="button" class="btn sm" :disabled="analyzing" @click="analyzeNow">
+          <Button size="small" :disabled="analyzing" @click="analyzeNow">
             {{ analyzing ? '⏳ Analyzing…' : '🔬 Analyze Now' }}
-          </button>
+          </Button>
         </template>
         <div v-else-if="result" class="ai-result-box">
           <div style="display: flex; align-items: center; gap: 0.55rem; margin-bottom: 0.4rem">
@@ -270,11 +278,15 @@ const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
             />
           </div>
           <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap">
-            <button type="button" class="btn sm ghost" :disabled="analyzing" @click="analyzeNow">↺ Re-analyze</button>
-            <button type="button" class="btn sm ghost" @click="showRawResponse = !showRawResponse">
+            <Button size="small" severity="secondary" outlined :disabled="analyzing" @click="analyzeNow"
+              >↺ Re-analyze</Button
+            >
+            <Button size="small" severity="secondary" outlined @click="showRawResponse = !showRawResponse">
               {{ showRawResponse ? '📄 Hide response' : '📄 Full response' }}
-            </button>
-            <button v-if="promptDebugEnabled" type="button" class="btn sm ghost" @click="showPrompt">📝 Prompt</button>
+            </Button>
+            <Button v-if="promptDebugEnabled" size="small" severity="secondary" outlined @click="showPrompt"
+              >📝 Prompt</Button
+            >
           </div>
           <div
             v-if="showRawResponse"
@@ -304,27 +316,27 @@ const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
                   — "{{ feedback.correction_note }}"</template
                 ></span
               >
-              <button type="button" class="btn sm ghost" @click="changeFeedback">Change</button>
-              <button type="button" class="btn sm ghost" :disabled="feedbackClearing" @click="clearFeedback">
+              <Button size="small" severity="secondary" outlined @click="changeFeedback">Change</Button>
+              <Button size="small" severity="secondary" outlined :disabled="feedbackClearing" @click="clearFeedback">
                 Clear
-              </button>
+              </Button>
             </div>
             <div v-else style="font-size: 0.78rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap">
               <span style="color: var(--muted)">Was this verdict correct?</span>
-              <button type="button" class="btn sm ghost" @click="quickFeedback(true)">👍 Correct</button>
-              <button type="button" class="btn sm ghost" @click="openFeedbackNoteForm">👎 Incorrect</button>
+              <Button size="small" severity="secondary" outlined @click="quickFeedback(true)">👍 Correct</Button>
+              <Button size="small" severity="secondary" outlined @click="openFeedbackNoteForm">👎 Incorrect</Button>
             </div>
             <div
               v-if="showFeedbackForm"
               style="margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.35rem"
             >
               <label for="clip-ai-feedback-note" class="sr-only">Feedback note</label>
-              <input
+              <InputText
                 id="clip-ai-feedback-note"
                 v-model="feedbackNote"
                 class="tag-input"
-                style="width: 100%"
                 placeholder="What actually happened? (optional)"
+                fluid
               />
               <label style="font-size: 0.75rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem">
                 <input v-model="feedbackCorrectedSuspicious" type="checkbox" />
@@ -335,8 +347,8 @@ const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
                 }}
               </label>
               <div style="display: flex; gap: 0.4rem">
-                <button type="button" class="btn sm" @click="submitFeedbackFormClick">Submit</button>
-                <button type="button" class="btn sm ghost" @click="showFeedbackForm = false">Cancel</button>
+                <Button size="small" @click="submitFeedbackFormClick">Submit</Button>
+                <Button size="small" severity="secondary" outlined @click="showFeedbackForm = false">Cancel</Button>
               </div>
             </div>
           </div>
@@ -347,14 +359,15 @@ const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
               style="font-size: 0.76rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap"
             >
               <span style="color: var(--muted)">👤 Face match ({{ result.face_bypass_names }}) — correct?</span>
-              <button
-                type="button"
-                class="btn sm ghost"
+              <Button
+                size="small"
+                severity="secondary"
+                outlined
                 :disabled="faceReportSubmitting"
                 @click="reportFaceIssue('false_positive', result.face_bypass_names)"
               >
                 👎 Wrong match
-              </button>
+              </Button>
             </div>
             <div
               v-else-if="showFaceReportPicker"
@@ -363,39 +376,46 @@ const detectionEmoji = (label: string) => DETECTION_EMOJI[label] ?? '📦'
               <label for="clip-ai-face-report-name" class="sr-only">
                 {{ faceReportType === 'false_negative' ? 'Who was missed?' : 'Who was wrongly matched?' }}
               </label>
-              <select id="clip-ai-face-report-name" v-model="faceReportPersonName" class="tag-input">
-                <option value="">Not sure / someone else</option>
-                <option v-for="n in enrolledNames" :key="n" :value="n">{{ n }}</option>
-              </select>
-              <button
-                type="button"
-                class="btn sm ghost"
+              <Select
+                id="clip-ai-face-report-name"
+                v-model="faceReportPersonName"
+                size="small"
+                :options="faceReportNameOptions"
+                option-label="label"
+                option-value="value"
+              />
+              <Button
+                size="small"
+                severity="secondary"
+                outlined
                 :disabled="faceReportSubmitting"
                 @click="reportFaceIssue(faceReportType, faceReportPersonName)"
               >
                 {{ faceReportType === 'false_negative' ? '🚩' : '👎' }} Submit report
-              </button>
-              <button type="button" class="btn sm ghost" @click="showFaceReportPicker = false">Cancel</button>
+              </Button>
+              <Button size="small" severity="secondary" outlined @click="showFaceReportPicker = false">Cancel</Button>
             </div>
             <div v-else style="font-size: 0.76rem; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap">
-              <button
-                type="button"
-                class="btn sm ghost"
+              <Button
+                size="small"
+                severity="secondary"
+                outlined
                 style="font-size: 0.72rem"
                 :disabled="faceReportSubmitting"
                 @click="startFaceReport('false_negative')"
               >
                 🚩 Report a missed face match
-              </button>
-              <button
-                type="button"
-                class="btn sm ghost"
+              </Button>
+              <Button
+                size="small"
+                severity="secondary"
+                outlined
                 style="font-size: 0.72rem"
                 :disabled="faceReportSubmitting"
                 @click="startFaceReport('false_positive')"
               >
                 👎 Wrong match
-              </button>
+              </Button>
             </div>
           </div>
         </div>
