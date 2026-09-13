@@ -92,7 +92,7 @@ describe('SuspiciousFeed', () => {
     )
     const wrapper = mountFeed()
     await flushPromises()
-    await wrapper.find('.card').trigger('click')
+    await wrapper.find('.p-card').trigger('click')
     expect(useClipViewerStore().clipId).toBe('c1')
   })
 

@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import Accordion from 'primevue/accordion'
+import AccordionContent from 'primevue/accordioncontent'
+import AccordionHeader from 'primevue/accordionheader'
+import AccordionPanel from 'primevue/accordionpanel'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Message from 'primevue/message'
+import Tag from 'primevue/tag'
 import { getCameraConfigs, resolveCameraAlias, updateCameraConfigs } from '../../api/ai'
 import type { CameraConfig } from '../../api/types'
 import { useToastStore } from '../../stores/toast'
 import { useRefreshStore } from '../../stores/refresh'
+import EmptyState from '../layout/EmptyState.vue'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
 // is_car_camera and car_zone are edited on the Vehicles tab now, not here —
@@ -52,6 +61,12 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+// Lets a glance at a collapsed accordion header show which cameras
+// already have a description/prompt set, without opening every one.
+function isConfigured(cfg: EditableConfig): boolean {
+  return Boolean(cfg.description.trim() || cfg.custom_prompt.trim())
 }
 onMounted(load)
 watch(
@@ -127,52 +142,53 @@ async function save() {
       <strong>Vehicles</strong> tab.
     </p>
     <div v-if="loading" style="padding: 1rem"><LoadingIndicator /></div>
-    <div v-else-if="loadError" style="color: var(--danger); font-size: 0.84rem">Failed to load camera configs.</div>
-    <div v-else-if="!configs.length" style="color: var(--muted); font-size: 0.84rem; padding: 0.5rem 0">
-      No cameras found. Download at least one clip to populate the camera list.
-    </div>
-    <div v-else style="display: flex; flex-direction: column; gap: 0.65rem">
-      <div v-for="cfg in configs" :key="cfg.camera" class="status-card" style="padding: 0.85rem 1rem">
-        <div style="display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.55rem">
-          <span style="font-weight: 600; font-size: 0.88rem; color: var(--accent)">📷 {{ cfg.camera }}</span>
-        </div>
-        <div style="margin-bottom: 0.45rem">
-          <label
-            :for="`cam-desc-${cfg.camera}`"
-            style="font-size: 0.76rem; color: var(--muted); display: block; margin-bottom: 0.2rem"
-            >Camera purpose / description</label
-          >
-          <input
-            :id="`cam-desc-${cfg.camera}`"
-            v-model="cfg.description"
-            type="text"
-            class="tag-input"
-            style="width: 100%"
-            placeholder="e.g. Points at driveway, monitors the silver Kia Forte. Watch for anyone approaching the car."
-          />
-        </div>
-        <div>
-          <label
-            :for="`cam-prompt-${cfg.camera}`"
-            style="font-size: 0.76rem; color: var(--muted); display: block; margin-bottom: 0.2rem"
-          >
-            Custom AI prompt (overrides global prompt for this camera — optional)
-          </label>
-          <input
-            :id="`cam-prompt-${cfg.camera}`"
-            v-model="cfg.custom_prompt"
-            type="text"
-            class="tag-input"
-            style="width: 100%"
-            placeholder="Leave empty to use the global AI prompt"
-          />
-        </div>
-      </div>
-    </div>
+    <Message v-else-if="loadError" severity="error" :closable="false">Failed to load camera configs.</Message>
+    <EmptyState v-else-if="!configs.length" title="No cameras found.">
+      Download at least one clip to populate the camera list.
+    </EmptyState>
+    <Accordion v-else multiple>
+      <AccordionPanel v-for="cfg in configs" :key="cfg.camera" :value="cfg.camera">
+        <AccordionHeader>
+          <span style="flex: 1; text-align: left">📷 {{ cfg.camera }}</span>
+          <Tag v-if="isConfigured(cfg)" severity="secondary" value="Configured" style="margin-right: 0.5rem" />
+        </AccordionHeader>
+        <AccordionContent>
+          <div style="margin-bottom: 0.45rem">
+            <label
+              :for="`cam-desc-${cfg.camera}`"
+              style="font-size: 0.76rem; color: var(--muted); display: block; margin-bottom: 0.2rem"
+              >Camera purpose / description</label
+            >
+            <InputText
+              :id="`cam-desc-${cfg.camera}`"
+              v-model="cfg.description"
+              class="tag-input"
+              fluid
+              placeholder="e.g. Points at driveway, monitors the silver Kia Forte. Watch for anyone approaching the car."
+            />
+          </div>
+          <div>
+            <label
+              :for="`cam-prompt-${cfg.camera}`"
+              style="font-size: 0.76rem; color: var(--muted); display: block; margin-bottom: 0.2rem"
+            >
+              Custom AI prompt (overrides global prompt for this camera — optional)
+            </label>
+            <InputText
+              :id="`cam-prompt-${cfg.camera}`"
+              v-model="cfg.custom_prompt"
+              class="tag-input"
+              fluid
+              placeholder="Leave empty to use the global AI prompt"
+            />
+          </div>
+        </AccordionContent>
+      </AccordionPanel>
+    </Accordion>
     <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap">
-      <button type="button" class="btn sm" :disabled="saving" @click="save">
+      <Button size="small" :disabled="saving" @click="save">
         {{ saving ? '⏳ Saving…' : '💾 Save Camera Configs' }}
-      </button>
+      </Button>
       <span style="font-size: 0.75rem; color: var(--muted)">Changes apply immediately — no restart needed</span>
     </div>
   </div>

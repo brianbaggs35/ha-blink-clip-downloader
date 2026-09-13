@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import Button from 'primevue/button'
+import Card from 'primevue/card'
+import Select from 'primevue/select'
 import {
   activateCheckpoint,
   createFinetune,
@@ -15,6 +18,13 @@ import { useConfirm } from '../../composables/useConfirm'
 import { useToastStore } from '../../stores/toast'
 
 const emit = defineEmits<{ activated: [] }>()
+
+const RANK_OPTIONS = [
+  { label: 'Rank 8', value: 8 },
+  { label: 'Rank 16', value: 16 },
+  { label: 'Rank 24', value: 24 },
+  { label: 'Rank 32', value: 32 },
+]
 
 const toast = useToastStore()
 const confirm = useConfirm()
@@ -130,99 +140,106 @@ function backToList() {
 </script>
 
 <template>
-  <div class="card" style="padding: 1.2rem">
-    <h3 style="margin-bottom: 0.8rem">🎯 Fine-Tuning</h3>
-
-    <div
-      v-if="view === 'checkpoints'"
-      style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem"
-    >
+  <Card>
+    <template #title><h3 style="margin: 0; font: inherit; color: inherit">🎯 Fine-Tuning</h3></template>
+    <template #content>
       <div
-        v-for="cp in checkpoints"
-        :key="cp.step"
-        style="
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 0.5rem;
-          padding: 0.4rem 0.55rem;
-          background: var(--card2);
-          border-radius: var(--radius);
-        "
+        v-if="view === 'checkpoints'"
+        style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem"
       >
-        <span style="font-size: 0.82rem">Step {{ cp.step }}</span>
-        <button type="button" class="btn sm" @click="activate(cp.step)">Activate</button>
-      </div>
-      <button type="button" class="btn sm ghost" style="margin-top: 0.4rem" @click="backToList">
-        ← Back to fine-tunes
-      </button>
-    </div>
-
-    <template v-else>
-      <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem">
-        <div v-if="loading" style="color: var(--muted); font-size: 0.8rem">Loading…</div>
-        <div v-else-if="loadError" style="color: var(--danger); font-size: 0.8rem">Failed to load fine-tunes</div>
-        <div v-else-if="!finetunes.length" style="color: var(--muted); font-size: 0.8rem">
-          No fine-tunes yet — create one below.
+        <div
+          v-for="cp in checkpoints"
+          :key="cp.step"
+          style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            padding: 0.4rem 0.55rem;
+            background: var(--card2);
+            border-radius: var(--radius);
+          "
+        >
+          <span style="font-size: 0.82rem">Step {{ cp.step }}</span>
+          <Button size="small" @click="activate(cp.step)">Activate</Button>
         </div>
-        <template v-else>
-          <div
-            v-for="ft in finetunes"
-            :key="finetuneId(ft)"
-            style="
-              display: flex;
-              align-items: center;
-              justify-content: space-between;
-              gap: 0.5rem;
-              padding: 0.4rem 0.55rem;
-              background: var(--card2);
-              border-radius: var(--radius);
-              flex-wrap: wrap;
-            "
-          >
-            <span style="font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{
-              ft.name || finetuneId(ft) || '—'
-            }}</span>
-            <div style="display: flex; gap: 0.3rem; flex-shrink: 0; flex-wrap: wrap">
-              <button
-                type="button"
-                class="btn sm ghost"
-                title="Train on corrections from clip feedback"
-                @click="train(finetuneId(ft))"
-              >
-                🧠 Train from Feedback ({{ pendingCount }})
-              </button>
-              <button
-                type="button"
-                class="btn sm ghost"
-                title="Save current trained state as an activatable checkpoint"
-                @click="saveCkpt(finetuneId(ft))"
-              >
-                💾 Save Checkpoint
-              </button>
-              <button type="button" class="btn sm ghost" @click="viewCheckpoints(finetuneId(ft))">Checkpoints</button>
-              <button type="button" class="btn sm danger" @click="remove(finetuneId(ft))">🗑</button>
-            </div>
+        <Button size="small" severity="secondary" outlined style="margin-top: 0.4rem" @click="backToList">
+          ← Back to fine-tunes
+        </Button>
+      </div>
+
+      <template v-else>
+        <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.6rem">
+          <div v-if="loading" style="color: var(--muted); font-size: 0.8rem">Loading…</div>
+          <div v-else-if="loadError" style="color: var(--danger); font-size: 0.8rem">Failed to load fine-tunes</div>
+          <div v-else-if="!finetunes.length" style="color: var(--muted); font-size: 0.8rem">
+            No fine-tunes yet — create one below.
           </div>
-        </template>
-      </div>
-      <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap">
-        <label for="finetune-new-name" class="sr-only">New fine-tune name</label>
-        <input id="finetune-new-name" v-model="newName" class="tag-input" placeholder="New fine-tune name" />
-        <label for="finetune-new-rank" class="sr-only">Fine-tune rank</label>
-        <select id="finetune-new-rank" v-model.number="newRank" class="sel">
-          <option :value="8">Rank 8</option>
-          <option :value="16">Rank 16</option>
-          <option :value="24">Rank 24</option>
-          <option :value="32">Rank 32</option>
-        </select>
-        <button type="button" class="btn sm" @click="create">+ New Fine-tune</button>
-      </div>
-      <p style="font-size: 0.72rem; color: var(--muted); margin-top: 0.4rem">
-        🧠 Train from Feedback turns your 👍/👎 clip corrections into real training steps against Moondream Cloud. 💾
-        Save Checkpoint persists the result so it appears under Checkpoints — Activate one to switch live inference
-        immediately, no restart needed.
-      </p>
+          <template v-else>
+            <div
+              v-for="ft in finetunes"
+              :key="finetuneId(ft)"
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 0.5rem;
+                padding: 0.4rem 0.55rem;
+                background: var(--card2);
+                border-radius: var(--radius);
+                flex-wrap: wrap;
+              "
+            >
+              <span style="font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{
+                ft.name || finetuneId(ft) || '—'
+              }}</span>
+              <div style="display: flex; gap: 0.3rem; flex-shrink: 0; flex-wrap: wrap">
+                <Button
+                  size="small"
+                  severity="secondary"
+                  outlined
+                  title="Train on corrections from clip feedback"
+                  @click="train(finetuneId(ft))"
+                >
+                  🧠 Train from Feedback ({{ pendingCount }})
+                </Button>
+                <Button
+                  size="small"
+                  severity="secondary"
+                  outlined
+                  title="Save current trained state as an activatable checkpoint"
+                  @click="saveCkpt(finetuneId(ft))"
+                >
+                  💾 Save Checkpoint
+                </Button>
+                <Button size="small" severity="secondary" outlined @click="viewCheckpoints(finetuneId(ft))"
+                  >Checkpoints</Button
+                >
+                <Button size="small" severity="danger" @click="remove(finetuneId(ft))">🗑</Button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap">
+          <label for="finetune-new-name" class="sr-only">New fine-tune name</label>
+          <input id="finetune-new-name" v-model="newName" class="tag-input" placeholder="New fine-tune name" />
+          <label for="finetune-new-rank" class="sr-only">Fine-tune rank</label>
+          <Select
+            id="finetune-new-rank"
+            v-model="newRank"
+            :options="RANK_OPTIONS"
+            option-label="label"
+            option-value="value"
+            size="small"
+          />
+          <Button size="small" @click="create">+ New Fine-tune</Button>
+        </div>
+        <p style="font-size: 0.72rem; color: var(--muted); margin-top: 0.4rem">
+          🧠 Train from Feedback turns your 👍/👎 clip corrections into real training steps against Moondream Cloud. 💾
+          Save Checkpoint persists the result so it appears under Checkpoints — Activate one to switch live inference
+          immediately, no restart needed.
+        </p>
+      </template>
     </template>
-  </div>
+  </Card>
 </template>

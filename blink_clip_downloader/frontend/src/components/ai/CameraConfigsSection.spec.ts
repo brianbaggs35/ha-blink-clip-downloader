@@ -67,6 +67,39 @@ describe('CameraConfigsSection', () => {
     expect(wrapper.find('input[type="number"]').exists()).toBe(false)
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('Vehicles')
+    // Already has a description set — the accordion header shows an
+    // at-a-glance "Configured" badge without needing to open it.
+    expect(wrapper.text()).toContain('Configured')
+  })
+
+  it('omits the "Configured" badge for a camera with no description or prompt set', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]),
+        ),
+      ),
+    )
+    const wrapper = mount(CameraConfigsSection)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Configured')
+  })
+
+  it('expands a camera panel when its accordion header is clicked', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]),
+        ),
+      ),
+    )
+    const wrapper = mount(CameraConfigsSection)
+    await flushPromises()
+    expect(wrapper.find('.p-accordioncontent').isVisible()).toBe(false)
+    await wrapper.find('.p-accordionheader').trigger('click')
+    expect(wrapper.find('.p-accordioncontent').isVisible()).toBe(true)
   })
 
   it('edits the description and custom prompt', async () => {

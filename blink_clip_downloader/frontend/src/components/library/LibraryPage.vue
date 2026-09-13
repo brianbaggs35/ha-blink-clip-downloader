@@ -1,14 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Checkbox from 'primevue/checkbox'
-import IconField from 'primevue/iconfield'
-import InputIcon from 'primevue/inputicon'
-import InputText from 'primevue/inputtext'
 import Panel from 'primevue/panel'
 import ProgressBar from 'primevue/progressbar'
 import ScrollTop from 'primevue/scrolltop'
-import Select from 'primevue/select'
 import {
   deleteClip,
   exportZip,
@@ -31,33 +26,13 @@ import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import AppIcon from '../icons/AppIcon.vue'
+import EmptyState from '../layout/EmptyState.vue'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import GDriveUploadModal from '../storage/GDriveUploadModal.vue'
 import BulkBar from './BulkBar.vue'
 import ClipCard from './ClipCard.vue'
 import ClipModal from './ClipModal.vue'
-
-const DATE_RANGE_OPTIONS = [
-  { label: 'All time', value: '' },
-  { label: 'Today', value: 'today' },
-  { label: 'Yesterday', value: 'yesterday' },
-  { label: 'This week', value: 'week' },
-  { label: 'This month', value: 'month' },
-]
-const SOURCE_OPTIONS = [
-  { label: 'All sources', value: '' },
-  { label: 'Motion (PIR)', value: 'pir' },
-  { label: 'Liveview', value: 'liveview' },
-  { label: 'Snapshot', value: 'snapshot' },
-  { label: 'Local Storage', value: 'local_storage' },
-]
-const SORT_OPTIONS = [
-  { label: '⬆ Newest', value: 'newest' },
-  { label: '⬇ Oldest', value: 'oldest' },
-  { label: '📷 Camera', value: 'camera' },
-  { label: '💾 Size', value: 'size' },
-  { label: '⏱ Duration', value: 'duration' },
-]
+import LibraryFilterFields from './LibraryFilterFields.vue'
 
 const PAGE_SIZE = 48
 
@@ -80,12 +55,15 @@ const starredOnly = ref(false)
 const notifiedOnly = ref(false)
 const recognizedOnly = ref(false)
 
-// Collapsed by default so the clip grid gets the vertical space back on
-// first load (the reported mobile complaint: the stats/filters rows ate
-// over half the viewport before any clip was visible) — remembered
-// per-browser afterward, same simple localStorage-ref shape AppSidebar
-// uses for notifEnabled rather than a Pinia store, since nothing outside
-// this page needs to read it.
+// Mobile-only: collapsed by default so the clip grid gets the vertical
+// space back on first load (the reported mobile complaint: the stats/
+// filters rows ate over half the viewport before any clip was visible).
+// Desktop has plenty of room and keeps its filters always fully visible —
+// see the template's .lib-filters-desktop/.lib-filters-mobile split below,
+// picked by CSS media query, not this ref (it only controls the mobile
+// Panel's own collapse state). Remembered per-browser afterward, same
+// simple localStorage-ref shape AppSidebar uses for notifEnabled rather
+// than a Pinia store, since nothing outside this page needs to read it.
 const FILTERS_COLLAPSED_KEY = 'blink_lib_filters_collapsed'
 const filtersCollapsed = ref(localStorage.getItem(FILTERS_COLLAPSED_KEY) !== '0')
 watch(filtersCollapsed, (collapsed) => {
@@ -93,10 +71,6 @@ watch(filtersCollapsed, (collapsed) => {
 })
 
 const tags = ref<string[]>([])
-const tagOptions = computed(() => [
-  { label: 'All tags', value: '' },
-  ...tags.value.map((t) => ({ label: `#${t}`, value: t })),
-])
 const stats = ref<LibraryStats | null>(null)
 const clips = ref<ClipListItem[]>([])
 const currentPage = ref(0)
@@ -590,7 +564,59 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <Panel v-model:collapsed="filtersCollapsed" toggleable header="Search &amp; Filters" class="lib-filters-panel">
+    <!-- Desktop: plain, always-fully-visible row — desktop has plenty of
+         vertical room, so it keeps exactly the original filters layout
+         with no collapse affordance. Hidden on narrow viewports via CSS
+         (see .lib-filters-desktop in base.css's @media(max-width:600px)
+         block), not v-if, so both this and the mobile Panel below share
+         the same live refs via LibraryFilterFields' v-models regardless of
+         which one is actually visible. -->
+    <div class="lib-filters lib-filters-desktop">
+      <LibraryFilterFields
+        v-model:search="search"
+        v-model:date-range="dateRange"
+        v-model:source-filter="sourceFilter"
+        v-model:tag-filter="tagFilter"
+        v-model:sort-order="sortOrder"
+        v-model:starred-only="starredOnly"
+        v-model:notified-only="notifiedOnly"
+        v-model:recognized-only="recognizedOnly"
+        :tags="tags"
+        :show-recognized="capabilities.faceRecognitionAvailable !== false"
+      />
+      <Button
+        size="small"
+        :severity="selectMode ? 'primary' : 'secondary'"
+        :outlined="!selectMode"
+        @click="toggleSelectMode(!selectMode)"
+      >
+        {{ selectMode ? 'Selecting…' : 'Select' }}
+      </Button>
+      <Button
+        size="small"
+        severity="secondary"
+        outlined
+        :loading="refreshing"
+        :disabled="refreshing"
+        title="Refresh library"
+        aria-label="Refresh library"
+        @click="refreshLibrary"
+      >
+        <template #icon><AppIcon name="refresh" /></template>
+      </Button>
+    </div>
+
+    <!-- Mobile only (see .lib-filters-mobile in base.css): the same fields
+         wrapped in a collapsible Panel, collapsed by default, to give the
+         clip grid its vertical space back — see filtersCollapsed above.
+         Select/Refresh live in the panel's header (#icons slot) instead of
+         the filter row itself, so they stay reachable without expanding. -->
+    <Panel
+      v-model:collapsed="filtersCollapsed"
+      toggleable
+      header="Search &amp; Filters"
+      class="lib-filters-panel lib-filters-mobile"
+    >
       <template #icons>
         <Button
           size="small"
@@ -614,58 +640,19 @@ onUnmounted(() => {
         </Button>
       </template>
       <div class="lib-filters">
-        <IconField class="lib-search">
-          <InputIcon><AppIcon name="tab-library" style="width: 15px; height: 15px" /></InputIcon>
-          <label for="search" class="sr-only">Search clips</label>
-          <InputText id="search" v-model="search" size="small" placeholder="Search clips…" fluid />
-        </IconField>
-        <label for="date-range" class="sr-only">Date range</label>
-        <Select
-          id="date-range"
-          v-model="dateRange"
-          size="small"
-          :options="DATE_RANGE_OPTIONS"
-          option-label="label"
-          option-value="value"
+        <LibraryFilterFields
+          v-model:search="search"
+          v-model:date-range="dateRange"
+          v-model:source-filter="sourceFilter"
+          v-model:tag-filter="tagFilter"
+          v-model:sort-order="sortOrder"
+          v-model:starred-only="starredOnly"
+          v-model:notified-only="notifiedOnly"
+          v-model:recognized-only="recognizedOnly"
+          :tags="tags"
+          :show-recognized="capabilities.faceRecognitionAvailable !== false"
+          id-suffix="-m"
         />
-        <label for="source-filter" class="sr-only">Source</label>
-        <Select
-          id="source-filter"
-          v-model="sourceFilter"
-          size="small"
-          :options="SOURCE_OPTIONS"
-          option-label="label"
-          option-value="value"
-          placeholder="All sources"
-        />
-        <label for="tag-filter" class="sr-only">Tag</label>
-        <Select
-          id="tag-filter"
-          v-model="tagFilter"
-          size="small"
-          :options="tagOptions"
-          option-label="label"
-          option-value="value"
-          placeholder="All tags"
-        />
-        <label for="sort-order" class="sr-only">Sort order</label>
-        <Select
-          id="sort-order"
-          v-model="sortOrder"
-          size="small"
-          :options="SORT_OPTIONS"
-          option-label="label"
-          option-value="value"
-        />
-        <label for="lib-filter-starred" class="lib-check">
-          <Checkbox v-model="starredOnly" input-id="lib-filter-starred" binary /> ★ Starred
-        </label>
-        <label for="lib-filter-notified" class="lib-check">
-          <Checkbox v-model="notifiedOnly" input-id="lib-filter-notified" binary /> 🔔 Notified
-        </label>
-        <label v-if="capabilities.faceRecognitionAvailable !== false" for="lib-filter-recognized" class="lib-check">
-          <Checkbox v-model="recognizedOnly" input-id="lib-filter-recognized" binary /> 👤 Recognized
-        </label>
       </div>
     </Panel>
 
@@ -698,11 +685,9 @@ onUnmounted(() => {
         <div v-if="loadingInitial" style="grid-column: 1 / -1; padding: 2.5rem">
           <LoadingIndicator label="Loading clips…" />
         </div>
-        <div v-else-if="!clips.length" class="empty">
-          <AppIcon name="empty-box" />
-          <h3>No clips found</h3>
-          <p>Try adjusting filters or tap Sync to fetch new clips.</p>
-        </div>
+        <EmptyState v-else-if="!clips.length" title="No clips found">
+          Try adjusting filters or tap Sync to fetch new clips.
+        </EmptyState>
         <template v-else>
           <ClipCard
             v-for="c in clips"
