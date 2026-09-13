@@ -17,12 +17,16 @@ test('AI tab shows the configured (offline) provider and lets you edit per-camer
 
   await expect(page.getByText('Camera Configurations')).toBeVisible()
   const description = 'e2e test: points at the driveway'
+  // Each camera's fields live behind a collapsed accordion panel now —
+  // expand Garage's before it's fillable.
+  await page.locator('.p-accordionheader', { hasText: 'Garage' }).click()
   await page.locator('#cam-desc-Garage').fill(description)
   await page.getByRole('button', { name: '💾 Save Camera Configs' }).click()
   await expect(page.getByText('Camera configs saved')).toBeVisible()
 
   await page.reload()
   await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.locator('.p-accordionheader', { hasText: 'Garage' }).click()
   await expect(page.locator('#cam-desc-Garage')).toHaveValue(description)
 })
 
@@ -58,7 +62,7 @@ test('AI Usage tab shows the configured provider with zero usage recorded', asyn
   await page.waitForSelector('.app-nav-tab.active[data-tab="usage"]')
 
   await expect(page.getByText('AI Token Usage')).toBeVisible()
-  const providerCard = page.locator('.status-card', { hasText: 'Current Provider' })
+  const providerCard = page.locator('.p-card', { hasText: 'Current Provider' })
   await expect(providerCard.locator('.status-row', { hasText: 'Provider' })).toContainText('Ollama (Local/LAN)')
   await expect(providerCard.locator('.status-row', { hasText: 'Model' })).toContainText('llava')
   await expect(page.getByText('No analysis data yet')).toBeVisible()

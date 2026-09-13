@@ -178,7 +178,7 @@ test('covers AI configuration, feedback, email alerts, and model-picker success 
   await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
 
   await expect(page.getByText('1 false positive(s), 0 false negative(s) reported')).toBeVisible()
-  const suspicious = page.locator('.card', { hasText: 'Mocked suspicious activity' })
+  const suspicious = page.locator('.p-card', { hasText: 'Mocked suspicious activity' })
   await expect(suspicious).toContainText('82%')
   await suspicious.locator('button[title="Correct"]').click()
   await expect(suspicious).toContainText('Thanks!')
@@ -205,6 +205,7 @@ test('covers AI configuration, feedback, email alerts, and model-picker success 
   await page.getByRole('button', { name: '📋 Copy' }).click()
   await expect(page.getByText('Copied "llava:latest"')).toBeVisible()
 
+  await page.locator('.p-accordionheader', { hasText: 'Garage' }).click()
   await page.locator('#cam-prompt-Garage').fill('  Mocked garage prompt  ')
   await page.getByRole('button', { name: '💾 Save Camera Configs' }).click()
   await expect(page.getByText('Camera configs saved')).toBeVisible()
@@ -458,9 +459,9 @@ test("AI tab model picker marks OpenAI's recommended model as Best, not just the
   await expect(page.getByText('Provider:')).toContainText('OpenAI')
 
   await page.getByRole('button', { name: '⟳ Fetch Models' }).click()
-  const picker = page.locator('#ai-model-picker')
-  await expect(picker.locator('option', { hasText: 'gpt-5.4-nano' })).toHaveText(/⭐ Best/)
-  await expect(picker.locator('option', { hasText: 'gpt-4o-mini' })).not.toHaveText(/⭐ Best/)
+  await page.locator('#ai-model-picker').click()
+  await expect(page.getByRole('option', { name: 'gpt-5.4-nano' })).toContainText('⭐ Best')
+  await expect(page.getByRole('option', { name: 'gpt-4o-mini' })).not.toContainText('⭐ Best')
 })
 
 test('shows the escalation model as online, and a failed Test Analysis attempt', async ({ page }) => {
@@ -584,7 +585,7 @@ test('exercises mocked Moondream fine-tuning controls without cloud credentials'
   await page.locator('.app-nav-tab[data-tab="ai"]').click()
   await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
 
-  const fineTuneCard = page.locator('.card').filter({ has: page.locator('h3', { hasText: 'Fine-Tuning' }) })
+  const fineTuneCard = page.locator('.p-card').filter({ has: page.locator('h3', { hasText: 'Fine-Tuning' }) })
   await expect(fineTuneCard).toContainText('No fine-tunes yet')
   await fineTuneCard.locator('#finetune-new-name').fill('E2E Fine-tune')
   await fineTuneCard.getByRole('button', { name: '+ New Fine-tune' }).click()
@@ -722,6 +723,7 @@ test('shows a failure toast when saving Camera Configs fails', async ({ page }) 
   await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
   await expect(page.getByText('Camera Configurations')).toBeVisible()
 
+  await page.locator('.p-accordionheader', { hasText: 'Garage' }).click()
   await page.locator('#cam-desc-Garage').fill('should not persist')
   await page.getByRole('button', { name: '💾 Save Camera Configs' }).click()
   await expect(page.getByText('Failed to save camera configs')).toBeVisible()
@@ -811,7 +813,7 @@ test('suspicious activity feed renders a mocked item and opens the real clip mod
   await page.locator('.app-nav-tab[data-tab="ai"]').click()
   await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
 
-  const item = page.locator('.card', { hasText: 'Front Door' }).filter({ hasText: '92%' })
+  const item = page.locator('.p-card', { hasText: 'Front Door' }).filter({ hasText: '92%' })
   await expect(item).toContainText('A person lingered at the front door for several minutes.')
 
   await item.click()
@@ -842,7 +844,7 @@ test('quick feedback on a suspicious item shows a thanks message and hides the b
   await page.locator('.app-nav-tab[data-tab="ai"]').click()
   await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
 
-  const item = page.locator('.card', { hasText: 'Backyard' })
+  const item = page.locator('.p-card', { hasText: 'Backyard' })
   await item.locator('button[title="Correct"]').click()
   await expect(item.getByText('Thanks!')).toBeVisible()
   await expect(item.locator('button[title="Correct"]')).toHaveCount(0)

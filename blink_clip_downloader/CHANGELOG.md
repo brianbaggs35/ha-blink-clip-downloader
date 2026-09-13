@@ -176,6 +176,18 @@ before this version ships.
     the moment its `<input>` became a PrimeVue `InputText` (a component ref
     isn't the DOM element) — now fixed and covered by a real
     focus-assertion test, not just a rendering check.
+  - Fixed a visual regression from the mobile filters panel itself: its
+    "Select"/Refresh buttons and its own collapse toggle sat at slightly
+    different heights in the header row, since PrimeVue's Panel header
+    isn't a flex container by default and lets unequal-height buttons
+    align by text baseline instead of by center. Now forced to
+    `align-items: center`, both for this panel and any future one that
+    adds custom header buttons the same way.
+  - Updated the Playwright e2e suite for every markup change in this pass
+    (old `.status-card`/`.card` class selectors, native `<select>`
+    interactions, and the AI tab's camera list now living behind a
+    collapsed accordion panel) — full suite (166 tests) passing again,
+    including Library's video.js-backed clip modal.
 
 ## 5.5.2
 

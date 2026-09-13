@@ -340,7 +340,8 @@ test('expanding the AI panel and clicking Analyze Now shows a real analysis resu
   // shows the picker rather than auto-submitting against a lone name.
   await modal.getByRole('button', { name: 'Report a missed face match' }).click()
   await expect(modal.locator('#clip-ai-face-report-name')).toBeVisible()
-  await modal.locator('#clip-ai-face-report-name').selectOption('Alex E2E')
+  await modal.locator('#clip-ai-face-report-name').click()
+  await page.getByRole('option', { name: 'Alex E2E' }).click()
   await modal.getByRole('button', { name: 'Submit report' }).click()
   await expect(page.getByText('Thanks, reported — visible on the Biometrics activity card')).toBeVisible()
   await expect(modal.getByText('✓ Reported — thanks')).toBeVisible()
@@ -452,7 +453,8 @@ test('a single enrolled person auto-submits a missed-match report without showin
     route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
   )
   await modal.getByRole('button', { name: 'Report a missed face match' }).click()
-  await modal.locator('#clip-ai-face-report-name').selectOption('Alex E2E')
+  await modal.locator('#clip-ai-face-report-name').click()
+  await page.getByRole('option', { name: 'Alex E2E' }).click()
   await modal.getByRole('button', { name: 'Submit report' }).click()
   await expect(page.getByText('Failed to save the report')).toBeVisible()
   await expect(modal.getByText('✓ Reported — thanks')).toHaveCount(0)
