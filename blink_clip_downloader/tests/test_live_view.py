@@ -442,6 +442,42 @@ async def test_start_session_port_bind_failure(
 
     with pytest.raises(LiveViewError, match="Could not open a local port"):
         await manager.start_session("Front Door")
+    # init_livestream() already opened an authenticated session against
+    # Blink's cloud, which holds a live view open on the camera itself —
+    # leaking it on a battery-powered camera is not merely untidy.
+    assert stream.stopped is True
+
+
+async def test_start_session_relay_failure_releases_the_stream(
+    manager: LiveViewManager, camera_registry: dict[str, Any]
+) -> None:
+    """Any relay start failure, not just a port bind, has to release it."""
+    stream = _FakeStream()
+    stream.start = AsyncMock(side_effect=RuntimeError("relay refused"))
+    camera_registry["Front Door"] = _make_camera(stream)
+
+    with pytest.raises(LiveViewError, match="Could not start live view"):
+        await manager.start_session("Front Door")
+    assert stream.stopped is True
+
+
+async def test_teardown_completes_even_if_stopping_the_stream_raises(
+    manager: LiveViewManager, camera_registry: dict[str, Any]
+) -> None:
+    """self._session is already cleared by then, so a raise here would
+    strand the session's background tasks and its temp directory with
+    nothing left holding a reference to clean them up."""
+    stream = _FakeStream()
+    stream.stop = MagicMock(side_effect=RuntimeError("already closed"))
+    camera_registry["Front Door"] = _make_camera(stream)
+
+    status = await manager.start_session("Front Door")
+    hls_dir = manager.get_hls_dir(status.session_id)
+    assert hls_dir is not None
+
+    assert await manager.stop_session() is True
+    assert manager.get_status().active is False
+    assert not hls_dir.exists()
 
 
 # ---------------------------------------------------------------------------

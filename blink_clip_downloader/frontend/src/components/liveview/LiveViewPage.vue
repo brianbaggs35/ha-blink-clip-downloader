@@ -124,8 +124,18 @@ async function sendHeartbeat() {
 }
 
 async function pollStatus() {
+  // Both stop() and selectCamera() bump selectGeneration, so a poll issued
+  // before either one can tell that its answer is now about a session the
+  // user has already left. Without this, a status poll still in flight when
+  // Stop is pressed resolves afterwards, re-sources the player from the
+  // playlist of a session the server has just torn down, and the stream the
+  // user stopped appears to come back — the same "async outlives the thing
+  // it describes" shape this file has had to fix before.
+  const generation = selectGeneration
   try {
-    applyStatus(await getLiveViewStatus())
+    const s = await getLiveViewStatus()
+    if (unmounted || generation !== selectGeneration) return
+    applyStatus(s)
   } catch {
     // Transient network hiccup — the next poll retries.
   }
