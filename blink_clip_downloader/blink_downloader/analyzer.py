@@ -1629,10 +1629,42 @@ class BaseAnalyzer(abc.ABC):
         tracks = getattr(vision_hints, "tracks", None)
         if not tracks:
             return None
+        try:
+            return self._assess_security_locked(
+                camera,
+                vision_hints,
+                clip_timestamp,
+                scene_deviation,
+                frames_analyzed,
+                target_frames,
+            )
+        except Exception:
+            # This layer is additive: every optional stage in the pipeline
+            # reports itself unavailable rather than raising, and a bug in
+            # the security rules must not turn a perfectly analyzable clip
+            # into a failed, retried one. Logged loudly because unlike the
+            # CV stages this is our own pure code — an exception here is a
+            # defect, not a missing dependency.
+            _LOGGER.exception(
+                "Security assessment failed for camera %r; continuing without it",
+                camera,
+            )
+            return None
+
+    def _assess_security_locked(
+        self,
+        camera: str,
+        vision_hints: Any,
+        clip_timestamp: str,
+        scene_deviation: float | None,
+        frames_analyzed: int,
+        target_frames: int,
+    ) -> SecurityOutcome:
+        """The assessment itself — see :meth:`_assess_security`'s guard."""
         posture = vision_hints.posture
         return assess_clip(
             camera=camera,
-            tracks=tracks,
+            tracks=vision_hints.tracks,
             frame_interval=vision_hints.scan_interval or self._frame_interval,
             frame_count=vision_hints.scan_frame_count,
             frames_analyzed=frames_analyzed,
@@ -2555,13 +2587,19 @@ class BaseAnalyzer(abc.ABC):
         # can see the car (all cameras when car_cameras is empty, otherwise only
         # the cameras explicitly listed in car_cameras). car_applies was
         # already computed above, before the scene-baseline block.
+        vehicle_absent = self._vehicle_absent(vision_hints)
         car_segment = self._car_protection_segment(
-            camera, car_applies, vehicle_absent=self._vehicle_absent(vision_hints)
+            camera, car_applies, vehicle_absent=vehicle_absent
         )
         if car_segment:
             parts.append(car_segment)
 
-        parts.append(self._output_rules_segment(camera, car_applies))
+        # Same absence check: the OUTPUT RULES example phrase talks about
+        # distance from "the car", which is the wrong thing to model a
+        # description on when the protected vehicle is not in frame.
+        parts.append(
+            self._output_rules_segment(camera, car_applies and not vehicle_absent)
+        )
 
         return "".join(parts)
 

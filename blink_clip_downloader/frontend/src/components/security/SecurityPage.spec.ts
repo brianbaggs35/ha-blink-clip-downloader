@@ -225,6 +225,130 @@ describe('SecurityPage', () => {
     expect(toast.isError).toBe(true)
   })
 
+  it('ignores a slow earlier request that resolves after a newer one', async () => {
+    // Changing two filters quickly, or a refresh tick landing mid-request,
+    // would otherwise repopulate the tab with rows for a filter the user
+    // has already moved off.
+    const resolvers: ((value: Response) => void)[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/security/timeline')) {
+          return new Promise<Response>((resolve) => resolvers.push(resolve))
+        }
+        if (url.startsWith('/api/security/stats')) {
+          return Promise.resolve(jsonResponse({ by_severity: {}, total: 0, days: 7 }))
+        }
+        return Promise.resolve(jsonResponse([]))
+      }),
+    )
+    const wrapper = mount(SecurityPage)
+    await flushPromises()
+
+    await wrapper.findAllComponents(Select)[0].setValue('Back Yard')
+    await flushPromises()
+    expect(resolvers).toHaveLength(2)
+
+    // Newest request answers first, then the stale one.
+    resolvers[1](jsonResponse({ events: [row({ camera: 'Back Yard' })], total: 1 }))
+    await flushPromises()
+    resolvers[0](jsonResponse({ events: [row({ camera: 'Stale' })], total: 9 }))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Back Yard')
+    expect(wrapper.text()).not.toContain('Stale')
+  })
+
+  it('lets a newer request stand when a slow earlier one fails', async () => {
+    // The failure belongs to a filter the user has already moved off —
+    // replacing their rows with an error state would be a lie about the
+    // filter they are actually looking at.
+    const rejecters: ((reason: Error) => void)[] = []
+    let call = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/security/timeline')) {
+          call += 1
+          if (call === 1) return new Promise<Response>((_resolve, reject) => rejecters.push(reject))
+          return Promise.resolve(jsonResponse({ events: [row({ camera: 'Back Yard' })], total: 1 }))
+        }
+        if (url.startsWith('/api/security/stats')) {
+          return Promise.resolve(jsonResponse({ by_severity: {}, total: 0, days: 7 }))
+        }
+        return Promise.resolve(jsonResponse([]))
+      }),
+    )
+    const wrapper = mount(SecurityPage)
+    await flushPromises()
+
+    await wrapper.findAllComponents(Select)[0].setValue('Back Yard')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Back Yard')
+
+    rejecters[0](new Error('down'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('Back Yard')
+    expect(wrapper.text()).not.toContain('Could not load security events')
+  })
+
+  it('drops a "load more" page fetched under a filter the user has left', async () => {
+    const pending: { resolve: (value: Response) => void; reject: (reason: Error) => void }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.includes('offset=') && !url.includes('offset=0')) {
+          return new Promise<Response>((resolve, reject) => pending.push({ resolve, reject }))
+        }
+        if (url.startsWith('/api/security/timeline')) {
+          return Promise.resolve(jsonResponse({ events: [row()], total: 2 }))
+        }
+        if (url.startsWith('/api/security/stats')) {
+          return Promise.resolve(jsonResponse({ by_severity: {}, total: 0, days: 7 }))
+        }
+        if (url === '/api/cameras') {
+          return Promise.resolve(jsonResponse([{ camera: 'Driveway' }, { camera: 'Back Yard' }]))
+        }
+        return Promise.resolve(jsonResponse([]))
+      }),
+    )
+    const wrapper = mount(SecurityPage)
+    await flushPromises()
+
+    await wrapper
+      .findAllComponents(Button)
+      .filter((b) => b.props('label') === 'Load more')[0]
+      .trigger('click')
+    await flushPromises()
+    // The filter moves on while that page is still in flight.
+    await wrapper.findAllComponents(Select)[0].setValue('Back Yard')
+    await flushPromises()
+
+    pending[0].resolve(jsonResponse({ events: [row({ id: 2, clip_id: 'c2', camera: 'Stale' })], total: 9 }))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Stale')
+    // ...and the button it came from is usable again rather than stuck
+    // spinning on a request whose answer was thrown away.
+    expect(
+      wrapper
+        .findAllComponents(Button)
+        .filter((b) => b.props('label') === 'Load more')[0]
+        .props('loading'),
+    ).toBe(false)
+
+    // ...and a stale page that fails is equally not the user's problem.
+    await wrapper
+      .findAllComponents(Button)
+      .filter((b) => b.props('label') === 'Load more')[0]
+      .trigger('click')
+    await flushPromises()
+    await wrapper.findAllComponents(Select)[0].setValue(null)
+    await flushPromises()
+    pending[1].reject(new Error('down'))
+    await flushPromises()
+    expect(useToastStore().message).toBe('')
+  })
+
   it('reloads on the global refresh tick', async () => {
     await mountPage({ rows: [row()] })
     const before = timelineCalls.length

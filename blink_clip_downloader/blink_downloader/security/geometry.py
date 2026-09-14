@@ -116,8 +116,9 @@ def box_iou(a: Box, b: Box) -> float:
     intersection = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
     if intersection <= 0.0:
         return 0.0
-    union = box_area(a) + box_area(b) - intersection
-    return intersection / union if union > 0 else 0.0
+    # Safe to divide: a non-zero intersection means both boxes are at least
+    # that large, so the union is at least the intersection.
+    return intersection / (box_area(a) + box_area(b) - intersection)
 
 
 def point_in_polygon(x: float, y: float, points: list[tuple[float, float]]) -> bool:

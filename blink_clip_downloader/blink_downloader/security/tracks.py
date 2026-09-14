@@ -71,6 +71,14 @@ _STATIONARY_DRIFT = 0.05
 #: what this matters most for, overlaps itself almost exactly.
 _ASSOCIATION_IOU = 0.3
 
+#: How many sampled frames a pseudo-track may go unseen before a later
+#: detection at the same spot counts as a *different* object. Without this,
+#: one person standing at the door at the start of a clip and a different
+#: one standing there at the end merge into a single track whose apparent
+#: dwell spans the whole clip — which reads as loitering when nobody
+#: loitered. One missed frame is tolerated; a long absence is not.
+_ASSOCIATION_MAX_FRAME_GAP = 2
+
 #: Share of a subject's own box that must fall inside a zone's bounding box
 #: for them to count as being in it even when their feet are not. A zone
 #: drawn tightly around a parked car sits *above* the ground a person stands
@@ -189,14 +197,6 @@ class ObjectTrack:
     def mean_confidence(self) -> float:
         """Mean detector confidence across this track's sightings."""
         return sum(p.confidence for p in self.points) / len(self.points)
-
-    @property
-    def peak_area_fraction(self) -> float:
-        """Largest share of the frame's area this object ever occupied."""
-        frame_px = self.frame_size[0] * self.frame_size[1]
-        if frame_px <= 0:
-            return 0.0
-        return min(1.0, max(box_area(p.box) for p in self.points) / frame_px)
 
     @property
     def peak_height_fraction(self) -> float:
@@ -511,7 +511,7 @@ def _associate_untracked(detections: list[Detection]) -> list[tuple[int, Detecti
             for index, (_tid, last_box, last_frame) in enumerate(
                 open_tracks.get(label, [])
             )
-            if last_frame < frame_index
+            if 0 < frame_index - last_frame <= _ASSOCIATION_MAX_FRAME_GAP
         ]
         best = max(candidates, default=(0.0, -1))
         if best[0] >= _ASSOCIATION_IOU:

@@ -3850,14 +3850,16 @@ async def test_security_events_are_deleted_with_their_clip(db: ClipDatabase) -> 
 
 
 async def _seed_timeline(db: ClipDatabase) -> None:
+    # Recent timestamps: get_security_stats' window is relative to now.
+    now = datetime.now(UTC)
     await db.add_clip(
-        _make_clip("c1", "Front Door", timestamp="2024-06-01T08:00:00+00:00")
+        _make_clip("c1", "Front Door", timestamp=(now - timedelta(hours=3)).isoformat())
     )
     await db.add_clip(
-        _make_clip("c2", "Driveway", timestamp="2024-06-02T08:00:00+00:00")
+        _make_clip("c2", "Driveway", timestamp=(now - timedelta(hours=2)).isoformat())
     )
     await db.add_clip(
-        _make_clip("c3", "Driveway", timestamp="2024-06-03T08:00:00+00:00")
+        _make_clip("c3", "Driveway", timestamp=(now - timedelta(hours=1)).isoformat())
     )
     await db.save_security_events(
         "c1", "Front Door", [_event("subject_present", "routine", 0.9)]
@@ -3898,7 +3900,7 @@ async def test_timeline_keeps_each_clips_most_severe_event(db: ClipDatabase) -> 
 async def test_timeline_includes_clip_metadata(db: ClipDatabase) -> None:
     await _seed_timeline(db)
     first = (await db.get_security_timeline())["events"][0]
-    assert first["clip_timestamp"] == "2024-06-03T08:00:00+00:00"
+    assert first["clip_id"] == "c3"
     assert first["file_path"]
     assert first["starred"] is False
 
@@ -3933,15 +3935,20 @@ async def test_timeline_paginates(db: ClipDatabase) -> None:
     assert page["total"] == 3
 
 
-async def test_timeline_filters_by_period(db: ClipDatabase) -> None:
-    await db.add_clip(_make_clip("old"))
+async def test_timeline_filters_by_when_the_clip_was_recorded(
+    db: ClipDatabase,
+) -> None:
+    """Not by when it was analyzed: the list is ordered by clip time, and a
+    backlog processed overnight would otherwise file three-day-old footage
+    under "Today" while sorting it among today's clips."""
+    await db.add_clip(_make_clip("old", timestamp="2020-01-01T08:00:00+00:00"))
     await db.save_security_events("old", "Front Door", [_event()])
-    assert db._pool is not None
-    await db._pool.execute(
-        "UPDATE security_events SET created_at='2020-01-01T00:00:00+00:00'"
-    )
     assert (await db.get_security_timeline(period="today"))["total"] == 0
     assert (await db.get_security_timeline())["total"] == 1
+
+    await db.add_clip(_make_clip("new", timestamp=datetime.now(UTC).isoformat()))
+    await db.save_security_events("new", "Front Door", [_event()])
+    assert (await db.get_security_timeline(period="today"))["total"] == 1
 
 
 async def test_timeline_without_a_pool_is_empty() -> None:
@@ -3960,14 +3967,12 @@ async def test_security_stats_counts_clips_by_severity(db: ClipDatabase) -> None
     assert stats["days"] == 7
 
 
-async def test_security_stats_ignores_events_outside_the_window(
+async def test_security_stats_ignores_clips_outside_the_window(
     db: ClipDatabase,
 ) -> None:
     await _seed_timeline(db)
     assert db._pool is not None
-    await db._pool.execute(
-        "UPDATE security_events SET created_at='2020-01-01T00:00:00+00:00'"
-    )
+    await db._pool.execute("UPDATE clips SET timestamp='2020-01-01T00:00:00+00:00'")
     assert (await db.get_security_stats())["total"] == 0
 
 
@@ -4195,3 +4200,104 @@ async def test_save_analysis_records_the_detection_timing_and_frame_size(
     (stored,) = (await db.get_detected_object_boxes("c1"))["objects"]
     assert stored["offset_seconds"] == pytest.approx(7.5)
     assert stored["box"] == pytest.approx([0.1, 0.1, 0.2, 0.5])
+
+
+# ======================================================================
+# Camera rename / replacement must carry the new tables too
+# ======================================================================
+
+
+async def test_rename_camera_moves_security_events(db: ClipDatabase) -> None:
+    """A renamed camera's events must follow it, or the Security tab's
+    camera filter silently loses everything recorded before the rename."""
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    await db.save_security_events("c1", "Front Door", [_event()])
+    assert await db.rename_camera("Front Door", "Porch") is True
+    (stored,) = await db.get_security_events("c1")
+    assert stored["camera"] == "Porch"
+    assert (await db.get_security_timeline(camera="Porch"))["total"] == 1
+
+
+async def test_rename_camera_carries_the_learned_vehicle_signature(
+    db: ClipDatabase,
+) -> None:
+    """Same camera, same car, same spot — only the name changed."""
+    await db.save_vehicle_signature("Front Door", _signature(6))
+    assert await db.rename_camera("Front Door", "Porch") is True
+    assert await db.get_vehicle_signature("Front Door") is None
+    moved = await db.get_vehicle_signature("Porch")
+    assert moved is not None
+    assert moved.sample_count == 6
+
+
+async def test_rename_camera_keeps_the_better_established_signature(
+    db: ClipDatabase,
+) -> None:
+    """A stub row already under the new name must not displace the real
+    history being carried across."""
+    await db.save_vehicle_signature("Front Door", _signature(9))
+    await db.save_vehicle_signature("Porch", _signature(1))
+    await db.rename_camera("Front Door", "Porch")
+    moved = await db.get_vehicle_signature("Porch")
+    assert moved is not None
+    assert moved.sample_count == 9
+
+
+async def test_rename_camera_without_a_signature_is_still_fine(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1", camera="Front Door"))
+    assert await db.rename_camera("Front Door", "Porch") is True
+    assert await db.get_vehicle_signature("Porch") is None
+
+
+async def test_replacing_a_camera_drops_its_learned_vehicle_signature(
+    db: ClipDatabase,
+) -> None:
+    """A replacement unit's field of view differs, so where the vehicle
+    "normally sits" is stale — and a signature pointing at the wrong part of
+    the new frame would keep confirming its own mistake."""
+    await db.save_vehicle_signature("Front Door", _signature(9))
+    await db.reset_camera_baselines("Front Door")
+    assert await db.get_vehicle_signature("Front Door") is None
+
+
+async def test_notified_badge_matches_the_risk_override_dispatch_exemption(
+    db: ClipDatabase,
+) -> None:
+    """AnalysisQueue skips the confidence threshold for an override-flagged
+    clip; a badge that still applied it would say "not notified" about a
+    notification that was actually sent."""
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "analyzed_at": datetime.now(UTC).isoformat(),
+            "is_suspicious": True,
+            "confidence": 0.2,
+            "risk_override_applied": True,
+        }
+    )
+    (clip,) = await db.get_clips(min_confidence=0.9)
+    assert clip["notified"] is True
+    assert len(await db.get_clips(min_confidence=0.9, notified_only=True)) == 1
+
+
+async def test_notified_badge_still_applies_the_threshold_without_an_override(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "analyzed_at": datetime.now(UTC).isoformat(),
+            "is_suspicious": True,
+            "confidence": 0.2,
+        }
+    )
+    (clip,) = await db.get_clips(min_confidence=0.9)
+    assert clip["notified"] is False

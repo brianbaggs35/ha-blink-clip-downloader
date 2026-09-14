@@ -17,13 +17,20 @@ function kind(label: string): string {
   return 'other'
 }
 
+// The modal keeps this mounted while stepping between clips, so two
+// fetches can be in flight at once and the slower, earlier one would
+// otherwise paint the previous clip's boxes over the current video.
+let requestSeq = 0
+
 async function load() {
+  const seq = ++requestSeq
   try {
-    objects.value = (await getClipDetections(props.clipId)).objects ?? []
+    const loaded = (await getClipDetections(props.clipId)).objects ?? []
+    if (seq === requestSeq) objects.value = loaded
   } catch {
     // Silent: the overlay is an extra, and a modal that pops an error
     // because an optional decoration failed is worse than one without it.
-    objects.value = []
+    if (seq === requestSeq) objects.value = []
   }
 }
 

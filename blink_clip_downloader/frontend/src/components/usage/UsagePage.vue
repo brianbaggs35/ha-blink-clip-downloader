@@ -44,13 +44,23 @@ const byModel = computed(() => usage.value?.by_model || [])
 const dailyRows = computed(() => usage.value?.daily || [])
 const modelsUsedCount = computed(() => new Set(byModel.value.map((m) => m.model).filter(Boolean)).size)
 
+// A 10s poll runs alongside Clear Stats' own reload, so an in-flight poll
+// started before the clear can resolve after it and paint the pre-clear
+// numbers straight back over the cleared ones. Same monotonic token
+// SecurityPage/LibraryPage use: capture it at the start, apply the result
+// only if it is still the newest request.
+let requestSeq = 0
+
 async function load() {
+  const seq = ++requestSeq
   try {
-    usage.value = await getAiUsage()
+    const result = await getAiUsage()
+    if (seq !== requestSeq) return
+    usage.value = result
   } catch {
     /* non-fatal — mirrors the pre-Vue UI's console.error-only handling */
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
 }
 

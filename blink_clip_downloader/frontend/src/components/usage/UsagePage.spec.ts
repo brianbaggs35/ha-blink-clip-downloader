@@ -324,6 +324,55 @@ describe('UsagePage', () => {
     wrapper.unmount()
   })
 
+  it('ignores a poll response that lands after Clear Stats emptied the stats', async () => {
+    // The 10s poll and Clear Stats' own reload are two concurrent loads: a
+    // poll issued just before the clear used to resolve after it and paint
+    // the pre-clear numbers straight back over the cleared ones.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let releaseStalePoll: (() => void) | undefined
+    let gets = 0
+    const cleared = baseUsage({
+      total_analyses: 0,
+      total_tokens: 0,
+      total_estimated_cost: 0,
+      by_model: [],
+      daily: [],
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, opts?: RequestInit) => {
+        if (opts?.method === 'DELETE') return Promise.resolve(jsonResponse({ cleared: true }))
+        gets += 1
+        if (gets === 2) {
+          return new Promise<Response>((resolve) => {
+            releaseStalePoll = () => resolve(jsonResponse(baseUsage()))
+          })
+        }
+        return Promise.resolve(jsonResponse(gets === 1 ? baseUsage() : cleared))
+      }),
+    )
+    const wrapper = mount(UsagePage)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('No analysis data yet')
+
+    vi.advanceTimersByTime(10_000)
+    await flushPromises()
+    expect(releaseStalePoll).toBeDefined()
+
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.find('button').trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(wrapper.text()).toContain('No analysis data yet')
+
+    releaseStalePoll?.()
+    await flushPromises()
+    expect(wrapper.text()).toContain('No analysis data yet')
+    wrapper.unmount()
+  })
+
   it('does not clear when declined', async () => {
     vi.stubGlobal(
       'fetch',
