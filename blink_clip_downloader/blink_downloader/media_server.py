@@ -67,6 +67,10 @@ _LIVEVIEW_FILENAME_RE = re.compile(r"^(stream\.m3u8|seg_\d{5}\.ts)$")
 # explicitly via ?count=. Bounds ffmpeg's work and the JSON response size
 # (each frame is a base64 480px-wide JPEG) for an unusually long clip.
 _MAX_CLIP_FRAMES = 60
+#: Most pending feedback rows one "Train" press may consume. Each example
+#: costs a frame extraction and a paid Moondream API call, so this is a
+#: spend ceiling as much as a paging one — press it again for more.
+_MAX_FINETUNE_TRAIN_BATCH = 100
 _ARCHIVE_CLIPS_PAGE_SIZE = 50
 _MAX_ARCHIVE_CLIPS_PAGE_SIZE = 200
 
@@ -3376,7 +3380,16 @@ class MediaServer:
             body = await request.json()
         except Exception:  # noqa: BLE001
             body = {}
-        limit = int(body.get("limit", 10)) if isinstance(body, dict) else 10
+        # Bounded like every other limit on this server. Unclamped, a
+        # negative value reached Postgres as a negative LIMIT (a 500), a
+        # non-numeric one raised out of int() (also a 500), and a very large
+        # one would extract frames and spend a paid Moondream call for every
+        # pending feedback row in the database.
+        try:
+            limit = int(body.get("limit", 10)) if isinstance(body, dict) else 10
+        except (TypeError, ValueError):
+            limit = 10
+        limit = max(1, min(limit, _MAX_FINETUNE_TRAIN_BATCH))
 
         try:
             feedback_rows = await self._db.get_untrained_feedback(limit=limit)
