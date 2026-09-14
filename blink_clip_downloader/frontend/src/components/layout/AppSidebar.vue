@@ -26,6 +26,7 @@ export type TabName =
   | 'ai'
   | 'usage'
   | 'models'
+  | 'security'
   | 'vehicles'
   | 'biometrics'
   | 'storage'
@@ -40,6 +41,7 @@ const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'ai', label: 'AI', icon: 'tab-ai' },
   { name: 'usage', label: 'AI Usage', icon: 'tab-usage' },
   { name: 'models', label: 'Models', icon: 'tab-models' },
+  { name: 'security', label: 'Security', icon: 'tab-security' },
   { name: 'vehicles', label: 'Vehicles', icon: 'tab-vehicles' },
   { name: 'biometrics', label: 'Biometrics', icon: 'tab-biometrics' },
   { name: 'storage', label: 'Storage', icon: 'tab-storage' },

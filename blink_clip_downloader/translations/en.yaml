@@ -410,6 +410,43 @@ configuration:
       Optional Hugging Face access token used to authenticate computer-vision
       model downloads and increase Hugging Face Hub rate limits. Create one at
       https://huggingface.co/settings/tokens. Keep this secret.
+  ai_security_events_enabled:
+    name: Enable Structured Security Analysis
+    description: >-
+      Turn the object detector's per-frame boxes into tracked subjects,
+      security events (entered the protection zone, approached the vehicle,
+      lingered, possible contact, retreated) and a 0-100 risk score, and give
+      the AI that evidence to verify instead of asking it to work out the
+      geometry from stills. Also powers the Security tab's timeline. Adds no
+      extra model inference on top of Enhanced Detection; produces nothing
+      when that is off.
+  ai_temporal_scan_frames:
+    name: Behaviour Scan Frames
+    description: >-
+      How many evenly-spaced frames object detection runs over when building
+      the security analysis above. Trades detection cost against how much of a
+      clip's behaviour — how long someone stayed, whether they approached or
+      backed away — can be seen at all. Does not change how many frames the AI
+      model itself receives. Lower on very constrained hardware; 0 disables the
+      wider scan and makes reported durations unreliable.
+  ai_cv_concurrency:
+    name: Computer-Vision Concurrency
+    description: >-
+      How many heavy computer-vision stages may run at once across all clips
+      being analyzed. 1 is right for a Raspberry Pi 5 and is the default: these
+      stages already run one after another within a single clip, so this only
+      serializes a backlog that would contend for the same CPU anyway, while
+      stopping several large models from loading at the same moment. Raise only
+      on hardware with real spare capacity.
+  ai_risk_alert_threshold:
+    name: Risk Score Alert Threshold
+    description: >-
+      Risk score (0-100) at or above which a clip is flagged suspicious even
+      when the AI model judged it unremarkable. The default (75) covers the
+      critical band only — possible contact or impact with the protected
+      vehicle, backed by depth or segmentation evidence. Set to 0 to leave the
+      model's verdict final. This can only raise a flag the model missed, never
+      clear one it raised.
   mobile_app_target:
     name: Mobile App Target Entity
     description: >-

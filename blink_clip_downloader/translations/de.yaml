@@ -486,6 +486,36 @@ configuration:
       Computer-Vision-Modell-Downloads und zur Erhöhung der
       Hugging Face Hub-Ratenlimits. Erstelle eines unter
       https://huggingface.co/settings/tokens. Geheim halten.
+  ai_security_events_enabled:
+    name: Strukturierte Sicherheitsanalyse aktivieren
+    description: >-
+      Wandelt die Einzelbild-Boxen der Objekterkennung in verfolgte Personen,
+      Sicherheitsereignisse (Schutzzone betreten, dem Fahrzeug genähert,
+      verweilt, möglicher Kontakt, zurückgezogen) und eine Risikobewertung von
+      0-100 um und gibt der KI diese Belege zur Überprüfung, statt sie die
+      Geometrie aus Standbildern ableiten zu lassen. Versorgt auch die
+      Zeitleiste im Sicherheits-Tab. Erfordert keine zusätzliche
+      Modellinferenz.
+  ai_temporal_scan_frames:
+    name: Bilder für die Verhaltensanalyse
+    description: >-
+      Über wie viele gleichmäßig verteilte Bilder die Objekterkennung für die
+      obige Sicherheitsanalyse läuft. Wägt Rechenaufwand gegen die Menge des
+      erkennbaren Verhaltens ab. Ändert nicht, wie viele Bilder das KI-Modell
+      selbst erhält. 0 deaktiviert den erweiterten Scan.
+  ai_cv_concurrency:
+    name: Parallelität der Bildverarbeitung
+    description: >-
+      Wie viele rechenintensive Bildverarbeitungsstufen gleichzeitig über alle
+      Clips hinweg laufen dürfen. 1 ist für einen Raspberry Pi 5 richtig und
+      die Voreinstellung. Nur auf Hardware mit echten Reserven erhöhen.
+  ai_risk_alert_threshold:
+    name: Schwellenwert für Risiko-Alarm
+    description: >-
+      Risikobewertung (0-100), ab der ein Clip als verdächtig markiert wird,
+      auch wenn das KI-Modell ihn als unauffällig eingestuft hat. Der
+      Standardwert 75 deckt nur den kritischen Bereich ab. 0 lässt das Urteil
+      des Modells endgültig sein.
   mobile_app_target:
     name: Ziel-Entität der Mobil-App
     description: >-

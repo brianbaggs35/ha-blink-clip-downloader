@@ -38,7 +38,7 @@ from .notifier import HANotifier
 from .sqlite_migration import migrate_legacy_sqlite
 from .storage import StorageManager
 from .tracker import ClipTracker
-from .vision import VisionConfig, VisionPipeline
+from .vision import VisionConfig, VisionPipeline, configure_cv_concurrency
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -532,6 +532,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             frame_strategy=config.ai_frame_strategy,
             car_cameras=car_cameras,
             car_zones=car_zones or None,
+            security_events_enabled=config.ai_security_events_enabled,
+            risk_alert_threshold=config.ai_risk_alert_threshold,
             ollama_url=config.ollama_url,
             ollama_model=config.ollama_model,
             ollama_cloud_api_key=config.ollama_cloud_api_key,
@@ -548,7 +550,12 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         if self._analyzer is None:
             return
 
-        self._analyzer.attach_scene_baseline_db(self._db)
+        self._analyzer.attach_database(self._db)
+        # Applied before the first clip is analyzed: this caps how many heavy
+        # torch stages may be resident at once across every concurrent
+        # analysis, which on a Raspberry Pi is the difference between slow
+        # and unusable.
+        configure_cv_concurrency(config.ai_cv_concurrency)
         self._analyzer.attach_vision_pipeline(
             VisionPipeline(
                 VisionConfig(
@@ -557,6 +564,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     depth_estimation_model=config.ai_depth_estimation_model,
                     face_recognition_enabled=config.ai_face_recognition_enabled,
                     hf_token=config.hf_token,
+                    temporal_scan_frames=config.ai_temporal_scan_frames,
+                    security_events_enabled=config.ai_security_events_enabled,
                 ),
                 db=self._db,
             )

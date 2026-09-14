@@ -20,7 +20,10 @@ from typing import TYPE_CHECKING, Any
 import asyncpg
 from asyncpg.pool import PoolConnectionProxy
 
+from .security import SecurityEvent, VehicleSignature
+
 if TYPE_CHECKING:
+    from .analyzer import AnalysisResult
     from .vision import DetectedObject
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,7 +90,15 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     prompt_text                  TEXT    DEFAULT '',
     face_bypass_applied          BOOLEAN DEFAULT FALSE,
     face_bypass_names            TEXT    DEFAULT '',
-    approved_faces_seen          BOOLEAN DEFAULT FALSE
+    approved_faces_seen          BOOLEAN DEFAULT FALSE,
+    -- Deterministic security assessment (see blink_downloader/security).
+    -- Stored alongside the model's own verdict rather than replacing it:
+    -- the two are independent judgements and the UI shows both.
+    risk_score                   DOUBLE PRECISION DEFAULT 0.0,
+    severity                     TEXT    DEFAULT 'routine',
+    event_type                   TEXT    DEFAULT '',
+    evidence_quality             DOUBLE PRECISION DEFAULT 0.0,
+    risk_override_applied        BOOLEAN DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
@@ -112,6 +123,58 @@ CREATE TABLE IF NOT EXISTS detected_objects (
     frame_index   INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_detected_objects_clip ON detected_objects (clip_id);
+
+-- Structured security events produced by the deterministic layer (see
+-- blink_downloader/security). Same replace-not-accumulate semantics as
+-- detected_objects above: a re-analyze deletes and re-inserts this clip's
+-- rows rather than piling up every past run's conclusions.
+--
+-- risk_score and evidence_quality are deliberately denormalized onto every
+-- row rather than joined from analysis_results. The Security tab's timeline
+-- filters and sorts on them across every camera, and the alternative is a
+-- join against "the most recent analysis row per clip", which is both
+-- slower and — because analysis_results is append-only history — ambiguous
+-- in exactly the case that matters (a clip analyzed more than once).
+CREATE TABLE IF NOT EXISTS security_events (
+    id               INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    clip_id          TEXT    NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    camera           TEXT    NOT NULL,
+    event_type       TEXT    NOT NULL,
+    severity         TEXT    NOT NULL,
+    confidence       DOUBLE PRECISION DEFAULT 0.0,
+    risk_score       DOUBLE PRECISION DEFAULT 0.0,
+    evidence_quality DOUBLE PRECISION DEFAULT 0.0,
+    detail           TEXT    DEFAULT '',
+    subject_label    TEXT    DEFAULT '',
+    track_id         INTEGER,
+    asset_name       TEXT    DEFAULT '',
+    asset_type       TEXT    DEFAULT '',
+    start_offset     DOUBLE PRECISION DEFAULT 0.0,
+    end_offset       DOUBLE PRECISION DEFAULT 0.0,
+    evidence         TEXT    DEFAULT '{}',
+    created_at       TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_security_events_clip ON security_events (clip_id);
+CREATE INDEX IF NOT EXISTS idx_security_events_camera ON security_events (camera);
+CREATE INDEX IF NOT EXISTS idx_security_events_severity
+    ON security_events (severity, created_at DESC);
+
+-- What each camera has learned about where its protected vehicle sits and
+-- what colour it is (see blink_downloader/security/vehicles.py). This is
+-- what lets the add-on tell your car from the one parked beside it when the
+-- drawn zone alone cannot — on a shared driveway or in an apartment car
+-- park, both cars overlap the zone and only the accumulated parking habit
+-- separates them. box is a JSON-encoded normalized [x1, y1, x2, y2] so it
+-- survives a change of frame resolution; histogram is a JSON list of floats.
+-- Per camera, not per clip: a camera that never sees a protected vehicle
+-- simply never gets a row.
+CREATE TABLE IF NOT EXISTS camera_vehicle_signatures (
+    camera       TEXT PRIMARY KEY,
+    box          TEXT NOT NULL,
+    histogram    TEXT NOT NULL DEFAULT '[]',
+    sample_count INTEGER DEFAULT 0,
+    updated_at   TEXT NOT NULL
+);
 
 -- Single-row marker for the AI Usage tab's "Clear Stats" button: usage
 -- queries only aggregate analysis_results rows analyzed after reset_at,
@@ -293,6 +356,11 @@ ALTER TABLE gdrive_upload_queue ADD COLUMN IF NOT EXISTS folder_id TEXT DEFAULT 
 DROP INDEX IF EXISTS idx_battery_history_camera;
 CREATE INDEX IF NOT EXISTS idx_battery_history_camera ON battery_history (camera, id DESC);
 ALTER TABLE analysis_queue ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS risk_score DOUBLE PRECISION DEFAULT 0.0;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'routine';
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS event_type TEXT DEFAULT '';
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS evidence_quality DOUBLE PRECISION DEFAULT 0.0;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS risk_override_applied BOOLEAN DEFAULT FALSE;
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -439,6 +507,48 @@ def _suspicious_period_bounds(period: str | None) -> tuple[str | None, str | Non
     if period == "month":
         return _local_day_bounds(30)[0], None
     return None, None
+
+
+#: Severity names in ascending order, mirroring
+#: ``security.events.Severity``. Kept as plain strings because severity is
+#: stored as text and this module must not depend on the security package's
+#: enum ordering staying in lockstep with a column's contents written by an
+#: older build.
+_SEVERITY_ORDER: tuple[str, ...] = ("routine", "noteworthy", "suspicious", "critical")
+
+#: SQL expression ranking a ``security_events.severity`` value, so "most
+#: severe event for this clip" and "at least this severe" can both be
+#: answered in the database rather than by fetching everything and sorting
+#: in Python.
+_SEVERITY_RANK_SQL = (
+    "CASE se.severity "
+    + " ".join(
+        f"WHEN '{name}' THEN {rank}" for rank, name in enumerate(_SEVERITY_ORDER)
+    )
+    + " ELSE 0 END"
+)
+
+
+def _severities_at_or_above(severity: str) -> list[str]:
+    """Severity names at least as severe as *severity*.
+
+    An unrecognized name matches everything rather than nothing — a filter
+    this build doesn't understand must not silently hide a critical event.
+    """
+    try:
+        index = _SEVERITY_ORDER.index(severity)
+    except ValueError:
+        return list(_SEVERITY_ORDER)
+    return list(_SEVERITY_ORDER[index:])
+
+
+def _decode_security_event(row: dict[str, Any]) -> dict[str, Any]:
+    """Turn a stored row into the API's event shape, decoding its evidence."""
+    try:
+        row["evidence"] = json.loads(row.get("evidence") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        row["evidence"] = {}
+    return row
 
 
 def _suspicious_clips_where(
@@ -1429,8 +1539,10 @@ class ClipDatabase:
                    tokens_prompt, tokens_completion, anomaly_score,
                    escalation_model, escalation_tokens_prompt, escalation_tokens_completion,
                    escalation_provider, prompt_text, face_bypass_applied, face_bypass_names,
-                   approved_faces_seen)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   approved_faces_seen, risk_score, severity, event_type,
+                   evidence_quality, risk_override_applied)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?)
                 """
             ),
             self._res_str(result, "clip_id"),
@@ -1454,6 +1566,30 @@ class ClipDatabase:
             bool(result.get("face_bypass_applied")),
             self._res_str(result, "face_bypass_names"),
             bool(result.get("approved_faces_seen")),
+            self._res_float(result, "risk_score"),
+            self._res_str(result, "severity") or "routine",
+            self._res_str(result, "event_type"),
+            self._res_float(result, "evidence_quality"),
+            bool(result.get("risk_override_applied")),
+        )
+
+    async def save_analysis(self, result: AnalysisResult) -> None:
+        """Persist one analysis run in full.
+
+        The verdict row, its object detections, and its security events are
+        three tables that must always be written together — a clip whose
+        security events are left over from a previous run reads as a
+        different, older event in the timeline than the verdict beside it.
+        Every caller goes through here rather than remembering all three.
+        """
+        await self.add_analysis_result(result.to_dict())
+        await self.save_detected_objects(result.clip_id, result.detected_objects)
+        await self.save_security_events(
+            result.clip_id,
+            result.camera,
+            result.security_events,
+            risk_score=result.risk_score,
+            evidence_quality=result.evidence_quality,
         )
 
     async def get_analysis_for_clip(self, clip_id: str) -> dict[str, Any] | None:
@@ -1716,6 +1852,245 @@ class ClipDatabase:
             clip_id,
         )
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Security events (see blink_downloader/security)
+    # ------------------------------------------------------------------
+
+    async def save_security_events(
+        self,
+        clip_id: str,
+        camera: str,
+        events: list[SecurityEvent],
+        risk_score: float = 0.0,
+        evidence_quality: float = 0.0,
+    ) -> None:
+        """Replace the stored security events for *clip_id*.
+
+        Replace, not accumulate — a re-analyze must leave exactly the latest
+        conclusions behind rather than a pile of every past run's, which
+        would show the same clip several times over in the timeline. A clip
+        analyzed with the security layer off, or one where nothing was
+        detected, simply clears any stale rows and inserts nothing.
+        """
+        if self._pool is None:
+            return
+        now = datetime.now(UTC).isoformat()
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                _qm("DELETE FROM security_events WHERE clip_id=?"), clip_id
+            )
+            if events:
+                await conn.executemany(
+                    _qm(
+                        """
+                        INSERT INTO security_events
+                          (clip_id, camera, event_type, severity, confidence,
+                           risk_score, evidence_quality, detail, subject_label,
+                           track_id, asset_name, asset_type, start_offset,
+                           end_offset, evidence, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """
+                    ),
+                    [
+                        (
+                            clip_id,
+                            camera,
+                            str(e.event_type),
+                            str(e.severity),
+                            e.confidence,
+                            risk_score,
+                            evidence_quality,
+                            e.detail,
+                            e.subject_label,
+                            e.track_id,
+                            e.asset_name,
+                            e.asset_type,
+                            e.start_offset,
+                            e.end_offset,
+                            json.dumps(e.evidence),
+                            now,
+                        )
+                        for e in events
+                    ],
+                )
+
+    async def get_security_events(self, clip_id: str) -> list[dict[str, Any]]:
+        """Every stored security event for one clip, earliest first."""
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm(
+                "SELECT * FROM security_events WHERE clip_id=? "
+                "ORDER BY start_offset ASC, id ASC"
+            ),
+            clip_id,
+        )
+        return [_decode_security_event(dict(r)) for r in rows]
+
+    async def get_security_timeline(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        camera: str | None = None,
+        min_severity: str | None = None,
+        period: str | None = None,
+    ) -> dict[str, Any]:
+        """One row per clip for the Security tab's timeline.
+
+        Collapsed to the clip's most severe event rather than listing every
+        event: a single visit legitimately produces half a dozen of them
+        (present, approached, near, lingered, retreated) and a timeline that
+        repeats one clip six times is a worse view of the property than no
+        timeline at all. The per-event detail is one request away via
+        :meth:`get_security_events`.
+        """
+        if self._pool is None:
+            return {"events": [], "total": 0}
+
+        where = ["1=1"]
+        params: list[Any] = []
+        if camera:
+            where.append("se.camera=?")
+            params.append(camera)
+        if min_severity:
+            allowed = _severities_at_or_above(min_severity)
+            where.append(f"se.severity IN ({', '.join(['?'] * len(allowed))})")
+            params.extend(allowed)
+        if period:
+            start, end = _suspicious_period_bounds(period)
+            if start is not None:
+                where.append("se.created_at >= ?")
+                params.append(start)
+            if end is not None:
+                where.append("se.created_at < ?")
+                params.append(end)
+        clause = " AND ".join(where)
+
+        total_row = await self._pool.fetchrow(
+            _qm(
+                f"SELECT COUNT(DISTINCT se.clip_id) AS total FROM security_events se "
+                f"WHERE {clause}"
+            ),
+            *params,
+        )
+        # DISTINCT ON keeps one row per clip, and the ORDER BY inside it is
+        # what decides *which* one: most severe first, then most confident.
+        rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT * FROM (
+                    SELECT DISTINCT ON (se.clip_id)
+                           se.*, c.timestamp AS clip_timestamp, c.file_path,
+                           c.starred, c.archived
+                    FROM security_events se
+                    JOIN clips c ON c.id = se.clip_id
+                    WHERE {clause}
+                    ORDER BY se.clip_id, {_SEVERITY_RANK_SQL} DESC,
+                             se.confidence DESC, se.id ASC
+                ) ranked
+                ORDER BY ranked.clip_timestamp DESC, ranked.id DESC
+                LIMIT ? OFFSET ?
+                """
+            ),
+            *params,
+            limit,
+            offset,
+        )
+        return {
+            "events": [_decode_security_event(dict(r)) for r in rows],
+            "total": int(total_row["total"]) if total_row else 0,
+        }
+
+    async def get_security_stats(self, days: int = 7) -> dict[str, Any]:
+        """Counts by severity over the last *days*, for the tab's header."""
+        if self._pool is None:
+            return {"by_severity": {}, "total": 0, "days": days}
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT severity, COUNT(DISTINCT clip_id) AS count
+                FROM security_events
+                WHERE created_at >= ?
+                GROUP BY severity
+                """
+            ),
+            cutoff,
+        )
+        by_severity = {str(r["severity"]): int(r["count"]) for r in rows}
+        return {
+            "by_severity": by_severity,
+            "total": sum(by_severity.values()),
+            "days": days,
+        }
+
+    # ------------------------------------------------------------------
+    # Learned protected-vehicle signatures (see security/vehicles.py)
+    # ------------------------------------------------------------------
+
+    async def get_vehicle_signature(self, camera: str) -> VehicleSignature | None:
+        """This camera's learned protected-vehicle signature, if it has one."""
+        if self._pool is None:
+            return None
+        row = await self._pool.fetchrow(
+            _qm("SELECT * FROM camera_vehicle_signatures WHERE camera=?"), camera
+        )
+        if row is None:
+            return None
+        try:
+            box = json.loads(row["box"])
+            histogram = json.loads(row["histogram"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(box, list) or len(box) != 4:
+            return None
+        return VehicleSignature(
+            box=(float(box[0]), float(box[1]), float(box[2]), float(box[3])),
+            histogram=tuple(float(v) for v in histogram),
+            sample_count=int(row["sample_count"] or 0),
+        )
+
+    async def save_vehicle_signature(
+        self, camera: str, signature: VehicleSignature
+    ) -> None:
+        """Store (or replace) this camera's learned vehicle signature."""
+        if self._pool is None:
+            return
+        await self._pool.execute(
+            _qm(
+                """
+                INSERT INTO camera_vehicle_signatures
+                  (camera, box, histogram, sample_count, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (camera) DO UPDATE SET
+                  box = EXCLUDED.box,
+                  histogram = EXCLUDED.histogram,
+                  sample_count = EXCLUDED.sample_count,
+                  updated_at = EXCLUDED.updated_at
+                """
+            ),
+            camera,
+            json.dumps(list(signature.box)),
+            json.dumps(list(signature.histogram)),
+            signature.sample_count,
+            datetime.now(UTC).isoformat(),
+        )
+
+    async def reset_vehicle_signature(self, camera: str) -> bool:
+        """Forget what this camera learned about the protected vehicle.
+
+        Needed whenever the premise changes — a new car, a rearranged
+        driveway, or a signature that has plainly latched onto the wrong
+        vehicle. Without a way to clear it, a bad signature would keep
+        reinforcing itself every time it "confirmed" its own mistake.
+        """
+        if self._pool is None:
+            return False
+        result = await self._pool.execute(
+            _qm("DELETE FROM camera_vehicle_signatures WHERE camera=?"), camera
+        )
+        return _affected(result) > 0
 
     # ------------------------------------------------------------------
     # Battery history (see battery_monitor.py)

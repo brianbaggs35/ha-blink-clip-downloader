@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
+import sys
+import types
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -30,7 +34,8 @@ _ALL_TABLES = (
     "clips, analysis_results, detected_objects, ai_usage_reset, "
     "analysis_queue, gdrive_upload_queue, "
     "camera_baselines, camera_duration_stats, camera_scene_baselines, "
-    "analysis_feedback, face_enrollments, battery_history"
+    "analysis_feedback, face_enrollments, battery_history, "
+    "security_events, camera_vehicle_signatures"
 )
 
 
@@ -146,3 +151,68 @@ def options_file(tmp_path: Path) -> Path:
     f = tmp_path / "options.json"
     f.write_text(json.dumps(opts))
     return f
+
+
+@pytest.fixture
+def real_cv2(monkeypatch: pytest.MonkeyPatch):
+    """Install a small, genuinely-working stand-in for the ``cv2`` functions
+    the vision module's pure-image helpers use.
+
+    OpenCV is part of the optional ``vision`` extra and is deliberately not
+    installed for the test suite (see pyproject.toml), so the heavier stages
+    are exercised against ``MagicMock``. That is fine for plumbing, but it
+    proves nothing about code whose whole job is arithmetic on pixels —
+    whether two colours actually separate, whether a lighting shift actually
+    cancels out. This fixture backs those few calls with numpy and Pillow
+    instead, so the real code path runs on real image data.
+
+    Colour conventions follow OpenCV's: images are BGR, and hue spans
+    0-179 rather than 0-255.
+    """
+    import numpy as np
+    from PIL import Image
+
+    cv2: Any = types.ModuleType("cv2")
+    cv2.IMREAD_COLOR = 1
+    cv2.COLOR_BGR2HSV = 40
+    cv2.COLOR_BGR2GRAY = 6
+
+    def imdecode(buffer, _flag):
+        try:
+            with Image.open(io.BytesIO(bytes(buffer))) as img:
+                return np.asarray(img.convert("RGB"))[:, :, ::-1].copy()
+        except Exception:  # noqa: BLE001 - mirrors cv2's "returns None" contract
+            return None
+
+    def cvt_color(img, code):
+        rgb = Image.fromarray(img[:, :, ::-1].copy())
+        if code == cv2.COLOR_BGR2GRAY:
+            return np.asarray(rgb.convert("L"))
+        hsv = np.asarray(rgb.convert("HSV")).astype("float32")
+        hsv[:, :, 0] = hsv[:, :, 0] * 179.0 / 255.0
+        return hsv.astype("uint8")
+
+    def calc_hist(images, channels, _mask, hist_size, ranges):
+        img = images[0]
+        first = img[:, :, channels[0]].ravel()
+        second = img[:, :, channels[1]].ravel()
+        hist, _, _ = np.histogram2d(
+            first,
+            second,
+            bins=hist_size,
+            range=[[ranges[0], ranges[1]], [ranges[2], ranges[3]]],
+        )
+        return hist.astype("float32")
+
+    def resize(img, size):
+        width, height = size
+        return np.asarray(
+            Image.fromarray(img).resize((width, height), Image.Resampling.BILINEAR)
+        )
+
+    cv2.imdecode = imdecode
+    cv2.cvtColor = cvt_color
+    cv2.calcHist = calc_hist
+    cv2.resize = resize
+    monkeypatch.setitem(sys.modules, "cv2", cv2)
+    return cv2

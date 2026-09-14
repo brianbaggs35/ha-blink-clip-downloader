@@ -166,6 +166,74 @@ export interface AnalysisResultDict {
   face_bypass_applied: boolean
   face_bypass_names: string
   detected_objects?: DetectedObjectSummary[]
+  // Deterministic security assessment (see blink_downloader/security).
+  // Zero/absent when the security layer produced nothing for this clip —
+  // the optional object-detection pipeline is off, or nothing relevant was
+  // detected.
+  risk_score?: number
+  severity?: SecuritySeverity
+  event_type?: string
+  evidence_quality?: number
+  risk_override_applied?: boolean
+  security_events?: SecurityEventRow[]
+}
+
+/** Ascending order — the same four bands the backend scores into. */
+export type SecuritySeverity = 'routine' | 'noteworthy' | 'suspicious' | 'critical'
+
+export const SECURITY_SEVERITIES: SecuritySeverity[] = ['routine', 'noteworthy', 'suspicious', 'critical']
+
+/** One structured thing the deterministic layer believes happened.
+ *
+ * `confidence` is how sure the *detector* is given the evidence it had;
+ * `evidence_quality` is how good that evidence was in the first place. They
+ * are deliberately separate — see the backend's evidence.py. */
+export interface SecurityEventRow {
+  id: number
+  clip_id: string
+  camera: string
+  event_type: string
+  severity: SecuritySeverity
+  confidence: number
+  risk_score: number
+  evidence_quality: number
+  detail: string
+  subject_label: string
+  track_id: number | null
+  asset_name: string
+  asset_type: string
+  start_offset: number
+  end_offset: number
+  evidence: Record<string, unknown>
+  created_at: string
+}
+
+/** A timeline row: one clip, represented by its most severe event. */
+export type SecurityTimelineRow = SecurityEventRow & {
+  clip_timestamp: string
+  file_path: string
+  starred: boolean
+  archived: boolean
+}
+
+export interface SecurityTimelineResponse {
+  events: SecurityTimelineRow[]
+  total: number
+}
+
+export interface SecurityStats {
+  by_severity: Partial<Record<SecuritySeverity, number>>
+  total: number
+  days: number
+}
+
+/** What a camera has learned about where its protected vehicle sits. */
+export interface VehicleSignatureInfo {
+  camera: string
+  learned: boolean
+  established?: boolean
+  sample_count: number
+  box?: number[]
 }
 
 // One label's aggregate from the optional computer-vision object-detection

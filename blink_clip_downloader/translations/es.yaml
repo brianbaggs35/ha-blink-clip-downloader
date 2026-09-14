@@ -475,6 +475,37 @@ configuration:
       descargas de modelos de visión por computador y aumentar los
       límites de tasa del Hugging Face Hub. Crea uno en
       https://huggingface.co/settings/tokens. Mantenlo en secreto.
+  ai_security_events_enabled:
+    name: Activar análisis de seguridad estructurado
+    description: >-
+      Convierte los cuadros por fotograma del detector de objetos en sujetos
+      rastreados, eventos de seguridad (entró en la zona protegida, se acercó
+      al vehículo, merodeó, posible contacto, se retiró) y una puntuación de
+      riesgo de 0-100, y le da a la IA esa evidencia para verificar en lugar de
+      pedirle que deduzca la geometría de imágenes fijas. También alimenta la
+      línea de tiempo de la pestaña Seguridad. No añade inferencia de modelo
+      adicional.
+  ai_temporal_scan_frames:
+    name: Fotogramas de análisis de comportamiento
+    description: >-
+      Sobre cuántos fotogramas equiespaciados se ejecuta la detección de
+      objetos para el análisis anterior. Equilibra el coste de detección con
+      cuánto comportamiento del clip puede verse. No cambia cuántos fotogramas
+      recibe el modelo de IA. 0 desactiva el análisis ampliado.
+  ai_cv_concurrency:
+    name: Concurrencia de visión por computador
+    description: >-
+      Cuántas etapas pesadas de visión por computador pueden ejecutarse a la
+      vez en todos los clips analizados. 1 es lo adecuado para una Raspberry Pi
+      5 y es el valor por defecto. Auméntalo solo en hardware con capacidad
+      sobrante real.
+  ai_risk_alert_threshold:
+    name: Umbral de alerta por puntuación de riesgo
+    description: >-
+      Puntuación de riesgo (0-100) a partir de la cual un clip se marca como
+      sospechoso aunque el modelo de IA lo considerase normal. El valor por
+      defecto (75) cubre solo la banda crítica. Ponlo a 0 para que el veredicto
+      del modelo sea definitivo.
   mobile_app_target:
     name: Entidad de destino de la app móvil
     description: >-

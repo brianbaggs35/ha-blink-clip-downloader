@@ -11,6 +11,7 @@ import type { CameraConfig } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
+import VehicleSignatureCard from './VehicleSignatureCard.vue'
 import VehicleZonePicker from './VehicleZonePicker.vue'
 
 const toast = useToastStore()
@@ -168,13 +169,15 @@ const showInactiveWarning = computed(() => carCameras.value.length > 0 && !prote
               >Protected vehicle visible from this camera</label
             >
           </div>
-          <VehicleZonePicker
-            v-if="cfg.is_car_camera"
-            :camera="cfg.camera"
-            :model-value="cfg.car_zone"
-            class="zone-picker"
-            @update:model-value="setZone(cfg, $event)"
-          />
+          <template v-if="cfg.is_car_camera">
+            <VehicleZonePicker
+              :camera="cfg.camera"
+              :model-value="cfg.car_zone"
+              class="zone-picker"
+              @update:model-value="setZone(cfg, $event)"
+            />
+            <VehicleSignatureCard :camera="cfg.camera" />
+          </template>
         </template>
       </Card>
     </div>

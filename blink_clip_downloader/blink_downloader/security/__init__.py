@@ -34,6 +34,7 @@ from .narrative import (
     build_vehicle_identity_segment,
     summarize_assessment,
 )
+from .pipeline import SecurityOutcome, assess_clip
 from .scoring import (
     RiskAssessment,
     RiskFactor,
@@ -87,12 +88,14 @@ __all__ = [
     "SecurityEvent",
     "SecurityEventDetector",
     "SecurityEventType",
+    "SecurityOutcome",
     "Severity",
     "TrackPoint",
     "VehicleCandidate",
     "VehicleIdentification",
     "VehicleSignature",
     "Zone",
+    "assess_clip",
     "assess_evidence",
     "band_for_score",
     "box_gap",

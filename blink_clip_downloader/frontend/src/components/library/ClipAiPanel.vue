@@ -15,6 +15,14 @@ import {
   submitFeedback,
 } from '../../api/ai'
 import type { AnalysisResultDict, FaceFeedbackReportType, Feedback } from '../../api/types'
+import {
+  evidenceLabel,
+  formatEventType,
+  formatOffset,
+  severityLabel,
+  severityRank,
+  severityTag,
+} from '../security/severity'
 import { usePromptOverlayStore } from '../../stores/promptOverlay'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
@@ -40,6 +48,20 @@ const analyzing = ref(false)
 const faceReportSubmitting = ref(false)
 const faceReportSubmitted = ref<FaceFeedbackReportType | null>(null)
 const enrolledNames = ref<string[]>([])
+
+/** Most severe first, then earliest: the panel has room for a few lines, and
+ *  a list led by "a person was visible" buries the reason the clip matters.
+ *  The full, time-ordered list lives on the Security tab. */
+const securityEvents = computed(() =>
+  [...(result.value?.security_events ?? [])]
+    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || a.start_offset - b.start_offset)
+    .slice(0, 4),
+)
+
+/** Present only when the optional detection pipeline ran and the security
+ *  layer found something — an empty section would otherwise appear on every
+ *  clip for anyone with the feature off. */
+const hasSecurityAssessment = computed(() => securityEvents.value.length > 0)
 const showFaceReportPicker = ref(false)
 const faceReportPersonName = ref('')
 const faceReportType = ref<FaceFeedbackReportType>('false_negative')
@@ -276,6 +298,29 @@ const faceReportNameOptions = computed(() => [
               class="detection-chip"
               :title="`${obj.label} · up to ${Math.round(obj.max_confidence * 100)}% confidence`"
             />
+          </div>
+          <div v-if="hasSecurityAssessment" class="ai-security" data-testid="ai-security">
+            <div class="ai-security-head">
+              <Tag
+                :value="`${severityLabel(result.severity ?? 'routine')} · risk ${Math.round(result.risk_score ?? 0)}`"
+                :severity="severityTag(result.severity ?? 'routine')"
+              />
+              <span class="ai-security-evidence">
+                Evidence {{ Math.round((result.evidence_quality ?? 0) * 100) }}% ({{
+                  evidenceLabel(result.evidence_quality ?? 0)
+                }})
+              </span>
+            </div>
+            <p v-if="result.risk_override_applied" class="ai-security-override">
+              Flagged on detection evidence — the AI model itself reported nothing unusual.
+            </p>
+            <ul class="ai-security-list">
+              <li v-for="event in securityEvents" :key="event.id">
+                <span class="ai-security-time">{{ formatOffset(event.start_offset) }}</span>
+                <Tag :value="formatEventType(event.event_type)" :severity="severityTag(event.severity)" />
+                <span class="ai-security-text">{{ event.detail }}</span>
+              </li>
+            </ul>
           </div>
           <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap">
             <Button size="small" severity="secondary" outlined :disabled="analyzing" @click="analyzeNow"
