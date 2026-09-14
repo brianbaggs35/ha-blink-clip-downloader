@@ -186,6 +186,77 @@ describe('StatusPage', () => {
     wrapper.unmount()
   })
 
+  it('does not blank the dashboard for a background refresh', async () => {
+    // The shared signal fires from other tabs' actions, not just a manual
+    // refresh — replacing a page someone is reading with skeleton cards is
+    // not the right response to one.
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    expect(wrapper.findAll('.skeleton').length).toBe(0)
+    useRefreshStore().bump()
+    expect(wrapper.findAll('.skeleton').length).toBe(0)
+    await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('ignores a slow earlier refresh that answers after a newer one', async () => {
+    const pending: ((v: unknown) => void)[] = []
+    let statsCalls = 0
+    const base = vi.mocked(fetch).getMockImplementation()!
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url.startsWith('/api/stats')) {
+          statsCalls += 1
+          if (statsCalls > 1) return new Promise((resolve) => pending.push(resolve))
+        }
+        return base(url, opts)
+      }),
+    )
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(pending.length).toBe(2)
+    pending[1]({ ok: true, status: 200, json: () => Promise.resolve({ total_count: 42 }) })
+    await flushPromises()
+    pending[0]({ ok: true, status: 200, json: () => Promise.resolve({ total_count: 9999 }) })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('9999')
+    wrapper.unmount()
+  })
+
+  it('does not surface an error from a refresh the page has moved past', async () => {
+    const pending: { resolve: (v: unknown) => void; reject: (e: Error) => void }[] = []
+    let statsCalls = 0
+    const base = vi.mocked(fetch).getMockImplementation()!
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url.startsWith('/api/stats')) {
+          statsCalls += 1
+          if (statsCalls > 1) return new Promise((resolve, reject) => pending.push({ resolve, reject }))
+        }
+        return base(url, opts)
+      }),
+    )
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+
+    pending[1].resolve({ ok: true, status: 200, json: () => Promise.resolve({ total_count: 42 }) })
+    await flushPromises()
+    pending[0].reject(new Error('down'))
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Failed to load status.')
+    wrapper.unmount()
+  })
+
   it('omits optional cards/rows when their data is minimal or absent', async () => {
     vi.stubGlobal(
       'fetch',
