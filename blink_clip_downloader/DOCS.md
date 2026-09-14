@@ -698,6 +698,8 @@ you'll see them report unavailable there.
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
 
+| `ai_pose_estimation_enabled` | `false` | Body-keypoint (pose) estimation for whoever is nearest the protected vehicle, on the one frame the depth and contact stages already examine. Adds three facts a bounding box cannot give: an arm extended toward the vehicle (trying a handle, reaching through a window), an arm raised above shoulder height, and a crouched or bent-over posture. Its own small model, downloaded on first use. |
+| `ai_pose_model` | `yolo11n-pose.pt` | Which Ultralytics pose checkpoint the stage above runs. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; larger sizes are more accurate and much slower. |
 | `ai_cv_concurrency` | `1` | How many of these heavy stages may run at once **across every clip being analyzed**. The stages already run one after another within a single clip, so the default only serializes a multi-clip backlog — which would have contended for the same CPU anyway — while stopping four large models from being resident and computing simultaneously. Raise it only on hardware with real spare capacity. |
 
 None of these packages are required to install or run the add-on normally; if a
@@ -742,9 +744,13 @@ temporal scan therefore takes its own evenly-spaced sample (capped at
 #### Events it can detect
 
 `subject_present`, `zone_entered`, `asset_approached`, `asset_proximity`,
-`loitering`, `retreat`, `contact_candidate`, `impact_candidate`,
-`retreat_after_contact`, `object_removed`, `object_added`,
-`animal_asset_interaction`, `multiple_subjects`, `camera_obstruction`.
+`loitering`, `retreat`, `asset_reach`, `contact_candidate`,
+`impact_candidate`, `retreat_after_contact`, `object_removed`,
+`object_added`, `animal_asset_interaction`, `multiple_subjects`,
+`camera_obstruction`.
+
+`asset_reach` requires `ai_pose_estimation_enabled`; everything else works
+from object detection alone.
 
 Every rule under-claims on purpose. Sampled frames are seconds apart, boxes are
 approximations, and a 2D overlap is not contact — so where the evidence only
@@ -766,6 +772,22 @@ sure it saw someone try a car door, and the underlying imagery can still be
 three dark frames of a figure spanning 6% of the frame height. Weak evidence
 damps the risk score, so a pile of confident-sounding events built on almost
 nothing cannot manufacture a critical alert on its own.
+
+#### The Security tab
+
+A timeline of everything the layer observed across every camera, most recent
+first. Each row is **one clip**, represented by its most severe event — a
+single visit legitimately produces half a dozen events (present, approached,
+near, lingered, retreated), and a timeline that repeats one clip six times is
+a worse view of the property than no timeline at all.
+
+Filter by camera, by minimum severity, or by period. **Show evidence**
+expands a row into that clip's full event list with the risk score and
+evidence quality behind it; **View clip** opens the clip's own player
+without leaving the tab.
+
+Not to be confused with the **Security Feed** tab, which is the grid of
+near-live camera snapshots.
 
 #### Which car is yours
 
@@ -812,6 +834,40 @@ overlaps it exactly like a person leaning on it. Three things separate them:
   stage's verdict dominates — including its negative verdict. If it places the
   subject at a clearly different distance from the camera than the vehicle,
   proximity and zone-entry events are suppressed outright.
+
+#### What pose estimation adds
+
+Standing two feet from a car with your arms at your sides, and standing two
+feet from it with an arm through the window, are the same bounding box. Pose
+estimation is the only stage here that can tell them apart, and it produces
+three narrow, scale-free facts rather than an action label — naming an action
+("prying", "kicking") from a single sparse frame is a claim this pipeline
+cannot support:
+
+- **An arm extended toward the vehicle**, which combined with close range
+  becomes an `asset_reach` event.
+- **An arm raised above shoulder height**, which during contact is the one
+  posture that separates a strike from a touch, and which therefore raises an
+  `impact_candidate` on its own.
+- **A crouched or bent-over posture**, recorded as evidence on the events it
+  accompanies.
+
+It runs on exactly one frame per clip — the moment the depth and contact
+stages already examine — so the cost is one small-model inference, not one
+per frame.
+
+#### Detection overlays in the clip viewer
+
+The clip modal has a **Boxes** toggle that draws the object detector's own
+boxes over the video, timed to where in the clip each was seen. The original
+video is never modified; the overlay is drawn on top and can be switched off
+again. Off by default, and the per-box data is only fetched when it is
+switched on — a minute of footage can hold hundreds of boxes, and every clip
+opened should not pay for them.
+
+Boxes only appear for clips analyzed with object detection enabled *after*
+6.0.0: placing a box needs the frame size and sampling interval it came
+from, which earlier rows did not record.
 
 #### The risk override, and what it can't do
 

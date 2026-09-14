@@ -31,6 +31,9 @@ def _make_result(suspicious: bool = True, **kwargs: Any) -> AnalysisResult:
         frame_count=3,
         analysis_duration=2.0,
         analyzed_at="2024-06-01T09:00:00+00:00",
+        risk_score=float(kwargs.get("risk_score", 0.0)),
+        severity=str(kwargs.get("severity", "routine")),
+        risk_override_applied=bool(kwargs.get("risk_override_applied", False)),
     )
 
 
@@ -796,3 +799,53 @@ async def test_send_discord_network_error_returns_false() -> None:
 
     result = await dispatcher.send_discord("Alert", "Body")
     assert result is False
+
+
+async def test_alert_body_includes_the_deterministic_assessment() -> None:
+    """Two independent judgements reached this alert; reporting only the
+    model's confidence hides half of why it fired."""
+    dispatcher = NotificationDispatcher(ha_notify_enabled=True)
+    sent: list[tuple[str, str]] = []
+    with patch.object(
+        NotificationDispatcher,
+        "send_ha_notification",
+        new=AsyncMock(side_effect=lambda t, b: sent.append((t, b))),
+    ):
+        await dispatcher.dispatch(
+            _make_result(True, risk_score=88.0, severity="critical"),
+            {"camera": "Driveway"},
+        )
+    assert "Risk: 88/100 (critical)" in sent[0][1]
+    assert "Flagged on detection evidence" not in sent[0][1]
+
+
+async def test_alert_body_says_when_the_model_did_not_raise_the_flag() -> None:
+    dispatcher = NotificationDispatcher(ha_notify_enabled=True)
+    sent: list[tuple[str, str]] = []
+    with patch.object(
+        NotificationDispatcher,
+        "send_ha_notification",
+        new=AsyncMock(side_effect=lambda t, b: sent.append((t, b))),
+    ):
+        await dispatcher.dispatch(
+            _make_result(
+                True,
+                risk_score=88.0,
+                severity="critical",
+                risk_override_applied=True,
+            ),
+            {"camera": "Driveway"},
+        )
+    assert "Flagged on detection evidence, not by the AI model." in sent[0][1]
+
+
+async def test_alert_body_omits_the_assessment_when_there_is_none() -> None:
+    dispatcher = NotificationDispatcher(ha_notify_enabled=True)
+    sent: list[tuple[str, str]] = []
+    with patch.object(
+        NotificationDispatcher,
+        "send_ha_notification",
+        new=AsyncMock(side_effect=lambda t, b: sent.append((t, b))),
+    ):
+        await dispatcher.dispatch(_make_result(True), {"camera": "Driveway"})
+    assert "Risk:" not in sent[0][1]

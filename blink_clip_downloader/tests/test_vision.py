@@ -37,19 +37,27 @@ from blink_downloader.vision import (
     FaceRecognizer,
     FrameEnhancer,
     ObjectDetector,
+    PoseEstimator,
+    PostureResult,
     VisionConfig,
     VisionPipeline,
+    _best_pose_keypoints,
     _best_subject_vehicle_pair,
     _box_gap,
     _build_contact_hint,
     _build_depth_hint,
     _build_detection_hint,
+    _build_posture_hint,
     _build_recognition_hint,
     _build_tracking_hint,
     _car_zone_pixel_box,
     _crop_region,
     _detection_distance_pair,
     _is_huggingface_auth_error,
+    _is_reaching,
+    _keypoint,
+    _pose_confidence,
+    _posture_from_keypoints,
     _proximity_label,
     _region_appearance_change,
     _select_scan_frames,
@@ -2678,6 +2686,7 @@ async def test_pipeline_records_unavailable_sources_when_detection_is_off() -> N
         "object detection",
         "depth estimation",
         "contact segmentation",
+        "pose estimation",
         "face recognition",
     ]
 
@@ -2868,3 +2877,454 @@ async def test_pipeline_pair_stages_need_a_subject(
     )
     assert hints.contact_track_id is None
     assert "depth estimation" in hints.unavailable_sources
+
+
+# ----------------------------------------------------------------------
+# Pose estimation
+# ----------------------------------------------------------------------
+
+
+class _FakeKeypoints:
+    def __init__(self, data) -> None:
+        self.data = data
+
+
+class _FakePoseResult:
+    def __init__(self, boxes, keypoints) -> None:
+        self.boxes = boxes
+        self.keypoints = keypoints
+
+
+def _skeleton(**joints: tuple[float, float, float]) -> list[tuple[float, float, float]]:
+    """A 17-keypoint COCO skeleton with everything unplaced but *joints*."""
+    points = [(0.0, 0.0, 0.0)] * 17
+    names = {
+        "left_shoulder": 5,
+        "right_shoulder": 6,
+        "left_wrist": 9,
+        "right_wrist": 10,
+        "left_hip": 11,
+        "right_hip": 12,
+        "left_ankle": 15,
+        "right_ankle": 16,
+    }
+    for name, value in joints.items():
+        points[names[name]] = value
+    return points
+
+
+#: A person 200px tall standing to the left of a car, arms down.
+_STANDING = _skeleton(
+    left_shoulder=(100.0, 120.0, 0.9),
+    right_shoulder=(140.0, 120.0, 0.9),
+    left_wrist=(98.0, 200.0, 0.9),
+    right_wrist=(142.0, 200.0, 0.9),
+    left_hip=(105.0, 210.0, 0.9),
+    right_hip=(135.0, 210.0, 0.9),
+    left_ankle=(105.0, 300.0, 0.9),
+    right_ankle=(135.0, 300.0, 0.9),
+)
+_SUBJECT_BOX = (90.0, 100.0, 150.0, 300.0)
+_ASSET_BOX = (200.0, 140.0, 400.0, 280.0)
+
+
+def test_posture_from_keypoints_standing_still_establishes_nothing() -> None:
+    result = _posture_from_keypoints(_STANDING, _SUBJECT_BOX, _ASSET_BOX)
+    assert result.any_posture is False
+    assert result.describe() == ""
+
+
+def test_posture_detects_an_arm_extended_toward_the_asset() -> None:
+    reaching = _skeleton(
+        left_shoulder=(100.0, 120.0, 0.9),
+        right_shoulder=(140.0, 120.0, 0.9),
+        right_wrist=(200.0, 130.0, 0.9),
+        left_hip=(105.0, 210.0, 0.9),
+        left_ankle=(105.0, 300.0, 0.9),
+    )
+    result = _posture_from_keypoints(reaching, _SUBJECT_BOX, _ASSET_BOX)
+    assert result.reaching is True
+    assert "arm extended toward it" in result.describe()
+
+
+def test_posture_ignores_an_arm_extended_away_from_the_asset() -> None:
+    away = _skeleton(
+        left_shoulder=(100.0, 120.0, 0.9),
+        right_shoulder=(140.0, 120.0, 0.9),
+        left_wrist=(20.0, 130.0, 0.9),
+    )
+    assert _posture_from_keypoints(away, _SUBJECT_BOX, _ASSET_BOX).reaching is False
+
+
+def test_posture_detects_a_raised_arm() -> None:
+    raised = _skeleton(
+        left_shoulder=(100.0, 120.0, 0.9),
+        right_shoulder=(140.0, 120.0, 0.9),
+        left_wrist=(100.0, 60.0, 0.9),
+    )
+    result = _posture_from_keypoints(raised, _SUBJECT_BOX, _ASSET_BOX)
+    assert result.arm_raised is True
+    assert "raised above shoulder height" in result.describe()
+
+
+def test_posture_detects_crouching() -> None:
+    crouched = _skeleton(
+        left_hip=(105.0, 250.0, 0.9),
+        right_hip=(135.0, 250.0, 0.9),
+        left_ankle=(105.0, 300.0, 0.9),
+        right_ankle=(135.0, 300.0, 0.9),
+    )
+    result = _posture_from_keypoints(crouched, _SUBJECT_BOX, _ASSET_BOX)
+    assert result.crouching is True
+    assert "crouched or bent-over" in result.describe()
+
+
+def test_posture_ignores_low_confidence_joints() -> None:
+    """A pose model will happily place a wrist it cannot see, and a
+    hallucinated wrist is exactly what turns arms-down into 'reaching'."""
+    guessed = _skeleton(
+        left_shoulder=(100.0, 120.0, 0.9),
+        right_shoulder=(140.0, 120.0, 0.9),
+        right_wrist=(250.0, 130.0, 0.1),
+    )
+    assert _posture_from_keypoints(guessed, _SUBJECT_BOX, _ASSET_BOX).reaching is False
+
+
+def test_posture_of_a_degenerate_subject_box_is_empty() -> None:
+    assert _posture_from_keypoints(_STANDING, (10.0, 10.0, 20.0, 10.0), _ASSET_BOX) == (
+        PostureResult()
+    )
+
+
+def test_posture_needs_both_shoulders_to_judge_reaching() -> None:
+    one_shoulder = _skeleton(
+        left_shoulder=(100.0, 120.0, 0.9), right_wrist=(250.0, 130.0, 0.9)
+    )
+    assert _posture_from_keypoints(one_shoulder, _SUBJECT_BOX, _ASSET_BOX).reaching is (
+        False
+    )
+
+
+def test_reaching_needs_non_zero_shoulder_width() -> None:
+    assert _is_reaching(
+        [(100.0, 120.0), (100.0, 120.0)], [(300.0, 120.0)], _ASSET_BOX
+    ) is (False)
+
+
+def test_reaching_toward_an_asset_on_the_left() -> None:
+    assert (
+        _is_reaching(
+            [(100.0, 120.0), (140.0, 120.0)], [(60.0, 120.0)], (0.0, 100.0, 60.0, 200.0)
+        )
+        is True
+    )
+
+
+def test_pose_confidence_of_an_unplaced_skeleton_is_zero() -> None:
+    assert _pose_confidence([(0.0, 0.0, 0.0)] * 17) == 0.0
+
+
+def test_keypoint_beyond_the_skeleton_is_absent() -> None:
+    assert _keypoint([(1.0, 2.0, 0.9)], 9) is None
+
+
+def test_best_pose_keypoints_matches_the_tracked_subject() -> None:
+    boxes = _FakeBoxes(
+        cls=[0, 0],
+        conf=[0.9, 0.9],
+        xyxy=[(400.0, 100.0, 460.0, 300.0), _SUBJECT_BOX],
+        ids=None,
+    )
+    result = _FakePoseResult(boxes, _FakeKeypoints([_skeleton(), _STANDING]))
+    assert _best_pose_keypoints(result, _SUBJECT_BOX) == _STANDING
+
+
+def test_best_pose_keypoints_discards_a_non_overlapping_skeleton() -> None:
+    """Attributing a bystander's raised arm to the person at the car would
+    be worse than reporting nothing."""
+    boxes = _FakeBoxes(
+        cls=[0], conf=[0.9], xyxy=[(400.0, 100.0, 460.0, 300.0)], ids=None
+    )
+    result = _FakePoseResult(boxes, _FakeKeypoints([_STANDING]))
+    assert _best_pose_keypoints(result, _SUBJECT_BOX) is None
+
+
+def test_best_pose_keypoints_without_any_detections() -> None:
+    empty = _FakeBoxes(cls=[], conf=[], xyxy=[], ids=None)
+    assert _best_pose_keypoints(
+        _FakePoseResult(empty, _FakeKeypoints([])), _SUBJECT_BOX
+    ) is (None)
+    assert _best_pose_keypoints(_FakePoseResult(None, None), _SUBJECT_BOX) is None
+
+
+def test_build_posture_hint_is_absent_when_nothing_was_established() -> None:
+    assert _build_posture_hint(PostureResult(), "person") is None
+
+
+def test_build_posture_hint_hedges() -> None:
+    hint = _build_posture_hint(PostureResult(reaching=True), "person")
+    assert hint is not None
+    assert "POSTURE:" in hint
+    assert "not from watching the movement" in hint
+
+
+async def test_pose_estimator_reports_unavailable_without_ultralytics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delitem(sys.modules, "ultralytics", raising=False)
+    with patch("builtins.__import__", side_effect=ImportError("no ultralytics")):
+        assert await PoseEstimator().ensure_ready() is False
+
+
+def test_pose_estimator_load_sync_refuses_an_incompatible_cpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(vision_module, "torch_cpu_compatible", lambda: False)
+    with pytest.raises(CPUIncompatibleError):
+        PoseEstimator()._load_sync()
+
+
+async def test_pose_estimator_load_failure_is_not_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.side_effect = RuntimeError("corrupt weights")
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+    assert await PoseEstimator().ensure_ready() is False
+
+
+async def test_pose_estimator_resolves_a_bare_model_name_to_the_cache_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    monkeypatch.setattr(vision_module, "_YOLO_MODEL_CACHE_DIR", str(tmp_path))
+    mock_ultra = MagicMock()
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+    assert await PoseEstimator("yolo11n-pose.pt").ensure_ready() is True
+    assert mock_ultra.YOLO.call_args[0][0] == str(tmp_path / "yolo11n-pose.pt")
+
+
+async def test_pose_estimator_analyzes_the_subject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((360, 640, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    boxes = _FakeBoxes(cls=[0], conf=[0.9], xyxy=[_SUBJECT_BOX], ids=None)
+    reaching = _skeleton(
+        left_shoulder=(100.0, 120.0, 0.9),
+        right_shoulder=(140.0, 120.0, 0.9),
+        right_wrist=(200.0, 130.0, 0.9),
+    )
+    model = MagicMock(return_value=[_FakePoseResult(boxes, _FakeKeypoints([reaching]))])
+    estimator = PoseEstimator()
+    estimator._model = model
+
+    result = await estimator.analyze(b"frame", _SUBJECT_BOX, _ASSET_BOX)
+    assert result is not None
+    assert result.reaching is True
+
+
+async def test_pose_estimator_returns_nothing_for_an_undecodable_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = None
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+    estimator = PoseEstimator()
+    estimator._model = MagicMock(return_value=[])
+    assert await estimator.analyze(b"frame", _SUBJECT_BOX, _ASSET_BOX) is None
+
+
+async def test_pose_estimator_returns_nothing_when_the_model_finds_no_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((360, 640, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+    estimator = PoseEstimator()
+    estimator._model = MagicMock(return_value=[])
+    assert await estimator.analyze(b"frame", _SUBJECT_BOX, _ASSET_BOX) is None
+
+
+async def test_pose_estimator_survives_an_inference_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+    estimator = PoseEstimator()
+    estimator._model = MagicMock(side_effect=RuntimeError("boom"))
+    assert await estimator.analyze(b"frame", _SUBJECT_BOX, _ASSET_BOX) is None
+
+
+async def test_pose_estimator_unavailable_returns_nothing() -> None:
+    estimator = PoseEstimator()
+    with patch.object(PoseEstimator, "ensure_ready", return_value=False):
+        assert await estimator.analyze(b"frame", _SUBJECT_BOX, _ASSET_BOX) is None
+
+
+def test_pipeline_rebuilds_the_pose_estimator_only_on_a_model_change() -> None:
+    pipeline = VisionPipeline(VisionConfig(pose_model="yolo11n-pose.pt"))
+    original = pipeline._pose
+    pipeline.update_config(VisionConfig(pose_model="yolo11n-pose.pt"))
+    assert pipeline._pose is original
+    pipeline.update_config(VisionConfig(pose_model="yolo11s-pose.pt"))
+    assert pipeline._pose is not original
+
+
+async def test_pipeline_records_posture_when_pose_estimation_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(
+            cls=[0, 2],
+            conf=[0.9, 0.95],
+            xyxy=[(5.0, 5.0, 45.0, 195.0), (60.0, 60.0, 190.0, 150.0)],
+            ids=[1, 2],
+        ),
+        {0: "person", 2: "car"},
+    )
+    posture = PostureResult(reaching=True, confidence=0.9)
+    pipeline = VisionPipeline(
+        VisionConfig(enhanced_detection_enabled=True, pose_estimation_enabled=True)
+    )
+    with patch.object(PoseEstimator, "analyze", return_value=posture):
+        hints = await pipeline.process_clip(
+            [_real_jpeg_bytes(size=(200, 200))],
+            car_description="Silver Kia",
+            car_protection_applies=True,
+            camera="Driveway",
+        )
+    assert hints.posture is posture
+    assert hints.posture_hint is not None
+    assert "pose estimation" not in hints.unavailable_sources
+
+
+async def test_pipeline_reports_pose_unavailable_when_it_finds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(
+            cls=[0, 2],
+            conf=[0.9, 0.95],
+            xyxy=[(5.0, 5.0, 45.0, 195.0), (60.0, 60.0, 190.0, 150.0)],
+            ids=[1, 2],
+        ),
+        {0: "person", 2: "car"},
+    )
+    pipeline = VisionPipeline(
+        VisionConfig(enhanced_detection_enabled=True, pose_estimation_enabled=True)
+    )
+    with patch.object(PoseEstimator, "analyze", return_value=None):
+        hints = await pipeline.process_clip(
+            [_real_jpeg_bytes(size=(200, 200))],
+            car_description="Silver Kia",
+            car_protection_applies=True,
+            camera="Driveway",
+        )
+    assert hints.posture is None
+    assert "pose estimation" in hints.unavailable_sources
+
+
+async def test_appearance_change_is_skipped_while_someone_blocks_the_vehicle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The region would be showing a person rather than the car, and "it
+    looks different" would be measuring where they stood — which is not
+    something the one CRITICAL event should ever rest on."""
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(
+            cls=[0, 2],
+            conf=[0.9, 0.95],
+            xyxy=[(70.0, 70.0, 110.0, 160.0), (60.0, 60.0, 190.0, 150.0)],
+            ids=[1, 2],
+        ),
+        {0: "person", 2: "car"},
+    )
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+        camera="Driveway",
+    )
+    assert hints.asset_appearance_change is None
+
+
+async def test_appearance_change_is_computed_with_a_clear_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(
+            cls=[0, 2],
+            conf=[0.9, 0.95],
+            xyxy=[(5.0, 5.0, 45.0, 195.0), (60.0, 60.0, 190.0, 150.0)],
+            ids=[1, 2],
+        ),
+        {0: "person", 2: "car"},
+    )
+    calls: list[tuple[float, ...]] = []
+
+    def _change(_before: bytes, _after: bytes, box: tuple[float, ...]) -> float:
+        calls.append(tuple(box))
+        return 0.42
+
+    monkeypatch.setattr(vision_module, "_region_appearance_change", _change)
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+        camera="Driveway",
+    )
+    assert hints.asset_appearance_change == pytest.approx(0.42)
+    assert calls == [(60.0, 60.0, 190.0, 150.0)]
+
+
+async def test_pose_estimator_loads_once_under_concurrent_first_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two clips analyzed at once both reach ensure_ready before either has
+    finished loading; the second must reuse the first's model rather than
+    load a second copy."""
+    mock_ultra = MagicMock()
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+    estimator = PoseEstimator()
+    results = await asyncio.gather(estimator.ensure_ready(), estimator.ensure_ready())
+    assert results == [True, True]
+    assert mock_ultra.YOLO.call_count == 1
+
+
+async def test_pose_estimator_reports_an_incompatible_cpu_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(vision_module, "torch_cpu_compatible", lambda: False)
+    assert await PoseEstimator().ensure_ready() is False
+
+
+async def test_pose_estimator_returns_nothing_when_no_skeleton_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bystander's skeleton must not be attributed to the person at the
+    car — no match means no posture, not the nearest guess."""
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((360, 640, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    elsewhere = _FakeBoxes(
+        cls=[0], conf=[0.9], xyxy=[(500.0, 100.0, 560.0, 300.0)], ids=None
+    )
+    estimator = PoseEstimator()
+    estimator._model = MagicMock(
+        return_value=[_FakePoseResult(elsewhere, _FakeKeypoints([_STANDING]))]
+    )
+    assert await estimator.analyze(b"frame", _SUBJECT_BOX, _ASSET_BOX) is None

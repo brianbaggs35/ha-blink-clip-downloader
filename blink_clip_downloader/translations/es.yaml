@@ -475,6 +475,21 @@ configuration:
       descargas de modelos de visión por computador y aumentar los
       límites de tasa del Hugging Face Hub. Crea uno en
       https://huggingface.co/settings/tokens. Mantenlo en secreto.
+  ai_pose_estimation_enabled:
+    name: Activar estimación de pose
+    description: >-
+      Estimación de puntos clave corporales de quien esté más cerca del
+      vehículo protegido, sobre el mismo fotograma que ya analizan las etapas
+      de profundidad y contacto. Aporta tres datos que un cuadro delimitador
+      no puede dar: un brazo extendido hacia el vehículo, un brazo levantado
+      por encima del hombro y una postura agachada o inclinada. Requiere la
+      detección mejorada.
+  ai_pose_model:
+    name: Modelo de pose
+    description: >-
+      Qué punto de control de pose de Ultralytics se ejecuta. "n" (nano) es
+      el más rápido y ligero, y el punto de partida recomendado en hardware
+      solo-CPU; los tamaños mayores son más precisos y mucho más lentos.
   ai_security_events_enabled:
     name: Activar análisis de seguridad estructurado
     description: >-

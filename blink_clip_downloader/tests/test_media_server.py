@@ -8784,3 +8784,26 @@ async def test_resetting_an_unlearned_vehicle_signature(client: TestClient) -> N
     assert (await (await client.delete("/api/vehicle/signature/Nowhere")).json()) == {
         "reset": False
     }
+
+
+async def test_clip_detections_endpoint_returns_normalized_boxes(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    from blink_downloader.vision import DetectedObject
+
+    await db.add_clip(_make_clip("det1"))
+    await db.save_detected_objects(
+        "det1",
+        [DetectedObject("person", 0.9, (64.0, 36.0, 128.0, 180.0), 1, 1)],
+        interval=2.0,
+        frame_size=(640.0, 360.0),
+    )
+    data = await (await client.get("/api/ai/detections/det1")).json()
+    assert data["objects"][0]["box"] == pytest.approx([0.1, 0.1, 0.2, 0.5])
+    assert data["objects"][0]["offset_seconds"] == pytest.approx(2.0)
+
+
+async def test_clip_detections_endpoint_for_a_clip_with_none(
+    client: TestClient,
+) -> None:
+    assert await (await client.get("/api/ai/detections/nope")).json() == {"objects": []}

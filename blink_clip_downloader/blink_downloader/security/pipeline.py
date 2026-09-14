@@ -64,6 +64,9 @@ def assess_clip(
     depth_similar: bool | None = None,
     scene_deviation: float | None = None,
     appearance_change: float | None = None,
+    posture_reaching: bool | None = None,
+    posture_arm_raised: bool | None = None,
+    posture_crouching: bool | None = None,
     unavailable_sources: list[str] | None = None,
     is_night: bool = False,
     approved_person_recognized: bool = False,
@@ -93,6 +96,9 @@ def assess_clip(
             depth_similar=depth_similar,
             scene_deviation=scene_deviation,
             appearance_change=appearance_change,
+            posture_reaching=posture_reaching,
+            posture_arm_raised=posture_arm_raised,
+            posture_crouching=posture_crouching,
         )
     )
 

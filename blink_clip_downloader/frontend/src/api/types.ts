@@ -178,6 +178,20 @@ export interface AnalysisResultDict {
   security_events?: SecurityEventRow[]
 }
 
+/** One detected box, normalized to 0-1 of the frame it came from so it
+ *  overlays correctly at any player size. */
+export interface DetectedBox {
+  label: string
+  confidence: number
+  track_id: number | null
+  offset_seconds: number
+  box: [number, number, number, number]
+}
+
+export interface DetectedBoxesResponse {
+  objects: DetectedBox[]
+}
+
 /** Ascending order — the same four bands the backend scores into. */
 export type SecuritySeverity = 'routine' | 'noteworthy' | 'suspicious' | 'critical'
 

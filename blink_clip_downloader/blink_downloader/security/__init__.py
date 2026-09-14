@@ -28,7 +28,14 @@ from .events import (
     severity_rank,
 )
 from .evidence import EvidenceQuality, assess_evidence
-from .geometry import Box, Zone, box_gap, pixel_gap_to_feet, point_in_polygon
+from .geometry import (
+    Box,
+    Zone,
+    box_gap,
+    box_iou,
+    pixel_gap_to_feet,
+    point_in_polygon,
+)
 from .narrative import (
     build_security_segment,
     build_vehicle_identity_segment,
@@ -99,6 +106,7 @@ __all__ = [
     "assess_evidence",
     "band_for_score",
     "box_gap",
+    "box_iou",
     "build_security_segment",
     "build_tracks",
     "build_vehicle_identity_segment",

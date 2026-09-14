@@ -46,11 +46,20 @@ were already being computed — and produces nothing when that is off.
   the depth-estimation stage's verdict now dominates *including its negative
   verdict* — a subject it places at a clearly different distance from the
   camera has their proximity and zone-entry events suppressed outright.
-- **Fourteen structured event types** — zone entry, approach, proximity,
-  loitering, retreat, possible contact, possible impact, retreat after
-  contact, object removed/added, animal interaction, multiple subjects,
-  camera obstruction — each recorded with its own confidence, its timing
-  within the clip, and the raw numbers behind it.
+- **Fifteen structured event types** — zone entry, approach, proximity,
+  loitering, retreat, reaching at the vehicle, possible contact, possible
+  impact, retreat after contact, object removed/added, animal interaction,
+  multiple subjects, camera obstruction — each recorded with its own
+  confidence, its timing within the clip, and the raw numbers behind it.
+- **A Security tab**: the whole property's events on one timeline, most
+  recent first, collapsed to one row per clip (a single visit legitimately
+  produces half a dozen events), with camera/severity/period filters, the
+  full per-clip evidence on demand, and a button that opens the clip
+  itself without leaving the tab.
+- The protected-vehicle distance rules are now suppressed entirely when
+  identification concludes the car is not in frame — previously the prompt
+  could say "it is not here" and "apply these distance rules to it" in the
+  same breath.
 - **A deterministic risk score** (0-100, four severity bands) whose every
   contribution is listed back to you, so a verdict is auditable rather than
   a number nobody can inspect.
@@ -79,10 +88,38 @@ were already being computed — and produces nothing when that is off.
   chosen for the AI prompt. Those are picked by motion and deliberately
   unevenly spaced, which makes every duration, speed and trajectory derived
   from them wrong.
+- **`ai_pose_estimation_enabled`** (off by default): body-keypoint
+  estimation for whoever is nearest the protected vehicle, on the one frame
+  the depth and contact stages already examine. Standing two feet from a
+  car with your arms down and standing there with an arm through the window
+  are the same bounding box; this is the only stage that can tell them
+  apart. Produces three narrow facts — an arm extended toward the vehicle,
+  an arm raised above shoulder height, a crouched posture — rather than an
+  action label, because naming an action from one sparse frame is a claim
+  the evidence cannot support.
+- **Detection overlays in the clip viewer.** A Boxes toggle draws the
+  detector's own boxes over the video, timed to where in the clip each was
+  seen. The video itself is never modified, and the per-box data is only
+  fetched when the overlay is switched on.
+- Alerts now carry the risk score and severity alongside the model's own
+  confidence, and say outright when the flag came from detection evidence
+  rather than from the model — an alert reporting only half of why it fired
+  is an alert you cannot act on.
 - One structured log line per analysis, covering frames, detections,
   tracks, which vehicle was identified, which evidence sources were
   unavailable, and the resulting score — without ever logging a recognized
   person's name.
+
+Deliberately **not** included, and why: a Hugging Face vehicle-damage
+classifier and a temporal action-recognition model were both evaluated and
+left out. Neither has an open checkpoint with evidence of working on
+security-camera footage at this resolution, both are large downloads, and
+both would need real labelled clips to validate rather than a model card's
+claims. The practical substitutes are here instead: pose-derived posture
+evidence in place of action recognition, and a model-free before/after
+comparison of the vehicle's own image region — contrast-normalized so a
+passing cloud or a floodlight is not mistaken for a new dent — in place of
+damage classification.
 
 ### Added
 

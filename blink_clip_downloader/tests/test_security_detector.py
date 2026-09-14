@@ -833,3 +833,81 @@ def test_a_degenerate_subject_box_can_never_establish_contact() -> None:
     assert SecurityEventType.CONTACT_CANDIDATE not in _types(
         SecurityEventDetector().detect(_ctx([flat], asset=_asset()))
     )
+
+
+# ----------------------------------------------------------------------
+# posture evidence (pose estimation)
+# ----------------------------------------------------------------------
+
+
+def test_reaching_toward_the_asset_from_close_range_is_suspicious() -> None:
+    """The one thing a bounding box is completely blind to: standing two
+    feet from a car with your arms down, and standing there with an arm
+    through the window, are the same box."""
+    near = _track([(470, 200, 490, 280)] * 3)
+    events = SecurityEventDetector().detect(
+        _ctx([near], asset=_asset(), posture_reaching=True)
+    )
+    reach = _of(events, SecurityEventType.ASSET_REACH)
+    assert reach.severity is Severity.SUSPICIOUS
+    assert reach.evidence["crouching"] is False
+
+
+def test_a_reach_from_across_the_driveway_is_not_reported() -> None:
+    far = _track([(0, 200, 20, 280)] * 3)
+    assert SecurityEventType.ASSET_REACH not in _types(
+        SecurityEventDetector().detect(
+            _ctx([far], asset=_asset(), posture_reaching=True)
+        )
+    )
+
+
+def test_a_reach_is_attributed_only_to_the_examined_subject() -> None:
+    examined = _track([(470, 200, 490, 280)] * 3, track_id=1)
+    other = _track([(495, 200, 515, 280)] * 3, track_id=2)
+    events = SecurityEventDetector().detect(
+        _ctx(
+            [examined, other],
+            asset=_asset(),
+            posture_reaching=True,
+            contact_track_id=1,
+        )
+    )
+    reaches = [e for e in events if e.event_type is SecurityEventType.ASSET_REACH]
+    assert [e.track_id for e in reaches] == [1]
+
+
+def test_a_crouched_reach_says_so() -> None:
+    near = _track([(470, 200, 490, 280)] * 3)
+    reach = _of(
+        SecurityEventDetector().detect(
+            _ctx([near], asset=_asset(), posture_reaching=True, posture_crouching=True)
+        ),
+        SecurityEventType.ASSET_REACH,
+    )
+    assert "crouched or bent over" in reach.detail
+    assert reach.evidence["crouching"] is True
+
+
+def test_a_raised_arm_during_contact_is_an_impact_candidate() -> None:
+    """Unlike the speed spike, a raised arm is visible in the single frame
+    the pose stage examines, so it stands on its own."""
+    arriving = _track([(0, 200, 20, 280), (350, 200, 390, 280), (352, 200, 392, 280)])
+    impact = _of(
+        SecurityEventDetector().detect(
+            _ctx([arriving], asset=_asset(), posture_arm_raised=True)
+        ),
+        SecurityEventType.IMPACT_CANDIDATE,
+    )
+    assert impact.severity is Severity.CRITICAL
+    assert "arm was raised above shoulder height" in impact.detail
+    assert impact.evidence["arm_raised"] is True
+
+
+def test_a_raised_arm_with_no_contact_is_not_an_impact() -> None:
+    apart = _track([(500, 200, 520, 280)] * 3)
+    assert SecurityEventType.IMPACT_CANDIDATE not in _types(
+        SecurityEventDetector().detect(
+            _ctx([apart], asset=_asset(), posture_arm_raised=True)
+        )
+    )

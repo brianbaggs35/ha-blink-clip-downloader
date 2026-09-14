@@ -356,6 +356,9 @@ class MediaServer:
         app.router.add_delete(
             "/api/vehicle/zone/{camera}", self._handle_vehicle_zone_delete
         )
+        app.router.add_get(
+            "/api/ai/detections/{clip_id}", self._handle_ai_clip_detections
+        )
         app.router.add_get("/api/security/timeline", self._handle_security_timeline)
         app.router.add_get("/api/security/stats", self._handle_security_stats)
         app.router.add_get(
@@ -1424,6 +1427,18 @@ class MediaServer:
         )
         result["security_events"] = await self._db.get_security_events(clip_id)
         return web.json_response(result)
+
+    async def _handle_ai_clip_detections(self, request: web.Request) -> web.Response:
+        """Per-box detections for one clip, for the clip modal's overlay.
+
+        Kept separate from ``/api/ai/results/{id}``, which returns the
+        aggregated chip summary: a minute of footage can hold hundreds of
+        boxes, and every clip opened would otherwise pay for them whether or
+        not the overlay is ever switched on.
+        """
+        return web.json_response(
+            await self._db.get_detected_object_boxes(request.match_info["clip_id"])
+        )
 
     async def _handle_security_timeline(self, request: web.Request) -> web.Response:
         """Security events across every camera, one row per clip.

@@ -60,6 +60,20 @@ function mockFetch() {
       if (url === '/api/clips/c1/star') return Promise.resolve(jsonResponse({ id: 'c1', starred: true }))
       if (url === '/api/clips/c1/tags')
         return Promise.resolve(jsonResponse({ id: 'c1', tags: JSON.parse((opts?.body as string) || '{}').tags }))
+      if (url.startsWith('/api/ai/detections/'))
+        return Promise.resolve(
+          jsonResponse({
+            objects: [
+              {
+                label: 'person',
+                confidence: 0.9,
+                track_id: 1,
+                offset_seconds: 0,
+                box: [0.1, 0.2, 0.3, 0.8],
+              },
+            ],
+          }),
+        )
       return Promise.reject(new Error(`unexpected fetch ${url} ${opts?.method}`))
     }),
   )
@@ -224,6 +238,20 @@ describe('ClipModal', () => {
       vi.fn((url: string, opts?: RequestInit) => {
         if (url === '/api/clips/c1') return Promise.resolve(jsonResponse({ ...CLIP, starred: true }))
         if (url === '/api/clips/c1/star') return Promise.resolve(jsonResponse({ id: 'c1', starred: false }))
+        if (url.startsWith('/api/ai/detections/'))
+          return Promise.resolve(
+            jsonResponse({
+              objects: [
+                {
+                  label: 'person',
+                  confidence: 0.9,
+                  track_id: 1,
+                  offset_seconds: 0,
+                  box: [0.1, 0.2, 0.3, 0.8],
+                },
+              ],
+            }),
+          )
         return Promise.reject(new Error(`unexpected fetch ${url} ${opts?.method}`))
       }),
     )
@@ -743,5 +771,71 @@ describe('ClipModal', () => {
     expect(wrapper.text()).not.toContain('front')
     expect(fakePlayer.src).toHaveBeenLastCalledWith([{ src: '/api/clips/c2/stream', type: 'video/mp4' }])
     wrapper.unmount()
+  })
+
+  it('leaves its actions inert while no clip is selected', async () => {
+    // The modal stays mounted with clipId null between openings, so its
+    // buttons are still in the DOM — they must do nothing rather than act
+    // on a clip that isn't there.
+    const wrapper = mount(ClipModal, {
+      props: { clipId: null, aiEnabled: false, promptDebugEnabled: false },
+    })
+    await flushPromises()
+    const byText = (text: string) => wrapper.findAll('button').find((b) => b.text().includes(text))
+
+    await byText('Star')?.trigger('click')
+    await byText('Delete')?.trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled()
+    expect(wrapper.emitted('starred')).toBeUndefined()
+    expect(wrapper.emitted('deleted')).toBeUndefined()
+  })
+
+  it('keeps the detection overlay in step with playback', async () => {
+    const wrapper = mount(ClipModal, {
+      props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false },
+    })
+    await flushPromises()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Boxes'))!
+      .trigger('click')
+    await flushPromises()
+
+    const onTimeUpdate = fakePlayer.on.mock.calls.find((c) => c[0] === 'timeupdate')![1]
+    const overlay = () => wrapper.findComponent({ name: 'ClipDetectionOverlay' })
+
+    fakePlayer.currentTime.mockReturnValue(42)
+    onTimeUpdate()
+    await flushPromises()
+    expect(overlay().props('currentTime')).toBe(42)
+
+    // video.js reports no current time until metadata has loaded; that must
+    // park the overlay at the start rather than blank it.
+    fakePlayer.currentTime.mockReturnValue(undefined)
+    onTimeUpdate()
+    await flushPromises()
+    expect(overlay().props('currentTime')).toBe(0)
+  })
+
+  it('draws the detection overlay only once the boxes are switched on', async () => {
+    const wrapper = mount(ClipModal, {
+      props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="detection-overlay"]').exists()).toBe(false)
+
+    const toggle = wrapper.findAll('button').find((b) => b.text().includes('Boxes'))!
+    await toggle.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="detection-overlay"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Boxes on')
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Boxes'))!
+      .trigger('click')
+    expect(wrapper.find('[data-testid="detection-overlay"]').exists()).toBe(false)
   })
 })

@@ -4123,3 +4123,75 @@ async def test_add_analysis_result_defaults_severity_when_absent(
     assert stored is not None
     assert stored["severity"] == "routine"
     assert stored["risk_score"] == pytest.approx(0.0)
+
+
+# ======================================================================
+# Per-box detections (the clip modal's overlay)
+# ======================================================================
+
+
+async def test_detected_object_boxes_are_normalized_for_drawing(
+    db: ClipDatabase,
+) -> None:
+    """Boxes are stored in the detector's own scaled pixel space, which the
+    player knows nothing about."""
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject("person", 0.9, (64.0, 36.0, 128.0, 180.0), 1, 0),
+            DetectedObject("car", 0.95, (320.0, 180.0, 640.0, 360.0), 2, 2),
+        ],
+        interval=2.0,
+        frame_size=(640.0, 360.0),
+    )
+    result = await db.get_detected_object_boxes("c1")
+    first, second = result["objects"]
+    assert first["box"] == pytest.approx([0.1, 0.1, 0.2, 0.5])
+    assert first["offset_seconds"] == pytest.approx(0.0)
+    assert first["track_id"] == 1
+    assert second["offset_seconds"] == pytest.approx(4.0)
+
+
+async def test_detected_object_boxes_skip_rows_with_no_frame_size(
+    db: ClipDatabase,
+) -> None:
+    """Rows written before the frame dimensions were recorded cannot be
+    placed, and drawing them in the wrong spot is worse than omitting them."""
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1", [DetectedObject("person", 0.9, (1.0, 2.0, 3.0, 4.0), 1, 0)]
+    )
+    assert await db.get_detected_object_boxes("c1") == {"objects": []}
+
+
+async def test_detected_object_boxes_without_a_pool() -> None:
+    assert await ClipDatabase().get_detected_object_boxes("c1") == {"objects": []}
+
+
+async def test_save_analysis_records_the_detection_timing_and_frame_size(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.save_analysis(
+        AnalysisResult(
+            clip_id="c1",
+            camera="Front Door",
+            model="llava",
+            response_text="",
+            is_suspicious=False,
+            confidence=0.1,
+            summary="ok",
+            frame_count=2,
+            analysis_duration=1.0,
+            analyzed_at=datetime.now(UTC).isoformat(),
+            detected_objects=[
+                DetectedObject("person", 0.9, (64.0, 36.0, 128.0, 180.0), 1, 3)
+            ],
+            detection_interval=2.5,
+            detection_frame_size=(640.0, 360.0),
+        )
+    )
+    (stored,) = (await db.get_detected_object_boxes("c1"))["objects"]
+    assert stored["offset_seconds"] == pytest.approx(7.5)
+    assert stored["box"] == pytest.approx([0.1, 0.1, 0.2, 0.5])

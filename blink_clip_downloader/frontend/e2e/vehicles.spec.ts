@@ -315,3 +315,26 @@ test('selecting a different clip from the thumb strip switches frames and clears
   await expect(firstThumb).not.toHaveClass(/active/)
   await expect(card.locator('.zone-rect')).toHaveCount(0)
 })
+
+// The learned protected-vehicle signature (see security/vehicles.py) is what
+// tells your car from the one parked beside it when the drawn zone alone
+// cannot. Garage is seeded with an established one; Test Scratch, which the
+// tests above mutate, deliberately has none.
+test('shows what a camera has learned about the protected vehicle', async ({ page }) => {
+  const card = page.locator('.camera-card', { hasText: 'Garage' })
+  await card.locator('input[role="switch"]').click()
+  const signature = card.locator('[data-testid="vehicle-signature"]')
+  await expect(signature).toContainText('Learned where your vehicle sits from 11')
+  await expect(signature.getByRole('button', { name: 'Reset' })).toBeVisible()
+})
+
+test('resetting a learned vehicle signature clears it', async ({ page }) => {
+  const card = page.locator('.camera-card', { hasText: 'Garage' })
+  await card.locator('input[role="switch"]').click()
+  await card.getByRole('button', { name: 'Reset' }).click()
+  // ConfirmDialog is a PrimeVue Dialog (.p-dialog), not one of the
+  // hand-rolled .modal-bg overlays — the button is unambiguous by role.
+  await page.getByRole('button', { name: 'Confirm' }).click()
+  await expect(page.getByText('Learned vehicle position cleared')).toBeVisible()
+  await expect(card.locator('[data-testid="vehicle-signature"]')).toContainText('Still learning')
+})
