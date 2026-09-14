@@ -6,6 +6,7 @@ import Select from 'primevue/select'
 import SelectButton from 'primevue/selectbutton'
 import Timeline from 'primevue/timeline'
 import SecurityPage from './SecurityPage.vue'
+import SecurityEventDetail from './SecurityEventDetail.vue'
 import { useClipViewerStore } from '../../stores/clipViewer'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
@@ -44,6 +45,10 @@ function row(overrides: Partial<SecurityTimelineRow> = {}): SecurityTimelineRow 
     file_path: '/clips/c1.mp4',
     starred: false,
     archived: false,
+    ai_suspicious: null,
+    ai_confidence: null,
+    ai_summary: null,
+    risk_override_applied: null,
     ...overrides,
   }
 }
@@ -130,7 +135,7 @@ describe('SecurityPage', () => {
     const viewer = useClipViewerStore()
     await wrapper
       .findAllComponents(Button)
-      .filter((b) => b.props('label') === 'View clip')[0]
+      .filter((b) => String(b.props('label')).startsWith('View clip'))[0]
       .trigger('click')
     expect(viewer.clipId).toBe('c1')
     expect(viewer.seq).toBe(1)
@@ -367,6 +372,88 @@ describe('SecurityPage', () => {
     pending[1].reject(new Error('down'))
     await flushPromises()
     expect(useToastStore().message).toBe('')
+  })
+
+  it("shows the model's own verdict beside the code-computed risk", async () => {
+    const wrapper = await mountPage({
+      rows: [row({ ai_suspicious: false, ai_summary: 'A delivery driver left a parcel.' })],
+    })
+    expect(wrapper.text()).toContain('AI: nothing unusual')
+    expect(wrapper.text()).toContain('A delivery driver left a parcel.')
+  })
+
+  it('marks a clip the model itself called suspicious', async () => {
+    const wrapper = await mountPage({ rows: [row({ severity: 'suspicious', ai_suspicious: true })] })
+    expect(wrapper.text()).toContain('AI: suspicious')
+    expect(wrapper.text()).not.toContain('disagreement')
+  })
+
+  it('points at a clip where code and model reached opposite conclusions', async () => {
+    // A clip the geometry rates highly and the model waved through is the
+    // one a person most needs to look at themselves.
+    const wrapper = await mountPage({ rows: [row({ severity: 'critical', ai_suspicious: false })] })
+    expect(wrapper.text()).toContain('disagreement')
+  })
+
+  it('does not call a risk override a disagreement', async () => {
+    const wrapper = await mountPage({
+      rows: [row({ severity: 'critical', ai_suspicious: true, risk_override_applied: true })],
+    })
+    expect(wrapper.text()).toContain('Flagged on evidence')
+    expect(wrapper.text()).not.toContain('disagreement')
+  })
+
+  it('says nothing about a verdict for a clip that has no analysis row', async () => {
+    const wrapper = await mountPage({ rows: [row()] })
+    expect(wrapper.text()).not.toContain('AI:')
+    expect(wrapper.text()).not.toContain('disagreement')
+  })
+
+  it('opens the clip at the second the event was measured at', async () => {
+    const wrapper = await mountPage({ rows: [row({ start_offset: 6 })] })
+    const viewer = useClipViewerStore()
+    await wrapper
+      .findAllComponents(Button)
+      .filter((b) => String(b.props('label')).startsWith('View clip'))[0]
+      .trigger('click')
+    expect(viewer.clipId).toBe('c1')
+    expect(viewer.startAt).toBe(6)
+  })
+
+  it('opens from the top when the event is at the very start', async () => {
+    const wrapper = await mountPage({ rows: [row({ start_offset: 0 })] })
+    const viewer = useClipViewerStore()
+    const button = wrapper.findAllComponents(Button).filter((b) => String(b.props('label')).startsWith('View clip'))[0]
+    expect(button.props('label')).toBe('View clip')
+    await button.trigger('click')
+    expect(viewer.startAt).toBe(0)
+  })
+
+  it('seeks the clip when an event time in the evidence panel is clicked', async () => {
+    const wrapper = await mountPage({ rows: [row()], events: [] })
+    const viewer = useClipViewerStore()
+    await wrapper
+      .findAllComponents(Button)
+      .filter((b) => b.props('label') === 'Show evidence')[0]
+      .trigger('click')
+    await flushPromises()
+    wrapper.findComponent(SecurityEventDetail).vm.$emit('seek', 12)
+    expect(viewer.clipId).toBe('c1')
+    expect(viewer.startAt).toBe(12)
+  })
+
+  it('opens the clip from the top when its thumbnail is clicked', async () => {
+    const wrapper = await mountPage({ rows: [row({ start_offset: 6 })] })
+    const viewer = useClipViewerStore()
+    await wrapper.find('.security-thumb').trigger('click')
+    expect(viewer.clipId).toBe('c1')
+    expect(viewer.startAt).toBeNull()
+  })
+
+  it('drops the thumbnail rather than showing a broken image', async () => {
+    const wrapper = await mountPage({ rows: [row()] })
+    await wrapper.find('.security-thumb img').trigger('error')
+    expect(wrapper.find('.security-thumb').exists()).toBe(false)
   })
 
   it('reloads on the global refresh tick', async () => {

@@ -22,6 +22,10 @@ const props = defineProps<{
   aiEnabled: boolean
   promptDebugEnabled: boolean
   availableTags?: string[]
+  /** Clip-relative seconds to open at, when the caller knows which moment
+   *  matters. Used once per clip, on the first metadata load, so the viewer
+   *  can still scrub freely afterwards. */
+  startAt?: number | null
 }>()
 const emit = defineEmits<{
   close: []
@@ -131,6 +135,16 @@ async function load(id: string) {
     starred.value = c.starred
     const p = ensurePlayer()
     p.src([{ src: clipStreamUrl(id), type: 'video/mp4' }])
+    // Seeking before the source reports a duration is silently ignored, so
+    // it waits for metadata — `once`, so a viewer who scrubs elsewhere and
+    // lets the clip loop is not yanked back to the same second every time.
+    const at = props.startAt
+    if (at != null && at > 0) {
+      p.one('loadedmetadata', () => {
+        if (seq !== requestSeq) return
+        p.currentTime(at)
+      })
+    }
     p.load()
     p.play()?.catch(() => {})
   } catch {

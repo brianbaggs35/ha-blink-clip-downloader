@@ -126,6 +126,14 @@ describe('SecurityEventDetail', () => {
     expect(wrapper2.text()).not.toContain('Could not load')
   })
 
+  it('emits the second an event was measured at when its time is clicked', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ events: [event({ start_offset: 12 })] }))
+    const wrapper = mount(SecurityEventDetail, { props: { clipId: 'c1' } })
+    await flushPromises()
+    await wrapper.find('.security-detail-time').trigger('click')
+    expect(wrapper.emitted('seek')).toEqual([[12]])
+  })
+
   it('reloads when the clip changes', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ events: [event()] }))
     const wrapper = mount(SecurityEventDetail, { props: { clipId: 'c1' } })
