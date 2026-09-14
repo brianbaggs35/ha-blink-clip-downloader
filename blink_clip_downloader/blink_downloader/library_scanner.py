@@ -41,7 +41,14 @@ async def import_existing_clips(db: ClipDatabase, download_path: Path) -> int:
     # unbounded number of them, so yield periodically to keep this from
     # starving the event loop (and anything else on it, like the media
     # server) for the whole scan.
-    for i, file_path in enumerate(sorted(download_path.rglob("*.mp4"))):
+    #
+    # The walk itself runs in a thread rather than inline: sorted() consumes
+    # the whole generator before the loop below reaches its first yield
+    # point, so on a large library every directory read happened in one
+    # uninterrupted block — during startup, which is exactly when the web
+    # server is meant to be answering ingress requests.
+    paths = await asyncio.to_thread(lambda: sorted(download_path.rglob("*.mp4")))
+    for i, file_path in enumerate(paths):
         if i % 25 == 0:
             await asyncio.sleep(0)
 

@@ -307,6 +307,9 @@ damage classification.
   a background refresh happens to be in flight no longer discards what you
   typed when that refresh lands. Neither tab blanks itself for a background
   refresh any more either.
+- Scanning the clip folder for untracked files on start-up no longer holds
+  up the event loop for the whole walk, which on a large library made the
+  web UI briefly unresponsive at exactly the wrong moment.
 - Completed the PrimeVue 5 migration by using the PrimeUI license format
   expected by PrimeVue 5.0.1, binding numeric `ProgressSpinner` props
   correctly, and documenting the `VITE_PRIMEVUE_LICENSE_KEY` development
