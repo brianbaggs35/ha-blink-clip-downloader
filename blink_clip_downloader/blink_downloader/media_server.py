@@ -160,11 +160,82 @@ _CSP = (
 )
 
 
+async def _json_object(
+    request: web.Request,
+    message: str = _INVALID_JSON_BODY,
+    default: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read a request body that is expected to be a JSON *object*.
+
+    Every handler that takes a body immediately calls ``body.get(...)`` on
+    it. Catching only the parse left a second, equally reachable failure
+    open: a body that is perfectly valid JSON but is a list, string or
+    number parses fine and then raises ``AttributeError`` on that first
+    ``.get`` — a bare 500 for what is plainly a bad request. Both cases
+    land here instead.
+
+    *default* is for the handlers that are deliberately lenient about being
+    called with no body at all (Live View's stop, say, which is meant to be
+    safe to fire on tab unload); they get the default back rather than a
+    400.
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if isinstance(body, dict):
+        return body
+    if default is not None:
+        return default
+    raise web.HTTPBadRequest(text=message)
+
+
+#: Ceiling on any ``offset`` query parameter. int() happily parses a number
+#: far larger than PostgreSQL's bigint, which then fails inside asyncpg as a
+#: bare 500 rather than an empty page — and no real library is a million
+#: clips deep, so clamping costs nothing a caller would notice.
+_MAX_OFFSET = 1_000_000
+
+
+def _paging(
+    query: Any, default_limit: int, max_limit: int, min_limit: int = 0
+) -> tuple[int, int]:
+    """Read ``limit``/``offset`` from *query*, clamped into usable bounds.
+
+    A negative LIMIT means "no limit" to some engines and a negative OFFSET
+    is invalid, so both are floored; both are also capped, so a crafted
+    query string can neither dump the whole table nor overflow the column
+    type. Anything unparseable falls back to the defaults rather than
+    erroring — this is a listing, and a caller who sends nonsense is better
+    served the first page than a stack trace.
+    """
+    try:
+        limit = max(min_limit, min(int(query.get("limit", default_limit)), max_limit))
+        offset = max(0, min(int(query.get("offset", 0)), _MAX_OFFSET))
+    except (TypeError, ValueError):
+        return default_limit, 0
+    return limit, offset
+
+
 @web.middleware
 async def _security_middleware(
     request: web.Request, handler: Callable
 ) -> web.StreamResponse:
-    """Attach security headers to every non-streaming response."""
+    """Reject requests Postgres cannot answer, and attach security headers.
+
+    A NUL byte is the one character PostgreSQL's text type cannot hold at
+    all, so any request carrying one in its path or query string — a clip
+    id, a camera name, a search term — fails inside asyncpg as an unhandled
+    encoding error and surfaces as a bare 500. Rejecting it once here, for
+    every route at once, is both the honest answer (a URL containing a NUL
+    is malformed, not a server fault) and the only version of this fix that
+    keeps covering routes added later.
+    """
+    # rel_url is the yarl-decoded view; request.path_qs keeps the raw
+    # percent-encoded form, where a "%00" would sail straight past this.
+    url = request.rel_url
+    if "\x00" in url.path or any("\x00" in v for v in url.query.values()):
+        raise web.HTTPBadRequest(text="Request contains an invalid null byte")
     response = await handler(request)
     if not response.prepared:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -548,14 +619,7 @@ class MediaServer:
 
     async def _handle_list_clips(self, request: web.Request) -> web.Response:
         q = request.rel_url.query
-        try:
-            # A negative SQLite LIMIT means "no limit", and a negative OFFSET
-            # is invalid - clamp both to non-negative so a crafted query
-            # string can't bypass pagination and dump the whole table.
-            limit = max(0, min(int(q.get("limit", 48)), 200))
-            offset = max(0, int(q.get("offset", 0)))
-        except ValueError:
-            limit, offset = 48, 0
+        limit, offset = _paging(q, default_limit=48, max_limit=200)
 
         starred_raw = q.get("starred")
         if starred_raw == "1":
@@ -1041,10 +1105,7 @@ class MediaServer:
     async def _handle_liveview_start(self, request: web.Request) -> web.Response:
         if self._live_view is None:
             raise web.HTTPServiceUnavailable(text=_LIVE_VIEW_NOT_AVAILABLE)
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_REQUEST_BODY)
+        body = await _json_object(request, _INVALID_REQUEST_BODY)
         camera = str(body.get("camera", "")).strip()
         if not camera:
             raise web.HTTPBadRequest(text="Missing camera")
@@ -1078,10 +1139,7 @@ class MediaServer:
     async def _handle_liveview_heartbeat(self, request: web.Request) -> web.Response:
         if self._live_view is None:
             raise web.HTTPServiceUnavailable(text=_LIVE_VIEW_NOT_AVAILABLE)
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_REQUEST_BODY)
+        body = await _json_object(request, _INVALID_REQUEST_BODY)
         session_id = str(body.get("session_id", "")).strip()
         if not session_id:
             raise web.HTTPBadRequest(text="Missing session_id")
@@ -1202,10 +1260,7 @@ class MediaServer:
     async def _handle_security_feed_settings_put(
         self, request: web.Request
     ) -> web.Response:
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        body = await _json_object(request)
         cameras = body.get("cameras", [])
         if not isinstance(cameras, list):
             raise web.HTTPBadRequest(text="cameras must be a list")
@@ -1479,11 +1534,7 @@ class MediaServer:
         makes a worse timeline than no timeline at all.
         """
         q = request.rel_url.query
-        try:
-            limit = max(1, min(int(q.get("limit", 50)), 200))
-            offset = max(0, int(q.get("offset", 0)))
-        except ValueError:
-            limit, offset = 50, 0
+        limit, offset = _paging(q, default_limit=50, max_limit=200, min_limit=1)
         period = q.get("period")
         if period not in SUSPICIOUS_PERIODS:
             period = None
@@ -1552,11 +1603,7 @@ class MediaServer:
 
     async def _handle_ai_suspicious(self, request: web.Request) -> web.Response:
         q = request.rel_url.query
-        try:
-            limit = max(0, min(int(q.get("limit", 20)), 200))
-            offset = max(0, int(q.get("offset", 0)))
-        except ValueError:
-            limit, offset = 20, 0
+        limit, offset = _paging(q, default_limit=20, max_limit=200)
         period = q.get("period")
         if period not in SUSPICIOUS_PERIODS:
             period = None
@@ -2355,10 +2402,7 @@ class MediaServer:
         404 message.
         """
         name = request.match_info[match_key]
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        body = await _json_object(request)
         armed = bool(body.get("armed"))
         if arm_fn is None:
             raise web.HTTPServiceUnavailable(text=_SYNC_MODULES_NOT_AVAILABLE)
@@ -2447,18 +2491,12 @@ class MediaServer:
     async def _handle_storage_archive_clips(self, request: web.Request) -> web.Response:
         """Return one page of clips from one ZIP archive for the Storage tab."""
         q = request.rel_url.query
-        try:
-            limit = max(
-                1,
-                min(
-                    int(q.get("limit", _ARCHIVE_CLIPS_PAGE_SIZE)),
-                    _MAX_ARCHIVE_CLIPS_PAGE_SIZE,
-                ),
-            )
-            offset = max(0, int(q.get("offset", 0)))
-        except ValueError:
-            limit = _ARCHIVE_CLIPS_PAGE_SIZE
-            offset = 0
+        limit, offset = _paging(
+            q,
+            default_limit=_ARCHIVE_CLIPS_PAGE_SIZE,
+            max_limit=_MAX_ARCHIVE_CLIPS_PAGE_SIZE,
+            min_limit=1,
+        )
 
         archive_path = q.get("archive_path", "")
         if not archive_path:
@@ -2561,10 +2599,7 @@ class MediaServer:
     async def _handle_gdrive_settings_put(self, request: web.Request) -> web.Response:
         if self._gdrive_client is None:
             raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        body = await _json_object(request)
 
         client_id = str(body.get("client_id", "") or "")
         # Omitted/empty client_secret means "keep the previously stored one"
@@ -2766,10 +2801,7 @@ class MediaServer:
     async def _handle_gdrive_create_folder(self, request: web.Request) -> web.Response:
         if self._gdrive_client is None:
             raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        body = await _json_object(request)
         name = str(body.get("name", "") or "").strip()
         if not name:
             raise web.HTTPBadRequest(text="Folder name is required")
@@ -2790,10 +2822,7 @@ class MediaServer:
         """Set the default folder used for automatic archived/all_clips backups."""
         if self._gdrive_client is None:
             raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        body = await _json_object(request)
         folder_id = str(body.get("folder_id", "") or "")
         if not folder_id:
             raise web.HTTPBadRequest(text="folder_id is required")
@@ -2828,10 +2857,7 @@ class MediaServer:
         action), optionally targeting a folder other than the default."""
         if self._gdrive_client is None or self._gdrive_queue is None:
             raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        body = await _json_object(request)
         clip_ids = body.get("clip_ids")
         if not isinstance(clip_ids, list) or not clip_ids:
             raise web.HTTPBadRequest(text="clip_ids must be a non-empty list")
@@ -3064,10 +3090,7 @@ class MediaServer:
             enrollment_id = int(request.match_info["id"])
         except ValueError:
             raise web.HTTPBadRequest(text="Invalid enrollment id")
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        body = await _json_object(request)
 
         if "approved" not in body and "name" not in body:
             return web.json_response(
@@ -3095,10 +3118,7 @@ class MediaServer:
         for them, not just one row.
         """
         name = request.match_info["name"]
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
+        body = await _json_object(request)
 
         if "approved" not in body and "name" not in body:
             return web.json_response(
@@ -3402,10 +3422,7 @@ class MediaServer:
                 status=400,
             )
         finetune_id = request.match_info["finetune_id"]
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            body = {}
+        body = await _json_object(request, default={})
         # Bounded like every other limit on this server. Unclamped, a
         # negative value reached Postgres as a negative LIMIT (a 500), a
         # non-numeric one raised out of int() (also a 500), and a very large

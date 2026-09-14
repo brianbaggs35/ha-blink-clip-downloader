@@ -681,6 +681,32 @@ add-on manifest and the Python package.
 versions (`.github/workflows/*.yaml`) do not need a version bump or
 CHANGELOG entry — nothing user-facing changed.
 
+### Release ordering (since `config.yaml` gained an `image:` key)
+
+`config.yaml` names a published image (`image:
+"ghcr.io/brianbaggs35/blink_clip_downloader"`), so **Supervisor pulls
+`<image>:<version>` rather than building the add-on locally** — there is no
+build fallback if that tag is missing. `build.yaml` publishes it on
+`release: published`, and takes ~15-30 minutes for both architectures.
+
+So the version in `config.yaml` on the branch users' add-on store reads
+must never be newer than the image tag that actually exists on ghcr: a user
+who refreshes the repository in that window gets a pull failure with no way
+forward. Publish the GitHub release (and let `build.yaml` finish) before
+the bumped `config.yaml` reaches the branch the add-on repository points
+at. Confirm with:
+
+```bash
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:brianbaggs35/blink_clip_downloader:pull" | jq -r .token)
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+  https://ghcr.io/v2/brianbaggs35/blink_clip_downloader/manifests/vX.Y.Z
+```
+
+200 means the tag is there (and it should be an OCI index covering
+linux/amd64 *and* linux/arm64 — `arch:` promises both, and `image:` carries
+no `{arch}` placeholder, so one multi-arch manifest is what makes both
+work).
+
 ## Conventions worth knowing
 
 - Two toolchains, not one: Python (`blink_clip_downloader/`, ruff/pyright/

@@ -241,6 +241,17 @@ damage classification.
 
 ### Internal
 
+- The add-on's upgrade path from the previous release is now tested rather
+  than assumed: `tests/test_upgrade_from_previous_release.py` checks a
+  checked-in snapshot of 5.5.2's own options schema against this release's
+  (no option removed, no enum narrowed so that a stored value stops
+  validating, every new option defaulted), loads that release's exact
+  `options.json`, and builds a database from its shipped SQL before running
+  this release's `init()` over it and reading the old rows back. The Home
+  Assistant Supervisor CI job additionally writes a setting through the real
+  ingress UI, restarts the add-on so Supervisor recreates its container, and
+  reads the setting back — the same transition an update puts an existing
+  install through — then checks the add-on's log for tracebacks.
 - `analyzer.py`'s frame arithmetic — grayscale thumbnails, inter-frame diff
   magnitudes and centroids, the scene-baseline thumbnail, the
   motion-trajectory phrase and the car-zone motion share — moved into a new
@@ -262,6 +273,14 @@ damage classification.
 
 ### Bug Fixes
 
+- **A malformed request is answered, not crashed on.** A URL carrying a
+  null byte — in a clip id, a camera name, a search term — reached
+  PostgreSQL, which cannot store one, and came back as a bare 500 from
+  roughly a dozen endpoints; an `offset` larger than a database bigint did
+  the same on every paginated list; and a request body that was valid JSON
+  but not an object (a list, a string, a number) crashed eleven handlers on
+  their first field access. All three now answer 400, or page to an empty
+  result, as they always should have.
 - **`min_clip_duration` no longer silently downloads nothing at all.** The
   clip list reports a duration of 0 for every clip on some accounts and
   clip types — which is why a downloaded clip's real length is probed from

@@ -217,6 +217,87 @@ cmd_start() {
     curl -sf "http://127.0.0.1:${ADDON_PORT}/health"
 }
 
+cmd_restart() {
+  # The closest thing this job can do to rehearsing an upgrade without
+  # installing two images: stopping and starting recreates the add-on's
+  # container while /data survives, which is exactly the transition an
+  # update puts an existing install through. What it proves is the part
+  # that actually breaks people -- that the bundled PostgreSQL cluster
+  # written under /data by the previous run is re-attached and re-read by a
+  # fresh container, rather than the add-on only ever working on the
+  # first-ever start against an empty volume.
+  ha_cli apps stop "$ADDON_SLUG" --raw-json
+  poll "Supervisor reports '${ADDON_SLUG}' stopped" 120 3 \
+    bash -c "docker exec '$CONTAINER_NAME' ha apps info '$ADDON_SLUG' --raw-json | grep -q '\"state\": *\"stopped\"'"
+  cmd_start
+}
+
+# Log lines that are expected on a healthy run in *this* environment, where
+# there is no Blink account to sign in to and no AI provider configured.
+# Deliberately a short, specific list rather than a broad pattern: the whole
+# point of the check is to notice a traceback or a startup error nobody has
+# seen before, and a permissive allowlist would hide exactly that.
+_EXPECTED_LOG_NOISE='Blink authentication failed|Invalid credentials|Could not connect to Blink|two_fa|2FA|AI analysis (is )?not configured|No AI provider|ollama'
+
+cmd_assert_clean_log() {
+  # Supervisor keeps the add-on's stdout, which is where every unhandled
+  # exception in the poll loop, the media server, or any background task
+  # ends up. A traceback there does not stop the container, so without this
+  # the job passes with the add-on quietly broken behind a UI that still
+  # renders its empty states.
+  local log
+  log="$(ha_cli apps logs "$ADDON_SLUG" 2>&1 || true)"
+  local suspicious
+  suspicious="$(printf '%s\n' "$log" \
+    | grep -E 'Traceback \(most recent call last\)|CRITICAL|ERROR' \
+    | grep -Ev "$_EXPECTED_LOG_NOISE" || true)"
+  if [[ -n "$suspicious" ]]; then
+    echo "Unexpected error output in the add-on's log:" >&2
+    printf '%s\n' "$suspicious" >&2
+    return 1
+  fi
+  echo "OK: add-on log has no unexpected errors or tracebacks"
+}
+
+cmd_assert_persisted() {
+  # The other half of e2e/ha_integration_smoke.mjs's PERSISTENCE_MARKER:
+  # that marker was written through the real ingress UI *before*
+  # `restart` recreated the add-on's container. Reading it back now proves
+  # /data -- the bundled PostgreSQL cluster included -- genuinely survived
+  # that, which is the transition an upgrade puts every existing install
+  # through and which nothing else in this repo's CI covers.
+  #
+  # Read over the add-on's own direct port rather than through ingress:
+  # this runs after the browser is gone, and the direct port is already
+  # proven reachable by cmd_start's readiness probe.
+  local expected="${1:?expected marker value required}"
+  local body
+  body="$(curl -sf --max-time 30 \
+    "http://127.0.0.1:${ADDON_PORT}/api/storage/gdrive/settings" || true)"
+  if [[ "$body" != *"$expected"* ]]; then
+    echo "Settings written before the restart did not survive it." >&2
+    echo "  expected to find: $expected" >&2
+    echo "  got: ${body:-<no response>}" >&2
+    return 1
+  fi
+  echo "OK: settings written before the restart survived it (/data persisted)"
+}
+
+cmd_assert_version() {
+  # Supervisor pulls the image named in config.yaml by that file's own
+  # version. If the tag it resolved were stale, every check in this job
+  # would still pass while testing the wrong build entirely.
+  local expected="${1:?expected version required}"
+  local reported
+  reported="$(ha_cli apps info "$ADDON_SLUG" --raw-json 2>/dev/null \
+    | tr ',' '\n' | grep -m1 '"version"' | cut -d'"' -f4 || true)"
+  if [[ "$reported" != "$expected" ]]; then
+    echo "Supervisor is running version '${reported:-<unknown>}', expected '${expected}'" >&2
+    return 1
+  fi
+  echo "OK: Supervisor is running the expected version ($expected)"
+}
+
 cmd_enable_ingress_panel() {
   # Installing and starting an add-on does NOT put its ingress panel in the
   # HA sidebar by default -- confirmed empirically (ingress_panel reads
@@ -277,13 +358,23 @@ case "${1:-}" in
   discover) cmd_discover ;;
   install) cmd_install ;;
   start) cmd_start ;;
+  restart) cmd_restart ;;
+  assert-clean-log) cmd_assert_clean_log ;;
+  assert-persisted)
+    shift
+    cmd_assert_persisted "$@"
+    ;;
+  assert-version)
+    shift
+    cmd_assert_version "$@"
+    ;;
   enable-ingress-panel) cmd_enable_ingress_panel ;;
   diagnostics)
     shift
     cmd_diagnostics "$@"
     ;;
   *)
-    echo "Usage: $0 {prepare-addon-copy|wait-docker|wait-core|discover|install|start|enable-ingress-panel|diagnostics <dir>}" >&2
+    echo "Usage: $0 {prepare-addon-copy|wait-docker|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|diagnostics <dir>}" >&2
     exit 64
     ;;
 esac

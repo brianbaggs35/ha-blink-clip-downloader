@@ -154,3 +154,19 @@ test('stepping to the next clip from a Security-opened modal stays where it was'
   await expect(modal.locator('.modal-title')).toHaveText(title ?? '')
   await expect(modal).toBeVisible()
 })
+
+test('a clip analyzed before 6.0.0 shows no security row rather than a broken one', async ({ page }) => {
+  // Every clip in an upgrading install predates the security layer: its
+  // analysis row has the new columns at their defaults and no events at
+  // all. The timeline is built from security_events, so such a clip simply
+  // must not appear — not appear empty, and not break the rows that do.
+  const rows = await page.evaluate(async () => {
+    const res = await fetch('/api/security/timeline?limit=200')
+    const data = await res.json()
+    return data.events.map((e: { clip_id: string }) => e.clip_id)
+  })
+  expect(rows.length).toBeGreaterThan(0)
+  // e2e-clip-000 is analyzed by ai.spec.ts but has no security events.
+  expect(rows).not.toContain('e2e-clip-000')
+  await expect(page.locator('.security-row')).toHaveCount(3)
+})
