@@ -217,16 +217,20 @@ test("a tag's remove control is a real button, reachable and operable by keyboar
 })
 
 test('a clip card opens from the keyboard, not only from a mouse click', async ({ page }) => {
-  const card = page.locator('.clip-card[data-id="e2e-clip-001"]')
-  await card.focus()
-  await expect(card).toBeFocused()
+  // The card body is a real <button>, so Enter and Space are the browser's
+  // own activation behaviour rather than hand-rolled key handlers — which
+  // is exactly why this is asserted here, in a real browser, and not in
+  // jsdom (which never synthesizes the click a key press causes).
+  const opener = page.locator('.clip-card[data-id="e2e-clip-001"] .clip-open')
+  await opener.focus()
+  await expect(opener).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(openModal(page)).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(openModal(page)).toHaveCount(0)
 
   // Space works too, and must not also scroll the grid out from under it.
-  await card.focus()
+  await opener.focus()
   await page.keyboard.press(' ')
   await expect(openModal(page)).toBeVisible()
 })
