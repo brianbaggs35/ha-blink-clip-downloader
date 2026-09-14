@@ -330,6 +330,10 @@ damage classification.
   stored thumbnail, instead of presenting a collapsed canvas with nothing to
   draw on. Clip strips there and in Biometrics show a placeholder rather than
   a broken image.
+- A slow Home Assistant Supervisor no longer aborts a whole polling cycle.
+  Notifications and webhooks caught connection errors but not timeouts, so
+  a Supervisor that took more than fifteen seconds to answer raised out of
+  the notification call and skipped the rest of that cycle's work.
 - The Status tab no longer replaces itself with loading placeholders when a
   background refresh fires from another tab, and a slow refresh can no
   longer repaint older figures over newer ones.
