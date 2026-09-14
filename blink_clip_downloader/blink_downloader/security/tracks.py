@@ -32,6 +32,7 @@ from .geometry import (
     box_center,
     box_foot_point,
     box_gap,
+    box_iou,
     ground_gap,
 )
 
@@ -62,6 +63,13 @@ ANIMAL_LABELS: frozenset[str] = SUBJECT_LABELS - {PERSON_LABEL}
 #: Fractional change in net position (in frame widths) below which a track
 #: counts as having stayed put rather than travelled across the scene.
 _STATIONARY_DRIFT = 0.05
+
+#: Minimum overlap between a detection and an open pseudo-track's last box
+#: for the two to be treated as the same object when no tracker ids are
+#: available. Generous, because sampled frames are seconds apart and a
+#: walking subject moves a long way between them; a parked vehicle, which is
+#: what this matters most for, overlaps itself almost exactly.
+_ASSOCIATION_IOU = 0.3
 
 #: Share of a subject's own box that must fall inside a zone's bounding box
 #: for them to count as being in it even when their feet are not. A zone
@@ -417,15 +425,37 @@ def build_tracks(
     Detections carrying a real track id group by ``(track_id, label)`` — a
     label flip mid-track starts a new track rather than producing an object
     that was a dog and then a person. Detections with no track id (tracking
-    unavailable for that call) fall back to one pseudo-track per label,
-    flagged ``tracked=False``.
+    unavailable for that call) are associated across frames by spatial
+    overlap instead — see :func:`_associate_untracked` — and the resulting
+    tracks are flagged ``tracked=False`` so everything downstream knows the
+    association was inferred rather than measured.
 
     Tracks are returned ordered by first appearance, so the caller's
     narration follows the order things actually happened.
     """
-    grouped: dict[tuple[int | None, str], list[TrackPoint]] = {}
-    for label, confidence, box, track_id, frame_index in detections:
-        grouped.setdefault((track_id, label), []).append(
+    grouped: dict[tuple[int, str], list[TrackPoint]] = {}
+    tracked_keys: set[tuple[int, str]] = set()
+    untracked: list[Detection] = []
+    for detection in detections:
+        label, confidence, box, track_id, frame_index = detection
+        if track_id is None:
+            untracked.append(detection)
+            continue
+        key = (track_id, label)
+        tracked_keys.add(key)
+        grouped.setdefault(key, []).append(
+            TrackPoint(
+                frame_index=frame_index,
+                offset=frame_index * frame_interval,
+                box=box,
+                confidence=confidence,
+            )
+        )
+
+    for synthetic_id, (label, confidence, box, _, frame_index) in _associate_untracked(
+        untracked
+    ):
+        grouped.setdefault((synthetic_id, label), []).append(
             TrackPoint(
                 frame_index=frame_index,
                 offset=frame_index * frame_interval,
@@ -437,15 +467,63 @@ def build_tracks(
     tracks = [
         ObjectTrack(
             label=label,
-            track_id=track_id,
+            track_id=track_id if (track_id, label) in tracked_keys else None,
             points=sorted(points, key=lambda p: p.frame_index),
             frame_size=frame_size,
-            tracked=track_id is not None,
+            tracked=(track_id, label) in tracked_keys,
         )
         for (track_id, label), points in grouped.items()
     ]
     tracks.sort(key=lambda t: (t.first_offset, t.label, t.track_id or 0))
     return tracks
+
+
+def _associate_untracked(detections: list[Detection]) -> list[tuple[int, Detection]]:
+    """Link detections that carry no tracker id into plausible tracks.
+
+    Without this, every detection of a class would collapse into one
+    pseudo-track per label — and two cars parked side by side would become a
+    single phantom vehicle sitting in the gap between them, which is worse
+    than useless for deciding which one is the protected car.
+
+    The association is a simple greedy nearest-overlap match against each
+    open track's most recent box, one frame at a time. Sampled frames are
+    seconds apart so this cannot compete with a real tracker, and the tracks
+    it produces say so (``tracked=False``); but it is exactly right for the
+    stationary objects that matter most here, and better than nothing for
+    moving ones.
+
+    Returns ``(synthetic_id, detection)`` pairs. Ids are negative so they
+    can never collide with a real tracker's.
+    """
+    if not detections:
+        return []
+
+    assigned: list[tuple[int, Detection]] = []
+    # label -> list of (synthetic_id, last_box, last_frame_index)
+    open_tracks: dict[str, list[tuple[int, Box, int]]] = {}
+    next_id = -1
+
+    for detection in sorted(detections, key=lambda d: d[4]):
+        label, _confidence, box, _track_id, frame_index = detection
+        candidates = [
+            (box_iou(box, last_box), index)
+            for index, (_tid, last_box, last_frame) in enumerate(
+                open_tracks.get(label, [])
+            )
+            if last_frame < frame_index
+        ]
+        best = max(candidates, default=(0.0, -1))
+        if best[0] >= _ASSOCIATION_IOU:
+            track_id, _, _ = open_tracks[label][best[1]]
+            open_tracks[label][best[1]] = (track_id, box, frame_index)
+        else:
+            track_id = next_id
+            next_id -= 1
+            open_tracks.setdefault(label, []).append((track_id, box, frame_index))
+        assigned.append((track_id, detection))
+
+    return assigned
 
 
 def subject_tracks(tracks: list[ObjectTrack]) -> list[ObjectTrack]:

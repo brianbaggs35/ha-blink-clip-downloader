@@ -143,6 +143,16 @@ describe('App', () => {
     wrapper.unmount()
   })
 
+  it('switches to the Security tab and mounts SecurityPage', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="security"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-security').classes()).toContain('active')
+    expect(wrapper.text()).toContain('Security Timeline')
+    wrapper.unmount()
+  })
+
   it('switches to the Vehicles tab and mounts VehiclesPage', async () => {
     mockArrayAwareFetch()
     const wrapper = mountApp()

@@ -43,6 +43,20 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .security import (
+    SUBJECT_LABELS,
+    VEHICLE_LABELS,
+    Box,
+    ObjectTrack,
+    ProtectedAsset,
+    Zone,
+    box_gap,
+    build_tracks,
+    resolve_vehicle_asset,
+)
+from .security.geometry import TYPICAL_VEHICLE_WIDTH_FEET, pixel_gap_to_feet
+from .security.vehicles import VehicleSignature
+
 if TYPE_CHECKING:
     from .database import ClipDatabase
 
@@ -68,6 +82,45 @@ _LOGGER = logging.getLogger(__name__)
 # startup.
 _native_import_lock = threading.Lock()
 
+# Ceiling on how many of this module's heavy stages may run at once, across
+# every clip being analyzed concurrently. Each stage below runs its torch
+# inference in a thread executor, so without a limit a startup backlog of
+# clips can have YOLO, Depth Anything, SAM2 and facenet all resident and
+# computing simultaneously — several gigabytes of working set and a wedged
+# CPU on the Raspberry Pi 5 this add-on is expected to run on. The limiter
+# covers model *loading* as well as inference, since two first-time model
+# downloads racing each other is the same problem in a worse form.
+#
+# One is the right default: these stages are already sequential within a
+# clip, so a limit of one costs a multi-clip backlog only its own
+# serialization, which it was going to pay in CPU contention anyway.
+_cv_limit = 1
+_cv_semaphore: asyncio.Semaphore | None = None
+
+
+def configure_cv_concurrency(limit: int) -> None:
+    """Set how many heavy CV stages may run at once (see ``ai_cv_concurrency``).
+
+    Takes effect for work started after this call; anything already running
+    keeps the limit it acquired under. Values below one are treated as one —
+    a limit of zero would deadlock every stage rather than disabling them,
+    and disabling is what the feature toggles are for.
+    """
+    global _cv_limit, _cv_semaphore
+    limit = max(1, limit)
+    if limit != _cv_limit:
+        _cv_limit = limit
+        _cv_semaphore = None
+
+
+def _cv_slot() -> asyncio.Semaphore:
+    """Return the shared concurrency semaphore, creating it on first use."""
+    global _cv_semaphore
+    if _cv_semaphore is None:
+        _cv_semaphore = asyncio.Semaphore(_cv_limit)
+    return _cv_semaphore
+
+
 # Persistent cache dir for Ultralytics YOLO weights (see ObjectDetector
 # below) — mirrors TORCH_HOME/HF_HOME (set in the Dockerfile) for the same
 # reason: YOLO downloads to whatever path it's given rather than consulting
@@ -80,32 +133,18 @@ _YOLO_MODEL_CACHE_DIR = "/data/model_cache/yolo"
 # in prompts. Anything else YOLO detects (furniture, traffic lights, sports
 # balls, ...) isn't relevant to a home-security judgment and is filtered
 # out to keep the OBJECT DETECTION hint short and focused.
-_RELEVANT_CLASSES = frozenset(
-    {
-        "person",
-        "car",
-        "truck",
-        "bus",
-        "motorcycle",
-        "bicycle",
-        "dog",
-        "cat",
-        "bird",
-        "horse",
-        "backpack",
-        "handbag",
-        "suitcase",
-    }
+# The label vocabulary itself lives in security/tracks.py, which is where
+# every rule that reasons about people, animals and vehicles reads it from —
+# one definition, not two that can drift apart. This module adds only the
+# carryable classes and the bicycle, which the detector surfaces for the
+# prompt but which no security rule treats as a subject or a vehicle.
+_VEHICLE_CLASSES = VEHICLE_CLASSES = VEHICLE_LABELS
+_SUBJECT_CLASSES = SUBJECT_LABELS
+_RELEVANT_CLASSES = (
+    SUBJECT_LABELS
+    | VEHICLE_LABELS
+    | frozenset({"bicycle", "backpack", "handbag", "suitcase"})
 )
-_VEHICLE_CLASSES = frozenset({"car", "truck", "bus", "motorcycle"})
-# Classes eligible as the "subject" in vehicle-proximity/depth/contact
-# analysis — not just people. A dog jumping on a parked car (scratches) or
-# a cat pawing at one is exactly the kind of non-person vehicle contact the
-# base prompt's own rules already flag (see analyzer.py's default prompt,
-# "An animal ... jumps on, paws at, or urinates/defecates on a vehicle"), so
-# the more rigorous depth/contact stages need to consider animals as
-# candidate subjects too, not only people.
-_SUBJECT_CLASSES = frozenset({"person", "dog", "cat", "bird", "horse"})
 
 # Cosine-similarity floor (0.0-1.0, InceptionResnetV1 512-d embeddings) for
 # treating a detected face as matching an enrolled household member. Chosen
@@ -450,45 +489,24 @@ class ObjectDetector:
 
     async def detect(self, frames: list[bytes]) -> list[DetectedObject] | None:
         """Detect+track relevant objects across *frames*. None if unavailable."""
-        if not frames or not await self.ensure_ready():
+        if not frames:
             return None
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._detect_sync, frames)
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Object detection failed: %s", exc)
-            return None
+        async with _cv_slot():
+            if not await self.ensure_ready():
+                return None
+            try:
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, self._detect_sync, frames)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("Object detection failed: %s", exc)
+                return None
 
 
-def _box_gap(
-    a: tuple[float, float, float, float], b: tuple[float, float, float, float]
-) -> float:
-    """Return the edge-to-edge pixel gap between boxes *a* and *b*.
-
-    Zero or positive when the boxes don't overlap (the straight-line
-    distance between their nearest edges). Negative when they overlap,
-    with magnitude equal to the smaller of the two axes' overlap depth —
-    more negative means more deeply overlapping.
-    """
-    ax1, ay1, ax2, ay2 = a
-    bx1, by1, bx2, by2 = b
-    dx = max(bx1 - ax2, ax1 - bx2, 0.0)
-    dy = max(by1 - ay2, ay1 - by2, 0.0)
-    if not dx and not dy:
-        overlap_x = min(ax2, bx2) - max(ax1, bx1)
-        overlap_y = min(ay2, by2) - max(ay1, by1)
-        return -min(overlap_x, overlap_y)
-    return math.hypot(dx, dy)
-
-
-# Reference real-world vehicle width (feet) used to convert a detected
-# vehicle's pixel width into an implicit scale for turning a pixel gap into
-# an approximate distance estimate — the same "a typical car is about 6
-# feet wide" reference analyzer.py's _car_protection_segment already gives
-# the AI model, so this code-computed hint and the model's own written
-# distance rules (1 ft / 3 ft thresholds) reason about one consistent
-# scale instead of two independently-chosen ones.
-_TYPICAL_VEHICLE_WIDTH_FEET = 6.0
+# Re-exported under this module's historical private name: the geometry
+# itself now lives in security/geometry.py, shared with every security rule
+# that measures the same distances.
+_box_gap = box_gap
+_TYPICAL_VEHICLE_WIDTH_FEET = TYPICAL_VEHICLE_WIDTH_FEET
 
 
 def _proximity_label(gap: float, vehicle_width: float) -> str:
@@ -503,14 +521,151 @@ def _proximity_label(gap: float, vehicle_width: float) -> str:
     """
     if gap <= 0:
         return "overlapping the detected vehicle's outline"
-    if vehicle_width <= 0:
+    feet = pixel_gap_to_feet(gap, vehicle_width)
+    if feet is None:
         return "at an indeterminate distance from the detected vehicle"
-    feet = (gap / vehicle_width) * _TYPICAL_VEHICLE_WIDTH_FEET
     if feet < 1.0:
         return "well under 1 ft from the detected vehicle"
     if feet < 3.0:
         return f"approximately {feet:.0f} ft from the detected vehicle"
     return f"well away from the detected vehicle (roughly {feet:.0f} ft or more)"
+
+
+def _frame_dimensions(frame: bytes) -> tuple[int, int] | None:
+    """Decode *frame* far enough to read its ``(width, height)``.
+
+    Everything the security layer computes — zone membership, ground
+    distance, how much of the frame a subject fills — needs the frame's
+    real resolution, which the detector's pixel boxes alone don't carry.
+    ``None`` when the frame can't be decoded, which every caller treats as
+    "no geometry available for this clip".
+    """
+    with _native_import_lock:
+        import cv2  # type: ignore[import-not-found]
+        import numpy as np
+
+    img = cv2.imdecode(np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    height, width = img.shape[:2]
+    return (width, height)
+
+
+def _crop_region(img: Any, box: Box) -> Any:
+    """Clamp *box* to *img*'s bounds and return that region of it.
+
+    Always at least one pixel wide and tall. A detector box can sit partly
+    (or, after the tracker extrapolates one, entirely) outside the frame,
+    and an empty crop would fail further down in ways that read as a decode
+    error rather than as the bad box it actually is.
+    """
+    height, width = img.shape[:2]
+    x1 = max(0, min(width - 1, int(box[0])))
+    y1 = max(0, min(height - 1, int(box[1])))
+    x2 = max(x1 + 1, min(width, int(box[2])))
+    y2 = max(y1 + 1, min(height, int(box[3])))
+    return img[y1:y2, x1:x2]
+
+
+def _vehicle_histogram(frame: bytes, box: Box) -> tuple[float, ...]:
+    """Return a coarse colour fingerprint of *box*'s contents in *frame*.
+
+    A 16×4 hue/saturation histogram of the cropped region, area-normalized.
+    Hue and saturation rather than raw RGB so the same car scores similarly
+    in morning sun and under a porch light; coarse bins because the job is
+    "is this the silver hatchback or the red pickup", not fine-grained
+    recognition. Empty when the crop can't be produced, which callers treat
+    as "no appearance evidence" rather than as a mismatch.
+    """
+    with _native_import_lock:
+        import cv2  # type: ignore[import-not-found]
+        import numpy as np
+
+    img = cv2.imdecode(np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return ()
+    hsv = cv2.cvtColor(_crop_region(img, box), cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1], None, [16, 4], [0, 180, 0, 256])
+    return tuple(float(v) for v in (hist.flatten() / float(hist.sum())))
+
+
+#: Side length the asset's region is resampled to before before/after
+#: comparison. Small enough that the comparison is about structure rather
+#: than sensor noise or a pixel of camera shake, large enough to notice a
+#: dent-sized change in a vehicle-sized crop.
+_CHANGE_PATCH = 64
+
+
+def _region_appearance_change(before: bytes, after: bytes, box: Box) -> float | None:
+    """How much *box*'s contents changed between two frames (0.0-1.0).
+
+    The cheap, model-free half of "did the protected vehicle itself change
+    during this clip" — a new dent, a thrown object left on the bonnet, a
+    door left open. Both crops are contrast-normalized before comparison so
+    that a cloud passing, a floodlight switching on, or the camera's own
+    auto-exposure does not register as damage; what survives is structural
+    difference in that one region.
+
+    This is evidence, never a verdict: it says the region looks different,
+    not that anything was damaged. ``None`` when either crop can't be
+    produced.
+    """
+    with _native_import_lock:
+        import cv2  # type: ignore[import-not-found]
+        import numpy as np
+
+    crops: list[Any] = []
+    for data in (before, after):
+        img = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            return None
+        gray = cv2.cvtColor(_crop_region(img, box), cv2.COLOR_BGR2GRAY)
+        try:
+            resized = np.asarray(
+                cv2.resize(gray, (_CHANGE_PATCH, _CHANGE_PATCH)), dtype="float32"
+            )
+        except Exception:  # noqa: BLE001
+            # Every other stage in this module treats a failure as missing
+            # evidence rather than an error, and this one is the least
+            # important of them: no before/after comparison simply means the
+            # impact rule has one fewer input.
+            return None
+        if resized.shape != (_CHANGE_PATCH, _CHANGE_PATCH):
+            return None
+        std = float(resized.std())
+        # A region with no variance at all — a blown-out or fully black
+        # crop — would divide by zero here and reach the impact rule as
+        # NaN, where every threshold comparison silently evaluates False.
+        # Dividing by one instead leaves it flat, which reads correctly as
+        # "nothing structural changed".
+        crops.append((resized - float(resized.mean())) / (std if std > 0 else 1.0))
+
+    difference = float(np.abs(crops[0] - crops[1]).mean())
+    # Two contrast-normalized, structurally unrelated crops differ by about
+    # 1.1 on average, so halving maps "completely different" onto roughly
+    # 0.55 and leaves headroom above it rather than saturating at 1.0.
+    return min(1.0, difference / 2.0)
+
+
+def _select_scan_frames(
+    frames: list[bytes], cap: int, interval: float
+) -> tuple[list[bytes], float]:
+    """Pick an evenly-spaced subset of *frames* for the temporal scan.
+
+    Object detection runs over this set rather than over the handful of
+    frames chosen for the AI prompt, because those are picked by motion
+    (entry, peak, exit) and are deliberately *not* evenly spaced — which
+    makes "frame index × interval" the wrong clip time for them, and every
+    duration, speed and trajectory derived from it wrong too. An even
+    subset keeps the arithmetic honest at a bounded cost: *cap* frames of
+    detection, whatever the clip's length.
+
+    Returns the frames alongside the real seconds between them.
+    """
+    if cap <= 0 or len(frames) <= cap:
+        return frames, interval
+    step = math.ceil(len(frames) / cap)
+    return frames[::step], interval * step
 
 
 def _car_zone_pixel_box(
@@ -527,30 +682,13 @@ def _car_zone_pixel_box(
     zone" comparison, not exact geometry. None if *frame* fails to decode
     or the zone has no usable points.
     """
-    with _native_import_lock:
-        import cv2  # type: ignore[import-not-found]
-        import numpy as np
-
-    arr = np.frombuffer(frame, dtype=np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if img is None:
+    parsed = Zone.from_config(zone)
+    if parsed is None:
         return None
-    height, width = img.shape[:2]
-
-    if zone.get("shape") == "polygon":
-        points = zone.get("points") or []
-        if not points:
-            return None
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        x_min, x_max = min(xs), max(xs)
-        y_min, y_max = min(ys), max(ys)
-    else:
-        x_min = zone.get("x_min", 0.0)
-        y_min = zone.get("y_min", 0.0)
-        x_max = zone.get("x_max", 1.0)
-        y_max = zone.get("y_max", 1.0)
-    return (x_min * width, y_min * height, x_max * width, y_max * height)
+    size = _frame_dimensions(frame)
+    if size is None:
+        return None
+    return parsed.to_pixel_box(*size)
 
 
 def _best_subject_vehicle_pair(
@@ -597,10 +735,29 @@ def _best_subject_vehicle_pair(
     return best
 
 
+def _detection_distance_pair(
+    detections: list[DetectedObject],
+    zone_box: tuple[float, float, float, float] | None,
+    asset_box: Box | None,
+    car_description: str,
+) -> tuple[DetectedObject, Box] | None:
+    """Pick the subject and vehicle box the distance estimate should use."""
+    if not car_description:
+        return None
+    if asset_box is not None:
+        subjects = [d for d in detections if d.label in _SUBJECT_CLASSES]
+        if not subjects:
+            return None
+        return (min(subjects, key=lambda d: _box_gap(d.box, asset_box)), asset_box)
+    legacy = _best_subject_vehicle_pair(detections, zone_box)
+    return (legacy[0], legacy[1].box) if legacy is not None else None
+
+
 def _build_detection_hint(
     detections: list[DetectedObject],
     car_description: str,
     zone_box: tuple[float, float, float, float] | None = None,
+    asset_box: Box | None = None,
 ) -> str | None:
     """Render detections into an OBJECT DETECTION prompt hint, or None if empty.
 
@@ -608,21 +765,24 @@ def _build_detection_hint(
     protected-vehicle rules (see :meth:`VisionPipeline.process_clip`) — the
     detected-classes line is still useful generically, but the
     vehicle-distance estimate is skipped since there's no protected vehicle
-    for it to be relevant to on this camera. *zone_box* is forwarded to
-    :func:`_best_subject_vehicle_pair` unchanged, so this hint's distance
-    estimate always agrees with the depth/contact stages about which
-    vehicle is "the" protected one.
+    for it to be relevant to on this camera.
+
+    *asset_box*, when the security layer has identified the protected
+    vehicle, is the box this hint measures against — so the distance it
+    states is a distance to *your* car, not to whichever vehicle a subject
+    happened to stand nearest. *zone_box* is the fallback used when no
+    identification was made, matching the behaviour before that existed.
     """
     if not detections:
         return None
     labels = sorted({d.label for d in detections})
     lines = [f"Detected object classes across sampled frames: {', '.join(labels)}."]
 
-    pair = _best_subject_vehicle_pair(detections, zone_box) if car_description else None
+    pair = _detection_distance_pair(detections, zone_box, asset_box, car_description)
     if pair is not None:
-        subject, vehicle, _ = pair
-        vehicle_width = vehicle.box[2] - vehicle.box[0]
-        gap = _box_gap(subject.box, vehicle.box)
+        subject, vehicle_box = pair
+        vehicle_width = vehicle_box[2] - vehicle_box[0]
+        gap = _box_gap(subject.box, vehicle_box)
         proximity = _proximity_label(gap, vehicle_width)
         lines.append(
             f"Object-detection distance estimate: the detected {subject.label}'s "
@@ -834,16 +994,17 @@ class DepthEstimator:
         subject_box: tuple[float, float, float, float],
         vehicle_box: tuple[float, float, float, float],
     ) -> DepthComparison | None:
-        if not await self.ensure_ready():
-            return None
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, self._compare_sync, frame, subject_box, vehicle_box
-            )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Depth estimation failed: %s", exc)
-            return None
+        async with _cv_slot():
+            if not await self.ensure_ready():
+                return None
+            try:
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(
+                    None, self._compare_sync, frame, subject_box, vehicle_box
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("Depth estimation failed: %s", exc)
+                return None
 
 
 def _build_depth_hint(result: DepthComparison, subject_label: str) -> str:
@@ -1051,16 +1212,17 @@ class ContactSegmenter:
         subject_box: tuple[float, float, float, float],
         vehicle_box: tuple[float, float, float, float],
     ) -> ContactResult | None:
-        if not await self.ensure_ready():
-            return None
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                None, self._check_sync, frame, subject_box, vehicle_box
-            )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Contact segmentation failed: %s", exc)
-            return None
+        async with _cv_slot():
+            if not await self.ensure_ready():
+                return None
+            try:
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(
+                    None, self._check_sync, frame, subject_box, vehicle_box
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("Contact segmentation failed: %s", exc)
+                return None
 
 
 def _build_contact_hint(result: ContactResult, subject_label: str) -> str:
@@ -1203,14 +1365,15 @@ class FaceEmbedder:
 
     async def embed(self, frame: bytes) -> list[list[float]]:
         """Return one 512-dim embedding per detected face in *frame*."""
-        if not await self.ensure_ready():
-            return []
-        try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._embed_sync, frame)
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Face embedding failed: %s", exc)
-            return []
+        async with _cv_slot():
+            if not await self.ensure_ready():
+                return []
+            try:
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, self._embed_sync, frame)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("Face embedding failed: %s", exc)
+                return []
 
 
 class FaceRecognizer:
@@ -1326,6 +1489,15 @@ class VisionConfig:
     depth_estimation_model: str = "depth-anything/Depth-Anything-V2-Small-hf"
     face_recognition_enabled: bool = False
     hf_token: str = ""
+    #: How many evenly-spaced frames the temporal scan runs detection over
+    #: (see :func:`_select_scan_frames`). This is the single knob that trades
+    #: detection cost against how much of the clip's *behaviour* — dwell,
+    #: approach, retreat — the security layer can see.
+    temporal_scan_frames: int = 12
+    #: Whether the structured security layer runs at all. Costs no extra
+    #: model inference when detection is already on, so it defaults to
+    #: enabled; turning it off falls back to the plain prompt hints.
+    security_events_enabled: bool = True
 
 
 @dataclass
@@ -1344,6 +1516,36 @@ class VisionHints:
     # persist structured results — see database.py's detected_objects
     # table — rather than only ever having the flattened prompt string.
     detections: list[DetectedObject] | None = None
+
+    # --- structured security evidence (see blink_downloader.security) ---
+    # Everything below is raw material for the deterministic event
+    # detector, which analyzer.py runs: this module's job ends at producing
+    # measurements, and the rules that interpret them live where they can
+    # be tested without torch installed.
+    tracks: list[ObjectTrack] | None = None
+    asset: ProtectedAsset | None = None
+    frame_size: tuple[float, float] | None = None
+    #: Frames the temporal scan actually covered, and the real seconds
+    #: between them — the security layer's whole sense of time.
+    scan_frame_count: int = 0
+    scan_interval: float = 0.0
+    #: Which track the depth/contact stages examined, so their verdicts are
+    #: attributed to the right subject rather than to whoever else was in
+    #: frame.
+    contact_track_id: int | None = None
+    depth_similar: bool | None = None
+    contact_touching: bool | None = None
+    #: How much the protected asset's own image region changed between the
+    #: start and end of the clip (see :func:`_region_appearance_change`).
+    asset_appearance_change: float | None = None
+    #: Optional stages that produced nothing for this clip, named so the
+    #: final result can say which evidence was missing instead of quietly
+    #: concluding without it.
+    unavailable_sources: list[str] = field(default_factory=list)
+    #: An updated learned vehicle signature to persist, set only when this
+    #: clip identified the protected vehicle confidently enough to learn
+    #: from (see :mod:`blink_downloader.security.vehicles`).
+    vehicle_signature_update: VehicleSignature | None = None
 
 
 class VisionPipeline:
@@ -1365,7 +1567,12 @@ class VisionPipeline:
         self._face_embedder = FaceEmbedder()
 
     def update_config(self, config: VisionConfig) -> None:
-        """Replace the active config at runtime (e.g. after an options reload)."""
+        """Replace the active config at runtime (e.g. after an options reload).
+
+        Models are only rebuilt when the setting that chooses them actually
+        changed — reloading options must not throw away a loaded checkpoint
+        and pay its multi-second cold start again for an unrelated edit.
+        """
         if config.object_detection_model != self._config.object_detection_model:
             self._detector = ObjectDetector(config.object_detection_model)
         if (
@@ -1382,33 +1589,36 @@ class VisionPipeline:
         frames: list[bytes],
         car_description: str = "",
         car_protection_applies: bool = False,
-        face_recognition_frames: list[bytes] | None = None,
+        raw_frames: list[bytes] | None = None,
         car_zone: dict[str, Any] | None = None,
+        camera: str = "",
+        frame_interval: float = 2.0,
+        vehicle_signature: VehicleSignature | None = None,
     ) -> VisionHints:
-        """Run every enabled stage against *frames* and return the resulting hints.
+        """Run every enabled stage and return this clip's hints and evidence.
+
+        *frames* are the handful already down-selected for the AI prompt.
+        *raw_frames*, when given, is the full pre-down-selection extraction
+        pool, and is what the temporal scan and face recognition both work
+        from — for different reasons that happen to point the same way.
+        Face recognition needs the widest possible pool because the clearest
+        view of a face is often a *low*-motion moment the down-selection
+        drops; the temporal scan needs it because down-selected frames are
+        deliberately unevenly spaced, which makes every duration and speed
+        derived from them wrong. See :func:`_select_scan_frames`.
 
         *car_protection_applies* must reflect whether protected-vehicle
         rules apply to *this specific camera* (see
-        BaseAnalyzer._car_protection_applies) — not merely whether a
-        protected vehicle is described somewhere on the property. Vehicle
-        distance/depth/contact analysis is skipped entirely when False, so
-        a camera that doesn't view the protected vehicle never generates
-        vehicle-proximity hints just because it happened to detect an
-        unrelated car and a person in frame.
+        ``BaseAnalyzer._car_protection_applies``) — not merely whether a
+        protected vehicle is described somewhere on the property. Every
+        vehicle-related stage is skipped entirely when False, so a camera
+        that doesn't view the protected vehicle never generates vehicle
+        evidence just because it happened to see a car.
 
-        *car_zone*, when given (the same normalized rect/polygon a user
-        draws on the Vehicles tab, see ``analyzer.py``'s ``_car_zones``),
-        disambiguates *which* detected vehicle is the protected one on a
-        camera that can see more than one (see
-        :func:`_best_subject_vehicle_pair`) — without it, this pipeline can
-        only fall back to "whichever detected vehicle a subject happens to
-        be closest to," which is wrong whenever an unrelated car is also in
-        frame.
-
-        *face_recognition_frames*, when given, is used for face recognition
-        instead of *frames* — see the comment where it's consumed below for
-        why recognition needs a wider frame pool than the rest of this
-        pipeline.
+        *car_zone*, *vehicle_signature* and the colour fingerprints computed
+        below are the three pieces of evidence that decide *which* detected
+        vehicle is the protected one — see
+        :func:`~blink_downloader.security.vehicles.identify_protected_vehicle`.
         """
         hints = VisionHints()
         if not frames:
@@ -1420,80 +1630,31 @@ class VisionPipeline:
         # is an embedding-space mismatch that can cause real matches (approved
         # household members) to be missed. Captured before `frames` is
         # potentially reassigned to CLAHE-enhanced frames below.
-        #
-        # Prefer face_recognition_frames (the full pre-down-selection extraction
-        # pool) over frames (the handful already down-selected for the AI
-        # prompt) when the caller supplies it. The down-selection in
-        # analyzer.py picks frames by motion (entry/peak/exit) to narrate the
-        # clip for the AI model — but a person can stand still while looking
-        # straight at the camera, which is exactly a *low*-motion moment, so
-        # that selection is liable to drop the one frame with the clearest,
-        # most front-on view of a face. Recognition doesn't need a narrative
-        # sequence; it just needs the best chance of seeing every face that
-        # appears anywhere in the clip.
-        raw_frames = face_recognition_frames if face_recognition_frames else frames
+        raw_pool = raw_frames if raw_frames else frames
 
         if self._config.enhanced_detection_enabled:
-            frames = FrameEnhancer.enhance(frames)
-            hints.enhanced_frames = frames
-
-            detections = await self._detector.detect(frames)
-            hints.detections = detections
-
-            # Only decoded when actually useful: disambiguating which
-            # detected vehicle is the protected one only matters on a
-            # camera under protected-vehicle rules that also has a
-            # specific zone drawn (see _car_zone_pixel_box and
-            # _best_subject_vehicle_pair) — most cameras have neither, so
-            # this stays None and every call below behaves exactly as it
-            # did before car_zone existed.
-            zone_box = (
-                _car_zone_pixel_box(car_zone, frames[0])
-                if detections and car_protection_applies and car_zone
-                else None
+            await self._run_detection_stages(
+                hints,
+                frames,
+                raw_pool,
+                camera=camera,
+                car_description=car_description if car_protection_applies else "",
+                car_zone=car_zone if car_protection_applies else None,
+                frame_interval=frame_interval,
+                vehicle_signature=vehicle_signature,
             )
-
-            if detections:
-                # Vehicle-distance language (and the depth/contact stages
-                # below) is only relevant on a camera actually designated to
-                # view the protected vehicle — car_protection_applies is
-                # False for any other camera even when a protected vehicle
-                # is described elsewhere on the property, so those cameras
-                # stay properly isolated (see BaseAnalyzer._car_protection_applies).
-                hints.detection_hint = _build_detection_hint(
-                    detections,
-                    car_description if car_protection_applies else "",
-                    zone_box,
-                )
-                hints.tracking_hint = _build_tracking_hint(detections, len(frames))
-
-            pair = (
-                _best_subject_vehicle_pair(detections, zone_box)
-                if detections and car_protection_applies
-                else None
-            )
-
-            if pair:
-                subject, vehicle, frame_idx = pair
-                depth_result = await self._depth.compare(
-                    frames[frame_idx], subject.box, vehicle.box
-                )
-                if depth_result is not None:
-                    hints.depth_hint = _build_depth_hint(depth_result, subject.label)
-
-                contact_result = await self._segmenter.check_contact(
-                    frames[frame_idx], subject.box, vehicle.box
-                )
-                if contact_result is not None:
-                    hints.contact_hint = _build_contact_hint(
-                        contact_result, subject.label
-                    )
+        else:
+            hints.unavailable_sources.append("object detection")
+            hints.unavailable_sources.append("depth estimation")
+            hints.unavailable_sources.append("contact segmentation")
 
         if self._config.face_recognition_enabled and self._db is not None:
             recognizer = FaceRecognizer(self._face_embedder, self._db)
-            face_result = await recognizer.recognize(raw_frames)
+            face_result = await recognizer.recognize(raw_pool)
             hints.face_recognition = face_result
             hints.recognized_resident_hint = _build_recognition_hint(face_result)
+        else:
+            hints.unavailable_sources.append("face recognition")
 
         # The only per-clip evidence any of this ran was the one-time
         # "model ready" INFO log each stage prints on its first load —
@@ -1504,13 +1665,16 @@ class VisionPipeline:
         # counts, mirroring what the prompt itself is allowed to say.
         _LOGGER.debug(
             "Vision pipeline result: enhanced_detection=%s "
-            "(detection=%r, tracking=%r, depth=%r, contact=%r), "
-            "face_recognition=%s (approved=%d, other=%d, unrecognized_present=%s)",
+            "(detection=%r, tracking=%r, depth=%r, contact=%r, tracks=%d, "
+            "scan_frames=%d), face_recognition=%s "
+            "(approved=%d, other=%d, unrecognized_present=%s)",
             self._config.enhanced_detection_enabled,
             hints.detection_hint,
             hints.tracking_hint,
             hints.depth_hint,
             hints.contact_hint,
+            len(hints.tracks or []),
+            hints.scan_frame_count,
             self._config.face_recognition_enabled,
             len(hints.face_recognition.approved_names) if hints.face_recognition else 0,
             len(hints.face_recognition.other_names) if hints.face_recognition else 0,
@@ -1520,3 +1684,212 @@ class VisionPipeline:
         )
 
         return hints
+
+    async def _run_detection_stages(
+        self,
+        hints: VisionHints,
+        frames: list[bytes],
+        raw_pool: list[bytes],
+        camera: str,
+        car_description: str,
+        car_zone: dict[str, Any] | None,
+        frame_interval: float,
+        vehicle_signature: VehicleSignature | None,
+    ) -> None:
+        """Frame preprocessing, detection, tracking and vehicle identification."""
+        hints.enhanced_frames = FrameEnhancer.enhance(frames)
+
+        scan_frames, scan_interval = _select_scan_frames(
+            raw_pool, self._config.temporal_scan_frames, frame_interval
+        )
+        scan_frames = FrameEnhancer.enhance(scan_frames)
+        hints.scan_frame_count = len(scan_frames)
+        hints.scan_interval = scan_interval
+
+        detections = await self._detector.detect(scan_frames)
+        hints.detections = detections
+        if not detections:
+            if detections is None:
+                hints.unavailable_sources.append("object detection")
+            hints.unavailable_sources.append("depth estimation")
+            hints.unavailable_sources.append("contact segmentation")
+            return
+
+        frame_size = _frame_dimensions(scan_frames[0])
+        if frame_size is None:
+            return
+        hints.frame_size = (float(frame_size[0]), float(frame_size[1]))
+
+        if self._config.security_events_enabled:
+            hints.tracks = build_tracks(
+                [
+                    (d.label, d.confidence, d.box, d.track_id, d.frame_index)
+                    for d in detections
+                ],
+                scan_interval,
+                hints.frame_size,
+            )
+            hints.asset = self._resolve_asset(
+                hints, scan_frames, camera, car_description, car_zone, vehicle_signature
+            )
+
+        zone_box = (
+            _car_zone_pixel_box(car_zone, scan_frames[0])
+            if car_zone and car_description
+            else None
+        )
+        asset_box = hints.asset.box if hints.asset and hints.asset.present else None
+        hints.detection_hint = _build_detection_hint(
+            detections, car_description, zone_box, asset_box
+        )
+        hints.tracking_hint = _build_tracking_hint(detections, len(scan_frames))
+
+        await self._run_pair_stages(hints, scan_frames, detections, zone_box)
+
+    def _resolve_asset(
+        self,
+        hints: VisionHints,
+        scan_frames: list[bytes],
+        camera: str,
+        car_description: str,
+        car_zone: dict[str, Any] | None,
+        vehicle_signature: VehicleSignature | None,
+    ) -> ProtectedAsset | None:
+        """Work out which detected vehicle, if any, is the protected one."""
+        if not car_description or hints.tracks is None or hints.frame_size is None:
+            return None
+
+        # A colour fingerprint per candidate vehicle, taken from the frame
+        # where the detector saw it most confidently. Only computed when
+        # there is a learned signature to compare against — otherwise it is
+        # decode work whose result nothing would read.
+        histograms: dict[int | None, tuple[float, ...]] = {}
+        if vehicle_signature is not None and vehicle_signature.histogram:
+            for track in hints.tracks:
+                if track.label not in VEHICLE_LABELS:
+                    continue
+                best = max(track.points, key=lambda pt: pt.confidence)
+                if 0 <= best.frame_index < len(scan_frames):
+                    histograms[track.track_id] = _vehicle_histogram(
+                        scan_frames[best.frame_index], best.box
+                    )
+
+        asset = resolve_vehicle_asset(
+            camera,
+            car_description,
+            hints.tracks,
+            hints.frame_size,
+            zone=Zone.from_config(car_zone),
+            signature=vehicle_signature,
+            histograms=histograms,
+        )
+        if asset is not None:
+            hints.vehicle_signature_update = self._learn_signature(
+                asset, hints, scan_frames, vehicle_signature
+            )
+        return asset
+
+    @staticmethod
+    def _learn_signature(
+        asset: ProtectedAsset,
+        hints: VisionHints,
+        scan_frames: list[bytes],
+        current: VehicleSignature | None,
+    ) -> VehicleSignature | None:
+        """Fold a confident sighting into this camera's learned signature.
+
+        Only confident identifications teach: learning from a guess is how
+        a signature drifts onto the neighbour's car and stays there, which
+        would make the whole mechanism worse than not having it. The blend
+        itself is deliberately slow — see
+        :meth:`~blink_downloader.security.vehicles.VehicleSignature.blend`.
+        """
+        identification = asset.identification
+        if (
+            identification is None
+            or not identification.confident
+            or identification.protected is None
+            or hints.frame_size is None
+            or not scan_frames
+        ):
+            return None
+        normalized = identification.protected.normalized_box
+        histogram = _vehicle_histogram(scan_frames[0], identification.protected.box)
+        if current is None:
+            return VehicleSignature.from_observation(normalized, histogram)
+        return current.blend(normalized, histogram)
+
+    async def _run_pair_stages(
+        self,
+        hints: VisionHints,
+        scan_frames: list[bytes],
+        detections: list[DetectedObject],
+        zone_box: tuple[float, float, float, float] | None,
+    ) -> None:
+        """Depth and contact analysis for the subject nearest the asset.
+
+        These are the two stages that can tell "walked past the car" from
+        "stood right at it" — a distinction a 2D frame simply does not
+        contain — so they are pointed at whichever subject actually came
+        closest, and their verdict is tagged with that subject's track id so
+        nothing downstream misapplies it to somebody else in frame.
+        """
+        pair = self._select_pair(hints, detections, zone_box)
+        if pair is None:
+            hints.unavailable_sources.append("depth estimation")
+            hints.unavailable_sources.append("contact segmentation")
+            return
+        subject, asset_box, frame_idx, track_id = pair
+        hints.contact_track_id = track_id
+
+        depth_result = await self._depth.compare(
+            scan_frames[frame_idx], subject.box, asset_box
+        )
+        if depth_result is None:
+            hints.unavailable_sources.append("depth estimation")
+        else:
+            hints.depth_similar = depth_result.similar_depth
+            hints.depth_hint = _build_depth_hint(depth_result, subject.label)
+
+        contact_result = await self._segmenter.check_contact(
+            scan_frames[frame_idx], subject.box, asset_box
+        )
+        if contact_result is None:
+            hints.unavailable_sources.append("contact segmentation")
+        else:
+            hints.contact_touching = contact_result.touching
+            hints.contact_hint = _build_contact_hint(contact_result, subject.label)
+
+        # Cheap, model-free "did the vehicle itself change" evidence, worth
+        # computing exactly when somebody was close enough to change it.
+        hints.asset_appearance_change = _region_appearance_change(
+            scan_frames[0], scan_frames[-1], asset_box
+        )
+
+    @staticmethod
+    def _select_pair(
+        hints: VisionHints,
+        detections: list[DetectedObject],
+        zone_box: tuple[float, float, float, float] | None,
+    ) -> tuple[DetectedObject, Box, int, int | None] | None:
+        """Pick the subject/asset box pair the heavy stages should examine.
+
+        Prefers the identified protected vehicle, so depth and contact are
+        measured against the right car rather than against whichever one a
+        subject happened to stand nearest. Falls back to the legacy
+        nearest-pair search when the security layer is switched off or found
+        no asset.
+        """
+        asset = hints.asset
+        if asset is not None and asset.present and asset.box is not None:
+            subjects = [d for d in detections if d.label in _SUBJECT_CLASSES]
+            if not subjects:
+                return None
+            nearest = min(subjects, key=lambda d: box_gap(d.box, asset.box))  # type: ignore[arg-type]
+            return (nearest, asset.box, nearest.frame_index, nearest.track_id)
+
+        legacy = _best_subject_vehicle_pair(detections, zone_box)
+        if legacy is None:
+            return None
+        subject, vehicle, frame_idx = legacy
+        return (subject, vehicle.box, frame_idx, subject.track_id)

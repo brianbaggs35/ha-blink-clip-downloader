@@ -192,7 +192,8 @@ _ALL_TABLES = (
     "clips, analysis_results, ai_usage_reset, analysis_queue, "
     "gdrive_upload_queue, "
     "camera_baselines, camera_duration_stats, camera_scene_baselines, "
-    "analysis_feedback, face_enrollments, battery_history"
+    "analysis_feedback, face_enrollments, battery_history, "
+    "security_events, camera_vehicle_signatures"
 )
 
 

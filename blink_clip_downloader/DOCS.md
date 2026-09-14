@@ -698,6 +698,8 @@ you'll see them report unavailable there.
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
 
+| `ai_cv_concurrency` | `1` | How many of these heavy stages may run at once **across every clip being analyzed**. The stages already run one after another within a single clip, so the default only serializes a multi-clip backlog — which would have contended for the same CPU anyway — while stopping four large models from being resident and computing simultaneously. Raise it only on hardware with real spare capacity. |
+
 None of these packages are required to install or run the add-on normally; if a
 package fails to install in the Docker image (see the Dockerfile) or isn't present
 for any other reason, the corresponding option simply reports itself unavailable at
@@ -707,6 +709,120 @@ runtime and analysis proceeds exactly as if it were disabled.
 place of it — each one produces a bounded, hedged hint appended to the same prompt
 the "SCENE BASELINE" and "ZONE MOTION" hints already use, so the model still judges
 each clip on what it can actually see, with better evidence to work with.
+
+### Structured Security Analysis
+
+Object detection gives you boxes. On its own that answers "what was in frame",
+while every question a security system actually cares about is temporal: how
+*long* was someone there, were they getting *closer*, did they leave *after*
+touching something. This layer turns the detector's per-frame boxes into tracked
+subjects, structured security events, and a 0-100 risk score — then hands the AI
+provider that evidence to **verify** rather than asking it to work the geometry
+out from a handful of stills.
+
+It costs no extra model inference on top of `ai_enhanced_detection_enabled`; it
+is post-processing of detections that were already being computed. With enhanced
+detection off, it simply produces nothing.
+
+| Option | Default | What it does |
+|---|---|---|
+| `ai_security_events_enabled` | `true` | Turns the whole layer on. Produces the security events, the risk score, the evidence-quality score, the **SECURITY EVIDENCE** and **WHICH VEHICLE IS PROTECTED** prompt sections, and the Security tab's timeline. |
+| `ai_temporal_scan_frames` | `12` | How many evenly-spaced frames object detection runs over. This is the one knob that trades detection cost against how much of a clip's *behaviour* can be seen. It does **not** change how many frames the AI model itself receives (that is still `ai_max_frames`). `0` disables the wider scan, which makes every reported duration unreliable. |
+| `ai_risk_alert_threshold` | `75` | Risk score at or above which a clip is flagged suspicious **even when the AI model judged it unremarkable**. The default covers the "critical" band only. `0` disables the override and leaves the model's verdict final. |
+
+#### Why the frames it scans are different from the frames the AI sees
+
+The frames sent to the model are chosen by motion — entry, peak, exit — and are
+deliberately *not* evenly spaced, which is right for narrating a clip and wrong
+for measuring it: "frame index × interval" is simply not the clip time for them,
+so every duration, speed and trajectory derived from them would be wrong. The
+temporal scan therefore takes its own evenly-spaced sample (capped at
+`ai_temporal_scan_frames`) and reports the real seconds between those frames.
+
+#### Events it can detect
+
+`subject_present`, `zone_entered`, `asset_approached`, `asset_proximity`,
+`loitering`, `retreat`, `contact_candidate`, `impact_candidate`,
+`retreat_after_contact`, `object_removed`, `object_added`,
+`animal_asset_interaction`, `multiple_subjects`, `camera_obstruction`.
+
+Every rule under-claims on purpose. Sampled frames are seconds apart, boxes are
+approximations, and a 2D overlap is not contact — so where the evidence only
+supports "possible", the event says possible. Events that would need pose
+estimation or action recognition (striking, kicking, climbing) are deliberately
+absent rather than guessed at.
+
+#### Risk score, severity, and evidence quality
+
+The score is a weighted sum of the detected events, adjusted for the hour and
+for whether a recognized household member was present, and every contribution is
+listed back to you in the UI — "protected-zone entry +20, possible contact +32,
+recognized household member −32" — so a verdict is auditable rather than being a
+number nobody can inspect. It maps onto four bands: **routine** (0-24),
+**noteworthy** (25-49), **suspicious** (50-74), **critical** (75+).
+
+*Evidence quality* is scored separately and deliberately: a model can be 95%
+sure it saw someone try a car door, and the underlying imagery can still be
+three dark frames of a figure spanning 6% of the frame height. Weak evidence
+damps the risk score, so a pile of confident-sounding events built on almost
+nothing cannot manufacture a critical alert on its own.
+
+#### Which car is yours
+
+The single most damaging way a protected-vehicle feature can fail is by
+protecting the wrong vehicle. On a shared driveway or in an apartment car park, a
+neighbour returning to their own car sits a few feet from yours and produces
+exactly the geometry an intruder would.
+
+Picking "whichever vehicle is nearest the drawn zone" is not enough — two cars
+parked side by side are both near it. Identification instead weighs three
+independent pieces of evidence, any of which may be missing:
+
+1. **Zone overlap** — how much of the marked region a vehicle actually
+   *occupies*, not how close it is to the boundary.
+2. **Learned parking position** — where the protected vehicle has sat in this
+   camera's view across previous clips, accumulated over time.
+3. **Learned appearance** — a coarse colour fingerprint, which separates a
+   silver hatchback from the red pickup beside it.
+
+Only *confident* identifications teach the learned signature, because learning
+from a guess is how a signature drifts onto the neighbour's car and stays there.
+The Vehicles tab shows what each camera has learned and lets you reset it — do
+that after buying a new car, rearranging where you park, or if identification has
+plainly latched onto the wrong vehicle.
+
+Crucially, the answer may be **"none of these"**. A camera whose owner has driven
+to work sees only the neighbour's car; the old nearest-vehicle logic had no way
+to say so and would designate that car as protected. When the protected vehicle
+is judged absent, proximity and contact rules stand down entirely — someone at a
+car parked in the vacated space is not at *your* car.
+
+#### Telling "walked past" from "stood right at it"
+
+In a 2D frame, a person walking along the pavement in front of a parked car
+overlaps it exactly like a person leaning on it. Three things separate them:
+
+- **Ground distance, not box distance.** Proximity is measured from where a
+  subject's feet are to the vehicle's own ground line, with vertical separation
+  weighted for perspective — so foreground traffic stops reading as "inches from
+  the vehicle".
+- **Overlap depth.** Contact requires the overlap to be substantial relative to
+  the subject's own size, not merely present.
+- **Depth estimation.** When `ai_enhanced_detection_enabled` is on, the depth
+  stage's verdict dominates — including its negative verdict. If it places the
+  subject at a clearly different distance from the camera than the vehicle,
+  proximity and zone-entry events are suppressed outright.
+
+#### The risk override, and what it can't do
+
+`ai_risk_alert_threshold` is **one-directional**: a high deterministic score can
+raise a verdict the model missed, but nothing here can lower one the model made.
+That asymmetry matches the tier-2 escalation path's, for the same reason — a
+small local vision model overlooking someone at a car window is an observed
+failure, not a hypothetical one, and a missed intrusion costs far more than an
+extra notification. When the override fires, the clip's summary leads with the
+event that raised it, so a flagged clip never appears next to a description
+saying nothing happened.
 
 #### Biometrics Tab — face-recognition enrollment and the suspicious-flag bypass
 

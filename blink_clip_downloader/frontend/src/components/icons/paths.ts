@@ -53,6 +53,9 @@ export const ICONS = {
       { x: 10, y: 10, width: 4, height: 4 },
     ],
   },
+  'tab-security': {
+    paths: ['M12 3 4.5 6v5.5c0 4.4 3.1 8.5 7.5 9.5 4.4-1 7.5-5.1 7.5-9.5V6L12 3z', 'M9.2 12.2l2 2 3.6-3.8'],
+  },
   'tab-vehicles': {
     paths: ['M3 16v-4l2.2-5.5A2 2 0 0 1 7.06 5h9.88a2 2 0 0 1 1.86 1.5L21 12v4', 'M3 16h18', 'M3 12h18'],
     rects: [

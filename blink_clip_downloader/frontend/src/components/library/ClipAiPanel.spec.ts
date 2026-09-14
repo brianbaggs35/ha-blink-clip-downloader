@@ -139,6 +139,173 @@ describe('ClipAiPanel', () => {
     expect(chips[1].text()).toContain('1')
   })
 
+  it('shows the security assessment when the security layer found something', async () => {
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        risk_score: 82.4,
+        severity: 'critical',
+        evidence_quality: 0.58,
+        security_events: [
+          {
+            id: 1,
+            clip_id: 'c1',
+            camera: 'front',
+            event_type: 'subject_present',
+            severity: 'routine',
+            confidence: 0.9,
+            risk_score: 82.4,
+            evidence_quality: 0.58,
+            detail: 'A person was visible for at least 10s.',
+            subject_label: 'person',
+            track_id: 1,
+            asset_name: '',
+            asset_type: '',
+            start_offset: 0,
+            end_offset: 10,
+            evidence: {},
+            created_at: '2026-01-05T10:00:00Z',
+          },
+          {
+            id: 2,
+            clip_id: 'c1',
+            camera: 'front',
+            event_type: 'impact_candidate',
+            severity: 'critical',
+            confidence: 0.8,
+            risk_score: 82.4,
+            evidence_quality: 0.58,
+            detail: 'Possible impact with the blue sedan.',
+            subject_label: 'person',
+            track_id: 1,
+            asset_name: 'blue sedan',
+            asset_type: 'vehicle',
+            start_offset: 6,
+            end_offset: 10,
+            evidence: {},
+            created_at: '2026-01-05T10:00:00Z',
+          },
+          {
+            id: 3,
+            clip_id: 'c1',
+            camera: 'front',
+            event_type: 'multiple_subjects',
+            severity: 'routine',
+            confidence: 0.7,
+            risk_score: 82.4,
+            evidence_quality: 0.58,
+            detail: '2 separate people were tracked in this clip.',
+            subject_label: 'person',
+            track_id: null,
+            asset_name: '',
+            asset_type: '',
+            start_offset: 4,
+            end_offset: 8,
+            evidence: {},
+            created_at: '2026-01-05T10:00:00Z',
+          },
+        ],
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    const panel = wrapper.find('[data-testid="ai-security"]')
+    expect(panel.exists()).toBe(true)
+    expect(panel.text()).toContain('Critical · risk 82')
+    expect(panel.text()).toContain('Evidence 58% (moderate)')
+    // Most severe first — a list led by "a person was visible" buries the
+    // reason the clip matters — then earliest within a severity.
+    const rows = panel.findAll('.ai-security-list li')
+    expect(rows[0].text()).toContain('Impact candidate')
+    expect(rows[0].text()).toContain('0:06')
+    expect(rows[1].text()).toContain('Subject present')
+    expect(rows[2].text()).toContain('Multiple subjects')
+  })
+
+  it('says when the flag came from detection evidence rather than the model', async () => {
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        risk_override_applied: true,
+        risk_score: 88,
+        severity: 'critical',
+        evidence_quality: 0.7,
+        security_events: [
+          {
+            id: 1,
+            clip_id: 'c1',
+            camera: 'front',
+            event_type: 'impact_candidate',
+            severity: 'critical',
+            confidence: 0.8,
+            risk_score: 88,
+            evidence_quality: 0.7,
+            detail: 'Possible impact with the blue sedan.',
+            subject_label: 'person',
+            track_id: 1,
+            asset_name: 'blue sedan',
+            asset_type: 'vehicle',
+            start_offset: 6,
+            end_offset: 10,
+            evidence: {},
+            created_at: '2026-01-05T10:00:00Z',
+          },
+        ],
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('the AI model itself reported nothing unusual')
+  })
+
+  it('renders safely when an older analysis row has events but no scores', async () => {
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        security_events: [
+          {
+            id: 1,
+            clip_id: 'c1',
+            camera: 'front',
+            event_type: 'zone_entered',
+            severity: 'noteworthy',
+            confidence: 0.8,
+            risk_score: 0,
+            evidence_quality: 0,
+            detail: 'Crossed into the marked area.',
+            subject_label: 'person',
+            track_id: 1,
+            asset_name: '',
+            asset_type: '',
+            start_offset: 2,
+            end_offset: 4,
+            evidence: {},
+            created_at: '2026-01-05T10:00:00Z',
+          },
+        ],
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    const panel = wrapper.find('[data-testid="ai-security"]')
+    expect(panel.text()).toContain('Routine · risk 0')
+    expect(panel.text()).toContain('Evidence 0% (weak)')
+  })
+
+  it('hides the security section entirely when the layer produced nothing', async () => {
+    mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ai-security"]').exists()).toBe(false)
+  })
+
   it('does not render the detection chip row when nothing was detected', async () => {
     mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })

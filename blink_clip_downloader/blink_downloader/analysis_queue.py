@@ -169,8 +169,7 @@ class AnalysisQueue:
                 clip_duration=clip_duration,
                 recent_corrections=recent_corrections,
             )
-            await self._db.add_analysis_result(result.to_dict())
-            await self._db.save_detected_objects(clip_id, result.detected_objects)
+            await self._db.save_analysis(result)
             await self._db.update_queue_status(clip_id, "completed")
             self._log_result(clip_id, result)
 

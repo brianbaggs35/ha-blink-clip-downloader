@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
 
 from blink_downloader.config import (
     AppConfig,
+    _bounded_int,
     _parse_config,
     _sanitize_for_log,
     load_config,
@@ -786,3 +788,23 @@ def test_moondream_api_key_parsed():
         {"username": "u", "password": "p", "moondream_api_key": "  sk-abc123  "}
     )
     assert cfg.moondream_api_key == "sk-abc123"
+
+
+def test_bounded_int_clamps_into_range() -> None:
+    assert _bounded_int({"n": 99}, "n", default=5, low=1, high=8) == 8
+    assert _bounded_int({"n": -3}, "n", default=5, low=1, high=8) == 1
+    assert _bounded_int({"n": 4}, "n", default=5, low=1, high=8) == 4
+
+
+def test_bounded_int_falls_back_on_a_non_numeric_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Refusing to start over a typo in a resource dial would be worse than
+    quietly using the default."""
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.config"):
+        assert _bounded_int({"n": "lots"}, "n", default=5, low=1, high=8) == 5
+    assert "Invalid n=" in caplog.text
+
+
+def test_bounded_int_uses_the_default_when_the_key_is_absent() -> None:
+    assert _bounded_int({}, "n", default=5, low=1, high=8) == 5

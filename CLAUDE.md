@@ -46,6 +46,20 @@ architecture.
     installs would never get the new column otherwise.
   - `analyzer.py` — AI vision analysis. See **AI provider architecture** below.
   - `analysis_queue.py` — async queue that feeds clips to the analyzer.
+  - `security/` — the structured security layer (`events.py`, `tracks.py`,
+    `geometry.py`, `zones`/`assets.py`, `vehicles.py`, `detector.py`,
+    `scoring.py`, `evidence.py`, `narrative.py`, `pipeline.py`). Turns
+    `vision.py`'s per-frame boxes into typed `ObjectTrack`s, deterministic
+    `SecurityEvent`s, a 0-100 risk score and an evidence-quality score, and
+    renders them as prompt text the AI provider verifies rather than
+    re-derives. **Imports nothing from `vision.py` and no heavy optional
+    dependency** — every CV stage's output is reduced to plain numbers
+    before it arrives, so the whole layer loads and is tested with no
+    torch/opencv installed. `vehicles.py` is the one to read first: it
+    decides *which* car in frame is the protected one (zone occupancy +
+    a learned per-camera parking position + a learned colour fingerprint),
+    and is allowed to answer "none of them", which is what stops a
+    neighbour's car being treated as yours.
   - `vision.py` — optional, off-by-default computer-vision enhancement
     pipeline (object detection/tracking, depth estimation, contact
     segmentation, OpenCV frame preprocessing, local-only face recognition).
@@ -378,13 +392,29 @@ suspicious flag (`analyzer.py`'s `BaseAnalyzer._face_bypass_applies` /
 `parse_response()`). This is deliberately **all-or-nothing per clip**: it
 requires at least one approved match **and zero** unrecognized or
 recognized-but-not-approved faces anywhere in the clip's sampled frames
-(`vision.py`'s `FaceRecognizer.recognize()` → `FaceRecognitionResult`). A
-single stranger standing next to an approved family member must still get
-flagged — **do not loosen this condition** without equally strong
-justification; a false bypass here is a missed genuine intrusion, not a
-cosmetic bug. `tests/test_analyzer.py`'s adversarial "stays suspicious when
-a stranger is also present" tests exist specifically to catch a regression
-here.
+(`vision.py`'s `FaceRecognizer.recognize()` → `FaceRecognitionResult`, via
+`_face_match_is_unambiguous`). A single stranger standing next to an
+approved family member must still get flagged — **do not loosen this
+condition** without equally strong justification; a false bypass here is a
+missed genuine intrusion, not a cosmetic bug. `tests/test_analyzer.py`'s
+adversarial "stays suspicious when a stranger is also present" tests exist
+specifically to catch a regression here.
+
+Since 6.0.0 there is a **second** condition: an event in
+`security.BYPASS_BLOCKING_EVENTS` withholds the bypass even on a clean
+identity match — a recognized person denting the car is still a dented car.
+That set is deliberately a single entry (`IMPACT_CANDIDATE`) and **must not
+be widened casually**: `CONTACT_CANDIDATE` in particular is what a resident
+opening their own car door produces several times a day, so adding it would
+make routine household activity permanently suspicious — exactly the
+false-positive problem the bypass exists to solve. See the set's own comment
+for why each near-miss was excluded.
+
+Separately, `ai_risk_alert_threshold` can flag a clip the model called
+unremarkable. It is checked *before* the bypass so the two can never
+contradict each other (a clip is never reported as both bypassed and
+force-flagged), and it is strictly one-directional: it can raise a verdict,
+never lower one.
 
 A recognized person's **name never appears in any prompt sent to any AI
 provider**, local or cloud (`vision.py`'s `_build_recognition_hint` is
@@ -633,6 +663,17 @@ CHANGELOG entry — nothing user-facing changed.
   static output does).
 - `ai_car_cameras` empty = "applies to all cameras" is intentional, documented
   behavior, not a bug — see **AI provider architecture** above.
+- Two coordinate spaces exist and must not be mixed: **normalized** (0-1, how
+  user-drawn zones and learned vehicle signatures are stored, so they survive a
+  resolution change) and **pixel** (what the detector returns).
+  `security/geometry.py`'s `Zone` owns the conversion; every `box_*` helper is
+  scale-independent but requires both arguments in the *same* space.
+- Distance has two meanings in this codebase and they answer different
+  questions: `box_gap` is outline-to-outline (negative when boxes overlap) and
+  is what contact rules need; `ground_gap` is feet-to-ground-line with vertical
+  separation weighted for perspective, and is what proximity/approach rules
+  need. Using the former for proximity is what made a pedestrian walking in
+  front of a parked car read as "inches from the vehicle".
 - Docstrings in this codebase are typically one-line-to-short-paragraph
   descriptions of behavior (see existing methods in `analyzer.py`,
   `config.py`) — match that style rather than terse or absent docstrings on

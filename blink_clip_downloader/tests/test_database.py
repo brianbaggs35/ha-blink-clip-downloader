@@ -10,11 +10,19 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.database import (
     ClipDatabase,
     _affected,
     _local_day_bounds,
     _row_to_dict,
+    _severities_at_or_above,
+)
+from blink_downloader.security import (
+    SecurityEvent,
+    SecurityEventType,
+    Severity,
+    VehicleSignature,
 )
 from blink_downloader.vision import DetectedObject
 from tests.conftest import TEST_DB_DSN
@@ -3753,3 +3761,365 @@ async def test_face_enrollment_without_init_is_noop() -> None:
     assert await d.add_face_enrollment("Brian", [0.1]) == 0
     assert await d.list_face_enrollments() == []
     await d.delete_face_enrollment(1)  # must not raise
+
+
+# ======================================================================
+# Security events (see blink_downloader/security)
+# ======================================================================
+
+
+def _event(
+    event_type: str = "contact_candidate",
+    severity: str = "suspicious",
+    confidence: float = 0.8,
+    start: float = 0.0,
+) -> SecurityEvent:
+    return SecurityEvent(
+        event_type=SecurityEventType(event_type),
+        severity=Severity(severity),
+        confidence=confidence,
+        detail=f"{event_type} happened",
+        subject_label="person",
+        track_id=3,
+        asset_name="blue sedan",
+        asset_type="vehicle",
+        start_offset=start,
+        end_offset=start + 2.0,
+        evidence={"min_gap_feet": 0.4},
+    )
+
+
+async def test_save_and_get_security_events(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.save_security_events(
+        "c1",
+        "Front Door",
+        [_event(), _event("zone_entered", "noteworthy", start=4.0)],
+        risk_score=82.5,
+        evidence_quality=0.61,
+    )
+    events = await db.get_security_events("c1")
+    assert [e["event_type"] for e in events] == ["contact_candidate", "zone_entered"]
+    assert events[0]["risk_score"] == pytest.approx(82.5)
+    assert events[0]["evidence_quality"] == pytest.approx(0.61)
+    assert events[0]["evidence"] == {"min_gap_feet": 0.4}
+    assert events[0]["track_id"] == 3
+
+
+async def test_security_events_replace_rather_than_accumulate(db: ClipDatabase) -> None:
+    """A re-analyze must leave exactly the latest conclusions behind — a
+    timeline showing the same clip twice is worse than no timeline."""
+    await db.add_clip(_make_clip("c1"))
+    await db.save_security_events("c1", "Front Door", [_event()])
+    await db.save_security_events(
+        "c1", "Front Door", [_event("loitering", "noteworthy")]
+    )
+    events = await db.get_security_events("c1")
+    assert [e["event_type"] for e in events] == ["loitering"]
+
+
+async def test_saving_no_security_events_clears_stale_rows(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.save_security_events("c1", "Front Door", [_event()])
+    await db.save_security_events("c1", "Front Door", [])
+    assert await db.get_security_events("c1") == []
+
+
+async def test_get_security_events_for_an_unknown_clip(db: ClipDatabase) -> None:
+    assert await db.get_security_events("nope") == []
+
+
+async def test_malformed_stored_evidence_decodes_to_an_empty_dict(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.save_security_events("c1", "Front Door", [_event()])
+    assert db._pool is not None
+    await db._pool.execute("UPDATE security_events SET evidence='{not json'")
+    assert (await db.get_security_events("c1"))[0]["evidence"] == {}
+
+
+async def test_security_events_are_deleted_with_their_clip(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.save_security_events("c1", "Front Door", [_event()])
+    await db.delete_clip("c1")
+    assert await db.get_security_events("c1") == []
+
+
+# ---- timeline --------------------------------------------------------
+
+
+async def _seed_timeline(db: ClipDatabase) -> None:
+    await db.add_clip(
+        _make_clip("c1", "Front Door", timestamp="2024-06-01T08:00:00+00:00")
+    )
+    await db.add_clip(
+        _make_clip("c2", "Driveway", timestamp="2024-06-02T08:00:00+00:00")
+    )
+    await db.add_clip(
+        _make_clip("c3", "Driveway", timestamp="2024-06-03T08:00:00+00:00")
+    )
+    await db.save_security_events(
+        "c1", "Front Door", [_event("subject_present", "routine", 0.9)]
+    )
+    await db.save_security_events(
+        "c2",
+        "Driveway",
+        [_event("subject_present", "routine", 0.9), _event("loitering", "suspicious")],
+        risk_score=55.0,
+    )
+    await db.save_security_events(
+        "c3",
+        "Driveway",
+        [_event("impact_candidate", "critical", 0.7)],
+        risk_score=90.0,
+    )
+
+
+async def test_timeline_returns_one_row_per_clip_newest_first(
+    db: ClipDatabase,
+) -> None:
+    """A single visit legitimately produces half a dozen events; a timeline
+    that repeats one clip six times is a worse view than none."""
+    await _seed_timeline(db)
+    result = await db.get_security_timeline()
+    assert [e["clip_id"] for e in result["events"]] == ["c3", "c2", "c1"]
+    assert result["total"] == 3
+
+
+async def test_timeline_keeps_each_clips_most_severe_event(db: ClipDatabase) -> None:
+    await _seed_timeline(db)
+    result = await db.get_security_timeline()
+    by_clip = {e["clip_id"]: e for e in result["events"]}
+    assert by_clip["c2"]["event_type"] == "loitering"
+    assert by_clip["c2"]["severity"] == "suspicious"
+
+
+async def test_timeline_includes_clip_metadata(db: ClipDatabase) -> None:
+    await _seed_timeline(db)
+    first = (await db.get_security_timeline())["events"][0]
+    assert first["clip_timestamp"] == "2024-06-03T08:00:00+00:00"
+    assert first["file_path"]
+    assert first["starred"] is False
+
+
+async def test_timeline_filters_by_camera(db: ClipDatabase) -> None:
+    await _seed_timeline(db)
+    result = await db.get_security_timeline(camera="Driveway")
+    assert {e["clip_id"] for e in result["events"]} == {"c2", "c3"}
+    assert result["total"] == 2
+
+
+async def test_timeline_filters_by_minimum_severity(db: ClipDatabase) -> None:
+    await _seed_timeline(db)
+    result = await db.get_security_timeline(min_severity="suspicious")
+    assert {e["clip_id"] for e in result["events"]} == {"c2", "c3"}
+
+
+async def test_timeline_unknown_severity_filter_hides_nothing(
+    db: ClipDatabase,
+) -> None:
+    """A filter this build doesn't understand must not silently hide a
+    critical event."""
+    await _seed_timeline(db)
+    result = await db.get_security_timeline(min_severity="apocalyptic")
+    assert result["total"] == 3
+
+
+async def test_timeline_paginates(db: ClipDatabase) -> None:
+    await _seed_timeline(db)
+    page = await db.get_security_timeline(limit=1, offset=1)
+    assert [e["clip_id"] for e in page["events"]] == ["c2"]
+    assert page["total"] == 3
+
+
+async def test_timeline_filters_by_period(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("old"))
+    await db.save_security_events("old", "Front Door", [_event()])
+    assert db._pool is not None
+    await db._pool.execute(
+        "UPDATE security_events SET created_at='2020-01-01T00:00:00+00:00'"
+    )
+    assert (await db.get_security_timeline(period="today"))["total"] == 0
+    assert (await db.get_security_timeline())["total"] == 1
+
+
+async def test_timeline_without_a_pool_is_empty() -> None:
+    assert await ClipDatabase().get_security_timeline() == {"events": [], "total": 0}
+
+
+# ---- stats -----------------------------------------------------------
+
+
+async def test_security_stats_counts_clips_by_severity(db: ClipDatabase) -> None:
+    await _seed_timeline(db)
+    stats = await db.get_security_stats()
+    assert stats["by_severity"]["critical"] == 1
+    assert stats["by_severity"]["suspicious"] == 1
+    assert stats["total"] == 4
+    assert stats["days"] == 7
+
+
+async def test_security_stats_ignores_events_outside_the_window(
+    db: ClipDatabase,
+) -> None:
+    await _seed_timeline(db)
+    assert db._pool is not None
+    await db._pool.execute(
+        "UPDATE security_events SET created_at='2020-01-01T00:00:00+00:00'"
+    )
+    assert (await db.get_security_stats())["total"] == 0
+
+
+async def test_security_stats_without_a_pool() -> None:
+    assert await ClipDatabase().get_security_stats() == {
+        "by_severity": {},
+        "total": 0,
+        "days": 7,
+    }
+
+
+async def test_save_security_events_without_a_pool_is_a_noop() -> None:
+    await ClipDatabase().save_security_events("c1", "cam", [_event()])
+
+
+async def test_get_security_events_without_a_pool() -> None:
+    assert await ClipDatabase().get_security_events("c1") == []
+
+
+def test_severities_at_or_above() -> None:
+    assert _severities_at_or_above("suspicious") == ["suspicious", "critical"]
+    assert _severities_at_or_above("routine") == [
+        "routine",
+        "noteworthy",
+        "suspicious",
+        "critical",
+    ]
+    assert len(_severities_at_or_above("nonsense")) == 4
+
+
+# ======================================================================
+# Learned protected-vehicle signatures
+# ======================================================================
+
+
+def _signature(sample_count: int = 5) -> VehicleSignature:
+    return VehicleSignature(
+        box=(0.1, 0.2, 0.5, 0.6), histogram=(0.25, 0.75), sample_count=sample_count
+    )
+
+
+async def test_save_and_get_vehicle_signature(db: ClipDatabase) -> None:
+    await db.save_vehicle_signature("Driveway", _signature())
+    stored = await db.get_vehicle_signature("Driveway")
+    assert stored is not None
+    assert stored.box == pytest.approx((0.1, 0.2, 0.5, 0.6))
+    assert stored.histogram == pytest.approx((0.25, 0.75))
+    assert stored.sample_count == 5
+    assert stored.established is True
+
+
+async def test_saving_a_signature_replaces_the_previous_one(db: ClipDatabase) -> None:
+    await db.save_vehicle_signature("Driveway", _signature(1))
+    await db.save_vehicle_signature("Driveway", _signature(9))
+    stored = await db.get_vehicle_signature("Driveway")
+    assert stored is not None
+    assert stored.sample_count == 9
+
+
+async def test_signatures_are_per_camera(db: ClipDatabase) -> None:
+    await db.save_vehicle_signature("Driveway", _signature())
+    assert await db.get_vehicle_signature("Back Yard") is None
+
+
+async def test_reset_vehicle_signature(db: ClipDatabase) -> None:
+    """A signature that has latched onto the wrong car would otherwise keep
+    reinforcing its own mistake."""
+    await db.save_vehicle_signature("Driveway", _signature())
+    assert await db.reset_vehicle_signature("Driveway") is True
+    assert await db.get_vehicle_signature("Driveway") is None
+    assert await db.reset_vehicle_signature("Driveway") is False
+
+
+async def test_malformed_signature_json_reads_as_absent(db: ClipDatabase) -> None:
+    await db.save_vehicle_signature("Driveway", _signature())
+    assert db._pool is not None
+    await db._pool.execute("UPDATE camera_vehicle_signatures SET box='{not json'")
+    assert await db.get_vehicle_signature("Driveway") is None
+
+
+async def test_signature_with_a_wrong_shaped_box_reads_as_absent(
+    db: ClipDatabase,
+) -> None:
+    await db.save_vehicle_signature("Driveway", _signature())
+    assert db._pool is not None
+    await db._pool.execute("UPDATE camera_vehicle_signatures SET box='[1, 2]'")
+    assert await db.get_vehicle_signature("Driveway") is None
+
+
+async def test_vehicle_signature_methods_without_a_pool() -> None:
+    empty = ClipDatabase()
+    assert await empty.get_vehicle_signature("Driveway") is None
+    await empty.save_vehicle_signature("Driveway", _signature())
+    assert await empty.reset_vehicle_signature("Driveway") is False
+
+
+# ======================================================================
+# save_analysis writes all three tables together
+# ======================================================================
+
+
+async def test_save_analysis_persists_verdict_detections_and_events(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    result = AnalysisResult(
+        clip_id="c1",
+        camera="Front Door",
+        model="llava",
+        response_text="{}",
+        is_suspicious=True,
+        confidence=0.8,
+        summary="Someone at the car",
+        frame_count=3,
+        analysis_duration=1.5,
+        analyzed_at=datetime.now(UTC).isoformat(),
+        risk_score=82.0,
+        severity="critical",
+        event_type="impact_candidate",
+        evidence_quality=0.61,
+        risk_override_applied=True,
+        detected_objects=[DetectedObject("person", 0.9, (1.0, 2.0, 3.0, 4.0), 1, 0)],
+        security_events=[_event()],
+    )
+    await db.save_analysis(result)
+
+    stored = await db.get_analysis_for_clip("c1")
+    assert stored is not None
+    assert stored["risk_score"] == pytest.approx(82.0)
+    assert stored["severity"] == "critical"
+    assert stored["event_type"] == "impact_candidate"
+    assert stored["evidence_quality"] == pytest.approx(0.61)
+    assert stored["risk_override_applied"] is True
+    assert len(await db.get_detected_objects_summary("c1")) == 1
+    events = await db.get_security_events("c1")
+    assert len(events) == 1
+    assert events[0]["risk_score"] == pytest.approx(82.0)
+
+
+async def test_add_analysis_result_defaults_severity_when_absent(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "c1",
+            "camera": "Front Door",
+            "model": "llava",
+            "analyzed_at": datetime.now(UTC).isoformat(),
+        }
+    )
+    stored = await db.get_analysis_for_clip("c1")
+    assert stored is not None
+    assert stored["severity"] == "routine"
+    assert stored["risk_score"] == pytest.approx(0.0)

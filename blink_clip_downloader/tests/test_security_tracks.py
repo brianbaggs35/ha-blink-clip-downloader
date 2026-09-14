@@ -87,15 +87,66 @@ def test_build_tracks_label_flip_starts_a_new_track() -> None:
     assert sorted(t.label for t in tracks) == ["dog", "person"]
 
 
-def test_build_tracks_untracked_detections_group_by_label_and_are_flagged() -> None:
+def test_build_tracks_associates_untracked_detections_by_overlap() -> None:
+    """With no tracker ids, a barely-moved object across two frames is still
+    one object — that association is what makes a parked car identifiable
+    when tracking is unavailable."""
     detections = [
-        ("person", 0.9, (0.0, 0.0, 10.0, 20.0), None, 0),
-        ("person", 0.9, (40.0, 0.0, 50.0, 20.0), None, 1),
+        ("car", 0.9, (0.0, 0.0, 100.0, 60.0), None, 0),
+        ("car", 0.9, (2.0, 1.0, 102.0, 61.0), None, 1),
     ]
     (track,) = build_tracks(detections, 2.0, FRAME)
     assert track.tracked is False
     assert track.track_id is None
     assert track.frame_count == 2
+
+
+def test_build_tracks_does_not_merge_two_untracked_objects_into_one() -> None:
+    """Two cars parked side by side must not collapse into a single phantom
+    vehicle sitting in the gap between them — that box belongs to neither,
+    and the whole point of identifying the protected vehicle is telling one
+    from the other."""
+    detections = [
+        ("car", 0.9, (0.0, 0.0, 100.0, 60.0), None, 0),
+        ("car", 0.9, (200.0, 0.0, 300.0, 60.0), None, 0),
+        ("car", 0.9, (0.0, 0.0, 100.0, 60.0), None, 1),
+        ("car", 0.9, (200.0, 0.0, 300.0, 60.0), None, 1),
+    ]
+    tracks = build_tracks(detections, 2.0, FRAME)
+    assert len(tracks) == 2
+    assert {t.frame_count for t in tracks} == {2}
+    assert all(not t.tracked for t in tracks)
+
+
+def test_build_tracks_untracked_object_that_moves_far_starts_a_new_track() -> None:
+    detections = [
+        ("person", 0.9, (0.0, 0.0, 10.0, 20.0), None, 0),
+        ("person", 0.9, (400.0, 0.0, 410.0, 20.0), None, 1),
+    ]
+    assert len(build_tracks(detections, 2.0, FRAME)) == 2
+
+
+def test_build_tracks_untracked_association_never_claims_two_in_one_frame() -> None:
+    """An open pseudo-track can only take one detection per frame; the
+    second overlapping box in the same frame is a different object."""
+    detections = [
+        ("car", 0.9, (0.0, 0.0, 100.0, 60.0), None, 0),
+        ("car", 0.9, (5.0, 5.0, 105.0, 65.0), None, 0),
+    ]
+    assert len(build_tracks(detections, 2.0, FRAME)) == 2
+
+
+def test_build_tracks_mixes_tracked_and_untracked_detections() -> None:
+    detections = [
+        ("person", 0.9, (0.0, 0.0, 10.0, 20.0), 7, 0),
+        ("car", 0.9, (0.0, 0.0, 100.0, 60.0), None, 0),
+    ]
+    tracks = build_tracks(detections, 2.0, FRAME)
+    by_label = {t.label: t for t in tracks}
+    assert by_label["person"].tracked is True
+    assert by_label["person"].track_id == 7
+    assert by_label["car"].tracked is False
+    assert by_label["car"].track_id is None
 
 
 def test_build_tracks_offsets_come_from_frame_index_and_interval() -> None:

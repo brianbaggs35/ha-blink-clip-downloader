@@ -32,6 +32,12 @@ from blink_downloader.live_view import (
     LiveViewStatus,
 )
 from blink_downloader.media_server import MediaServer
+from blink_downloader.security import (
+    SecurityEvent,
+    SecurityEventType,
+    Severity,
+    VehicleSignature,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -8574,3 +8580,207 @@ async def test_security_feed_settings_put_non_numeric_columns_falls_back_to_defa
         assert data["refresh_seconds"] == 15
     finally:
         await tc.close()
+
+
+# ---------------------------------------------------------------------------
+# Security timeline API
+# ---------------------------------------------------------------------------
+
+
+def _sec_event(
+    event_type: str = "contact_candidate",
+    severity: str = "suspicious",
+    confidence: float = 0.8,
+) -> SecurityEvent:
+    return SecurityEvent(
+        event_type=SecurityEventType(event_type),
+        severity=Severity(severity),
+        confidence=confidence,
+        detail=f"{event_type} happened",
+        subject_label="person",
+        asset_name="blue sedan",
+        asset_type="vehicle",
+        evidence={"min_gap_feet": 0.4},
+    )
+
+
+async def _seed_security(db: ClipDatabase) -> None:
+    await db.add_clip(_make_clip("sec1", camera="Front Door"))
+    await db.add_clip(_make_clip("sec2", camera="Driveway"))
+    await db.save_security_events(
+        "sec1", "Front Door", [_sec_event("subject_present", "routine", 0.9)]
+    )
+    await db.save_security_events(
+        "sec2",
+        "Driveway",
+        [_sec_event(), _sec_event("subject_present", "routine", 0.9)],
+        risk_score=78.0,
+        evidence_quality=0.6,
+    )
+
+
+async def test_security_timeline_returns_one_row_per_clip(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await _seed_security(db)
+    resp = await client.get("/api/security/timeline")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["total"] == 2
+    assert {e["clip_id"] for e in data["events"]} == {"sec1", "sec2"}
+
+
+async def test_security_timeline_filters_by_camera_and_severity(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await _seed_security(db)
+    data = await (
+        await client.get("/api/security/timeline?camera=Driveway&severity=suspicious")
+    ).json()
+    assert [e["clip_id"] for e in data["events"]] == ["sec2"]
+
+
+async def test_security_timeline_rejects_an_unknown_period(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await _seed_security(db)
+    data = await (await client.get("/api/security/timeline?period=nonsense")).json()
+    assert data["total"] == 2
+
+
+async def test_security_timeline_honours_a_period(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await _seed_security(db)
+    assert db._pool is not None
+    await db._pool.execute(
+        "UPDATE security_events SET created_at='2020-01-01T00:00:00+00:00'"
+    )
+    data = await (await client.get("/api/security/timeline?period=today")).json()
+    assert data["total"] == 0
+
+
+async def test_security_timeline_paginates(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await _seed_security(db)
+    data = await (await client.get("/api/security/timeline?limit=1&offset=0")).json()
+    assert len(data["events"]) == 1
+    assert data["total"] == 2
+
+
+async def test_security_timeline_falls_back_on_unparseable_paging(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await _seed_security(db)
+    data = await (
+        await client.get("/api/security/timeline?limit=abc&offset=xyz")
+    ).json()
+    assert data["total"] == 2
+
+
+async def test_security_stats(client: TestClient, db: ClipDatabase) -> None:
+    await _seed_security(db)
+    data = await (await client.get("/api/security/stats")).json()
+    assert data["days"] == 7
+    assert data["by_severity"]["suspicious"] == 1
+
+
+async def test_security_stats_accepts_a_window(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await _seed_security(db)
+    assert (await (await client.get("/api/security/stats?days=30")).json())[
+        "days"
+    ] == 30
+
+
+async def test_security_stats_falls_back_on_an_unparseable_window(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await _seed_security(db)
+    assert (await (await client.get("/api/security/stats?days=abc")).json())[
+        "days"
+    ] == 7
+
+
+async def test_security_events_for_one_clip(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await _seed_security(db)
+    data = await (await client.get("/api/security/events/sec2")).json()
+    assert len(data["events"]) == 2
+    assert data["events"][0]["evidence"] == {"min_gap_feet": 0.4}
+
+
+async def test_security_events_for_a_clip_with_none(client: TestClient) -> None:
+    assert (await (await client.get("/api/security/events/nope")).json()) == {
+        "events": []
+    }
+
+
+async def test_ai_clip_result_includes_security_events(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("secr"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "secr",
+            "camera": "Front Door",
+            "model": "llava",
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "risk_score": 80.0,
+            "severity": "critical",
+            "event_type": "impact_candidate",
+            "evidence_quality": 0.5,
+        }
+    )
+    await db.save_security_events("secr", "Front Door", [_sec_event()])
+    data = await (await client.get("/api/ai/results/secr")).json()
+    assert data["risk_score"] == 80.0
+    assert data["severity"] == "critical"
+    assert len(data["security_events"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Learned vehicle signature API
+# ---------------------------------------------------------------------------
+
+
+async def test_vehicle_signature_is_absent_before_anything_is_learned(
+    client: TestClient,
+) -> None:
+    data = await (await client.get("/api/vehicle/signature/Driveway")).json()
+    assert data == {"camera": "Driveway", "learned": False, "sample_count": 0}
+
+
+async def test_vehicle_signature_reports_what_was_learned(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.save_vehicle_signature(
+        "Driveway",
+        VehicleSignature(box=(0.1, 0.2, 0.5, 0.6), histogram=(1.0,), sample_count=6),
+    )
+    data = await (await client.get("/api/vehicle/signature/Driveway")).json()
+    assert data["learned"] is True
+    assert data["established"] is True
+    assert data["sample_count"] == 6
+    assert data["box"] == [0.1, 0.2, 0.5, 0.6]
+
+
+async def test_vehicle_signature_can_be_reset(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.save_vehicle_signature(
+        "Driveway", VehicleSignature(box=(0.1, 0.2, 0.5, 0.6), sample_count=6)
+    )
+    assert (await (await client.delete("/api/vehicle/signature/Driveway")).json()) == {
+        "reset": True
+    }
+    assert await db.get_vehicle_signature("Driveway") is None
+
+
+async def test_resetting_an_unlearned_vehicle_signature(client: TestClient) -> None:
+    assert (await (await client.delete("/api/vehicle/signature/Nowhere")).json()) == {
+        "reset": False
+    }

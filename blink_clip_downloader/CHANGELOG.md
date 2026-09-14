@@ -15,6 +15,75 @@ Library scrolling fix, and a broader PrimeVue-5 UI/UX consistency pass
 across the AI, Status, AI Usage, and Models tabs. More parts land here
 before this version ships.
 
+### Security Intelligence
+
+A new deterministic security layer (`blink_downloader/security/`) sits
+between the computer-vision stages and the AI providers. It turns the
+object detector's per-frame boxes into tracked subjects, structured
+security events and a 0-100 risk score, and hands the AI that evidence to
+**verify** rather than asking it to work the geometry out from a handful of
+stills. It costs no extra model inference on top of
+`ai_enhanced_detection_enabled` — it is post-processing of detections that
+were already being computed — and produces nothing when that is off.
+
+- **The add-on can now tell which car is yours.** Picking whichever vehicle
+  is nearest the drawn zone was never enough: two cars parked side by side
+  are both near it, and the nearest-edge test happily picked the
+  neighbour's when it was marginally closer to the boundary. That is the
+  reported failure where a neighbour getting into their own car was flagged
+  as activity at the protected one. Identification now weighs how much of
+  the zone a vehicle actually *occupies*, a learned per-camera parking
+  position, and a learned colour fingerprint — and, critically, is allowed
+  to answer "none of these is the protected vehicle", so a car parked in a
+  vacated space is no longer silently promoted. When the protected vehicle
+  is judged absent, proximity and contact rules stand down entirely.
+- **"Walked past the car" is now distinguishable from "stood right at it".**
+  Three changes, all addressing the same 2D-projection blindness: proximity
+  is measured foot-point to the vehicle's ground line with vertical
+  separation weighted for perspective (so foreground traffic stops reading
+  as inches from the vehicle); contact requires the box overlap to be
+  substantial relative to the subject's own size, not merely present; and
+  the depth-estimation stage's verdict now dominates *including its negative
+  verdict* — a subject it places at a clearly different distance from the
+  camera has their proximity and zone-entry events suppressed outright.
+- **Fourteen structured event types** — zone entry, approach, proximity,
+  loitering, retreat, possible contact, possible impact, retreat after
+  contact, object removed/added, animal interaction, multiple subjects,
+  camera obstruction — each recorded with its own confidence, its timing
+  within the clip, and the raw numbers behind it.
+- **A deterministic risk score** (0-100, four severity bands) whose every
+  contribution is listed back to you, so a verdict is auditable rather than
+  a number nobody can inspect.
+- **Evidence quality scored separately from confidence.** A model can be
+  95% sure it saw someone try a car door while the underlying imagery is
+  three dark frames of a barely-tracked figure. Weak evidence damps the
+  risk score, so confident-sounding events built on almost nothing cannot
+  manufacture a critical alert.
+- **`ai_risk_alert_threshold`** (default 75): a clip can now be flagged
+  suspicious on strong deterministic evidence even when the AI model judged
+  it unremarkable. One-directional by design — it can raise a verdict the
+  model missed, never lower one it made — matching the asymmetry the
+  tier-2 escalation path already enforces. Set to 0 to disable.
+- **A safety guard on the face-recognition bypass.** A recognized household
+  member no longer auto-clears a clip where the vehicle may have been
+  struck: recognition explains who was there, not away a dent. Deliberately
+  narrow — ordinary contact with one's own car still bypasses, since that
+  is what a resident opening their door produces several times a day.
+- **`ai_cv_concurrency`** (default 1): a cap on how many heavy
+  computer-vision stages may run at once across every clip being analyzed.
+  Without it, a startup backlog could have YOLO, Depth Anything, SAM2 and
+  facenet all resident and computing simultaneously — several gigabytes of
+  working set and a wedged CPU on a Raspberry Pi 5.
+- **`ai_temporal_scan_frames`** (default 12): object detection now runs
+  over its own evenly-spaced sample of the clip rather than over the frames
+  chosen for the AI prompt. Those are picked by motion and deliberately
+  unevenly spaced, which makes every duration, speed and trajectory derived
+  from them wrong.
+- One structured log line per analysis, covering frames, detections,
+  tracks, which vehicle was identified, which evidence sources were
+  unavailable, and the resulting score — without ever logging a recognized
+  person's name.
+
 ### Added
 
 - The clip modal's AI panel now shows a compact chip summary of detected

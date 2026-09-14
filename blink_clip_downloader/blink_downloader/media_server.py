@@ -356,6 +356,17 @@ class MediaServer:
         app.router.add_delete(
             "/api/vehicle/zone/{camera}", self._handle_vehicle_zone_delete
         )
+        app.router.add_get("/api/security/timeline", self._handle_security_timeline)
+        app.router.add_get("/api/security/stats", self._handle_security_stats)
+        app.router.add_get(
+            "/api/security/events/{clip_id}", self._handle_security_events
+        )
+        app.router.add_get(
+            "/api/vehicle/signature/{camera}", self._handle_vehicle_signature_get
+        )
+        app.router.add_delete(
+            "/api/vehicle/signature/{camera}", self._handle_vehicle_signature_delete
+        )
         app.router.add_get("/api/sync-modules", self._handle_sync_modules_get)
         app.router.add_post(
             "/api/sync-modules/{name}/arm", self._handle_sync_module_arm
@@ -1411,7 +1422,87 @@ class MediaServer:
         result["detected_objects"] = await self._db.get_detected_objects_summary(
             clip_id
         )
+        result["security_events"] = await self._db.get_security_events(clip_id)
         return web.json_response(result)
+
+    async def _handle_security_timeline(self, request: web.Request) -> web.Response:
+        """Security events across every camera, one row per clip.
+
+        Collapsed per clip rather than per event — see
+        :meth:`ClipDatabase.get_security_timeline` for why a raw event list
+        makes a worse timeline than no timeline at all.
+        """
+        q = request.rel_url.query
+        try:
+            limit = max(1, min(int(q.get("limit", 50)), 200))
+            offset = max(0, int(q.get("offset", 0)))
+        except ValueError:
+            limit, offset = 50, 0
+        period = q.get("period")
+        if period not in SUSPICIOUS_PERIODS:
+            period = None
+        return web.json_response(
+            await self._db.get_security_timeline(
+                limit=limit,
+                offset=offset,
+                camera=q.get("camera") or None,
+                min_severity=q.get("severity") or None,
+                period=period,
+            )
+        )
+
+    async def _handle_security_stats(self, request: web.Request) -> web.Response:
+        """Severity counts over a recent window, for the Security tab header."""
+        try:
+            days = max(1, min(int(request.rel_url.query.get("days", 7)), 90))
+        except ValueError:
+            days = 7
+        return web.json_response(await self._db.get_security_stats(days=days))
+
+    async def _handle_security_events(self, request: web.Request) -> web.Response:
+        """Every structured event behind one clip's assessment."""
+        clip_id = request.match_info["clip_id"]
+        return web.json_response(
+            {"events": await self._db.get_security_events(clip_id)}
+        )
+
+    async def _handle_vehicle_signature_get(self, request: web.Request) -> web.Response:
+        """What this camera has learned about where the protected vehicle sits.
+
+        Surfaced so a user can see whether the learned signature is doing
+        anything yet — and, when identification is going wrong, that there
+        is something to reset.
+        """
+        camera = request.match_info["camera"]
+        signature = await self._db.get_vehicle_signature(camera)
+        if signature is None:
+            return web.json_response(
+                {"camera": camera, "learned": False, "sample_count": 0}
+            )
+        return web.json_response(
+            {
+                "camera": camera,
+                "learned": True,
+                "established": signature.established,
+                "sample_count": signature.sample_count,
+                "box": list(signature.box),
+            }
+        )
+
+    async def _handle_vehicle_signature_delete(
+        self, request: web.Request
+    ) -> web.Response:
+        """Forget the learned signature for one camera.
+
+        Needed whenever the premise changes — a new car, a rearranged
+        driveway, or a signature that has plainly latched onto the
+        neighbour's vehicle and would otherwise keep confirming its own
+        mistake.
+        """
+        camera = request.match_info["camera"]
+        return web.json_response(
+            {"reset": await self._db.reset_vehicle_signature(camera)}
+        )
 
     async def _handle_ai_suspicious(self, request: web.Request) -> web.Response:
         q = request.rel_url.query
@@ -1446,8 +1537,7 @@ class MediaServer:
                 camera=clip["camera"],
                 clip_duration=float(clip.get("duration") or 0),
             )
-            await self._db.add_analysis_result(result.to_dict())
-            await self._db.save_detected_objects(clip_id, result.detected_objects)
+            await self._db.save_analysis(result)
             return web.json_response(result.to_dict())
         except Exception as exc:  # noqa: BLE001
             # Mirrors _handle_ai_test's error handling — without this, an
@@ -1477,8 +1567,7 @@ class MediaServer:
                 camera=clip["camera"],
                 clip_duration=float(clip.get("duration") or 0),
             )
-            await self._db.add_analysis_result(result.to_dict())
-            await self._db.save_detected_objects(clip["id"], result.detected_objects)
+            await self._db.save_analysis(result)
             return web.json_response(
                 {"success": True, "clip_id": clip["id"], **result.to_dict()}
             )

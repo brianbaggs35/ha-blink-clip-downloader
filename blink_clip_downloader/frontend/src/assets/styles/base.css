@@ -1470,6 +1470,7 @@ body.nav-collapsed {
    per page or their content has no way to scroll past the viewport, the
    same gap #page-models had before it was added above. */
 #page-vehicles,
+#page-security,
 #page-biometrics,
 #page-storage,
 #page-liveview,
