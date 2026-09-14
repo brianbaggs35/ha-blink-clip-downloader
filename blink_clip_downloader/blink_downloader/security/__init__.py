@@ -1,0 +1,114 @@
+"""Structured security analysis: tracks, events, risk, and evidence quality.
+
+This package sits between the computer-vision stages (``vision.py``, which
+produce boxes and pixels) and the AI providers (``analyzer.py``, which
+produce judgement). Its job is to turn the former into structured, typed
+facts the latter can verify rather than re-derive:
+
+    detections ──▶ tracks ──▶ security events ──▶ risk score
+                                      │
+                                      ├──▶ prompt evidence (narrative)
+                                      ├──▶ security_events table
+                                      └──▶ Security tab timeline
+
+Nothing here imports torch, ultralytics, opencv, or ``vision`` itself —
+every stage's output is reduced to plain numbers before it arrives — so the
+whole security layer loads, runs, and is tested on an install with none of
+the optional computer-vision dependencies present.
+"""
+
+from .assets import AssetLocation, AssetType, ProtectedAsset, resolve_vehicle_asset
+from .detector import DetectionContext, DetectorThresholds, SecurityEventDetector
+from .events import (
+    BYPASS_BLOCKING_EVENTS,
+    SecurityEvent,
+    SecurityEventType,
+    Severity,
+    max_severity,
+    severity_rank,
+)
+from .evidence import EvidenceQuality, assess_evidence
+from .geometry import Box, Zone, box_gap, pixel_gap_to_feet, point_in_polygon
+from .narrative import (
+    build_security_segment,
+    build_vehicle_identity_segment,
+    summarize_assessment,
+)
+from .scoring import (
+    RiskAssessment,
+    RiskFactor,
+    RiskScorer,
+    ScoringContext,
+    band_for_score,
+)
+from .tracks import (
+    ANIMAL_LABELS,
+    CARRYABLE_LABELS,
+    PERSON_LABEL,
+    SUBJECT_LABELS,
+    VEHICLE_LABELS,
+    Detection,
+    ObjectTrack,
+    TrackPoint,
+    build_tracks,
+    person_tracks,
+    subject_tracks,
+)
+from .vehicles import (
+    VehicleCandidate,
+    VehicleIdentification,
+    VehicleSignature,
+    describe_region,
+    identify_protected_vehicle,
+    nearest_vehicle_for_subjects,
+    relative_side,
+)
+
+__all__ = [
+    "ANIMAL_LABELS",
+    "BYPASS_BLOCKING_EVENTS",
+    "CARRYABLE_LABELS",
+    "PERSON_LABEL",
+    "SUBJECT_LABELS",
+    "VEHICLE_LABELS",
+    "AssetLocation",
+    "AssetType",
+    "Box",
+    "Detection",
+    "DetectionContext",
+    "DetectorThresholds",
+    "EvidenceQuality",
+    "ObjectTrack",
+    "ProtectedAsset",
+    "RiskAssessment",
+    "RiskFactor",
+    "RiskScorer",
+    "ScoringContext",
+    "SecurityEvent",
+    "SecurityEventDetector",
+    "SecurityEventType",
+    "Severity",
+    "TrackPoint",
+    "VehicleCandidate",
+    "VehicleIdentification",
+    "VehicleSignature",
+    "Zone",
+    "assess_evidence",
+    "band_for_score",
+    "box_gap",
+    "build_security_segment",
+    "build_tracks",
+    "build_vehicle_identity_segment",
+    "describe_region",
+    "identify_protected_vehicle",
+    "max_severity",
+    "nearest_vehicle_for_subjects",
+    "person_tracks",
+    "pixel_gap_to_feet",
+    "point_in_polygon",
+    "relative_side",
+    "resolve_vehicle_asset",
+    "severity_rank",
+    "subject_tracks",
+    "summarize_assessment",
+]
