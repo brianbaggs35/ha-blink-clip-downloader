@@ -259,10 +259,11 @@ onUnmounted(stopConnectPolling)
             class="gdrive-input"
             placeholder="xxxx.apps.googleusercontent.com"
           />
-          <label class="field-label" for="gdrive-client-secret">OAuth Client Secret</label>
+          <label class="field-label" for="gdrive-client-secret-input">OAuth Client Secret</label>
           <Password
             id="gdrive-client-secret"
             v-model="clientSecretInput"
+            input-id="gdrive-client-secret-input"
             class="gdrive-input"
             :feedback="false"
             toggle-mask
