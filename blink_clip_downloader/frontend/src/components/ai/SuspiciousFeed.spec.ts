@@ -174,6 +174,51 @@ describe('SuspiciousFeed', () => {
     expect(fetchMock).toHaveBeenLastCalledWith('/api/ai/suspicious?limit=20&offset=0&period=today', {})
   })
 
+  it('ignores a slow earlier page that resolves after a newer one', async () => {
+    // Paging, the period filter and the refresh signal all fire load() with
+    // no inherent ordering, so the feed could fill with rows for a period
+    // the user had already moved off.
+    const resolvers: ((value: Response) => void)[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve))),
+    )
+    const wrapper = mountFeed()
+    await flushPromises()
+
+    await wrapper.findComponent(Select).vm.$emit('update:modelValue', 'today')
+    await flushPromises()
+    expect(resolvers).toHaveLength(2)
+
+    resolvers[1](jsonResponse({ items: [{ ...ITEM, clip_id: 'newest', summary: 'Newest' }], total: 1 }))
+    await flushPromises()
+    resolvers[0](jsonResponse({ items: [{ ...ITEM, clip_id: 'stale', summary: 'Stale' }], total: 9 }))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Newest')
+    expect(wrapper.text()).not.toContain('Stale')
+  })
+
+  it('does not surface an error from a request the user has already moved off', async () => {
+    const pending: { resolve: (v: Response) => void; reject: (e: Error) => void }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve, reject) => pending.push({ resolve, reject }))),
+    )
+    const wrapper = mountFeed()
+    await flushPromises()
+    await wrapper.findComponent(Select).vm.$emit('update:modelValue', 'today')
+    await flushPromises()
+
+    pending[1].resolve(jsonResponse({ items: [{ ...ITEM, summary: 'Newest' }], total: 1 }))
+    await flushPromises()
+    pending[0].reject(new Error('down'))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Newest')
+    expect(wrapper.text()).not.toContain('Could not load')
+  })
+
   it('shows a period-specific empty message once a filter is active', async () => {
     const fetchMock = vi
       .fn()

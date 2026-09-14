@@ -5824,11 +5824,11 @@ async def test_finetune_list_success(db: ClipDatabase, tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.list_finetunes",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.list_finetunes",
                 new=AsyncMock(return_value=[{"finetune_id": "ft1", "name": "test"}]),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -5847,7 +5847,7 @@ async def test_finetune_create_missing_name(db: ClipDatabase, tmp_path: Path) ->
     await tc.start_server()
     try:
         with patch(
-            "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+            "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
             new=AsyncMock(),
         ):
             resp = await tc.post("/api/ai/finetune", json={"name": "", "rank": 16})
@@ -5863,11 +5863,11 @@ async def test_finetune_create_success(db: ClipDatabase, tmp_path: Path) -> None
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.create_finetune",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.create_finetune",
                 new=AsyncMock(return_value="ft-new"),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -5892,7 +5892,7 @@ async def test_finetune_create_bad_json(db: ClipDatabase, tmp_path: Path) -> Non
     await tc.start_server()
     try:
         with patch(
-            "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+            "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
             new=AsyncMock(),
         ):
             resp = await tc.post(
@@ -5914,11 +5914,11 @@ async def test_finetune_create_manager_returns_none(
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.create_finetune",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.create_finetune",
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -5937,11 +5937,11 @@ async def test_finetune_create_raises_returns_500(
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.create_finetune",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.create_finetune",
                 new=AsyncMock(side_effect=RuntimeError("network error")),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -5960,11 +5960,11 @@ async def test_finetune_get_found(db: ClipDatabase, tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.get_finetune",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.get_finetune",
                 new=AsyncMock(return_value={"finetune_id": "ft1"}),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -5981,11 +5981,11 @@ async def test_finetune_get_not_found(db: ClipDatabase, tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.get_finetune",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.get_finetune",
                 new=AsyncMock(return_value=None),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -6007,11 +6007,11 @@ async def test_finetune_delete(db: ClipDatabase, tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.delete_finetune",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.delete_finetune",
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -6034,11 +6034,11 @@ async def test_finetune_checkpoints(db: ClipDatabase, tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.list_checkpoints",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.list_checkpoints",
                 new=AsyncMock(return_value=[{"step": 50}]),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -6225,7 +6225,7 @@ async def test_finetune_train_success(db: ClipDatabase, tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.train_from_examples",
                 new=AsyncMock(
                     return_value={
                         "steps_completed": 1,
@@ -6235,7 +6235,7 @@ async def test_finetune_train_success(db: ClipDatabase, tmp_path: Path) -> None:
                 ),
             ) as mock_train,
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -6274,7 +6274,7 @@ async def test_finetune_train_failed_step_leaves_feedback_untrained(
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.train_from_examples",
                 new=AsyncMock(
                     return_value={
                         "steps_completed": 0,
@@ -6284,7 +6284,7 @@ async def test_finetune_train_failed_step_leaves_feedback_untrained(
                 ),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -6342,7 +6342,7 @@ async def test_finetune_train_bad_json_falls_back_to_default_limit(
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.train_from_examples",
                 new=AsyncMock(
                     return_value={
                         "steps_completed": 1,
@@ -6352,7 +6352,7 @@ async def test_finetune_train_bad_json_falls_back_to_default_limit(
                 ),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -6397,7 +6397,7 @@ async def test_finetune_train_falls_back_to_original_suspicious_when_uncorrected
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.train_from_examples",
                 new=AsyncMock(
                     return_value={
                         "steps_completed": 1,
@@ -6407,7 +6407,7 @@ async def test_finetune_train_falls_back_to_original_suspicious_when_uncorrected
                 ),
             ) as mock_train,
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -6433,11 +6433,11 @@ async def test_finetune_train_manager_raises_returns_500(
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.train_from_examples",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.train_from_examples",
                 new=AsyncMock(side_effect=RuntimeError("api down")),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):
@@ -6456,11 +6456,11 @@ async def test_finetune_save_checkpoint_success(
     try:
         with (
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.save_checkpoint",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.save_checkpoint",
                 new=AsyncMock(return_value=True),
             ),
             patch(
-                "blink_downloader.analyzer.MoondreamFineTuneManager.close",
+                "blink_downloader.moondream_finetune.MoondreamFineTuneManager.close",
                 new=AsyncMock(),
             ),
         ):

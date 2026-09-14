@@ -348,6 +348,52 @@ async def test_send_discord_success() -> None:
     assert "headers" not in call_kwargs.kwargs
 
 
+async def test_discord_alert_carries_the_deterministic_assessment() -> None:
+    """The mobile/email/HA bodies already say this; an alert reporting only
+    the model's own confidence hides half of why it fired — and in the
+    override case, the half that fired it."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 204
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        discord_enabled=True,
+        discord_webhook_url="https://discord.com/api/webhooks/123/abc",
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    await dispatcher.dispatch(
+        _make_result(risk_score=88.0, severity="critical", risk_override_applied=True),
+        {"id": "c1", "camera": "Driveway", "path": "/clips/c1.mp4"},
+    )
+    payload = dispatcher._session.post.call_args.kwargs["json"]
+    fields = {f["name"]: f["value"] for f in payload["embeds"][0]["fields"]}
+    assert fields["Risk"] == "88/100 (critical)"
+    assert "not by the AI model" in fields["Why"]
+
+
+async def test_discord_alert_omits_risk_when_there_is_none() -> None:
+    mock_resp = AsyncMock()
+    mock_resp.status = 204
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        discord_enabled=True,
+        discord_webhook_url="https://discord.com/api/webhooks/123/abc",
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    await dispatcher.dispatch(
+        _make_result(), {"id": "c1", "camera": "Driveway", "path": "/clips/c1.mp4"}
+    )
+    payload = dispatcher._session.post.call_args.kwargs["json"]
+    names = {f["name"] for f in payload["embeds"][0]["fields"]}
+    assert "Risk" not in names
+    assert "Why" not in names
+
+
 async def test_send_discord_disabled() -> None:
     dispatcher = NotificationDispatcher(discord_enabled=False)
     assert await dispatcher.send_discord("Alert", "Body") is False

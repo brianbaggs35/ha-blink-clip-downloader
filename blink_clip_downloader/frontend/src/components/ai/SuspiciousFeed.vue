@@ -28,7 +28,14 @@ const period = ref<SuspiciousPeriod | 'all'>('all')
 const first = ref(0)
 const rows = ref(20)
 
+// Paging, the period filter and the cross-tab refresh signal all call
+// load() with no inherent ordering, so a slower earlier request can resolve
+// after a newer one and fill the feed with rows for a page or period the
+// user has already moved off. Same monotonic token LibraryPage uses.
+let requestSeq = 0
+
 async function load() {
+  const seq = ++requestSeq
   loading.value = true
   loadError.value = false
   try {
@@ -37,12 +44,13 @@ async function load() {
       offset: first.value,
       period: period.value === 'all' ? undefined : period.value,
     })
+    if (seq !== requestSeq) return
     items.value = d.items
     total.value = d.total
   } catch {
-    loadError.value = true
+    if (seq === requestSeq) loadError.value = true
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
 }
 onMounted(load)
