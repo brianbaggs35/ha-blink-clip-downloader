@@ -1920,6 +1920,43 @@ async def test_get_queue_counts(db: ClipDatabase) -> None:
     assert counts["failed"] == 1
 
 
+async def test_get_failed_analysis_queue_returns_error_details(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await db.requeue_for_retry("c1", retry_count=2, error="transient timeout")
+    await db.update_queue_status("c1", "failed", error="Ollama timeout")
+
+    failed = await db.get_failed_analysis_queue()
+    assert len(failed) == 1
+    assert failed[0]["clip_id"] == "c1"
+    assert failed[0]["camera"] == "Front Door"
+    assert failed[0]["error_message"] == "Ollama timeout"
+    assert failed[0]["retry_count"] == 2
+
+
+async def test_get_failed_analysis_queue_excludes_other_statuses(
+    db: ClipDatabase,
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.add_clip(_make_clip("c2"))
+    await db.enqueue_for_analysis("c1", "A", "/c1.mp4")
+    await db.enqueue_for_analysis("c2", "B", "/c2.mp4")
+    await db.update_queue_status("c2", "completed")
+
+    assert await db.get_failed_analysis_queue() == []
+
+
+async def test_get_failed_analysis_queue_empty(db: ClipDatabase) -> None:
+    assert await db.get_failed_analysis_queue() == []
+
+
+async def test_get_failed_analysis_queue_without_init_returns_empty() -> None:
+    d = ClipDatabase()
+    assert await d.get_failed_analysis_queue() == []
+
+
 async def test_analysis_operations_without_init() -> None:
     d = ClipDatabase()
     assert await d.get_analysis_for_clip("x") is None

@@ -30,6 +30,44 @@ test('AI tab shows the configured (offline) provider and lets you edit per-camer
   await expect(page.locator('#cam-desc-Garage')).toHaveValue(description)
 })
 
+test('the Failed queue count opens a modal listing why each clip failed to analyze', async ({ page }) => {
+  // standalone_server.py seeds one real failed analysis_queue row (on
+  // e2e-failed-upload/Test Scratch), so /api/ai/queue/failed -- the
+  // endpoint the modal itself calls -- returns real data from a real
+  // query, no mocking needed. But the queue *count* AiStatusCards reads to
+  // decide whether the button is even clickable only ever comes from a
+  // real AnalysisQueue object (media_server.py's _handle_ai_status), which
+  // standalone_server.py deliberately never constructs (no queue-
+  // processing loop runs against the unreachable analyzer -- see its own
+  // module docstring) -- so status.queue.failed is always 0 from the real
+  // endpoint. Mocking just that one field on top of the real response,
+  // same approach as "the escalation tier shows..." below, makes the
+  // button clickable without faking the part this test actually cares
+  // about proving (the modal's real content).
+  await page.route('**/api/ai/status', async (route) => {
+    const response = await route.fetch()
+    const status = (await response.json()) as Record<string, unknown>
+    const queue = (status.queue as Record<string, unknown>) ?? {}
+    await route.fulfill({ response, json: { ...status, queue: { ...queue, failed: 1 } } })
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+
+  const failedButton = page.locator('.failed-stat-btn')
+  await expect(failedButton).toBeEnabled()
+  await failedButton.click()
+
+  const dialog = page.getByRole('dialog', { name: 'Failed Analyses' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('Test Scratch')
+  await expect(dialog).toContainText('Simulated failure for e2e testing')
+
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await expect(dialog).not.toBeVisible()
+})
+
 test('AI Analysis Configuration dialog toggles automatic analysis per camera and persists it', async ({ page }) => {
   await page.goto('/')
   await page.locator('.app-nav-tab[data-tab="ai"]').click()

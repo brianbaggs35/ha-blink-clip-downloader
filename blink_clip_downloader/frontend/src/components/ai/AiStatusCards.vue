@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import Card from 'primevue/card'
 import type { AiStatus } from '../../api/types'
+import AnalysisFailuresModal from './AnalysisFailuresModal.vue'
 
 const props = defineProps<{ status: AiStatus }>()
+const showFailures = ref(false)
 
 const scheduleText = computed(() => {
   const q = props.status.queue
@@ -55,8 +57,18 @@ const lastAnalysis = computed(() => {
           <div style="font-size: 0.72rem; color: var(--muted)">Completed</div>
         </div>
         <div style="text-align: center">
-          <div style="font-size: 1.5rem; font-weight: 700; color: var(--danger)">{{ status.queue?.failed || 0 }}</div>
-          <div style="font-size: 0.72rem; color: var(--muted)">Failed</div>
+          <button
+            type="button"
+            class="failed-stat-btn"
+            :disabled="!status.queue?.failed"
+            :aria-label="`View details for ${status.queue?.failed || 0} failed analyses`"
+            @click="showFailures = true"
+          >
+            <div style="font-size: 1.5rem; font-weight: 700; color: var(--danger)">
+              {{ status.queue?.failed || 0 }}
+            </div>
+            <div style="font-size: 0.72rem; color: var(--muted)">Failed</div>
+          </button>
         </div>
       </div>
     </template>
@@ -78,4 +90,32 @@ const lastAnalysis = computed(() => {
       </div>
     </template>
   </Card>
+
+  <AnalysisFailuresModal v-if="showFailures" @close="showFailures = false" />
 </template>
+
+<style scoped>
+.failed-stat-btn {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0.15rem 0.3rem;
+  margin: 0;
+  font: inherit;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.failed-stat-btn:disabled {
+  cursor: default;
+}
+
+.failed-stat-btn:not(:disabled):hover {
+  background: var(--card-hover);
+}
+
+.failed-stat-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+</style>
