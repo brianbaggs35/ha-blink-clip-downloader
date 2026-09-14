@@ -74,13 +74,11 @@ jobs:
       # Bandit's findings don't vary by Python version, so scan once on the
       # 3.13 leg (same pattern as the frontend checks below).
       - name: Run Bandit security scan
-        if: matrix.python-version == '3.13'
         run: bandit -c blink_clip_downloader/pyproject.toml -r blink_clip_downloader
 
       # Frontend checks don't depend on the Python matrix leg, so they only
       # need to run once — pinned to the 3.13 leg to avoid running twice.
       - name: Set up Node.js
-        if: matrix.python-version == '3.13'
         uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -88,26 +86,21 @@ jobs:
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        if: matrix.python-version == '3.13'
         run: npm install -g npm@12.0.2
 
       - name: Install frontend dependencies
-        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm ci
 
       - name: Run ESLint
-        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm run lint
 
       - name: Check frontend formatting with Prettier
-        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm run format:check
 
       - name: Run Vue/TypeScript type checks
-        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm run type-check
 
@@ -195,10 +188,7 @@ jobs:
           flags: backend
           fail_ci_if_error: false
 
-      # Frontend tests don't depend on the Python matrix leg, so they only
-      # need to run once — pinned to the 3.13 leg to avoid running twice.
       - name: Set up Node.js
-        if: matrix.python-version == '3.13'
         uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -206,16 +196,13 @@ jobs:
           cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
-        if: matrix.python-version == '3.13'
         run: npm install -g npm@12.0.2
 
       - name: Install frontend dependencies
-        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm ci
 
       - name: Run Vitest with coverage
-        if: matrix.python-version == '3.13'
         working-directory: blink_clip_downloader/frontend
         run: npm run test:coverage
 
