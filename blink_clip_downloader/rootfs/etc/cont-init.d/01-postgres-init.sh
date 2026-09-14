@@ -23,6 +23,21 @@ SOCKET_DIR=/var/run/postgresql
 mkdir -p /data/postgresql "${SOCKET_DIR}"
 chown postgres:postgres /data/postgresql "${SOCKET_DIR}"
 
+# An existing cluster — i.e. every upgrade — was written by whatever uid the
+# `postgres` user happened to get when *that* version's image was built.
+# That uid is allocated at build time from whatever is free, and the base
+# image is pinned by tag rather than digest, so an upstream rebuild that
+# adds a system user can shift it. postgres refuses outright to start on a
+# data directory it does not own ("data directory has wrong ownership"), and
+# because services.d/blink-downloader/run waits on pg_isready forever, the
+# add-on would hang with no web UI at all to diagnose it through — the worst
+# possible failure mode for someone who just pressed Update. Repairing the
+# ownership here costs one stat on every start and removes the whole class.
+if [ -s "${PGDATA}/PG_VERSION" ] && [ "$(stat -c '%U' "${PGDATA}")" != "postgres" ]; then
+  bashio::log.warning "PostgreSQL data directory ${PGDATA} is owned by $(stat -c '%U:%G' "${PGDATA}") rather than postgres:postgres — repairing so the existing database can be opened."
+  chown -R postgres:postgres "${PGDATA}"
+fi
+
 if [ ! -s "${PGDATA}/PG_VERSION" ]; then
   bashio::log.info "Initializing PostgreSQL 17 data directory at ${PGDATA}..."
   mkdir -p "${PGDATA}"

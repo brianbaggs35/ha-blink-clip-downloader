@@ -273,6 +273,15 @@ damage classification.
 
 ### Bug Fixes
 
+- **An upgrade can no longer be stranded by a database it cannot open.**
+  The bundled PostgreSQL cluster under `/data` is owned by whatever uid the
+  `postgres` user was given when the *previous* version's image was built,
+  and that uid is allocated at build time from whatever happened to be
+  free. PostgreSQL refuses outright to start on a data directory it does
+  not own, and the add-on waits for PostgreSQL forever — so the failure
+  would have looked like an add-on that starts and then hangs, with no web
+  UI to diagnose it through. Startup now checks and repairs that ownership
+  before PostgreSQL is launched.
 - **A malformed request is answered, not crashed on.** A URL carrying a
   null byte — in a clip id, a camera name, a search term — reached
   PostgreSQL, which cannot store one, and came back as a bare 500 from
