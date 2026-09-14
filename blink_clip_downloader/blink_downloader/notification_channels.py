@@ -91,9 +91,19 @@ class NotificationDispatcher:
 
         camera = result.camera or clip.get("camera", "Unknown")
         title = f"Suspicious Activity — {camera}"
+        # The deterministic assessment, when there is one. Two independent
+        # judgements reached the same alert and an alert that reports only
+        # the model's own confidence hides half of why it fired — including,
+        # in the override case, the half that fired it.
+        assessment = ""
+        if result.risk_score > 0:
+            assessment = f"Risk: {result.risk_score:.0f}/100 ({result.severity})\n"
+            if result.risk_override_applied:
+                assessment += "Flagged on detection evidence, not by the AI model.\n"
         body = (
             f"Camera: {camera}\n"
             f"Confidence: {result.confidence:.0%}\n"
+            f"{assessment}"
             f"Summary: {result.summary}\n"
             f"Time: {result.analyzed_at}"
         )

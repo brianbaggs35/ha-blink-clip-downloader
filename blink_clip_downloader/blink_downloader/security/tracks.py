@@ -153,7 +153,7 @@ class ObjectTrack:
     points: list[TrackPoint]
     frame_size: tuple[float, float]
     tracked: bool = True
-    _zone_cache: dict[int, list[bool]] = field(
+    _zone_cache: dict[Zone, list[bool]] = field(
         default_factory=dict, repr=False, compare=False
     )
 
@@ -355,12 +355,12 @@ class ObjectTrack:
         which is what "at the car" looks like for a zone drawn around a
         parked vehicle rather than around a patch of ground.
 
-        Cached per zone instance: the detector asks the same question from
-        several rules, and the polygon test is the one piece of geometry
-        here that isn't trivially cheap.
+        Cached per zone *value* (Zone is a frozen dataclass, so it hashes by
+        its coordinates): the detector asks the same question from several
+        rules, and the polygon test is the one piece of geometry here that
+        isn't trivially cheap.
         """
-        key = id(zone)
-        cached = self._zone_cache.get(key)
+        cached = self._zone_cache.get(zone)
         if cached is not None:
             return cached
         width, height = self.frame_size
@@ -376,7 +376,7 @@ class ObjectTrack:
                     standing_in
                     or _overlap_share(point.box, zone_box) >= _ZONE_BOX_OVERLAP
                 )
-        self._zone_cache[key] = result
+        self._zone_cache[zone] = result
         return result
 
     def entered_zone(self, zone: Zone) -> bool:

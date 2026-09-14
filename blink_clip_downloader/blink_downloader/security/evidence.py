@@ -44,9 +44,10 @@ _SMALL_SUBJECT_CAP_FLOOR = 0.35
 _UNTRACKED_PENALTY = 0.5
 
 #: Optional evidence sources the pipeline can contribute beyond object
-#: detection itself: depth estimation, contact segmentation, and face
-#: recognition. Used to scale the stage-coverage sub-score.
-TOTAL_OPTIONAL_SOURCES = 3
+#: detection itself: depth estimation, contact segmentation, pose
+#: estimation, and face recognition. Used to scale the stage-coverage
+#: sub-score.
+TOTAL_OPTIONAL_SOURCES = 4
 
 _WEIGHTS: dict[str, float] = {
     "frame_coverage": 0.20,

@@ -96,6 +96,10 @@ class SecurityEventType(StrEnum):
     #: A subject's distance to the asset increased materially after having
     #: been close to it.
     RETREAT = "retreat"
+    #: A subject close to the protected asset with an arm extended toward
+    #: it — trying a handle, reaching through a window. Needs pose
+    #: estimation; a bounding box cannot tell this from standing still.
+    ASSET_REACH = "asset_reach"
     #: Bounding boxes overlapped at a similar depth, or pixel-level contact
     #: segmentation reported touching.
     CONTACT_CANDIDATE = "contact_candidate"

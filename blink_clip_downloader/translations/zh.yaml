@@ -355,6 +355,17 @@ configuration:
       可选的 Hugging Face 访问令牌，用于验证计算机视觉模型下载身份并提高
       Hugging Face Hub 的速率限制。可在
       https://huggingface.co/settings/tokens 创建。请妥善保密。
+  ai_pose_estimation_enabled:
+    name: 启用姿态估计
+    description: >-
+      对最靠近受保护车辆的人进行人体关键点估计，使用深度与接触阶段已经分析的
+      同一帧。提供边界框无法给出的三项事实：伸向车辆的手臂、高过肩部的抬起
+      手臂，以及蹲伏或弯腰的姿态。需要启用增强检测。
+  ai_pose_model:
+    name: 姿态模型
+    description: >-
+      运行哪个 Ultralytics 姿态检查点。"n"（nano）最快最轻，是纯 CPU 硬件的
+      推荐起点；更大的模型更准确但慢得多。
   ai_security_events_enabled:
     name: 启用结构化安全分析
     description: >-

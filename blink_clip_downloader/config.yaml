@@ -405,6 +405,21 @@ options:
   # — reference photos and computed face embeddings never leave this add-on
   # or your network, and are never sent to any cloud AI provider.
   ai_face_recognition_enabled: false
+  # Body-keypoint (pose) estimation for whoever is nearest the protected
+  # vehicle, on the one frame the depth/contact stages already examine.
+  # Adds three narrow facts a bounding box cannot give: an arm extended
+  # toward the vehicle (trying a handle, reaching through a window), an arm
+  # raised above shoulder height, and a crouched or bent-over posture. Its
+  # own small model, downloaded on first use. Requires Enhanced Detection.
+  ai_pose_estimation_enabled: false
+  # Ultralytics pose checkpoint the stage above runs. "n" (nano) is
+  # fastest/lightest and the recommended starting point on CPU-only
+  # hardware; larger sizes are more accurate and much slower. YOLO11
+  # rather than the YOLO26 generation the object detector defaults to:
+  # these are the pose checkpoints Ultralytics publishes and this add-on
+  # has confirmed download names for, and a model name that turns out not
+  # to exist fails at first use rather than at configuration time.
+  ai_pose_model: "yolo11n-pose.pt"
   # Hugging Face Token (HF_TOKEN) for authenticated model downloads and higher
   # rate limits. Optional; create one at https://huggingface.co/settings/tokens.
   hf_token: ""
@@ -562,6 +577,10 @@ schema:
   ai_depth_estimation_model: "list(depth-anything/Depth-Anything-V2-Small-hf|depth-anything/Depth-Anything-V2-Base-hf|depth-anything/Depth-Anything-V2-Large-hf)"
   # yamllint enable rule:line-length
   ai_face_recognition_enabled: "bool"
+  ai_pose_estimation_enabled: "bool"
+  # yamllint disable rule:line-length
+  ai_pose_model: "list(yolo11n-pose.pt|yolo11s-pose.pt|yolo11m-pose.pt|yolo11l-pose.pt|yolo11x-pose.pt)"
+  # yamllint enable rule:line-length
   hf_token: "password?"
   ai_security_events_enabled: "bool"
   ai_temporal_scan_frames: "int(0,60)"

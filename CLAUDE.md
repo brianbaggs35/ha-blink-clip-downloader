@@ -62,7 +62,8 @@ architecture.
     neighbour's car being treated as yours.
   - `vision.py` — optional, off-by-default computer-vision enhancement
     pipeline (object detection/tracking, depth estimation, contact
-    segmentation, OpenCV frame preprocessing, local-only face recognition).
+    segmentation, OpenCV frame preprocessing, pose estimation, local-only
+    face recognition).
     Layered on top of `analyzer.py`'s prompt pipeline via
     `BaseAnalyzer.attach_vision_pipeline()` — each stage produces a hint
     string appended to the same prompt, never replacing the configured AI
@@ -208,7 +209,10 @@ removed in 5.0.0.
   once; it only surfaced via live browser testing under a real Home
   Assistant OS install, not any automated test. Current nav order: Library,
   Live View, Security Feed, Automations, Sync Module, Status, AI, AI Usage,
-  Models, Vehicles, Biometrics, Storage.
+  Models, Security, Vehicles, Biometrics, Storage. Note the two
+  similarly-named tabs are unrelated: **Security Feed** is the grid of
+  near-live camera snapshots; **Security** is the structured security-event
+  timeline (`components/security/`, backed by `blink_downloader/security/`).
 - **API client**: every backend call goes through `api/<area>.ts` modules
   built on `api/client.ts`'s `apiGet`/`apiPost`/`apiPut`/`apiPatch`/`apiDelete`
   helpers (thin `fetch` wrappers, ingress-path-aware via `env.ts`). Add new
@@ -274,7 +278,9 @@ removed in 5.0.0.
   (filter/star/tag/modal, including the clip modal's theater mode/autoplay/
   loop/prev-next-nav/download-link/AI-panel-analyze-now), Vehicles, Status,
   AI (including Test Analysis) + AI Usage, Automations, Sync Module,
-  Models, Security Feed, and Storage (Archived Clips list/expand/
+  Models, Security Feed, Security (timeline/filters/evidence/open-clip,
+  against directly-seeded `security_events` rows — producing them for real
+  would need a running YOLO), and Storage (Archived Clips list/expand/
   camera-filter/delete — all DB-backed; Google Drive only as far as its
   disconnected/not-configured state, since exercising a real connection
   needs actual OAuth credentials)

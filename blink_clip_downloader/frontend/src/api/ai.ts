@@ -7,6 +7,7 @@ import type {
   AnalysisResultDict,
   CameraConfig,
   CheckpointsResponse,
+  DetectedBoxesResponse,
   EscalationModelsResponse,
   FaceBypassStats,
   FaceEnrollResult,
@@ -61,6 +62,10 @@ export function getSuspiciousClips(params: SuspiciousClipsParams = {}): Promise<
   const { limit = 20, offset = 0, period } = params
   const periodQuery = period ? `&period=${period}` : ''
   return apiGet(`/api/ai/suspicious?limit=${limit}&offset=${offset}${periodQuery}`)
+}
+
+export function getClipDetections(clipId: string): Promise<DetectedBoxesResponse> {
+  return apiGet(`/api/ai/detections/${encodeURIComponent(clipId)}`)
 }
 
 export function analyzeClipNow(clipId: string): Promise<AnalysisResultDict> {

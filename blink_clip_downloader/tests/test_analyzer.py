@@ -10834,3 +10834,70 @@ async def _analyze_with_response(
 
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
         return await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+
+def test_primary_event_type_labels_a_clip_with_its_most_severe_event() -> None:
+    outcome = SecurityOutcome()
+    outcome.assessment = RiskAssessment(
+        events=[
+            _security_event(SecurityEventType.SUBJECT_PRESENT, Severity.ROUTINE, 1.0),
+            _security_event(SecurityEventType.IMPACT_CANDIDATE, Severity.CRITICAL, 0.6),
+        ]
+    )
+    assert BaseAnalyzer._primary_event_type(outcome) == "impact_candidate"
+
+
+def test_primary_event_type_without_events_or_an_assessment() -> None:
+    assert BaseAnalyzer._primary_event_type(None) == ""
+    assert BaseAnalyzer._primary_event_type(SecurityOutcome()) == ""
+
+
+def test_output_rules_forbid_quoting_the_security_evidence(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """Both new prompt sections state numbers the model must reason over and
+    must not repeat — a homeowner-facing summary that says "risk score 88"
+    has leaked internals."""
+    rules = analyzer._output_rules_segment("Driveway", car_applies=False)
+    for banned in ("risk score", "evidence quality", "protection zone", "track"):
+        assert f"'{banned}'" in rules
+    assert "do not quote them" in rules
+
+
+def test_protected_vehicle_rules_are_dropped_when_the_car_is_not_there(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """Following "the protected vehicle is not in these frames" with "apply
+    these distance rules to it" is two contradictory instructions about a
+    car that isn't there."""
+    from blink_downloader.security.assets import AssetLocation
+
+    analyzer.update_car_description("blue sedan")
+    asset = _vehicle_asset()
+    asset.location = AssetLocation.ZONE_ABSENT
+    hints = _hints_with_tracks(asset=asset)
+
+    assert "PROTECTED VEHICLE:" in analyzer._build_prompt("Driveway")
+    assert "PROTECTED VEHICLE:" not in analyzer._build_prompt(
+        "Driveway", vision_hints=hints
+    )
+
+
+def test_a_vehicle_the_detector_merely_missed_keeps_the_rules(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """ "Not detected" is not "gone" — the detector misses cars in shadow,
+    and dropping the rules for that would quietly disable the feature."""
+    from blink_downloader.security.assets import AssetLocation
+
+    analyzer.update_car_description("blue sedan")
+    asset = _vehicle_asset()
+    asset.location = AssetLocation.ZONE
+    assert "PROTECTED VEHICLE:" in analyzer._build_prompt(
+        "Driveway", vision_hints=_hints_with_tracks(asset=asset)
+    )
+
+
+def test_vehicle_absent_without_any_vision_hints() -> None:
+    assert BaseAnalyzer._vehicle_absent(None) is False
+    assert BaseAnalyzer._vehicle_absent(VisionHints()) is False
