@@ -190,31 +190,38 @@ function formatWhen(timestamp: string): string {
       Analysis enabled.
     </Message>
 
-    <Timeline v-else :value="rows" class="security-timeline" data-testid="security-timeline">
-      <template #opposite="{ item }">
-        <span class="security-when">{{ formatWhen(item.clip_timestamp) }}</span>
-      </template>
-      <template #content="{ item }">
-        <div class="security-row">
-          <div class="security-row-head">
-            <Tag :value="formatEventType(item.event_type)" :severity="severityTag(item.severity)" />
-            <span class="security-camera">{{ item.camera }}</span>
-            <span class="security-risk">Risk {{ Math.round(item.risk_score) }}</span>
+    <!-- The test id lives on this wrapper rather than on <Timeline>: a
+         PrimeVue component does not reliably forward arbitrary attributes
+         to its rendered root, so scoping to it directly matched nothing in
+         a real browser even while the rows were plainly on screen. -->
+    <div v-else data-testid="security-timeline">
+      <Timeline :value="rows" class="security-timeline">
+        <template #opposite="{ item }">
+          <span class="security-when">{{ formatWhen(item.clip_timestamp) }}</span>
+        </template>
+        <template #content="{ item }">
+          <div class="security-row">
+            <div class="security-row-head">
+              <span class="security-when-inline">{{ formatWhen(item.clip_timestamp) }}</span>
+              <Tag :value="formatEventType(item.event_type)" :severity="severityTag(item.severity)" />
+              <span class="security-camera">{{ item.camera }}</span>
+              <span class="security-risk">Risk {{ Math.round(item.risk_score) }}</span>
+            </div>
+            <p class="security-detail-line">{{ item.detail }}</p>
+            <div class="security-row-actions">
+              <Button label="View clip" size="small" severity="secondary" outlined @click="openClip(item)" />
+              <Button
+                :label="expanded === item.clip_id ? 'Hide evidence' : 'Show evidence'"
+                size="small"
+                text
+                @click="toggle(item)"
+              />
+            </div>
+            <SecurityEventDetail v-if="expanded === item.clip_id" :clip-id="item.clip_id" />
           </div>
-          <p class="security-detail-line">{{ item.detail }}</p>
-          <div class="security-row-actions">
-            <Button label="View clip" size="small" severity="secondary" outlined @click="openClip(item)" />
-            <Button
-              :label="expanded === item.clip_id ? 'Hide evidence' : 'Show evidence'"
-              size="small"
-              text
-              @click="toggle(item)"
-            />
-          </div>
-          <SecurityEventDetail v-if="expanded === item.clip_id" :clip-id="item.clip_id" />
-        </div>
-      </template>
-    </Timeline>
+        </template>
+      </Timeline>
+    </div>
 
     <div v-if="hasMore && !loading" class="security-more">
       <Button label="Load more" severity="secondary" outlined :loading="loadingMore" @click="loadMore" />
@@ -245,6 +252,24 @@ function formatWhen(timestamp: string): string {
   font-size: 0.8rem;
   color: var(--text-muted);
   white-space: nowrap;
+}
+/* PrimeVue's Timeline gives the "opposite" column a fixed share of the
+   row, which on a phone leaves the event itself a column barely wide
+   enough for one word. Below that width the timestamp moves into the row
+   itself and the opposite column is dropped entirely. */
+.security-when-inline {
+  display: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+@media (max-width: 700px) {
+  .security-when-inline {
+    display: inline;
+    flex-basis: 100%;
+  }
+  .security-page :deep(.p-timeline-event-opposite) {
+    display: none;
+  }
 }
 .security-row-head {
   display: flex;

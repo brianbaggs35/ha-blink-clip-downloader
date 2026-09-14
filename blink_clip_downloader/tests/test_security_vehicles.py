@@ -332,3 +332,14 @@ def test_normalize_without_a_frame_size_returns_the_box_unchanged() -> None:
     """Defensive: dividing by a zero dimension would be worse than leaving
     the box in pixel space for the similarity check to score poorly."""
     assert _normalize(MY_CAR, (0.0, 0.0)) == MY_CAR
+
+
+def test_a_zone_is_ignored_when_the_frame_size_is_unknown() -> None:
+    """A zone only means anything once there is a frame to scale it onto —
+    without one it would score every candidate zero and report the
+    protected vehicle as absent, when the truth is that nothing could be
+    measured."""
+    tracks = _tracks([("car", MY_CAR, 1)])
+    result = identify_protected_vehicle(tracks, (0.0, 0.0), zone=ZONE)
+    assert result.protected is not None
+    assert result.basis == "the only vehicle visible in these frames"

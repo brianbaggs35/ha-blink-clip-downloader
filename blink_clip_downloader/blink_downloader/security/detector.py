@@ -112,6 +112,13 @@ class DetectionContext:
     depth_similar: bool | None = None
     scene_deviation: float | None = None
     appearance_change: float | None = None
+    #: What pose estimation found the examined subject's body doing at the
+    #: closest moment (see ``vision.PostureResult``). All ``None`` when the
+    #: stage is off or found nothing, which every rule treats as "no
+    #: posture evidence" rather than as a negative finding.
+    posture_reaching: bool | None = None
+    posture_arm_raised: bool | None = None
+    posture_crouching: bool | None = None
 
     @property
     def timeline_end(self) -> float:
@@ -248,18 +255,18 @@ class SecurityEventDetector:
         if not subjects:
             return []
 
-        profiles = {id(t): t.approach_to(asset.box) for t in subjects}
-        primary = min(subjects, key=lambda t: profiles[id(t)].min_box_gap)
+        profiles = [t.approach_to(asset.box) for t in subjects]
+        primary = min(range(len(subjects)), key=lambda i: profiles[i].min_box_gap)
 
         events: list[SecurityEvent] = []
-        for track in subjects:
+        for index, track in enumerate(subjects):
             events.extend(
                 self._asset_track_events(
                     track,
-                    profiles[id(track)],
+                    profiles[index],
                     asset,
                     ctx,
-                    cv_applies=self._cv_evidence_applies(track, primary, ctx),
+                    cv_applies=self._cv_evidence_applies(track, index == primary, ctx),
                 )
             )
         if not asset.confident:
@@ -275,7 +282,7 @@ class SecurityEventDetector:
 
     @staticmethod
     def _cv_evidence_applies(
-        track: ObjectTrack, primary: ObjectTrack, ctx: DetectionContext
+        track: ObjectTrack, is_primary: bool, ctx: DetectionContext
     ) -> bool:
         """Whether this clip's depth/contact verdict describes *track*.
 
@@ -286,7 +293,7 @@ class SecurityEventDetector:
         """
         if ctx.contact_track_id is not None:
             return track.track_id == ctx.contact_track_id
-        return track is primary
+        return is_primary
 
     def _asset_track_events(
         self,
@@ -339,6 +346,9 @@ class SecurityEventDetector:
         approach = self._approach_event(track, profile, asset, min_feet)
         if approach is not None:
             events.append(approach)
+
+        if near and cv_applies and ctx.posture_reaching:
+            events.append(self._reach_event(track, profile, asset, ctx))
 
         contact = self._contact_event(track, profile, asset, ctx, cv_applies)
         if contact is not None:
@@ -522,6 +532,45 @@ class SecurityEventDetector:
             ),
         )
 
+    def _reach_event(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        ctx: DetectionContext,
+    ) -> SecurityEvent:
+        """An arm extended toward the asset from close range.
+
+        Only emitted alongside proximity: a reaching gesture ten feet from a
+        car is somebody stretching. Close range plus a reach is the shape of
+        trying a door handle, and it is the one thing a bounding box is
+        completely blind to.
+        """
+        crouched = " while crouched or bent over" if ctx.posture_crouching else ""
+        return SecurityEvent(
+            event_type=SecurityEventType.ASSET_REACH,
+            severity=Severity.SUSPICIOUS,
+            confidence=0.65,
+            detail=(
+                f"The {track.label} had an arm extended toward "
+                f"{asset.description or 'the protected asset'} from close "
+                f"range{crouched}."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=profile.min_gap_offset,
+            end_offset=profile.min_gap_offset,
+            evidence=_round_evidence(
+                {
+                    "min_gap_pixels": profile.min_gap,
+                    "crouching": bool(ctx.posture_crouching),
+                    "arm_raised": bool(ctx.posture_arm_raised),
+                }
+            ),
+        )
+
     def _contact_basis(
         self,
         track: ObjectTrack,
@@ -626,6 +675,7 @@ class SecurityEventDetector:
             return None
         speed_increase = track.max_speed_increase
         change = ctx.appearance_change
+        raised = bool(ctx.posture_arm_raised)
         # A speed spike alone is only worth this much when the contact under
         # it is itself well evidenced. Bare box overlap plus a brisk walk is
         # a person arriving at their car, not a collision — requiring depth
@@ -636,10 +686,16 @@ class SecurityEventDetector:
             and contact.confidence >= _IMPACT_CONTACT_CONFIDENCE
         )
         altered = change is not None and change >= self._t.appearance_change
-        if not (abrupt or altered):
+        # A raised arm at the moment of contact is the one posture that
+        # separates a strike from a touch, and unlike the speed spike it is
+        # visible in a single frame — so it stands on its own rather than
+        # needing depth- or segmentation-backed contact underneath it.
+        if not (abrupt or altered or raised):
             return None
 
         reasons: list[str] = []
+        if raised:
+            reasons.append("the subject's arm was raised above shoulder height")
         if abrupt:
             reasons.append("the subject accelerated sharply around that moment")
         if altered:
@@ -663,6 +719,7 @@ class SecurityEventDetector:
                 {
                     "max_speed_increase": speed_increase,
                     "appearance_change": change,
+                    "arm_raised": raised,
                     "contact_confidence": contact.confidence,
                 }
             ),

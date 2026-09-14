@@ -41,6 +41,8 @@ from blink_downloader.database import ClipDatabase
 from blink_downloader.gdrive_client import GDriveClient
 from blink_downloader.live_view import LiveViewManager
 from blink_downloader.media_server import MediaServer
+from blink_downloader.security import SecurityEvent, SecurityEventType, Severity
+from blink_downloader.security.vehicles import VehicleSignature
 
 
 class _ExpectedE2ENoiseFilter(logging.Filter):
@@ -591,6 +593,111 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     # approve-toggle test) so those two tests' assertions never have to
     # account for this one's mutations.
     await db.add_face_enrollment("Casey E2E", [0.15, 0.25, 0.35], approved=True)
+
+    # Security events for the Security tab, attached to *existing*
+    # distribution clips rather than new ones: security_events is its own
+    # table that no other spec counts, while an extra clip would perturb the
+    # exact per-camera/source/total counts library-filters.spec.ts and
+    # status.spec.ts assert. Three clips across three cameras and three
+    # severities give the camera filter, the severity filter and the
+    # "most severe event wins" collapse something real to assert against.
+    #
+    # Clips 003/004/005 specifically. Re-analyzing a clip *replaces* its
+    # security events (see save_security_events' own docstring), so any clip
+    # another spec analyzes would have these wiped out from under it before
+    # security.spec.ts runs: 000 (ai.spec.ts's Test Analysis, which always
+    # takes the most recent clip), 001 (library-modal.spec.ts's Analyze Now)
+    # and 008/009 (library-selection.spec.ts's bulk analyze) are all spoken
+    # for. These three are not, and their cameras happen to be one of each.
+    await db.save_security_events(
+        "e2e-clip-003",
+        "Front Door",
+        [
+            SecurityEvent(
+                event_type=SecurityEventType.SUBJECT_PRESENT,
+                severity=Severity.ROUTINE,
+                confidence=0.91,
+                detail="A person was visible for at least 6s, moving left.",
+                subject_label="person",
+                track_id=1,
+                start_offset=0.0,
+                end_offset=6.0,
+                evidence={"dwell_seconds": 6.0, "frames_seen": 4},
+            )
+        ],
+        risk_score=4.0,
+        evidence_quality=0.82,
+    )
+    await db.save_security_events(
+        "e2e-clip-004",
+        "Backyard",
+        [
+            SecurityEvent(
+                event_type=SecurityEventType.SUBJECT_PRESENT,
+                severity=Severity.ROUTINE,
+                confidence=0.88,
+                detail="A person was visible for at least 14s, staying in one place.",
+                subject_label="person",
+                track_id=1,
+                start_offset=0.0,
+                end_offset=14.0,
+                evidence={"dwell_seconds": 14.0},
+            ),
+            SecurityEvent(
+                event_type=SecurityEventType.LOITERING,
+                severity=Severity.SUSPICIOUS,
+                confidence=0.7,
+                detail="The person remained at the protected vehicle for at least 14s.",
+                subject_label="person",
+                track_id=1,
+                asset_name="silver sedan",
+                asset_type="vehicle",
+                start_offset=2.0,
+                end_offset=14.0,
+                evidence={"dwell_seconds": 14.0, "near_asset": True},
+            ),
+        ],
+        risk_score=58.0,
+        evidence_quality=0.66,
+    )
+    await db.save_security_events(
+        "e2e-clip-005",
+        "Garage",
+        [
+            SecurityEvent(
+                event_type=SecurityEventType.IMPACT_CANDIDATE,
+                severity=Severity.CRITICAL,
+                confidence=0.79,
+                detail=(
+                    "Possible impact with the silver sedan: the subject accelerated "
+                    "sharply around that moment. This is a candidate for review, not "
+                    "a confirmed impact."
+                ),
+                subject_label="person",
+                track_id=2,
+                asset_name="silver sedan",
+                asset_type="vehicle",
+                start_offset=6.0,
+                end_offset=11.0,
+                evidence={"max_speed_increase": 0.21},
+            )
+        ],
+        risk_score=88.0,
+        evidence_quality=0.58,
+    )
+
+    # A learned protected-vehicle signature on Garage, so the Vehicles tab's
+    # signature card has an established one to render and reset. Garage is
+    # deliberately not Test Scratch, whose car-camera toggle vehicles.spec.ts
+    # mutates.
+    await db.save_vehicle_signature(
+        "Garage",
+        VehicleSignature(
+            box=(0.28, 0.42, 0.71, 0.79),
+            histogram=tuple([0.05] * 20),
+            sample_count=11,
+        ),
+    )
 
     # Battery history for the Status tab's battery strip/history modal
     # tests — Front Door ends up "ok", Backyard ends up "low" with one

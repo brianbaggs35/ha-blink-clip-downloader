@@ -339,6 +339,18 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # regardless of which ai_provider is configured. Off by default; enroll
     # household members via the web UI's AI tab.
     ai_face_recognition_enabled: bool = False
+    # Body-keypoint estimation (Ultralytics YOLO-pose) for the subject
+    # nearest a protected asset, on the single frame the depth/contact
+    # stages already examine. Its own toggle and its own small checkpoint:
+    # standing two feet from a car with your arms down and standing two
+    # feet from it with an arm through the window are indistinguishable
+    # from a bounding box, and obvious from a skeleton. Off by default.
+    ai_pose_estimation_enabled: bool = False
+    # YOLO11 rather than the YOLO26 generation ai_object_detection_model
+    # defaults to: these are the pose checkpoints Ultralytics publishes
+    # under confirmed names, and a name that turns out not to exist fails
+    # at first use rather than at configuration time.
+    ai_pose_model: str = "yolo11n-pose.pt"
     # Hugging Face Token (HF_TOKEN) for authenticated model downloads and
     # higher rate limits. Optional; get one from https://huggingface.co/settings/tokens.
     hf_token: str = ""
@@ -728,6 +740,11 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
         "ai_face_recognition_enabled": bool(
             data.get("ai_face_recognition_enabled", False)
         ),
+        "ai_pose_estimation_enabled": bool(
+            data.get("ai_pose_estimation_enabled", False)
+        ),
+        "ai_pose_model": str(data.get("ai_pose_model", "") or "").strip()
+        or "yolo11n-pose.pt",
         "hf_token": str(data.get("hf_token", "") or "").strip(),
         "ai_security_events_enabled": bool(
             data.get("ai_security_events_enabled", True)

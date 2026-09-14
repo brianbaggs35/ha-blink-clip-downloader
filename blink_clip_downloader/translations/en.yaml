@@ -410,6 +410,21 @@ configuration:
       Optional Hugging Face access token used to authenticate computer-vision
       model downloads and increase Hugging Face Hub rate limits. Create one at
       https://huggingface.co/settings/tokens. Keep this secret.
+  ai_pose_estimation_enabled:
+    name: Enable Pose Estimation
+    description: >-
+      Body-keypoint estimation for whoever is nearest the protected vehicle,
+      on the one frame the depth and contact stages already examine. Adds
+      three facts a bounding box cannot give: an arm extended toward the
+      vehicle (trying a handle, reaching through a window), an arm raised
+      above shoulder height, and a crouched or bent-over posture. Requires
+      Enhanced Detection. Downloads its own small model on first use.
+  ai_pose_model:
+    name: Pose Model
+    description: >-
+      Which Ultralytics pose checkpoint the stage above runs. "n" (nano) is
+      fastest and lightest, and the recommended starting point on CPU-only
+      hardware; larger sizes are more accurate and much slower.
   ai_security_events_enabled:
     name: Enable Structured Security Analysis
     description: >-

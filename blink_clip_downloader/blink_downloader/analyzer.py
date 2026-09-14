@@ -559,6 +559,13 @@ class AnalysisResult:
     # save_detected_objects) and served to the clip modal pre-aggregated
     # via get_detected_objects_summary, not as this raw per-box list.
     detected_objects: list[DetectedObject] = field(default_factory=list)
+    # Seconds between the frames those detections came from, and the size of
+    # those frames. Both are needed to draw a box back over the video — the
+    # detector works on scaled frames sampled at its own interval, neither of
+    # which the player knows anything about. Excluded from to_dict() with
+    # detected_objects themselves.
+    detection_interval: float = 0.0
+    detection_frame_size: tuple[float, float] | None = None
     # Deterministic security assessment (see blink_downloader.security).
     # Zero/empty when the security layer produced nothing — the optional
     # object-detection pipeline is off, or nothing relevant was detected.
@@ -1380,15 +1387,21 @@ class BaseAnalyzer(abc.ABC):
             face_bypass_names=face_bypass_names,
             approved_faces_seen=self._face_match_is_unambiguous(vision_hints),
             detected_objects=(vision_hints.detections or []) if vision_hints else [],
+            detection_interval=vision_hints.scan_interval if vision_hints else 0.0,
+            detection_frame_size=vision_hints.frame_size if vision_hints else None,
             risk_score=security.risk_score if security else 0.0,
             severity=str(security.severity) if security else str(Severity.ROUTINE),
-            event_type=(
-                str(security.assessment.to_dict()["event_type"]) if security else ""
-            ),
+            event_type=self._primary_event_type(security),
             evidence_quality=security.evidence.score if security else 0.0,
             risk_override_applied=risk_override_applied,
             security_events=security.events if security else [],
         )
+
+    @staticmethod
+    def _primary_event_type(security: SecurityOutcome | None) -> str:
+        """The event a clip gets labelled with where there is room for one."""
+        primary = security.assessment.primary_event if security else None
+        return str(primary.event_type) if primary else ""
 
     def _risk_forces_alert(self, security: SecurityOutcome | None) -> bool:
         """Whether the deterministic score alone justifies flagging this clip.
@@ -1616,6 +1629,7 @@ class BaseAnalyzer(abc.ABC):
         tracks = getattr(vision_hints, "tracks", None)
         if not tracks:
             return None
+        posture = vision_hints.posture
         return assess_clip(
             camera=camera,
             tracks=tracks,
@@ -1629,6 +1643,9 @@ class BaseAnalyzer(abc.ABC):
             depth_similar=vision_hints.depth_similar,
             scene_deviation=scene_deviation,
             appearance_change=vision_hints.asset_appearance_change,
+            posture_reaching=posture.reaching if posture else None,
+            posture_arm_raised=posture.arm_raised if posture else None,
+            posture_crouching=posture.crouching if posture else None,
             unavailable_sources=vision_hints.unavailable_sources,
             is_night=self._is_night(clip_timestamp),
             approved_person_recognized=self._face_match_is_unambiguous(vision_hints),
@@ -2538,13 +2555,27 @@ class BaseAnalyzer(abc.ABC):
         # can see the car (all cameras when car_cameras is empty, otherwise only
         # the cameras explicitly listed in car_cameras). car_applies was
         # already computed above, before the scene-baseline block.
-        car_segment = self._car_protection_segment(camera, car_applies)
+        car_segment = self._car_protection_segment(
+            camera, car_applies, vehicle_absent=self._vehicle_absent(vision_hints)
+        )
         if car_segment:
             parts.append(car_segment)
 
         parts.append(self._output_rules_segment(camera, car_applies))
 
         return "".join(parts)
+
+    @staticmethod
+    def _vehicle_absent(vision_hints: VisionHints | None) -> bool:
+        """True when identification concluded the protected vehicle is gone.
+
+        Distinct from "not detected": other vehicles were found and none of
+        them is the protected one, which is the driven-to-work case. A
+        vehicle simply missed by the detector leaves this False, so the
+        distance rules keep applying exactly as they did before.
+        """
+        asset = getattr(vision_hints, "asset", None)
+        return asset is not None and not asset.present
 
     def _camera_context_segment(self, camera: str) -> str:
         """Camera location/purpose framing, or a plain camera name fallback.
@@ -2781,14 +2812,28 @@ class BaseAnalyzer(abc.ABC):
                 vision_hints.tracking_hint,
                 vision_hints.depth_hint,
                 vision_hints.contact_hint,
+                vision_hints.posture_hint,
                 vision_hints.recognized_resident_hint,
             )
             if hint
         ]
 
-    def _car_protection_segment(self, camera: str, car_applies: bool) -> str | None:
+    def _car_protection_segment(
+        self, camera: str, car_applies: bool, vehicle_absent: bool = False
+    ) -> str | None:
         """Protected-vehicle distance rules, or a "this camera can't see it"
-        note, or None when no protected vehicle is configured at all."""
+        note, or None when no protected vehicle is configured at all.
+
+        *vehicle_absent* suppresses the distance rules entirely: when
+        identification has concluded the protected vehicle is not in these
+        frames (see ``AssetLocation.ZONE_ABSENT``), the WHICH VEHICLE
+        section immediately above already says so, and following it with
+        "apply these rules to the vehicle matching this description" hands
+        the model two contradictory instructions about a car that isn't
+        there.
+        """
+        if vehicle_absent:
+            return None
         if car_applies:
             return (
                 f"\n\nPROTECTED VEHICLE: {self._car_description}\n"
@@ -2940,8 +2985,11 @@ class BaseAnalyzer(abc.ABC):
             "of reporting a low-confidence guess. "
             "NEVER include any of these technical terms in the description: "
             "'bounding box', 'normalized', 'frame width', 'frame percentage', 'spatial data', "
-            "'INTERNAL', 'CONTEXT', 'proximity analysis', 'overlap', 'gap 0.', or any decimal coordinates. "
-            "Any internal proximity hints provided are for your reasoning only — do not quote them."
+            "'INTERNAL', 'CONTEXT', 'proximity analysis', 'overlap', 'gap 0.', 'risk score', "
+            "'evidence quality', 'protection zone', 'track', 'detector', or any decimal "
+            "coordinates, percentages, or clip timestamps quoted from the sections above. "
+            "Any internal proximity, tracking or security-evidence hints provided are for "
+            "your reasoning only — do not quote them."
         )
 
     def parse_response(self, response: str) -> tuple[bool, float, str]:

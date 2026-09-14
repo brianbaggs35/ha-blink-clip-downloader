@@ -120,7 +120,14 @@ CREATE TABLE IF NOT EXISTS detected_objects (
     box_x2        DOUBLE PRECISION DEFAULT 0.0,
     box_y2        DOUBLE PRECISION DEFAULT 0.0,
     track_id      INTEGER,
-    frame_index   INTEGER DEFAULT 0
+    frame_index   INTEGER DEFAULT 0,
+    -- Where in the clip this box was seen, and how big the frame it came
+    -- from was. Both are needed to draw the box back over the video: the
+    -- detector works on scaled frames sampled at its own interval, neither
+    -- of which the player knows anything about.
+    offset_seconds DOUBLE PRECISION DEFAULT 0.0,
+    frame_width    DOUBLE PRECISION DEFAULT 0.0,
+    frame_height   DOUBLE PRECISION DEFAULT 0.0
 );
 CREATE INDEX IF NOT EXISTS idx_detected_objects_clip ON detected_objects (clip_id);
 
@@ -361,6 +368,9 @@ ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'rou
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS event_type TEXT DEFAULT '';
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS evidence_quality DOUBLE PRECISION DEFAULT 0.0;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS risk_override_applied BOOLEAN DEFAULT FALSE;
+ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS offset_seconds DOUBLE PRECISION DEFAULT 0.0;
+ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_width DOUBLE PRECISION DEFAULT 0.0;
+ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_height DOUBLE PRECISION DEFAULT 0.0;
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
@@ -1583,7 +1593,12 @@ class ClipDatabase:
         Every caller goes through here rather than remembering all three.
         """
         await self.add_analysis_result(result.to_dict())
-        await self.save_detected_objects(result.clip_id, result.detected_objects)
+        await self.save_detected_objects(
+            result.clip_id,
+            result.detected_objects,
+            interval=result.detection_interval,
+            frame_size=result.detection_frame_size,
+        )
         await self.save_security_events(
             result.clip_id,
             result.camera,
@@ -1786,7 +1801,11 @@ class ClipDatabase:
     # ------------------------------------------------------------------
 
     async def save_detected_objects(
-        self, clip_id: str, detections: list[DetectedObject]
+        self,
+        clip_id: str,
+        detections: list[DetectedObject],
+        interval: float = 0.0,
+        frame_size: tuple[float, float] | None = None,
     ) -> None:
         """Replace the stored object-detection results for *clip_id*.
 
@@ -1810,8 +1829,9 @@ class ClipDatabase:
                         """
                             INSERT INTO detected_objects
                               (clip_id, label, confidence, box_x1, box_y1,
-                               box_x2, box_y2, track_id, frame_index)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               box_x2, box_y2, track_id, frame_index,
+                               offset_seconds, frame_width, frame_height)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """
                     ),
                     [
@@ -1825,10 +1845,54 @@ class ClipDatabase:
                             d.box[3],
                             d.track_id,
                             d.frame_index,
+                            d.frame_index * interval,
+                            frame_size[0] if frame_size else 0.0,
+                            frame_size[1] if frame_size else 0.0,
                         )
                         for d in detections
                     ],
                 )
+
+    async def get_detected_object_boxes(self, clip_id: str) -> dict[str, Any]:
+        """Every stored box for *clip_id*, normalized for drawing over the video.
+
+        Boxes are stored in the detector's own scaled pixel space, which the
+        player knows nothing about; dividing by the frame size it recorded
+        turns them into 0-1 fractions that overlay correctly at any player
+        size. Rows written before those dimensions were recorded are skipped
+        rather than drawn in the wrong place.
+        """
+        if self._pool is None:
+            return {"objects": []}
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT label, confidence, box_x1, box_y1, box_x2, box_y2,
+                       track_id, offset_seconds, frame_width, frame_height
+                FROM detected_objects
+                WHERE clip_id=? AND frame_width > 0 AND frame_height > 0
+                ORDER BY offset_seconds ASC, id ASC
+                """
+            ),
+            clip_id,
+        )
+        return {
+            "objects": [
+                {
+                    "label": r["label"],
+                    "confidence": float(r["confidence"]),
+                    "track_id": r["track_id"],
+                    "offset_seconds": float(r["offset_seconds"]),
+                    "box": [
+                        float(r["box_x1"]) / float(r["frame_width"]),
+                        float(r["box_y1"]) / float(r["frame_height"]),
+                        float(r["box_x2"]) / float(r["frame_width"]),
+                        float(r["box_y2"]) / float(r["frame_height"]),
+                    ],
+                }
+                for r in rows
+            ]
+        }
 
     async def get_detected_objects_summary(self, clip_id: str) -> list[dict[str, Any]]:
         """Detections for *clip_id*, aggregated by label — {label, count,

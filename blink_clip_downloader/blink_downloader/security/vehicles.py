@@ -308,7 +308,14 @@ def identify_protected_vehicle(
         return VehicleIdentification(basis="no vehicle detected in these frames")
 
     hist_map = histograms or {}
-    zone_box = zone.to_pixel_box(*frame_size) if zone is not None else None
+    # A zone only means anything once there is a frame to scale it onto.
+    # Without one it would convert to a zero-sized box that every candidate
+    # scores zero against — reporting the protected vehicle as absent when
+    # the truth is simply that we could not measure.
+    has_frame = frame_size[0] > 0 and frame_size[1] > 0
+    zone_box = (
+        zone.to_pixel_box(*frame_size) if zone is not None and has_frame else None
+    )
     use_signature = signature is not None and signature.established
 
     candidates: list[VehicleCandidate] = []

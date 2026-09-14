@@ -14,6 +14,7 @@ import { usePromptOverlayStore } from '../../stores/promptOverlay'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import AppIcon from '../icons/AppIcon.vue'
+import ClipDetectionOverlay from './ClipDetectionOverlay.vue'
 import ClipAiPanel from './ClipAiPanel.vue'
 
 const props = defineProps<{
@@ -56,6 +57,8 @@ const tagSuggestions = computed(() => {
 })
 const showTagSuggestions = computed(() => tagInputFocused.value && tagSuggestions.value.length > 0)
 const theater = ref(false)
+const showOverlay = ref(false)
+const currentTime = ref(0)
 const autoplayNext = ref(false)
 const loopClip = ref(false)
 // A handful of real Blink clips (source: "snapshot" in particular) download
@@ -87,6 +90,19 @@ function ensurePlayer(): Player {
       pictureInPictureToggle: true,
     },
     userActions: { hotkeys: false },
+  })
+  // Drives the optional detection overlay. Tracked on the player rather
+  // than inside the overlay so the overlay stays a pure presentational
+  // component with nothing to mock in its own tests.
+  // Bound to the local instance, not the module-level `player`, so the
+  // handler needs no null check for something that cannot be null inside
+  // the call that just created it.
+  const instance = player
+  instance.on('timeupdate', () => {
+    // video.js types currentTime() as possibly undefined (it is, before
+    // metadata loads), and an undefined here would blank the overlay
+    // rather than leave it where it was.
+    currentTime.value = instance.currentTime() ?? 0
   })
   player.on('ended', () => {
     if (autoplayNext.value) emit('nav', 1)
@@ -310,6 +326,11 @@ onUnmounted(() => {
             >
           </div>
         </div>
+        <ClipDetectionOverlay
+          v-if="showOverlay && clipId && !videoError"
+          :clip-id="clipId"
+          :current-time="currentTime"
+        />
         <div class="vid-nav">
           <button type="button" class="vid-nav-btn" title="Previous (↑)" @click="emit('nav', -1)">‹</button>
           <button type="button" class="vid-nav-btn" title="Next (↓)" @click="emit('nav', 1)">›</button>
@@ -332,6 +353,15 @@ onUnmounted(() => {
           <span>{{ fmtRelative(clip.downloaded_at) }}</span>
         </div>
         <div class="modal-actions">
+          <Button
+            size="small"
+            severity="secondary"
+            :outlined="!showOverlay"
+            title="Draw the object detector's boxes over the video"
+            @click="showOverlay = !showOverlay"
+          >
+            {{ showOverlay ? '⬚ Boxes on' : '⬚ Boxes' }}
+          </Button>
           <Button size="small" outlined :style="starred ? 'color: var(--starred)' : ''" @click="toggleStar">
             {{ starred ? '★ Starred' : '☆ Star' }}
           </Button>

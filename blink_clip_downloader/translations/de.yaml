@@ -486,6 +486,21 @@ configuration:
       Computer-Vision-Modell-Downloads und zur Erhöhung der
       Hugging Face Hub-Ratenlimits. Erstelle eines unter
       https://huggingface.co/settings/tokens. Geheim halten.
+  ai_pose_estimation_enabled:
+    name: Posenerkennung aktivieren
+    description: >-
+      Schätzt Körperkeypoints der Person, die dem geschützten Fahrzeug am
+      nächsten ist — auf demselben Einzelbild, das die Tiefen- und
+      Kontaktstufen bereits auswerten. Liefert drei Fakten, die eine
+      Bounding Box nicht hergibt: ein zum Fahrzeug ausgestreckter Arm, ein
+      über Schulterhöhe erhobener Arm und eine geduckte oder gebückte
+      Haltung. Erfordert die erweiterte Erkennung.
+  ai_pose_model:
+    name: Posenmodell
+    description: >-
+      Welcher Ultralytics-Posen-Checkpoint verwendet wird. "n" (Nano) ist am
+      schnellsten und leichtesten und für reine CPU-Hardware empfohlen;
+      größere Modelle sind genauer, aber deutlich langsamer.
   ai_security_events_enabled:
     name: Strukturierte Sicherheitsanalyse aktivieren
     description: >-

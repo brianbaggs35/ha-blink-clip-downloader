@@ -37,6 +37,7 @@ DEFAULT_EVENT_POINTS: dict[SecurityEventType, float] = {
     SecurityEventType.ASSET_PROXIMITY: 14.0,
     SecurityEventType.LOITERING: 15.0,
     SecurityEventType.RETREAT: 4.0,
+    SecurityEventType.ASSET_REACH: 24.0,
     SecurityEventType.CONTACT_CANDIDATE: 32.0,
     SecurityEventType.IMPACT_CANDIDATE: 40.0,
     SecurityEventType.RETREAT_AFTER_CONTACT: 18.0,
