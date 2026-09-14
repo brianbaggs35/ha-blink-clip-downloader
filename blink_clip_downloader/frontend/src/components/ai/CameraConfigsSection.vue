@@ -49,18 +49,39 @@ function toEditable(c: CameraConfig): EditableConfig {
   }
 }
 
+// These are edit fields. A refresh landing while someone is part-way
+// through typing a camera description would replace what they had written
+// with whatever the server last stored — so a result is dropped if the form
+// became dirty while it was in flight, alongside the usual newest-request
+// check. The watcher below already declines to *start* a load over a dirty
+// form; this covers a form that went dirty after one started.
+let requestSeq = 0
+
 async function load() {
-  loading.value = true
+  const seq = ++requestSeq
+  const signatureAtStart = loadedSignature
+  // Only for the first load, when there is nothing on screen yet. A
+  // background refresh must not replace a form someone may be looking at
+  // with a spinner — same "don't blank the page for a background refresh"
+  // reasoning SyncModulePage's own silent reload documents.
+  if (!configs.value.length) loading.value = true
   loadError.value = false
   try {
     const data = await getCameraConfigs()
+    if (seq !== requestSeq) return
+    if (isDirty() && loadedSignature === signatureAtStart) return
     configs.value = data.map(toEditable)
     loadedSignature = JSON.stringify(configs.value)
   } catch {
-    loadError.value = true
+    if (seq === requestSeq) loadError.value = true
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
+}
+
+/** True when the form holds edits that have not been saved. */
+function isDirty(): boolean {
+  return configs.value.length > 0 && JSON.stringify(configs.value) !== loadedSignature
 }
 
 // Lets a glance at a collapsed accordion header show which cameras
@@ -72,7 +93,7 @@ onMounted(load)
 watch(
   () => refresh.tick,
   () => {
-    if (JSON.stringify(configs.value) !== loadedSignature) return
+    if (isDirty()) return
     void load()
   },
 )

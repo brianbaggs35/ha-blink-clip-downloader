@@ -137,6 +137,94 @@ describe('CameraConfigsSection', () => {
     expect(fetchMock.mock.calls).toHaveLength(callsBeforeTick)
   })
 
+  it('does not overwrite an edit made while a reload was already in flight', async () => {
+    // The tick watcher declines to *start* a load over a dirty form; this is
+    // the other half — a form that goes dirty after one has started. Losing
+    // what someone typed is worse than showing them slightly stale data.
+    const rows = [{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]
+    let releaseSecond: (() => void) | undefined
+    let reads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        reads += 1
+        if (reads === 1) return Promise.resolve(jsonResponse(rows))
+        return new Promise<Response>((resolve) => {
+          releaseSecond = () => resolve(jsonResponse(rows))
+        })
+      }),
+    )
+    const wrapper = mount(CameraConfigsSection)
+    await flushPromises()
+
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(releaseSecond).toBeDefined()
+
+    await wrapper.find('input.tag-input').setValue('typed while it was loading')
+    releaseSecond?.()
+    await flushPromises()
+
+    expect((wrapper.find('input.tag-input').element as HTMLInputElement).value).toBe('typed while it was loading')
+  })
+
+  it('does not surface an error from a superseded reload', async () => {
+    const rows = [{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]
+    const pending: { resolve: (v: Response) => void; reject: (e: Error) => void }[] = []
+    let reads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        reads += 1
+        if (reads === 1) return Promise.resolve(jsonResponse(rows))
+        return new Promise<Response>((resolve, reject) => pending.push({ resolve, reject }))
+      }),
+    )
+    const wrapper = mount(CameraConfigsSection)
+    await flushPromises()
+
+    useRefreshStore().bump()
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(pending).toHaveLength(2)
+
+    pending[1].resolve(jsonResponse(rows))
+    await flushPromises()
+    pending[0].reject(new Error('down'))
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Could not load')
+  })
+
+  it('ignores a superseded reload that answers last', async () => {
+    const rows = [{ camera: 'front', description: '', custom_prompt: '', is_car_camera: false, car_zone: null }]
+    const pending: ((v: Response) => void)[] = []
+    let reads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        reads += 1
+        if (reads === 1) return Promise.resolve(jsonResponse(rows))
+        return new Promise<Response>((resolve) => pending.push(resolve))
+      }),
+    )
+    const wrapper = mount(CameraConfigsSection)
+    await flushPromises()
+
+    useRefreshStore().bump()
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+
+    pending[1](jsonResponse([{ ...rows[0], description: 'Newest' }]))
+    await flushPromises()
+    pending[0](jsonResponse([{ ...rows[0], description: 'Stale' }]))
+    await flushPromises()
+
+    expect((wrapper.find('input.tag-input').element as HTMLInputElement).value).toBe('Newest')
+  })
+
   it('falls back to the local auto_analyze preference when the server omits it', async () => {
     let saved: unknown
     let reads = 0

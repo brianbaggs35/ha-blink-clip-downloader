@@ -472,6 +472,7 @@ async def test_teardown_completes_even_if_stopping_the_stream_raises(
     camera_registry["Front Door"] = _make_camera(stream)
 
     status = await manager.start_session("Front Door")
+    assert status.session_id is not None
     hls_dir = manager.get_hls_dir(status.session_id)
     assert hls_dir is not None
 

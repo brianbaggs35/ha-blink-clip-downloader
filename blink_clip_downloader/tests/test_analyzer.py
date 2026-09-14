@@ -16,14 +16,12 @@ import pytest
 from blink_downloader.analyzer import (
     _ANTHROPIC_FALLBACK_MODELS,
     _OPENAI_FALLBACK_MODELS,
-    _OPENAI_MODEL_DISPLAY_ORDER,
     _OPENAI_STRUCTURED_OUTPUT_SCHEMA,
     AnalysisResult,
     AnthropicAnalyzer,
     BaseAnalyzer,
     ClipAnalyzer,
     MoondreamCloudAnalyzer,
-    MoondreamFineTuneManager,
     MoondreamLocalAnalyzer,
     OllamaCloudAnalyzer,
     OpenAIAnalyzer,
@@ -34,6 +32,8 @@ from blink_downloader.analyzer import (
     is_openai_vision_model,
     is_vision_model,
 )
+from blink_downloader.model_catalog import _OPENAI_MODEL_DISPLAY_ORDER
+from blink_downloader.moondream_finetune import MoondreamFineTuneManager
 from blink_downloader.security import (
     AssetLocation,
     ProtectedAsset,

@@ -2672,7 +2672,8 @@ class ClipDatabase:
         Oldest first, so a training run works through the backlog in order
         rather than repeatedly picking up the same most-recent rows. See
         :meth:`mark_feedback_trained` and
-        ``MoondreamFineTuneManager.train_from_examples`` in ``analyzer.py``.
+        ``MoondreamFineTuneManager.train_from_examples`` in
+        ``moondream_finetune.py``.
         """
         if self._pool is None:
             return []
