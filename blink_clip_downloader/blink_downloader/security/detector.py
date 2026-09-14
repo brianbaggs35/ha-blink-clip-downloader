@@ -146,9 +146,20 @@ class SecurityEventDetector:
         Ties at the same offset are ordered most-severe first so a
         timeline's first line for a moment is its most important one.
         """
+        asset_events = self._asset_events(ctx)
+        # Standing at the protected vehicle for a while is *one* behaviour,
+        # and the scorer adds up every event it is handed — so a track
+        # already credited with lingering at the asset must not also be
+        # scored for lingering on open ground, or a single loiterer is
+        # counted twice at full weight.
+        already_loitering = {
+            _track_key(e)
+            for e in asset_events
+            if e.event_type is SecurityEventType.LOITERING
+        }
         events: list[SecurityEvent] = []
-        events.extend(self._subject_events(ctx))
-        events.extend(self._asset_events(ctx))
+        events.extend(self._subject_events(ctx, already_loitering))
+        events.extend(asset_events)
         events.extend(self._carryable_events(ctx))
         events.extend(self._scene_events(ctx))
         events.sort(key=lambda e: (e.start_offset, -severity_rank(e.severity)))
@@ -156,14 +167,17 @@ class SecurityEventDetector:
 
     # -- subjects ------------------------------------------------------
 
-    def _subject_events(self, ctx: DetectionContext) -> list[SecurityEvent]:
+    def _subject_events(
+        self, ctx: DetectionContext, already_loitering: set[tuple[object, ...]]
+    ) -> list[SecurityEvent]:
         """Presence, open-ground loitering, and more than one person."""
         events: list[SecurityEvent] = []
         subjects = subject_tracks(ctx.tracks)
         for track in subjects:
-            events.append(self._presence_event(track, ctx))
+            presence = self._presence_event(track, ctx)
+            events.append(presence)
             loiter = self._open_loiter_event(track)
-            if loiter is not None:
+            if loiter is not None and _track_key(loiter) not in already_loitering:
                 events.append(loiter)
 
         people = [t for t in subjects if t.label == PERSON_LABEL and t.tracked]
@@ -383,7 +397,16 @@ class SecurityEventDetector:
         ctx: DetectionContext,
         depth_similar: bool | None = None,
     ) -> SecurityEvent | None:
-        """Entry into the user-drawn zone, judged from the subject's feet.
+        """Presence in the user-drawn zone, judged from the subject's feet.
+
+        Deliberately not restricted to an observed *crossing*. A clip starts
+        when motion is detected, so a subject can perfectly well already be
+        standing at the vehicle in the very first sampled frame — and on a
+        camera pointed straight at a parking space that is the common case,
+        not the exotic one. Requiring an outside-then-inside transition
+        silently produced no zone event at all for exactly those clips. The
+        wording below distinguishes the two so the claim stays honest about
+        what was actually observed.
 
         Suppressed when depth estimation places the subject at a clearly
         different distance from the camera than the vehicle the zone was
@@ -392,7 +415,7 @@ class SecurityEventDetector:
         detected, since that is what the depth comparison actually measured
         against.
         """
-        if asset.zone is None or not track.entered_zone(asset.zone):
+        if asset.zone is None or not track.in_zone(asset.zone):
             return None
         if depth_similar is False and asset.detected:
             return None
@@ -402,14 +425,21 @@ class SecurityEventDetector:
         # measurement of an instant — say "entered" instead of claiming a
         # duration the frames cannot support.
         stayed = f" and stayed at least {dwell:.0f}s" if dwell >= 1.0 else ""
+        crossed = track.entered_zone(asset.zone)
+        # Named after the vehicle rather than via _asset_place: the zone is a
+        # fixed region the user drew, and it keeps that name whether or not
+        # the car is currently parked in it.
+        place = asset.description or "the protected asset"
+        movement = (
+            f"crossed into the area marked around {place}"
+            if crossed
+            else f"was already inside the area marked around {place} when the clip began"
+        )
         return SecurityEvent(
             event_type=SecurityEventType.ZONE_ENTERED,
             severity=Severity.NOTEWORTHY,
             confidence=0.8 if track.tracked else 0.5,
-            detail=(
-                f"The {track.label} crossed into the area marked around "
-                f"{asset.description or 'the protected asset'}{stayed}."
-            ),
+            detail=f"The {track.label} {movement}{stayed}.",
             subject_label=track.label,
             track_id=track.track_id,
             asset_name=asset.name,
@@ -420,6 +450,7 @@ class SecurityEventDetector:
                 {
                     "zone_dwell_seconds": dwell,
                     "frames_in_zone": sum(track.zone_membership(asset.zone)),
+                    "crossed_in": crossed,
                     "frame_interval": ctx.frame_interval,
                 }
             ),
@@ -529,9 +560,8 @@ class SecurityEventDetector:
             severity=Severity.SUSPICIOUS,
             confidence=0.7 if track.tracked else 0.45,
             detail=(
-                f"The {track.label} remained at "
-                f"{asset.description or 'the protected asset'} for at least "
-                f"{dwell:.0f}s."
+                f"The {track.label} remained at {_asset_place(asset)} for at "
+                f"least {dwell:.0f}s."
             ),
             subject_label=track.label,
             track_id=track.track_id,
@@ -890,6 +920,31 @@ class SecurityEventDetector:
                 evidence=_round_evidence({"scene_deviation": deviation}),
             )
         ]
+
+
+def _track_key(event: SecurityEvent) -> tuple[object, ...]:
+    """Identify the track an event belongs to, for cross-rule deduplication.
+
+    ``track_id`` alone is not enough: every pseudo-track assembled without a
+    real tracker carries ``None``, so keying on it would merge two different
+    untracked people into one. The observed span disambiguates them.
+    """
+    return (event.track_id, event.subject_label, event.start_offset, event.end_offset)
+
+
+def _asset_place(asset: ProtectedAsset) -> str:
+    """Name the asset, or the space it left behind when it is not there.
+
+    A zone rule still fires when the protected vehicle has been driven away
+    — the area is worth watching whether or not the car is in it — but
+    saying somebody "remained at the blue sedan" when this same pipeline has
+    just concluded the blue sedan is not in frame is a claim the evidence
+    contradicts, and it reaches both the prompt and the Security tab.
+    """
+    described = asset.description or "the protected asset"
+    if asset.present:
+        return described
+    return f"the space where {described} normally sits"
 
 
 def _article(label: str) -> str:

@@ -251,6 +251,19 @@ damage classification.
   screen: the AI Usage tab refreshes itself every ten seconds, and a refresh
   already in flight when you cleared could land afterwards and paint the
   pre-clear totals straight back over the cleared ones.
+- Someone who is already standing at the protected vehicle in a clip's first
+  frame is now reported as being in the protection zone. A clip starts when
+  motion is detected, so on a camera pointed at a parking space that is the
+  ordinary case rather than the exotic one — and requiring an observed
+  step across the boundary meant those clips produced no zone event at all.
+  The wording distinguishes the two, so the event still says only what was
+  actually seen.
+- Lingering at the vehicle is no longer counted twice. It satisfies both the
+  "stayed at the protected vehicle" and the "stayed in one place" rules, and
+  the risk score added both at full weight, inflating one loiterer into two.
+- A clip where the protected vehicle has evidently been driven away no longer
+  describes someone as lingering "at" it — it now names the space the vehicle
+  normally occupies, matching what the rest of the analysis concluded.
 - Completed the PrimeVue 5 migration by using the PrimeUI license format
   expected by PrimeVue 5.0.1, binding numeric `ProgressSpinner` props
   correctly, and documenting the `VITE_PRIMEVUE_LICENSE_KEY` development
