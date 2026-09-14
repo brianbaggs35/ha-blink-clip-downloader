@@ -41,8 +41,17 @@ const diskClass = computed(() => {
 })
 const frameStats = computed(() => aiStatus.value?.analysis_stats)
 
+// Mount and the shared refresh signal both call this, with no inherent
+// ordering — and that signal fires from other tabs' actions, not just a
+// manual refresh, so a slow earlier response could repaint older numbers
+// over newer ones while the page is simply being read.
+let requestSeq = 0
+
 async function load() {
-  loading.value = true
+  const seq = ++requestSeq
+  // Only while there is nothing on screen yet: a background refresh must
+  // not replace a dashboard someone is reading with skeleton cards.
+  if (!stats.value) loading.value = true
   error.value = false
   try {
     const [statsRes, camsRes, actRes, aiRes, batteryRes] = await Promise.all([
@@ -52,6 +61,7 @@ async function load() {
       getAiStatus().catch(() => null),
       getBatteryStatus(),
     ])
+    if (seq !== requestSeq) return
     stats.value = statsRes
     cameras.value = camsRes
     activity.value = actRes
@@ -59,9 +69,9 @@ async function load() {
     batteryStatus.value = batteryRes
     if (typeof statsRes.connected === 'boolean') connection.setConnected(statsRes.connected)
   } catch {
-    error.value = true
+    if (seq === requestSeq) error.value = true
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
 }
 
