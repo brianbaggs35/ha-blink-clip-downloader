@@ -533,20 +533,29 @@ onUnmounted(() => {
         <span class="lib-stat-value">{{ stats?.week_count ?? 0 }}</span>
       </div>
       <div class="lib-stat">
-        <span class="lib-stat-label">★ Starred</span>
+        <span class="lib-stat-label-row">
+          <span class="lib-stat-icon lib-stat-icon-star" aria-hidden="true">★</span>
+          <span class="lib-stat-label lib-stat-label-hideable">Starred</span>
+        </span>
         <span class="lib-stat-value">{{ stats?.starred_count ?? 0 }}</span>
       </div>
       <div v-if="capabilities.faceRecognitionAvailable !== false" class="lib-stat">
-        <span class="lib-stat-label">👤 Recognized</span>
+        <span class="lib-stat-label-row">
+          <span class="lib-stat-icon" aria-hidden="true">👤</span>
+          <span class="lib-stat-label lib-stat-label-hideable">Recognized</span>
+        </span>
         <span class="lib-stat-value">{{ stats?.recognized_count ?? 0 }}</span>
       </div>
-      <div v-if="stats?.disk" class="lib-stat lib-stat-storage" :title="`${stats.disk.free_gb} GB free on disk`">
-        <span class="lib-stat-label">💾 Storage</span>
+      <div class="lib-stat lib-stat-storage" :title="stats?.disk ? `${stats.disk.free_gb} GB free on disk` : undefined">
+        <span class="lib-stat-label-row">
+          <span class="lib-stat-icon" aria-hidden="true">💾</span>
+          <span class="lib-stat-label">Storage</span>
+        </span>
         <span class="lib-stat-value lib-stat-storage-value">
-          {{ usedStorageLabel }}<template v-if="stats.disk.quota_bytes"> / {{ stats.disk.quota_gb }} GB</template>
+          {{ usedStorageLabel }}<template v-if="stats?.disk?.quota_bytes"> / {{ stats.disk.quota_gb }} GB</template>
         </span>
         <ProgressBar
-          v-if="stats.disk.quota_bytes"
+          v-if="stats?.disk?.quota_bytes"
           class="lib-stat-storage-bar"
           :value="diskPct || 0"
           :show-value="false"
