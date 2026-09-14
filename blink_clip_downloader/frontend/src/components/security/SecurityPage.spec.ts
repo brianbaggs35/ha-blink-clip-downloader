@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import Button from 'primevue/button'
 import Select from 'primevue/select'
 import SelectButton from 'primevue/selectbutton'
+import Timeline from 'primevue/timeline'
 import SecurityPage from './SecurityPage.vue'
 import { useClipViewerStore } from '../../stores/clipViewer'
 import { useRefreshStore } from '../../stores/refresh'
@@ -206,6 +207,25 @@ describe('SecurityPage', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Driveway')
     expect(wrapper.findAllComponents(Button).filter((b) => b.props('label') === 'Load more')).toHaveLength(0)
+  })
+
+  it('does not repeat a clip when the list grew between pages', async () => {
+    // Offset paging over a list that grows at the top: a clip analyzed
+    // between the two requests shifts every row down one, so the next page
+    // repeats the row that ended the previous one.
+    const wrapper = await mountPage({
+      rows: [row()],
+      total: 3,
+      morePage: [row(), row({ id: 2, clip_id: 'c2', camera: 'Back Yard' })],
+    })
+    await wrapper
+      .findAllComponents(Button)
+      .filter((b) => b.props('label') === 'Load more')[0]
+      .trigger('click')
+    await flushPromises()
+    const timeline = wrapper.findComponent(Timeline)
+    const shown = (timeline.props('value') as SecurityTimelineRow[]).map((r) => r.clip_id)
+    expect(shown).toEqual(['c1', 'c2'])
   })
 
   it('hides "load more" once everything is shown', async () => {

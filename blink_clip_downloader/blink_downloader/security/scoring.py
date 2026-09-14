@@ -43,7 +43,12 @@ DEFAULT_EVENT_POINTS: dict[SecurityEventType, float] = {
     SecurityEventType.RETREAT_AFTER_CONTACT: 18.0,
     SecurityEventType.OBJECT_REMOVED: 25.0,
     SecurityEventType.OBJECT_ADDED: 0.0,
-    SecurityEventType.ANIMAL_ASSET_INTERACTION: 8.0,
+    # An animal against the vehicle is a damage event, not an intrusion, so
+    # it stays out of the suspicious band — but it scored below plain
+    # proximity, which had a dog with its paws on the bonnet counting for
+    # less than a person merely standing beside the car. Scratched paintwork
+    # is precisely what an owner wants told about.
+    SecurityEventType.ANIMAL_ASSET_INTERACTION: 18.0,
     SecurityEventType.CAMERA_OBSTRUCTION: 40.0,
 }
 

@@ -4301,3 +4301,84 @@ async def test_notified_badge_still_applies_the_threshold_without_an_override(
     )
     (clip,) = await db.get_clips(min_confidence=0.9)
     assert clip["notified"] is False
+
+
+# ----------------------------------------------------------------------
+# Upgrading an existing install (see database.py's _MIGRATIONS)
+# ----------------------------------------------------------------------
+
+
+#: Columns v6.0.0 adds to tables that already existed in 5.x. A
+#: ``CREATE TABLE IF NOT EXISTS`` is a no-op against a table that is already
+#: there, so any of these missing from _MIGRATIONS would work perfectly on a
+#: fresh database and break every upgrading install on the first write.
+_V6_ADDED_COLUMNS = {
+    "analysis_results": [
+        "risk_score",
+        "severity",
+        "event_type",
+        "evidence_quality",
+        "risk_override_applied",
+    ],
+    "detected_objects": ["offset_seconds", "frame_width", "frame_height"],
+}
+
+
+async def test_upgrading_an_existing_database_gains_the_v6_columns(
+    db: ClipDatabase,
+) -> None:
+    """Simulates a 5.x install upgrading: drop the columns v6 added, then
+    re-run init() exactly as the add-on does on every start."""
+    assert db._pool is not None
+    for table, columns in _V6_ADDED_COLUMNS.items():
+        for column in columns:
+            await db._pool.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+
+    upgraded = ClipDatabase(TEST_DB_DSN)
+    await upgraded.init()
+    try:
+        assert upgraded._pool is not None
+        for table, columns in _V6_ADDED_COLUMNS.items():
+            present = {
+                r["column_name"]
+                for r in await upgraded._pool.fetch(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = $1",
+                    table,
+                )
+            }
+            assert set(columns) <= present, (
+                f"{table} is missing {set(columns) - present}"
+            )
+
+        # ...and the upgraded database actually round-trips a v6 analysis.
+        await upgraded.add_clip(_make_clip("upgraded"))
+        await upgraded.save_analysis(
+            AnalysisResult(
+                clip_id="upgraded",
+                camera="Front Door",
+                model="llava",
+                response_text="{}",
+                is_suspicious=True,
+                confidence=0.8,
+                summary="Someone at the car",
+                frame_count=3,
+                analysis_duration=1.5,
+                analyzed_at=datetime.now(UTC).isoformat(),
+                risk_score=81.0,
+                severity="suspicious",
+                evidence_quality=0.6,
+                detected_objects=[
+                    DetectedObject("person", 0.9, (1.0, 2.0, 3.0, 4.0), 1, 0)
+                ],
+                detection_interval=2.0,
+                detection_frame_size=(640.0, 360.0),
+                security_events=[_event()],
+            )
+        )
+        stored = await upgraded.get_analysis_for_clip("upgraded")
+        assert stored is not None
+        assert stored["risk_score"] == 81.0
+        assert len(await upgraded.get_security_events("upgraded")) == 1
+    finally:
+        await upgraded.close()
