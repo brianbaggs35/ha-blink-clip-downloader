@@ -639,6 +639,54 @@ def test_contact_plus_a_changed_asset_region_is_an_impact_candidate() -> None:
     assert impact.evidence["appearance_change"] == pytest.approx(0.6)
 
 
+def test_a_changed_asset_region_alone_cannot_manufacture_an_impact() -> None:
+    """The one CRITICAL event this detector emits forces an alert past the AI
+    model's own verdict and withholds the face-recognition bypass, so it has
+    to rest on a contact something actually confirmed. A box overlap plus "the
+    car's region looks different" is a passer-by crossing in front of a car
+    whose door was opened, or on which snow settled — and on a device where
+    depth and segmentation are unavailable that is all the evidence there is.
+    """
+    events = SecurityEventDetector().detect(
+        _ctx([_overlapping()], asset=_asset(), appearance_change=0.9)
+    )
+    assert SecurityEventType.IMPACT_CANDIDATE not in _types(events)
+    # The contact itself is still reported, just not as a confirmed strike.
+    contact = _of(events, SecurityEventType.CONTACT_CANDIDATE)
+    assert contact.severity is Severity.NOTEWORTHY
+
+
+def test_an_unconfirmed_overlap_is_noteworthy_not_suspicious() -> None:
+    contact = _of(
+        SecurityEventDetector().detect(_ctx([_overlapping()], asset=_asset())),
+        SecurityEventType.CONTACT_CANDIDATE,
+    )
+    assert contact.severity is Severity.NOTEWORTHY
+    assert "no depth or segmentation evidence" in contact.detail
+
+
+def test_depth_confirmed_contact_is_suspicious() -> None:
+    """What the advanced stages buy: the same geometry, believed."""
+    contact = _of(
+        SecurityEventDetector().detect(
+            _ctx([_overlapping()], asset=_asset(), depth_similar=True)
+        ),
+        SecurityEventType.CONTACT_CANDIDATE,
+    )
+    assert contact.severity is Severity.SUSPICIOUS
+
+
+def test_retreat_after_an_unconfirmed_contact_stays_noteworthy() -> None:
+    touch_and_go = _track(
+        [(340, 200, 380, 280), (350, 200, 390, 280), (10, 200, 50, 280)]
+    )
+    retreat = _of(
+        SecurityEventDetector().detect(_ctx([touch_and_go], asset=_asset())),
+        SecurityEventType.RETREAT_AFTER_CONTACT,
+    )
+    assert retreat.severity is Severity.NOTEWORTHY
+
+
 def test_steady_contact_with_no_change_is_not_an_impact() -> None:
     assert SecurityEventType.IMPACT_CANDIDATE not in _types(
         SecurityEventDetector().detect(

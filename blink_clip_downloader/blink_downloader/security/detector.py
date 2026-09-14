@@ -40,6 +40,24 @@ _UNCONFIDENT_ASSET_SCALE = 0.6
 #: a bare bounding-box overlap.
 _IMPACT_CONTACT_CONFIDENCE = 0.6
 
+#: Confidence assigned when the *only* evidence of contact is that two boxes
+#: overlapped deeply in a 2D projection. Deliberately below
+#: :data:`_IMPACT_CONTACT_CONFIDENCE`, and below the bar
+#: :meth:`SecurityEventDetector._contact_severity` uses to call a contact
+#: suspicious rather than merely noteworthy.
+_BARE_OVERLAP_CONFIDENCE = 0.45
+
+#: Contact confidence at or above which the event is treated as suspicious
+#: rather than noteworthy. A camera cannot see depth, so a person walking in
+#: front of or behind a parked car overlaps it in every single frame — and
+#: on a device where the depth and segmentation stages are unavailable, that
+#: projection is *all* the evidence there is. Calling it suspicious anyway
+#: is what turns an ordinary pavement into a stream of false alerts. The
+#: event is still raised, still reaches the prompt and the Security tab, and
+#: still says plainly what it rests on; only its weight waits for evidence
+#: that a second stage actually confirmed it.
+_CONFIRMED_CONTACT_CONFIDENCE = 0.6
+
 
 @dataclass(frozen=True)
 class DetectorThresholds:
@@ -382,7 +400,7 @@ class SecurityEventDetector:
             )
             if impact is not None:
                 events.append(impact)
-            retreat = self._retreat_after_contact_event(track, profile, asset)
+            retreat = self._retreat_after_contact_event(track, profile, asset, contact)
             if retreat is not None:
                 events.append(retreat)
         elif near and profile.retreated:
@@ -642,7 +660,10 @@ class SecurityEventDetector:
             return None
         if cv_applies and ctx.depth_similar is True:
             return 0.7, "the outlines overlapped at a similar distance from the camera"
-        return 0.45, "the outlines overlapped, with no depth or segmentation evidence"
+        return (
+            _BARE_OVERLAP_CONFIDENCE,
+            "the outlines overlapped, with no depth or segmentation evidence",
+        )
 
     @staticmethod
     def points_offset(track: ObjectTrack, profile: ApproachProfile) -> float:
@@ -656,6 +677,25 @@ class SecurityEventDetector:
         if height <= 0:
             return False
         return -profile.min_box_gap >= self._t.contact_overlap_fraction * height
+
+    @staticmethod
+    def _contact_severity(confidence: float, animal: bool) -> Severity:
+        """How much weight a contact claim has earned.
+
+        An animal against the vehicle stays noteworthy whatever confirmed
+        it: a dog putting its paws on a bonnet is worth telling the owner
+        about, and is why animals are subjects at all, but it is not the
+        intruder the suspicious band exists for. For a person, the
+        distinction that matters is whether anything beyond a 2D overlap
+        actually backs the claim — see :data:`_CONFIRMED_CONTACT_CONFIDENCE`.
+        """
+        if animal:
+            return Severity.NOTEWORTHY
+        return (
+            Severity.SUSPICIOUS
+            if confidence >= _CONFIRMED_CONTACT_CONFIDENCE
+            else Severity.NOTEWORTHY
+        )
 
     def _contact_event(
         self,
@@ -677,7 +717,7 @@ class SecurityEventDetector:
         )
         return SecurityEvent(
             event_type=event_type,
-            severity=Severity.NOTEWORTHY if animal else Severity.SUSPICIOUS,
+            severity=self._contact_severity(confidence, animal),
             confidence=confidence,
             detail=(
                 f"Possible contact between the {track.label} and "
@@ -723,16 +763,22 @@ class SecurityEventDetector:
         speed_increase = track.max_speed_increase
         change = ctx.appearance_change
         raised = bool(ctx.posture_arm_raised)
-        # A speed spike alone is only worth this much when the contact under
-        # it is itself well evidenced. Bare box overlap plus a brisk walk is
-        # a person arriving at their car, not a collision — requiring depth
-        # or segmentation backing keeps the one CRITICAL event type this
-        # detector can emit out of everyday footage.
-        abrupt = (
-            speed_increase >= self._t.abrupt_speed_change
-            and contact.confidence >= _IMPACT_CONTACT_CONFIDENCE
+        # Neither of these is worth anything unless the contact under it is
+        # itself well evidenced. Bare box overlap plus a brisk walk is a
+        # person arriving at their car, not a collision; bare box overlap
+        # plus "the car's image region looks different" is a passer-by
+        # crossing in front of a car whose door someone opened, or on which
+        # snow settled, or which the camera re-exposed. Requiring depth or
+        # segmentation backing is what keeps the one CRITICAL event type
+        # this detector can emit — the one that forces an alert past the AI
+        # model's own verdict and withholds the face-recognition bypass —
+        # out of everyday footage on a device where those stages are
+        # unavailable.
+        confirmed = contact.confidence >= _IMPACT_CONTACT_CONFIDENCE
+        abrupt = speed_increase >= self._t.abrupt_speed_change and confirmed
+        altered = (
+            change is not None and change >= self._t.appearance_change and confirmed
         )
-        altered = change is not None and change >= self._t.appearance_change
         # A raised arm at the moment of contact is the one posture that
         # separates a strike from a touch, and unlike the speed spike it is
         # visible in a single frame — so it stands on its own rather than
@@ -773,14 +819,27 @@ class SecurityEventDetector:
         )
 
     def _retreat_after_contact_event(
-        self, track: ObjectTrack, profile: ApproachProfile, asset: ProtectedAsset
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        contact: SecurityEvent,
     ) -> SecurityEvent | None:
+        """Moving away immediately after touching the asset.
+
+        This event is defined entirely in terms of the contact it follows,
+        so it cannot be more certain than that contact was. Inheriting the
+        weaker severity matters most on a device where the depth and
+        segmentation stages are unavailable: a passer-by whose box merely
+        overlapped the car in projection would otherwise walk on and collect
+        a second suspicious event for doing so.
+        """
         if not profile.retreated:
             return None
         return SecurityEvent(
             event_type=SecurityEventType.RETREAT_AFTER_CONTACT,
-            severity=Severity.SUSPICIOUS,
-            confidence=0.6,
+            severity=min(Severity.SUSPICIOUS, contact.severity, key=severity_rank),
+            confidence=min(0.6, contact.confidence),
             detail=(
                 f"The {track.label} moved away from "
                 f"{asset.description or 'the protected asset'} directly after the "

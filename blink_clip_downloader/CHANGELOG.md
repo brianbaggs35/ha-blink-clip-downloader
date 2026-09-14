@@ -264,6 +264,22 @@ damage classification.
 - A clip where the protected vehicle has evidently been driven away no longer
   describes someone as lingering "at" it — it now names the space the vehicle
   normally occupies, matching what the rest of the analysis concluded.
+- **A person walking past a parked car no longer reads as touching it on a
+  device without the depth and segmentation stages.** A camera cannot see
+  depth, so anyone crossing in front of or behind a car overlaps it in the
+  image every single frame — and with those stages unavailable that
+  projection is the only evidence there is. The contact is still reported,
+  still says plainly that nothing confirmed it, and still reaches the AI
+  model; what it no longer does is claim the weight of a confirmed one.
+  Neither can it produce a possible-impact alert any more: that event forces
+  a notification past the model's own verdict and withholds the
+  face-recognition bypass, so it now requires a contact that depth or
+  segmentation actually backed. With those stages enabled, every one of
+  these claims is believed exactly as before — that is precisely what they
+  buy you.
+- An animal against the protected vehicle now scores above a person merely
+  standing near it. A dog with its paws on the bonnet is what the owner
+  wants told about; it previously counted for less than proximity did.
 - Completed the PrimeVue 5 migration by using the PrimeUI license format
   expected by PrimeVue 5.0.1, binding numeric `ProgressSpinner` props
   correctly, and documenting the `VITE_PRIMEVUE_LICENSE_KEY` development
