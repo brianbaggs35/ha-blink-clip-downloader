@@ -10438,6 +10438,24 @@ def test_assess_security_without_tracks(analyzer: ClipAnalyzer) -> None:
     assert analyzer._assess_security("Driveway", VisionHints(), "", None, 3, 3) is None
 
 
+def test_assess_security_survives_a_defect_in_its_own_rules(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    """This layer is additive — a bug in the security rules must not turn a
+    perfectly analyzable clip into a failed, retried one."""
+    with (
+        patch.object(
+            ClipAnalyzer, "_assess_security_locked", side_effect=RuntimeError("boom")
+        ),
+        caplog.at_level(logging.ERROR),
+    ):
+        assert (
+            analyzer._assess_security("Driveway", _hints_with_tracks(), "", None, 3, 3)
+            is None
+        )
+    assert "Security assessment failed" in caplog.text
+
+
 def test_assess_security_produces_events_and_prompt_text(
     analyzer: ClipAnalyzer,
 ) -> None:
@@ -10901,3 +10919,23 @@ def test_a_vehicle_the_detector_merely_missed_keeps_the_rules(
 def test_vehicle_absent_without_any_vision_hints() -> None:
     assert BaseAnalyzer._vehicle_absent(None) is False
     assert BaseAnalyzer._vehicle_absent(VisionHints()) is False
+
+
+def test_output_rules_example_drops_car_language_when_the_car_is_absent(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """The example phrase models how to describe a distance; "2 feet from
+    the car" is the wrong model when the protected vehicle is not there."""
+    from blink_downloader.security.assets import AssetLocation
+
+    analyzer.update_car_description("blue sedan")
+    asset = _vehicle_asset()
+    asset.location = AssetLocation.ZONE_ABSENT
+
+    present = analyzer._build_prompt("Driveway")
+    absent = analyzer._build_prompt(
+        "Driveway", vision_hints=_hints_with_tracks(asset=asset)
+    )
+    assert "about 2 feet from the car" in present
+    assert "about 2 feet from the car" not in absent
+    assert "walking across the yard" in absent

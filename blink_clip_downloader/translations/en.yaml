@@ -422,7 +422,9 @@ configuration:
   ai_pose_model:
     name: Pose Model
     description: >-
-      Which Ultralytics pose checkpoint the stage above runs. "n" (nano) is
+      Which Ultralytics pose checkpoint the stage above runs. YOLO26-pose is
+      the current generation and matches the object detector's own default;
+      the YOLO11 pose models remain selectable. "n" (nano) is
       fastest and lightest, and the recommended starting point on CPU-only
       hardware; larger sizes are more accurate and much slower.
   ai_security_events_enabled:

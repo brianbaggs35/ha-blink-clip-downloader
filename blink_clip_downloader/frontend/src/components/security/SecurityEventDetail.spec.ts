@@ -88,6 +88,44 @@ describe('SecurityEventDetail', () => {
     expect(wrapper.findAll('.security-detail-list li')).toHaveLength(0)
   })
 
+  it('shows the empty state rather than throwing on a response with no events array', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({}))
+    const wrapper = mount(SecurityEventDetail, { props: { clipId: 'c1' } })
+    await flushPromises()
+    expect(wrapper.findAll('.security-detail-list li')).toHaveLength(0)
+    expect(wrapper.find('.security-detail-scores').exists()).toBe(false)
+  })
+
+  it('ignores a slow request for a clip the row has already been handed off', async () => {
+    // The timeline re-renders on every reload, so an expanded row can be
+    // given a different clip while its own request is still in flight.
+    const pending: { resolve: (value: Response) => void; reject: (reason: Error) => void }[] = []
+    vi.mocked(fetch).mockImplementation(
+      () => new Promise<Response>((resolve, reject) => pending.push({ resolve, reject })),
+    )
+    const wrapper = mount(SecurityEventDetail, { props: { clipId: 'c1' } })
+    await wrapper.setProps({ clipId: 'c2' })
+    await flushPromises()
+
+    pending[1].resolve(jsonResponse({ events: [event({ id: 2, detail: 'Current clip evidence.' })] }))
+    await flushPromises()
+    pending[0].resolve(jsonResponse({ events: [event({ id: 3, detail: 'Stale clip evidence.' })] }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('Current clip evidence.')
+    expect(wrapper.text()).not.toContain('Stale clip evidence.')
+
+    // ...and a stale failure belongs to a clip nobody is looking at.
+    const wrapper2 = mount(SecurityEventDetail, { props: { clipId: 'c3' } })
+    await wrapper2.setProps({ clipId: 'c4' })
+    await flushPromises()
+    pending[3].resolve(jsonResponse({ events: [event({ id: 4, detail: 'Still here.' })] }))
+    await flushPromises()
+    pending[2].reject(new Error('down'))
+    await flushPromises()
+    expect(wrapper2.text()).toContain('Still here.')
+    expect(wrapper2.text()).not.toContain('Could not load')
+  })
+
   it('reloads when the clip changes', async () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ events: [event()] }))
     const wrapper = mount(SecurityEventDetail, { props: { clipId: 'c1' } })

@@ -6,7 +6,7 @@ import asyncio
 import json
 import sys
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8605,8 +8605,21 @@ def _sec_event(
 
 
 async def _seed_security(db: ClipDatabase) -> None:
-    await db.add_clip(_make_clip("sec1", camera="Front Door"))
-    await db.add_clip(_make_clip("sec2", camera="Driveway"))
+    # Recent clip timestamps: both the timeline's period filter and the
+    # stats window are measured against when the clip was recorded.
+    now = datetime.now(UTC)
+    await db.add_clip(
+        _make_clip(
+            "sec1",
+            camera="Front Door",
+            timestamp=(now - timedelta(hours=2)).isoformat(),
+        )
+    )
+    await db.add_clip(
+        _make_clip(
+            "sec2", camera="Driveway", timestamp=(now - timedelta(hours=1)).isoformat()
+        )
+    )
     await db.save_security_events(
         "sec1", "Front Door", [_sec_event("subject_present", "routine", 0.9)]
     )
@@ -8652,10 +8665,13 @@ async def test_security_timeline_honours_a_period(
     client: TestClient, db: ClipDatabase
 ) -> None:
     await _seed_security(db)
+    data = await (await client.get("/api/security/timeline?period=today")).json()
+    assert data["total"] == 2
+
+    # The period is the clip's own recording time, not when it was analyzed:
+    # a backlog processed overnight must not file old footage under "Today".
     assert db._pool is not None
-    await db._pool.execute(
-        "UPDATE security_events SET created_at='2020-01-01T00:00:00+00:00'"
-    )
+    await db._pool.execute("UPDATE clips SET timestamp='2020-01-01T00:00:00+00:00'")
     data = await (await client.get("/api/security/timeline?period=today")).json()
     assert data["total"] == 0
 

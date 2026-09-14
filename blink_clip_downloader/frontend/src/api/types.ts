@@ -273,16 +273,6 @@ export interface SuspiciousClipsResponse {
   total: number
 }
 
-export interface AiTestResult {
-  success: true
-  clip_id: string
-  [key: string]: unknown
-}
-
-export interface ApiErrorBody {
-  error: string
-}
-
 // ---------------------------------------------------------------------
 // AI usage / cost tracking
 // ---------------------------------------------------------------------

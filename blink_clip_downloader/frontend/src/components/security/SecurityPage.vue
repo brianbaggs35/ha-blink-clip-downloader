@@ -57,7 +57,16 @@ const cameraOptions = computed(() => [
 
 const hasMore = computed(() => rows.value.length < total.value)
 
+// Three independent triggers fire load() with no inherent ordering — the
+// initial mount, the filter watcher, and refresh.tick — so a slower earlier
+// request can resolve after a newer one and repopulate the tab with rows
+// for a filter the user has already moved off. Same monotonic token
+// LibraryPage uses for the same reason: capture it at the start, apply the
+// result only if still the newest request.
+let requestSeq = 0
+
 async function load() {
+  const seq = ++requestSeq
   loading.value = true
   failed.value = false
   try {
@@ -73,17 +82,25 @@ async function load() {
     // Defaulted rather than trusted: a response missing `events` (an older
     // backend, a proxy returning something unexpected) would otherwise blank
     // the whole tab with a render error instead of the empty state.
+    if (seq !== requestSeq) return
     rows.value = timeline.events ?? []
     total.value = timeline.total ?? 0
     stats.value = statsResult
   } catch {
-    failed.value = true
+    if (seq === requestSeq) failed.value = true
   } finally {
-    loading.value = false
+    if (seq === requestSeq) {
+      loading.value = false
+      // A reload replaces the whole list, so any page-append still in
+      // flight is moot — its result is dropped by the same token below, and
+      // its spinner (which also disables the button) must not outlive it.
+      loadingMore.value = false
+    }
   }
 }
 
 async function loadMore() {
+  const seq = ++requestSeq
   loadingMore.value = true
   try {
     const page = await getSecurityTimeline({
@@ -93,12 +110,15 @@ async function loadMore() {
       severity: severity.value ?? undefined,
       period: period.value ?? undefined,
     })
+    // Appending a page fetched under the previous filter would splice rows
+    // the user has already filtered away back into the list.
+    if (seq !== requestSeq) return
     rows.value = [...rows.value, ...(page.events ?? [])]
     total.value = page.total ?? rows.value.length
   } catch {
-    toast.show('Failed to load more events', true)
+    if (seq === requestSeq) toast.show('Failed to load more events', true)
   } finally {
-    loadingMore.value = false
+    if (seq === requestSeq) loadingMore.value = false
   }
 }
 

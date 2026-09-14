@@ -232,16 +232,6 @@ def test_peak_height_fraction_is_capped_at_one() -> None:
     assert track.peak_height_fraction == pytest.approx(1.0)
 
 
-def test_peak_area_fraction() -> None:
-    track = _track([(0.0, 0.0, 64.0, 36.0)])
-    assert track.peak_area_fraction == pytest.approx(0.01)
-
-
-def test_peak_area_fraction_zero_area_frame() -> None:
-    track = _track([(0, 0, 10, 10)], frame_size=(0.0, 0.0))
-    assert track.peak_area_fraction == 0.0
-
-
 def test_continuity_perfect_when_seen_every_frame() -> None:
     track = _track([(0, 0, 10, 20)] * 4)
     assert track.continuity(2.0) == pytest.approx(1.0)
@@ -481,3 +471,26 @@ def test_zone_dwell_is_zero_when_never_in_zone() -> None:
 def test_in_zone() -> None:
     assert _track([(400.0, 0.0, 420.0, 100.0)]).in_zone(_zone()) is True
     assert _track([(0.0, 0.0, 20.0, 100.0)]).in_zone(_zone()) is False
+
+
+def test_build_tracks_does_not_resurrect_a_track_after_a_long_absence() -> None:
+    """One person at the door at the start and a different one there at the
+    end must not merge into a single track whose dwell spans the whole clip
+    — that reads as loitering when nobody loitered."""
+    detections = [
+        ("person", 0.9, (0.0, 0.0, 40.0, 120.0), None, 0),
+        ("person", 0.9, (0.0, 0.0, 40.0, 120.0), None, 8),
+    ]
+    tracks = build_tracks(detections, 2.0, FRAME)
+    assert len(tracks) == 2
+    assert all(t.dwell_seconds == 0.0 for t in tracks)
+
+
+def test_build_tracks_tolerates_one_missed_frame() -> None:
+    """A subject the detector loses for a single frame is still one subject."""
+    detections = [
+        ("person", 0.9, (0.0, 0.0, 40.0, 120.0), None, 0),
+        ("person", 0.9, (2.0, 1.0, 42.0, 121.0), None, 2),
+    ]
+    (track,) = build_tracks(detections, 2.0, FRAME)
+    assert track.frame_count == 2

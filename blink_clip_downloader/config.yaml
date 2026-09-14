@@ -412,14 +412,14 @@ options:
   # raised above shoulder height, and a crouched or bent-over posture. Its
   # own small model, downloaded on first use. Requires Enhanced Detection.
   ai_pose_estimation_enabled: false
-  # Ultralytics pose checkpoint the stage above runs. "n" (nano) is
+  # Ultralytics pose checkpoint the stage above runs. YOLO26-pose
+  # (yolo26n/s/m/l/x-pose.pt) is the current generation and matches the
+  # object detector's own default; yolo11n/s/m/l/x-pose.pt remain
+  # selectable for anyone already using them. "n" (nano) is
   # fastest/lightest and the recommended starting point on CPU-only
-  # hardware; larger sizes are more accurate and much slower. YOLO11
-  # rather than the YOLO26 generation the object detector defaults to:
-  # these are the pose checkpoints Ultralytics publishes and this add-on
-  # has confirmed download names for, and a model name that turns out not
-  # to exist fails at first use rather than at configuration time.
-  ai_pose_model: "yolo11n-pose.pt"
+  # hardware; larger sizes are more accurate and much slower. Downloaded
+  # automatically on first use.
+  ai_pose_model: "yolo26n-pose.pt"
   # Hugging Face Token (HF_TOKEN) for authenticated model downloads and higher
   # rate limits. Optional; create one at https://huggingface.co/settings/tokens.
   hf_token: ""
@@ -579,7 +579,7 @@ schema:
   ai_face_recognition_enabled: "bool"
   ai_pose_estimation_enabled: "bool"
   # yamllint disable rule:line-length
-  ai_pose_model: "list(yolo11n-pose.pt|yolo11s-pose.pt|yolo11m-pose.pt|yolo11l-pose.pt|yolo11x-pose.pt)"
+  ai_pose_model: "list(yolo26n-pose.pt|yolo26s-pose.pt|yolo26m-pose.pt|yolo26l-pose.pt|yolo26x-pose.pt|yolo11n-pose.pt|yolo11s-pose.pt|yolo11m-pose.pt|yolo11l-pose.pt|yolo11x-pose.pt)"
   # yamllint enable rule:line-length
   hf_token: "password?"
   ai_security_events_enabled: "bool"

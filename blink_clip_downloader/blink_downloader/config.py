@@ -346,11 +346,10 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # feet from it with an arm through the window are indistinguishable
     # from a bounding box, and obvious from a skeleton. Off by default.
     ai_pose_estimation_enabled: bool = False
-    # YOLO11 rather than the YOLO26 generation ai_object_detection_model
-    # defaults to: these are the pose checkpoints Ultralytics publishes
-    # under confirmed names, and a name that turns out not to exist fails
-    # at first use rather than at configuration time.
-    ai_pose_model: str = "yolo11n-pose.pt"
+    # YOLO26-pose, matching ai_object_detection_model's own generation;
+    # yolo11n/s/m/l/x-pose.pt remain selectable for anyone who has already
+    # downloaded them. Same "n is the CPU-friendly starting point" advice.
+    ai_pose_model: str = "yolo26n-pose.pt"
     # Hugging Face Token (HF_TOKEN) for authenticated model downloads and
     # higher rate limits. Optional; get one from https://huggingface.co/settings/tokens.
     hf_token: str = ""
@@ -744,7 +743,7 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
             data.get("ai_pose_estimation_enabled", False)
         ),
         "ai_pose_model": str(data.get("ai_pose_model", "") or "").strip()
-        or "yolo11n-pose.pt",
+        or "yolo26n-pose.pt",
         "hf_token": str(data.get("hf_token", "") or "").strip(),
         "ai_security_events_enabled": bool(
             data.get("ai_security_events_enabled", True)

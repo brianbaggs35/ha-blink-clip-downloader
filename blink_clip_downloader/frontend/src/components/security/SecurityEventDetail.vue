@@ -12,15 +12,26 @@ const events = ref<SecurityEventRow[]>([])
 const loading = ref(false)
 const failed = ref(false)
 
+// The timeline re-renders whenever it reloads, so an expanded row can be
+// handed a different clip while its own request is still in flight. Same
+// monotonic token SecurityPage uses: apply the result only if it is still
+// the newest request, and default a malformed payload rather than trusting
+// it — an `events` the backend omitted would otherwise throw on `[0]` below
+// instead of rendering the "no events" state.
+let requestSeq = 0
+
 async function load() {
+  const seq = ++requestSeq
   loading.value = true
   failed.value = false
   try {
-    events.value = (await getSecurityEvents(props.clipId)).events
+    const loaded = (await getSecurityEvents(props.clipId)).events ?? []
+    if (seq !== requestSeq) return
+    events.value = loaded
   } catch {
-    failed.value = true
+    if (seq === requestSeq) failed.value = true
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
 }
 

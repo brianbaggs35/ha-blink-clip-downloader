@@ -110,6 +110,54 @@ describe('ClipDetectionOverlay', () => {
     expect(wrapper.find('rect').attributes('height')).toBe('0')
   })
 
+  it('ignores a slow fetch for a clip the modal has already moved off', async () => {
+    // Stepping to the next clip with the overlay on would otherwise paint
+    // the previous clip's boxes over the current video.
+    const resolvers: ((value: Response) => void)[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve))),
+    )
+    const wrapper = mount(ClipDetectionOverlay, {
+      props: { clipId: 'c1', currentTime: 0 },
+    })
+    await wrapper.setProps({ clipId: 'c2' })
+    await flushPromises()
+    expect(resolvers).toHaveLength(2)
+
+    resolvers[1](jsonResponse({ objects: [box({ label: 'car' })] }))
+    await flushPromises()
+    resolvers[0](jsonResponse({ objects: [box(), box(), box()] }))
+    await flushPromises()
+
+    expect(wrapper.findAll('rect')).toHaveLength(1)
+    expect(wrapper.find('.detection-label').text()).toBe('car')
+  })
+
+  it('keeps the open clip’s boxes when a stale fetch fails', async () => {
+    // Same reasoning as the stale-success case above: the failure belongs
+    // to a clip the modal has already left, so clearing the boxes would
+    // wipe the overlay off the clip actually on screen.
+    const pending: { resolve: (value: Response) => void; reject: (reason: Error) => void }[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>((resolve, reject) => pending.push({ resolve, reject }))),
+    )
+    const wrapper = mount(ClipDetectionOverlay, {
+      props: { clipId: 'c1', currentTime: 0 },
+    })
+    await wrapper.setProps({ clipId: 'c2' })
+    await flushPromises()
+
+    pending[1].resolve(jsonResponse({ objects: [box({ label: 'car' })] }))
+    await flushPromises()
+    pending[0].reject(new Error('down'))
+    await flushPromises()
+
+    expect(wrapper.findAll('rect')).toHaveLength(1)
+    expect(wrapper.find('.detection-label').text()).toBe('car')
+  })
+
   it('reloads when the clip changes', async () => {
     const wrapper = await mountOverlay([box()])
     await wrapper.setProps({ clipId: 'c2' })

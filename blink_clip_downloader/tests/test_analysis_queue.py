@@ -817,3 +817,78 @@ async def test_process_pending_dispatches_when_no_feedback_history(
     await queue._process_pending()
 
     dispatcher.dispatch.assert_awaited_once()
+
+
+async def test_a_risk_override_alert_is_not_gated_by_the_model_threshold(
+    db: ClipDatabase,
+) -> None:
+    """The adaptive threshold calibrates the AI model's confidence from
+    feedback about the model's own verdicts. A clip flagged by the
+    deterministic risk score never got its verdict from the model, and a
+    clip shown as critical in the UI that silently produced no alert is the
+    most confusing failure this path has."""
+    overridden = AnalysisResult(
+        clip_id="c1",
+        camera="Front Door",
+        model="llava",
+        response_text="",
+        is_suspicious=True,
+        confidence=0.2,
+        summary="Possible impact with the blue sedan.",
+        frame_count=1,
+        analysis_duration=1.0,
+        analyzed_at="2024-06-01T09:00:00+00:00",
+        risk_score=88.0,
+        severity="critical",
+        risk_override_applied=True,
+    )
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock()
+    queue = AnalysisQueue(
+        analyzer=_make_analyzer_mock(result=overridden),
+        db=db,
+        dispatcher=dispatcher,
+        min_confidence=0.9,
+    )
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await queue._process_pending()
+
+    dispatcher.dispatch.assert_awaited_once()
+
+
+async def test_a_low_confidence_model_verdict_is_still_gated(
+    db: ClipDatabase,
+) -> None:
+    """The bypass is narrow: only an actual override skips the threshold."""
+    unsure = AnalysisResult(
+        clip_id="c1",
+        camera="Front Door",
+        model="llava",
+        response_text="",
+        is_suspicious=True,
+        confidence=0.2,
+        summary="Maybe something",
+        frame_count=1,
+        analysis_duration=1.0,
+        analyzed_at="2024-06-01T09:00:00+00:00",
+        risk_score=88.0,
+        severity="critical",
+    )
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock()
+    queue = AnalysisQueue(
+        analyzer=_make_analyzer_mock(result=unsure),
+        db=db,
+        dispatcher=dispatcher,
+        min_confidence=0.9,
+    )
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+    await queue._process_pending()
+
+    dispatcher.dispatch.assert_not_awaited()
