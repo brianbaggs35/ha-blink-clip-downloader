@@ -330,6 +330,10 @@ damage classification.
   stored thumbnail, instead of presenting a collapsed canvas with nothing to
   draw on. Clip strips there and in Biometrics show a placeholder rather than
   a broken image.
+- The Moondream fine-tuning "Train" endpoint now bounds how much pending
+  feedback one press consumes. It was the only unclamped limit on the
+  server, and the one that costs a frame extraction and a paid API call per
+  row — a malformed or very large value could error outright or run away.
 - Completed the PrimeVue 5 migration by using the PrimeUI license format
   expected by PrimeVue 5.0.1, binding numeric `ProgressSpinner` props
   correctly, and documenting the `VITE_PRIMEVUE_LICENSE_KEY` development
