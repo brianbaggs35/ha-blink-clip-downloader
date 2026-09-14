@@ -280,6 +280,17 @@ damage classification.
 - An animal against the protected vehicle now scores above a person merely
   standing near it. A dog with its paws on the bonnet is what the owner
   wants told about; it previously counted for less than proximity did.
+- Live View no longer leaks a session against the camera when the local
+  relay fails to start. Blink's side of the connection had already been
+  opened by then, and leaving it open holds a live view running on the
+  camera itself — which on battery-powered hardware costs more than an
+  untidy socket — and could stop the next attempt from starting at all.
+- Pressing Stop in Live View while a status check happened to be in flight
+  could bring the stream back a few seconds later, reconnecting to a session
+  the server had already torn down.
+- Tearing down a Live View session now always finishes: a failure while
+  closing the relay previously stranded the session's background tasks and
+  its temporary segment directory.
 - Completed the PrimeVue 5 migration by using the PrimeUI license format
   expected by PrimeVue 5.0.1, binding numeric `ProgressSpinner` props
   correctly, and documenting the `VITE_PRIMEVUE_LICENSE_KEY` development

@@ -576,6 +576,50 @@ describe('LiveViewPage', () => {
     expect(toast.isError).toBe(true)
   })
 
+  it('a status poll still in flight when Stop is pressed cannot resurrect the stream', async () => {
+    // The poll is issued before Stop and answers after it, describing a
+    // session the server has by then torn down. Acting on that answer
+    // re-sources the player from a dead playlist and the stream the user
+    // just stopped appears to come back.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const live: LiveViewStatus = { active: true, session_id: 's1', camera: 'Front Door', state: 'live' }
+    let releasePoll: (() => void) | undefined
+    let statusCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/liveview/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
+        if (url === '/api/liveview/status') {
+          statusCalls += 1
+          if (statusCalls === 1) return Promise.resolve(jsonResponse(live))
+          return new Promise<Response>((resolve) => {
+            releasePoll = () => resolve(jsonResponse(live))
+          })
+        }
+        return Promise.resolve(jsonResponse({ stopped: true }))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Select a camera above to start watching')
+
+    vi.advanceTimersByTime(4000)
+    await flushPromises()
+    expect(releasePoll).toBeDefined()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Stop'))!
+      .trigger('click')
+    await flushPromises()
+    fakePlayer.src.mockClear()
+
+    releasePoll?.()
+    await flushPromises()
+    expect(fakePlayer.src).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Select a camera above to start watching')
+  })
+
   it('Stop calls stopLiveView with the current session id and resets to picker state', async () => {
     const routes: Routes = {
       cameras: ['Front Door'],
