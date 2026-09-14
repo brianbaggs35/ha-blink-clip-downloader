@@ -43,6 +43,7 @@ from blink_downloader.live_view import LiveViewManager
 from blink_downloader.media_server import MediaServer
 from blink_downloader.security import SecurityEvent, SecurityEventType, Severity
 from blink_downloader.security.vehicles import VehicleSignature
+from blink_downloader.vision import DetectedObject
 
 
 class _ExpectedE2ENoiseFilter(logging.Filter):
@@ -697,6 +698,41 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
             histogram=tuple([0.05] * 20),
             sample_count=11,
         ),
+    )
+
+    # Per-box object detections for the clip modal's Boxes overlay, on the
+    # one seeded clip with a *real* video file (see _BIOMETRICS_CLIP_ID):
+    # the overlay is deliberately not rendered once the player reports an
+    # error, so a placeholder-bytes clip would prove nothing. Stored in the
+    # detector's own pixel space against a recorded frame size, exactly as
+    # vision.py's ObjectDetector produces them, so the test exercises
+    # get_detected_object_boxes' real normalization back to 0-1 fractions
+    # rather than a hand-written fraction. detected_objects is its own
+    # table that no other spec counts, so this perturbs nothing.
+    await db.save_detected_objects(
+        _BIOMETRICS_CLIP_ID,
+        [
+            DetectedObject(
+                label="person",
+                confidence=0.93,
+                box=(64.0, 72.0, 160.0, 288.0),
+                track_id=1,
+                frame_index=index,
+            )
+            for index in range(3)
+        ]
+        + [
+            DetectedObject(
+                label="car",
+                confidence=0.88,
+                box=(320.0, 160.0, 576.0, 300.0),
+                track_id=2,
+                frame_index=index,
+            )
+            for index in range(3)
+        ],
+        interval=1.0,
+        frame_size=(640.0, 360.0),
     )
 
     # Battery history for the Status tab's battery strip/history modal

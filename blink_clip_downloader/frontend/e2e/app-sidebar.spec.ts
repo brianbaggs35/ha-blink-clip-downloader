@@ -115,3 +115,28 @@ test('typing ? into a text field does not open the keyboard shortcuts overlay', 
   await expect(search).toHaveValue('?')
   await expect(page.locator('.modal-bg.open')).toHaveCount(0)
 })
+
+test('the sidebar collapses to icons, stays collapsed across a reload, and expands again', async ({ page }) => {
+  // The collapsed state is a per-browser preference (localStorage), so the
+  // reload below is the whole point: a toggle that forgets itself on every
+  // page load is not a preference. Playwright gives each test its own
+  // context, so nothing here leaks into another spec's expanded layout.
+  const nav = page.locator('.app-nav')
+  const libraryTab = page.locator('.app-nav-tab[data-tab="library"]')
+  await expect(nav).not.toHaveClass(/collapsed/)
+  await expect(libraryTab).toContainText('Library')
+
+  await page.getByRole('button', { name: 'Collapse sidebar' }).click()
+  await expect(nav).toHaveClass(/collapsed/)
+  // Icon-only: the label is gone from the DOM, not merely hidden, and the
+  // tab keeps a title so the icon is still identifiable.
+  await expect(libraryTab).not.toContainText('Library')
+  await expect(libraryTab).toHaveAttribute('title', 'Library')
+
+  await page.reload()
+  await expect(page.locator('.app-nav')).toHaveClass(/collapsed/)
+
+  await page.getByRole('button', { name: 'Expand sidebar' }).click()
+  await expect(page.locator('.app-nav')).not.toHaveClass(/collapsed/)
+  await expect(page.locator('.app-nav-tab[data-tab="library"]')).toContainText('Library')
+})

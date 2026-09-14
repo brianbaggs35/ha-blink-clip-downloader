@@ -502,3 +502,45 @@ test('shows an error toast when deleting a clip from the modal fails, and keeps 
   await expect(modal).toBeVisible()
   await expect(page.locator('.clip-card[data-id="e2e-clip-002"]')).toHaveCount(1)
 })
+
+test("the Boxes toggle draws the detector's own boxes over the video", async ({ page }) => {
+  // Real end to end: standalone_server.py seeds detected_objects rows in the
+  // detector's own pixel space, /api/ai/detections normalizes them back to
+  // 0-1 fractions (get_detected_object_boxes), and ClipDetectionOverlay
+  // draws them. Uses the one seeded clip with a *real* video file, because
+  // the overlay is deliberately not rendered once the player reports an
+  // error — a placeholder-bytes clip would prove nothing.
+  await page.locator('.clip-card[data-id="e2e-biometrics-source"]').click()
+  const modal = openModal(page)
+
+  // Off until asked for: a decoration nobody switched on must not cost a
+  // request, let alone paint over the video.
+  await expect(modal.locator('[data-testid="detection-overlay"]')).toHaveCount(0)
+
+  // Pinned to the first sampled frame so the assertions below don't race
+  // playback: boxes belong to the window around their own timestamp, so a
+  // playing clip would scroll them in and out from under the test.
+  await page.evaluate(() => {
+    document.querySelectorAll('video').forEach((video) => {
+      video.pause()
+      video.currentTime = 0
+    })
+  })
+
+  await modal.getByRole('button', { name: '⬚ Boxes' }).click()
+  const overlay = modal.locator('[data-testid="detection-overlay"]')
+  await expect(overlay).toBeVisible()
+  await expect(overlay.locator('.detection-box')).toHaveCount(2)
+  await expect(overlay.locator('.detection-person')).toHaveCount(1)
+  await expect(overlay.locator('.detection-vehicle')).toHaveCount(1)
+  await expect(modal.locator('.detection-label', { hasText: 'person' })).toBeVisible()
+
+  // Seeded person box is (64,72)-(160,288) of a 640x360 frame, so the
+  // rendered rect must be exactly that fraction of the 0-100 viewBox — the
+  // one thing a wrong frame_width/height division would silently break.
+  await expect(overlay.locator('.detection-person')).toHaveAttribute('x', '10')
+  await expect(overlay.locator('.detection-person')).toHaveAttribute('width', '15')
+
+  await modal.getByRole('button', { name: '⬚ Boxes on' }).click()
+  await expect(overlay).toHaveCount(0)
+})

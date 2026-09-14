@@ -1002,19 +1002,41 @@ def test_a_crouched_reach_says_so() -> None:
     assert reach.evidence["crouching"] is True
 
 
-def test_a_raised_arm_during_contact_is_an_impact_candidate() -> None:
+def test_a_raised_arm_during_confirmed_contact_is_an_impact_candidate() -> None:
     """Unlike the speed spike, a raised arm is visible in the single frame
-    the pose stage examines, so it stands on its own."""
+    the pose stage examines, so it needs no corroborating motion signal."""
     arriving = _track([(0, 200, 20, 280), (350, 200, 390, 280), (352, 200, 392, 280)])
     impact = _of(
         SecurityEventDetector().detect(
-            _ctx([arriving], asset=_asset(), posture_arm_raised=True)
+            _ctx(
+                [arriving],
+                asset=_asset(),
+                posture_arm_raised=True,
+                contact_touching=True,
+            )
         ),
         SecurityEventType.IMPACT_CANDIDATE,
     )
     assert impact.severity is Severity.CRITICAL
     assert "arm was raised above shoulder height" in impact.detail
     assert impact.evidence["arm_raised"] is True
+
+
+def test_a_raised_arm_over_a_bare_overlap_is_not_an_impact_candidate() -> None:
+    """The low-powered-device guarantee, in the one place it is easiest to
+    lose: with no depth or segmentation stage, the only thing under the
+    raised arm is a 2D overlap that anyone walking in front of a parked car
+    produces — and a raised wrist is an everyday gesture (a phone held to an
+    ear clears the threshold). Letting that reach CRITICAL would force an
+    alert past the model's verdict and withhold the face-recognition bypass
+    for somebody walking to their own car."""
+    arriving = _track([(0, 200, 20, 280), (350, 200, 390, 280), (352, 200, 392, 280)])
+    events = SecurityEventDetector().detect(
+        _ctx([arriving], asset=_asset(), posture_arm_raised=True)
+    )
+    assert SecurityEventType.IMPACT_CANDIDATE not in _types(events)
+    # The contact itself is still reported — only its escalation is withheld.
+    assert SecurityEventType.CONTACT_CANDIDATE in _types(events)
 
 
 def test_a_raised_arm_with_no_contact_is_not_an_impact() -> None:

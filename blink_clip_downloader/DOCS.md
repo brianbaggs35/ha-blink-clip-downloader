@@ -697,7 +697,6 @@ you'll see them report unavailable there.
 | `ai_object_detection_model` | `yolo26n.pt` | Which Ultralytics model the detection stage above runs. YOLO26 (`yolo26n/s/m/l/x.pt`) is the current generation — end-to-end inference, lighter and more accurate than YOLO11 at every size — and is the default; `yolo11n/s/m/l/x.pt` remain selectable for compatibility with existing configurations. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the most accurate and much slower. |
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
-
 | `ai_pose_estimation_enabled` | `false` | Body-keypoint (pose) estimation for whoever is nearest the protected vehicle, on the one frame the depth and contact stages already examine. Adds three facts a bounding box cannot give: an arm extended toward the vehicle (trying a handle, reaching through a window), an arm raised above shoulder height, and a crouched or bent-over posture. Its own small model, downloaded on first use. |
 | `ai_pose_model` | `yolo26n-pose.pt` | Which Ultralytics pose checkpoint the stage above runs. YOLO26-pose is the current generation, matching the object detector's own default; `yolo11n/s/m/l/x-pose.pt` remain selectable for anyone already using them. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; larger sizes are more accurate and much slower. All output the same 17 COCO keypoints. |
 | `ai_cv_concurrency` | `1` | How many of these heavy stages may run at once **across every clip being analyzed**. The stages already run one after another within a single clip, so the default only serializes a multi-clip backlog — which would have contended for the same CPU anyway — while stopping four large models from being resident and computing simultaneously. Raise it only on hardware with real spare capacity. |
@@ -891,8 +890,13 @@ cannot support:
 - **An arm extended toward the vehicle**, which combined with close range
   becomes an `asset_reach` event.
 - **An arm raised above shoulder height**, which during contact is the one
-  posture that separates a strike from a touch, and which therefore raises an
-  `impact_candidate` on its own.
+  posture that separates a strike from a touch. It raises an
+  `impact_candidate` without needing the sharp acceleration or the
+  changed-vehicle-region evidence the other two routes to that event rely on
+  — but, like them, only when the contact underneath it was confirmed by the
+  depth or segmentation stage. A raised wrist over a bare 2D overlap is
+  somebody walking past their own car with a phone to their ear, and is left
+  as an ordinary contact (see "Running it on a low-powered device" above).
 - **A crouched or bent-over posture**, recorded as evidence on the events it
   accompanies.
 
