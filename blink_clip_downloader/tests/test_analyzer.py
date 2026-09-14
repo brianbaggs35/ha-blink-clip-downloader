@@ -9603,7 +9603,10 @@ def test_grayscale_thumbnails_raises_on_undecodable_frame() -> None:
     silently returning garbage - the caller
     (_maybe_compute_motion_thumbnails) is what's responsible for turning
     that into a graceful None."""
-    with pytest.raises(Exception):  # noqa: B017
+    # OSError specifically: Pillow raises UnidentifiedImageError, a subclass
+    # of it. Asserting on bare Exception would keep passing if this ever
+    # started failing for some unrelated reason instead.
+    with pytest.raises(OSError):
         frame_motion.grayscale_thumbnails([_FAKE_JPEG, _FAKE_JPEG_2, _FAKE_JPEG_3])
 
 

@@ -101,8 +101,9 @@ def test_protected_vehicle_absent_is_reported_as_absent() -> None:
     tracks = _tracks([("car", NEIGHBOUR, 2)])
     result = identify_protected_vehicle(tracks, FRAME, zone=ZONE)
     assert result.protected is None
-    assert result.others and result.others[0].track_id == 2
-    assert "no detected vehicle matches where it normally sits" == result.basis
+    assert result.others
+    assert result.others[0].track_id == 2
+    assert result.basis == "no detected vehicle matches where it normally sits"
 
 
 def test_single_vehicle_without_zone_or_signature_is_accepted() -> None:

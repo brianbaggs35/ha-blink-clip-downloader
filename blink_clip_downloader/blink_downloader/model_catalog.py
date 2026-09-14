@@ -87,6 +87,13 @@ def _vision_model_score(name: str) -> int:
     return 30
 
 
+#: The GPT-5.6 tier ids, named once: each appears in the pricing table, the
+#: display-order list and the offline fallback list below, and all three
+#: have to agree for a model to be priced *and* offered.
+_GPT_56_SOL = "gpt-5.6-sol"
+_GPT_56_TERRA = "gpt-5.6-terra"
+_GPT_56_LUNA = "gpt-5.6-luna"
+
 # OpenAI model pricing: (input_$/1M_tokens, output_$/1M_tokens)
 # Source: https://developers.openai.com/api/docs/pricing (standard tier)
 # More specific model-family prefixes (mini/nano/dotted variants) must be
@@ -120,9 +127,9 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     # (mid), Luna (budget) — replacing the old size-suffix naming. Prices
     # verified live against the pricing page 2026-09-10, post the 2026-07-30
     # Luna/Terra price cuts.
-    "gpt-5.6-sol": (4.00, 20.00),
-    "gpt-5.6-terra": (2.00, 12.00),
-    "gpt-5.6-luna": (0.20, 1.20),
+    _GPT_56_SOL: (4.00, 20.00),
+    _GPT_56_TERRA: (2.00, 12.00),
+    _GPT_56_LUNA: (0.20, 1.20),
     "gpt-5.4-nano": (0.20, 1.25),  # NOSONAR
     "gpt-5.4-mini": (0.75, 4.50),  # NOSONAR
     "gpt-5-nano": (0.05, 0.40),
@@ -187,9 +194,9 @@ _OPENAI_STRUCTURED_OUTPUT_SCHEMA: dict[str, Any] = {
 # purely because '-' sorts before '.' in ASCII, which looked like a
 # recommendation for the oldest, most expensive model in the lineup.
 _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
+    _GPT_56_SOL,
+    _GPT_56_TERRA,
+    _GPT_56_LUNA,
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
@@ -216,9 +223,9 @@ _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
 # model ids a user needs to paste into the add-on's Configuration tab, in
 # the same newest-to-oldest order as _OPENAI_MODEL_DISPLAY_ORDER above.
 _OPENAI_FALLBACK_MODELS: list[str] = [
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
+    _GPT_56_SOL,
+    _GPT_56_TERRA,
+    _GPT_56_LUNA,
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",

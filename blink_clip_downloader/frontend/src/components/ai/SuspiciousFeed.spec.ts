@@ -274,4 +274,21 @@ describe('SuspiciousFeed', () => {
     expect(fetchMock).toHaveBeenLastCalledWith('/api/ai/suspicious?limit=20&offset=20', {})
     expect(useClipViewerStore().clipId).toBeNull()
   })
+
+  it('keeps an interaction with the feedback buttons from also opening the clip', async () => {
+    // That wrapper exists purely so thumbs up/down does not also open the
+    // clip behind it. It guarded clicks only, so the keyboard path went
+    // straight through to the row.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse({ items: [ITEM], total: 1 }))),
+    )
+    const wrapper = mountFeed()
+    await flushPromises()
+    const guard = wrapper.find('.feed-actions')
+    expect(guard.exists()).toBe(true)
+    await guard.trigger('click')
+    await guard.trigger('keydown', { key: 'Enter' })
+    expect(useClipViewerStore().clipId).toBeNull()
+  })
 })

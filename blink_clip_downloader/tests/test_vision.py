@@ -2324,42 +2324,45 @@ def test_huggingface_auth_error_status_code_is_detected() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_configure_cv_concurrency_replaces_the_semaphore() -> None:
-    original = vision_module._cv_limit
-    try:
-        vision_module.configure_cv_concurrency(4)
-        first = vision_module._cv_slot()
-        assert vision_module._cv_limit == 4
-        # Same limit again must not throw away a semaphore stages are using.
-        vision_module.configure_cv_concurrency(4)
-        assert vision_module._cv_slot() is first
-        vision_module.configure_cv_concurrency(2)
-        assert vision_module._cv_slot() is not first
-    finally:
-        vision_module.configure_cv_concurrency(original)
-        vision_module._cv_semaphore = None
+@pytest.fixture
+def cv_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore both concurrency globals after a test touches either.
+
+    ``configure_cv_concurrency`` writes ``_cv_limit`` and invalidates
+    ``_cv_semaphore``, so putting only the limit back leaves the next test
+    with a semaphore built at the wrong one. monkeypatch restores both,
+    including when the test fails part-way.
+    """
+    monkeypatch.setattr(vision_module, "_cv_limit", vision_module._cv_limit)
+    monkeypatch.setattr(vision_module, "_cv_semaphore", None)
 
 
-def test_configure_cv_concurrency_floors_at_one() -> None:
+def test_configure_cv_concurrency_replaces_the_semaphore(cv_concurrency: None) -> None:
+    vision_module.configure_cv_concurrency(4)
+    first = vision_module._cv_slot()
+    assert vision_module._cv_limit == 4
+    # Same limit again must not throw away a semaphore stages are using.
+    vision_module.configure_cv_concurrency(4)
+    assert vision_module._cv_slot() is first
+    vision_module.configure_cv_concurrency(2)
+    assert vision_module._cv_slot() is not first
+
+
+def test_configure_cv_concurrency_floors_at_one(cv_concurrency: None) -> None:
     """Zero would deadlock every stage rather than disabling them, which is
     what the per-stage toggles are for."""
-    original = vision_module._cv_limit
-    try:
-        vision_module.configure_cv_concurrency(0)
-        assert vision_module._cv_limit == 1
-    finally:
-        vision_module.configure_cv_concurrency(original)
-        vision_module._cv_semaphore = None
+    vision_module.configure_cv_concurrency(0)
+    assert vision_module._cv_limit == 1
 
 
 async def test_heavy_stages_do_not_run_concurrently(
     monkeypatch: pytest.MonkeyPatch,
+    cv_concurrency: None,
 ) -> None:
     """Two clips analyzed at once must not have two torch models computing
     simultaneously — on a Raspberry Pi that is the difference between slow
     and wedged."""
     vision_module.configure_cv_concurrency(1)
-    vision_module._cv_semaphore = None
     in_flight = 0
     peak = 0
 
@@ -2377,7 +2380,6 @@ async def test_heavy_stages_do_not_run_concurrently(
 
     await asyncio.gather(*(detector.detect([b"frame"]) for _ in range(4)))
     assert peak == 1
-    vision_module._cv_semaphore = None
 
 
 # ----------------------------------------------------------------------
@@ -3017,8 +3019,9 @@ def test_pose_estimator_load_sync_refuses_an_incompatible_cpu(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(vision_module, "torch_cpu_compatible", lambda: False)
+    estimator = PoseEstimator()
     with pytest.raises(CPUIncompatibleError):
-        PoseEstimator()._load_sync()
+        estimator._load_sync()
 
 
 async def test_pose_estimator_ensure_ready_false_when_cpu_incompatible(

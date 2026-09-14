@@ -22,7 +22,13 @@ const SHORTCUTS: [string, string][] = [
      dev/test mode, breaking wrapper.classes()/wrapper.element in tests —
      keep any template-level comments outside the <template> tag. -->
 <template>
-  <div class="modal-bg nested-overlay" :class="{ open }" style="z-index: 150" @click.self="open = false">
+  <div
+    class="modal-bg nested-overlay"
+    :class="{ open }"
+    style="z-index: 150"
+    @click.self="open = false"
+    @keydown.escape="open = false"
+  >
     <div class="modal" style="max-width: 460px">
       <button type="button" class="modal-close" title="Close (Esc)" aria-label="Close" @click="open = false">
         <AppIcon name="close" />

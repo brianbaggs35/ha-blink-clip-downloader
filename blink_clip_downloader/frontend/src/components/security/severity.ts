@@ -45,7 +45,7 @@ export function severityTag(severity: string): string {
  *  user unformatted. */
 export function formatEventType(eventType: string): string {
   if (!eventType) return ''
-  const spaced = eventType.replace(/_/g, ' ')
+  const spaced = eventType.replaceAll('_', ' ')
   return spaced.charAt(0).toUpperCase() + spaced.slice(1)
 }
 

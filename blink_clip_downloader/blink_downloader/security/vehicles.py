@@ -228,6 +228,23 @@ class VehicleIdentification:
         }
 
 
+#: Thirds of the frame, with the middle band deliberately wider than a
+#: strict third: a vehicle whose centre sits just off the dividing line
+#: should read as "middle", not flip between "upper" and "lower" on a few
+#: pixels of detector jitter between clips.
+_BAND_LOW = 0.38
+_BAND_HIGH = 0.62
+
+
+def _band(fraction: float, low: str, middle: str, high: str) -> str:
+    """Name which third of an axis *fraction* (0.0-1.0) falls in."""
+    if fraction < _BAND_LOW:
+        return low
+    if fraction > _BAND_HIGH:
+        return high
+    return middle
+
+
 def describe_region(box: Box, frame_size: tuple[float, float]) -> str:
     """Name the ninth of the frame a box's centre falls in.
 
@@ -241,8 +258,8 @@ def describe_region(box: Box, frame_size: tuple[float, float]) -> str:
         return "an unknown part of the frame"
     cx = (box[0] + box[2]) / 2.0 / width
     cy = (box[1] + box[3]) / 2.0 / height
-    vertical = "upper" if cy < 0.38 else ("lower" if cy > 0.62 else "middle")
-    horizontal = "left" if cx < 0.38 else ("right" if cx > 0.62 else "centre")
+    vertical = _band(cy, "upper", "middle", "lower")
+    horizontal = _band(cx, "left", "centre", "right")
     if vertical == "middle" and horizontal == "centre":
         return "the centre of the frame"
     if vertical == "middle":
@@ -282,6 +299,58 @@ def _normalize(box: Box, frame_size: tuple[float, float]) -> Box:
     return (box[0] / width, box[1] / height, box[2] / width, box[3] / height)
 
 
+def _score_candidate(
+    track: ObjectTrack,
+    frame_size: tuple[float, float],
+    zone_box: Box | None,
+    signature: VehicleSignature | None,
+    histograms: dict[int | None, tuple[float, ...]],
+) -> VehicleCandidate:
+    """Score one detected vehicle against whichever evidence exists.
+
+    The score is the weighted mean of the sources actually available, not a
+    sum with zeros for the missing ones: a user who drew a zone but has no
+    learned signature yet is judged purely on the zone, rather than being
+    dragged toward zero by evidence nobody has collected.
+    """
+    box = _median_box(track)
+    normalized = _normalize(box, frame_size)
+    candidate = VehicleCandidate(
+        track_id=track.track_id,
+        label=track.label,
+        box=box,
+        normalized_box=normalized,
+        position_label=describe_region(box, frame_size),
+    )
+
+    components: list[tuple[float, float]] = []
+    if zone_box is not None:
+        candidate.zone_overlap = _overlap_coefficient(box, zone_box)
+        components.append((candidate.zone_overlap, _WEIGHT_ZONE))
+    if signature is not None and signature.established:
+        candidate.position_similarity = signature.position_similarity(normalized)
+        components.append((candidate.position_similarity, _WEIGHT_POSITION))
+        # Untracked pseudo-tracks all carry a track id of None, so a
+        # fingerprint map keyed by id would hand every candidate the same
+        # vector — noise dressed as evidence. Appearance is only usable for
+        # vehicles the tracker actually told apart.
+        fingerprint = (
+            histograms.get(track.track_id, ()) if track.track_id is not None else ()
+        )
+        if fingerprint and signature.histogram:
+            candidate.appearance_similarity = signature.appearance_similarity(
+                fingerprint
+            )
+            components.append((candidate.appearance_similarity, _WEIGHT_APPEARANCE))
+
+    total_weight = sum(weight for _, weight in components)
+    if total_weight > 0:
+        candidate.score = (
+            sum(value * weight for value, weight in components) / total_weight
+        )
+    return candidate
+
+
 def identify_protected_vehicle(
     tracks: list[ObjectTrack],
     frame_size: tuple[float, float],
@@ -318,43 +387,10 @@ def identify_protected_vehicle(
     )
     use_signature = signature is not None and signature.established
 
-    candidates: list[VehicleCandidate] = []
-    for track in vehicles:
-        box = _median_box(track)
-        normalized = _normalize(box, frame_size)
-        candidate = VehicleCandidate(
-            track_id=track.track_id,
-            label=track.label,
-            box=box,
-            normalized_box=normalized,
-            position_label=describe_region(box, frame_size),
-        )
-        components: list[tuple[float, float]] = []
-        if zone_box is not None:
-            candidate.zone_overlap = _overlap_coefficient(box, zone_box)
-            components.append((candidate.zone_overlap, _WEIGHT_ZONE))
-        if use_signature and signature is not None:
-            candidate.position_similarity = signature.position_similarity(normalized)
-            components.append((candidate.position_similarity, _WEIGHT_POSITION))
-            # Untracked pseudo-tracks all carry a track id of None, so a
-            # fingerprint map keyed by id would hand every candidate the
-            # same vector — noise dressed as evidence. Appearance is only
-            # usable for vehicles the tracker actually told apart.
-            fingerprint = (
-                hist_map.get(track.track_id, ()) if track.track_id is not None else ()
-            )
-            if fingerprint and signature.histogram:
-                candidate.appearance_similarity = signature.appearance_similarity(
-                    fingerprint
-                )
-                components.append((candidate.appearance_similarity, _WEIGHT_APPEARANCE))
-        total_weight = sum(w for _, w in components)
-        candidate.score = (
-            sum(value * w for value, w in components) / total_weight
-            if total_weight > 0
-            else 0.0
-        )
-        candidates.append(candidate)
+    candidates = [
+        _score_candidate(track, frame_size, zone_box, signature, hist_map)
+        for track in vehicles
+    ]
 
     if zone_box is None and not use_signature:
         return _identify_without_evidence(candidates)

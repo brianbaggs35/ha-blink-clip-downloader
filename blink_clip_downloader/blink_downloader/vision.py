@@ -893,12 +893,21 @@ class DepthEstimator:
     # config.yaml for the other selectable sizes (and their licensing:
     # this default is Apache-2.0, the larger Base/Large options are
     # CC-BY-NC-4.0/non-commercial — see that option's own comment).
-    _MODEL_ID = "depth-anything/Depth-Anything-V2-Small-hf"
+    _DEFAULT_MODEL_ID = "depth-anything/Depth-Anything-V2-Small-hf"
 
     # Empty default means no token configured; it is not a credential.
-    def __init__(self, hf_token: str = "", model_id: str = _MODEL_ID) -> None:  # nosec B107
+    def __init__(
+        self,
+        hf_token: str = "",
+        model_id: str = _DEFAULT_MODEL_ID,  # nosec B107
+    ) -> None:
         self._pipe: Any = None
         self._hf_token = hf_token
+        # Named apart from the class-level default above rather than
+        # shadowing it in a different case: one is the fallback checkpoint,
+        # the other is whichever checkpoint this instance was actually told
+        # to load, and a reader glancing at `_MODEL_ID` vs `_model_id` has
+        # no way to tell which is which.
         self._model_id = model_id
         self._lock: asyncio.Lock | None = None
 
@@ -1809,6 +1818,20 @@ class VisionConfig:
     security_events_enabled: bool = True
 
 
+#: Names of the optional evidence sources, as reported in
+#: ``VisionHints.unavailable_sources`` and rendered verbatim into the
+#: prompt's "Evidence sources unavailable for this clip" line. Named
+#: constants rather than repeated literals because they are compared and
+#: counted downstream — ``security.evidence.assess_evidence`` scores stage
+#: coverage from the length of that list, so a typo here would silently
+#: change an evidence-quality score rather than fail.
+SOURCE_OBJECT_DETECTION = "object detection"
+SOURCE_DEPTH_ESTIMATION = "depth estimation"
+SOURCE_CONTACT_SEGMENTATION = "contact segmentation"
+SOURCE_POSE_ESTIMATION = "pose estimation"
+SOURCE_FACE_RECOGNITION = "face recognition"
+
+
 @dataclass
 class VisionHints:
     """Per-clip output of :meth:`VisionPipeline.process_clip`."""
@@ -1940,10 +1963,10 @@ class VisionPipeline:
                 vehicle_signature=vehicle_signature,
             )
         else:
-            hints.unavailable_sources.append("object detection")
-            hints.unavailable_sources.append("depth estimation")
-            hints.unavailable_sources.append("contact segmentation")
-            hints.unavailable_sources.append("pose estimation")
+            hints.unavailable_sources.append(SOURCE_OBJECT_DETECTION)
+            hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
+            hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
+            hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
 
         if self._config.face_recognition_enabled and self._db is not None:
             recognizer = FaceRecognizer(self._face_embedder, self._db)
@@ -1951,7 +1974,7 @@ class VisionPipeline:
             hints.face_recognition = face_result
             hints.recognized_resident_hint = _build_recognition_hint(face_result)
         else:
-            hints.unavailable_sources.append("face recognition")
+            hints.unavailable_sources.append(SOURCE_FACE_RECOGNITION)
 
         # The only per-clip evidence any of this ran was the one-time
         # "model ready" INFO log each stage prints on its first load —
@@ -2016,10 +2039,10 @@ class VisionPipeline:
         hints.detections = detections
         if not detections:
             if detections is None:
-                hints.unavailable_sources.append("object detection")
-            hints.unavailable_sources.append("depth estimation")
-            hints.unavailable_sources.append("contact segmentation")
-            hints.unavailable_sources.append("pose estimation")
+                hints.unavailable_sources.append(SOURCE_OBJECT_DETECTION)
+            hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
+            hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
+            hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
             return
 
         # A frame that won't decode costs the security layer its geometry,
@@ -2151,9 +2174,9 @@ class VisionPipeline:
         """
         pair = self._select_pair(hints, detections, zone_box)
         if pair is None:
-            hints.unavailable_sources.append("depth estimation")
-            hints.unavailable_sources.append("contact segmentation")
-            hints.unavailable_sources.append("pose estimation")
+            hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
+            hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
+            hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
             return
         subject, asset_box, frame_idx, track_id = pair
         hints.contact_track_id = track_id
@@ -2162,7 +2185,7 @@ class VisionPipeline:
             scan_frames[frame_idx], subject.box, asset_box
         )
         if depth_result is None:
-            hints.unavailable_sources.append("depth estimation")
+            hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
         else:
             hints.depth_similar = depth_result.similar_depth
             hints.depth_hint = _build_depth_hint(depth_result, subject.label)
@@ -2171,7 +2194,7 @@ class VisionPipeline:
             scan_frames[frame_idx], subject.box, asset_box
         )
         if contact_result is None:
-            hints.unavailable_sources.append("contact segmentation")
+            hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
         else:
             hints.contact_touching = contact_result.touching
             hints.contact_hint = _build_contact_hint(contact_result, subject.label)
@@ -2181,12 +2204,12 @@ class VisionPipeline:
                 scan_frames[frame_idx], subject.box, asset_box
             )
             if posture is None:
-                hints.unavailable_sources.append("pose estimation")
+                hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
             else:
                 hints.posture = posture
                 hints.posture_hint = _build_posture_hint(posture, subject.label)
         else:
-            hints.unavailable_sources.append("pose estimation")
+            hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
 
         # Cheap, model-free "did the vehicle itself change" evidence, worth
         # computing exactly when somebody was close enough to change it.

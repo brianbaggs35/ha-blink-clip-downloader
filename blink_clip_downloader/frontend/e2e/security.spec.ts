@@ -136,10 +136,27 @@ test('the period filter narrows to the chosen window', async ({ page }) => {
 })
 
 test('stepping to the next clip from a Security-opened modal stays where it was', async ({ page }) => {
-  // A clip opened from here is generally not in the Library's own filtered
-  // list, which used to make prev/next find index -1, step to 0 and
-  // teleport the modal to the newest clip in the library. The modal should
-  // simply stay on the clip it was showing.
+  // A clip opened from here need not be in the Library's own filtered list,
+  // which used to make prev/next find index -1, step to 0 and teleport the
+  // modal to the newest clip in the library. The modal should simply stay
+  // on the clip it was showing.
+  //
+  // Narrow the Library to a camera the clip below is *not* on first. Every
+  // seeded security event is attached to a distribution clip (see
+  // standalone_server.py's _seed for why), so with the Library unfiltered
+  // the clip is in its list and stepping is the correct behaviour — the
+  // premise of this test would then be a race against the Library's own
+  // load rather than a fact.
+  await page.locator('.app-nav-cam[data-camera="Front Door"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="library"]')
+  const cameras = page.locator('.clip-card .clip-camera')
+  await expect(cameras.first()).toBeVisible()
+  expect(await cameras.allTextContents()).not.toContain('Garage')
+  await page.locator('.app-nav-tab[data-tab="security"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="security"]')
+
+  // The Impact candidate row is the Garage clip, which the Front Door
+  // filter above has just excluded from the Library's list.
   await page
     .locator('.security-row', { hasText: 'Impact candidate' })
     .getByRole('button', { name: 'View clip' })

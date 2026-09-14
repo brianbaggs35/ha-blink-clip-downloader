@@ -186,9 +186,15 @@ async function toggleStar() {
 }
 
 async function handleDelete() {
-  if (!props.clipId) return
+  // Captured before the await: the modal can be showing a different clip by
+  // the time the dialog is answered (prev/next, or another tab opening one
+  // through the clip-viewer store), and deleting a clip the prompt never
+  // named is not recoverable.
+  const id = props.clipId
+  if (!id) return
   if (!(await confirm('Delete this clip permanently?'))) return
-  emit('deleted', props.clipId)
+  if (props.clipId !== id) return
+  emit('deleted', id)
 }
 
 async function copyPath() {
@@ -254,7 +260,12 @@ async function selectTagSuggestion(tag: string) {
 }
 
 async function removeTag(tag: string) {
+  const id = props.clipId
   if (!(await confirm(`Remove tag "${tag}" from this clip?`))) return
+  // Same reason handleDelete captures its id: currentTags has already been
+  // reloaded for whichever clip is showing now, so saving it would edit
+  // that clip's tags instead of the one the prompt named.
+  if (props.clipId !== id) return
   const previous = [...currentTags.value]
   currentTags.value = currentTags.value.filter((t) => t !== tag)
   await saveTags(previous)
@@ -278,6 +289,12 @@ function onKeydown(e: KeyboardEvent) {
     return
   }
   if (isTextInput) return
+  // Everything below drives the modal *behind* whatever is on top of it.
+  // ArrowUp/ArrowDown is the one that matters: it swapped the clip out from
+  // under a "Delete this clip permanently?" prompt that named the previous
+  // one. Space/f/m/l playing or resizing the video behind an open dialog
+  // was the same mistake, just a cosmetic one.
+  if (promptOverlay.open || confirmStore.open) return
   if (!props.clipId || !player) return
   switch (e.key) {
     case ' ':
@@ -332,7 +349,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="modal-bg" :class="{ open: !!clipId }" @click.self="emit('close')">
+  <!-- .self on the Escape handler, exactly like the click one beside it:
+       Escape raised from *inside* the modal is already handled by the
+       document-level onKeydown above, which has guards this backdrop does
+       not (a focused text input blurs instead of closing; an open confirm
+       dialog or prompt overlay takes precedence). Without .self a bubbled
+       Escape would reach here first and close the modal unconditionally,
+       losing all three. -->
+  <div class="modal-bg" :class="{ open: !!clipId }" @click.self="emit('close')" @keydown.escape.self="emit('close')">
     <div class="modal" :class="{ theater }">
       <button type="button" class="modal-close" title="Close (Esc)" aria-label="Close" @click="emit('close')">
         <AppIcon name="close" />
@@ -444,7 +468,10 @@ onUnmounted(() => {
           </div>
           <div class="tag-list">
             <span v-for="tag in currentTags" :key="tag" class="tag-item"
-              >{{ tag }}<span class="rm" @click="removeTag(tag)">×</span></span
+              >{{ tag
+              }}<button type="button" class="rm" :aria-label="`Remove tag ${tag}`" @click="removeTag(tag)">
+                ×
+              </button></span
             >
           </div>
           <div class="modal-options">

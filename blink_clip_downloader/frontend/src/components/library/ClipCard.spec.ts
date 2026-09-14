@@ -104,4 +104,16 @@ describe('ClipCard', () => {
     const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false, selectable: false } })
     expect(wrapper.find('.sel-check').exists()).toBe(false)
   })
+
+  it('opens on Enter and Space, not only on a mouse click', async () => {
+    // The card is the Library's primary control and used to be reachable
+    // only with a pointer: no tab stop, no key handler.
+    const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false } })
+    const card = wrapper.find('.clip-card')
+    expect(card.attributes('tabindex')).toBe('0')
+
+    await card.trigger('keydown.enter')
+    await card.trigger('keydown.space')
+    expect(wrapper.emitted('click')).toHaveLength(2)
+  })
 })

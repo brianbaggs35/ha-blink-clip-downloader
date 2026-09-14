@@ -14,7 +14,13 @@ const store = usePromptOverlayStore()
      fragment in dev/test mode, breaking wrapper.classes()/wrapper.element
      in tests — keep any template-level comments outside <template>. -->
 <template>
-  <div class="modal-bg nested-overlay" :class="{ open: store.open }" style="z-index: 150" @click.self="store.close()">
+  <div
+    class="modal-bg nested-overlay"
+    :class="{ open: store.open }"
+    style="z-index: 150"
+    @click.self="store.close()"
+    @keydown.escape="store.close()"
+  >
     <div class="modal" style="max-width: 700px">
       <button type="button" class="modal-close" title="Close (Esc)" aria-label="Close" @click="store.close()">
         <AppIcon name="close" />

@@ -15,7 +15,22 @@ const thumbFailed = ref(false)
 </script>
 
 <template>
-  <div class="clip-card" :class="{ selected }" :data-id="clip.id" @click="$emit('click')">
+  <!-- Opening a clip was mouse-only: the card carried the click handler but
+       nothing put it in the tab order or responded to a key. It is the
+       primary control of the whole Library, so it is focusable and
+       Enter/Space-activatable now. Deliberately not role="button" — the
+       card contains its own checkbox, and nesting a control inside a
+       button role is what screen readers cope with worst. -->
+  <div
+    class="clip-card"
+    :class="{ selected }"
+    :data-id="clip.id"
+    tabindex="0"
+    :aria-label="`Open the clip from ${clip.camera}`"
+    @click="$emit('click')"
+    @keydown.enter.self="$emit('click')"
+    @keydown.space.self.prevent="$emit('click')"
+  >
     <div class="thumb-wrap">
       <img v-if="!thumbFailed" :src="clipThumbUrl(clip.id)" loading="lazy" alt="" @error="thumbFailed = true" />
       <div v-else class="no-thumb">
