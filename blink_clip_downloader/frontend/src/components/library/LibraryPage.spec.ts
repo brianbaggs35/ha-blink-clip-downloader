@@ -328,7 +328,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     expect(wrapper.text()).toContain('1 selected')
     wrapper.unmount()
   })
@@ -362,7 +362,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     const starBtn = wrapper.findAll('button').find((b) => b.text().includes('Star selected'))!
     await starBtn.trigger('click')
     await flushPromises()
@@ -375,7 +375,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.findAll('.clip-card')[0]!.trigger('click')
+    await wrapper.findAll('.clip-open')[0]!.trigger('click')
     expect(wrapper.text()).toContain('1 selected')
     const selectAllBtn = wrapper.findAll('button').find((b) => b.text().includes('Select all'))!
     await selectAllBtn.trigger('click')
@@ -462,7 +462,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     const confirm = useConfirmStore()
     const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete selected'))!
     const clickPromise = deleteBtn.trigger('click')
@@ -523,7 +523,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     const confirmStore = useConfirmStore()
     const analyzeBtn = wrapper.findAll('button').find((b) => b.text().includes('Analyze selected'))!
     const clickPromise = analyzeBtn.trigger('click')
@@ -541,7 +541,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     // base AI_STATUS has enabled: false, so the button shouldn't even render.
     expect(wrapper.findAll('button').some((b) => b.text().includes('Analyze selected'))).toBe(false)
     wrapper.unmount()
@@ -552,7 +552,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     expect(wrapper.findAll('button').some((b) => b.text().includes('Upload to Drive'))).toBe(false)
     wrapper.unmount()
   })
@@ -583,7 +583,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     const confirmStore = useConfirmStore()
     const callsBefore = vi.mocked(fetch).mock.calls.length
     const analyzeBtn = wrapper.findAll('button').find((b) => b.text().includes('Analyze selected'))!
@@ -639,7 +639,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
 
     const uploadBtn = wrapper.findAll('button').find((b) => b.text().includes('Upload to Drive'))
     expect(uploadBtn).toBeTruthy()
@@ -676,7 +676,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     const uploadBtn = wrapper.findAll('button').find((b) => b.text().includes('Upload to Drive'))!
     await uploadBtn.trigger('click')
     await flushPromises()
@@ -691,7 +691,7 @@ describe('LibraryPage', () => {
     mockFetch()
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     expect(body().find('.modal-bg').classes()).toContain('open')
     wrapper.unmount()
@@ -701,7 +701,7 @@ describe('LibraryPage', () => {
     mockFetch()
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     await body().find('.tag-input').trigger('focus')
     const suggestions = body()
@@ -718,7 +718,7 @@ describe('LibraryPage', () => {
     mockFetch()
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     const confirm = useConfirmStore()
     const deleteBtn = body()
@@ -738,7 +738,7 @@ describe('LibraryPage', () => {
     mockFetch()
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     const starBtn = body()
       .findAll('button')
@@ -761,7 +761,7 @@ describe('LibraryPage', () => {
       wrapper.findAll('.lib-stat').find((s) => s.find('.lib-stat-label').text().includes('Starred'))!
     expect(starredStat().find('.lib-stat-value').text()).toBe('1')
 
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     const starBtn = body()
       .findAll('button')
@@ -781,7 +781,7 @@ describe('LibraryPage', () => {
       wrapper.findAll('.lib-stat').find((s) => s.find('.lib-stat-label').text().includes('Starred'))!
     expect(starredStat().find('.lib-stat-value').text()).toBe('1')
 
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     const unstarBtn = body()
       .findAll('button')
@@ -1079,7 +1079,7 @@ describe('LibraryPage', () => {
     mockFetch()
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     const statsCallsBefore = vi.mocked(fetch).mock.calls.filter((c) => (c[0] as string).startsWith('/api/stats')).length
     await vi.advanceTimersByTimeAsync(60_000)
@@ -1094,7 +1094,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     const blob = new Blob(['zip'])
     vi.stubGlobal(
       'fetch',
@@ -1123,7 +1123,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.resolve({ ok: false, status: 500 } as Response)),
@@ -1139,7 +1139,7 @@ describe('LibraryPage', () => {
     mockFetch({}, [clip({ id: 'c1' }), clip({ id: 'c2' })])
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.findAll('.clip-card')[0]!.trigger('click')
+    await wrapper.findAll('.clip-open')[0]!.trigger('click')
     await flushPromises()
     await body().find('.vid-nav-btn:nth-of-type(2)').trigger('click')
     await flushPromises()
@@ -1151,7 +1151,7 @@ describe('LibraryPage', () => {
     mockFetch()
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     await body().find('.vid-nav-btn:nth-of-type(2)').trigger('click')
     expect(body().find('.modal-bg').classes()).toContain('open')
@@ -1162,7 +1162,7 @@ describe('LibraryPage', () => {
     mockFetch()
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     const confirm = useConfirmStore()
     const deleteBtn = body()
@@ -1181,7 +1181,7 @@ describe('LibraryPage', () => {
     mockFetch({}, [clip({ id: 'c1' }), clip({ id: 'c2' })])
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.findAll('.clip-card')[1]!.trigger('click')
+    await wrapper.findAll('.clip-open')[1]!.trigger('click')
     await flushPromises()
     const confirm = useConfirmStore()
     const deleteBtn = body()
@@ -1212,7 +1212,7 @@ describe('LibraryPage', () => {
     })
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     useRefreshStore().bump()
     await flushPromises()
@@ -1239,7 +1239,7 @@ describe('LibraryPage', () => {
     })
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     useRefreshStore().bump()
     await flushPromises()
@@ -1371,9 +1371,9 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     expect(wrapper.text()).toContain('1 selected')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     expect(wrapper.text()).toContain('0 selected')
     wrapper.unmount()
   })
@@ -1630,7 +1630,7 @@ describe('LibraryPage', () => {
     const wrapper = mountLibrary()
     await flushPromises()
     await findByText(wrapper, 'Select').trigger('click')
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     const confirm = useConfirmStore()
     const callsBefore = vi.mocked(fetch).mock.calls.length
     const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete selected'))!
@@ -1684,7 +1684,7 @@ describe('LibraryPage', () => {
     mockFetch({}, [clip({ id: 'c1' }), clip({ id: 'c2' })])
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     const confirm = useConfirmStore()
     const deleteBtn = body()
@@ -1767,7 +1767,7 @@ describe('LibraryPage', () => {
     mockFetch()
     const wrapper = mountLibrary()
     await flushPromises()
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     await flushPromises()
     vi.stubGlobal(
       'fetch',

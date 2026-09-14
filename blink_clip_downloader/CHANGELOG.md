@@ -173,15 +173,15 @@ damage classification.
 
 ### Changed
 
-- **The web UI is reachable without a mouse.** A clip card is now in the tab
-  order and opens on Enter or Space, and announces itself as a button
-  rather than being a focusable element with no role at all; a tag's remove
-  control is a real button instead of a `<span>` that only responded to a
-  click; and the sidebar's connection indicator is an `<output>`, so a
-  screen reader announces a change of connection state instead of silently
-  repainting a dot. (Escape already dismissed every overlay, via the
-  app-wide shortcut handler; each overlay's own backdrop now handles it too
-  rather than relying on that one place.)
+- **The web UI is reachable without a mouse.** A clip card's body is a real
+  button now, so it is in the tab order, opens on Enter or Space and
+  announces itself, instead of being a `<div>` that only answered a
+  pointer; a tag's remove control is likewise a real button rather than a
+  `<span>` with a click handler; and the sidebar's connection indicator is
+  an `<output>`, so a screen reader announces a change of connection state
+  instead of silently repainting a dot. (Escape already dismissed every
+  overlay, via the app-wide shortcut handler; each overlay's own backdrop
+  now handles it too rather than relying on that one place.)
 - The vehicle-protection depth/contact hints now name the actual detected
   subject ("dog", "cat", "person", ...) instead of always saying "person"
   — sharpens cases like a pet making contact with a protected vehicle.

@@ -76,7 +76,7 @@ describe('ClipCard', () => {
 
   it('emits click', async () => {
     const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false } })
-    await wrapper.find('.clip-card').trigger('click')
+    await wrapper.find('.clip-open').trigger('click')
     expect(wrapper.emitted('click')).toHaveLength(1)
   })
 
@@ -105,15 +105,22 @@ describe('ClipCard', () => {
     expect(wrapper.find('.sel-check').exists()).toBe(false)
   })
 
-  it('opens on Enter and Space, not only on a mouse click', async () => {
+  it('opens through a real button, not a div that only answers a pointer', async () => {
     // The card is the Library's primary control and used to be reachable
-    // only with a pointer: no tab stop, no key handler.
+    // only with a pointer: no tab stop, no key handler, nothing announced.
+    // It is a <button> now, so focus order, Enter/Space and the accessible
+    // name are the browser's job rather than hand-rolled — which is why
+    // this asserts the element and its name here and leaves actually
+    // pressing the keys to library-modal.spec.ts, in a real browser.
     const wrapper = mount(ClipCard, { props: { clip: CLIP, selected: false } })
-    const card = wrapper.find('.clip-card')
-    expect(card.attributes('tabindex')).toBe('0')
+    const opener = wrapper.find('.clip-open')
+    expect(opener.element.tagName).toBe('BUTTON')
+    expect(opener.attributes('type')).toBe('button')
+    expect(opener.attributes('aria-label')).toBe('Open the clip from front')
 
-    await card.trigger('keydown.enter')
-    await card.trigger('keydown.space')
-    expect(wrapper.emitted('click')).toHaveLength(2)
+    // And the checkbox is outside it: a control nested inside a button is
+    // invalid, which is what forced this shape in the first place.
+    expect(wrapper.find('.clip-open .sel-check').exists()).toBe(false)
+    expect(wrapper.find('.sel-check').exists()).toBe(true)
   })
 })

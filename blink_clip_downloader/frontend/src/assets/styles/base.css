@@ -716,6 +716,21 @@ body.nav-collapsed {
   user-select: none;
   box-shadow: var(--shadow-sm);
 }
+/* The card's whole body is one <button> (see ClipCard.vue) — stripped back
+   to looking like the plain block it replaced, so the card is unchanged
+   visually while gaining native focus and Enter/Space activation. */
+.clip-open {
+  display: block;
+  width: 100%;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: inherit;
+}
 .clip-card:hover {
   border-color: var(--border-strong);
   transform: translateY(-3px);
