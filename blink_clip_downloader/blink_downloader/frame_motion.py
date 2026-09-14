@@ -18,6 +18,7 @@ module costs nothing on an install where it is unused.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from .security.geometry import point_in_polygon
@@ -324,27 +325,7 @@ def zone_motion_fraction(
 
     try:
         width, height = MOTION_TRAJECTORY_THUMB_SIZE
-
-        is_polygon = zone.get("shape") == "polygon"
-        poly_px: list[tuple[float, float]] = []
-        zx1 = zy1 = zx2 = zy2 = 0
-        if is_polygon:
-            # Already precisely traced by the user, unlike a quick
-            # rectangle drag — skip the tolerance padding rects get
-            # below and test membership against the exact outline.
-            poly_px = [(px * width, py * height) for px, py in zone.get("points", [])]
-        else:
-            raw_x_min = zone.get("x_min", 0.0)
-            raw_y_min = zone.get("y_min", 0.0)
-            raw_x_max = zone.get("x_max", 1.0)
-            raw_y_max = zone.get("y_max", 1.0)
-            pad_x = max(0.0, raw_x_max - raw_x_min) * ZONE_MOTION_PAD_FRACTION
-            pad_y = max(0.0, raw_y_max - raw_y_min) * ZONE_MOTION_PAD_FRACTION
-
-            zx1 = max(0, min(width - 1, round((raw_x_min - pad_x) * width)))
-            zy1 = max(0, min(height - 1, round((raw_y_min - pad_y) * height)))
-            zx2 = max(zx1 + 1, min(width, round((raw_x_max + pad_x) * width)))
-            zy2 = max(zy1 + 1, min(height, round((raw_y_max + pad_y) * height)))
+        inside = _zone_membership_test(zone, width, height)
 
         total_motion = 0
         zone_motion = 0
@@ -354,13 +335,7 @@ def zone_motion_fraction(
                 if not d:
                     continue
                 total_motion += d
-                x, y = idx % width, idx // width
-                hit = (
-                    point_in_polygon(x + 0.5, y + 0.5, poly_px)
-                    if is_polygon
-                    else zx1 <= x < zx2 and zy1 <= y < zy2
-                )
-                if hit:
+                if inside(idx % width, idx // width):
                     zone_motion += d
 
         pixels_per_pair = width * height
@@ -370,3 +345,33 @@ def zone_motion_fraction(
         return zone_motion / total_motion
     except Exception:  # noqa: BLE001
         return None
+
+
+def _zone_membership_test(
+    zone: dict[str, Any], width: int, height: int
+) -> Callable[[int, int], bool]:
+    """Build the "is this thumbnail pixel in the zone" test for *zone*.
+
+    Resolved once per clip rather than per pixel, and returned as a closure
+    so the hot loop above has a single call rather than a shape check on
+    every one of the tens of thousands of pixels it walks.
+    """
+    if zone.get("shape") == "polygon":
+        # Already precisely traced by the user, unlike a quick rectangle
+        # drag — skip the tolerance padding rects get below and test
+        # membership against the exact outline.
+        poly_px = [(px * width, py * height) for px, py in zone.get("points", [])]
+        return lambda x, y: point_in_polygon(x + 0.5, y + 0.5, poly_px)
+
+    raw_x_min = zone.get("x_min", 0.0)
+    raw_y_min = zone.get("y_min", 0.0)
+    raw_x_max = zone.get("x_max", 1.0)
+    raw_y_max = zone.get("y_max", 1.0)
+    pad_x = max(0.0, raw_x_max - raw_x_min) * ZONE_MOTION_PAD_FRACTION
+    pad_y = max(0.0, raw_y_max - raw_y_min) * ZONE_MOTION_PAD_FRACTION
+
+    zx1 = max(0, min(width - 1, round((raw_x_min - pad_x) * width)))
+    zy1 = max(0, min(height - 1, round((raw_y_min - pad_y) * height)))
+    zx2 = max(zx1 + 1, min(width, round((raw_x_max + pad_x) * width)))
+    zy2 = max(zy1 + 1, min(height, round((raw_y_max + pad_y) * height)))
+    return lambda x, y: zx1 <= x < zx2 and zy1 <= y < zy2

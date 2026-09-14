@@ -451,6 +451,19 @@ damage classification.
   instead of attempting a Supervisor-local frontend build that cannot receive
   the BuildKit license secret. CI's Supervisor integration test uses the same
   licensed-image path.
+- **A clip's Delete prompt now deletes the clip it named.** Arrow-key
+  prev/next kept working *through* an open dialog, so pressing Down while
+  "Delete this clip permanently?" was up swapped the modal to the next clip
+  and answering Yes deleted that one instead. Removing a tag had the same
+  shape — it would save the previous clip's tag list onto whichever clip had
+  taken its place. Keyboard playback and navigation shortcuts are now inert
+  while a dialog is on top of the modal, and both actions are pinned to the
+  clip the prompt named.
+- The Vehicles tab's learned-vehicle card no longer shows one camera's
+  learned parking position under another camera's name. Clicking through
+  cameras faster than the backend answered let an earlier response land
+  last, and nothing in it says which camera it describes. Clearing a learned
+  position is likewise pinned to the camera the confirmation named.
 
 ### Web UI
 

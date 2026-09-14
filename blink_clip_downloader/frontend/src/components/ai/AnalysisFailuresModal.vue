@@ -89,7 +89,7 @@ onMounted(load)
   font-size: 0.82rem;
   color: var(--danger);
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .failure-retries {

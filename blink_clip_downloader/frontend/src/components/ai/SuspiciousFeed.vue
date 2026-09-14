@@ -141,7 +141,7 @@ async function quickFeedback(clipId: string, correct: boolean) {
                 </div>
                 <div style="font-size: 0.65rem; color: var(--muted)">confidence</div>
               </div>
-              <div style="display: flex; gap: 0.25rem" @click.stop>
+              <div class="feed-actions" style="display: flex; gap: 0.25rem" @click.stop @keydown.stop>
                 <span v-if="thanked.has(item.clip_id)" style="font-size: 0.72rem; color: var(--muted)">Thanks!</span>
                 <template v-else>
                   <Button

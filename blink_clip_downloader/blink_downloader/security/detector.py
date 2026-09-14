@@ -390,22 +390,43 @@ class SecurityEventDetector:
         if near and cv_applies and ctx.posture_reaching:
             events.append(self._reach_event(track, profile, asset, ctx))
 
-        contact = self._contact_event(track, profile, asset, ctx, cv_applies)
-        if contact is not None:
-            events.append(contact)
-            impact = (
-                self._impact_event(track, profile, asset, ctx, contact)
-                if cv_applies
-                else None
-            )
-            if impact is not None:
-                events.append(impact)
-            retreat = self._retreat_after_contact_event(track, profile, asset, contact)
-            if retreat is not None:
-                events.append(retreat)
-        elif near and profile.retreated:
-            events.append(self._retreat_event(track, profile, asset))
+        events.extend(
+            self._contact_events(track, profile, asset, ctx, cv_applies, near)
+        )
+        return events
 
+    def _contact_events(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        ctx: DetectionContext,
+        cv_applies: bool,
+        near: bool,
+    ) -> list[SecurityEvent]:
+        """Possible contact, and the two events defined in terms of it.
+
+        Impact and retreat-after-contact both describe the *same* contact,
+        so neither can exist without it — and a subject who came close and
+        then left without one gets the plain retreat instead.
+        """
+        contact = self._contact_event(track, profile, asset, ctx, cv_applies)
+        if contact is None:
+            if near and profile.retreated:
+                return [self._retreat_event(track, profile, asset)]
+            return []
+
+        events = [contact]
+        impact = (
+            self._impact_event(track, profile, asset, ctx, contact)
+            if cv_applies
+            else None
+        )
+        if impact is not None:
+            events.append(impact)
+        retreat = self._retreat_after_contact_event(track, profile, asset, contact)
+        if retreat is not None:
+            events.append(retreat)
         return events
 
     def _zone_event(

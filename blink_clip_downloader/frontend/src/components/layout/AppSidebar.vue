@@ -298,14 +298,10 @@ onUnmounted(() => {
         rounded
         class="app-nav-conn-tag"
       />
-      <span
-        v-else
-        class="app-nav-conn-dot"
-        :class="connSeverity"
-        :title="connLabel"
-        role="status"
-        :aria-label="connLabel"
-      />
+      <!-- <output>, not a span carrying role="status": it is the element
+           that natively means "a live result", so assistive tech announces
+           a connection change without depending on the role mapping. -->
+      <output v-else class="app-nav-conn-dot" :class="connSeverity" :title="connLabel" :aria-label="connLabel" />
       <div class="app-nav-icon-row">
         <Button
           text

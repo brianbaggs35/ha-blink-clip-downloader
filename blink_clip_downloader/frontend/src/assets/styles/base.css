@@ -1235,6 +1235,13 @@ body.nav-collapsed {
   cursor: pointer;
   opacity: 0.6;
   line-height: 1;
+  /* A real <button> now (it was a bare span, reachable only by mouse), so
+     it needs the chrome stripped back to how the span looked. */
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
 }
 .tag-item .rm:hover {
   opacity: 1;

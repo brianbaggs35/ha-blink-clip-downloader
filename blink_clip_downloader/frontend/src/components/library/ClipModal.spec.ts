@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+
+/** The tag names shown as chips, without the remove affordance that sits
+ *  inside each one — asserting on the visible name is the point, not on the
+ *  whitespace around the "×" button. */
+function tagNames(wrapper: VueWrapper): string[] {
+  return wrapper.findAll('.tag-item').map((el: DOMWrapper<Element>) => el.text().replace('×', '').trim())
+}
 
 const fakePlayer = {
   src: vi.fn(),
@@ -138,6 +145,34 @@ describe('ClipModal', () => {
     mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
     expect(fakePlayer.one.mock.calls.filter(([e]) => e === 'loadedmetadata')).toHaveLength(0)
+  })
+
+  it('closes on Escape at the backdrop, so dismissal is not mouse-only', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    await wrapper.find('.modal-bg').trigger('keydown.escape')
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('Escape inside the modal still blurs the input rather than closing', async () => {
+    // The backdrop's own Escape handler is scoped with .self for a reason:
+    // a real keypress in the tag field bubbles up through .modal-bg on its
+    // way to the document listener, and an unscoped handler there would
+    // close the modal before that listener's "blur the input instead"
+    // guard ever ran. Dispatched through the real tree (attachTo), not
+    // straight at document, because that path is the whole point.
+    const wrapper = mount(ClipModal, {
+      attachTo: document.body,
+      props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false },
+    })
+    await flushPromises()
+    const input = wrapper.find('#clip-tag-input').element as HTMLInputElement
+    input.focus()
+    expect(document.activeElement).toBe(input)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(document.activeElement).not.toBe(input)
+    wrapper.unmount()
   })
 
   it('is closed when clipId is null', () => {
@@ -334,7 +369,7 @@ describe('ClipModal', () => {
     await input.setValue('New Tag!!')
     await input.trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(wrapper.findAll('.tag-item').map((el) => el.text())).toContain('new-tag×')
+    expect(tagNames(wrapper)).toContain('new-tag')
   })
 
   it('reports a failed star instead of doing nothing at all', async () => {
@@ -371,7 +406,7 @@ describe('ClipModal', () => {
     await input.setValue('doomed')
     await input.trigger('keydown', { key: 'Enter' })
     await flushPromises()
-    expect(wrapper.findAll('.tag-item').map((el) => el.text())).not.toContain('doomed×')
+    expect(tagNames(wrapper)).not.toContain('doomed')
     expect(useToastStore().message).toBe('Could not save tags')
   })
 
@@ -391,7 +426,7 @@ describe('ClipModal', () => {
     confirm.settle(true)
     await clickPromise
     await flushPromises()
-    expect(wrapper.findAll('.tag-item').map((el) => el.text())).toContain('delivery×')
+    expect(tagNames(wrapper)).toContain('delivery')
     expect(useToastStore().message).toBe('Could not save tags')
   })
 
@@ -415,7 +450,7 @@ describe('ClipModal', () => {
     await input.setValue('New Tag')
     await input.trigger('keydown', { key: 'Tab' })
     await flushPromises()
-    expect(wrapper.findAll('.tag-item').map((el) => el.text())).not.toContain('new-tag×')
+    expect(tagNames(wrapper)).not.toContain('new-tag')
   })
 
   it('bumps the shared refresh signal after saving a tag, so the Library filter picks it up', async () => {
@@ -472,7 +507,7 @@ describe('ClipModal', () => {
     await input.trigger('focus')
     await wrapper.find('.tag-suggestions li').trigger('mousedown')
     await flushPromises()
-    expect(wrapper.findAll('.tag-item').map((el) => el.text())).toContain('package×')
+    expect(tagNames(wrapper)).toContain('package')
     expect((input.element as HTMLInputElement).value).toBe('')
     expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c1/tags', expect.objectContaining({ method: 'PUT' }))
   })
@@ -507,6 +542,22 @@ describe('ClipModal', () => {
     await clickPromise
     await flushPromises()
     expect(wrapper.find('.tag-item').exists()).toBe(false)
+  })
+
+  it('does not write a tag removal onto whichever clip is showing by then', async () => {
+    // currentTags has already been reloaded for the new clip by the time
+    // the dialog is answered, so saving it would edit that clip's tags
+    // rather than the one the prompt named.
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.find('.tag-item .rm').trigger('click')
+    await flushPromises()
+    await wrapper.setProps({ clipId: 'c2' })
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(vi.mocked(fetch).mock.calls.some((c) => String(c[0]).includes('/tags'))).toBe(false)
   })
 
   it('does not remove a tag when the confirm dialog is dismissed', async () => {
@@ -625,6 +676,44 @@ describe('ClipModal', () => {
     expect(document.activeElement).not.toBe(input)
     expect(wrapper.emitted('close')).toBeUndefined()
     input.remove()
+    wrapper.unmount()
+  })
+
+  it('keyboard: clip navigation is inert while a dialog is open', async () => {
+    // Regression test: the document-level handler fired regardless of what
+    // was on top of the modal, so ArrowDown could swap the clip out from
+    // under a "Delete this clip permanently?" prompt naming the previous
+    // one — and Space played the video behind the dialog.
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    expect(wrapper.emitted('nav')).toHaveLength(1)
+
+    useConfirmStore().open = true
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    expect(wrapper.emitted('nav')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('deletes the clip the prompt named, not whichever is showing when it is answered', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(CLIP))),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete'))!
+    const clickPromise = deleteBtn.trigger('click')
+    await flushPromises()
+    // The clip moves on while the dialog is up — what prev/next used to do
+    // straight through the open dialog, and what the Security tab can still
+    // do through the clip-viewer store.
+    await wrapper.setProps({ clipId: 'c2' })
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(wrapper.emitted('deleted')).toBeUndefined()
     wrapper.unmount()
   })
 

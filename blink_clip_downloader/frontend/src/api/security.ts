@@ -17,7 +17,8 @@ export function getSecurityTimeline(params: SecurityTimelineParams = {}): Promis
   if (params.severity) query.set('severity', params.severity)
   if (params.period) query.set('period', params.period)
   const suffix = query.toString()
-  return apiGet(`/api/security/timeline${suffix ? `?${suffix}` : ''}`)
+  const queryString = suffix ? `?${suffix}` : ''
+  return apiGet(`/api/security/timeline${queryString}`)
 }
 
 export function getSecurityStats(days = 7): Promise<SecurityStats> {

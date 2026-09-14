@@ -14,11 +14,21 @@ const toast = useToastStore()
 const info = ref<VehicleSignatureInfo | null>(null)
 const resetting = ref(false)
 
+// Clicking through cameras can outpace the requests those clicks fire, and
+// nothing about the response says which camera it describes. Without a
+// token, a slow answer for the previous camera lands last and renders under
+// the new camera's name — in the one card whose entire job is reporting what
+// *this* camera learned. Same monotonic token LibraryPage uses.
+let requestSeq = 0
+
 async function load() {
+  const seq = ++requestSeq
   try {
-    info.value = await getVehicleSignature(props.camera)
+    const result = await getVehicleSignature(props.camera)
+    if (seq !== requestSeq) return
+    info.value = result
   } catch {
-    info.value = null
+    if (seq === requestSeq) info.value = null
   }
 }
 
@@ -28,14 +38,18 @@ watch(() => props.camera, load, { immediate: true })
  *  a signature that has latched onto the neighbour's car will keep
  *  "confirming" its own mistake every time it matches. */
 async function reset() {
+  // Read once, before the await: the dialog names a camera, and clearing a
+  // different one than the name the user agreed to is exactly the surprise
+  // an escape hatch must not spring.
+  const camera = props.camera
   const ok = await confirm.ask(
-    `Forget what ${props.camera} has learned about the protected vehicle? ` +
+    `Forget what ${camera} has learned about the protected vehicle? ` +
       'It will start learning again from the next analyzed clip.',
   )
   if (!ok) return
   resetting.value = true
   try {
-    await resetVehicleSignature(props.camera)
+    await resetVehicleSignature(camera)
     toast.show('Learned vehicle position cleared')
     await load()
   } catch {

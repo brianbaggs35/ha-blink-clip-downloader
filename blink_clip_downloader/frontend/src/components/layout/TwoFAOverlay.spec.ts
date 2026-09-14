@@ -119,6 +119,18 @@ describe('TwoFAOverlay', () => {
     await flushPromises()
     expect(fetch).toHaveBeenCalled()
   })
+
+  it('puts the one-time-code autocomplete on the real input element', () => {
+    // The attribute is bound rather than written literally (see the
+    // component for why), so what matters is that it still lands on the
+    // <input> PrimeVue renders — that token is what makes a phone offer the
+    // code from the SMS instead of a password manager filling the account
+    // password into a six-digit box.
+    const wrapper = mount(TwoFAOverlay)
+    const input = wrapper.find('#two-fa-code')
+    expect(input.element.tagName).toBe('INPUT')
+    expect(input.attributes('autocomplete')).toBe('one-time-code')
+  })
 })
 
 function flushPromises() {

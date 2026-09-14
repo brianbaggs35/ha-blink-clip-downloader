@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .analysis_queue import AnalysisQueue
-from .analyzer import BaseAnalyzer, create_analyzer
+from .analyzer import BaseAnalyzer, SecurityLayerSettings, create_analyzer
 from .archiver import ClipArchiver
 from .battery_monitor import BatteryMonitor
 from .config import AppConfig
@@ -532,8 +532,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             frame_strategy=config.ai_frame_strategy,
             car_cameras=car_cameras,
             car_zones=car_zones or None,
-            security_events_enabled=config.ai_security_events_enabled,
-            risk_alert_threshold=config.ai_risk_alert_threshold,
+            security_settings=SecurityLayerSettings(
+                enabled=config.ai_security_events_enabled,
+                risk_alert_threshold=config.ai_risk_alert_threshold,
+            ),
             ollama_url=config.ollama_url,
             ollama_model=config.ollama_model,
             ollama_cloud_api_key=config.ollama_cloud_api_key,

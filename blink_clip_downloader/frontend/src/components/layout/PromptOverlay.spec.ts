@@ -41,4 +41,12 @@ describe('PromptOverlay', () => {
     await wrapper.find('.modal-bg').trigger('click')
     expect(store.open).toBe(false)
   })
+
+  it('closes on Escape, so dismissal is not mouse-only', async () => {
+    const store = usePromptOverlayStore()
+    store.show('x')
+    const wrapper = mount(PromptOverlay)
+    await wrapper.find('.modal-bg').trigger('keydown.escape')
+    expect(store.open).toBe(false)
+  })
 })

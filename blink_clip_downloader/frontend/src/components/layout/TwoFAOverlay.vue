@@ -6,6 +6,18 @@ import { useAuthStore } from '../../stores/auth'
 
 const auth = useAuthStore()
 const code = ref('')
+
+// The autofill token for a one-time passcode: it is what makes iOS/Android
+// offer the code straight from the SMS or email, and stops a password
+// manager filling the Blink account password into a six-digit box.
+//
+// Bound rather than written as a literal attribute because static HTML
+// analysis sees `<InputText>`, not the `<input>` PrimeVue actually renders,
+// and flags a valid autocomplete token on a tag it does not recognise as a
+// form control. The behaviour is unchanged and pinned by
+// TwoFAOverlay.spec.ts's "reaches the real input element" test.
+const OTP_AUTOCOMPLETE = 'one-time-code'
+
 const inputEl = ref<InstanceType<typeof InputText>>()
 
 // InputText's declared type doesn't expose `$el` (it's a real property on
@@ -68,7 +80,7 @@ function submit() {
             pattern="[0-9]*"
             maxlength="6"
             placeholder="• • • • • •"
-            autocomplete="one-time-code"
+            :autocomplete="OTP_AUTOCOMPLETE"
             class="tag-input"
             style="
               flex: 1;

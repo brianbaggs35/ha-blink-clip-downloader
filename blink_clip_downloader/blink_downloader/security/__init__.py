@@ -41,7 +41,7 @@ from .narrative import (
     build_vehicle_identity_segment,
     summarize_assessment,
 )
-from .pipeline import SecurityOutcome, assess_clip
+from .pipeline import ClipMeasurements, SecurityOutcome, assess_clip
 from .scoring import (
     RiskAssessment,
     RiskFactor,
@@ -82,6 +82,7 @@ __all__ = [
     "AssetLocation",
     "AssetType",
     "Box",
+    "ClipMeasurements",
     "Detection",
     "DetectionContext",
     "DetectorThresholds",

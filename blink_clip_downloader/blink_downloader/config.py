@@ -714,10 +714,16 @@ def _bounded_int(data: dict, key: str, default: int, low: int, high: int) -> int
     value is obviously what was meant, and refusing to start over a typo in
     one of them would be worse than quietly using the bound.
     """
+    raw = data.get(key, default)
     try:
-        value = int(data.get(key, default))
+        value = int(raw)
     except (TypeError, ValueError):
-        _LOGGER.warning("Invalid %s=%r, using %d", key, data.get(key), default)
+        # Sanitized like every other option echoed back in a warning here:
+        # the value comes from options.json, so a newline in it would
+        # otherwise let it forge additional log lines (CWE-117).
+        _LOGGER.warning(
+            "Invalid %s=%r, using %d", key, _sanitize_for_log(str(raw)), default
+        )
         return default
     return max(low, min(high, value))
 
