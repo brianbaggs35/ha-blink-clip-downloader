@@ -383,6 +383,80 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('bulk star reports the ones that worked when another fails', async () => {
+    // Promise.all's all-or-nothing rejection used to swallow the whole
+    // batch: no toast, selection left open, grid never reloaded — so the
+    // clips that *were* starred stayed invisible until a manual refresh.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/clips/c1/star') return Promise.reject(new Error('boom'))
+        if (url === '/api/clips/c2/star') return Promise.resolve(jsonResponse({ id: 'c2', starred: true }))
+        if (url.startsWith('/api/clips/')) return Promise.resolve(jsonResponse(clip()))
+        if (url.startsWith('/api/clips')) return Promise.resolve(jsonResponse([clip({ id: 'c1' }), clip({ id: 'c2' })]))
+        if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
+        if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
+        if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
+        if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+        if (url.startsWith('/api/storage/gdrive/status'))
+          return Promise.resolve(
+            jsonResponse({ configured: false, connected: false, account_email: '', folder_id: '', folder_name: '' }),
+          )
+        return Promise.reject(new Error(`unexpected fetch ${url} ${opts?.method}`))
+      }),
+    )
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Select all'))!
+      .trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Star selected'))!
+      .trigger('click')
+    await flushPromises()
+    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/clips/c2/star', expect.anything())
+    expect(useToastStore().message).toBe('Could not star 1 clip(s)')
+    expect(useToastStore().isError).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('bulk star reports only the failure when none of them worked', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, opts?: RequestInit) => {
+        if (url.endsWith('/star')) return Promise.reject(new Error('boom'))
+        if (url.startsWith('/api/clips/')) return Promise.resolve(jsonResponse(clip()))
+        if (url.startsWith('/api/clips')) return Promise.resolve(jsonResponse([clip({ id: 'c1' })]))
+        if (url.startsWith('/api/cameras')) return Promise.resolve(jsonResponse(CAMERAS))
+        if (url.startsWith('/api/stats')) return Promise.resolve(jsonResponse(STATS))
+        if (url.startsWith('/api/tags')) return Promise.resolve(jsonResponse(['delivery']))
+        if (url.startsWith('/api/ai/status')) return Promise.resolve(jsonResponse(AI_STATUS))
+        if (url.startsWith('/api/storage/gdrive/status'))
+          return Promise.resolve(
+            jsonResponse({ configured: false, connected: false, account_email: '', folder_id: '', folder_name: '' }),
+          )
+        return Promise.reject(new Error(`unexpected fetch ${url} ${opts?.method}`))
+      }),
+    )
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Select all'))!
+      .trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Star selected'))!
+      .trigger('click')
+    await flushPromises()
+    expect(useToastStore().message).toBe('Could not star 1 clip(s)')
+    wrapper.unmount()
+  })
+
   it('bulk delete requires confirmation before deleting', async () => {
     mockFetch()
     const wrapper = mountLibrary()

@@ -337,6 +337,64 @@ describe('ClipModal', () => {
     expect(wrapper.findAll('.tag-item').map((el) => el.text())).toContain('new-tag×')
   })
 
+  it('reports a failed star instead of doing nothing at all', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1/star') return Promise.resolve(jsonResponse({}, false))
+        return Promise.resolve(jsonResponse(CLIP))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    await wrapper.find('.modal-actions').findAll('button')[1].trigger('click')
+    await flushPromises()
+    expect(useToastStore().message).toBe('Could not update the star')
+    expect(useToastStore().isError).toBe(true)
+    expect(wrapper.emitted('starred')).toBeUndefined()
+  })
+
+  it('takes back a tag that could not be saved rather than leaving it showing', async () => {
+    // The chip is added first so it appears instantly. Leaving it there
+    // after a failed save is the worst version: it looks saved, is not, and
+    // vanishes on the next reload with nothing having said so.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1/tags') return Promise.resolve(jsonResponse({}, false))
+        return Promise.resolve(jsonResponse(CLIP))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const input = wrapper.find('.tag-input')
+    await input.setValue('doomed')
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(wrapper.findAll('.tag-item').map((el) => el.text())).not.toContain('doomed×')
+    expect(useToastStore().message).toBe('Could not save tags')
+  })
+
+  it('puts back a tag whose removal could not be saved', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1/tags') return Promise.resolve(jsonResponse({}, false))
+        return Promise.resolve(jsonResponse(CLIP))
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.find('.tag-item .rm').trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+    expect(wrapper.findAll('.tag-item').map((el) => el.text())).toContain('delivery×')
+    expect(useToastStore().message).toBe('Could not save tags')
+  })
+
   it('adding a tag that is already on the clip is a no-op', async () => {
     // CLIP already carries 'delivery' (see the fixture above).
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })

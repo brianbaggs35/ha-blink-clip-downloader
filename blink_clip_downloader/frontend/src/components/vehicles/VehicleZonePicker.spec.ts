@@ -112,6 +112,46 @@ describe('VehicleZonePicker', () => {
     await wrapper.findComponent(SelectButton).vm.$emit('update:modelValue', 'polygon')
   }
 
+  describe('a clip with no stored thumbnail', () => {
+    it('explains why there is nothing to draw on instead of collapsing silently', async () => {
+      // A clip only has a thumbnail if download_thumbnails was on when it
+      // arrived, and nothing filters the strip down to clips that have one.
+      const wrapper = mountPicker(null)
+      await flushPromises()
+      await wrapper.find('img.picker-image').trigger('error')
+      await flushPromises()
+      expect(wrapper.text()).toContain('no stored thumbnail')
+    })
+
+    it('shows a placeholder in the strip rather than a broken image', async () => {
+      const wrapper = mountPicker(null)
+      await flushPromises()
+      await wrapper.findAll('.thumb-strip-item img')[0].trigger('error')
+      await flushPromises()
+      expect(wrapper.find('.thumb-strip-item .no-thumb').exists()).toBe(true)
+    })
+
+    it('clears the message once a frame does load', async () => {
+      const wrapper = mountPicker(null)
+      await flushPromises()
+      await wrapper.find('img.picker-image').trigger('error')
+      await flushPromises()
+      await wrapper.find('img.picker-image').trigger('load')
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('no stored thumbnail')
+    })
+
+    it('clears the message when a different clip is picked', async () => {
+      const wrapper = mountPicker(null)
+      await flushPromises()
+      await wrapper.find('img.picker-image').trigger('error')
+      await flushPromises()
+      await wrapper.findAll('.thumb-strip-item')[1].trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('no stored thumbnail')
+    })
+  })
+
   describe('preview mode (zone already saved)', () => {
     it('shows the saved snapshot with a rectangle overlay, without fetching recent clips', async () => {
       const wrapper = mountPicker(RECT_ZONE)

@@ -172,7 +172,14 @@ function downloadName(): string {
 async function toggleStar() {
   if (!props.clipId) return
   const next = !starred.value
-  await starClip(props.clipId, next)
+  try {
+    await starClip(props.clipId, next)
+  } catch {
+    // Without this the click simply did nothing: no star, no message, no
+    // hint that the request had failed at all.
+    toast.show('Could not update the star', true)
+    return
+  }
   starred.value = next
   toast.show(next ? 'Starred ★' : 'Unstarred')
   emit('starred', props.clipId, next)
@@ -200,9 +207,21 @@ function toggleTheater() {
   player?.fluid(!theater.value)
 }
 
-async function saveTags() {
+/** Persist the tag list, restoring *previous* if the request fails.
+ *
+ *  Both callers edit `currentTags` first so the chip appears or disappears
+ *  immediately. Leaving that optimistic edit in place after a failed save
+ *  was the worst version of this: the tag looked saved, was not, and
+ *  vanished on the next reload with nothing ever having said so. */
+async function saveTags(previous: string[]) {
   if (!props.clipId) return
-  await setClipTags(props.clipId, currentTags.value)
+  try {
+    await setClipTags(props.clipId, currentTags.value)
+  } catch {
+    currentTags.value = previous
+    toast.show('Could not save tags', true)
+    return
+  }
   // The Library tab's tag filter dropdown lists every distinct tag in use —
   // bump the shared refresh signal so it picks up a newly-added or just-
   // removed tag without the user having to reload the page.
@@ -216,8 +235,9 @@ async function addTag(raw: string) {
     .replace(/\s+/g, '-')
     .replace(/[^a-z0-9_-]/g, '')
   if (v && !currentTags.value.includes(v)) {
+    const previous = [...currentTags.value]
     currentTags.value.push(v)
-    await saveTags()
+    await saveTags(previous)
   }
 }
 
@@ -235,8 +255,9 @@ async function selectTagSuggestion(tag: string) {
 
 async function removeTag(tag: string) {
   if (!(await confirm(`Remove tag "${tag}" from this clip?`))) return
+  const previous = [...currentTags.value]
   currentTags.value = currentTags.value.filter((t) => t !== tag)
-  await saveTags()
+  await saveTags(previous)
 }
 
 watch(loopClip, (val) => player?.loop(val))
