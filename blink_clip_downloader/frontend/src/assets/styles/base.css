@@ -435,6 +435,19 @@ h3 {
 body.nav-collapsed {
   --nav-w: 72px;
 }
+/* The five icon buttons are wider together than the collapsed sidebar's
+   whole content box. Left unwrapped, .app-nav-icon-row's own
+   `justify-content: center` pushed the overflow out both sides equally —
+   putting the first button, the one that expands the sidebar again, at a
+   negative x that no amount of scrolling can reach (a scroll container
+   only scrolls toward positive overflow). Since the collapsed state
+   persists in localStorage, collapsing the sidebar once left it collapsed
+   for good, with no way back short of clearing site data. Wrapping keeps
+   every button inside the box at any width — one per row at this one — and
+   .app-nav's own `overflow-y: auto` carries the extra height. */
+.app-nav.collapsed .app-nav-icon-row {
+  flex-wrap: wrap;
+}
 .app-nav.collapsed .app-nav-tab {
   justify-content: center;
   padding-left: 0;

@@ -1655,8 +1655,18 @@ class ClipDatabase:
         three otherwise-independent public methods, which is a poor trade for
         a window this small and self-healing — noted here so the next reader
         does not have to work out whether it was considered.
+
+        A run that examined *no* frames is the one exception. Frame
+        extraction failing (the file moved, archived, or still being
+        written) produces a real result row saying so — but it looked at
+        nothing, so it has no evidence of its own and must not replace the
+        evidence of a run that did. Without this, re-analyzing a clip whose
+        file has since gone erases its detections and its whole entry from
+        the Security tab's timeline.
         """
         await self.add_analysis_result(result.to_dict())
+        if result.frame_count <= 0:
+            return
         await self.save_detected_objects(
             result.clip_id,
             result.detected_objects,

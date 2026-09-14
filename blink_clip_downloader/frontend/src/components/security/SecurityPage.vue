@@ -67,7 +67,13 @@ let requestSeq = 0
 
 async function load() {
   const seq = ++requestSeq
-  loading.value = true
+  // Only while there is nothing on screen yet. refresh.tick fires from other
+  // tabs' actions — including the clip modal this very timeline opens, which
+  // bumps it on delete, analyze and feedback — so flipping this
+  // unconditionally replaced a timeline someone was reading (expanded
+  // evidence rows, scroll position and all) with a spinner for something
+  // they never asked to reload. Same treatment StatusPage received.
+  if (!rows.value.length) loading.value = true
   failed.value = false
   try {
     const [timeline, statsResult] = await Promise.all([
