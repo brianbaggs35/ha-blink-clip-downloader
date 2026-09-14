@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import logging
+import time
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -32,6 +34,17 @@ from blink_downloader.analyzer import (
     is_openai_vision_model,
     is_vision_model,
 )
+from blink_downloader.security import (
+    AssetLocation,
+    ProtectedAsset,
+    RiskAssessment,
+    SecurityEvent,
+    SecurityEventType,
+    SecurityOutcome,
+    Severity,
+    build_tracks,
+)
+from blink_downloader.vision import FaceRecognitionResult, VisionHints
 
 
 def _mock_session(**overrides: object) -> MagicMock:
@@ -4151,7 +4164,7 @@ async def test_lookup_scene_baseline_none_when_scene_thumbnail_fails() -> None:
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
     fake_db = MagicMock()
     fake_db.get_scene_deviation = AsyncMock(return_value=0.5)
-    a.attach_scene_baseline_db(fake_db)
+    a.attach_database(fake_db)
 
     thumbnail, deviation = await a._lookup_scene_baseline(
         "Driveway", [b"not a real jpeg"]
@@ -4877,9 +4890,9 @@ async def test_analyze_clip_gives_face_recognition_the_full_raw_frame_pool() -> 
 
     call = fake_pipeline.process_clip.call_args
     ai_prompt_frames = call.args[0]
-    face_recognition_frames = call.kwargs["face_recognition_frames"]
+    raw_frames = call.kwargs["raw_frames"]
     assert len(ai_prompt_frames) == 2  # down-selected to max_frames
-    assert len(face_recognition_frames) == 12  # full raw extraction pool
+    assert len(raw_frames) == 12  # full raw extraction pool
 
 
 # ------------------------------------------------------------------
@@ -9266,16 +9279,16 @@ def test_scene_thumbnail_returns_none_for_empty_bytes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# attach_scene_baseline_db / analyze_clip integration
+# attach_database / analyze_clip integration
 # ---------------------------------------------------------------------------
 
 
-def test_attach_scene_baseline_db_sets_attribute() -> None:
+def test_attach_database_sets_attribute() -> None:
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
-    assert a._scene_baseline_db is None
+    assert a._db is None
     sentinel = object()
-    a.attach_scene_baseline_db(sentinel)  # type: ignore[arg-type]
-    assert a._scene_baseline_db is sentinel
+    a.attach_database(sentinel)  # type: ignore[arg-type]
+    assert a._db is sentinel
 
 
 async def _run_analyze_clip_with_mock_db(
@@ -9292,7 +9305,7 @@ async def _run_analyze_clip_with_mock_db(
     mock_db = MagicMock()
     mock_db.get_scene_deviation = AsyncMock(return_value=0.05)
     mock_db.record_scene_baseline = AsyncMock()
-    analyzer.attach_scene_baseline_db(mock_db)
+    analyzer.attach_database(mock_db)
 
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(), b""))
@@ -10305,3 +10318,519 @@ def test_create_analyzer_store_prompt_debug_defaults_false() -> None:
     a = create_analyzer("ollama", "prompt", ollama_url="http://localhost:11434")
     assert isinstance(a, ClipAnalyzer)
     assert a._store_prompt_debug is False
+
+
+# ======================================================================
+# Structured security analysis (see blink_downloader/security)
+# ======================================================================
+
+
+def _security_event(
+    event_type: SecurityEventType = SecurityEventType.CONTACT_CANDIDATE,
+    severity: Severity = Severity.SUSPICIOUS,
+    confidence: float = 0.8,
+) -> SecurityEvent:
+    return SecurityEvent(
+        event_type=event_type,
+        severity=severity,
+        confidence=confidence,
+        detail="Possible contact with the blue sedan.",
+    )
+
+
+def _hints_with_tracks(
+    *,
+    boxes: list[tuple[float, float, float, float]] | None = None,
+    label: str = "person",
+    asset: ProtectedAsset | None = None,
+    depth_similar: bool | None = None,
+    face: FaceRecognitionResult | None = None,
+) -> VisionHints:
+    """A VisionHints carrying the structured evidence the security layer reads."""
+    boxes = boxes or [(0.0, 100.0, 40.0, 300.0), (250.0, 100.0, 290.0, 300.0)]
+    hints = VisionHints()
+    hints.tracks = build_tracks(
+        [(label, 0.9, box, 1, i) for i, box in enumerate(boxes)],
+        2.0,
+        (640.0, 360.0),
+    )
+    hints.frame_size = (640.0, 360.0)
+    hints.scan_frame_count = len(boxes)
+    hints.scan_interval = 2.0
+    hints.asset = asset
+    hints.depth_similar = depth_similar
+    hints.face_recognition = face
+    return hints
+
+
+def _vehicle_asset(
+    box: tuple[float, float, float, float] = (280.0, 160.0, 460.0, 290.0),
+):
+    from blink_downloader.security.assets import (
+        AssetLocation,
+        AssetType,
+        ProtectedAsset,
+    )
+    from blink_downloader.security.vehicles import (
+        VehicleCandidate,
+        VehicleIdentification,
+    )
+
+    return ProtectedAsset(
+        name="blue sedan",
+        asset_type=AssetType.VEHICLE,
+        camera="Driveway",
+        description="blue sedan",
+        box=box,
+        location=AssetLocation.DETECTED,
+        identification=VehicleIdentification(
+            protected=VehicleCandidate(
+                track_id=9,
+                label="car",
+                box=box,
+                normalized_box=(0.4, 0.4, 0.7, 0.8),
+                position_label="the lower centre of the frame",
+            ),
+            basis="it fills 100% of the marked protection zone",
+            confidence=0.9,
+        ),
+    )
+
+
+# ---- night detection -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "expected"),
+    [
+        ("2026-01-05T02:30:00+00:00", True),
+        ("2026-01-05T21:30:00+00:00", True),
+        ("2026-01-05T13:30:00+00:00", False),
+        ("2026-01-05T05:00:00+00:00", False),
+        ("", False),
+        ("not-a-timestamp", False),
+    ],
+)
+def test_is_night(
+    monkeypatch: pytest.MonkeyPatch, timestamp: str, expected: bool
+) -> None:
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    assert BaseAnalyzer._is_night(timestamp) is expected
+
+
+# ---- assessment gating -----------------------------------------------
+
+
+def test_assess_security_is_skipped_when_disabled(analyzer: ClipAnalyzer) -> None:
+    analyzer._security_events_enabled = False
+    assert (
+        analyzer._assess_security("Driveway", _hints_with_tracks(), "", None, 3, 3)
+        is None
+    )
+
+
+def test_assess_security_without_vision_hints(analyzer: ClipAnalyzer) -> None:
+    assert analyzer._assess_security("Driveway", None, "", None, 3, 3) is None
+
+
+def test_assess_security_without_tracks(analyzer: ClipAnalyzer) -> None:
+    assert analyzer._assess_security("Driveway", VisionHints(), "", None, 3, 3) is None
+
+
+def test_assess_security_produces_events_and_prompt_text(
+    analyzer: ClipAnalyzer,
+) -> None:
+    outcome = analyzer._assess_security(
+        "Driveway",
+        _hints_with_tracks(asset=_vehicle_asset(), depth_similar=True),
+        "2026-01-05T02:30:00+00:00",
+        None,
+        3,
+        3,
+    )
+    assert outcome is not None
+    assert outcome.events
+    assert outcome.risk_score > 0
+    joined = "".join(outcome.prompt_segments)
+    assert "WHICH VEHICLE IS PROTECTED" in joined
+    assert "SECURITY EVIDENCE" in joined
+
+
+def test_security_segments_reach_the_prompt(analyzer: ClipAnalyzer) -> None:
+    outcome = analyzer._assess_security(
+        "Driveway",
+        _hints_with_tracks(asset=_vehicle_asset(), depth_similar=True),
+        "",
+        None,
+        3,
+        3,
+    )
+    prompt = analyzer._build_prompt("Driveway", security=outcome)
+    assert "SECURITY EVIDENCE" in prompt
+    assert "WHICH VEHICLE IS PROTECTED" in prompt
+
+
+def test_prompt_is_unchanged_without_a_security_outcome(
+    analyzer: ClipAnalyzer,
+) -> None:
+    assert "SECURITY EVIDENCE" not in analyzer._build_prompt("Driveway")
+
+
+# ---- risk override ---------------------------------------------------
+
+
+def _outcome_with_score(score: float) -> SecurityOutcome:
+    outcome = SecurityOutcome()
+    outcome.assessment = RiskAssessment(
+        score=score, severity=Severity.CRITICAL, events=[_security_event()]
+    )
+    return outcome
+
+
+def test_risk_override_fires_at_the_threshold(analyzer: ClipAnalyzer) -> None:
+    analyzer._risk_alert_threshold = 75
+    assert analyzer._risk_forces_alert(_outcome_with_score(75.0)) is True
+    assert analyzer._risk_forces_alert(_outcome_with_score(74.9)) is False
+
+
+def test_risk_override_is_disabled_at_zero(analyzer: ClipAnalyzer) -> None:
+    analyzer._risk_alert_threshold = 0
+    assert analyzer._risk_forces_alert(_outcome_with_score(100.0)) is False
+
+
+def test_risk_override_without_a_security_outcome(analyzer: ClipAnalyzer) -> None:
+    assert analyzer._risk_forces_alert(None) is False
+
+
+def test_risk_override_summary_leads_with_what_raised_the_flag() -> None:
+    summary = BaseAnalyzer._risk_override_summary(
+        "A person is near the driveway.", _outcome_with_score(90.0)
+    )
+    assert summary.startswith("Possible contact with the blue sedan.")
+    assert "A person is near the driveway." in summary
+
+
+def test_risk_override_summary_with_no_model_text() -> None:
+    assert (
+        BaseAnalyzer._risk_override_summary("", _outcome_with_score(90.0))
+        == "Possible contact with the blue sedan."
+    )
+
+
+def test_risk_override_summary_without_events() -> None:
+    outcome = SecurityOutcome()
+    assert "Unusual activity" in BaseAnalyzer._risk_override_summary("", outcome)
+
+
+# ---- face-recognition bypass interaction -----------------------------
+
+
+def _approved_face() -> FaceRecognitionResult:
+    return FaceRecognitionResult(
+        approved_names=["Brian"], other_names=[], unrecognized_present=False
+    )
+
+
+def test_bypass_still_applies_for_ordinary_contact_with_your_own_car() -> None:
+    """A resident opening their own car door produces contact evidence
+    several times a day; blocking the bypass on that would make routine
+    household activity permanently suspicious."""
+    hints = _hints_with_tracks(face=_approved_face())
+    assert (
+        BaseAnalyzer._face_bypass_applies(
+            hints, [_security_event(SecurityEventType.CONTACT_CANDIDATE)]
+        )
+        is True
+    )
+
+
+def test_bypass_is_withheld_when_the_car_may_have_been_struck() -> None:
+    """Recognition explains who was there; it cannot explain away a dent."""
+    hints = _hints_with_tracks(face=_approved_face())
+    assert (
+        BaseAnalyzer._face_bypass_applies(
+            hints,
+            [_security_event(SecurityEventType.IMPACT_CANDIDATE, Severity.CRITICAL)],
+        )
+        is False
+    )
+
+
+def test_bypass_without_events_behaves_as_before() -> None:
+    assert BaseAnalyzer._face_bypass_applies(_hints_with_tracks(face=_approved_face()))
+
+
+def test_bypass_still_requires_an_unambiguous_match() -> None:
+    hints = _hints_with_tracks(
+        face=FaceRecognitionResult(
+            approved_names=["Brian"], other_names=[], unrecognized_present=True
+        )
+    )
+    assert BaseAnalyzer._face_bypass_applies(hints, []) is False
+
+
+# ---- learned vehicle signature ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_vehicle_signature_is_not_looked_up_without_car_protection(
+    analyzer: ClipAnalyzer,
+) -> None:
+    mock_db = MagicMock()
+    mock_db.get_vehicle_signature = AsyncMock(return_value="sig")
+    analyzer.attach_database(mock_db)
+    assert await analyzer._load_vehicle_signature("Driveway") is None
+    mock_db.get_vehicle_signature.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_vehicle_signature_is_looked_up_for_a_protected_camera(
+    analyzer: ClipAnalyzer,
+) -> None:
+    analyzer.update_car_description("blue sedan")
+    mock_db = MagicMock()
+    mock_db.get_vehicle_signature = AsyncMock(return_value="sig")
+    analyzer.attach_database(mock_db)
+    assert await analyzer._load_vehicle_signature("Driveway") == "sig"
+
+
+@pytest.mark.asyncio
+async def test_vehicle_signature_lookup_failure_is_not_fatal(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """A signature is an optimisation; without it identification falls back
+    to the drawn zone exactly as it did before signatures existed."""
+    analyzer.update_car_description("blue sedan")
+    mock_db = MagicMock()
+    mock_db.get_vehicle_signature = AsyncMock(side_effect=RuntimeError("boom"))
+    analyzer.attach_database(mock_db)
+    assert await analyzer._load_vehicle_signature("Driveway") is None
+
+
+@pytest.mark.asyncio
+async def test_vehicle_signature_is_not_looked_up_without_a_database(
+    analyzer: ClipAnalyzer,
+) -> None:
+    analyzer.update_car_description("blue sedan")
+    assert await analyzer._load_vehicle_signature("Driveway") is None
+
+
+@pytest.mark.asyncio
+async def test_vehicle_signature_is_stored_after_a_confident_sighting(
+    analyzer: ClipAnalyzer,
+) -> None:
+    mock_db = MagicMock()
+    mock_db.save_vehicle_signature = AsyncMock()
+    analyzer.attach_database(mock_db)
+    hints = VisionHints()
+    hints.vehicle_signature_update = "sig"  # type: ignore[assignment]
+    await analyzer._store_vehicle_signature("Driveway", hints)
+    mock_db.save_vehicle_signature.assert_awaited_once_with("Driveway", "sig")
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_stored_when_there_is_no_signature_update(
+    analyzer: ClipAnalyzer,
+) -> None:
+    mock_db = MagicMock()
+    mock_db.save_vehicle_signature = AsyncMock()
+    analyzer.attach_database(mock_db)
+    await analyzer._store_vehicle_signature("Driveway", VisionHints())
+    await analyzer._store_vehicle_signature("Driveway", None)
+    mock_db.save_vehicle_signature.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_vehicle_signature_save_failure_is_not_fatal(
+    analyzer: ClipAnalyzer,
+) -> None:
+    mock_db = MagicMock()
+    mock_db.save_vehicle_signature = AsyncMock(side_effect=RuntimeError("boom"))
+    analyzer.attach_database(mock_db)
+    hints = VisionHints()
+    hints.vehicle_signature_update = "sig"  # type: ignore[assignment]
+    await analyzer._store_vehicle_signature("Driveway", hints)
+
+
+# ---- logging ---------------------------------------------------------
+
+
+def test_vehicle_identification_summary_tokens() -> None:
+    assert BaseAnalyzer._describe_vehicle_identification(VisionHints()) == "n/a"
+
+    hints = _hints_with_tracks(asset=_vehicle_asset())
+    assert "confident" in BaseAnalyzer._describe_vehicle_identification(hints)
+
+    assert hints.asset is not None
+    hints.asset.identification.confidence = 0.1  # type: ignore[union-attr]
+    assert "tentative" in BaseAnalyzer._describe_vehicle_identification(hints)
+
+    hints.asset.identification.protected = None  # type: ignore[union-attr]
+    hints.asset.location = AssetLocation.ZONE_ABSENT
+    assert BaseAnalyzer._describe_vehicle_identification(hints) == (
+        "absent(zone_absent)"
+    )
+
+
+def test_analysis_summary_is_logged_without_names_or_prompt_text(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    hints = _hints_with_tracks(asset=_vehicle_asset(), face=_approved_face())
+    outcome = analyzer._assess_security("Driveway", hints, "", None, 2, 2)
+    with caplog.at_level(logging.INFO, logger="blink_downloader.analyzer"):
+        analyzer._log_analysis_summary("c1", "Driveway", [b"f"], hints, outcome, True)
+    message = caplog.text
+    assert "clip='c1'" in message
+    assert "tracks=1" in message
+    assert "Brian" not in message
+
+
+def test_analysis_summary_without_a_security_outcome(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="blink_downloader.analyzer"):
+        analyzer._log_analysis_summary("c1", "Driveway", [b"f"], None, None, False)
+    assert "risk=n/a" in caplog.text
+    assert "missing=none" in caplog.text
+
+
+# ---- result shape ----------------------------------------------------
+
+
+def test_analysis_result_carries_the_security_assessment() -> None:
+    result = AnalysisResult(
+        clip_id="c1",
+        camera="Driveway",
+        model="m",
+        response_text="",
+        is_suspicious=True,
+        confidence=0.8,
+        summary="s",
+        frame_count=3,
+        analysis_duration=1.0,
+        analyzed_at="2026-01-05T00:00:00+00:00",
+        risk_score=82.0,
+        severity="critical",
+        event_type="impact_candidate",
+        evidence_quality=0.61,
+        risk_override_applied=True,
+        security_events=[_security_event()],
+    )
+    payload = result.to_dict()
+    assert payload["risk_score"] == 82.0
+    assert payload["severity"] == "critical"
+    assert payload["event_type"] == "impact_candidate"
+    assert payload["evidence_quality"] == 0.61
+    assert payload["risk_override_applied"] is True
+    # Events are persisted to their own table, not into the analysis row.
+    assert "security_events" not in payload
+
+
+@pytest.mark.asyncio
+async def test_risk_override_flags_a_clip_the_model_called_unremarkable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """End-to-end: a small vision model overlooking someone at a car window
+    is an observed failure, not a hypothetical one, so strong code-computed
+    evidence is allowed to raise the flag the model missed."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="uniform",
+        max_frames=1,
+    )
+    outcome = _outcome_with_score(88.0)
+    with (
+        patch.object(ClipAnalyzer, "_assess_security", return_value=outcome),
+        caplog.at_level(logging.INFO, logger="blink_downloader.analyzer"),
+    ):
+        result = await _analyze_with_response(
+            analyzer,
+            json.dumps(
+                {
+                    "suspicious": False,
+                    "confidence": 0.2,
+                    "description": "Nothing unusual.",
+                }
+            ),
+        )
+
+    assert result.is_suspicious is True
+    assert result.risk_override_applied is True
+    assert result.confidence >= 0.7
+    assert result.summary.startswith("Possible contact with the blue sedan.")
+    assert result.risk_score == 88.0
+    assert result.severity == "critical"
+    assert "Risk override flagged" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_risk_override_leaves_a_verdict_the_model_already_made() -> None:
+    """One-directional by design: it can raise a flag, never lower one."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="uniform",
+        max_frames=1,
+    )
+    with patch.object(
+        ClipAnalyzer, "_assess_security", return_value=_outcome_with_score(88.0)
+    ):
+        result = await _analyze_with_response(
+            analyzer,
+            json.dumps(
+                {
+                    "suspicious": True,
+                    "confidence": 0.9,
+                    "description": "Someone at the car.",
+                }
+            ),
+        )
+    assert result.is_suspicious is True
+    assert result.risk_override_applied is False
+    assert result.summary == "Someone at the car."
+
+
+@pytest.mark.asyncio
+async def test_a_low_risk_score_never_overrides_the_model() -> None:
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        frame_strategy="uniform",
+        max_frames=1,
+    )
+    with patch.object(
+        ClipAnalyzer, "_assess_security", return_value=_outcome_with_score(20.0)
+    ):
+        result = await _analyze_with_response(
+            analyzer,
+            json.dumps(
+                {"suspicious": False, "confidence": 0.2, "description": "Quiet."}
+            ),
+        )
+    assert result.is_suspicious is False
+    assert result.risk_override_applied is False
+    assert result.risk_score == 20.0
+
+
+async def _analyze_with_response(
+    analyzer: ClipAnalyzer, response_json: str
+) -> AnalysisResult:
+    """Drive one full analyze_clip() with a canned provider response."""
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(), b""))
+    mock_proc.returncode = 0
+
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"response": response_json})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    analyzer._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        return await analyzer.analyze_clip("/clips/test.mp4", "c1", "Driveway")

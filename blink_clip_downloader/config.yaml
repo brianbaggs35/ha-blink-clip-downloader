@@ -409,6 +409,38 @@ options:
   # rate limits. Optional; create one at https://huggingface.co/settings/tokens.
   hf_token: ""
 
+  # --- Structured Security Analysis ---
+  # Turns the object detector's per-frame boxes into tracks, security events
+  # (entered the protection zone, approached the vehicle, lingered, possible
+  # contact, retreated) and a 0-100 risk score, then gives the AI that
+  # evidence to verify rather than asking it to work the geometry out from
+  # stills. Also powers the Security tab's timeline. Costs no extra model
+  # inference on top of object detection, so there is little reason to turn
+  # it off; with Enhanced Detection disabled it simply produces nothing.
+  ai_security_events_enabled: true
+  # How many evenly-spaced frames object detection runs over when building
+  # the above. This is the one setting that trades detection cost against
+  # how much of a clip's behaviour — how long someone stayed, whether they
+  # approached or backed away — can be seen at all. The frames sent to the
+  # AI model itself are unaffected (that is still ai_max_frames). Lower this
+  # on very constrained hardware; 0 disables the wider scan entirely, which
+  # makes every reported duration unreliable.
+  ai_temporal_scan_frames: 12
+  # How many heavy computer-vision stages may run at once across all clips
+  # being analyzed. 1 is right for a Raspberry Pi 5 and is the default:
+  # these stages already run one after another within a single clip, so this
+  # only serializes a multi-clip backlog that would contend for the same CPU
+  # regardless — while stopping several large models from being loaded at
+  # the same moment. Raise it only on hardware with real spare capacity.
+  ai_cv_concurrency: 1
+  # Risk score (0-100) at or above which a clip is flagged suspicious even
+  # when the AI model judged it unremarkable. The default (75) is the
+  # "critical" band only: possible contact or impact with the protected
+  # vehicle, backed by depth or segmentation evidence. Set to 0 to disable
+  # and leave the model's verdict final. This can only ever raise a flag the
+  # model missed, never clear one it raised.
+  ai_risk_alert_threshold: 75
+
   # --- Extended Notifications (AI alerts) ---
   # HA mobile app entity to push AI suspicious-activity alerts to.
   mobile_app_target: ""
@@ -531,6 +563,10 @@ schema:
   # yamllint enable rule:line-length
   ai_face_recognition_enabled: "bool"
   hf_token: "password?"
+  ai_security_events_enabled: "bool"
+  ai_temporal_scan_frames: "int(0,60)"
+  ai_cv_concurrency: "int(1,8)"
+  ai_risk_alert_threshold: "int(0,100)"
   mobile_app_target: "str?"
   mobile_app_enabled: "bool"
   smtp_host: "str?"

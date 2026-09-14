@@ -22,7 +22,9 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from blink_downloader import vision as vision_module
 from blink_downloader.database import ClipDatabase
+from blink_downloader.security.vehicles import VehicleSignature
 from blink_downloader.vision import (
     ContactResult,
     ContactSegmenter,
@@ -45,8 +47,13 @@ from blink_downloader.vision import (
     _build_recognition_hint,
     _build_tracking_hint,
     _car_zone_pixel_box,
+    _crop_region,
+    _detection_distance_pair,
     _is_huggingface_auth_error,
     _proximity_label,
+    _region_appearance_change,
+    _select_scan_frames,
+    _vehicle_histogram,
     cosine_similarity,
     is_face_recognition_available,
     torch_cpu_compatible,
@@ -2132,13 +2139,16 @@ async def test_vision_pipeline_car_zone_disambiguates_protected_vehicle(
     assert "well away from the detected vehicle" in hints.detection_hint
 
 
-async def test_vision_pipeline_without_car_zone_falls_back_to_closest_vehicle(
+async def test_vision_pipeline_without_car_zone_prefers_the_largest_vehicle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Same ambiguous scene as the zone-disambiguation test above but with
-    no car_zone configured for this camera - confirms the pre-existing
-    "closest vehicle wins" behavior is still the fallback, not a
-    regression introduced by adding zone-awareness."""
+    """Same ambiguous scene as the zone-disambiguation test above, with no
+    car_zone configured. The old fallback was "whichever vehicle the person
+    is standing next to", which is precisely how a neighbour at their own
+    car became activity at the protected one. With nothing to disambiguate
+    on, the largest vehicle is assumed instead — the protected car is
+    normally the one parked closest to its own camera — and the prompt says
+    outright that the choice is not confident."""
     mock_cv2 = MagicMock()
     mock_cv2.IMREAD_COLOR = 1
     mock_cv2.imdecode.return_value = np.zeros((200, 200, 3), dtype=np.uint8)
@@ -2168,7 +2178,11 @@ async def test_vision_pipeline_without_car_zone_falls_back_to_closest_vehicle(
         car_protection_applies=True,
     )
     assert hints.detection_hint is not None
-    assert "overlapping the detected vehicle's outline" in hints.detection_hint
+    assert "well away from the detected vehicle" in hints.detection_hint
+    assert hints.asset is not None
+    assert hints.asset.confident is False
+    assert hints.asset.identification is not None
+    assert "draw a zone" in hints.asset.identification.basis
 
 
 async def test_vision_pipeline_tracking_hint_across_multiple_frames(
@@ -2267,9 +2281,7 @@ async def test_vision_pipeline_face_recognition_prefers_face_recognition_frames_
     config = VisionConfig(face_recognition_enabled=True)
     pipeline = VisionPipeline(config, db=db)
     with patch.object(FaceEmbedder, "embed", side_effect=_embed):
-        hints = await pipeline.process_clip(
-            prompt_frames, face_recognition_frames=wider_pool
-        )
+        hints = await pipeline.process_clip(prompt_frames, raw_frames=wider_pool)
 
     assert seen_frames == wider_pool
     assert hints.face_recognition is not None
@@ -2363,3 +2375,496 @@ def test_huggingface_auth_error_status_code_is_detected() -> None:
     error = ForbiddenError("request rejected")
 
     assert _is_huggingface_auth_error(error) is True
+
+
+# ----------------------------------------------------------------------
+# CV concurrency limiting
+# ----------------------------------------------------------------------
+
+
+def test_configure_cv_concurrency_replaces_the_semaphore() -> None:
+    original = vision_module._cv_limit
+    try:
+        vision_module.configure_cv_concurrency(4)
+        first = vision_module._cv_slot()
+        assert vision_module._cv_limit == 4
+        # Same limit again must not throw away a semaphore stages are using.
+        vision_module.configure_cv_concurrency(4)
+        assert vision_module._cv_slot() is first
+        vision_module.configure_cv_concurrency(2)
+        assert vision_module._cv_slot() is not first
+    finally:
+        vision_module.configure_cv_concurrency(original)
+        vision_module._cv_semaphore = None
+
+
+def test_configure_cv_concurrency_floors_at_one() -> None:
+    """Zero would deadlock every stage rather than disabling them, which is
+    what the per-stage toggles are for."""
+    original = vision_module._cv_limit
+    try:
+        vision_module.configure_cv_concurrency(0)
+        assert vision_module._cv_limit == 1
+    finally:
+        vision_module.configure_cv_concurrency(original)
+        vision_module._cv_semaphore = None
+
+
+async def test_heavy_stages_do_not_run_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two clips analyzed at once must not have two torch models computing
+    simultaneously — on a Raspberry Pi that is the difference between slow
+    and wedged."""
+    vision_module.configure_cv_concurrency(1)
+    vision_module._cv_semaphore = None
+    in_flight = 0
+    peak = 0
+
+    def _slow_detect(_frames: list[bytes]) -> list[DetectedObject]:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        time.sleep(0.02)
+        in_flight -= 1
+        return []
+
+    detector = ObjectDetector()
+    detector._model = MagicMock()
+    monkeypatch.setattr(detector, "_detect_sync", _slow_detect)
+
+    await asyncio.gather(*(detector.detect([b"frame"]) for _ in range(4)))
+    assert peak == 1
+    vision_module._cv_semaphore = None
+
+
+# ----------------------------------------------------------------------
+# temporal scan frame selection
+# ----------------------------------------------------------------------
+
+
+def test_select_scan_frames_keeps_everything_under_the_cap() -> None:
+    frames = [b"a", b"b", b"c"]
+    assert _select_scan_frames(frames, 12, 2.0) == (frames, 2.0)
+
+
+def test_select_scan_frames_disabled_cap_keeps_everything() -> None:
+    frames = [b"a", b"b", b"c"]
+    assert _select_scan_frames(frames, 0, 2.0) == (frames, 2.0)
+
+
+def test_select_scan_frames_thins_evenly_and_reports_the_real_interval() -> None:
+    """The interval has to grow with the stride or every duration, speed and
+    trajectory computed from these frames is wrong."""
+    frames = [bytes([i]) for i in range(30)]
+    selected, interval = _select_scan_frames(frames, 10, 2.0)
+    assert len(selected) == 10
+    assert selected[0] == frames[0]
+    assert selected[1] == frames[3]
+    assert interval == pytest.approx(6.0)
+
+
+# ----------------------------------------------------------------------
+# colour fingerprints and asset appearance change
+# ----------------------------------------------------------------------
+
+
+def _solid_jpeg(color: tuple[int, int, int], size: tuple[int, int] = (64, 64)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="JPEG", quality=95)
+    return buf.getvalue()
+
+
+def _noisy_jpeg(seed: int, size: tuple[int, int] = (64, 64)) -> bytes:
+    rng = np.random.default_rng(seed)
+    array = rng.integers(0, 255, (size[1], size[0], 3), dtype=np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(array).save(buf, format="JPEG", quality=95)
+    return buf.getvalue()
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_vehicle_histogram_separates_two_colours() -> None:
+    red = _vehicle_histogram(_solid_jpeg((200, 20, 20)), (0, 0, 64, 64))
+    blue = _vehicle_histogram(_solid_jpeg((20, 20, 200)), (0, 0, 64, 64))
+    assert len(red) == 64
+    assert sum(red) == pytest.approx(1.0)
+    assert sum(r * b for r, b in zip(red, blue)) == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_vehicle_histogram_clamps_a_box_outside_the_frame() -> None:
+    assert _vehicle_histogram(_solid_jpeg((10, 200, 10)), (500, 500, 900, 900))
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_vehicle_histogram_of_an_undecodable_frame_is_empty() -> None:
+    assert _vehicle_histogram(b"not a jpeg", (0, 0, 10, 10)) == ()
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_appearance_change_is_near_zero_for_an_unchanged_region() -> None:
+    frame = _noisy_jpeg(1)
+    assert _region_appearance_change(frame, frame, (0, 0, 64, 64)) == pytest.approx(
+        0.0, abs=0.01
+    )
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_appearance_change_ignores_a_uniform_lighting_shift() -> None:
+    """A cloud passing or a floodlight switching on must not read as damage
+    to the vehicle."""
+    rng = np.random.default_rng(7)
+    base = rng.integers(20, 120, (64, 64, 3), dtype=np.uint8)
+    brighter = np.clip(base.astype("int16") + 90, 0, 255).astype(np.uint8)
+
+    def _encode(array: np.ndarray) -> bytes:
+        buf = io.BytesIO()
+        Image.fromarray(array).save(buf, format="JPEG", quality=95)
+        return buf.getvalue()
+
+    change = _region_appearance_change(_encode(base), _encode(brighter), (0, 0, 64, 64))
+    assert change is not None
+    assert change < 0.15
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_appearance_change_is_large_for_a_structurally_different_region() -> None:
+    change = _region_appearance_change(_noisy_jpeg(1), _noisy_jpeg(2), (0, 0, 64, 64))
+    assert change is not None
+    assert change > 0.25
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_appearance_change_of_a_featureless_region_is_zero_not_nan() -> None:
+    """A crop with no variance would divide by zero when normalized, and a
+    NaN reaching the impact rule would make every threshold test silently
+    false. It must read as "nothing changed" instead."""
+    flat = _solid_jpeg((128, 128, 128))
+    assert _region_appearance_change(flat, flat, (0, 0, 64, 64)) == 0.0
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_appearance_change_of_an_undecodable_frame_is_unavailable() -> None:
+    assert _region_appearance_change(b"junk", _noisy_jpeg(1), (0, 0, 64, 64)) is None
+
+
+def test_appearance_change_rejects_an_unexpected_resize_result(
+    real_cv2: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        real_cv2,
+        "resize",
+        lambda _img, _size: np.zeros((4, 4), dtype=np.uint8),
+        raising=False,
+    )
+    assert (
+        _region_appearance_change(_noisy_jpeg(1), _noisy_jpeg(2), (0, 0, 64, 64))
+        is None
+    )
+
+
+def test_appearance_change_survives_a_failure_in_the_resize(
+    real_cv2: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every stage in this module reports a failure as missing evidence
+    rather than an error, and this is the least important of them."""
+    monkeypatch.setattr(
+        real_cv2, "resize", MagicMock(side_effect=RuntimeError("boom")), raising=False
+    )
+    assert (
+        _region_appearance_change(_noisy_jpeg(1), _noisy_jpeg(2), (0, 0, 64, 64))
+        is None
+    )
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_crop_region_clamps_a_box_that_runs_off_the_frame() -> None:
+    img = np.zeros((20, 30, 3), dtype=np.uint8)
+    crop = _crop_region(img, (-50.0, -50.0, 500.0, 500.0))
+    assert crop.shape[:2] == (20, 30)
+
+
+@pytest.mark.usefixtures("real_cv2")
+def test_crop_region_of_a_degenerate_box_is_never_empty() -> None:
+    img = np.zeros((20, 30, 3), dtype=np.uint8)
+    assert _crop_region(img, (10.0, 10.0, 10.0, 10.0)).size > 0
+
+
+def test_detection_distance_pair_needs_a_subject() -> None:
+    detections = [DetectedObject("car", 0.9, (0.0, 0.0, 10.0, 10.0), 1, 0)]
+    assert (
+        _detection_distance_pair(detections, None, (0.0, 0.0, 10.0, 10.0), "Silver Kia")
+        is None
+    )
+
+
+# ----------------------------------------------------------------------
+# security-layer integration
+# ----------------------------------------------------------------------
+
+
+def _yolo_env(
+    monkeypatch: pytest.MonkeyPatch,
+    boxes: _FakeBoxes,
+    names: dict[int, str],
+    *,
+    frame: tuple[int, int] = (200, 200),
+) -> None:
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((frame[1], frame[0], 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+
+    fake_model = MagicMock()
+    fake_model.track.return_value = [_FakeYoloResult(boxes, names)]
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+    monkeypatch.setitem(sys.modules, "transformers", None)
+
+
+async def test_pipeline_builds_tracks_over_the_temporal_scan_not_the_prompt_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scan's own interval is what track timings must be based on —
+    the prompt frames are motion-selected and deliberately uneven."""
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(
+            cls=[0],
+            conf=[0.9],
+            xyxy=[(10.0, 10.0, 30.0, 90.0)],
+            ids=[1],
+        ),
+        {0: "person"},
+    )
+    pipeline = VisionPipeline(
+        VisionConfig(enhanced_detection_enabled=True, temporal_scan_frames=3)
+    )
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        raw_frames=[_real_jpeg_bytes(size=(200, 200))] * 9,
+        frame_interval=2.0,
+    )
+    assert hints.scan_frame_count == 3
+    assert hints.scan_interval == pytest.approx(6.0)
+    assert hints.tracks is not None
+    assert hints.tracks[0].dwell_seconds == pytest.approx(12.0)
+    assert hints.frame_size == (200.0, 200.0)
+
+
+async def test_pipeline_skips_the_security_layer_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(10.0, 10.0, 30.0, 90.0)], ids=[1]),
+        {0: "person"},
+    )
+    pipeline = VisionPipeline(
+        VisionConfig(enhanced_detection_enabled=True, security_events_enabled=False)
+    )
+    hints = await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
+    assert hints.detections
+    assert hints.tracks is None
+    assert hints.asset is None
+
+
+async def test_pipeline_records_unavailable_sources_when_detection_is_off() -> None:
+    pipeline = VisionPipeline(VisionConfig())
+    hints = await pipeline.process_clip([b"frame"])
+    assert hints.unavailable_sources == [
+        "object detection",
+        "depth estimation",
+        "contact segmentation",
+        "face recognition",
+    ]
+
+
+async def test_pipeline_stops_cleanly_when_the_frame_cannot_be_measured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(10.0, 10.0, 30.0, 90.0)], ids=[1]),
+        {0: "person"},
+    )
+    monkeypatch.setattr(vision_module, "_frame_dimensions", lambda _frame: None)
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
+    assert hints.detections
+    assert hints.frame_size is None
+    assert hints.tracks is None
+
+
+async def test_pipeline_learns_a_vehicle_signature_from_a_confident_sighting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(cls=[2], conf=[0.95], xyxy=[(20.0, 20.0, 180.0, 140.0)], ids=[2]),
+        {2: "car"},
+    )
+    monkeypatch.setattr(vision_module, "_vehicle_histogram", lambda _f, _b: (1.0, 0.0))
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+        car_zone={"x_min": 0.1, "y_min": 0.1, "x_max": 0.9, "y_max": 0.7},
+        camera="Driveway",
+    )
+    assert hints.asset is not None
+    assert hints.asset.confident is True
+    assert hints.vehicle_signature_update is not None
+    assert hints.vehicle_signature_update.sample_count == 1
+    assert hints.vehicle_signature_update.histogram == (1.0, 0.0)
+
+
+async def test_pipeline_blends_into_an_existing_vehicle_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(cls=[2], conf=[0.95], xyxy=[(20.0, 20.0, 180.0, 140.0)], ids=[2]),
+        {2: "car"},
+    )
+    monkeypatch.setattr(vision_module, "_vehicle_histogram", lambda _f, _b: (1.0, 0.0))
+    existing = VehicleSignature(
+        box=(0.1, 0.1, 0.9, 0.7), histogram=(0.0, 1.0), sample_count=9
+    )
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+        car_zone={"x_min": 0.1, "y_min": 0.1, "x_max": 0.9, "y_max": 0.7},
+        camera="Driveway",
+        vehicle_signature=existing,
+    )
+    assert hints.vehicle_signature_update is not None
+    assert hints.vehicle_signature_update.sample_count == 10
+
+
+async def test_pipeline_does_not_learn_from_an_unconfident_identification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Learning from a guess is how a signature drifts onto the neighbour's
+    car and stays there."""
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(
+            cls=[2, 2],
+            conf=[0.9, 0.9],
+            xyxy=[(10.0, 10.0, 90.0, 90.0), (100.0, 100.0, 190.0, 190.0)],
+            ids=[2, 3],
+        ),
+        {2: "car"},
+    )
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+        camera="Driveway",
+    )
+    assert hints.asset is not None
+    assert hints.asset.confident is False
+    assert hints.vehicle_signature_update is None
+
+
+async def test_pipeline_compares_candidate_colours_against_a_learned_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(
+            cls=[2, 2],
+            conf=[0.9, 0.95],
+            xyxy=[(10.0, 10.0, 90.0, 90.0), (100.0, 100.0, 190.0, 190.0)],
+            ids=[2, 3],
+        ),
+        {2: "car"},
+    )
+    fingerprints = {
+        (10.0, 10.0, 90.0, 90.0): (1.0, 0.0),
+        (100.0, 100.0, 190.0, 190.0): (0.0, 1.0),
+    }
+    monkeypatch.setattr(
+        vision_module,
+        "_vehicle_histogram",
+        lambda _frame, box: fingerprints.get(tuple(box), (0.5, 0.5)),
+    )
+    signature = VehicleSignature(
+        box=(0.05, 0.05, 0.45, 0.45), histogram=(1.0, 0.0), sample_count=8
+    )
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+        camera="Driveway",
+        vehicle_signature=signature,
+    )
+    assert hints.asset is not None
+    assert hints.asset.identification is not None
+    protected = hints.asset.identification.protected
+    assert protected is not None
+    assert protected.track_id == 2
+    assert protected.appearance_similarity == pytest.approx(1.0)
+
+
+async def test_pipeline_skips_colour_matching_for_non_vehicle_tracks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only vehicles are candidates for "which car is yours"; fingerprinting
+    a person would be wasted decode work at best."""
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(
+            cls=[0, 2],
+            conf=[0.9, 0.95],
+            xyxy=[(5.0, 5.0, 25.0, 95.0), (20.0, 20.0, 180.0, 140.0)],
+            ids=[1, 2],
+        ),
+        {0: "person", 2: "car"},
+    )
+    fingerprinted: list[tuple[float, ...]] = []
+
+    def _histogram(_frame: bytes, box: tuple[float, ...]) -> tuple[float, ...]:
+        fingerprinted.append(tuple(box))
+        return (1.0, 0.0)
+
+    monkeypatch.setattr(vision_module, "_vehicle_histogram", _histogram)
+    signature = VehicleSignature(
+        box=(0.1, 0.1, 0.9, 0.7), histogram=(1.0, 0.0), sample_count=8
+    )
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+        camera="Driveway",
+        vehicle_signature=signature,
+    )
+    assert (5.0, 5.0, 25.0, 95.0) not in fingerprinted
+
+
+async def test_pipeline_pair_stages_need_a_subject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(cls=[2], conf=[0.95], xyxy=[(20.0, 20.0, 180.0, 140.0)], ids=[2]),
+        {2: "car"},
+    )
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        car_description="Silver Kia",
+        car_protection_applies=True,
+        camera="Driveway",
+    )
+    assert hints.contact_track_id is None
+    assert "depth estimation" in hints.unavailable_sources

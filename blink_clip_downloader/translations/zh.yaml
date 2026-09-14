@@ -355,6 +355,28 @@ configuration:
       可选的 Hugging Face 访问令牌，用于验证计算机视觉模型下载身份并提高
       Hugging Face Hub 的速率限制。可在
       https://huggingface.co/settings/tokens 创建。请妥善保密。
+  ai_security_events_enabled:
+    name: 启用结构化安全分析
+    description: >-
+      将目标检测器的逐帧边界框转化为被跟踪的对象、安全事件（进入保护区、
+      靠近车辆、逗留、可能接触、退开）以及 0-100 的风险评分，并将这些证据交给
+      AI 去核实，而不是让它从静态画面推断几何关系。同时为"安全"标签页的时间线
+      提供数据。在增强检测之上不会增加额外的模型推理开销。
+  ai_temporal_scan_frames:
+    name: 行为扫描帧数
+    description: >-
+      为上述安全分析运行目标检测时所使用的等间隔帧数。在检测开销与能观察到多少
+      片段行为之间取得平衡。不会改变 AI 模型本身收到的帧数。0 表示关闭扩展扫描。
+  ai_cv_concurrency:
+    name: 计算机视觉并发数
+    description: >-
+      在所有正在分析的片段中，最多允许同时运行多少个重量级计算机视觉阶段。
+      树莓派 5 上取 1 最合适，这也是默认值。仅在确有余量的硬件上调高。
+  ai_risk_alert_threshold:
+    name: 风险评分告警阈值
+    description: >-
+      即使 AI 模型认为并无异常，风险评分达到该值（0-100）时仍将片段标记为可疑。
+      默认值 75 仅覆盖"严重"区间。设为 0 则以模型的判定为准。
   mobile_app_target:
     name: 手机应用目标实体
     description: >-

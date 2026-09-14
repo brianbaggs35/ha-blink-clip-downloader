@@ -343,6 +343,38 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # higher rate limits. Optional; get one from https://huggingface.co/settings/tokens.
     hf_token: str = ""
 
+    # --- Structured security analysis (see blink_downloader/security) ---
+    # Turns the object detector's per-frame boxes into tracks, security
+    # events and a risk score, and feeds them to the AI provider as evidence
+    # to verify rather than facts to re-derive. On by default because it
+    # costs no extra model inference on top of object detection — with
+    # ai_enhanced_detection_enabled off it simply produces nothing.
+    ai_security_events_enabled: bool = True
+    # How many evenly-spaced frames the temporal scan runs object detection
+    # over. This is the one knob that trades detection cost against how much
+    # of a clip's *behaviour* — how long someone stayed, whether they
+    # approached or retreated — the security layer can see. The frames the
+    # AI model itself receives are unaffected (ai_max_frames still governs
+    # those). 0 falls back to scanning only the frames chosen for the
+    # prompt, which are deliberately unevenly spaced and therefore give
+    # unreliable timings.
+    ai_temporal_scan_frames: int = 12
+    # How many heavy computer-vision stages may run at once across every
+    # clip being analyzed. One is right for a Raspberry Pi: these stages are
+    # already sequential within a clip, so the limit only serializes a
+    # multi-clip backlog that would otherwise contend for the same CPU
+    # anyway — while stopping four torch models from being resident
+    # simultaneously. Raise it only on hardware with real spare capacity.
+    ai_cv_concurrency: int = 1
+    # Deterministic risk score (0-100) at or above which a clip is flagged
+    # suspicious even if the AI model judged it unremarkable. 0 disables the
+    # override entirely, leaving the model's verdict final. The default only
+    # fires in the "critical" band — strong, code-computed evidence of
+    # physical interference with a protected asset. One-directional by
+    # design: this can raise a verdict the model missed but never lower one
+    # it made.
+    ai_risk_alert_threshold: int = 75
+
     # --- Extended Notifications (AI alerts) ---
     mobile_app_target: str = ""
     mobile_app_enabled: bool = False
@@ -663,6 +695,22 @@ def _parse_ai_camera_kwargs(data: dict) -> dict[str, Any]:
     }
 
 
+def _bounded_int(data: dict, key: str, default: int, low: int, high: int) -> int:
+    """Read an integer option, clamped into ``[low, high]``.
+
+    A value outside the range is clamped rather than rejected: every option
+    using this is a resource or sensitivity dial where the nearest legal
+    value is obviously what was meant, and refusing to start over a typo in
+    one of them would be worse than quietly using the bound.
+    """
+    try:
+        value = int(data.get(key, default))
+    except (TypeError, ValueError):
+        _LOGGER.warning("Invalid %s=%r, using %d", key, data.get(key), default)
+        return default
+    return max(low, min(high, value))
+
+
 def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
     return {
         "ai_prompt_debug_enabled": bool(data.get("ai_prompt_debug_enabled", False)),
@@ -681,6 +729,18 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
             data.get("ai_face_recognition_enabled", False)
         ),
         "hf_token": str(data.get("hf_token", "") or "").strip(),
+        "ai_security_events_enabled": bool(
+            data.get("ai_security_events_enabled", True)
+        ),
+        "ai_temporal_scan_frames": _bounded_int(
+            data, "ai_temporal_scan_frames", default=12, low=0, high=60
+        ),
+        "ai_cv_concurrency": _bounded_int(
+            data, "ai_cv_concurrency", default=1, low=1, high=8
+        ),
+        "ai_risk_alert_threshold": _bounded_int(
+            data, "ai_risk_alert_threshold", default=75, low=0, high=100
+        ),
     }
 
 

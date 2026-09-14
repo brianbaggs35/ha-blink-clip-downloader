@@ -27,6 +27,7 @@ from blink_downloader.security.detector import DetectionContext, SecurityEventDe
 from blink_downloader.security.events import SecurityEventType, Severity, severity_rank
 from blink_downloader.security.evidence import assess_evidence
 from blink_downloader.security.geometry import Box, Zone
+from blink_downloader.security.pipeline import SecurityOutcome
 from blink_downloader.security.scoring import RiskAssessment, RiskScorer, ScoringContext
 from blink_downloader.security.tracks import build_tracks, subject_tracks
 from blink_downloader.security.vehicles import nearest_vehicle_for_subjects
@@ -300,3 +301,15 @@ def test_the_scenario_table_covers_both_directions() -> None:
 
 def test_scenario_names_are_unique() -> None:
     assert len({s.name for s in SCENARIOS}) == len(SCENARIOS)
+
+
+def test_security_outcome_exposes_the_assessment_directly() -> None:
+    """Callers read `outcome.severity`/`risk_score`/`events` rather than
+    reaching through to the assessment, so those shortcuts are part of the
+    contract, not conveniences."""
+    scenario = SCENARIOS[0]
+    assessment, _ = _run(scenario)
+    outcome = SecurityOutcome(assessment=assessment)
+    assert outcome.severity is assessment.severity
+    assert outcome.risk_score == assessment.score
+    assert outcome.events is assessment.events

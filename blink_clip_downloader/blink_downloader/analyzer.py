@@ -27,6 +27,18 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+# Imported eagerly, unlike vision below: the security package is pure
+# stdlib — no torch, no opencv — so it costs nothing at import time and is
+# available whether or not the optional CV extra is installed.
+from .security import (
+    BYPASS_BLOCKING_EVENTS,
+    SecurityEvent,
+    SecurityOutcome,
+    Severity,
+    assess_clip,
+    summarize_assessment,
+)
+
 if TYPE_CHECKING:
     from .database import ClipDatabase
     from .vision import DetectedObject, VisionHints, VisionPipeline
@@ -43,6 +55,14 @@ _CONTENT_TYPE_JSON = "application/json"
 # ever samples the leading portion of the clip (e.g. 5 frames * 2s = the first
 # 10s of a 60s clip) and anything that happens later is never seen.
 _MAX_CLIP_COVERAGE_SECONDS: float = 60.0
+
+# Floor applied to a clip's confidence when the deterministic risk score
+# overrides the model's "nothing unusual" verdict (see
+# ai_risk_alert_threshold). Above the default notification threshold, since
+# an override only fires on evidence strong enough to disagree with the
+# model in the first place — a lower value would raise the flag and then
+# silently suppress the notification it exists to send.
+_RISK_OVERRIDE_CONFIDENCE: float = 0.7
 
 # max_frames/frame_interval are honored exactly for clips at or under this
 # length. Longer clips (Blink's ceiling is 60s) get their frame budget
@@ -539,6 +559,21 @@ class AnalysisResult:
     # save_detected_objects) and served to the clip modal pre-aggregated
     # via get_detected_objects_summary, not as this raw per-box list.
     detected_objects: list[DetectedObject] = field(default_factory=list)
+    # Deterministic security assessment (see blink_downloader.security).
+    # Zero/empty when the security layer produced nothing — the optional
+    # object-detection pipeline is off, or nothing relevant was detected.
+    risk_score: float = 0.0
+    severity: str = str(Severity.ROUTINE)
+    event_type: str = ""
+    evidence_quality: float = 0.0
+    # True when ai_risk_alert_threshold flagged this clip despite the AI
+    # model having judged it unremarkable — surfaced so a user can see the
+    # verdict did not come from the model.
+    risk_override_applied: bool = False
+    # Structured events behind the score above. Excluded from to_dict()
+    # like detected_objects: they are persisted to their own table (see
+    # database.py's security_events) rather than into the analysis row.
+    security_events: list[SecurityEvent] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -563,6 +598,11 @@ class AnalysisResult:
             "face_bypass_applied": self.face_bypass_applied,
             "face_bypass_names": self.face_bypass_names,
             "approved_faces_seen": self.approved_faces_seen,
+            "risk_score": self.risk_score,
+            "severity": self.severity,
+            "event_type": self.event_type,
+            "evidence_quality": self.evidence_quality,
+            "risk_override_applied": self.risk_override_applied,
         }
 
 
@@ -581,6 +621,8 @@ class BaseAnalyzer(abc.ABC):
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
         car_zones: dict[str, dict[str, Any]] | None = None,
+        security_events_enabled: bool = True,
+        risk_alert_threshold: int = 75,
     ) -> None:
         self._base_prompt = prompt
         self._car_description = car_description
@@ -606,6 +648,19 @@ class BaseAnalyzer(abc.ABC):
         # it never needs to be re-derived per clip. Used to compute
         # zone-restricted motion evidence — see :meth:`_zone_motion_fraction`.
         self._car_zones: dict[str, dict[str, Any]] = car_zones or {}
+        # Whether the deterministic security layer runs at all (see
+        # blink_downloader.security). It costs no extra model inference on
+        # top of object detection, so it is on by default and simply
+        # produces nothing when detection is off.
+        self._security_events_enabled = security_events_enabled
+        # Deterministic risk score (0-100) at or above which a clip is
+        # flagged suspicious even when the AI model said otherwise. 0
+        # disables the override entirely. This is the same high-recall
+        # asymmetry the tier-2 escalation path already enforces: strong,
+        # code-computed evidence of physical interference with a protected
+        # asset must not be silently dismissed by a weak local model, while
+        # nothing here can move a verdict in the reassuring direction.
+        self._risk_alert_threshold = risk_alert_threshold
         # Token counts set by _call_model() implementations that support them.
         # Reset to 0 at the start of each analyze_clip() call.
         self._last_prompt_tokens: int = 0
@@ -641,8 +696,8 @@ class BaseAnalyzer(abc.ABC):
         self._store_prompt_debug: bool = False
         # Optional ClipDatabase for the visual scene-baseline ("smart brain")
         # feature. Unset (None) disables it entirely — set via
-        # attach_scene_baseline_db() once the app has a database ready.
-        self._scene_baseline_db: ClipDatabase | None = None
+        # attach_database() once the app has a database ready.
+        self._db: ClipDatabase | None = None
         # Optional VisionPipeline (see vision.py) providing the heavy,
         # off-by-default computer-vision enhancement stages (object
         # detection/tracking, depth estimation, contact segmentation, face
@@ -815,13 +870,11 @@ class BaseAnalyzer(abc.ABC):
         )
 
     @staticmethod
-    def _face_bypass_applies(vision_hints: VisionHints | None) -> bool:
-        """True if the clip should have its suspicious flag auto-cleared
-        because every face detected across the clip belongs to an approved,
-        locally-enrolled household member.
+    def _face_match_is_unambiguous(vision_hints: VisionHints | None) -> bool:
+        """True when every face found in this clip is an approved member.
 
         Deliberately all-or-nothing and fail-safe: a positive approved match
-        is required (absence of any face at all does not bypass — no
+        is required (absence of any face at all does not qualify — no
         enrollment ever matched means ``approved_names`` stays empty), AND
         zero unrecognized or recognized-but-not-approved faces may appear
         anywhere in the clip's sampled frames. A single stranger — or a
@@ -838,6 +891,36 @@ class BaseAnalyzer(abc.ABC):
             and not fr.other_names
             and not fr.unrecognized_present
         )
+
+    @classmethod
+    def _face_bypass_applies(
+        cls,
+        vision_hints: VisionHints | None,
+        events: list[SecurityEvent] | None = None,
+    ) -> bool:
+        """True if the clip should have its suspicious flag auto-cleared
+        because every face detected across the clip belongs to an approved,
+        locally-enrolled household member — and nothing happened that a
+        household member's identity cannot explain.
+
+        The identity condition is :meth:`_face_match_is_unambiguous`. The
+        second condition is new and narrow: a recognized person denting the
+        car is still a dented car, so an event in
+        :data:`~blink_downloader.security.BYPASS_BLOCKING_EVENTS` blocks the
+        bypass outright. That set is deliberately tiny — see its own comment
+        for why ordinary contact with one's own vehicle is *not* in it, and
+        must not be added.
+        """
+        if not cls._face_match_is_unambiguous(vision_hints):
+            return False
+        blocking = [e for e in (events or []) if e.event_type in BYPASS_BLOCKING_EVENTS]
+        if blocking:
+            _LOGGER.info(
+                "Face-recognition bypass withheld despite an approved match: %s",
+                ", ".join(sorted({str(e.event_type) for e in blocking})),
+            )
+            return False
+        return True
 
     @staticmethod
     def _personalization_names(vision_hints: VisionHints | None) -> list[str]:
@@ -972,19 +1055,22 @@ class BaseAnalyzer(abc.ABC):
         """
         return await self._call_model(frames, prompt)
 
-    def attach_scene_baseline_db(self, db: ClipDatabase) -> None:
-        """Enable the visual scene-baseline ("smart brain") feature.
+    def attach_database(self, db: ClipDatabase) -> None:
+        """Enable every analysis feature that needs to remember something.
 
-        Blink cameras are stationary, so each camera's background should look
-        almost the same clip after clip. Once attached, analyze_clip() checks
-        each clip's opening frame against this camera's learned baseline
-        appearance and — once enough history has accumulated — tells the
-        model whether the scene looks like it usually does. That is a cheap
-        signal for flagging a genuinely new object or vehicle in frame, and
-        just as importantly, for reassuring the model when a scene is
-        unremarkable so it doesn't over-flag routine activity.
+        Two of them, today. The visual scene-baseline ("smart brain"):
+        Blink cameras are stationary, so each camera's background should
+        look almost the same clip after clip, and once enough history has
+        accumulated the model can be told whether this clip's scene looks
+        like it usually does — a cheap signal for a genuinely new object in
+        frame, and just as valuable for reassuring the model when a scene is
+        unremarkable so it doesn't over-flag routine activity. And the
+        learned per-camera vehicle signature, which is how the protected
+        vehicle stays identifiable when the drawn zone alone cannot separate
+        it from the car parked beside it (see
+        :mod:`blink_downloader.security.vehicles`).
         """
-        self._scene_baseline_db = db
+        self._db = db
 
     def attach_vision_pipeline(self, pipeline: VisionPipeline) -> None:
         """Enable the optional computer-vision enhancement pipeline (see vision.py).
@@ -1107,9 +1193,22 @@ class BaseAnalyzer(abc.ABC):
         # pool (see _apply_vision_pipeline), everything else still runs
         # against the down-selected set below.
         raw_frame_pool = frames
+        target_frame_count = self._target_frame_count(
+            len(raw_frame_pool), clip_duration=clip_duration
+        )
         frames = await self._downselect_frames(frames, clip_duration, camera)
         frames, vision_hints = await self._apply_vision_pipeline(
             frames, camera, raw_frames=raw_frame_pool
+        )
+        await self._store_vehicle_signature(camera, vision_hints)
+
+        security = self._assess_security(
+            camera,
+            vision_hints,
+            clip_timestamp=clip_timestamp,
+            scene_deviation=scene_deviation,
+            frames_analyzed=len(frames),
+            target_frames=target_frame_count,
         )
 
         # Shared precomputation for the two motion hints below — see
@@ -1155,6 +1254,7 @@ class BaseAnalyzer(abc.ABC):
             zone_motion_fraction=zone_motion_fraction,
             clip_duration=clip_duration,
             vision_hints=vision_hints,
+            security=security,
         )
 
         response = await self._generate_response(frames, prompt)
@@ -1190,8 +1290,14 @@ class BaseAnalyzer(abc.ABC):
         # recognized-but-not-bypass-approved person (e.g. a nanny) still
         # gets named in the summary even though they can never clear a
         # suspicious flag.
-        bypass_condition_met = self._face_bypass_applies(vision_hints)
+        bypass_condition_met = self._face_bypass_applies(
+            vision_hints, security.events if security else None
+        )
         personalization_names = self._personalization_names(vision_hints)
+        # Computed before the bypass below so the two can't contradict each
+        # other: a clip the deterministic layer rates high enough to force an
+        # alert must not also be reported as having had its flag cleared.
+        risk_forces_alert = self._risk_forces_alert(security)
 
         face_bypass_applied = False
         face_bypass_names = ""
@@ -1209,7 +1315,7 @@ class BaseAnalyzer(abc.ABC):
                 vision_hints is not None and vision_hints.face_recognition is not None
             )
             approved_names = vision_hints.face_recognition.approved_names
-            if is_suspicious:
+            if is_suspicious and not risk_forces_alert:
                 is_suspicious = False
                 face_bypass_applied = True
                 face_bypass_names = ", ".join(approved_names)
@@ -1227,8 +1333,28 @@ class BaseAnalyzer(abc.ABC):
                     face_bypass_names,
                 )
 
+        risk_override_applied = False
+        if risk_forces_alert and not is_suspicious:
+            assert security is not None
+            is_suspicious = True
+            risk_override_applied = True
+            confidence = max(confidence, _RISK_OVERRIDE_CONFIDENCE)
+            summary = self._risk_override_summary(summary, security)
+            _LOGGER.info(
+                "Risk override flagged clip=%r camera=%r: score %.0f/100 (%s) "
+                "despite the model reporting nothing unusual",
+                clip_id,
+                camera,
+                security.risk_score,
+                security.severity,
+            )
+
         await self._maybe_update_scene_baseline(
             camera, scene_thumbnail, is_suspicious, confidence
+        )
+
+        self._log_analysis_summary(
+            clip_id, camera, frames, vision_hints, security, is_suspicious
         )
 
         return AnalysisResult(
@@ -1252,9 +1378,89 @@ class BaseAnalyzer(abc.ABC):
             prompt_text=prompt if self._store_prompt_debug else "",
             face_bypass_applied=face_bypass_applied,
             face_bypass_names=face_bypass_names,
-            approved_faces_seen=bypass_condition_met,
+            approved_faces_seen=self._face_match_is_unambiguous(vision_hints),
             detected_objects=(vision_hints.detections or []) if vision_hints else [],
+            risk_score=security.risk_score if security else 0.0,
+            severity=str(security.severity) if security else str(Severity.ROUTINE),
+            event_type=(
+                str(security.assessment.to_dict()["event_type"]) if security else ""
+            ),
+            evidence_quality=security.evidence.score if security else 0.0,
+            risk_override_applied=risk_override_applied,
+            security_events=security.events if security else [],
         )
+
+    def _risk_forces_alert(self, security: SecurityOutcome | None) -> bool:
+        """Whether the deterministic score alone justifies flagging this clip.
+
+        The override is one-directional by design: a high score can raise a
+        verdict the model missed, but nothing here can lower one it made.
+        That asymmetry is the same one the tier-2 escalation path already
+        enforces, for the same reason — a missed intrusion costs far more
+        than an extra notification, and a small local vision model
+        overlooking someone at a car window is a real, observed failure
+        rather than a hypothetical one.
+        """
+        return (
+            security is not None
+            and self._risk_alert_threshold > 0
+            and security.risk_score >= self._risk_alert_threshold
+        )
+
+    @staticmethod
+    def _risk_override_summary(summary: str, security: SecurityOutcome) -> str:
+        """Prefix the model's description with what actually raised the flag.
+
+        Without this the clip appears in the library flagged as suspicious
+        alongside a summary saying nothing happened, which reads as a bug
+        rather than as the two independent judgements it really is.
+        """
+        primary = security.assessment.primary_event
+        detail = primary.detail if primary else "Unusual activity was detected."
+        return f"{detail} {summary}".strip() if summary else detail
+
+    def _log_analysis_summary(
+        self,
+        clip_id: str,
+        camera: str,
+        frames: list[bytes],
+        vision_hints: Any,
+        security: SecurityOutcome | None,
+        is_suspicious: bool,
+    ) -> None:
+        """One structured line per analysis, so a run can be understood.
+
+        Before this, the only per-clip evidence any of the optional stages
+        had run was whatever hint text happened to reach a stored prompt.
+        Deliberately free of recognized names and of prompt text: what gets
+        logged here is counts and verdicts, matching the same privacy line
+        the prompt itself is held to.
+        """
+        _LOGGER.info(
+            "Analyzed clip=%r camera=%r provider=%s frames=%d suspicious=%s "
+            "detections=%d tracks=%d scan_frames=%d vehicle=%s missing=%s %s",
+            clip_id,
+            camera,
+            self.provider_name,
+            len(frames),
+            is_suspicious,
+            len(getattr(vision_hints, "detections", None) or []),
+            len(getattr(vision_hints, "tracks", None) or []),
+            getattr(vision_hints, "scan_frame_count", 0),
+            self._describe_vehicle_identification(vision_hints),
+            ",".join(getattr(vision_hints, "unavailable_sources", []) or []) or "none",
+            summarize_assessment(security.assessment) if security else "risk=n/a",
+        )
+
+    @staticmethod
+    def _describe_vehicle_identification(vision_hints: Any) -> str:
+        """Short "which car did we protect" token for the summary log."""
+        asset = getattr(vision_hints, "asset", None)
+        if asset is None:
+            return "n/a"
+        if asset.identification is None or asset.identification.protected is None:
+            return f"absent({asset.location})"
+        return f"{'confident' if asset.confident else 'tentative'}({asset.location})"
 
     def _reset_analysis_state(self, camera: str) -> None:
         self._last_prompt_tokens = 0
@@ -1278,14 +1484,12 @@ class BaseAnalyzer(abc.ABC):
         folded back into the baseline by ``_maybe_update_scene_baseline()``
         once we know whether this clip was suspicious.
         """
-        if self._scene_baseline_db is None:
+        if self._db is None:
             return None, None
         scene_thumbnail = self._scene_thumbnail(frames[0])
         if scene_thumbnail is None:
             return None, None
-        scene_deviation = await self._scene_baseline_db.get_scene_deviation(
-            camera, scene_thumbnail
-        )
+        scene_deviation = await self._db.get_scene_deviation(camera, scene_thumbnail)
         return scene_thumbnail, scene_deviation
 
     async def _downselect_frames(
@@ -1358,12 +1562,96 @@ class BaseAnalyzer(abc.ABC):
             frames,
             car_description=self._car_description,
             car_protection_applies=self._car_protection_applies(camera),
-            face_recognition_frames=raw_frames,
+            raw_frames=raw_frames,
             car_zone=self._car_zones.get(camera),
+            camera=camera,
+            frame_interval=self._frame_interval,
+            vehicle_signature=await self._load_vehicle_signature(camera),
         )
         if vision_hints.enhanced_frames is not None:
             frames = vision_hints.enhanced_frames
         return frames, vision_hints
+
+    async def _load_vehicle_signature(self, camera: str) -> Any:
+        """Read this camera's learned protected-vehicle signature, if any."""
+        if self._db is None or not self._car_protection_applies(camera):
+            return None
+        try:
+            return await self._db.get_vehicle_signature(camera)
+        except Exception:  # noqa: BLE001
+            # A signature is an optimisation, not a requirement: without it
+            # identification falls back to the drawn zone exactly as it did
+            # before signatures existed.
+            _LOGGER.debug("Vehicle signature lookup failed for %r", camera)
+            return None
+
+    async def _store_vehicle_signature(self, camera: str, hints: Any) -> None:
+        """Persist an updated signature after a confident identification."""
+        update = getattr(hints, "vehicle_signature_update", None)
+        if update is None or self._db is None:
+            return
+        try:
+            await self._db.save_vehicle_signature(camera, update)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Vehicle signature save failed for %r", camera)
+
+    def _assess_security(
+        self,
+        camera: str,
+        vision_hints: Any,
+        clip_timestamp: str,
+        scene_deviation: float | None,
+        frames_analyzed: int,
+        target_frames: int,
+    ) -> SecurityOutcome | None:
+        """Run the deterministic security layer over this clip's evidence.
+
+        ``None`` when there is nothing to reason about: the feature is off,
+        the object-detection pipeline is off, or it found nothing. Every
+        caller treats that as "analysis proceeds exactly as it did before
+        this layer existed".
+        """
+        if not self._security_events_enabled or vision_hints is None:
+            return None
+        tracks = getattr(vision_hints, "tracks", None)
+        if not tracks:
+            return None
+        return assess_clip(
+            camera=camera,
+            tracks=tracks,
+            frame_interval=vision_hints.scan_interval or self._frame_interval,
+            frame_count=vision_hints.scan_frame_count,
+            frames_analyzed=frames_analyzed,
+            target_frames=target_frames,
+            asset=vision_hints.asset,
+            contact_touching=vision_hints.contact_touching,
+            contact_track_id=vision_hints.contact_track_id,
+            depth_similar=vision_hints.depth_similar,
+            scene_deviation=scene_deviation,
+            appearance_change=vision_hints.asset_appearance_change,
+            unavailable_sources=vision_hints.unavailable_sources,
+            is_night=self._is_night(clip_timestamp),
+            approved_person_recognized=self._face_match_is_unambiguous(vision_hints),
+        )
+
+    @staticmethod
+    def _is_night(clip_timestamp: str) -> bool:
+        """True for the overnight hours, in the *local* timezone.
+
+        Blink timestamps are UTC, but "is this an odd hour to be in someone's
+        driveway" is inherently a local question — the same reasoning as
+        :meth:`_time_of_day_segment`, and the same hour boundaries, so the
+        risk score and the prompt never disagree about whether it was night.
+        """
+        if not clip_timestamp:
+            return False
+        try:
+            from datetime import datetime as _dt
+
+            hour = _dt.fromisoformat(clip_timestamp).astimezone().hour
+        except Exception:  # noqa: BLE001
+            return False
+        return hour < 5 or hour >= 20
 
     def _maybe_compute_zone_motion(
         self, thumbs: list[bytes] | None, camera: str
@@ -1446,10 +1734,10 @@ class BaseAnalyzer(abc.ABC):
         )
         if (
             scene_thumbnail is not None
-            and self._scene_baseline_db is not None
+            and self._db is not None
             and not confident_suspicious
         ):
-            await self._scene_baseline_db.record_scene_baseline(camera, scene_thumbnail)
+            await self._db.record_scene_baseline(camera, scene_thumbnail)
 
     # ------------------------------------------------------------------
     # Two-tier escalation (any provider may act as tier 2 for any other)
@@ -2193,11 +2481,13 @@ class BaseAnalyzer(abc.ABC):
         zone_motion_fraction: float | None = None,
         clip_duration: float = 0.0,
         vision_hints: VisionHints | None = None,
+        security: SecurityOutcome | None = None,
     ) -> str:
         """Build a rich analysis prompt with camera context, temporal context,
         anomaly alert, scene-baseline signal, movement hint, recent human
         corrections, zone-motion evidence, short-event hint, optional
-        computer-vision pipeline hints, and asset-protection distance rules."""
+        computer-vision pipeline hints, structured security evidence, and
+        asset-protection distance rules."""
         base = self._camera_prompts.get(camera, self._base_prompt)
         parts = [base, self._camera_context_segment(camera)]
 
@@ -2235,6 +2525,14 @@ class BaseAnalyzer(abc.ABC):
             parts.append(zone_segment)
 
         parts.extend(self._vision_hint_segments(vision_hints))
+
+        # Structured security evidence: which vehicle is protected, what the
+        # deterministic layer observed, and how good the evidence behind it
+        # was. Placed immediately before the protected-vehicle rules so the
+        # model reads "here is which car is yours" right before "here is what
+        # counts as too close to it".
+        if security is not None:
+            parts.extend(security.prompt_segments)
 
         # Protected vehicle with precise distance rules — only for cameras that
         # can see the car (all cameras when car_cameras is empty, otherwise only
@@ -2790,6 +3088,8 @@ class ClipAnalyzer(BaseAnalyzer):
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
         car_zones: dict[str, dict[str, Any]] | None = None,
+        security_events_enabled: bool = True,
+        risk_alert_threshold: int = 75,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -2802,6 +3102,8 @@ class ClipAnalyzer(BaseAnalyzer):
             frame_strategy=frame_strategy,
             car_cameras=car_cameras,
             car_zones=car_zones,
+            security_events_enabled=security_events_enabled,
+            risk_alert_threshold=risk_alert_threshold,
         )
         self._ollama_url = ollama_url.rstrip("/")
         self._model = model
@@ -2927,6 +3229,8 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
         car_zones: dict[str, dict[str, Any]] | None = None,
+        security_events_enabled: bool = True,
+        risk_alert_threshold: int = 75,
     ) -> None:
         super().__init__(
             ollama_url=self._CLOUD_BASE_URL,
@@ -2941,6 +3245,8 @@ class OllamaCloudAnalyzer(ClipAnalyzer):
             frame_strategy=frame_strategy,
             car_cameras=car_cameras,
             car_zones=car_zones,
+            security_events_enabled=security_events_enabled,
+            risk_alert_threshold=risk_alert_threshold,
         )
         self._api_key = api_key
 
@@ -3401,6 +3707,8 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         car_cameras: list[str] | None = None,
         car_zones: dict[str, dict[str, Any]] | None = None,
         finetune_model: str = "",
+        security_events_enabled: bool = True,
+        risk_alert_threshold: int = 75,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -3413,6 +3721,8 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             frame_strategy=frame_strategy,
             car_cameras=car_cameras,
             car_zones=car_zones,
+            security_events_enabled=security_events_enabled,
+            risk_alert_threshold=risk_alert_threshold,
         )
         self._api_key = api_key
         self._finetune_model = finetune_model
@@ -3999,6 +4309,8 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
         car_zones: dict[str, dict[str, Any]] | None = None,
+        security_events_enabled: bool = True,
+        risk_alert_threshold: int = 75,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -4011,6 +4323,8 @@ class MoondreamLocalAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
             frame_strategy=frame_strategy,
             car_cameras=car_cameras,
             car_zones=car_zones,
+            security_events_enabled=security_events_enabled,
+            risk_alert_threshold=risk_alert_threshold,
         )
         self._md_model: Any = None
         self._model_lock: asyncio.Lock | None = None
@@ -4812,6 +5126,8 @@ class AnthropicAnalyzer(BaseAnalyzer):
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
         car_zones: dict[str, dict[str, Any]] | None = None,
+        security_events_enabled: bool = True,
+        risk_alert_threshold: int = 75,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -4824,6 +5140,8 @@ class AnthropicAnalyzer(BaseAnalyzer):
             frame_strategy=frame_strategy,
             car_cameras=car_cameras,
             car_zones=car_zones,
+            security_events_enabled=security_events_enabled,
+            risk_alert_threshold=risk_alert_threshold,
         )
         self._api_key = api_key
         self._model = model or "claude-haiku-4-5"
@@ -5169,6 +5487,8 @@ class OpenAIAnalyzer(BaseAnalyzer):
         frame_strategy: str = "smart",
         car_cameras: list[str] | None = None,
         car_zones: dict[str, dict[str, Any]] | None = None,
+        security_events_enabled: bool = True,
+        risk_alert_threshold: int = 75,
     ) -> None:
         super().__init__(
             prompt=prompt,
@@ -5181,6 +5501,8 @@ class OpenAIAnalyzer(BaseAnalyzer):
             frame_strategy=frame_strategy,
             car_cameras=car_cameras,
             car_zones=car_zones,
+            security_events_enabled=security_events_enabled,
+            risk_alert_threshold=risk_alert_threshold,
         )
         self._api_key = api_key
         self._model = model or "gpt-4o-mini"
@@ -5507,6 +5829,8 @@ def _build_single_analyzer(
     frame_strategy: str = "smart",
     car_cameras: list[str] | None = None,
     car_zones: dict[str, dict[str, Any]] | None = None,
+    security_events_enabled: bool = True,
+    risk_alert_threshold: int = 75,
     *,
     ollama_url: str = "",
     ollama_model: str = "",
@@ -5535,6 +5859,8 @@ def _build_single_analyzer(
         "frame_strategy": frame_strategy,
         "car_cameras": car_cameras,
         "car_zones": car_zones,
+        "security_events_enabled": security_events_enabled,
+        "risk_alert_threshold": risk_alert_threshold,
     }
 
     if ai_provider == "ollama":
@@ -5642,6 +5968,8 @@ def create_analyzer(
     frame_strategy: str = "smart",
     car_cameras: list[str] | None = None,
     car_zones: dict[str, dict[str, Any]] | None = None,
+    security_events_enabled: bool = True,
+    risk_alert_threshold: int = 75,
     *,
     ollama_url: str = "",
     ollama_model: str = "",
@@ -5692,6 +6020,8 @@ def create_analyzer(
         frame_strategy=frame_strategy,
         car_cameras=car_cameras,
         car_zones=car_zones,
+        security_events_enabled=security_events_enabled,
+        risk_alert_threshold=risk_alert_threshold,
         **shared_kwargs,
     )
     if analyzer is None:
@@ -5716,6 +6046,8 @@ def create_analyzer(
             frame_strategy=frame_strategy,
             car_cameras=car_cameras,
             car_zones=car_zones,
+            security_events_enabled=security_events_enabled,
+            risk_alert_threshold=risk_alert_threshold,
             **tier2_kwargs,
         )
         if tier2 is None:

@@ -482,6 +482,38 @@ configuration:
       les téléchargements de modèles de vision par ordinateur et
       augmenter les limites de débit du Hugging Face Hub. Créez-en un
       sur https://huggingface.co/settings/tokens. Gardez-le secret.
+  ai_security_events_enabled:
+    name: Activer l'analyse de sécurité structurée
+    description: >-
+      Transforme les cadres image par image du détecteur d'objets en sujets
+      suivis, en événements de sécurité (entrée dans la zone protégée,
+      approche du véhicule, stationnement prolongé, contact possible, recul) et
+      en score de risque de 0 à 100, puis fournit ces preuves à l'IA pour
+      qu'elle les vérifie au lieu de déduire la géométrie d'images fixes.
+      Alimente aussi la chronologie de l'onglet Sécurité. N'ajoute aucune
+      inférence de modèle supplémentaire.
+  ai_temporal_scan_frames:
+    name: Images pour l'analyse comportementale
+    description: >-
+      Nombre d'images régulièrement espacées sur lesquelles la détection
+      d'objets s'exécute pour l'analyse ci-dessus. Arbitre entre le coût de
+      détection et la part du comportement d'un clip qui peut être observée. Ne
+      change pas le nombre d'images reçues par le modèle d'IA. 0 désactive
+      l'analyse élargie.
+  ai_cv_concurrency:
+    name: Concurrence de la vision par ordinateur
+    description: >-
+      Nombre d'étapes lourdes de vision par ordinateur pouvant s'exécuter
+      simultanément sur l'ensemble des clips analysés. 1 convient à un
+      Raspberry Pi 5 et constitue la valeur par défaut. À augmenter uniquement
+      sur du matériel disposant d'une réelle marge.
+  ai_risk_alert_threshold:
+    name: Seuil d'alerte du score de risque
+    description: >-
+      Score de risque (0-100) à partir duquel un clip est signalé comme
+      suspect même si le modèle d'IA l'a jugé anodin. La valeur par défaut (75)
+      ne couvre que la bande critique. Mettre 0 pour laisser le verdict du
+      modèle définitif.
   mobile_app_target:
     name: Entité cible de l'application mobile
     description: >-

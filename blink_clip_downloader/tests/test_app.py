@@ -2774,9 +2774,7 @@ def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
     assert "Could not load" in caplog.text
 
 
-def test_init_attaches_scene_baseline_db_and_creates_analysis_queue(
-    base_config, tmp_path
-):
+def test_init_attaches_db_and_creates_analysis_queue(base_config, tmp_path):
     """When create_analyzer() succeeds, the app must wire up the scene
     baseline DB and background analysis queue so the smart-brain baseline
     and long-clip frame doubling actually run."""
@@ -2784,9 +2782,7 @@ def test_init_attaches_scene_baseline_db_and_creates_analysis_queue(
         base_config, tmp_path, None
     )
 
-    mock_create_analyzer.return_value.attach_scene_baseline_db.assert_called_once_with(
-        app._db
-    )
+    mock_create_analyzer.return_value.attach_database.assert_called_once_with(app._db)
     assert app._analysis_queue is not None
     assert app._alert_dispatcher is not None
 
