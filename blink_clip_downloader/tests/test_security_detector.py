@@ -331,6 +331,52 @@ def test_lingering_at_the_asset_is_suspicious_sooner_than_open_ground() -> None:
     assert loiter.evidence["near_asset"] is True
 
 
+def test_lingering_is_scored_once_not_as_both_kinds_of_loitering() -> None:
+    """Standing at the vehicle for a while satisfies the open-ground rule
+    too, and the scorer adds up every event it is handed — so counting both
+    would score one loiterer twice at full weight."""
+    lingering = _track([(470, 200, 490, 280)] * 10)
+    events = SecurityEventDetector().detect(_ctx([lingering], asset=_asset()))
+    loiters = [e for e in events if e.event_type is SecurityEventType.LOITERING]
+    assert len(loiters) == 1
+    assert loiters[0].severity is Severity.SUSPICIOUS
+
+
+def test_two_untracked_loiterers_are_still_counted_separately() -> None:
+    """The de-duplication above keys on the observed span as well as the
+    track id, because every pseudo-track assembled without a real tracker
+    carries ``None`` — keying on the id alone would merge two people."""
+    first = _track([(470, 200, 490, 280)] * 10, track_id=None, tracked=False)
+    second = _track(
+        [(470, 200, 490, 280)] * 10,
+        track_id=None,
+        tracked=False,
+        frames=list(range(2, 12)),
+    )
+    events = SecurityEventDetector().detect(_ctx([first, second], asset=_asset()))
+    assert len([e for e in events if e.event_type is SecurityEventType.LOITERING]) == 2
+
+
+def test_lingering_where_the_vehicle_is_absent_says_so() -> None:
+    """The pipeline has concluded the car is not in frame; saying somebody
+    "remained at the blue sedan" contradicts the evidence, and that text
+    reaches both the AI prompt and the Security tab."""
+    zone = Zone.from_config(
+        {"x_min": 0.45, "y_min": 0.48, "x_max": 0.90, "y_max": 0.85}
+    )
+    lingering = _track([(470, 200, 490, 280)] * 8)
+    loiter = _of(
+        SecurityEventDetector().detect(
+            _ctx(
+                [lingering],
+                asset=_asset(location=AssetLocation.ZONE_ABSENT, box=CAR, zone=zone),
+            )
+        ),
+        SecurityEventType.LOITERING,
+    )
+    assert "the space where blue sedan normally sits" in loiter.detail
+
+
 def test_asset_loitering_is_skipped_when_neither_near_nor_in_zone() -> None:
     far = _track([(0, 200, 20, 280)] * 6)
     assert SecurityEventType.LOITERING not in _types(
@@ -368,11 +414,30 @@ def test_a_longer_stay_in_the_zone_is_reported_with_its_duration() -> None:
     assert "and stayed at least 4s" in zone_event.detail
 
 
-def test_someone_already_inside_the_zone_has_not_entered_it() -> None:
+def test_someone_already_inside_the_zone_is_still_reported() -> None:
+    """A clip starts when motion is detected, so on a camera pointed at a
+    parking space the subject is routinely already at the vehicle in the
+    first sampled frame. Requiring an observed outside-then-inside crossing
+    produced no zone event at all for exactly those clips — the wording,
+    not the event, is what has to stay honest about what was seen."""
     inside = _track([(330, 200, 350, 270)] * 3)
-    assert SecurityEventType.ZONE_ENTERED not in _types(
-        SecurityEventDetector().detect(_ctx([inside], asset=_asset(zone=ZONE)))
+    zone_event = _of(
+        SecurityEventDetector().detect(_ctx([inside], asset=_asset(zone=ZONE))),
+        SecurityEventType.ZONE_ENTERED,
     )
+    assert "already inside the area" in zone_event.detail
+    assert "crossed into" not in zone_event.detail
+    assert zone_event.evidence["crossed_in"] is False
+
+
+def test_an_observed_crossing_says_so() -> None:
+    entering = _track([(0, 200, 20, 280), (330, 200, 350, 270)])
+    zone_event = _of(
+        SecurityEventDetector().detect(_ctx([entering], asset=_asset(zone=ZONE))),
+        SecurityEventType.ZONE_ENTERED,
+    )
+    assert "crossed into the area" in zone_event.detail
+    assert zone_event.evidence["crossed_in"] is True
 
 
 def test_no_zone_configured_means_no_zone_event() -> None:
