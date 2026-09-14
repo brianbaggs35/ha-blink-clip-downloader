@@ -5,6 +5,7 @@ import VehiclesPage from './VehiclesPage.vue'
 import VehicleZonePicker from './VehicleZonePicker.vue'
 import type { CameraConfig } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
+import { useToastStore } from '../../stores/toast'
 
 function mountPage() {
   return mount(VehiclesPage)
@@ -102,6 +103,73 @@ describe('VehiclesPage', () => {
 
     expect(vi.mocked(fetch).mock.calls).toHaveLength(callsBeforeTick)
     expect(wrapper.find('.vehicle-zone-picker').exists()).toBe(true)
+  })
+
+  it('does not discard an edit made while a reload was already in flight', async () => {
+    // The tick watcher declines to *start* a reload over a dirty form; this
+    // is the other half — a form that goes dirty after one has started.
+    let releaseSecond: (() => void) | undefined
+    let settingsReads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (typeof url === 'string' && url.includes('/api/vehicle/settings')) {
+          settingsReads += 1
+          if (settingsReads > 1) {
+            return new Promise<Response>((resolve) => {
+              releaseSecond = () => resolve(jsonResponse({ car_description: 'Silver Kia Forte' }))
+            })
+          }
+          return Promise.resolve(jsonResponse({ car_description: 'Silver Kia Forte' }))
+        }
+        return Promise.resolve(jsonResponse([{ ...FRONT_CAM }]))
+      }),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(releaseSecond).toBeDefined()
+
+    await wrapper.find('textarea').setValue('Blue Honda Civic')
+    releaseSecond?.()
+    await flushPromises()
+
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('Blue Honda Civic')
+  })
+
+  it('does not toast an error from a superseded reload', async () => {
+    const pending: { resolve: (v: Response) => void; reject: (e: Error) => void }[] = []
+    let settingsReads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (typeof url === 'string' && url.includes('/api/vehicle/settings')) {
+          settingsReads += 1
+          if (settingsReads > 1) {
+            return new Promise<Response>((resolve, reject) => pending.push({ resolve, reject }))
+          }
+          return Promise.resolve(jsonResponse({ car_description: 'Silver Kia Forte' }))
+        }
+        return Promise.resolve(jsonResponse([{ ...FRONT_CAM }]))
+      }),
+    )
+    mountPage()
+    await flushPromises()
+
+    useRefreshStore().bump()
+    await flushPromises()
+    useRefreshStore().bump()
+    await flushPromises()
+    expect(pending).toHaveLength(2)
+
+    pending[1].resolve(jsonResponse({ car_description: 'Silver Kia Forte' }))
+    await flushPromises()
+    pending[0].reject(new Error('down'))
+    await flushPromises()
+
+    expect(useToastStore().message).not.toBe('Failed to load vehicle settings')
   })
 
   it('shows an inactive warning when a car camera is set but no description', async () => {

@@ -26,26 +26,44 @@ const configs = ref<CameraConfig[]>([])
 let loadedCarDescription = ''
 let loadedConfigsSignature = ''
 
+/** True when this page holds edits that have not been saved. */
+function isDirty(): boolean {
+  return (
+    carDescription.value !== loadedCarDescription ||
+    (configs.value.length > 0 && JSON.stringify(configs.value) !== loadedConfigsSignature)
+  )
+}
+
+// The watcher below declines to *start* a reload over a dirty form. This
+// token covers the other half — a form that goes dirty, or a newer reload
+// that starts, while one is already in flight. Replacing a protected-vehicle
+// description someone is part-way through typing is worse than showing them
+// slightly stale settings.
+let requestSeq = 0
+
 async function load() {
-  loading.value = true
+  const seq = ++requestSeq
+  // Only for the first load: a background refresh must not swap the whole
+  // page for a spinner while someone is reading it.
+  if (!configs.value.length) loading.value = true
   try {
     const [settings, cams] = await Promise.all([getVehicleSettings(), getCameraConfigs()])
+    if (seq !== requestSeq || isDirty()) return
     carDescription.value = settings.car_description
     configs.value = cams
     loadedCarDescription = carDescription.value
     loadedConfigsSignature = JSON.stringify(configs.value)
   } catch {
-    toast.show('Failed to load vehicle settings', true)
+    if (seq === requestSeq) toast.show('Failed to load vehicle settings', true)
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
 }
 onMounted(load)
 watch(
   () => refresh.tick,
   () => {
-    const camerasDirty = JSON.stringify(configs.value) !== loadedConfigsSignature
-    if (!camerasDirty && carDescription.value === loadedCarDescription) void load()
+    if (!isDirty()) void load()
   },
 )
 

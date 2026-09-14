@@ -28,11 +28,12 @@ from .vision import FaceEmbedder, is_face_recognition_available, torch_cpu_compa
 
 if TYPE_CHECKING:
     from .analysis_queue import AnalysisQueue
-    from .analyzer import BaseAnalyzer, MoondreamFineTuneManager
+    from .analyzer import BaseAnalyzer
     from .archiver import ClipArchiver
     from .gdrive_client import GDriveClient
     from .gdrive_queue import GDriveUploadQueue
     from .live_view import LiveViewManager
+    from .moondream_finetune import MoondreamFineTuneManager
     from .notification_channels import NotificationDispatcher
 
 _LOGGER = logging.getLogger(__name__)
@@ -3163,7 +3164,7 @@ class MediaServer:
             or not self._moondream_api_key
         ):
             return None
-        from .analyzer import MoondreamFineTuneManager
+        from .moondream_finetune import MoondreamFineTuneManager
 
         return MoondreamFineTuneManager(api_key=self._moondream_api_key)
 
@@ -3264,10 +3265,8 @@ class MediaServer:
         silently reverting to whatever moondream_finetune_model was last
         saved in options.json (see App._load_finetune_model_from_ui()).
         """
-        from .analyzer import (
-            MoondreamCloudAnalyzer,
-            MoondreamFineTuneManager,
-        )
+        from .analyzer import MoondreamCloudAnalyzer
+        from .moondream_finetune import MoondreamFineTuneManager
 
         if self._analyzer is None or not isinstance(
             self._analyzer, MoondreamCloudAnalyzer

@@ -113,7 +113,15 @@ class NotificationDispatcher:
         if self._smtp_enabled:
             await self.send_email(title, body)
         if self._discord_enabled:
-            await self.send_discord(title, result.summary, camera, result.confidence)
+            await self.send_discord(
+                title,
+                result.summary,
+                camera,
+                result.confidence,
+                risk=result.risk_score if result.risk_score > 0 else None,
+                severity=result.severity,
+                risk_override=result.risk_override_applied,
+            )
         if self._ha_notify_enabled:
             await self.send_ha_notification(title, body)
 
@@ -275,11 +283,22 @@ class NotificationDispatcher:
         description: str,
         camera: str = "",
         confidence: float | None = 0.0,
+        risk: float | None = None,
+        severity: str = "",
+        risk_override: bool = False,
     ) -> bool:
-        """Post an embed to a Discord webhook."""
+        """Post an embed to a Discord webhook.
+
+        *risk*/*severity*/*risk_override* carry the deterministic
+        assessment, matching what the mobile/email/HA bodies already say.
+        An alert reporting only the model's own confidence hides half of why
+        it fired — and in the override case, the half that fired it.
+        """
         if not self._discord_enabled or not self._discord_url:
             return False
-        return await self._send_discord_now(title, description, camera, confidence)
+        return await self._send_discord_now(
+            title, description, camera, confidence, risk, severity, risk_override
+        )
 
     async def send_test_discord(self) -> tuple[bool, str]:
         """Post a one-off test embed, ignoring discord_enabled.
@@ -301,7 +320,14 @@ class NotificationDispatcher:
         return False, "Failed to send test message — check the add-on logs for details."
 
     async def _send_discord_now(
-        self, title: str, description: str, camera: str, confidence: float | None
+        self,
+        title: str,
+        description: str,
+        camera: str,
+        confidence: float | None,
+        risk: float | None = None,
+        severity: str = "",
+        risk_override: bool = False,
     ) -> bool:
         # confidence=None (battery alerts — see dispatch_battery_alert) skips
         # the Confidence field entirely rather than showing a meaningless
@@ -312,6 +338,19 @@ class NotificationDispatcher:
         if confidence is not None:
             fields.append(
                 {"name": "Confidence", "value": f"{confidence:.0%}", "inline": True}
+            )
+        if risk is not None:
+            label = f"{risk:.0f}/100"
+            if severity:
+                label += f" ({severity})"
+            fields.append({"name": "Risk", "value": label, "inline": True})
+        if risk_override:
+            fields.append(
+                {
+                    "name": "Why",
+                    "value": "Flagged on detection evidence, not by the AI model.",
+                    "inline": False,
+                }
             )
         payload = {
             "embeds": [

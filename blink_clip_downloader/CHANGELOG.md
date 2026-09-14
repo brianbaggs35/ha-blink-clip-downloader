@@ -297,6 +297,16 @@ damage classification.
 - Tearing down a Live View session now always finishes: a failure while
   closing the relay previously stranded the session's background tasks and
   its temporary segment directory.
+- Discord alerts now carry the same risk assessment the mobile, email and
+  Home Assistant alerts already did — including the note that says a clip
+  was flagged on detection evidence rather than by the AI model, which is
+  the whole reason some alerts fire at all.
+- Paging or changing the period in the AI tab's suspicious feed no longer
+  briefly shows rows belonging to the page or period you just left.
+- Editing a camera description, or the protected-vehicle description, while
+  a background refresh happens to be in flight no longer discards what you
+  typed when that refresh lands. Neither tab blanks itself for a background
+  refresh any more either.
 - Completed the PrimeVue 5 migration by using the PrimeUI license format
   expected by PrimeVue 5.0.1, binding numeric `ProgressSpinner` props
   correctly, and documenting the `VITE_PRIMEVUE_LICENSE_KEY` development
