@@ -76,6 +76,28 @@ async def test_notify_client_error_returns_false():
     assert result is False
 
 
+async def test_notify_survives_a_supervisor_timeout():
+    """A *total* timeout is the builtin TimeoutError — an OSError, not an
+    aiohttp.ClientError — so catching ClientError alone let a slow
+    Supervisor raise out of notify() and abort the poll cycle that called
+    it."""
+    notifier = HANotifier("tok", enabled=True, title="T")
+    session = MagicMock()
+    session.post = MagicMock(side_effect=TimeoutError("too slow"))
+    session.closed = False
+    notifier._session = session
+    assert await notifier.notify("msg") is False
+
+
+async def test_webhook_survives_a_timeout():
+    notifier = HANotifier("tok", enabled=True, title="T", webhook_url="https://x/y")
+    session = MagicMock()
+    session.post = MagicMock(side_effect=TimeoutError("too slow"))
+    session.closed = False
+    notifier._session = session
+    assert await notifier.call_webhook({}) is False
+
+
 async def test_notify_uses_custom_title():
     notifier = HANotifier("tok", enabled=True, title="Default")
     resp = _make_mock_resp(200)

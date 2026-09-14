@@ -89,7 +89,7 @@ class HANotifier:
                     "Webhook %s returned HTTP %d", self._webhook_url, resp.status
                 )
                 return False
-        except aiohttp.ClientError as exc:
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.warning("Webhook request failed: %s", exc)
             return False
 
@@ -119,6 +119,12 @@ class HANotifier:
                     return True
                 _LOGGER.warning("POST %s returned HTTP %d", url, resp.status)
                 return False
-        except aiohttp.ClientError as exc:
+        # OSError as well as ClientError: a *total* timeout surfaces as the
+        # builtin TimeoutError, which is an OSError and not a ClientError, so
+        # ClientError alone let a slow Supervisor raise straight out of
+        # notify() — aborting the rest of the poll cycle that called it.
+        # notification_channels.py already catches the pair; this is the
+        # module that did not.
+        except (aiohttp.ClientError, OSError) as exc:
             _LOGGER.warning("Failed to POST %s: %s", url, exc)
             return False
