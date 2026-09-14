@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from '../localStorage'
 import { defineStore } from 'pinia'
 
 const STORAGE_KEY = 'blink_nav_collapsed'
@@ -6,7 +7,7 @@ const STORAGE_KEY = 'blink_nav_collapsed'
 // click sidebar tabs assuming today's expanded layout with no opt-in
 // needed. Only an explicit stored '1' collapses it on load.
 function initialCollapsed(): boolean {
-  return localStorage.getItem(STORAGE_KEY) === '1'
+  return readLocal(STORAGE_KEY) === '1'
 }
 
 export const useNavCollapsedStore = defineStore('navCollapsed', {
@@ -16,7 +17,7 @@ export const useNavCollapsedStore = defineStore('navCollapsed', {
   actions: {
     toggle() {
       this.collapsed = !this.collapsed
-      localStorage.setItem(STORAGE_KEY, this.collapsed ? '1' : '0')
+      writeLocal(STORAGE_KEY, this.collapsed ? '1' : '0')
     },
   },
 })

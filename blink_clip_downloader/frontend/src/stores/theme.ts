@@ -1,3 +1,4 @@
+import { readLocal, writeLocal } from '../localStorage'
 import { defineStore } from 'pinia'
 
 const STORAGE_KEY = 'blink_theme'
@@ -6,7 +7,7 @@ const STORAGE_KEY = 'blink_theme'
 // v4.0.0) — an explicit stored choice (either way) is always honored, but
 // unset means dark, not a prefers-color-scheme lookup.
 function initialIsDark(): boolean {
-  return localStorage.getItem(STORAGE_KEY) !== 'light'
+  return readLocal(STORAGE_KEY) !== 'light'
 }
 
 export const useThemeStore = defineStore('theme', {
@@ -16,7 +17,7 @@ export const useThemeStore = defineStore('theme', {
   actions: {
     toggle() {
       this.isDark = !this.isDark
-      localStorage.setItem(STORAGE_KEY, this.isDark ? 'dark' : 'light')
+      writeLocal(STORAGE_KEY, this.isDark ? 'dark' : 'light')
     },
   },
 })

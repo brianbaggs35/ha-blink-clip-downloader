@@ -9,6 +9,10 @@ from pathlib import Path
 
 _LOGGER = logging.getLogger(__name__)
 
+#: Used when the configured filename_format cannot be rendered. Mirrors
+#: config.py's own default for the same option.
+_DEFAULT_FILENAME_FORMAT = "{camera}_{timestamp}"
+
 _CLIP_GLOB = "*.mp4"
 _THUMB_GLOB = "*.jpg"
 
@@ -32,6 +36,9 @@ class StorageManager:
         self._organize_by_camera = organize_by_camera
         self._organize_by_date = organize_by_date
         self._filename_format = filename_format
+        # Set once the configured format has been seen to fail, so the
+        # warning below is logged per add-on run rather than per clip.
+        self._format_warned = False
 
     # ------------------------------------------------------------------
     # Directory management
@@ -59,16 +66,40 @@ class StorageManager:
         time_str = timestamp.strftime("%H%M%S")
         ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
 
-        filename = (
-            self._filename_format.format(
-                camera=safe_cam,
-                timestamp=ts_str,
-                date=date_str,
-                time=time_str,
-                id=safe_id,
-            )
-            + extension
-        )
+        tokens = {
+            "camera": safe_cam,
+            "timestamp": ts_str,
+            "date": date_str,
+            "time": time_str,
+            "id": safe_id,
+        }
+        try:
+            rendered = self._filename_format.format(**tokens)
+        except (KeyError, IndexError, ValueError, AttributeError) as exc:
+            # filename_format is free text in the add-on options, so a typo
+            # ("{cam}" for "{camera}") raises here for *every* clip — which
+            # previously failed each download with nothing but a log line,
+            # permanently, until someone noticed. Falling back to the
+            # default keeps clips arriving while making the mistake obvious.
+            if not self._format_warned:
+                self._format_warned = True
+                _LOGGER.warning(
+                    "filename_format %r is not usable (%s: %s) — falling back "
+                    "to %r. Valid tokens: {camera}, {timestamp}, {date}, "
+                    "{time}, {id}.",
+                    self._filename_format,
+                    type(exc).__name__,
+                    exc,
+                    _DEFAULT_FILENAME_FORMAT,
+                )
+            rendered = _DEFAULT_FILENAME_FORMAT.format(**tokens)
+
+        # Sanitized as a whole, not just per token: filename_format is a
+        # *filename* template, and a separator or ".." in it would otherwise
+        # place clips outside the configured download directory, where
+        # retention, the quota check and the library scan would all miss
+        # them. _safe_name collapses both to an underscore.
+        filename = _safe_name(rendered) + extension
 
         parts: list[Path | str] = [self._base]
         if self._organize_by_camera:

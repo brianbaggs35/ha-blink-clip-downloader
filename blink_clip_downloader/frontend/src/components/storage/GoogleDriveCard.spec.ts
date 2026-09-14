@@ -181,6 +181,34 @@ describe('GoogleDriveCard', () => {
     expect(wrapper.text()).toContain('me@example.com')
   })
 
+  it('survives the post-connect status refresh failing', async () => {
+    // That refresh settles after its enclosing try/catch has already
+    // exited, so without its own handler it is an unhandled rejection.
+    vi.useFakeTimers()
+    const routes: Routes = { settings: CONFIGURED, status: NOT_CONNECTED_STATUS }
+    const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+      const phase = (routes.connectStatus as { phase?: string } | undefined)?.phase
+      if (url.startsWith('/api/storage/gdrive/status') && phase === 'connected') {
+        return Promise.reject(new Error('down'))
+      }
+      return routedFetch(routes)(url, opts)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Connect Google Drive')!
+      .trigger('click')
+    await flushPromises()
+
+    routes.connectStatus = { phase: 'connected', account_email: 'me@example.com' }
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(wrapper.exists()).toBe(true)
+  })
+
   it('keeps polling while the connect-status endpoint still reports pending', async () => {
     vi.useFakeTimers()
     const routes: Routes = { settings: CONFIGURED, status: NOT_CONNECTED_STATUS }

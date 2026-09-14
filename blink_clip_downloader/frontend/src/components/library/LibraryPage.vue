@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { readLocal, writeLocal } from '../../localStorage'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Panel from 'primevue/panel'
@@ -65,9 +66,9 @@ const recognizedOnly = ref(false)
 // simple localStorage-ref shape AppSidebar uses for notifEnabled rather
 // than a Pinia store, since nothing outside this page needs to read it.
 const FILTERS_COLLAPSED_KEY = 'blink_lib_filters_collapsed'
-const filtersCollapsed = ref(localStorage.getItem(FILTERS_COLLAPSED_KEY) !== '0')
+const filtersCollapsed = ref(readLocal(FILTERS_COLLAPSED_KEY) !== '0')
 watch(filtersCollapsed, (collapsed) => {
-  localStorage.setItem(FILTERS_COLLAPSED_KEY, collapsed ? '1' : '0')
+  writeLocal(FILTERS_COLLAPSED_KEY, collapsed ? '1' : '0')
 })
 
 const tags = ref<string[]>([])
@@ -227,7 +228,7 @@ async function loadCameras() {
 }
 
 function checkNewClipsNotification(total: number) {
-  const notifEnabled = localStorage.getItem('blink_notif') === '1'
+  const notifEnabled = readLocal('blink_notif') === '1'
   if (
     lastTotalCount.value > 0 &&
     total > lastTotalCount.value &&
@@ -382,8 +383,24 @@ function selectAllVisible() {
 async function bulkStar() {
   if (!selectedIds.value.size) return
   const ids = [...selectedIds.value]
-  await Promise.all(ids.map((id) => starClip(id, true)))
-  toast.show(`Starred ${ids.length} clip(s)`)
+  // Per-clip, not Promise.all's all-or-nothing: one failed request used to
+  // reject the whole batch, so the clips that *were* starred showed no
+  // toast, the selection stayed open and the grid never reloaded — leaving
+  // the successful half invisible until a manual refresh. Same handling
+  // bulkDelete beside this already uses.
+  const results = await Promise.all(
+    ids.map((id) =>
+      starClip(id, true).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  )
+  const starred = results.filter(Boolean).length
+  if (starred) toast.show(`Starred ${starred} clip(s)`)
+  if (starred < ids.length) {
+    toast.show(`Could not star ${ids.length - starred} clip(s)`, true)
+  }
   toggleSelectMode(false)
   void loadClips(0)
   void loadStats()
