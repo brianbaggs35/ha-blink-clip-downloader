@@ -550,6 +550,30 @@ body.nav-collapsed {
   white-space: nowrap;
   text-align: center;
 }
+/* Groups an icon + its label so together they still count as a single flex
+   item — .lib-stat is display:flex on both viewports (column on desktop,
+   row on mobile, see below), and without this wrapper the icon/label would
+   each become their own flex item and end up on separate lines in the
+   desktop column layout instead of reading as one "★ Starred"-style line
+   like before this was split into two spans (done so the label text can be
+   visually hidden on mobile alone — see .lib-stat-label-hideable in the
+   @media(max-width:600px) block — while still being announced to
+   assistive tech, and so the star can be colored independently of the
+   label text next to it). */
+.lib-stat-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+}
+.lib-stat-icon {
+  font-size: 0.72rem;
+}
+/* Same gold used on a starred clip's own badge in the grid (ClipCard.vue's
+   .star-badge) so this stat reads as "the same star" at a glance. */
+.lib-stat-icon-star {
+  color: var(--starred);
+}
 .lib-stat-value {
   font-size: 1.3rem;
   font-weight: 700;
@@ -1834,7 +1858,7 @@ body.nav-collapsed {
     flex-direction: row;
     align-items: center;
     justify-content: flex-start;
-    gap: 0.4rem;
+    gap: 0.35rem;
     padding: 0.3rem 0.55rem;
     min-width: 0;
   }
@@ -1845,18 +1869,64 @@ body.nav-collapsed {
   .lib-stat-value {
     font-size: 0.92rem;
   }
+  /* Starred/Recognized/Storage read as icon + number only on mobile (no
+     room for "★ Starred"/"👤 Recognized"/"💾 Storage" text at this width,
+     and the icon alone is already unambiguous — the same star and person
+     glyphs used elsewhere in this same tab, see .lib-stat-icon-star above
+     and ClipCard.vue's face-badge) — Today/This week keep their text
+     since there's no icon standing in for "which count is this". The
+     label stays in the DOM (screen readers still get "Starred: 3", not
+     just "star, 3") via the same visually-hidden-but-announced technique
+     as the .sr-only utility class elsewhere in this file, just scoped to
+     this specific label rather than applied globally. */
+  .lib-stat-label-hideable {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  .lib-stat-icon {
+    font-size: 0.95rem;
+  }
   .lib-stat-storage {
-    /* Unlike the simpler count-only stats above, this one still has a
-       third element (the quota bar below the value) that can't share a
-       single row with the label/value text — keep it column-stacked
-       instead of inheriting .lib-stat's row layout at this width. */
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.1rem;
+    /* Disk usage is high-value information (the whole reason a user asked
+       for it back after it briefly went missing) — instead of squeezing
+       it into the same compact pill as the simpler counts, it gets its
+       own full-width second row (flex-basis:100% forces a new flex line
+       regardless of how much space the row above happens to leave, so
+       this is never at the mercy of exactly how many stats fit next to
+       each other first) with room for icon, label, value, and quota bar
+       all clearly laid out: icon+label read together on the left (plain
+       flex-start — Storage keeps its text label on mobile, unlike
+       Starred/Recognized, since there's room for it here and "💾 461 MB /
+       10 GB" alone reads less clearly than the simpler icon-only counts
+       do), the value pushed to the far right via margin-left:auto (not
+       justify-content:space-between, which would treat all three as
+       independent items and center the label alone between icon and
+       value instead of keeping it next to the icon), and the bar
+       spanning the full width on its own line beneath both. */
+    flex-basis: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
     min-width: 0;
   }
+  .lib-stat-storage .lib-stat-value {
+    margin-left: auto;
+  }
   .lib-stat-storage-value {
-    font-size: 0.78rem;
+    font-size: 0.85rem;
+  }
+  .lib-stat-storage .p-progressbar {
+    /* Force the bar onto its own line below the icon/label/value line
+       above, same flex-basis:100% trick as the card itself. */
+    flex-basis: 100%;
   }
   /* Swap which of the two filter-row renders is visible — desktop's plain
      always-expanded row hides, the mobile collapsible Panel (collapsed by
