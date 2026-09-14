@@ -22,6 +22,20 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector('.app-nav-tab.active[data-tab="library"]')
 })
 
+test('a backend that cannot list clips says so instead of showing an empty library', async ({ page }) => {
+  // An empty grid and a failed request look identical otherwise, and the
+  // Library is the tab someone lands on — "no clips yet" when the real
+  // answer is "the request failed" is the wrong thing to conclude.
+  // Matched by pathname so it hits only the list endpoint, not
+  // /api/clips/<id> or /api/clips/<id>/stream.
+  await page.route(
+    (url) => url.pathname.endsWith('/api/clips'),
+    (route) => route.fulfill({ status: 500, body: 'boom' }),
+  )
+  await page.reload()
+  await expect(page.getByText('Failed to load clips')).toBeVisible()
+})
+
 test('loads with the seeded clips and per-camera counts in the sidebar', async ({ page }) => {
   await expect(page.locator('.app-nav-cam[data-camera="all"] .app-nav-cam-count')).toHaveText(String(TOTAL_CLIPS))
   for (const camera of ['Front Door', 'Backyard', 'Garage']) {

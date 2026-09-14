@@ -196,6 +196,21 @@ test("toggling the sync module's own switch also asks for confirmation before di
   await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
 })
 
+test('a camera that refuses to arm says so and does not pretend it worked', async ({ page }) => {
+  // The optimistic switch has to be put back when the request fails, or
+  // the tab reports a camera as armed that the sync module never armed —
+  // the one thing this tab must never get wrong. Mocked at the API layer
+  // (the same approach live-view.spec.ts takes) because the real fake sync
+  // module deliberately always succeeds.
+  await page.route('**/api/sync-modules/cameras/*/arm', (route) => route.fulfill({ status: 500, body: 'boom' }))
+  const frontDoorCard = page.locator('.sm-cam-card', { hasText: 'Front Door' })
+  await frontDoorCard.locator('input[role="switch"]').click()
+
+  await expect(page.getByText('Failed to disarm Front Door')).toBeVisible()
+  await expect(frontDoorCard.getByText('Armed', { exact: true })).toBeVisible()
+  await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
+})
+
 test('the real seeded module has no local-storage clips panel at all', async ({ page }) => {
   // Sanity check against the *real*, unmocked backend data — confirms the
   // panel is genuinely conditional on local_storage, not just hidden by

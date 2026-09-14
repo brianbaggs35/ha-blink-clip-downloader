@@ -18,13 +18,17 @@ const thumbFailed = ref(false)
   <!-- Opening a clip was mouse-only: the card carried the click handler but
        nothing put it in the tab order or responded to a key. It is the
        primary control of the whole Library, so it is focusable and
-       Enter/Space-activatable now. Deliberately not role="button" — the
-       card contains its own checkbox, and nesting a control inside a
-       button role is what screen readers cope with worst. -->
+       Enter/Space-activatable now.
+       role="button" alongside the tabindex, despite the select-mode
+       checkbox this card contains: a focusable div with no role announces
+       as nothing at all, which is worse for every clip in the far commoner
+       case where there is no checkbox. The checkbox keeps its own place in
+       the tab order regardless of the parent's role. -->
   <div
     class="clip-card"
     :class="{ selected }"
     :data-id="clip.id"
+    role="button"
     tabindex="0"
     :aria-label="`Open the clip from ${clip.camera}`"
     @click="$emit('click')"

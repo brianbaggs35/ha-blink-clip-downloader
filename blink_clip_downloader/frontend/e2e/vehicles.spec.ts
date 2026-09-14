@@ -27,6 +27,17 @@ test('saving the protected vehicle description persists after reload', async ({ 
   await expect(page.locator('#vehicle-description')).toHaveValue(description)
 })
 
+test('a description the backend refuses to store reports the failure rather than a save', async ({ page }) => {
+  // Routed to a 500, so nothing is written — this sits between two tests
+  // that both depend on the real stored description and must not disturb it.
+  await page.route('**/api/vehicle/settings', (route) =>
+    route.request().method() === 'PUT' ? route.fulfill({ status: 500, body: 'boom' }) : route.continue(),
+  )
+  await page.locator('#vehicle-description').fill('e2e description that never lands')
+  await page.getByRole('button', { name: 'Save Description' }).click()
+  await expect(page.getByText('Failed to save description')).toBeVisible()
+})
+
 test('marking a camera as a car camera reveals the zone picker and persists after reload', async ({ page }) => {
   const card = page.locator('.camera-card', { hasText: 'Test Scratch' })
   await expect(card.locator('.zone-picker')).toHaveCount(0)

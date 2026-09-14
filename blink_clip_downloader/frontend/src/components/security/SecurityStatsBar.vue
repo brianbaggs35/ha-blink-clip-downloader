@@ -8,10 +8,6 @@ import { SEVERITY_LABEL, SEVERITY_TAG } from './severity'
 
 const props = defineProps<{ stats: SecurityStats | null }>()
 
-/** Always all four bands, in severity order, including the zeroes. A row
- *  that silently omits "critical" when the count is zero reads as missing
- *  data rather than as good news — and "0 critical" is exactly the thing
- *  someone opening this tab wants to see confirmed. */
 /** Colours the meter segments. Deliberately the same four hues the theme
  *  gives PrimeVue's secondary/info/warn/danger tags, so the bar and the
  *  counts beside it are visibly the same four things. */
@@ -22,6 +18,10 @@ const METER_COLOR: Record<SecuritySeverity, string> = {
   critical: '#ef4444',
 }
 
+/** Always all four bands, in severity order, including the zeroes. A row
+ *  that silently omits "critical" when the count is zero reads as missing
+ *  data rather than as good news — and "0 critical" is exactly the thing
+ *  someone opening this tab wants to see confirmed. */
 const bands = computed(() =>
   SECURITY_SEVERITIES.map((severity: SecuritySeverity) => ({
     severity,

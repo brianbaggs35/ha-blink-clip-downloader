@@ -174,6 +174,63 @@ test('declining the delete confirmation keeps the clip', async ({ page }) => {
   await expect(page.locator('.clip-card[data-id="e2e-clip-003"]')).toBeVisible()
 })
 
+test('playback and clip navigation are inert while a confirmation dialog is open', async ({ page }) => {
+  // The document-level shortcut handler fired regardless of what was on
+  // top of the modal, so ArrowDown swapped the clip out from under a
+  // "Delete this clip permanently?" prompt that named the previous one —
+  // and answering Yes then deleted whichever clip had taken its place.
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = openModal(page)
+  await expect(modal.locator('.modal-title')).toContainText('Front Door')
+
+  await modal.getByRole('button', { name: '🗑 Delete' }).click()
+  await expect(page.getByText('Delete this clip permanently?')).toBeVisible()
+
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowUp')
+  await expect(modal.locator('.modal-title')).toContainText('Front Door')
+  await expect(page.getByText('Delete this clip permanently?')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(modal.locator('.modal-title')).toContainText('Front Door')
+  await expect(page.locator('.clip-card[data-id="e2e-clip-000"]')).toBeVisible()
+})
+
+test("a tag's remove control is a real button, reachable and operable by keyboard", async ({ page }) => {
+  // It used to be a <span> with a click handler: visible, and completely
+  // unreachable without a mouse.
+  await page.locator('.clip-card[data-id="e2e-scratch-tag"]').click()
+  const modal = openModal(page)
+  const input = modal.locator('#clip-tag-input')
+  await input.fill('e2e-kbd-remove')
+  await input.press('Enter')
+  const tag = modal.locator('.tag-item', { hasText: 'e2e-kbd-remove' })
+  await expect(tag).toBeVisible()
+
+  const remove = tag.getByRole('button', { name: 'Remove tag e2e-kbd-remove' })
+  await remove.focus()
+  await expect(remove).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('Remove tag "e2e-kbd-remove" from this clip?')).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+  await expect(modal.locator('.tag-item', { hasText: 'e2e-kbd-remove' })).toHaveCount(0)
+})
+
+test('a clip card opens from the keyboard, not only from a mouse click', async ({ page }) => {
+  const card = page.locator('.clip-card[data-id="e2e-clip-001"]')
+  await card.focus()
+  await expect(card).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(openModal(page)).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(openModal(page)).toHaveCount(0)
+
+  // Space works too, and must not also scroll the grid out from under it.
+  await card.focus()
+  await page.keyboard.press(' ')
+  await expect(openModal(page)).toBeVisible()
+})
+
 test('Escape closes the modal', async ({ page }) => {
   await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
   await expect(openModal(page)).toBeVisible()

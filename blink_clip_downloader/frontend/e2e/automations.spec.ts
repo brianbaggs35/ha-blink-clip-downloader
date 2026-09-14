@@ -28,6 +28,24 @@ test('sending a test Discord message with no webhook configured fails gracefully
   await expect(page.getByText('Test Discord message failed')).toBeVisible()
 })
 
+test('the mobile and Home Assistant channels also fail gracefully with nothing configured', async ({ page }) => {
+  await page.getByRole('button', { name: 'Send test notification', exact: true }).click()
+  await expect(page.getByText('Test push notification failed')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Send test HA notification' }).click()
+  await expect(page.getByText('Test HA notification failed')).toBeVisible()
+})
+
+test('a channel test that cannot reach the backend at all says so rather than nothing', async ({ page }) => {
+  // The endpoints above answer {success:false} — a *transport* failure is
+  // a different branch, and the one that leaves the card with no result
+  // message at all if it is not handled.
+  await page.route('**/api/notifications/test-email', (route) => route.fulfill({ status: 500, body: 'boom' }))
+  await page.getByRole('button', { name: 'Send test email' }).click()
+  await expect(page.getByText('Test email failed')).toBeVisible()
+  await expect(page.getByText('Failed to send — check the add-on logs')).toBeVisible()
+})
+
 test('copying a code block shows a confirmation toast', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.locator('.code-block').first().getByRole('button', { name: 'Copy' }).click()

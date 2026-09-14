@@ -26,27 +26,19 @@ describe('PromptOverlay', () => {
     expect(wrapper.find('pre').exists()).toBe(false)
   })
 
-  it('closes via the close button', async () => {
+  // One overlay, three ways out of it. The keyboard one is why the list is
+  // worth keeping together: the backdrop handles Escape itself now instead
+  // of leaving it entirely to useKeyboardShortcuts' document listener, and
+  // a change to the backdrop markup would otherwise drop that silently.
+  it.each([
+    ['the close button', '.modal-close', 'click'],
+    ['a click on the backdrop', '.modal-bg', 'click'],
+    ['Escape raised inside it, not only via the app-wide handler', '.modal-bg', 'keydown.escape'],
+  ])('closes on %s', async (_label, selector, event) => {
     const store = usePromptOverlayStore()
     store.show('x')
     const wrapper = mount(PromptOverlay)
-    await wrapper.find('.modal-close').trigger('click')
-    expect(store.open).toBe(false)
-  })
-
-  it('closes on backdrop click', async () => {
-    const store = usePromptOverlayStore()
-    store.show('x')
-    const wrapper = mount(PromptOverlay)
-    await wrapper.find('.modal-bg').trigger('click')
-    expect(store.open).toBe(false)
-  })
-
-  it('closes on Escape, so dismissal is not mouse-only', async () => {
-    const store = usePromptOverlayStore()
-    store.show('x')
-    const wrapper = mount(PromptOverlay)
-    await wrapper.find('.modal-bg').trigger('keydown.escape')
+    await wrapper.find(selector).trigger(event)
     expect(store.open).toBe(false)
   })
 })

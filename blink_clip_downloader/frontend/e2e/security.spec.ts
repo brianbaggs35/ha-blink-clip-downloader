@@ -187,3 +187,86 @@ test('a clip analyzed before 6.0.0 shows no security row rather than a broken on
   expect(rows).not.toContain('e2e-clip-000')
   await expect(page.locator('.security-row')).toHaveCount(3)
 })
+
+// Row factory for the page.route()-mocked tests below. Paging and the
+// failure paths cannot be reached against the real seed — three clips
+// never fill a 25-row page — so those three tests mock the API layer,
+// the same approach live-view.spec.ts and mocked-integrations.spec.ts
+// take, while every other test here runs against the real backend.
+function timelineRow(clipId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id: Number(clipId.replace(/\D/g, '')) || 1,
+    clip_id: clipId,
+    camera: 'Front Door',
+    event_type: 'subject_present',
+    severity: 'routine',
+    confidence: 0.9,
+    risk_score: 5,
+    evidence_quality: 0.8,
+    detail: `Mocked row for ${clipId}`,
+    subject_label: 'person',
+    track_id: 1,
+    asset_name: '',
+    asset_type: '',
+    start_offset: 0,
+    end_offset: 4,
+    evidence: {},
+    created_at: '2026-09-14T12:00:00+00:00',
+    clip_timestamp: '2026-09-14T12:00:00+00:00',
+    file_path: '/tmp/none.mp4',
+    starred: false,
+    archived: false,
+    ai_suspicious: null,
+    ai_confidence: null,
+    ai_summary: null,
+    risk_override_applied: null,
+    ...overrides,
+  }
+}
+
+test('says so when the timeline cannot be loaded at all', async ({ page }) => {
+  await page.route('**/api/security/timeline*', (route) => route.fulfill({ status: 500, body: 'boom' }))
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="security"]').click()
+  await expect(page.getByText('Failed to load the security timeline.')).toBeVisible()
+})
+
+test('Load more appends the next page and drops a clip the first page already showed', async ({ page }) => {
+  // Offset paging over a list that grows at the top repeats the boundary
+  // row, and one row per clip is the property the whole timeline is built
+  // around — so the repeat must be dropped, not rendered twice.
+  await page.route('**/api/security/timeline*', (route) => {
+    const offset = new URL(route.request().url()).searchParams.get('offset')
+    const events = offset
+      ? [timelineRow('mock-b'), timelineRow('mock-c')]
+      : [timelineRow('mock-a'), timelineRow('mock-b')]
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ events, total: 3 }) })
+  })
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="security"]').click()
+  await expect(page.locator('.security-row')).toHaveCount(2)
+
+  await page.getByRole('button', { name: 'Load more' }).click()
+  await expect(page.locator('.security-row')).toHaveCount(3)
+  await expect(page.getByText('Mocked row for mock-b')).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Load more' })).toHaveCount(0)
+})
+
+test('a failed Load more keeps the rows already on screen and says what happened', async ({ page }) => {
+  await page.route('**/api/security/timeline*', (route) => {
+    const offset = new URL(route.request().url()).searchParams.get('offset')
+    if (offset) return route.fulfill({ status: 500, body: 'boom' })
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ events: [timelineRow('mock-a')], total: 9 }),
+    })
+  })
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="security"]').click()
+  await expect(page.locator('.security-row')).toHaveCount(1)
+
+  await page.getByRole('button', { name: 'Load more' }).click()
+  await expect(page.getByText('Failed to load more events')).toBeVisible()
+  await expect(page.locator('.security-row')).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Load more' })).toBeVisible()
+})
