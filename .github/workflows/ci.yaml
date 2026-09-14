@@ -104,6 +104,20 @@ jobs:
         working-directory: blink_clip_downloader/frontend
         run: npm run type-check
 
+      # The root e2e/ scripts drive the smoke-test and ha-integration jobs
+      # and cannot be run locally (ha_integration_smoke.mjs needs a whole
+      # Supervisor in front of it), so a mistake in them is otherwise only
+      # ever found by a ~20-minute CI run — which is exactly how a
+      # temporal-dead-zone reference got shipped. Linting them here costs
+      # seconds and catches that class before the expensive jobs start.
+      - name: Install root e2e dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Run ESLint on the root e2e scripts
+        working-directory: e2e
+        run: npm run lint
+
   test:
     name: Tests
     runs-on: ubuntu-latest

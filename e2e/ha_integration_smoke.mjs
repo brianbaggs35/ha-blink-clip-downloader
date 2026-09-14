@@ -76,6 +76,27 @@ const OWNER = {
   password: "ci-integration-test-password-1",
 };
 
+/**
+ * The marker this job restarts the add-on around: written through the real
+ * ingress-proxied UI during the run below, then read back by
+ * ha_integration_setup.sh's `assert-persisted` once Supervisor has
+ * recreated the container. Together they prove the add-on's /data volume —
+ * which holds the bundled PostgreSQL cluster as well as this settings file
+ * — genuinely survives the container being replaced, the exact transition
+ * an *upgrade* puts an existing install through.
+ *
+ * Declared up here, not beside writePersistenceMarker() at the bottom of
+ * the file: everything below the top-level `try` is still in the temporal
+ * dead zone while that block runs, so a `const` there is unreadable from
+ * inside it even though the hoisted function that reads it is callable.
+ *
+ * Kept in step with the literal in ha-integration.yaml's "Verify settings
+ * written before the restart survived it" step — if the two ever drift,
+ * that step fails loudly rather than passing vacuously.
+ */
+export const PERSISTENCE_MARKER =
+  "ha-integration-marker.apps.googleusercontent.com";
+
 const issues = [];
 
 console.log(`Completing onboarding at ${baseUrl} ...`);
@@ -381,12 +402,6 @@ async function checkAddonSupervisorTabs(page, baseUrl, addonSlug, addonName, iss
  * persisted setting reachable with no Blink account and no AI provider -
  * the state this job's Home Assistant is necessarily in.
  */
-// Kept in step with the literal in ha-integration.yaml's
-// "Verify settings written before the restart survived it" step — if the
-// two ever drift, that step fails loudly rather than passing vacuously.
-export const PERSISTENCE_MARKER =
-  "ha-integration-marker.apps.googleusercontent.com";
-
 async function writePersistenceMarker(frame, issuesList) {
   try {
     await frame.locator('.app-nav-tab[data-tab="storage"]').click();
