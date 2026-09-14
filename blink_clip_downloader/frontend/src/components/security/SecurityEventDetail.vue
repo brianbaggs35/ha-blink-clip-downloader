@@ -7,6 +7,10 @@ import type { SecurityEventRow } from '../../api/types'
 import { evidenceLabel, formatEventType, formatOffset, severityTag } from './severity'
 
 const props = defineProps<{ clipId: string }>()
+// Each listed event knows the second it was measured at, so the row it sits
+// in can open the clip there. Scrubbing for "possible contact at 0:06" by
+// hand is the difference between a log and something you can review.
+const emit = defineEmits<{ seek: [seconds: number] }>()
 
 const events = ref<SecurityEventRow[]>([])
 const loading = ref(false)
@@ -65,7 +69,14 @@ const summary = computed(() => events.value[0] ?? null)
       </p>
       <ul class="security-detail-list">
         <li v-for="event in events" :key="event.id">
-          <span class="security-detail-time">{{ formatOffset(event.start_offset) }}</span>
+          <button
+            type="button"
+            class="security-detail-time"
+            :aria-label="`Play from ${formatOffset(event.start_offset)}`"
+            @click="emit('seek', event.start_offset)"
+          >
+            {{ formatOffset(event.start_offset) }}
+          </button>
           <Tag :value="formatEventType(event.event_type)" :severity="severityTag(event.severity)" />
           <span class="security-detail-text">{{ event.detail }}</span>
           <span class="security-detail-confidence">{{ Math.round(event.confidence * 100) }}%</span>
@@ -107,6 +118,12 @@ const summary = computed(() => events.value[0] ?? null)
   font-size: 0.85rem;
 }
 .security-detail-time {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   min-width: 3em;

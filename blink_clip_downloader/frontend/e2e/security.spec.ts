@@ -71,6 +71,25 @@ test('opens the clip without leaving the tab', async ({ page }) => {
   await expect(page.locator('.modal-bg.open')).toBeVisible()
 })
 
+test('every row carries a thumbnail that opens its clip', async ({ page }) => {
+  const row = page.locator('.security-row', { hasText: 'Impact candidate' })
+  const thumb = row.locator('.security-thumb img')
+  await expect(thumb).toBeVisible()
+  await row.locator('.security-thumb').click()
+  await expect(page.locator('.modal-bg.open')).toBeVisible()
+})
+
+test("an event's own timestamp opens the clip at that moment", async ({ page }) => {
+  // Scrubbing by hand for "possible contact at 0:06" is the difference
+  // between a log and something a person can actually review.
+  const row = page.locator('.security-row', { hasText: 'Loitering' })
+  await row.getByRole('button', { name: 'Show evidence' }).click()
+  const detail = row.locator('[data-testid="security-detail"]')
+  await expect(detail).toBeVisible()
+  await detail.locator('.security-detail-time').first().click()
+  await expect(page.locator('.modal-bg.open')).toBeVisible()
+})
+
 test('the empty state explains itself rather than showing a blank tab', async ({ page }) => {
   await page.route('**/api/security/timeline*', (route) => route.fulfill({ json: { events: [], total: 0 } }))
   await page.reload()

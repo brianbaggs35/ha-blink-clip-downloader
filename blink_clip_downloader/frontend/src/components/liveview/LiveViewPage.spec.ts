@@ -587,7 +587,7 @@ describe('LiveViewPage', () => {
     let statusCalls = 0
     vi.stubGlobal(
       'fetch',
-      vi.fn((url: string, opts?: RequestInit) => {
+      vi.fn((url: string) => {
         if (url === '/api/liveview/cameras') return Promise.resolve(jsonResponse({ cameras: ['Front Door'] }))
         if (url === '/api/liveview/status') {
           statusCalls += 1

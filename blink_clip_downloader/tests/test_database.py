@@ -3905,6 +3905,57 @@ async def test_timeline_includes_clip_metadata(db: ClipDatabase) -> None:
     assert first["starred"] is False
 
 
+async def test_timeline_carries_the_models_own_verdict(db: ClipDatabase) -> None:
+    """The tab's whole point is comparing what code measured with what the
+    model concluded, so the row has to carry both."""
+    await _seed_timeline(db)
+    await db.add_analysis_result(
+        {
+            "clip_id": "c3",
+            "camera": "Driveway",
+            "model": "llava",
+            "response_text": "{}",
+            "is_suspicious": False,
+            "confidence": 0.2,
+            "summary": "Nothing unusual.",
+            "frame_count": 3,
+            "analysis_duration": 1.0,
+            "analyzed_at": "2026-01-05T00:00:00+00:00",
+        }
+    )
+    by_clip = {e["clip_id"]: e for e in (await db.get_security_timeline())["events"]}
+    assert by_clip["c3"]["ai_suspicious"] is False
+    assert by_clip["c3"]["ai_summary"] == "Nothing unusual."
+    # A clip with no analysis row at all still appears, just without one.
+    assert by_clip["c1"]["ai_suspicious"] is None
+
+
+async def test_timeline_shows_only_the_latest_verdict(db: ClipDatabase) -> None:
+    await _seed_timeline(db)
+    for analyzed_at, suspicious, summary in (
+        ("2026-01-05T00:00:00+00:00", True, "Someone at the car."),
+        ("2026-01-06T00:00:00+00:00", False, "A cat, on reflection."),
+    ):
+        await db.add_analysis_result(
+            {
+                "clip_id": "c3",
+                "camera": "Driveway",
+                "model": "llava",
+                "response_text": "{}",
+                "is_suspicious": suspicious,
+                "confidence": 0.5,
+                "summary": summary,
+                "frame_count": 3,
+                "analysis_duration": 1.0,
+                "analyzed_at": analyzed_at,
+            }
+        )
+    row = next(
+        e for e in (await db.get_security_timeline())["events"] if e["clip_id"] == "c3"
+    )
+    assert row["ai_summary"] == "A cat, on reflection."
+
+
 async def test_timeline_filters_by_camera(db: ClipDatabase) -> None:
     await _seed_timeline(db)
     result = await db.get_security_timeline(camera="Driveway")

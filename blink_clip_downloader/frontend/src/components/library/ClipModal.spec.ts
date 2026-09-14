@@ -9,6 +9,7 @@ const fakePlayer = {
   pause: vi.fn(),
   dispose: vi.fn(),
   on: vi.fn(),
+  one: vi.fn(),
   fluid: vi.fn(),
   loop: vi.fn(),
   muted: vi.fn().mockReturnValue(false),
@@ -88,6 +89,55 @@ describe('ClipModal', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.clearAllMocks()
+  })
+
+  it('opens at the requested second when one is given', async () => {
+    // The Security tab opens a clip at the moment its event was measured
+    // at, so reviewing "possible contact at 0:06" is not a manual scrub.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(CLIP))),
+    )
+    mount(ClipModal, {
+      props: { clipId: 'c1', startAt: 6, aiEnabled: false, promptDebugEnabled: false },
+    })
+    await flushPromises()
+    const seek = fakePlayer.one.mock.calls.find(([event]) => event === 'loadedmetadata')
+    expect(seek).toBeTruthy()
+    // Seeking before the source reports a duration is silently ignored, so
+    // it has to wait for metadata rather than run inline.
+    expect(fakePlayer.currentTime).not.toHaveBeenCalledWith(6)
+    ;(seek![1] as () => void)()
+    expect(fakePlayer.currentTime).toHaveBeenCalledWith(6)
+  })
+
+  it('drops a queued seek once the modal has moved to another clip', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(CLIP))),
+    )
+    const wrapper = mount(ClipModal, {
+      props: { clipId: 'c1', startAt: 6, aiEnabled: false, promptDebugEnabled: false },
+    })
+    await flushPromises()
+    const seek = fakePlayer.one.mock.calls.find(([event]) => event === 'loadedmetadata')!
+    // Stepping to the next clip before the first one's metadata arrives:
+    // seeking now would jump the new clip to the old one's event time.
+    await wrapper.setProps({ clipId: 'c2' })
+    await flushPromises()
+    fakePlayer.currentTime.mockClear()
+    ;(seek[1] as () => void)()
+    expect(fakePlayer.currentTime).not.toHaveBeenCalledWith(6)
+  })
+
+  it('does not queue a seek when no start second is given', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(CLIP))),
+    )
+    mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    expect(fakePlayer.one.mock.calls.filter(([e]) => e === 'loadedmetadata')).toHaveLength(0)
   })
 
   it('is closed when clipId is null', () => {
