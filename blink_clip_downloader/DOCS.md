@@ -758,6 +758,37 @@ supports "possible", the event says possible. Events that would need pose
 estimation or action recognition (striking, kicking, climbing) are deliberately
 absent rather than guessed at.
 
+#### Running it on a low-powered device
+
+Everything above needs only object detection. The depth-estimation and
+contact-segmentation stages are much heavier, and on a Raspberry Pi you may
+well end up running without them — either because the models never finish
+downloading, or because you turned the whole enhanced pipeline off.
+
+That is a supported configuration, and the important thing to understand is
+what changes:
+
+- **A camera cannot see depth.** Anybody who walks in front of or behind a
+  parked car overlaps it in the image in every single frame. With the depth
+  stage available, that subject is placed at a different distance and their
+  proximity, approach and zone events are suppressed outright — a passer-by
+  scores essentially zero. Without it, the geometry alone genuinely cannot
+  tell "walked past the car" from "stood at the car".
+- So a contact claim resting on nothing but that overlap is reported as
+  **noteworthy**, not suspicious, and says so in its own text. It reaches
+  the prompt and the Security tab either way; what it does not do is carry
+  the weight of a confirmed one, or raise a possible-impact alert.
+- With the stages available, the same geometry is **believed**: contact
+  becomes suspicious, and impact candidates become possible. That is the
+  concrete thing they buy you.
+
+The prompt always tells the AI model which stages produced nothing for a
+clip, and the evidence-quality score drops accordingly — so on a
+low-powered device the model is weighing the frames themselves rather than
+trusting geometry that nothing corroborated. With the whole enhanced
+pipeline off, this layer produces nothing at all and analysis runs exactly
+as it did before it existed.
+
 #### Risk score, severity, and evidence quality
 
 The score is a weighted sum of the detected events, adjusted for the hour and
@@ -783,8 +814,21 @@ a worse view of the property than no timeline at all.
 
 Filter by camera, by minimum severity, or by period. **Show evidence**
 expands a row into that clip's full event list with the risk score and
-evidence quality behind it; **View clip** opens the clip's own player
-without leaving the tab.
+evidence quality behind it.
+
+Every row carries the clip's own thumbnail, so the timeline can be scanned
+rather than read, and **View clip** opens the player at the second that
+row's event was measured at rather than from the top — as does clicking any
+timestamp inside the evidence list, so checking "possible contact at 0:06"
+does not mean scrubbing for it by hand.
+
+Each row also shows **what the AI model concluded about the same clip**, and
+marks the rows where the two disagreed. That marker is the most useful thing
+on the tab: a clip the geometry rated highly and the model waved through —
+or one the model flagged that the geometry saw nothing in — is exactly the
+clip worth thirty seconds of your own attention. Rows flagged by
+`ai_risk_alert_threshold` are labelled as such rather than as a
+disagreement, since there the evidence has already had the last word.
 
 Not to be confused with the **Security Feed** tab, which is the grid of
 near-live camera snapshots.

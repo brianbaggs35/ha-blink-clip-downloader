@@ -45,6 +45,16 @@ architecture.
     that statement is a no-op for a table that already exists, so upgrading
     installs would never get the new column otherwise.
   - `analyzer.py` — AI vision analysis. See **AI provider architecture** below.
+  - `model_catalog.py` — per-provider model reference data: which ids can
+    see images, which accept a structured-output schema, and per-token
+    pricing, plus the small pure functions that read it. Split out of
+    `analyzer.py` because it changes on the providers' schedule, not this
+    add-on's; it imports nothing from `analyzer.py`.
+  - `moondream_finetune.py` — `MoondreamFineTuneManager`, an async wrapper
+    over Moondream Cloud's fine-tuning REST API. **Not an analyzer** — no
+    clip, prompt or verdict is involved; it backs the AI tab's Fine-Tuning
+    panel and every method swallows transport failures rather than raising,
+    since nothing in clip analysis depends on it.
   - `analysis_queue.py` — async queue that feeds clips to the analyzer.
   - `security/` — the structured security layer (`events.py`, `tracks.py`,
     `geometry.py`, `zones`/`assets.py`, `vehicles.py`, `detector.py`,
@@ -138,7 +148,10 @@ selected via the `create_analyzer()` factory keyed on `ai_provider`:
 | `openai`          | `OpenAIAnalyzer`         | GPT vision models                         |
 
 `MoondreamFineTuneManager` is a separate helper class (not an analyzer) that
-wraps the Moondream Cloud fine-tuning API.
+wraps the Moondream Cloud fine-tuning API — it lives in
+`moondream_finetune.py`, not `analyzer.py`. The model capability/pricing
+tables live in `model_catalog.py` for the same reason: both are edited for
+reasons that have nothing to do with how a clip is analyzed.
 
 `BaseAnalyzer._build_prompt(camera, ...)` assembles the analysis prompt per
 clip. Key detail: **`ai_car_cameras` empty means "applies to all cameras"**

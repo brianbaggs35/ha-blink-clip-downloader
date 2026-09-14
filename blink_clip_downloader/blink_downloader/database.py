@@ -1643,10 +1643,18 @@ class ClipDatabase:
         """Persist one analysis run in full.
 
         The verdict row, its object detections, and its security events are
-        three tables that must always be written together — a clip whose
-        security events are left over from a previous run reads as a
-        different, older event in the timeline than the verdict beside it.
-        Every caller goes through here rather than remembering all three.
+        three tables that belong together — a clip whose security events are
+        left over from a previous run reads as a different, older event in
+        the timeline than the verdict beside it. Every caller goes through
+        here rather than remembering all three.
+
+        Each of the three writes is individually atomic, but they are not one
+        transaction: a process killed between them leaves a new verdict
+        beside the previous run's events until the clip is analyzed again.
+        Widening the transaction would mean threading a connection through
+        three otherwise-independent public methods, which is a poor trade for
+        a window this small and self-healing — noted here so the next reader
+        does not have to work out whether it was considered.
         """
         await self.add_analysis_result(result.to_dict())
         await self.save_detected_objects(
