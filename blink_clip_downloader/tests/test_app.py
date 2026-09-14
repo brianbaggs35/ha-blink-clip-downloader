@@ -884,10 +884,10 @@ async def test_on_clips_downloaded_baseline_failure_is_swallowed(app, caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_write_stats_creates_file(app, tmp_path):
+async def test_write_stats_creates_file(app, tmp_path):
     stats_path = tmp_path / "stats.json"
     with patch("blink_downloader.app.STATS_FILE", stats_path):
-        app._write_stats()
+        await app._write_stats()
 
     data = json.loads(stats_path.read_text())
     assert "last_poll" in data
@@ -895,10 +895,27 @@ def test_write_stats_creates_file(app, tmp_path):
     assert "disk" in data
 
 
-def test_write_stats_handles_oserror(app, tmp_path):
+async def test_write_stats_handles_oserror(app, tmp_path):
     # Should not raise even if the file can't be written.
     with patch("blink_downloader.app.STATS_FILE", Path("/nonexistent/deep/stats.json")):
-        app._write_stats()  # no exception
+        await app._write_stats()  # no exception
+
+
+async def test_write_stats_does_not_block_the_event_loop(app, tmp_path):
+    """disk_stats() walks and stats every file under download_path, so the
+    whole write is handed to a worker thread rather than run inline twice
+    per poll cycle while the web UI is served from the same loop."""
+    import threading
+
+    caller: dict[str, int] = {}
+    app._storage.disk_stats = MagicMock(
+        side_effect=lambda: (
+            caller.setdefault("thread", threading.get_ident()) and {} or {}
+        )
+    )
+    with patch("blink_downloader.app.STATS_FILE", tmp_path / "stats.json"):
+        await app._write_stats()
+    assert caller["thread"] != threading.get_ident()
 
 
 # ---------------------------------------------------------------------------

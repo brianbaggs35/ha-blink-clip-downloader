@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import io
 import json
 import logging
 import math
+import os
 import platform
 import re
 import sys
+import tempfile
 import time
 import zipfile
 from collections.abc import Awaitable, Callable
@@ -19,6 +20,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import aiofiles
 from aiohttp import web
 
 from .database import SUSPICIOUS_PERIODS, ClipDatabase
@@ -927,7 +929,7 @@ class MediaServer:
         tags = await self._db.get_distinct_tags()
         return web.json_response(tags)
 
-    async def _handle_export_zip(self, request: web.Request) -> web.Response:
+    async def _handle_export_zip(self, request: web.Request) -> web.StreamResponse:
         """Package up to 25 selected clips into a ZIP and return it."""
         try:
             body = await request.json()
@@ -938,27 +940,51 @@ class MediaServer:
         if not clip_ids:
             raise web.HTTPBadRequest(text="No clip IDs provided")
 
-        buf = io.BytesIO()
-        added = 0
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for cid in clip_ids:
-                clip = await self._db.get_clip(cid)
-                if not clip:
-                    continue
-                fp = Path(clip["file_path"])
-                if fp.exists():
-                    zf.write(fp, fp.name)
-                    added += 1
+        paths: list[Path] = []
+        for cid in clip_ids:
+            clip = await self._db.get_clip(cid)
+            if not clip:
+                continue
+            fp = Path(clip["file_path"])
+            if fp.exists():
+                paths.append(fp)
 
-        if not added:
+        if not paths:
             raise web.HTTPNotFound(text="No clip files found on disk")
 
-        buf.seek(0)
-        return web.Response(
-            body=buf.read(),
-            content_type="application/zip",
-            headers={"Content-Disposition": 'attachment; filename="blink-clips.zip"'},
-        )
+        # Built into a scratch file in a worker thread, then streamed.
+        # Twenty-five clips is tens of megabytes; assembling that in a
+        # BytesIO and then copying it again into the response body held two
+        # full copies in memory at once, on a box where the add-on may only
+        # have a few hundred megabytes to itself — and deflating them inline
+        # blocked the event loop (and so the whole web UI) for the duration.
+        fd, tmp_name = tempfile.mkstemp(prefix="blink-export-", suffix=".zip")
+        os.close(fd)
+        tmp_path = Path(tmp_name)
+        try:
+            await asyncio.to_thread(self._write_export_zip, tmp_path, paths)
+            response = web.StreamResponse(
+                headers={
+                    "Content-Disposition": 'attachment; filename="blink-clips.zip"',
+                    "Content-Length": str(tmp_path.stat().st_size),
+                }
+            )
+            response.content_type = "application/zip"
+            await response.prepare(request)
+            async with aiofiles.open(tmp_path, "rb") as fh:
+                while chunk := await fh.read(262_144):
+                    await response.write(chunk)
+            await response.write_eof()
+            return response
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _write_export_zip(zip_path: Path, paths: list[Path]) -> None:
+        """Compress *paths* into *zip_path*. Runs in a worker thread."""
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fp in paths:
+                zf.write(fp, fp.name)
 
     async def _handle_auth_status(  # NOSONAR
         self, _request: web.Request

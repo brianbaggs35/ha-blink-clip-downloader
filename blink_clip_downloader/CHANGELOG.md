@@ -239,6 +239,18 @@ damage classification.
   models (`claude-haiku-4-5`, `gpt-4o-mini`) deliberately left unchanged —
   still the most cost-effective vision-capable choice for each provider.
 
+### Internal
+
+- `analyzer.py`'s frame arithmetic — grayscale thumbnails, inter-frame diff
+  magnitudes and centroids, the scene-baseline thumbnail, the
+  motion-trajectory phrase and the car-zone motion share — moved into a new
+  `frame_motion.py`, for the same reason `model_catalog.py` and
+  `moondream_finetune.py` were split out earlier in this release: it is
+  image math that happens to be used during analysis rather than part of
+  deciding what a clip means. A pure move, no behaviour change; it also
+  removes a second, byte-identical copy of the point-in-polygon test that
+  the security layer already had.
+
 ### Dependency Updates
 
 - Updated python-slugify to 9.0.0, ultralytics to 8.4.146, transformers to
@@ -250,6 +262,33 @@ damage classification.
 
 ### Bug Fixes
 
+- **`min_clip_duration` no longer silently downloads nothing at all.** The
+  clip list reports a duration of 0 for every clip on some accounts and
+  clip types — which is why a downloaded clip's real length is probed from
+  the file afterwards. The pre-download filter trusted the same unreliable
+  field, so setting this option above zero on one of those accounts dropped
+  every clip, with no error and nothing ever reaching the library. A clip
+  whose length Blink does not report is now kept (and logged once), since a
+  clip missed is gone for good once Blink expires it.
+- **The add-on no longer stalls its own web UI while it does filesystem
+  work.** Retention, the storage-quota check and the disk-usage figures
+  each walk and stat every file under the download folder, and all of them
+  ran inline on the same event loop that serves the web UI, HA ingress and
+  Live View — five or more full walks per poll cycle, plus one *per clip*
+  being downloaded. On a 5,000-clip library that measured at roughly 700 ms
+  of dead UI per cycle before a single clip was fetched. They now run in a
+  worker thread, and the empty-directory sweep — the most expensive part,
+  which walked and sorted the entire tree — only runs when retention
+  actually deleted something, instead of on every cycle regardless. The
+  same treatment is applied to compressing clips into a monthly archive,
+  extracting one back out for a Drive upload, the startup archive-integrity
+  check, and the missing-thumbnail scan.
+- **Exporting clips as a ZIP no longer builds the whole archive in memory.**
+  Twenty-five clips were compressed into a buffer and then copied again into
+  the response, holding two full copies at once on a machine where the
+  add-on may have only a few hundred megabytes — and deflating them blocked
+  the event loop throughout. It is now built in a worker thread and streamed
+  from disk.
 - A raised arm no longer escalates an unconfirmed contact to a possible
   impact. With the depth and segmentation stages unavailable, the only
   evidence under it is a 2D overlap that anyone walking in front of a parked
