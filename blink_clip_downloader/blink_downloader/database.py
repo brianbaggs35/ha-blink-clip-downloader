@@ -2626,6 +2626,25 @@ class ClipDatabase:
             counts[r["status"]] = r["cnt"]
         return counts
 
+    async def get_failed_analysis_queue(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Failed analysis rows with their error message, newest-failure
+        first -- powers the AI tab's Queue Status "Failed" modal."""
+        if self._pool is None:
+            return []
+        rows = await self._pool.fetch(
+            _qm(
+                """
+                SELECT clip_id, camera, clip_path, error_message, completed_at, retry_count
+                FROM analysis_queue
+                WHERE status='failed'
+                ORDER BY completed_at DESC
+                LIMIT ?
+                """
+            ),
+            limit,
+        )
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------
     # Google Drive Upload Queue (see gdrive_client.py/gdrive_queue.py)
     # ------------------------------------------------------------------

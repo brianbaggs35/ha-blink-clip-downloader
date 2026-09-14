@@ -3,6 +3,7 @@ import type {
   AiModelsResponse,
   AiStatus,
   AiUsage,
+  AnalysisFailure,
   AnalysisResultDict,
   CameraConfig,
   CheckpointsResponse,
@@ -32,6 +33,10 @@ export function getAiStatus(): Promise<AiStatus> {
 
 export function getAiUsage(): Promise<AiUsage> {
   return apiGet('/api/ai/usage')
+}
+
+export function getFailedAnalysisQueue(): Promise<AnalysisFailure[]> {
+  return apiGet('/api/ai/queue/failed')
 }
 
 export function clearAiUsage(): Promise<{ cleared: boolean }> {

@@ -1,7 +1,17 @@
-import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import AiStatusCards from './AiStatusCards.vue'
 import type { AiStatus } from '../../api/types'
+
+function jsonResponse(body: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+  } as Response
+}
 
 function baseStatus(overrides: Partial<AiStatus> = {}): AiStatus {
   return {
@@ -20,6 +30,14 @@ function baseStatus(overrides: Partial<AiStatus> = {}): AiStatus {
 }
 
 describe('AiStatusCards', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    // AnalysisFailuresModal's Dialog teleports its content to document.body
+    // -- without clearing it, a previous test's dialog content lingers and
+    // pollutes a later test's document.body assertions.
+    document.body.innerHTML = ''
+  })
+
   it('shows "Always active" when the queue reports no schedule window', () => {
     const wrapper = mount(AiStatusCards, {
       props: {
@@ -131,5 +149,59 @@ describe('AiStatusCards', () => {
       },
     })
     expect(wrapper.text()).toContain('—')
+  })
+
+  it('disables the Failed stat button when there are no failures', () => {
+    const wrapper = mount(AiStatusCards, {
+      props: {
+        status: baseStatus({
+          queue: {
+            pending: 0,
+            processing: 0,
+            completed: 0,
+            failed: 0,
+            in_schedule: true,
+            min_confidence: 0.5,
+            schedule_start: null,
+            schedule_end: null,
+          },
+        }),
+      },
+    })
+    expect(wrapper.find('.failed-stat-btn').attributes('disabled')).toBeDefined()
+  })
+
+  it('clicking the Failed stat button opens the failures modal, which can then be closed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse([]))),
+    )
+    const wrapper = mount(AiStatusCards, {
+      props: {
+        status: baseStatus({
+          queue: {
+            pending: 0,
+            processing: 0,
+            completed: 0,
+            failed: 3,
+            in_schedule: true,
+            min_confidence: 0.5,
+            schedule_start: null,
+            schedule_end: null,
+          },
+        }),
+      },
+    })
+    const button = wrapper.find('.failed-stat-btn')
+    expect(button.attributes('disabled')).toBeUndefined()
+
+    await button.trigger('click')
+    await flushPromises()
+    const body = new DOMWrapper(document.body)
+    expect(body.text()).toContain('Failed Analyses')
+
+    await wrapper.findComponent({ name: 'Dialog' }).vm.$emit('update:visible', false)
+    await flushPromises()
+    expect(body.text()).not.toContain('Failed Analyses')
   })
 })

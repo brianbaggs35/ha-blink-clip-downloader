@@ -339,6 +339,7 @@ class MediaServer:
         app.router.add_delete("/api/ai/usage", self._handle_ai_usage_clear)
         app.router.add_get("/api/ai/models", self._handle_ai_models)
         app.router.add_get("/api/ai/queue", self._handle_ai_queue)
+        app.router.add_get("/api/ai/queue/failed", self._handle_ai_queue_failed)
         app.router.add_get("/api/ai/results/{clip_id}", self._handle_ai_clip_result)
         app.router.add_get("/api/ai/suspicious", self._handle_ai_suspicious)
         app.router.add_post("/api/ai/analyze/{clip_id}", self._handle_ai_analyze_now)
@@ -1388,6 +1389,14 @@ class MediaServer:
             return web.json_response({"enabled": False})
         status = await self._analysis_queue.get_queue_status()
         return web.json_response({"enabled": True, **status})
+
+    async def _handle_ai_queue_failed(self, _request: web.Request) -> web.Response:
+        """Failed analysis rows with their error message (AI tab's Queue
+        Status "Failed" modal) -- gated on self._db only, mirroring
+        _handle_gdrive_queue_failed: a failed row's error is worth seeing
+        even if the analysis queue isn't currently running.
+        """
+        return web.json_response(await self._db.get_failed_analysis_queue())
 
     async def _handle_ai_clip_result(self, request: web.Request) -> web.Response:
         clip_id = request.match_info["clip_id"]
