@@ -1,0 +1,830 @@
+"""Deterministic security-event detection from tracks and protected assets.
+
+This is the layer that takes work away from the AI model. Geometry and
+timing — did someone enter the zone, did they get closer, how long did they
+stay, did the boxes overlap at the same depth — are things code can compute
+exactly and a vision-language model can only guess at from stills. So code
+computes them, and the model is left to do what it is actually good at:
+looking at the frames and saying whether the story those facts tell is
+really what happened.
+
+Every rule here is written to under-claim. Sampled frames are seconds
+apart, boxes are approximations, and a 2D overlap is not contact. Where the
+evidence only supports "possible", the event says possible — see each
+rule's own comment for exactly what it does and does not establish.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+
+from .assets import ProtectedAsset
+from .events import SecurityEvent, SecurityEventType, Severity, severity_rank
+from .tracks import (
+    ANIMAL_LABELS,
+    CARRYABLE_LABELS,
+    PERSON_LABEL,
+    ApproachProfile,
+    ObjectTrack,
+    subject_tracks,
+)
+
+#: How much an event's confidence is cut when the protected asset itself was
+#: only tentatively identified. Not zero — the geometry still happened — but
+#: enough that an ambiguous identification cannot drive a critical alert on
+#: its own.
+_UNCONFIDENT_ASSET_SCALE = 0.6
+
+#: Contact confidence required before a movement spike alone can escalate to
+#: an impact candidate. Met by depth- or segmentation-backed contact, not by
+#: a bare bounding-box overlap.
+_IMPACT_CONTACT_CONFIDENCE = 0.6
+
+
+@dataclass(frozen=True)
+class DetectorThresholds:
+    """Tunable cut-offs for every rule below.
+
+    Defaults are aligned with the behavioural thresholds the analysis
+    prompt already states in words (1 ft / 3 ft from a protected vehicle),
+    so the deterministic layer and the model's own written rules agree
+    instead of each having invented their own idea of "close".
+    """
+
+    #: Distance (feet) inside which a subject counts as near the asset.
+    near_feet: float = 3.0
+    #: Distance (feet) inside which proximity becomes concerning on its own.
+    close_feet: float = 1.0
+    #: Distance (feet) a subject must end up within for closing distance to
+    #: read as "approached the asset" rather than merely "walked nearer".
+    approach_feet: float = 8.0
+    #: Observed presence (seconds) near the asset or inside its zone that
+    #: counts as lingering rather than passing through. Comfortably longer
+    #: than unlocking a car and getting in, which is what the threshold has
+    #: to clear to avoid firing on every household departure.
+    loiter_seconds: float = 12.0
+    #: Observed presence (seconds) anywhere in frame that counts as
+    #: loitering even with no protected asset involved.
+    open_loiter_seconds: float = 15.0
+    #: Total travel (frame widths) below which a track counts as having
+    #: stayed put rather than crossed the scene.
+    stationary_path: float = 0.35
+    #: Acceleration (frame widths per second) between consecutive legs that
+    #: reads as rushing at something rather than walking up to it.
+    abrupt_speed_change: float = 0.12
+    #: Change (0.0-1.0) in the asset's own image region between before and
+    #: after the interaction that reads as the asset itself being altered.
+    appearance_change: float = 0.25
+    #: Scene-baseline deviation (0.0-1.0) above which an empty frame reads
+    #: as the camera itself having been interfered with.
+    obstruction_deviation: float = 0.45
+    #: Share of the subject's own box height that must overlap the asset
+    #: before an overlap counts as possible contact. In a 2D projection
+    #: everyone who walks in front of or behind a parked car overlaps it;
+    #: only a substantial overlap distinguishes touching from passing.
+    contact_overlap_fraction: float = 0.15
+
+
+@dataclass
+class DetectionContext:
+    """Everything the detector needs about one clip.
+
+    Deliberately plain values rather than objects from
+    :mod:`blink_downloader.vision`: the optional depth and contact stages
+    are summarized down to ``depth_similar`` / ``contact_touching`` tri-state
+    booleans before they get here, which keeps this package independent of
+    torch and makes every rule below trivially testable from literals.
+
+    ``contact_track_id`` names which track the depth/contact stages actually
+    examined — they run on a single chosen subject/asset pair, so applying
+    their verdict to a *different* subject in the same clip would attribute
+    evidence to the wrong person. When it is ``None``, the verdict is
+    applied only to whichever subject came closest to the asset.
+    """
+
+    camera: str
+    tracks: list[ObjectTrack]
+    frame_interval: float
+    frame_count: int
+    asset: ProtectedAsset | None = None
+    contact_touching: bool | None = None
+    contact_track_id: int | None = None
+    depth_similar: bool | None = None
+    scene_deviation: float | None = None
+    appearance_change: float | None = None
+
+    @property
+    def timeline_end(self) -> float:
+        """Clip-relative offset of the last sampled frame."""
+        return max(0, self.frame_count - 1) * self.frame_interval
+
+
+def _round_evidence(values: dict[str, object]) -> dict[str, object]:
+    """Round float evidence values so stored JSON stays readable."""
+    return {
+        key: round(value, 3) if isinstance(value, float) else value
+        for key, value in values.items()
+    }
+
+
+class SecurityEventDetector:
+    """Turns tracks plus optional CV evidence into structured events."""
+
+    def __init__(self, thresholds: DetectorThresholds | None = None) -> None:
+        self._t = thresholds or DetectorThresholds()
+
+    def detect(self, ctx: DetectionContext) -> list[SecurityEvent]:
+        """Return every event supported by *ctx*, earliest first.
+
+        Ties at the same offset are ordered most-severe first so a
+        timeline's first line for a moment is its most important one.
+        """
+        events: list[SecurityEvent] = []
+        events.extend(self._subject_events(ctx))
+        events.extend(self._asset_events(ctx))
+        events.extend(self._carryable_events(ctx))
+        events.extend(self._scene_events(ctx))
+        events.sort(key=lambda e: (e.start_offset, -severity_rank(e.severity)))
+        return events
+
+    # -- subjects ------------------------------------------------------
+
+    def _subject_events(self, ctx: DetectionContext) -> list[SecurityEvent]:
+        """Presence, open-ground loitering, and more than one person."""
+        events: list[SecurityEvent] = []
+        subjects = subject_tracks(ctx.tracks)
+        for track in subjects:
+            events.append(self._presence_event(track, ctx))
+            loiter = self._open_loiter_event(track)
+            if loiter is not None:
+                events.append(loiter)
+
+        people = [t for t in subjects if t.label == PERSON_LABEL and t.tracked]
+        if len(people) > 1:
+            events.append(
+                SecurityEvent(
+                    event_type=SecurityEventType.MULTIPLE_SUBJECTS,
+                    severity=Severity.NOTEWORTHY,
+                    confidence=min(
+                        0.9, sum(t.mean_confidence for t in people) / len(people)
+                    ),
+                    detail=f"{len(people)} separate people were tracked in this clip.",
+                    subject_label=PERSON_LABEL,
+                    start_offset=min(t.first_offset for t in people),
+                    end_offset=max(t.last_offset for t in people),
+                    evidence=_round_evidence({"person_count": len(people)}),
+                )
+            )
+        return events
+
+    def _presence_event(
+        self, track: ObjectTrack, ctx: DetectionContext
+    ) -> SecurityEvent:
+        """The baseline "something was here" event, always routine."""
+        return SecurityEvent(
+            event_type=SecurityEventType.SUBJECT_PRESENT,
+            severity=Severity.ROUTINE,
+            confidence=track.mean_confidence,
+            detail=(
+                f"{_article(track.label)} {track.label} was visible for at least "
+                f"{track.dwell_seconds:.0f}s, {track.direction}."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            start_offset=track.first_offset,
+            end_offset=track.last_offset,
+            evidence=_round_evidence(
+                {
+                    "dwell_seconds": track.dwell_seconds,
+                    "frames_seen": track.frame_count,
+                    "direction": track.direction,
+                    "average_speed": track.average_speed,
+                    "tracking_continuity": track.continuity(ctx.frame_interval),
+                    "tracked": track.tracked,
+                }
+            ),
+        )
+
+    def _open_loiter_event(self, track: ObjectTrack) -> SecurityEvent | None:
+        """Loitering with no protected asset involved — long and stationary.
+
+        Requires both a long observed presence *and* very little travel:
+        someone walking steadily across a large field of view can be in
+        frame for a long time without loitering in any meaningful sense.
+        """
+        if (
+            track.dwell_seconds < self._t.open_loiter_seconds
+            or track.path_length > self._t.stationary_path
+        ):
+            return None
+        return SecurityEvent(
+            event_type=SecurityEventType.LOITERING,
+            severity=Severity.NOTEWORTHY,
+            confidence=0.55,
+            detail=(
+                f"The {track.label} stayed in roughly one place for at least "
+                f"{track.dwell_seconds:.0f}s."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            start_offset=track.first_offset,
+            end_offset=track.last_offset,
+            evidence=_round_evidence(
+                {
+                    "dwell_seconds": track.dwell_seconds,
+                    "path_length_widths": track.path_length,
+                }
+            ),
+        )
+
+    # -- protected asset ----------------------------------------------
+
+    def _asset_events(self, ctx: DetectionContext) -> list[SecurityEvent]:
+        """Every rule that needs a located protected asset to mean anything."""
+        asset = ctx.asset
+        if asset is None or asset.box is None:
+            return []
+        subjects = subject_tracks(ctx.tracks)
+        if not subjects:
+            return []
+
+        profiles = {id(t): t.approach_to(asset.box) for t in subjects}
+        primary = min(subjects, key=lambda t: profiles[id(t)].min_box_gap)
+
+        events: list[SecurityEvent] = []
+        for track in subjects:
+            events.extend(
+                self._asset_track_events(
+                    track,
+                    profiles[id(track)],
+                    asset,
+                    ctx,
+                    cv_applies=self._cv_evidence_applies(track, primary, ctx),
+                )
+            )
+        if not asset.confident:
+            # Every one of these events is a claim about the protected
+            # vehicle specifically. If which car that is was a guess, the
+            # claim inherits the guess's uncertainty rather than presenting
+            # at full strength — see vehicles.identify_protected_vehicle.
+            events = [
+                replace(e, confidence=e.confidence * _UNCONFIDENT_ASSET_SCALE)
+                for e in events
+            ]
+        return events
+
+    @staticmethod
+    def _cv_evidence_applies(
+        track: ObjectTrack, primary: ObjectTrack, ctx: DetectionContext
+    ) -> bool:
+        """Whether this clip's depth/contact verdict describes *track*.
+
+        Those stages examine one subject/asset pair per clip. Matching on
+        the track id they reported is exact; without one, only the subject
+        that came closest to the asset can plausibly be the pair they
+        looked at.
+        """
+        if ctx.contact_track_id is not None:
+            return track.track_id == ctx.contact_track_id
+        return track is primary
+
+    def _asset_track_events(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        ctx: DetectionContext,
+        cv_applies: bool,
+    ) -> list[SecurityEvent]:
+        events: list[SecurityEvent] = []
+        min_feet = asset.gap_feet(profile.min_gap)
+        # _asset_events only calls this for an asset with a box, which is
+        # the one thing gap_feet needs to produce a number.
+        assert min_feet is not None
+        near = min_feet <= self._t.near_feet
+
+        # Depth estimation is what separates "walked past the car" from
+        # "stood right at the car": in a 2D frame those look identical, and
+        # the depth map is the only evidence that says which one happened.
+        # A negative verdict is as useful as a positive one, so when depth
+        # places this subject at a clearly different distance from the
+        # camera than the asset, the proximity and zone rules below stand
+        # down entirely rather than reporting a closeness that only exists
+        # in the projection.
+        depth_verdict = ctx.depth_similar if cv_applies else None
+        if depth_verdict is False:
+            near = False
+
+        zone_event = self._zone_event(track, asset, ctx, depth_verdict)
+        if zone_event is not None:
+            events.append(zone_event)
+
+        loiter = self._asset_loiter_event(track, asset, near and asset.present)
+        if loiter is not None:
+            events.append(loiter)
+
+        # Everything below is about the physical object. When the protected
+        # vehicle has evidently been driven away and only its empty space
+        # remains (see AssetLocation.ZONE_ABSENT), there is nothing to be
+        # near, approach, or touch — and reporting otherwise is exactly how
+        # a neighbour parking in the vacated spot became a critical alert.
+        if not asset.present:
+            return events
+
+        if near:
+            events.append(
+                self._proximity_event(track, profile, asset, min_feet, depth_verdict)
+            )
+
+        approach = self._approach_event(track, profile, asset, min_feet)
+        if approach is not None:
+            events.append(approach)
+
+        contact = self._contact_event(track, profile, asset, ctx, cv_applies)
+        if contact is not None:
+            events.append(contact)
+            impact = self._impact_event(track, profile, asset, ctx, contact)
+            if impact is not None:
+                events.append(impact)
+            retreat = self._retreat_after_contact_event(track, profile, asset)
+            if retreat is not None:
+                events.append(retreat)
+        elif near and profile.retreated:
+            events.append(self._retreat_event(track, profile, asset))
+
+        return events
+
+    def _zone_event(
+        self,
+        track: ObjectTrack,
+        asset: ProtectedAsset,
+        ctx: DetectionContext,
+        depth_similar: bool | None = None,
+    ) -> SecurityEvent | None:
+        """Entry into the user-drawn zone, judged from the subject's feet.
+
+        Suppressed when depth estimation places the subject at a clearly
+        different distance from the camera than the vehicle the zone was
+        drawn around — they overlap the zone in the image while standing
+        somewhere else entirely. Only applied when the vehicle itself was
+        detected, since that is what the depth comparison actually measured
+        against.
+        """
+        if asset.zone is None or not track.entered_zone(asset.zone):
+            return None
+        if depth_similar is False and asset.detected:
+            return None
+        dwell = track.zone_dwell(asset.zone)
+        # A single in-zone sighting gives a zero-length span, which is a
+        # real limit of sampling every couple of seconds rather than a
+        # measurement of an instant — say "entered" instead of claiming a
+        # duration the frames cannot support.
+        stayed = f" and stayed at least {dwell:.0f}s" if dwell >= 1.0 else ""
+        return SecurityEvent(
+            event_type=SecurityEventType.ZONE_ENTERED,
+            severity=Severity.NOTEWORTHY,
+            confidence=0.8 if track.tracked else 0.5,
+            detail=(
+                f"The {track.label} crossed into the area marked around "
+                f"{asset.description or 'the protected asset'}{stayed}."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=track.first_offset,
+            end_offset=track.last_offset,
+            evidence=_round_evidence(
+                {
+                    "zone_dwell_seconds": dwell,
+                    "frames_in_zone": sum(track.zone_membership(asset.zone)),
+                    "frame_interval": ctx.frame_interval,
+                }
+            ),
+        )
+
+    def _proximity_event(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        min_feet: float,
+        depth_similar: bool | None = None,
+    ) -> SecurityEvent:
+        close = min_feet <= self._t.close_feet
+        confidence = 0.75 if asset.detected else 0.5
+        if depth_similar is True:
+            # Independent confirmation that the subject really is at the
+            # vehicle's distance, not merely overlapping it in projection.
+            confidence = min(0.95, confidence + 0.15)
+        return SecurityEvent(
+            event_type=SecurityEventType.ASSET_PROXIMITY,
+            severity=Severity.SUSPICIOUS if close else Severity.NOTEWORTHY,
+            confidence=confidence,
+            detail=(
+                f"The {track.label} came within {_feet_phrase(min_feet)} of "
+                f"{asset.description or 'the protected asset'}"
+                + (
+                    ""
+                    if asset.detected
+                    else ", measured against where it normally sits"
+                )
+                + "."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=profile.min_gap_offset,
+            end_offset=profile.min_gap_offset,
+            evidence=_round_evidence(
+                {
+                    "min_gap_pixels": profile.min_gap,
+                    "min_gap_feet": min_feet,
+                    "asset_detected": asset.detected,
+                    "similar_depth": depth_similar,
+                }
+            ),
+        )
+
+    def _approach_event(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        min_feet: float,
+    ) -> SecurityEvent | None:
+        """Closing distance, but only when it ends up somewhere that matters.
+
+        Walking from the far edge of frame to the near edge closes a lot of
+        distance without ever coming near the asset — that is a pedestrian,
+        not an approach.
+        """
+        if not profile.approached or min_feet > self._t.approach_feet:
+            return None
+        return SecurityEvent(
+            event_type=SecurityEventType.ASSET_APPROACHED,
+            severity=Severity.NOTEWORTHY,
+            confidence=0.7 if track.tracked else 0.45,
+            detail=(
+                f"The {track.label} closed {profile.approach_fraction * 100:.0f}% of "
+                f"the distance to {asset.description or 'the protected asset'}, "
+                f"ending within {_feet_phrase(min_feet)}."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=track.first_offset,
+            end_offset=profile.min_gap_offset,
+            evidence=_round_evidence(
+                {
+                    "approach_fraction": profile.approach_fraction,
+                    "first_gap_pixels": profile.first_gap,
+                    "min_gap_pixels": profile.min_gap,
+                    "min_gap_feet": min_feet,
+                }
+            ),
+        )
+
+    def _asset_loiter_event(
+        self, track: ObjectTrack, asset: ProtectedAsset, near: bool
+    ) -> SecurityEvent | None:
+        """Lingering specifically at the asset, which needs far less time
+        than loitering on open ground before it is worth noticing."""
+        in_zone = asset.zone is not None and track.in_zone(asset.zone)
+        if not (near or in_zone):
+            return None
+        dwell = (
+            track.zone_dwell(asset.zone)
+            if in_zone and asset.zone is not None
+            else track.dwell_seconds
+        )
+        if dwell < self._t.loiter_seconds:
+            return None
+        return SecurityEvent(
+            event_type=SecurityEventType.LOITERING,
+            severity=Severity.SUSPICIOUS,
+            confidence=0.7 if track.tracked else 0.45,
+            detail=(
+                f"The {track.label} remained at "
+                f"{asset.description or 'the protected asset'} for at least "
+                f"{dwell:.0f}s."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=track.first_offset,
+            end_offset=track.last_offset,
+            evidence=_round_evidence(
+                {"dwell_seconds": dwell, "in_zone": in_zone, "near_asset": near}
+            ),
+        )
+
+    def _contact_basis(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        ctx: DetectionContext,
+        cv_applies: bool,
+    ) -> tuple[float, str] | None:
+        """Grade the evidence that a subject actually touched the asset.
+
+        A 2D box overlap is the weakest possible signal — a person walking
+        ten feet in front of a car overlaps it in the image every time,
+        which is exactly the false positive that makes naive box-overlap
+        "contact" detection useless on a driveway. Two things guard against
+        it here: the overlap must be *deep* relative to the subject's own
+        size, and depth estimation or pixel-level segmentation, when
+        available, dominate — including their negative verdicts. If either
+        says the subject was at a different distance or not touching, no
+        contact event is emitted at all.
+        """
+        if cv_applies and ctx.contact_touching is True:
+            return 0.8, "pixel-level segmentation found the outlines touching"
+        if profile.min_box_gap > 0 or not self._overlap_is_deep(track, profile):
+            return None
+        if cv_applies and ctx.contact_touching is False:
+            return None
+        if cv_applies and ctx.depth_similar is False:
+            return None
+        if cv_applies and ctx.depth_similar is True:
+            return 0.7, "the outlines overlapped at a similar distance from the camera"
+        return 0.45, "the outlines overlapped, with no depth or segmentation evidence"
+
+    @staticmethod
+    def points_offset(track: ObjectTrack, profile: ApproachProfile) -> float:
+        """Clip offset of the moment the outlines overlapped most deeply."""
+        return track.points[profile.min_box_gap_index].offset
+
+    def _overlap_is_deep(self, track: ObjectTrack, profile: ApproachProfile) -> bool:
+        """Is the overlap more than a passer-by clipping the asset's outline?"""
+        box = track.points[profile.min_box_gap_index].box
+        height = box[3] - box[1]
+        if height <= 0:
+            return False
+        return -profile.min_box_gap >= self._t.contact_overlap_fraction * height
+
+    def _contact_event(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        ctx: DetectionContext,
+        cv_applies: bool,
+    ) -> SecurityEvent | None:
+        basis = self._contact_basis(track, profile, ctx, cv_applies)
+        if basis is None:
+            return None
+        confidence, reason = basis
+        animal = track.label in ANIMAL_LABELS
+        event_type = (
+            SecurityEventType.ANIMAL_ASSET_INTERACTION
+            if animal
+            else SecurityEventType.CONTACT_CANDIDATE
+        )
+        return SecurityEvent(
+            event_type=event_type,
+            severity=Severity.NOTEWORTHY if animal else Severity.SUSPICIOUS,
+            confidence=confidence,
+            detail=(
+                f"Possible contact between the {track.label} and "
+                f"{asset.description or 'the protected asset'} — {reason}."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=self.points_offset(track, profile),
+            end_offset=self.points_offset(track, profile),
+            evidence=_round_evidence(
+                {
+                    "min_overlap_pixels": profile.min_box_gap,
+                    "basis": reason,
+                    "segmentation_contact": ctx.contact_touching,
+                    "similar_depth": ctx.depth_similar,
+                }
+            ),
+        )
+
+    def _impact_event(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        asset: ProtectedAsset,
+        ctx: DetectionContext,
+        contact: SecurityEvent,
+    ) -> SecurityEvent | None:
+        """Contact plus something abrupt — the signature of a strike or bump.
+
+        Restricted to people: an animal brushing a car produces the same
+        contact evidence, but "impact" carries an intent this pipeline has
+        no business inferring from a dog.
+        """
+        if track.label != PERSON_LABEL:
+            return None
+        speed_increase = track.max_speed_increase
+        change = ctx.appearance_change
+        # A speed spike alone is only worth this much when the contact under
+        # it is itself well evidenced. Bare box overlap plus a brisk walk is
+        # a person arriving at their car, not a collision — requiring depth
+        # or segmentation backing keeps the one CRITICAL event type this
+        # detector can emit out of everyday footage.
+        abrupt = (
+            speed_increase >= self._t.abrupt_speed_change
+            and contact.confidence >= _IMPACT_CONTACT_CONFIDENCE
+        )
+        altered = change is not None and change >= self._t.appearance_change
+        if not (abrupt or altered):
+            return None
+
+        reasons: list[str] = []
+        if abrupt:
+            reasons.append("the subject accelerated sharply around that moment")
+        if altered:
+            reasons.append("the asset's own image region looked different afterwards")
+        return SecurityEvent(
+            event_type=SecurityEventType.IMPACT_CANDIDATE,
+            severity=Severity.CRITICAL,
+            confidence=min(0.85, contact.confidence + 0.1),
+            detail=(
+                f"Possible impact with {asset.description or 'the protected asset'}: "
+                + " and ".join(reasons)
+                + ". This is a candidate for review, not a confirmed impact."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=profile.min_gap_offset,
+            end_offset=track.last_offset,
+            evidence=_round_evidence(
+                {
+                    "max_speed_increase": speed_increase,
+                    "appearance_change": change,
+                    "contact_confidence": contact.confidence,
+                }
+            ),
+        )
+
+    def _retreat_after_contact_event(
+        self, track: ObjectTrack, profile: ApproachProfile, asset: ProtectedAsset
+    ) -> SecurityEvent | None:
+        if not profile.retreated:
+            return None
+        return SecurityEvent(
+            event_type=SecurityEventType.RETREAT_AFTER_CONTACT,
+            severity=Severity.SUSPICIOUS,
+            confidence=0.6,
+            detail=(
+                f"The {track.label} moved away from "
+                f"{asset.description or 'the protected asset'} directly after the "
+                "possible contact."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=profile.min_gap_offset,
+            end_offset=track.last_offset,
+            evidence=_round_evidence(
+                {
+                    "retreat_fraction": profile.retreat_fraction,
+                    "min_gap_pixels": profile.min_gap,
+                    "last_gap_pixels": profile.last_gap,
+                }
+            ),
+        )
+
+    def _retreat_event(
+        self, track: ObjectTrack, profile: ApproachProfile, asset: ProtectedAsset
+    ) -> SecurityEvent:
+        return SecurityEvent(
+            event_type=SecurityEventType.RETREAT,
+            severity=Severity.NOTEWORTHY,
+            confidence=0.6,
+            detail=(
+                f"The {track.label} came close to "
+                f"{asset.description or 'the protected asset'} and then moved away "
+                "again."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=profile.min_gap_offset,
+            end_offset=track.last_offset,
+            evidence=_round_evidence(
+                {
+                    "retreat_fraction": profile.retreat_fraction,
+                    "min_gap_pixels": profile.min_gap,
+                }
+            ),
+        )
+
+    # -- carryable objects ---------------------------------------------
+
+    def _carryable_events(self, ctx: DetectionContext) -> list[SecurityEvent]:
+        """Bags and cases appearing or disappearing while a person is around.
+
+        COCO has no "parcel" class, so a delivered package most often lands
+        in one of the bag classes — which makes this the closest thing to
+        package-theft detection the detector honestly has. It requires a
+        person to have been present, since an object the detector simply
+        lost track of is otherwise indistinguishable from one that was
+        taken. Confidence stays low on purpose.
+        """
+        if ctx.frame_count < 3:
+            return []
+        people = [t for t in ctx.tracks if t.label == PERSON_LABEL]
+        if not people:
+            return []
+        midpoint = ctx.timeline_end / 2.0
+        events: list[SecurityEvent] = []
+        for track in ctx.tracks:
+            if track.label not in CARRYABLE_LABELS:
+                continue
+            if track.first_offset <= 0.0 and track.last_offset < midpoint:
+                events.append(self._carryable_event(track, removed=True))
+            elif (
+                track.first_offset > midpoint and track.last_offset >= ctx.timeline_end
+            ):
+                events.append(self._carryable_event(track, removed=False))
+        return events
+
+    @staticmethod
+    def _carryable_event(track: ObjectTrack, removed: bool) -> SecurityEvent:
+        if removed:
+            return SecurityEvent(
+                event_type=SecurityEventType.OBJECT_REMOVED,
+                severity=Severity.SUSPICIOUS,
+                confidence=0.45,
+                detail=(
+                    f"A {track.label} visible at the start of the clip was gone by "
+                    "the end while a person was present — possible removal, though "
+                    "the detector may simply have lost sight of it."
+                ),
+                subject_label=track.label,
+                track_id=track.track_id,
+                start_offset=track.first_offset,
+                end_offset=track.last_offset,
+                evidence=_round_evidence({"last_seen_offset": track.last_offset}),
+            )
+        return SecurityEvent(
+            event_type=SecurityEventType.OBJECT_ADDED,
+            severity=Severity.ROUTINE,
+            confidence=0.45,
+            detail=(
+                f"A {track.label} that was not there earlier was present at the end "
+                "of the clip — consistent with a delivery or drop-off."
+            ),
+            subject_label=track.label,
+            track_id=track.track_id,
+            start_offset=track.first_offset,
+            end_offset=track.last_offset,
+            evidence=_round_evidence({"first_seen_offset": track.first_offset}),
+        )
+
+    # -- scene ---------------------------------------------------------
+
+    def _scene_events(self, ctx: DetectionContext) -> list[SecurityEvent]:
+        """Camera interference: the view changed drastically, yet nothing is in it.
+
+        A covered, sprayed, or repositioned camera looks exactly like this.
+        So, unfortunately, does a floodlight switching on and a sunrise —
+        which is why confidence stays low and the detail says so outright.
+        """
+        deviation = ctx.scene_deviation
+        if deviation is None or deviation < self._t.obstruction_deviation:
+            return []
+        if ctx.tracks:
+            return []
+        return [
+            SecurityEvent(
+                event_type=SecurityEventType.CAMERA_OBSTRUCTION,
+                severity=Severity.SUSPICIOUS,
+                confidence=0.35,
+                detail=(
+                    f"This camera's view differs sharply from its usual background "
+                    f"({deviation:.2f}/1.00) with nothing detected in it — possible "
+                    "obstruction or repositioning, but a lighting or weather change "
+                    "produces the same signal."
+                ),
+                start_offset=0.0,
+                end_offset=ctx.timeline_end,
+                evidence=_round_evidence({"scene_deviation": deviation}),
+            )
+        ]
+
+
+def _article(label: str) -> str:
+    """ "A" or "An" for a detection label, so details read as English."""
+    return "An" if label[:1].lower() in ("a", "e", "i", "o", "u") else "A"
+
+
+def _feet_phrase(feet: float) -> str:
+    """Render an approximate distance in the prompt's own 1ft/3ft terms."""
+    if feet < 1.0:
+        return "under a foot"
+    return f"about {feet:.0f} ft"
