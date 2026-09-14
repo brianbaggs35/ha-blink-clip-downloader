@@ -911,3 +911,40 @@ def test_a_raised_arm_with_no_contact_is_not_an_impact() -> None:
             _ctx([apart], asset=_asset(), posture_arm_raised=True)
         )
     )
+
+
+def test_depth_rules_out_an_approach_for_someone_at_a_different_distance() -> None:
+    """A passer-by closes a lot of 2D distance to a car they are nowhere
+    near; "approached the vehicle" is as wrong for them as "stood at it"."""
+    approaching = _track(
+        [(0, 200, 20, 280), (200, 200, 220, 280), (470, 200, 490, 280)]
+    )
+    assert SecurityEventType.ASSET_APPROACHED not in _types(
+        SecurityEventDetector().detect(
+            _ctx([approaching], asset=_asset(), depth_similar=False)
+        )
+    )
+
+
+def test_impact_is_never_attributed_to_a_subject_the_pose_stage_did_not_examine() -> (
+    None
+):
+    """Both impact signals belong to one subject and one moment; giving a
+    second person who merely overlapped the vehicle the same CRITICAL event
+    would double-count it."""
+    examined = _track(
+        [(0, 200, 20, 280), (20, 200, 40, 280), (350, 200, 390, 280)], track_id=1
+    )
+    other = _track([(352, 200, 392, 280)] * 3, track_id=2)
+    events = SecurityEventDetector().detect(
+        _ctx(
+            [examined, other],
+            asset=_asset(),
+            depth_similar=True,
+            contact_track_id=1,
+            posture_arm_raised=True,
+            appearance_change=0.9,
+        )
+    )
+    impacts = [e for e in events if e.event_type is SecurityEventType.IMPACT_CANDIDATE]
+    assert [e.track_id for e in impacts] == [1]

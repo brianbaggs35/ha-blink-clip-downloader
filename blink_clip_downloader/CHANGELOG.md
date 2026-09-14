@@ -238,6 +238,19 @@ damage classification.
 
 ### Bug Fixes
 
+- Pressing the next/previous shortcut in the clip modal no longer jumps to
+  the top of the Library when the open clip isn't in the Library's current
+  filtered list — opening a clip from the AI tab's suspicious feed (and now
+  from the Security tab) always produced that case.
+- A camera rename now carries its security events and its learned
+  protected-vehicle signature across with everything else, and marking a
+  camera as replaced clears the learned signature alongside the other
+  baselines — a replacement unit's field of view makes "where the vehicle
+  normally sits" stale in exactly the same way.
+- Clearing AI usage stats no longer occasionally leaves the old numbers on
+  screen: the AI Usage tab refreshes itself every ten seconds, and a refresh
+  already in flight when you cleared could land afterwards and paint the
+  pre-clear totals straight back over the cleared ones.
 - Completed the PrimeVue 5 migration by using the PrimeUI license format
   expected by PrimeVue 5.0.1, binding numeric `ProgressSpinner` props
   correctly, and documenting the `VITE_PRIMEVUE_LICENSE_KEY` development

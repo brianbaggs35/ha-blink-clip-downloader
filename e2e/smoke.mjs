@@ -85,6 +85,12 @@ export const TAB_CHECKS = {
     loadedText: "AI Providers & Models",
     loadingSelector: null,
   },
+  security: {
+    // Nothing has been analyzed in this container (no AI provider), so the
+    // timeline lands on its own "no data yet" state - same bar as the rest.
+    loadedText: "No security events yet",
+    loadingSelector: ".loading-indicator",
+  },
   vehicles: {
     loadedText: "No cameras found",
     loadingSelector: ".loading-indicator",

@@ -343,7 +343,15 @@ class SecurityEventDetector:
                 self._proximity_event(track, profile, asset, min_feet, depth_verdict)
             )
 
-        approach = self._approach_event(track, profile, asset, min_feet)
+        # Gated on the same depth verdict as proximity: a passer-by on the
+        # pavement closes a lot of 2D distance to a car they are nowhere
+        # near, and "approached the vehicle" is exactly as wrong for them as
+        # "stood next to it" would be.
+        approach = (
+            self._approach_event(track, profile, asset, min_feet)
+            if depth_verdict is not False
+            else None
+        )
         if approach is not None:
             events.append(approach)
 
@@ -353,7 +361,11 @@ class SecurityEventDetector:
         contact = self._contact_event(track, profile, asset, ctx, cv_applies)
         if contact is not None:
             events.append(contact)
-            impact = self._impact_event(track, profile, asset, ctx, contact)
+            impact = (
+                self._impact_event(track, profile, asset, ctx, contact)
+                if cv_applies
+                else None
+            )
             if impact is not None:
                 events.append(impact)
             retreat = self._retreat_after_contact_event(track, profile, asset)
@@ -669,7 +681,12 @@ class SecurityEventDetector:
 
         Restricted to people: an animal brushing a car produces the same
         contact evidence, but "impact" carries an intent this pipeline has
-        no business inferring from a dog.
+        no business inferring from a dog. Callers restrict it further, to
+        the one subject the pose and appearance stages actually examined —
+        both pieces of evidence below belong to that subject and that
+        moment, and attributing either to a second person who merely
+        overlapped the vehicle would double-count the only CRITICAL event
+        this detector can emit.
         """
         if track.label != PERSON_LABEL:
             return None

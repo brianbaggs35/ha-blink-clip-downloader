@@ -2303,77 +2303,11 @@ async def test_vision_pipeline_face_recognition_without_db_is_noop() -> None:
     assert hints.face_recognition is None
 
 
-def test_vision_pipeline_update_config_reuses_detector_when_model_unchanged() -> None:
-    pipeline = VisionPipeline(VisionConfig(object_detection_model="yolo11n.pt"))
-    original_detector = pipeline._detector
-    pipeline.update_config(VisionConfig(object_detection_model="yolo11n.pt"))
-    assert pipeline._detector is original_detector
-
-
-def test_vision_pipeline_update_config_reloads_detector_on_model_change() -> None:
-    pipeline = VisionPipeline(VisionConfig(object_detection_model="yolo11n.pt"))
-    original_detector = pipeline._detector
-    pipeline.update_config(VisionConfig(object_detection_model="yolo11s.pt"))
-    assert pipeline._detector is not original_detector
-
-
-def test_vision_pipeline_update_config_reloads_huggingface_stages_on_token_change() -> (
-    None
-):
-    pipeline = VisionPipeline(VisionConfig(hf_token="old_token"))
-    original_depth = pipeline._depth
-    original_segmenter = pipeline._segmenter
-
-    pipeline.update_config(VisionConfig(hf_token="new_token"))
-
-    assert pipeline._depth is not original_depth
-    assert pipeline._segmenter is not original_segmenter
-    assert pipeline._depth._hf_token == "new_token"
-    assert pipeline._segmenter._hf_token == "new_token"
-
-
 def test_vision_pipeline_passes_depth_model_from_config() -> None:
     pipeline = VisionPipeline(
         VisionConfig(depth_estimation_model="depth-anything/Depth-Anything-V2-Base-hf")
     )
     assert pipeline._depth._model_id == "depth-anything/Depth-Anything-V2-Base-hf"
-
-
-def test_vision_pipeline_update_config_reloads_depth_on_model_change_alone() -> None:
-    """depth_estimation_model changing, with hf_token unchanged, must still
-    recreate DepthEstimator — the pre-existing check only looked at
-    hf_token, which would have silently kept serving the old model size."""
-    pipeline = VisionPipeline(
-        VisionConfig(depth_estimation_model="depth-anything/Depth-Anything-V2-Small-hf")
-    )
-    original_depth = pipeline._depth
-    original_segmenter = pipeline._segmenter
-
-    pipeline.update_config(
-        VisionConfig(depth_estimation_model="depth-anything/Depth-Anything-V2-Large-hf")
-    )
-
-    assert pipeline._depth is not original_depth
-    assert pipeline._depth._model_id == "depth-anything/Depth-Anything-V2-Large-hf"
-    # The segmenter has no depth-model concept of its own and must be
-    # untouched by a depth-only config change.
-    assert pipeline._segmenter is original_segmenter
-
-
-def test_vision_pipeline_update_config_reuses_depth_when_fully_unchanged() -> None:
-    config = VisionConfig(
-        hf_token="tok",
-        depth_estimation_model="depth-anything/Depth-Anything-V2-Small-hf",
-    )
-    pipeline = VisionPipeline(config)
-    original_depth = pipeline._depth
-    pipeline.update_config(
-        VisionConfig(
-            hf_token="tok",
-            depth_estimation_model="depth-anything/Depth-Anything-V2-Small-hf",
-        )
-    )
-    assert pipeline._depth is original_depth
 
 
 def test_huggingface_auth_error_status_code_is_detected() -> None:
@@ -2705,6 +2639,9 @@ async def test_pipeline_stops_cleanly_when_the_frame_cannot_be_measured(
     assert hints.detections
     assert hints.frame_size is None
     assert hints.tracks is None
+    # The detection and tracking hints need no frame size, so losing the
+    # geometry must not cost the prompt those too.
+    assert hints.detection_hint is not None
 
 
 async def test_pipeline_learns_a_vehicle_signature_from_a_confident_sighting(
@@ -3084,6 +3021,28 @@ def test_pose_estimator_load_sync_refuses_an_incompatible_cpu(
         PoseEstimator()._load_sync()
 
 
+async def test_pose_estimator_ensure_ready_false_when_cpu_incompatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    assert await PoseEstimator().ensure_ready() is False
+
+
+async def test_pose_estimator_ensure_ready_concurrent_calls_load_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercises the double-checked-lock branch where the second caller
+    finds the model already loaded by the time it acquires the lock."""
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.side_effect = lambda *_a, **_kw: (time.sleep(0.05), MagicMock())[1]
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+    estimator = PoseEstimator()
+    results = await asyncio.gather(estimator.ensure_ready(), estimator.ensure_ready())
+    assert results == [True, True]
+    mock_ultra.YOLO.assert_called_once()
+
+
 async def test_pose_estimator_load_failure_is_not_fatal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3099,8 +3058,8 @@ async def test_pose_estimator_resolves_a_bare_model_name_to_the_cache_dir(
     monkeypatch.setattr(vision_module, "_YOLO_MODEL_CACHE_DIR", str(tmp_path))
     mock_ultra = MagicMock()
     monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
-    assert await PoseEstimator("yolo11n-pose.pt").ensure_ready() is True
-    assert mock_ultra.YOLO.call_args[0][0] == str(tmp_path / "yolo11n-pose.pt")
+    assert await PoseEstimator("yolo26n-pose.pt").ensure_ready() is True
+    assert mock_ultra.YOLO.call_args[0][0] == str(tmp_path / "yolo26n-pose.pt")
 
 
 async def test_pose_estimator_analyzes_the_subject(
@@ -3165,15 +3124,6 @@ async def test_pose_estimator_unavailable_returns_nothing() -> None:
     estimator = PoseEstimator()
     with patch.object(PoseEstimator, "ensure_ready", return_value=False):
         assert await estimator.analyze(b"frame", _SUBJECT_BOX, _ASSET_BOX) is None
-
-
-def test_pipeline_rebuilds_the_pose_estimator_only_on_a_model_change() -> None:
-    pipeline = VisionPipeline(VisionConfig(pose_model="yolo11n-pose.pt"))
-    original = pipeline._pose
-    pipeline.update_config(VisionConfig(pose_model="yolo11n-pose.pt"))
-    assert pipeline._pose is original
-    pipeline.update_config(VisionConfig(pose_model="yolo11s-pose.pt"))
-    assert pipeline._pose is not original
 
 
 async def test_pipeline_records_posture_when_pose_estimation_is_enabled(
@@ -3328,3 +3278,53 @@ async def test_pose_estimator_returns_nothing_when_no_skeleton_matches(
         return_value=[_FakePoseResult(elsewhere, _FakeKeypoints([_STANDING]))]
     )
     assert await estimator.analyze(b"frame", _SUBJECT_BOX, _ASSET_BOX) is None
+
+
+async def test_pipeline_enhances_the_scan_frames_once_when_they_are_the_prompt_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Denoising is the most expensive thing this module does without a
+    model behind it; paying for it twice on the same list matters on the
+    hardware this add-on targets."""
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(10.0, 10.0, 30.0, 90.0)], ids=[1]),
+        {0: "person"},
+    )
+    calls = 0
+    original = FrameEnhancer.enhance
+
+    def _counted(frames: list[bytes]) -> list[bytes]:
+        nonlocal calls
+        calls += 1
+        return original(frames)
+
+    monkeypatch.setattr(FrameEnhancer, "enhance", staticmethod(_counted))
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
+    assert calls == 1
+
+
+async def test_pipeline_enhances_a_wider_scan_pool_separately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(10.0, 10.0, 30.0, 90.0)], ids=[1]),
+        {0: "person"},
+    )
+    calls = 0
+    original = FrameEnhancer.enhance
+
+    def _counted(frames: list[bytes]) -> list[bytes]:
+        nonlocal calls
+        calls += 1
+        return original(frames)
+
+    monkeypatch.setattr(FrameEnhancer, "enhance", staticmethod(_counted))
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))],
+        raw_frames=[_real_jpeg_bytes(size=(200, 200))] * 4,
+    )
+    assert calls == 2

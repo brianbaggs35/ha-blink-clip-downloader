@@ -253,10 +253,18 @@ class AnalysisQueue:
         effective_threshold = await self._db.get_effective_confidence_threshold(
             item["camera"], self._min_confidence
         )
+        # The adaptive threshold calibrates *the AI model's* confidence from
+        # feedback about the model's own verdicts. A clip flagged by
+        # ai_risk_alert_threshold did not get its verdict from the model at
+        # all, so comparing it against that threshold measures the wrong
+        # thing — and a clip shown as critical in the UI that silently
+        # produced no alert is the most confusing failure this path has.
+        # Users who don't want these at all set ai_risk_alert_threshold to 0.
+        meets_threshold = getattr(result, "risk_override_applied", False) or (
+            result.confidence >= effective_threshold
+        )
         should_alert = (
-            result.is_suspicious
-            and result.confidence >= effective_threshold
-            and self._dispatcher is not None
+            result.is_suspicious and meets_threshold and self._dispatcher is not None
         )
         if should_alert and self._dispatcher:
             clip_data = {

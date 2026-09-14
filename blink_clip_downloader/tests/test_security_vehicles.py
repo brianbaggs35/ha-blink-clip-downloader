@@ -102,7 +102,7 @@ def test_protected_vehicle_absent_is_reported_as_absent() -> None:
     result = identify_protected_vehicle(tracks, FRAME, zone=ZONE)
     assert result.protected is None
     assert result.others and result.others[0].track_id == 2
-    assert "does not appear to be in these frames" in result.basis
+    assert "no detected vehicle matches where it normally sits" == result.basis
 
 
 def test_single_vehicle_without_zone_or_signature_is_accepted() -> None:
@@ -343,3 +343,25 @@ def test_a_zone_is_ignored_when_the_frame_size_is_unknown() -> None:
     result = identify_protected_vehicle(tracks, (0.0, 0.0), zone=ZONE)
     assert result.protected is not None
     assert result.basis == "the only vehicle visible in these frames"
+
+
+def test_untracked_vehicles_get_no_appearance_evidence() -> None:
+    """They all share a track id of None, so a fingerprint map keyed by id
+    would hand every candidate the same vector — noise dressed as
+    evidence."""
+    detections = [("car", 0.9, MY_CAR, None, i) for i in range(3)] + [
+        ("car", 0.9, NEIGHBOUR, None, i) for i in range(3)
+    ]
+    tracks = build_tracks(detections, 2.0, FRAME)
+    signature = VehicleSignature(
+        box=(300 / 640, 180 / 360, 460 / 640, 280 / 360),
+        histogram=(1.0, 0.0),
+        sample_count=SIGNATURE_MIN_SAMPLES,
+    )
+    result = identify_protected_vehicle(
+        tracks, FRAME, signature=signature, histograms={None: (1.0, 0.0)}
+    )
+    assert result.protected is not None
+    assert all(
+        c.appearance_similarity == 0.0 for c in [result.protected, *result.others]
+    )

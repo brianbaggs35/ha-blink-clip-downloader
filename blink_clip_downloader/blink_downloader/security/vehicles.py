@@ -336,7 +336,13 @@ def identify_protected_vehicle(
         if use_signature and signature is not None:
             candidate.position_similarity = signature.position_similarity(normalized)
             components.append((candidate.position_similarity, _WEIGHT_POSITION))
-            fingerprint = hist_map.get(track.track_id, ())
+            # Untracked pseudo-tracks all carry a track id of None, so a
+            # fingerprint map keyed by id would hand every candidate the
+            # same vector — noise dressed as evidence. Appearance is only
+            # usable for vehicles the tracker actually told apart.
+            fingerprint = (
+                hist_map.get(track.track_id, ()) if track.track_id is not None else ()
+            )
             if fingerprint and signature.histogram:
                 candidate.appearance_similarity = signature.appearance_similarity(
                     fingerprint
@@ -358,10 +364,7 @@ def identify_protected_vehicle(
     if best.score < MIN_MATCH_SCORE:
         return VehicleIdentification(
             others=ranked,
-            basis=(
-                "no detected vehicle matches where the protected vehicle normally "
-                "sits, so it does not appear to be in these frames"
-            ),
+            basis="no detected vehicle matches where it normally sits",
         )
 
     runner_up = ranked[1].score if len(ranked) > 1 else 0.0

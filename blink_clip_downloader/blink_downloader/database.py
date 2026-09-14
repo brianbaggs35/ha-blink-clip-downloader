@@ -1015,6 +1015,53 @@ class ClipDatabase:
         return True
 
     @staticmethod
+    async def _migrate_camera_vehicle_signature(
+        conn: asyncpg.Connection | PoolConnectionProxy, old_name: str, new_name: str
+    ) -> bool:
+        """Carry a learned protected-vehicle signature across a rename.
+
+        Same camera, same car, same parking spot — only the name changed, so
+        throwing the signature away would restart four clips' worth of
+        learning for nothing. Keyed on camera like camera_scene_baselines,
+        so the same delete-then-insert dance is needed to avoid a primary
+        key collision when a row already exists under the new name.
+        """
+        rows = await conn.fetch(
+            _qm(
+                "SELECT box, histogram, sample_count, updated_at "
+                "FROM camera_vehicle_signatures "
+                "WHERE LOWER(camera) = LOWER(?) OR LOWER(camera) = LOWER(?) "
+                "ORDER BY sample_count DESC LIMIT 1"
+            ),
+            old_name,
+            new_name,
+        )
+        if not rows:
+            return False
+        signature = rows[0]
+        await conn.execute(
+            _qm(
+                "DELETE FROM camera_vehicle_signatures "
+                "WHERE LOWER(camera) = LOWER(?) OR LOWER(camera) = LOWER(?)"
+            ),
+            old_name,
+            new_name,
+        )
+        await conn.execute(
+            _qm(
+                "INSERT INTO camera_vehicle_signatures "
+                "(camera, box, histogram, sample_count, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)"
+            ),
+            new_name,
+            signature["box"],
+            signature["histogram"],
+            signature["sample_count"],
+            signature["updated_at"],
+        )
+        return True
+
+    @staticmethod
     async def _rename_camera_rows(
         conn: asyncpg.Connection | PoolConnectionProxy, old_name: str, new_name: str
     ) -> bool:
@@ -1027,6 +1074,7 @@ class ClipDatabase:
             "analysis_feedback",
             "face_recognition_feedback",
             "battery_history",
+            "security_events",
         ):
             status = await conn.execute(
                 _qm(f"UPDATE {table} SET camera=? WHERE LOWER(camera)=LOWER(?)"),
@@ -1050,6 +1098,9 @@ class ClipDatabase:
             ) or changed
             changed = (
                 await self._migrate_camera_scene_baseline(conn, old_name, new_name)
+            ) or changed
+            changed = (
+                await self._migrate_camera_vehicle_signature(conn, old_name, new_name)
             ) or changed
             changed = (
                 await self._rename_camera_rows(conn, old_name, new_name)
@@ -1113,8 +1164,12 @@ class ClipDatabase:
         Every returned clip includes a ``notified`` boolean (True if the
         clip's *most recent* AI analysis result was/would be suspicious at
         *min_confidence* or higher — the same gate ``AnalysisQueue`` uses to
-        decide whether to dispatch a notification). Set *notified_only* to
-        restrict results to just those clips. Set *recognized_only* to
+        decide whether to dispatch a notification, including its
+        ``risk_override_applied`` exemption: a clip flagged by the
+        deterministic risk score rather than by the model skips the
+        confidence threshold there, so the badge has to skip it here too or
+        the two disagree about a notification that was actually sent). Set
+        *notified_only* to restrict results to just those clips. Set *recognized_only* to
         restrict to clips with ``face_recognized`` true (see below) —
         parameter-free, unlike *notified_only*/*min_confidence*, since
         ``approved_faces_seen`` has no equivalent threshold.
@@ -1152,7 +1207,8 @@ class ClipDatabase:
 
         notified_exists = (
             "EXISTS (SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
-            "AND ar.is_suspicious AND ar.confidence >= ? "
+            "AND ar.is_suspicious "
+            "AND (ar.confidence >= ? OR ar.risk_override_applied) "
             "AND ar.analyzed_at = (SELECT MAX(ar2.analyzed_at) FROM analysis_results ar2 "
             "WHERE ar2.clip_id = clips.id))"
         )
@@ -2022,19 +2078,23 @@ class ClipDatabase:
             where.append(f"se.severity IN ({', '.join(['?'] * len(allowed))})")
             params.extend(allowed)
         if period:
+            # Filtered on when the clip was *recorded*, not when it was
+            # analyzed: the list is ordered by clip time, and a backlog
+            # processed overnight would otherwise put three-day-old footage
+            # under "Today" while sorting it among today's clips.
             start, end = _suspicious_period_bounds(period)
             if start is not None:
-                where.append("se.created_at >= ?")
+                where.append("c.timestamp >= ?")
                 params.append(start)
             if end is not None:
-                where.append("se.created_at < ?")
+                where.append("c.timestamp < ?")
                 params.append(end)
         clause = " AND ".join(where)
 
         total_row = await self._pool.fetchrow(
             _qm(
-                f"SELECT COUNT(DISTINCT se.clip_id) AS total FROM security_events se "
-                f"WHERE {clause}"
+                "SELECT COUNT(DISTINCT se.clip_id) AS total FROM security_events se "
+                f"JOIN clips c ON c.id = se.clip_id WHERE {clause}"
             ),
             *params,
         )
@@ -2074,10 +2134,11 @@ class ClipDatabase:
         rows = await self._pool.fetch(
             _qm(
                 """
-                SELECT severity, COUNT(DISTINCT clip_id) AS count
-                FROM security_events
-                WHERE created_at >= ?
-                GROUP BY severity
+                SELECT se.severity, COUNT(DISTINCT se.clip_id) AS count
+                FROM security_events se
+                JOIN clips c ON c.id = se.clip_id
+                WHERE c.timestamp >= ?
+                GROUP BY se.severity
                 """
             ),
             cutoff,
@@ -2234,6 +2295,12 @@ class ClipDatabase:
             "camera_baselines",
             "camera_duration_stats",
             "camera_scene_baselines",
+            # A replacement unit's field of view and mount angle differ, so
+            # where the protected vehicle "normally sits" in frame is stale
+            # by exactly the reasoning that drops the scene baseline above —
+            # and a signature pointing at the wrong part of the new frame
+            # would keep confirming its own mistake.
+            "camera_vehicle_signatures",
         ):
             await self._pool.execute(
                 _qm(f"DELETE FROM {table} WHERE LOWER(camera)=LOWER(?)"),

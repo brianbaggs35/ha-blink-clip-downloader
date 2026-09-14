@@ -55,7 +55,7 @@ from .security import (
     build_tracks,
     resolve_vehicle_asset,
 )
-from .security.geometry import TYPICAL_VEHICLE_WIDTH_FEET, pixel_gap_to_feet
+from .security.geometry import pixel_gap_to_feet
 from .security.vehicles import VehicleSignature
 
 if TYPE_CHECKING:
@@ -139,7 +139,7 @@ _YOLO_MODEL_CACHE_DIR = "/data/model_cache/yolo"
 # one definition, not two that can drift apart. This module adds only the
 # carryable classes and the bicycle, which the detector surfaces for the
 # prompt but which no security rule treats as a subject or a vehicle.
-_VEHICLE_CLASSES = VEHICLE_CLASSES = VEHICLE_LABELS
+_VEHICLE_CLASSES = VEHICLE_LABELS
 _SUBJECT_CLASSES = SUBJECT_LABELS
 _RELEVANT_CLASSES = (
     SUBJECT_LABELS
@@ -507,7 +507,6 @@ class ObjectDetector:
 # itself now lives in security/geometry.py, shared with every security rule
 # that measures the same distances.
 _box_gap = box_gap
-_TYPICAL_VEHICLE_WIDTH_FEET = TYPICAL_VEHICLE_WIDTH_FEET
 
 
 def _proximity_label(gap: float, vehicle_width: float) -> str:
@@ -1332,7 +1331,7 @@ class PoseEstimator:
     wants object detection from paying for a download they will not use.
     """
 
-    def __init__(self, model_name: str = "yolo11n-pose.pt") -> None:
+    def __init__(self, model_name: str = "yolo26n-pose.pt") -> None:
         self._model_name = model_name
         self._model: Any = None
         self._lock: asyncio.Lock | None = None
@@ -1797,7 +1796,7 @@ class VisionConfig:
     #: user who wants object detection should not pay for a download they
     #: will never use.
     pose_estimation_enabled: bool = False
-    pose_model: str = "yolo11n-pose.pt"
+    pose_model: str = "yolo26n-pose.pt"
     hf_token: str = ""
     #: How many evenly-spaced frames the temporal scan runs detection over
     #: (see :func:`_select_scan_frames`). This is the single knob that trades
@@ -1880,26 +1879,6 @@ class VisionPipeline:
         self._segmenter = ContactSegmenter(config.hf_token)
         self._pose = PoseEstimator(config.pose_model)
         self._face_embedder = FaceEmbedder()
-
-    def update_config(self, config: VisionConfig) -> None:
-        """Replace the active config at runtime (e.g. after an options reload).
-
-        Models are only rebuilt when the setting that chooses them actually
-        changed — reloading options must not throw away a loaded checkpoint
-        and pay its multi-second cold start again for an unrelated edit.
-        """
-        if config.object_detection_model != self._config.object_detection_model:
-            self._detector = ObjectDetector(config.object_detection_model)
-        if (
-            config.hf_token != self._config.hf_token
-            or config.depth_estimation_model != self._config.depth_estimation_model
-        ):
-            self._depth = DepthEstimator(config.hf_token, config.depth_estimation_model)
-        if config.hf_token != self._config.hf_token:
-            self._segmenter = ContactSegmenter(config.hf_token)
-        if config.pose_model != self._config.pose_model:
-            self._pose = PoseEstimator(config.pose_model)
-        self._config = config
 
     async def process_clip(
         self,
@@ -2017,10 +1996,19 @@ class VisionPipeline:
         """Frame preprocessing, detection, tracking and vehicle identification."""
         hints.enhanced_frames = FrameEnhancer.enhance(frames)
 
-        scan_frames, scan_interval = _select_scan_frames(
+        selected, scan_interval = _select_scan_frames(
             raw_pool, self._config.temporal_scan_frames, frame_interval
         )
-        scan_frames = FrameEnhancer.enhance(scan_frames)
+        # Enhancement includes denoising, which is the most expensive thing
+        # this module does without a model behind it. When the scan set is
+        # the very same list that was just enhanced for the prompt — the
+        # case whenever no wider raw pool was supplied — reuse that result
+        # rather than paying for it twice on hardware where it matters.
+        scan_frames = (
+            hints.enhanced_frames
+            if selected is frames
+            else FrameEnhancer.enhance(selected)
+        )
         hints.scan_frame_count = len(scan_frames)
         hints.scan_interval = scan_interval
 
@@ -2034,12 +2022,16 @@ class VisionPipeline:
             hints.unavailable_sources.append("pose estimation")
             return
 
+        # A frame that won't decode costs the security layer its geometry,
+        # but the object-detection and tracking hints below are built from
+        # the detections alone and stay just as valid — returning early here
+        # would drop them for no reason.
         frame_size = _frame_dimensions(scan_frames[0])
-        if frame_size is None:
-            return
-        hints.frame_size = (float(frame_size[0]), float(frame_size[1]))
+        hints.frame_size = (
+            (float(frame_size[0]), float(frame_size[1])) if frame_size else None
+        )
 
-        if self._config.security_events_enabled:
+        if self._config.security_events_enabled and hints.frame_size is not None:
             hints.tracks = build_tracks(
                 [
                     (d.label, d.confidence, d.box, d.track_id, d.frame_index)
@@ -2085,7 +2077,11 @@ class VisionPipeline:
         histograms: dict[int | None, tuple[float, ...]] = {}
         if vehicle_signature is not None and vehicle_signature.histogram:
             for track in hints.tracks:
-                if track.label not in VEHICLE_LABELS:
+                # Untracked vehicles share a track id of None, so a
+                # fingerprint stored for one would be handed to all of them
+                # (and only the last decode would survive). Skipping them
+                # here also saves the decode.
+                if track.label not in VEHICLE_LABELS or track.track_id is None:
                     continue
                 best = max(track.points, key=lambda pt: pt.confidence)
                 if 0 <= best.frame_index < len(scan_frames):

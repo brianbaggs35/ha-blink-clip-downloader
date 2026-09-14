@@ -465,6 +465,12 @@ function closeModal() {
 function onNav(dir: number) {
   if (!activeClipId.value) return
   const idx = clips.value.findIndex((c) => c.id === activeClipId.value)
+  // The modal can be showing a clip that is not in this list at all — the
+  // Security tab and the AI tab's suspicious feed both open clips here
+  // without touching the Library's own filters. Stepping from "not in the
+  // list" would otherwise land on index 0 and teleport to the top of the
+  // library, which reads as the modal jumping to a random clip.
+  if (idx < 0) return
   const next = idx + dir
   if (next >= 0 && next < clips.value.length) activeClipId.value = clips.value[next].id
 }

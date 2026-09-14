@@ -40,6 +40,7 @@ const fakePlayer = {
 vi.mock('video.js', () => ({ default: vi.fn(() => fakePlayer) }))
 vi.mock('video.js/dist/video-js.css', () => ({}))
 
+import ClipModal from './ClipModal.vue'
 import LibraryPage from './LibraryPage.vue'
 import GDriveUploadModal from '../storage/GDriveUploadModal.vue'
 import { useCapabilitiesStore } from '../../stores/capabilities'
@@ -1576,6 +1577,23 @@ describe('LibraryPage', () => {
     useClipViewerStore().requestOpen('c1')
     await flushPromises()
     expect(body().find('.modal-bg').classes()).toContain('open')
+    wrapper.unmount()
+  })
+
+  it('nav does nothing for a clip that is not in the current list', async () => {
+    // The Security tab and the AI tab's suspicious feed both open clips
+    // here without touching the Library's own filters; stepping from one
+    // would otherwise land on index 0 and teleport to the top of the
+    // library, which reads as the modal jumping to a random clip.
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    useClipViewerStore().requestOpen('not-in-this-list')
+    await flushPromises()
+
+    await wrapper.findComponent(ClipModal).vm.$emit('nav', 1)
+    await flushPromises()
+    expect(wrapper.findComponent(ClipModal).props('clipId')).toBe('not-in-this-list')
     wrapper.unmount()
   })
 

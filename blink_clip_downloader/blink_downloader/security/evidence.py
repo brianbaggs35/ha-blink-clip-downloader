@@ -57,9 +57,6 @@ _WEIGHTS: dict[str, float] = {
     "stage_coverage": 0.10,
 }
 
-#: Sub-scores that only mean anything when a subject was actually detected.
-_SUBJECT_FACTORS = ("subject_size", "detector_confidence", "tracking_continuity")
-
 
 @dataclass
 class EvidenceQuality:
