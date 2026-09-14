@@ -108,6 +108,19 @@ export interface AnalysisStats {
   last_analysis: string | null
 }
 
+// One currently-failed analysis_queue row -- powers the AI tab's Queue
+// Status "Failed" modal (AnalysisFailuresModal.vue). Mirrors
+// GDriveFailedUpload below; clip_path is fetched but, like that type,
+// deliberately not surfaced in the modal itself.
+export interface AnalysisFailure {
+  clip_id: string
+  camera: string
+  clip_path: string
+  error_message: string
+  completed_at: string
+  retry_count: number
+}
+
 export interface AiStatus {
   enabled: boolean
   prompt_debug_enabled: boolean

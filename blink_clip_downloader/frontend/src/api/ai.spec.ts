@@ -16,6 +16,7 @@ import {
   getAiUsage,
   getCameraConfigs,
   getClipAiResult,
+  getFailedAnalysisQueue,
   getFeedbackForClip,
   getFeedbackStats,
   getFinetune,
@@ -72,6 +73,8 @@ describe('ai api', () => {
     expect(fetch).toHaveBeenCalledWith('/api/ai/usage', { method: 'DELETE' })
     await fetchAiModels()
     expect(fetch).toHaveBeenCalledWith('/api/ai/models', {})
+    await getFailedAnalysisQueue()
+    expect(fetch).toHaveBeenCalledWith('/api/ai/queue/failed', {})
   })
 
   it('getClipAiResult() / getSuspiciousClips() / analyzeClipNow()', async () => {

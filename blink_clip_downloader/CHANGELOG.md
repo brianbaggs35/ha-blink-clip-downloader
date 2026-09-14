@@ -47,6 +47,11 @@ before this version ships.
   clip modal the Library tab uses, without switching tabs. The Library
   tab's own source filter also gained a "Local Storage" option, matching
   a filter the backend already supported but the UI didn't expose.
+- The AI tab's Queue Status "Failed" count is now clickable, opening a
+  modal that lists why each currently-failed clip didn't analyze — camera,
+  when it failed, the error message, and how many times it was retried
+  first. The error text was already being recorded (`analysis_queue`'s
+  `error_message` column) but had no way to be viewed until now.
 
 ### Changed
 

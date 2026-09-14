@@ -290,6 +290,13 @@ _PENDING_ARCHIVE_HOURS_AGO = 140  # ~5.8 days
 # Failed Uploads / retry test. Deliberately its own clip rather than reusing
 # one of _ARCHIVE_CLIPS above — "e2e-archive-solo" is already earmarked for
 # the archive-delete test, and this needs to stay untouched by that.
+#
+# Also doubles as the AI tab's failed-analysis fixture (see _seed() below) —
+# a second, independent queue-table row (analysis_queue, distinct from
+# gdrive_upload_queue) on this same clip_id, rather than a whole new clip.
+# Deliberate: every clip added here also has to be priced into
+# library-filters.spec.ts's TOTAL_CLIPS and status.spec.ts's per-camera/
+# total counts, which a same-clip second queue-row doesn't touch at all.
 _FAILED_UPLOAD_CLIP_ID = "e2e-failed-upload"
 
 # A real, valid (not just placeholder bytes) short video, on _SCRATCH_CAMERA
@@ -515,6 +522,22 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
         f"/share/blink-clips/{_SCRATCH_CAMERA}/{_FAILED_UPLOAD_CLIP_ID}.mp4",
     )
     await db.update_gdrive_queue_status(
+        _FAILED_UPLOAD_CLIP_ID, "failed", error="Simulated failure for e2e testing"
+    )
+
+    # Same clip also gets a failed AI analysis row, for the AI tab's Queue
+    # Status "Failed" modal test — /api/ai/queue/failed only needs self._db
+    # (see media_server.py's _handle_ai_queue_failed), so no real
+    # AnalysisQueue processing needs to run for this to show up. A
+    # separate table (analysis_queue, not gdrive_upload_queue) keyed on
+    # the same clip_id, so this doesn't add a new clip for any
+    # total/per-camera count assertion to account for.
+    await db.enqueue_for_analysis(
+        _FAILED_UPLOAD_CLIP_ID,
+        _SCRATCH_CAMERA,
+        f"/share/blink-clips/{_SCRATCH_CAMERA}/{_FAILED_UPLOAD_CLIP_ID}.mp4",
+    )
+    await db.update_queue_status(
         _FAILED_UPLOAD_CLIP_ID, "failed", error="Simulated failure for e2e testing"
     )
 

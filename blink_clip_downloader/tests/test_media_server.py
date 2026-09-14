@@ -1673,6 +1673,33 @@ async def test_ai_queue_disabled(client: TestClient) -> None:
     assert data["enabled"] is False
 
 
+async def test_ai_queue_failed_empty(client: TestClient) -> None:
+    resp = await client.get("/api/ai/queue/failed")
+    assert resp.status == 200
+    assert await resp.json() == []
+
+
+async def test_ai_queue_failed_lists_error_details(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Available even though this fixture's client has no AnalysisQueue
+    wired up (see test_ai_queue_disabled above) -- mirrors
+    test_gdrive_queue_failed_works_without_gdrive_client_configured: a
+    failed row's error is meaningful to look at regardless."""
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/c1.mp4")
+    await db.requeue_for_retry("c1", retry_count=1, error="transient")
+    await db.update_queue_status("c1", "failed", error="Ollama timeout")
+
+    resp = await client.get("/api/ai/queue/failed")
+    data = await resp.json()
+    assert len(data) == 1
+    assert data[0]["clip_id"] == "c1"
+    assert data[0]["camera"] == "Front Door"
+    assert data[0]["error_message"] == "Ollama timeout"
+    assert data[0]["retry_count"] == 1
+
+
 async def test_ai_suspicious_empty(client: TestClient) -> None:
     resp = await client.get("/api/ai/suspicious")
     assert resp.status == 200
