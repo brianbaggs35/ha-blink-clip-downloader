@@ -267,3 +267,16 @@ test('moondream_local shows installed when already installed', async ({ page }) 
 
   await expect(page.getByText('✓ moondream installed')).toBeVisible()
 })
+
+test('the AI tab survives a backend that returns nothing for its queue', async ({ page }) => {
+  // A 6.0.0 upgrade adds columns to analysis_queue; an install whose
+  // database somehow answers with nothing at all (a proxy, a half-applied
+  // migration) must still render the tab rather than a blank page, since
+  // this is the tab a user would go to in order to notice the problem.
+  await page.route('**/api/ai/queue', (route) => route.fulfill({ json: {} }))
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await expect(page.getByText('AI Connection')).toBeVisible()
+  await expect(page.getByText('Queue Status')).toBeVisible()
+})

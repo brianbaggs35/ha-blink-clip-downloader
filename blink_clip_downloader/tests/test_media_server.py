@@ -8856,3 +8856,95 @@ async def test_clip_detections_endpoint_for_a_clip_with_none(
     client: TestClient,
 ) -> None:
     assert await (await client.get("/api/ai/detections/nope")).json() == {"objects": []}
+
+
+# ---------------------------------------------------------------------------
+# Request hardening: null bytes, runaway paging, non-object JSON bodies
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/clips?camera=%00",
+        "/api/clips?search=%00",
+        "/api/clips/%00",
+        "/api/ai/results/%00",
+        "/api/security/events/%00",
+        "/api/security/timeline?camera=%00",
+        "/api/vehicle/signature/%00",
+        "/api/storage/archives?camera=%00",
+    ],
+)
+async def test_a_null_byte_anywhere_in_the_url_is_a_bad_request(
+    client: TestClient, path: str
+) -> None:
+    """PostgreSQL's text type cannot hold a NUL, so any request carrying one
+    into a query used to blow up inside asyncpg and surface as a bare 500.
+    One middleware check covers every route, including ones added later."""
+    resp = await client.get(path)
+    assert resp.status == 400
+    assert "null byte" in await resp.text()
+
+
+async def test_a_normal_request_is_unaffected_by_the_null_byte_guard(
+    client: TestClient,
+) -> None:
+    assert (await client.get("/api/clips?camera=Front%20Door")).status == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/clips",
+        "/api/ai/suspicious",
+        "/api/security/timeline",
+        "/api/storage/archive-clips?archive_path=/x.zip",
+    ],
+)
+async def test_an_offset_beyond_bigint_is_clamped_not_a_server_error(
+    client: TestClient, path: str
+) -> None:
+    """int() parses a number far larger than PostgreSQL's bigint quite
+    happily; asyncpg then fails encoding it, which used to surface as a
+    500 instead of an empty page."""
+    sep = "&" if "?" in path else "?"
+    resp = await client.get(f"{path}{sep}offset=999999999999999999999999")
+    assert resp.status == 200
+
+
+async def test_a_nonsense_limit_falls_back_to_the_default(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    for i in range(3):
+        await db.add_clip(_make_clip(f"page{i}"))
+    resp = await client.get("/api/clips?limit=abc&offset=nonsense")
+    assert resp.status == 200
+    assert len(await resp.json()) == 3
+
+
+@pytest.mark.parametrize(
+    "path", ["/api/security-feed/settings", "/api/vehicle/settings"]
+)
+async def test_a_json_body_that_is_not_an_object_is_a_bad_request(
+    client: TestClient, path: str
+) -> None:
+    """These handlers call body.get(...) straight after parsing. A body that
+    is valid JSON but a list, string or number parses fine and then raises
+    AttributeError — a 500 for what is plainly a bad request.
+
+    ``/api/ai/camera-configs`` is deliberately absent: a list is its correct
+    body (it is a full-array replace), and it already rejects everything
+    else itself."""
+    for body in ([], "a string", 5, True):
+        resp = await client.put(path, json=body)
+        assert resp.status == 400, f"{path} with {body!r} returned {resp.status}"
+
+
+async def test_camera_configs_still_rejects_a_non_list_body(
+    client: TestClient,
+) -> None:
+    """The one endpoint whose body is a list rather than an object."""
+    for body in ({"camera": "x"}, "a string", 5):
+        resp = await client.put("/api/ai/camera-configs", json=body)
+        assert resp.status == 400, f"{body!r} returned {resp.status}"

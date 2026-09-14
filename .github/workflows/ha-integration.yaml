@@ -280,11 +280,37 @@ jobs:
       - name: Enable the add-on's ingress panel
         run: scripts/ci/ha_integration_setup.sh enable-ingress-panel
 
+      - name: Verify Supervisor is running the version we just built
+        run: >-
+          scripts/ci/ha_integration_setup.sh assert-version
+          "${{ steps.integration-image.outputs.version }}"
+
       - name: Verify through Home Assistant (onboarding, login, ingress, HA API, logs)
         working-directory: e2e
         run: >-
           node ha_integration_smoke.mjs
           "http://127.0.0.1:${HA_PORT}" "$ADDON_SLUG" "$ADDON_PANEL_TITLE" "$ADDON_NAME"
+
+      # The step above wrote a setting through the real ingress UI. Restarting
+      # recreates the add-on's container while /data survives — the same
+      # transition an *update* puts an existing install through — so reading
+      # that setting back afterwards is this job's proof that an upgrade does
+      # not lose an existing user's data or leave the bundled PostgreSQL
+      # cluster unusable. Every other suite in this repo only ever exercises a
+      # first-ever start against an empty volume.
+      - name: Restart the add-on (container recreated, /data kept)
+        run: scripts/ci/ha_integration_setup.sh restart
+
+      - name: Verify settings written before the restart survived it
+        run: >-
+          scripts/ci/ha_integration_setup.sh assert-persisted
+          "ha-integration-marker.apps.googleusercontent.com"
+
+      # A traceback in the poll loop, the media server or any background task
+      # does not stop the container, so without this the job passes green with
+      # the add-on quietly broken behind a UI that still renders empty states.
+      - name: Check the add-on's log for unexpected errors
+        run: scripts/ci/ha_integration_setup.sh assert-clean-log
 
       - name: Collect diagnostics
         if: failure()
