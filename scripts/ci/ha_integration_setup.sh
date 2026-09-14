@@ -232,12 +232,32 @@ cmd_restart() {
   cmd_start
 }
 
-# Log lines that are expected on a healthy run in *this* environment, where
-# there is no Blink account to sign in to and no AI provider configured.
-# Deliberately a short, specific list rather than a broad pattern: the whole
-# point of the check is to notice a traceback or a startup error nobody has
-# seen before, and a permissive allowlist would hide exactly that.
-_EXPECTED_LOG_NOISE='Blink authentication failed|Invalid credentials|Could not connect to Blink|two_fa|2FA|AI analysis (is )?not configured|No AI provider|ollama'
+# Error lines that are *expected* on a healthy run in this environment. The
+# add-on is installed with default options, so it has no Blink username: it
+# reports that and starts in web-only mode, exactly as designed (see
+# __main__.main()'s deliberate refusal to sys.exit). Everything here was
+# taken from a real run's log, not guessed.
+#
+# Deliberately a short, specific list: the whole point of this check is to
+# notice a traceback or an error nobody has seen before, and a permissive
+# allowlist would hide precisely that.
+_EXPECTED_LOG_NOISE='Configuration error . starting in web-only mode|Running in web-only mode|username is required and cannot be empty|Blink authentication failed|Invalid credentials|Could not connect to Blink|two_fa|2FA|AI analysis (is )?not configured|No AI provider|ollama'
+
+# The one traceback a healthy run in this environment prints: config
+# validation rejecting the absent username. Dropped as a *block* — from the
+# "Traceback" line through the ValueError that ends it — so that any other
+# traceback still shows up, rather than being waved through by a pattern
+# loose enough to match all of them.
+_strip_expected_traceback() {
+  awk '
+    /Traceback \(most recent call last\)/ { skipping = 1 }
+    skipping && /ValueError: username is required and cannot be empty/ {
+      skipping = 0
+      next
+    }
+    !skipping
+  '
+}
 
 cmd_assert_clean_log() {
   # Supervisor keeps the add-on's stdout, which is where every unhandled
@@ -247,8 +267,20 @@ cmd_assert_clean_log() {
   # renders its empty states.
   local log
   log="$(ha_cli apps logs "$ADDON_SLUG" 2>&1 || true)"
+
+  # Positive check first: a log that is "clean" because the app never got
+  # far enough to say anything would otherwise pass silently.
+  local marker='Media server listening on port'
+  if ! printf '%s\n' "$log" | grep -qF "$marker"; then
+    echo "The add-on's log never reports the media server starting." >&2
+    echo "Last 40 lines:" >&2
+    printf '%s\n' "$log" | tail -40 >&2
+    return 1
+  fi
+
   local suspicious
   suspicious="$(printf '%s\n' "$log" \
+    | _strip_expected_traceback \
     | grep -E 'Traceback \(most recent call last\)|CRITICAL|ERROR' \
     | grep -Ev "$_EXPECTED_LOG_NOISE" || true)"
   if [[ -n "$suspicious" ]]; then
@@ -256,7 +288,7 @@ cmd_assert_clean_log() {
     printf '%s\n' "$suspicious" >&2
     return 1
   fi
-  echo "OK: add-on log has no unexpected errors or tracebacks"
+  echo "OK: add-on started cleanly, with no unexpected errors or tracebacks"
 }
 
 cmd_assert_persisted() {
