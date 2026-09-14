@@ -109,6 +109,21 @@ def _patch_short_reads(stream: _AuthenticatingStream) -> None:
     stream.auth = _auth_then_patch_reader
 
 
+def _stop_stream_quietly(stream: Any) -> None:
+    """Close a live-view relay without letting its failure mask the caller's.
+
+    Every call site is already on a failure or teardown path where the
+    stream must be released whatever happens next: blinkpy's ``stop()``
+    closes sockets and cancels its own tasks, and any complaint it makes
+    about doing so is strictly less important than finishing the cleanup
+    around it.
+    """
+    try:
+        stream.stop()
+    except Exception:
+        _LOGGER.debug("Live view: stopping the relay stream failed", exc_info=True)
+
+
 class LiveViewError(Exception):
     """A live-view operation failed in a way that should reach the caller as
     a clean message, not a raw traceback — ffmpeg missing/crashed, the
@@ -372,16 +387,25 @@ class LiveViewManager:
 
         try:
             await stream.start(port=0)
-        except OSError as exc:
-            raise LiveViewError(
-                "Could not open a local port for the live view relay."
-            ) from exc
+        except Exception as exc:
+            # init_livestream() has already opened an authenticated session
+            # against Blink's cloud. Leaking it would hold a live view open
+            # on the camera itself — which on battery-powered hardware is
+            # not merely untidy — and can block the next attempt from
+            # starting at all, so it is stopped before this failure
+            # propagates, exactly as the ffmpeg failure below does.
+            _stop_stream_quietly(stream)
+            if isinstance(exc, OSError):
+                raise LiveViewError(
+                    "Could not open a local port for the live view relay."
+                ) from exc
+            raise LiveViewError(f"Could not start live view: {exc}") from exc
 
         hls_dir = Path(tempfile.mkdtemp(prefix="blink-liveview-"))
         try:
             ffmpeg_proc = await self._spawn_ffmpeg(hls_dir, stream.url)
         except Exception:
-            stream.stop()
+            _stop_stream_quietly(stream)
             await asyncio.to_thread(shutil.rmtree, hls_dir, ignore_errors=True)
             raise
 
@@ -726,7 +750,10 @@ class LiveViewManager:
         # misread this intentional kill as a crash.
         session.stopping = True
         await self._terminate_ffmpeg(session)
-        session.stream.stop()
+        # Quietly: self._session is already None, so anything raised here
+        # would strand this session's three background tasks and its temp
+        # directory with nothing left holding a reference to clean them up.
+        _stop_stream_quietly(session.stream)
         await self._cancel_task(session.feed_task)
         await self._cancel_task(session.watcher_task)
         await self._cancel_task(session.stderr_task)
