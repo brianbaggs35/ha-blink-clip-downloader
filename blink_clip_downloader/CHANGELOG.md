@@ -84,6 +84,12 @@ were already being computed — and produces nothing when that is off.
   struck: recognition explains who was there, not away a dent. Deliberately
   narrow — ordinary contact with one's own car still bypasses, since that
   is what a resident opening their door produces several times a day.
+- **`ai_security_events_enabled`** (default on): the switch for everything
+  in this section. It costs no extra model inference on top of
+  `ai_enhanced_detection_enabled` — it is post-processing of detections
+  already being computed — so there is little reason to turn it off, but a
+  clip analyzed with it off falls back to the plain prompt hints and writes
+  no security events.
 - **`ai_cv_concurrency`** (default 1): a cap on how many heavy
   computer-vision stages may run at once across every clip being analyzed.
   Without it, a startup backlog could have YOLO, Depth Anything, SAM2 and
@@ -244,6 +250,35 @@ damage classification.
 
 ### Bug Fixes
 
+- A raised arm no longer escalates an unconfirmed contact to a possible
+  impact. With the depth and segmentation stages unavailable, the only
+  evidence under it is a 2D overlap that anyone walking in front of a parked
+  car produces — and the raised-arm threshold is cleared by an everyday
+  gesture such as a phone held to an ear. That combination reached the one
+  CRITICAL event type the detector can emit, which forces an alert past the
+  AI model's verdict and withholds the face-recognition bypass: walking to
+  your own car on the phone could alert you about yourself. It now needs the
+  same depth- or segmentation-confirmed contact underneath it that the other
+  two routes to that event already required, restoring the guarantee the
+  low-powered-device documentation makes.
+- Collapsing the sidebar no longer strands you in it. Its five icon buttons
+  are wider together than the collapsed sidebar, and the row centred that
+  overflow — pushing the button that expands it again off the *left* edge,
+  where scrolling cannot reach. Since the collapsed state is remembered per
+  browser, one click left the sidebar collapsed for good, short of clearing
+  site data. The row now wraps.
+- Re-analyzing a clip whose video file has since gone (moved, archived, or
+  still being written) no longer erases what the previous, successful
+  analysis found. Frame extraction failing still records a result saying
+  so, but that run examined nothing — it now leaves the earlier run's
+  object detections and security events alone instead of replacing them
+  with nothing, which had been dropping the clip out of the Security tab's
+  timeline entirely.
+- The Security tab no longer replaces the timeline you are reading with a
+  loading spinner when something else refreshes it — including the clip
+  modal the timeline itself opens, which signals a refresh on delete,
+  analyze and feedback. Expanded evidence panels and scroll position
+  survive it now.
 - Pressing the next/previous shortcut in the clip modal no longer jumps to
   the top of the Library when the open clip isn't in the Library's current
   filtered list — opening a clip from the AI tab's suspicious feed (and now

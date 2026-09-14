@@ -98,3 +98,39 @@ test('the empty state explains itself rather than showing a blank tab', async ({
   await page.locator('.app-nav-tab[data-tab="security"]').click()
   await expect(page.getByText('No security events yet')).toBeVisible()
 })
+
+test('the severity filter includes everything at or above the chosen band', async ({ page }) => {
+  // "Critical only" is covered above; this is the other half of
+  // _severities_at_or_above — a band that must sweep up everything more
+  // severe than itself, not just its own name. The routine-only clip drops
+  // out; the suspicious and critical ones stay.
+  await page.locator('.security-filter').nth(1).click()
+  await page.getByRole('option', { name: 'Noteworthy and up' }).click()
+  const timeline = page.locator('[data-testid="security-timeline"]')
+  await expect(timeline.locator('.security-row')).toHaveCount(2)
+  await expect(timeline.getByText('Impact candidate')).toBeVisible()
+  await expect(timeline.getByText('Loitering')).toBeVisible()
+  await expect(timeline.getByText('Subject present')).toHaveCount(0)
+})
+
+test('the period filter narrows to the chosen window', async ({ page }) => {
+  // Filtered on when each clip was *recorded*, not when it was analyzed —
+  // the timeline is ordered by clip time, so a backlog processed overnight
+  // must not file three-day-old footage under this week. All three seeded
+  // clips are hours old, so both windows keep all three; the request
+  // assertion is what proves the choice actually reaches the query rather
+  // than being dropped on the way (deliberately not "Today", whose bound is
+  // local midnight — an 11-hour-old clip falls on either side of it
+  // depending on the hour the suite happens to run).
+  await page.locator('.p-selectbutton').getByText('Week', { exact: true }).click()
+  const timeline = page.locator('[data-testid="security-timeline"]')
+  await expect(timeline.locator('.security-row')).toHaveCount(3)
+
+  const requested: string[] = []
+  page.on('request', (request) => {
+    if (request.url().includes('/api/security/timeline')) requested.push(request.url())
+  })
+  await page.locator('.p-selectbutton').getByText('Month', { exact: true }).click()
+  await expect(timeline.locator('.security-row')).toHaveCount(3)
+  expect(requested.some((url) => url.includes('period=month'))).toBe(true)
+})

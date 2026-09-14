@@ -762,18 +762,21 @@ class SecurityEventDetector:
             return None
         speed_increase = track.max_speed_increase
         change = ctx.appearance_change
-        raised = bool(ctx.posture_arm_raised)
-        # Neither of these is worth anything unless the contact under it is
-        # itself well evidenced. Bare box overlap plus a brisk walk is a
-        # person arriving at their car, not a collision; bare box overlap
-        # plus "the car's image region looks different" is a passer-by
-        # crossing in front of a car whose door someone opened, or on which
-        # snow settled, or which the camera re-exposed. Requiring depth or
+        # None of the three signals below is worth anything unless the
+        # contact under it is itself well evidenced. Bare box overlap plus a
+        # brisk walk is a person arriving at their car, not a collision;
+        # bare box overlap plus "the car's image region looks different" is
+        # a passer-by crossing in front of a car whose door someone opened,
+        # or on which snow settled, or which the camera re-exposed; and bare
+        # box overlap plus a raised wrist is somebody walking past their own
+        # car with a phone to their ear (_ARM_RAISED_FRACTION is 6% of body
+        # height, so an everyday gesture clears it). Requiring depth or
         # segmentation backing is what keeps the one CRITICAL event type
         # this detector can emit — the one that forces an alert past the AI
         # model's own verdict and withholds the face-recognition bypass —
         # out of everyday footage on a device where those stages are
-        # unavailable.
+        # unavailable, exactly as DOCS' "Running it on a low-powered device"
+        # promises.
         confirmed = contact.confidence >= _IMPACT_CONTACT_CONFIDENCE
         abrupt = speed_increase >= self._t.abrupt_speed_change and confirmed
         altered = (
@@ -781,8 +784,12 @@ class SecurityEventDetector:
         )
         # A raised arm at the moment of contact is the one posture that
         # separates a strike from a touch, and unlike the speed spike it is
-        # visible in a single frame — so it stands on its own rather than
-        # needing depth- or segmentation-backed contact underneath it.
+        # visible in the single frame the pose stage examines — so it needs
+        # no corroborating *motion* signal. It still needs the same
+        # confirmed contact underneath it as the other two: what a single
+        # frame cannot establish is that the subject was touching the
+        # vehicle at all rather than passing in front of it.
+        raised = bool(ctx.posture_arm_raised) and confirmed
         if not (abrupt or altered or raised):
             return None
 

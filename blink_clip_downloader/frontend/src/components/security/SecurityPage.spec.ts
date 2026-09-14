@@ -7,6 +7,7 @@ import SelectButton from 'primevue/selectbutton'
 import Timeline from 'primevue/timeline'
 import SecurityPage from './SecurityPage.vue'
 import SecurityEventDetail from './SecurityEventDetail.vue'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import { useClipViewerStore } from '../../stores/clipViewer'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
@@ -462,6 +463,19 @@ describe('SecurityPage', () => {
     useRefreshStore().bump()
     await flushPromises()
     expect(timelineCalls.length).toBeGreaterThan(before)
+  })
+
+  it('keeps the timeline on screen while a background refresh is in flight', async () => {
+    // The refresh signal fires from other tabs' actions — including the clip
+    // modal this timeline itself opens — so a tick must not replace rows the
+    // user is reading (and their expanded evidence) with a spinner.
+    const wrapper = await mountPage({ rows: [row()] })
+    useRefreshStore().bump()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="security-timeline"]').exists()).toBe(true)
+    expect(wrapper.findComponent(LoadingIndicator).exists()).toBe(false)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="security-timeline"]').exists()).toBe(true)
   })
 
   it('survives the camera list failing to load', async () => {

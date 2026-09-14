@@ -4163,6 +4163,54 @@ async def test_save_analysis_persists_verdict_detections_and_events(
     assert events[0]["risk_score"] == pytest.approx(82.0)
 
 
+async def test_a_failed_reanalysis_does_not_erase_the_previous_run_evidence(
+    db: ClipDatabase,
+) -> None:
+    """Frame extraction failing (file moved, archived, still being written)
+    still produces a result row — but it examined nothing, so it must not
+    replace the detections and security events of a run that did. Erasing
+    them would drop the clip out of the Security tab's timeline entirely."""
+    await db.add_clip(_make_clip("c1"))
+    good = AnalysisResult(
+        clip_id="c1",
+        camera="Front Door",
+        model="llava",
+        response_text="{}",
+        is_suspicious=True,
+        confidence=0.8,
+        summary="Someone at the car",
+        frame_count=3,
+        analysis_duration=1.5,
+        analyzed_at=datetime.now(UTC).isoformat(),
+        detected_objects=[DetectedObject("person", 0.9, (1.0, 2.0, 3.0, 4.0), 1, 0)],
+        security_events=[_event()],
+    )
+    await db.save_analysis(good)
+
+    await db.save_analysis(
+        AnalysisResult(
+            clip_id="c1",
+            camera="Front Door",
+            model="llava",
+            response_text="",
+            is_suspicious=False,
+            confidence=0.0,
+            summary="No frames could be extracted",
+            frame_count=0,
+            analysis_duration=0.1,
+            analyzed_at=datetime.now(UTC).isoformat(),
+        )
+    )
+
+    # The failure is recorded as the latest verdict, as it always was...
+    stored = await db.get_analysis_for_clip("c1")
+    assert stored is not None
+    assert stored["summary"] == "No frames could be extracted"
+    # ...but the evidence from the run that actually looked at frames stays.
+    assert len(await db.get_detected_objects_summary("c1")) == 1
+    assert len(await db.get_security_events("c1")) == 1
+
+
 async def test_add_analysis_result_defaults_severity_when_absent(
     db: ClipDatabase,
 ) -> None:
