@@ -171,10 +171,11 @@ watch(
       <Panel header="Customize" toggleable collapsed class="secfeed-customize">
         <div class="secfeed-controls">
           <div class="secfeed-field">
-            <label for="secfeed-cameras" class="field-label">Cameras</label>
+            <label for="secfeed-cameras-input" class="field-label">Cameras</label>
             <MultiSelect
               id="secfeed-cameras"
               v-model="draftCameras"
+              input-id="secfeed-cameras-input"
               :options="allCameras"
               placeholder="All cameras"
               display="chip"
@@ -196,8 +197,8 @@ watch(
           <div class="secfeed-field">
             <label for="secfeed-refresh" class="field-label">Refresh every (seconds)</label>
             <InputNumber
-              id="secfeed-refresh"
               v-model="draftRefreshSeconds"
+              input-id="secfeed-refresh"
               :min="5"
               :max="300"
               :step="5"

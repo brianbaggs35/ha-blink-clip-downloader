@@ -350,6 +350,7 @@ async function removeArchive(group: ArchiveGroup) {
         class="archive-panel"
         toggleable
         :collapsed="!expandedArchives.has(group.archive_path)"
+        :toggle-button-props="{ ariaLabel: `Toggle ${archiveLabel(group.archive_path)}` }"
         @update:collapsed="() => toggleArchive(group.archive_path)"
       >
         <template #header>
