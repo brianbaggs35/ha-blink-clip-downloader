@@ -263,3 +263,24 @@ test('Run Archiving Now sweeps the currently-eligible backlog immediately', asyn
 
   await expect(page.locator('.archive-panel')).toHaveCount(panelsBefore + 1)
 })
+
+test('Google Drive settings survive a full page reload, as an upgrade needs them to', async ({ page }) => {
+  // The same round trip the Home Assistant integration job restarts the
+  // add-on around (see e2e/ha_integration_smoke.mjs's PERSISTENCE_MARKER):
+  // a setting written through the UI has to come back from /data, not from
+  // component state. Here it proves the read/write pair; there it proves
+  // the volume outlives the container.
+  await page.locator('#gdrive-client-id').fill('reload-check.apps.googleusercontent.com')
+  await page.getByRole('button', { name: 'Save Setup' }).click()
+  await expect(page.getByText('Google Drive settings saved')).toBeVisible()
+
+  const fetched = await page.evaluate(async () => {
+    const res = await fetch('/api/storage/gdrive/settings')
+    return res.json()
+  })
+  expect(fetched.client_id).toBe('reload-check.apps.googleusercontent.com')
+
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="storage"]').click()
+  await expect(page.locator('#gdrive-client-id')).toHaveValue('reload-check.apps.googleusercontent.com')
+})

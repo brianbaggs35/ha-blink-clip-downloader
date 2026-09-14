@@ -179,7 +179,14 @@ try {
     }
   }
 
+  await checkIngressApi(page, issues);
+  await writePersistenceMarker(frame, issues);
+
   // TABS_TO_VERIFY ends with "automations", so that tab is already active.
+  await frame.locator('.app-nav-tab[data-tab="automations"]').click();
+  await frame
+    .locator('.app-nav-tab.active[data-tab="automations"]')
+    .waitFor({ state: "visible", timeout: 5000 });
   await checkHaNotification(frame, issues);
 
   // Escapes the ingress iframe entirely - everything from here on is
@@ -356,5 +363,85 @@ async function checkAddonSupervisorTabs(page, baseUrl, addonSlug, addonName, iss
         `(${err.message}) - Supervisor's log capture for this add-on, or Core's own log viewer, may ` +
         `be broken.`,
     );
+  }
+}
+
+/**
+ * The marker this job restarts the add-on around. Written through the real
+ * ingress-proxied UI here; read back afterwards by
+ * ha_integration_setup.sh's `assert-persisted`, once Supervisor has
+ * recreated the container. Together they prove the add-on's /data volume -
+ * which holds the bundled PostgreSQL cluster as well as this settings file
+ * - genuinely survives the container being replaced, which is the exact
+ * transition an *upgrade* puts an existing install through. Nothing else in
+ * this repo's CI exercises that: every other suite runs against a
+ * first-ever start on an empty volume.
+ *
+ * Google Drive's own settings are the marker because they are the one
+ * persisted setting reachable with no Blink account and no AI provider -
+ * the state this job's Home Assistant is necessarily in.
+ */
+// Kept in step with the literal in ha-integration.yaml's
+// "Verify settings written before the restart survived it" step — if the
+// two ever drift, that step fails loudly rather than passing vacuously.
+export const PERSISTENCE_MARKER =
+  "ha-integration-marker.apps.googleusercontent.com";
+
+async function writePersistenceMarker(frame, issuesList) {
+  try {
+    await frame.locator('.app-nav-tab[data-tab="storage"]').click();
+    await frame
+      .locator('.app-nav-tab.active[data-tab="storage"]')
+      .waitFor({ state: "visible", timeout: 5000 });
+    const clientId = frame.locator("#gdrive-client-id");
+    await clientId.waitFor({ state: "visible", timeout: 10000 });
+    await clientId.fill(PERSISTENCE_MARKER);
+    await frame.getByRole("button", { name: "Save Setup" }).click();
+    await frame
+      .getByText("Google Drive settings saved")
+      .waitFor({ state: "visible", timeout: 10000 });
+    console.log("Wrote the persistence marker through ingress.");
+  } catch (err) {
+    issuesList.push(
+      `could not write the persistence marker through ingress: ${err.message}`,
+    );
+  }
+}
+
+/**
+ * Ingress has to proxy more than the HTML shell: every one of the app's own
+ * API calls goes back through the same rewritten path. Fetching one from
+ * inside the iframe's own origin is the only way to prove that end of it -
+ * a page that renders its empty states correctly would look identical if
+ * every API call behind it were failing.
+ */
+async function checkIngressApi(page, issuesList) {
+  try {
+    const frameUrl = page.frames().find((f) => f.url().includes("hassio_ingress"))?.url();
+    if (!frameUrl) {
+      issuesList.push("no ingress iframe URL found to call the API against");
+      return;
+    }
+    const root = new URL(frameUrl).pathname.replace(/\/$/, "");
+    const result = await page.evaluate(async (base) => {
+      const res = await fetch(`${base}/api/stats`, { credentials: "include" });
+      return { status: res.status, body: await res.text() };
+    }, root);
+    if (result.status !== 200) {
+      issuesList.push(`GET /api/stats through ingress returned ${result.status}`);
+      return;
+    }
+    const stats = JSON.parse(result.body);
+    if (typeof stats.total_count !== "number") {
+      issuesList.push(
+        `GET /api/stats through ingress returned no total_count: ${result.body.slice(0, 120)}`,
+      );
+      return;
+    }
+    console.log(
+      `API reachable through ingress (/api/stats -> total_count=${stats.total_count}).`,
+    );
+  } catch (err) {
+    issuesList.push(`could not call the app's API through ingress: ${err.message}`);
   }
 }

@@ -138,3 +138,27 @@ test('non-critical data (stats, cameras, tags, AI status, Google Drive status) f
   await expect(page.getByText('Library refreshed')).toBeVisible()
   await expect(page.locator('.clip-card')).toHaveCount(TOTAL_CLIPS)
 })
+
+test('a malformed request is refused cleanly rather than erroring the page', async ({ page }) => {
+  // Both of these used to reach PostgreSQL and come back as a bare 500: a
+  // NUL byte is the one character its text type cannot hold, and an offset
+  // larger than a bigint fails encoding rather than paging past the end.
+  // The UI has no way to send either, but a proxy, a bookmark or a script
+  // does, and a 500 is the wrong answer to a malformed URL.
+  const nul = await page.evaluate(async () => {
+    const res = await fetch('/api/clips?camera=%00')
+    return { status: res.status, body: await res.text() }
+  })
+  expect(nul.status).toBe(400)
+  expect(nul.body).toContain('null byte')
+
+  const deep = await page.evaluate(async () => {
+    const res = await fetch('/api/clips?offset=999999999999999999999999')
+    return { status: res.status, body: await res.text() }
+  })
+  expect(deep.status).toBe(200)
+  expect(JSON.parse(deep.body)).toEqual([])
+
+  // And the page itself is untouched by either.
+  await expect(page.locator('.clip-card').first()).toBeVisible()
+})
