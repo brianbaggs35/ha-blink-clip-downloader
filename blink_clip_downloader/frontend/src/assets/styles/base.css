@@ -1234,14 +1234,16 @@ body.nav-collapsed {
 .tag-item .rm {
   cursor: pointer;
   opacity: 0.6;
-  line-height: 1;
   /* A real <button> now (it was a bare span, reachable only by mouse), so
-     it needs the chrome stripped back to how the span looked. */
+     it needs the chrome stripped back to how the span looked. `font` is a
+     shorthand that resets line-height, so it has to come first — setting it
+     afterwards silently threw away the line-height below. */
   border: 0;
   padding: 0;
   background: none;
   color: inherit;
   font: inherit;
+  line-height: 1;
 }
 .tag-item .rm:hover {
   opacity: 1;

@@ -30,6 +30,23 @@ test('AI tab shows the configured (offline) provider and lets you edit per-camer
   await expect(page.locator('#cam-desc-Garage')).toHaveValue(description)
 })
 
+test('a half-typed camera description survives a background refresh from another tab', async ({ page }) => {
+  // The cross-tab refresh signal reloads this section from the server. It
+  // has to skip that while the form is dirty, or an edit someone is still
+  // typing is silently replaced by what is on disk. Deliberately leaves
+  // nothing saved.
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="ai"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="ai"]')
+  await page.locator('.p-accordionheader', { hasText: 'Backyard' }).click()
+
+  const typed = 'e2e unsaved draft, never saved'
+  await page.locator('#cam-desc-Backyard').fill(typed)
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+
+  await expect(page.locator('#cam-desc-Backyard')).toHaveValue(typed)
+})
+
 test('the Failed queue count opens a modal listing why each clip failed to analyze', async ({ page }) => {
   // standalone_server.py seeds one real failed analysis_queue row (on
   // e2e-failed-upload/Test Scratch), so /api/ai/queue/failed -- the
@@ -148,6 +165,22 @@ test('AI Usage tab reflects the completed analysis, and Clear Stats resets it', 
   await expect(page.getByText('AI usage stats cleared')).toBeVisible()
   await expect(statsGrid.locator('.usage-stat', { hasText: 'Clips Analyzed' }).locator('.num')).toHaveText('0')
   await expect(page.getByText('No analysis data yet')).toBeVisible()
+})
+
+test('a failed Clear Stats says so instead of pretending the counters were reset', async ({ page }) => {
+  // Deliberately runs after the test above, which has already cleared the
+  // real counters — routing the DELETE to a 500 means this one changes
+  // nothing server-side, so it cannot perturb anything that follows.
+  await page.route('**/api/ai/usage', (route) =>
+    route.request().method() === 'DELETE' ? route.fulfill({ status: 500, body: 'boom' }) : route.continue(),
+  )
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="usage"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="usage"]')
+
+  await page.getByRole('button', { name: '🗑 Clear Stats' }).click()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+  await expect(page.getByText('Failed to clear usage stats')).toBeVisible()
 })
 
 test('Fetch Models finds none on the unreachable Ollama server, and Copy requires a selection first', async ({

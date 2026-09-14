@@ -273,28 +273,39 @@ async function removeTag(tag: string) {
 
 watch(loopClip, (val) => player?.loop(val))
 
+/** True while something is stacked on top of the clip modal.
+ *
+ *  Both keyboard paths below defer to it: Escape belongs to whatever is on
+ *  top, and the playback/navigation shortcuts would otherwise drive the
+ *  modal *behind* an open dialog — ArrowUp/ArrowDown swapping the clip out
+ *  from under a "Delete this clip permanently?" prompt that named the
+ *  previous one being the case that actually cost something.
+ */
+function overlayOnTop(): boolean {
+  return promptOverlay.open || confirmStore.open
+}
+
+function onEscape(target: HTMLElement, isTextInput: boolean) {
+  // Escape blurs a focused input (the tag/feedback-note fields) rather
+  // than being silently swallowed, matching the typical "Escape blurs the
+  // input" convention instead of doing nothing.
+  if (isTextInput) {
+    target.blur()
+    return
+  }
+  if (overlayOnTop()) return
+  if (props.clipId) emit('close')
+}
+
 function onKeydown(e: KeyboardEvent) {
   const target = e.target as HTMLElement
   const isTextInput = target.tagName === 'INPUT'
   if (e.key === 'Escape') {
-    // Escape blurs a focused input (the tag/feedback-note fields) rather
-    // than being silently swallowed, matching the typical "Escape blurs the
-    // input" convention instead of doing nothing.
-    if (isTextInput) {
-      target.blur()
-      return
-    }
-    if (promptOverlay.open || confirmStore.open) return
-    if (props.clipId) emit('close')
+    onEscape(target, isTextInput)
     return
   }
   if (isTextInput) return
-  // Everything below drives the modal *behind* whatever is on top of it.
-  // ArrowUp/ArrowDown is the one that matters: it swapped the clip out from
-  // under a "Delete this clip permanently?" prompt that named the previous
-  // one. Space/f/m/l playing or resizing the video behind an open dialog
-  // was the same mistake, just a cosmetic one.
-  if (promptOverlay.open || confirmStore.open) return
+  if (overlayOnTop()) return
   if (!props.clipId || !player) return
   switch (e.key) {
     case ' ':

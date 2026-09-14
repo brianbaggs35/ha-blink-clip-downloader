@@ -28,7 +28,7 @@ describe('HelpOverlay', () => {
     expect(wrapper.classes()).not.toContain('open')
   })
 
-  it('closes on Escape, so dismissal is not mouse-only', async () => {
+  it('closes on Escape raised inside it, not only via the app-wide handler', async () => {
     const wrapper = mount(HelpOverlay, { props: { modelValue: true } })
     await wrapper.find('.modal-bg').trigger('keydown.escape')
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([false])

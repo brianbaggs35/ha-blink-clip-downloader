@@ -141,9 +141,17 @@ class SecurityEventType(StrEnum):
 #:   can have been recognized in the first place; adding it would be dead
 #:   code pretending to be a safety rule.
 #:
-#: ``IMPACT_CANDIDATE`` survives because it needs contact evidence *plus* an
-#: abrupt motion or appearance change — a signature no routine interaction
-#: with one's own vehicle produces.
+#: ``IMPACT_CANDIDATE`` survives because it never fires on contact alone: the
+#: detector requires confirmed contact *plus* one of an abrupt speed change,
+#: a change in the vehicle's own appearance, or a raised arm at the moment of
+#: contact (see ``detector._impact_event``). The first two no routine
+#: interaction with one's own vehicle produces. The third can — closing a
+#: tailgate, loading a roof rack, washing the roof — so a household member
+#: doing one of those is knowingly accepted as a false positive here, on the
+#: grounds that it is uncommon and that the alternative is staying quiet
+#: about the one event type that would actually matter. If that trade ever
+#: needs revisiting, revisit it in ``_impact_event``'s ``raised`` branch
+#: rather than by widening or narrowing this set.
 BYPASS_BLOCKING_EVENTS: frozenset[SecurityEventType] = frozenset(
     {SecurityEventType.IMPACT_CANDIDATE}
 )

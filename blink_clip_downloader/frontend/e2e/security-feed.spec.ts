@@ -41,6 +41,20 @@ test('the Customize panel starts collapsed and expands on click', async ({ page 
   await expect(page.locator('#secfeed-cameras')).toBeVisible()
 })
 
+test('a Save that the backend refuses says so instead of looking like it worked', async ({ page }) => {
+  // Routed to a 500, so this one writes nothing — it deliberately sits
+  // above the mutating test below and must leave the shared settings file
+  // exactly as it found it.
+  await page.route('**/api/security-feed/settings', (route) =>
+    route.request().method() === 'PUT' ? route.fulfill({ status: 500, body: 'boom' }) : route.continue(),
+  )
+  await page.getByRole('button', { name: 'Customize' }).click()
+  await page.getByRole('button', { name: 'Save' }).click()
+
+  await expect(page.getByText('Could not save Security Feed settings')).toBeVisible()
+  await expect(page.locator('.secfeed-tile')).toHaveCount(4)
+})
+
 // Mutates the shared security_feed_settings.json (a real PUT + file write,
 // same file every test in this run shares) — must run last, after every
 // assertion above that depends on all three cameras being displayed at the
