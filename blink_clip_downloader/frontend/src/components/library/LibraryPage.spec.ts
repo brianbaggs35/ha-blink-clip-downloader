@@ -729,6 +729,39 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('gives the Starred/Recognized/Storage stats an icon plus an accessible (mobile-hideable) label', async () => {
+    // The Starred/Recognized/Storage icons read as icon+number only on
+    // mobile (no room for the text label at that width — see base.css's
+    // .lib-stat-label-hideable), but the label text must still exist in
+    // the DOM/accessibility tree, not be removed outright, so a screen
+    // reader still announces e.g. "Starred: 3" rather than just "3".
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    const starredStat = wrapper.findAll('.lib-stat').find((s) => s.text().includes('Starred'))!
+    const recognizedStat = wrapper.findAll('.lib-stat').find((s) => s.text().includes('Recognized'))!
+    const storageStat = wrapper.find('.lib-stat-storage')
+
+    // Same gold used on a starred clip's own badge in the grid (ClipCard's
+    // .star-badge), so this stat reads as "the same star" at a glance.
+    expect(starredStat.find('.lib-stat-icon-star').text()).toBe('★')
+    expect(recognizedStat.find('.lib-stat-icon').text()).toBe('👤')
+    expect(storageStat.find('.lib-stat-icon').text()).toBe('💾')
+
+    // Starred/Recognized hide their text label on mobile (icon+number is
+    // unambiguous on its own); Storage keeps its visible label even on
+    // mobile since it has its own full-width row there with room for it.
+    expect(starredStat.find('.lib-stat-label').classes()).toContain('lib-stat-label-hideable')
+    expect(recognizedStat.find('.lib-stat-label').classes()).toContain('lib-stat-label-hideable')
+    expect(storageStat.find('.lib-stat-label').classes()).not.toContain('lib-stat-label-hideable')
+
+    // The label text itself is unchanged and still present for assistive
+    // tech regardless of which viewport's CSS is visually hiding it.
+    expect(starredStat.find('.lib-stat-label').text()).toBe('Starred')
+    expect(recognizedStat.find('.lib-stat-label').text()).toBe('Recognized')
+    wrapper.unmount()
+  })
+
   it('hides the Recognized stat and filter when face recognition is unavailable', async () => {
     mockFetch()
     useCapabilitiesStore().setFaceRecognitionAvailable(false)
@@ -1142,6 +1175,21 @@ describe('LibraryPage', () => {
     await flushPromises()
     const starredStat = wrapper.findAll('.lib-stat').find((el) => el.text().includes('Starred'))!
     expect(starredStat.find('.lib-stat-value').text()).toBe('1')
+    wrapper.unmount()
+  })
+
+  it('always shows the storage stat, even before disk usage has ever been reported', async () => {
+    // The default STATS fixture (used by plain mockFetch()) has no `disk`
+    // field at all — regression test for the storage stat silently
+    // disappearing instead of showing a 0 MB placeholder in that case.
+    mockFetch()
+    const wrapper = mountLibrary()
+    await flushPromises()
+    expect(wrapper.find('.lib-stat-storage').exists()).toBe(true)
+    expect(wrapper.find('.lib-stat-storage').text()).toContain('Storage')
+    expect(wrapper.find('.lib-stat-storage').text()).toContain('0 MB')
+    expect(wrapper.find('.lib-stat-storage').attributes('title')).toBeUndefined()
+    expect(wrapper.findComponent({ name: 'ProgressBar' }).exists()).toBe(false)
     wrapper.unmount()
   })
 

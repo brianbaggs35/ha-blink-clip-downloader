@@ -283,7 +283,7 @@ onUnmounted(() => {
 <template>
   <div class="modal-bg" :class="{ open: !!clipId }" @click.self="emit('close')">
     <div class="modal" :class="{ theater }">
-      <button type="button" class="modal-close" title="Close (Esc)" @click="emit('close')">
+      <button type="button" class="modal-close" title="Close (Esc)" aria-label="Close" @click="emit('close')">
         <AppIcon name="close" />
       </button>
       <div class="video-wrap">
