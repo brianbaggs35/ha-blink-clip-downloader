@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { readLocal, removeLocal, writeLocal } from '../../localStorage'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
@@ -91,21 +92,21 @@ watch(
 )
 
 const notifSupported = 'Notification' in window
-const notifEnabled = ref(localStorage.getItem('blink_notif') === '1')
+const notifEnabled = ref(readLocal('blink_notif') === '1')
 
 async function toggleNotifications() {
   if (!notifEnabled.value) {
     const perm = await Notification.requestPermission()
     if (perm === 'granted') {
       notifEnabled.value = true
-      localStorage.setItem('blink_notif', '1')
+      writeLocal('blink_notif', '1')
       toast.show('Browser notifications enabled 🔔')
     } else {
       toast.show('Notification permission denied', true)
     }
   } else {
     notifEnabled.value = false
-    localStorage.removeItem('blink_notif')
+    removeLocal('blink_notif')
     toast.show('Notifications disabled')
   }
 }

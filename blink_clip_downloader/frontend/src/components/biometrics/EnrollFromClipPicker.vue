@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from '../icons/AppIcon.vue'
 import { computed, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
@@ -8,6 +9,11 @@ import type { CameraStat, ClipListItem } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
 
 const selectedFrames = defineModel<string[]>('selectedFrames', { required: true })
+
+// A clip only has a thumbnail if download_thumbnails was on when it
+// arrived; without this the strip renders the browser's broken-image
+// icon for those. Mirrors ClipCard's own handling.
+const stripThumbFailed = ref<Record<string, boolean>>({})
 
 const cameras = ref<CameraStat[]>([])
 const selectedCamera = ref('')
@@ -243,7 +249,14 @@ function toggleFrame(frame: string) {
             :class="{ active: clip.id === selectedClipId }"
             @click="selectedClipId = clip.id"
           >
-            <img :src="clipThumbUrl(clip.id)" alt="" loading="lazy" />
+            <img
+              v-if="!stripThumbFailed[clip.id]"
+              :src="clipThumbUrl(clip.id)"
+              alt=""
+              loading="lazy"
+              @error="stripThumbFailed = { ...stripThumbFailed, [clip.id]: true }"
+            />
+            <div v-else class="no-thumb"><AppIcon name="no-thumb" /></div>
           </button>
         </div>
         <Button

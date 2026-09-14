@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppIcon from '../icons/AppIcon.vue'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import Button from 'primevue/button'
 import Message from 'primevue/message'
@@ -36,6 +37,11 @@ const toast = useToastStore()
 // initialised from the prop but updated locally the moment a save/clear
 // succeeds — the preview UI must not wait on the parent round-tripping a
 // new modelValue prop back down before it can render correctly.
+// A clip only has a thumbnail if download_thumbnails was on when it
+// arrived; without this the strip renders the browser's broken-image
+// icon for those. Mirrors ClipCard's own handling.
+const stripThumbFailed = ref<Record<string, boolean>>({})
+
 const savedZone = ref<CarZone | null>(props.modelValue)
 
 // preview: shows the persisted reference snapshot with the saved zone drawn
@@ -140,8 +146,19 @@ function measureContainer() {
 }
 
 async function onImageLoad() {
+  frameFailed.value = false
   await nextTick()
   measureContainer()
+}
+
+// A clip only has a thumbnail if `download_thumbnails` was on when it
+// arrived and generation actually succeeded, and nothing filters the strip
+// down to clips that have one. Without this the reference frame silently
+// 404s, the canvas collapses to the height of its alt text, and the zone
+// simply cannot be drawn — with nothing on screen saying why.
+const frameFailed = ref(false)
+function onImageError() {
+  frameFailed.value = true
 }
 
 // Computed from clientX/clientY and the container's own bounding rect,
@@ -321,6 +338,7 @@ const selectedClip = computed(() => recentClips.value.find((c) => c.id === selec
 
 function selectClip(id: string) {
   selectedClipId.value = id
+  frameFailed.value = false
   rect.value = null
   freeformPath.value = []
 }
@@ -399,7 +417,14 @@ const previewPolygonAttr = computed(() => {
             type="button"
             @click="selectClip(clip.id)"
           >
-            <img :src="clipThumbUrl(clip.id)" alt="" loading="lazy" />
+            <img
+              v-if="!stripThumbFailed[clip.id]"
+              :src="clipThumbUrl(clip.id)"
+              alt=""
+              loading="lazy"
+              @error="stripThumbFailed = { ...stripThumbFailed, [clip.id]: true }"
+            />
+            <div v-else class="no-thumb"><AppIcon name="no-thumb" /></div>
           </button>
         </div>
 
@@ -416,6 +441,7 @@ const previewPolygonAttr = computed(() => {
             alt="Selected frame"
             class="picker-image"
             @load="onImageLoad"
+            @error="onImageError"
           />
           <div
             class="picker-overlay"
@@ -435,6 +461,11 @@ const previewPolygonAttr = computed(() => {
             </svg>
           </div>
         </div>
+
+        <Message v-if="frameFailed" severity="warn" size="small" :closable="false">
+          This clip has no stored thumbnail, so there is no frame to draw on. Pick another clip above, or turn on
+          "Download thumbnails" in the add-on settings and wait for the next clip.
+        </Message>
 
         <div class="picker-actions">
           <Button size="small" :disabled="!hasDraft || saving" :loading="saving" @click="saveZone">

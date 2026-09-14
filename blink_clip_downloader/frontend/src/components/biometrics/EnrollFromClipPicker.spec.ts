@@ -193,6 +193,17 @@ describe('EnrollFromClipPicker', () => {
     expect(wrapper.findAll('.thumb-strip-item')).toHaveLength(2)
   })
 
+  it('shows a placeholder for a clip with no stored thumbnail', async () => {
+    // A clip only has one if download_thumbnails was on when it arrived;
+    // without this the strip renders a broken-image icon.
+    stubRoutedFetch({ cameras: [makeCamera('Front Door')], clips: [makeClip('c1'), makeClip('c2')] })
+    const wrapper = mountPicker()
+    await flushPromises()
+    await wrapper.findAll('.thumb-strip-item img')[0].trigger('error')
+    await flushPromises()
+    expect(wrapper.findAll('.thumb-strip-item .no-thumb')).toHaveLength(1)
+  })
+
   it('re-fetches clips when a different camera is selected', async () => {
     let clipsCallCount = 0
     vi.stubGlobal(

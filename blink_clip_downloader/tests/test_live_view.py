@@ -471,7 +471,11 @@ async def test_teardown_completes_even_if_stopping_the_stream_raises(
     stream.stop = MagicMock(side_effect=RuntimeError("already closed"))
     camera_registry["Front Door"] = _make_camera(stream)
 
-    status = await manager.start_session("Front Door")
+    # Starting a session spawns ffmpeg — mocked here like every other
+    # session test in this file, so the suite stays hermetic rather than
+    # depending on ffmpeg being installed wherever it runs.
+    with _mock_exec(_FakeProcess()):
+        status = await manager.start_session("Front Door")
     assert status.session_id is not None
     hls_dir = manager.get_hls_dir(status.session_id)
     assert hls_dir is not None

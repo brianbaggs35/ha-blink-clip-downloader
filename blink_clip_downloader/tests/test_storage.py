@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from blink_downloader.storage import StorageManager, _cleanup_empty_dirs, _safe_name
 
@@ -402,3 +405,56 @@ def test_disk_stats_oserror_fallback(tmp_path):
         stats = s.disk_stats()
     assert stats["total_gb"] == 0
     assert stats["free_gb"] == 0
+
+
+# ---------------------------------------------------------------------------
+# filename_format is free text in the add-on options
+# ---------------------------------------------------------------------------
+
+
+def test_a_typo_in_filename_format_falls_back_instead_of_failing_every_clip(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """It raised for every clip, which failed each download with nothing but
+    a log line — permanently, until somebody noticed."""
+    storage = make_storage(tmp_path, filename_format="{cam}_{timestamp}")
+    with caplog.at_level(logging.WARNING):
+        path = storage.resolve_path("Front Door", TS, "abc123")
+    assert path.name == "Front_Door_20240615_103000.mp4"
+    assert "filename_format" in caplog.text
+    assert "{camera}" in caplog.text
+
+
+def test_the_fallback_warning_is_logged_once_not_per_clip(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    storage = make_storage(tmp_path, filename_format="{nope}")
+    with caplog.at_level(logging.WARNING):
+        for i in range(3):
+            storage.resolve_path("Front Door", TS, f"clip{i}")
+    assert caplog.text.count("is not usable") == 1
+
+
+def test_a_positional_placeholder_also_falls_back(tmp_path: Path) -> None:
+    storage = make_storage(tmp_path, filename_format="{0}")
+    assert storage.resolve_path("Front Door", TS, "abc").name.startswith("Front_Door_")
+
+
+def test_filename_format_cannot_place_clips_outside_the_download_directory(
+    tmp_path: Path,
+) -> None:
+    """It is a filename template, not a path template. A separator or ".."
+    would put clips where retention, the quota check and the library scan
+    all miss them."""
+    storage = make_storage(tmp_path, filename_format="../../escape/{camera}")
+    path = storage.resolve_path("Front Door", TS, "abc123")
+    assert ".." not in path.parts
+    assert path.is_relative_to(tmp_path / "clips")
+
+
+def test_a_separator_in_filename_format_becomes_part_of_the_name(
+    tmp_path: Path,
+) -> None:
+    storage = make_storage(tmp_path, filename_format="{camera}/{id}")
+    path = storage.resolve_path("Front Door", TS, "abc123")
+    assert path.name == "Front_Door_abc123.mp4"

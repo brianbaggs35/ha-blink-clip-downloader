@@ -156,7 +156,9 @@ function startConnectPolling() {
         stopConnectPolling()
         if (state.phase === 'connected') {
           toast.show('Connected to Google Drive')
-          void loadStatus()
+          // Outside the try above by the time it settles, so it needs its
+          // own handler — loadAll() refreshes this anyway.
+          void loadStatus().catch(() => {})
         }
       }
     } catch {
