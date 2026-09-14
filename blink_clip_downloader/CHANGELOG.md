@@ -310,6 +310,26 @@ damage classification.
 - Scanning the clip folder for untracked files on start-up no longer holds
   up the event loop for the whole walk, which on a large library made the
   web UI briefly unresponsive at exactly the wrong moment.
+- A typo in `filename_format` no longer breaks every download. It raised for
+  each clip in turn and failed them all, permanently, with nothing but a log
+  line — it now falls back to the default and says so once, naming the valid
+  tokens. A path separator or `..` in that setting also no longer places
+  clips outside the download folder, where retention, the quota check and
+  the library scan would all miss them.
+- Starring a clip, or adding and removing tags, now says so when the request
+  fails instead of silently doing nothing. A tag that could not be saved is
+  taken back off the clip rather than left showing as though it had been.
+- Starring a multi-clip selection where one clip fails now reports what did
+  and did not work, and still refreshes the grid; previously a single
+  failure silently abandoned the whole batch.
+- The web UI no longer fails to start at all in a browser that blocks site
+  data (Safari's "Block All Cookies", and some embedded webviews). Reading
+  the saved theme and sidebar state threw before the page had rendered
+  anything.
+- The Vehicles tab's zone picker explains itself when the chosen clip has no
+  stored thumbnail, instead of presenting a collapsed canvas with nothing to
+  draw on. Clip strips there and in Biometrics show a placeholder rather than
+  a broken image.
 - Completed the PrimeVue 5 migration by using the PrimeUI license format
   expected by PrimeVue 5.0.1, binding numeric `ProgressSpinner` props
   correctly, and documenting the `VITE_PRIMEVUE_LICENSE_KEY` development
