@@ -50,6 +50,14 @@ architecture.
     pricing, plus the small pure functions that read it. Split out of
     `analyzer.py` because it changes on the providers' schedule, not this
     add-on's; it imports nothing from `analyzer.py`.
+  - `frame_motion.py` — pure frame arithmetic: grayscale thumbnails,
+    inter-frame diff magnitudes/centroids, the scene-baseline thumbnail,
+    the motion-trajectory phrase, and the share of a clip's motion falling
+    inside a car zone. Same reasoning as `model_catalog.py` — it is image
+    math that happens to be *used* during analysis, not part of deciding
+    what a clip means, and it imports nothing from `analyzer.py`. Uses
+    `security/geometry.py`'s `point_in_polygon` rather than keeping the
+    second, identical copy `analyzer.py` used to carry.
   - `moondream_finetune.py` — `MoondreamFineTuneManager`, an async wrapper
     over Moondream Cloud's fine-tuning REST API. **Not an analyzer** — no
     clip, prompt or verdict is involved; it backs the AI tab's Fine-Tuning

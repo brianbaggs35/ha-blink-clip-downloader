@@ -162,6 +162,10 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         self.two_fa_seq: int = 0
         self.two_fa_result_seq: int = 0
         self.two_fa_result_ok: bool | None = None
+        # Set once min_clip_duration has been seen to drop a clip whose
+        # duration the API never reported, so that warning is logged per
+        # add-on run rather than per poll cycle.
+        self._unknown_duration_warned = False
 
     # ------------------------------------------------------------------
     # Public: web-UI 2FA submission
@@ -1050,7 +1054,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             if self._tracker.is_downloaded(clip_id):
                 continue
 
-            if self._storage.is_over_quota():
+            if await asyncio.to_thread(self._storage.is_over_quota):
                 _LOGGER.warning(
                     "Storage quota reached — stopping local-storage download"
                 )
@@ -1233,13 +1237,40 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
             clips = [c for c in clips if self._in_time_window(c)]
 
         if self._config.min_clip_duration > 0:
-            clips = [
-                c
-                for c in clips
-                if int(c.get("duration", 0) or 0) >= self._config.min_clip_duration
-            ]
+            clips = [c for c in clips if self._meets_min_duration(c)]
 
         return clips
+
+    def _meets_min_duration(self, clip: dict) -> bool:
+        """Whether *clip* clears ``min_clip_duration``, keeping unknowns.
+
+        A duration of 0 from the clip list means "not reported", not "zero
+        seconds long": some accounts and clip types never populate the field
+        at all, which ``_download_clip`` already knows — it probes the
+        downloaded file with ffprobe whenever the API says 0. Filtering on
+        the same unreliable field *before* downloading cannot tell the two
+        apart, and dropping on it meant an account that reports 0 for
+        everything downloaded nothing at all the moment this option was set
+        above zero, with no error and no clip ever reaching the library. A
+        clip is deleted from Blink's cloud on its own schedule, so keeping
+        one whose length we cannot establish is the recoverable direction to
+        be wrong in; the user can still delete it afterwards.
+        """
+        duration = int(clip.get("duration", 0) or 0)
+        if duration <= 0:
+            if not self._unknown_duration_warned:
+                self._unknown_duration_warned = True
+                _LOGGER.warning(
+                    "min_clip_duration=%ds is set, but Blink reported no "
+                    "duration for clip %s — keeping it rather than dropping "
+                    "footage on a field this account may never populate. "
+                    "Real durations are probed from the file after download "
+                    "and shown in the library.",
+                    self._config.min_clip_duration,
+                    clip.get("id"),
+                )
+            return True
+        return duration >= self._config.min_clip_duration
 
     def _in_time_window(self, clip: dict) -> bool:
         """Return True if the clip's creation time falls in the configured window.
@@ -1294,7 +1325,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 _LOGGER.warning("Clip %s has no media URL, skipping", clip_id)
                 return None
 
-            if self._storage.is_over_quota():
+            if await asyncio.to_thread(self._storage.is_over_quota):
                 _LOGGER.warning("Storage quota reached, skipping clip %s", clip_id)
                 return None
 
@@ -1536,17 +1567,37 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         if not self._config.download_thumbnails or self._db is None:
             return 0
 
+        # Two stat() calls per clip in the whole library, every poll cycle,
+        # and on a library that is already fully thumbnailed (the steady
+        # state) not one of them reaches an await — so the scan itself has
+        # to happen off the loop, not just the ffmpeg runs it feeds.
+        paths = sorted(await self._db.get_all_file_paths())
+        pending = await asyncio.to_thread(self._thumbnails_missing, paths, limit)
+
         generated = 0
-        for path_str in sorted(await self._db.get_all_file_paths()):
-            if generated >= limit:
-                break
-            video_path = Path(path_str)
-            thumb_path = video_path.with_suffix(".jpg")
-            if thumb_path.exists() or not video_path.exists():
-                continue
-            if await self._generate_thumbnail(video_path, thumb_path):
+        for video_path in pending:
+            if await self._generate_thumbnail(
+                video_path, video_path.with_suffix(".jpg")
+            ):
                 generated += 1
         return generated
+
+    @staticmethod
+    def _thumbnails_missing(paths: list[str], limit: int) -> list[Path]:
+        """Up to *limit* clip paths that exist but have no thumbnail yet.
+
+        Pure filesystem probing, so it runs in a worker thread — see
+        :meth:`backfill_thumbnails`.
+        """
+        missing: list[Path] = []
+        for path_str in paths:
+            if len(missing) >= limit:
+                break
+            video_path = Path(path_str)
+            if video_path.with_suffix(".jpg").exists() or not video_path.exists():
+                continue
+            missing.append(video_path)
+        return missing
 
     # ------------------------------------------------------------------
     # Internal: auth helpers

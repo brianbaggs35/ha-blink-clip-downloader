@@ -216,7 +216,7 @@ selected** for several at once) regardless of this cap.
 | `motion_only` | `false` | Skip clips not triggered by a PIR motion sensor |
 | `time_window_start` | `""` | `HH:MM` — only download clips recorded at or after this time |
 | `time_window_end` | `""` | `HH:MM` — only download clips recorded at or before this time |
-| `min_clip_duration` | `0` | Skip clips shorter than N seconds (0 = keep all) |
+| `min_clip_duration` | `0` | Skip clips shorter than N seconds (0 = keep all). Blink's clip list does not report a duration for every account or clip type; a clip whose length it does not report is kept rather than dropped, since the real duration is only knowable after downloading the file. |
 
 ### Download Options
 

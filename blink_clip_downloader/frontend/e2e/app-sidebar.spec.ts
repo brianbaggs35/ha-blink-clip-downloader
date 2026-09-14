@@ -140,3 +140,19 @@ test('the sidebar collapses to icons, stays collapsed across a reload, and expan
   await expect(page.locator('.app-nav')).not.toHaveClass(/collapsed/)
   await expect(page.locator('.app-nav-tab[data-tab="library"]')).toContainText('Library')
 })
+
+test('a theme choice survives a reload', async ({ page }) => {
+  // Persisted through the localStorage wrapper that swallows a blocked or
+  // unavailable store — so the round trip is worth asserting rather than
+  // assuming, and a toggle that forgets itself is not a preference.
+  await page.getByRole('button', { name: 'Switch to light theme' }).click()
+  await expect(page.locator('body')).toHaveClass(/light/)
+
+  await page.reload()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="library"]')
+  await expect(page.locator('body')).toHaveClass(/light/)
+  await expect(page.getByRole('button', { name: 'Switch to dark theme' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Switch to dark theme' }).click()
+  await expect(page.locator('body')).toHaveClass(/dark/)
+})

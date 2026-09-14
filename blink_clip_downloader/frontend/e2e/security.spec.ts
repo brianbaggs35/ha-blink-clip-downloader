@@ -134,3 +134,23 @@ test('the period filter narrows to the chosen window', async ({ page }) => {
   await expect(timeline.locator('.security-row')).toHaveCount(3)
   expect(requested.some((url) => url.includes('period=month'))).toBe(true)
 })
+
+test('stepping to the next clip from a Security-opened modal stays where it was', async ({ page }) => {
+  // A clip opened from here is generally not in the Library's own filtered
+  // list, which used to make prev/next find index -1, step to 0 and
+  // teleport the modal to the newest clip in the library. The modal should
+  // simply stay on the clip it was showing.
+  await page
+    .locator('.security-row', { hasText: 'Impact candidate' })
+    .getByRole('button', { name: 'View clip' })
+    .click()
+  const modal = page.locator('.modal-bg.open')
+  await expect(modal).toBeVisible()
+  const title = await modal.locator('.modal-title').textContent()
+
+  await page.keyboard.press('ArrowDown')
+  await expect(modal.locator('.modal-title')).toHaveText(title ?? '')
+  await page.keyboard.press('ArrowUp')
+  await expect(modal.locator('.modal-title')).toHaveText(title ?? '')
+  await expect(modal).toBeVisible()
+})

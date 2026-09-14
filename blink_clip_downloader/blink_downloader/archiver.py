@@ -109,7 +109,12 @@ class ClipArchiver:
         removed = 0
         member_cache: dict[str, set[str]] = {}
         for record in records:
-            if self._archive_member_exists(record, member_cache):
+            # Off the loop: this opens and reads the central directory of
+            # every distinct monthly ZIP, and it runs during startup —
+            # exactly when HA ingress is waiting for the web server.
+            if await asyncio.to_thread(
+                self._archive_member_exists, record, member_cache
+            ):
                 continue
             try:
                 if await self._db.delete_clip(str(record["id"])):
@@ -239,8 +244,14 @@ class ClipArchiver:
                 # silently discard every previously-archived entry instead
                 # and report success, which no exception handler here could
                 # ever catch.
-                with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_DEFLATED) as zf:
-                    zf.write(src, arcname)
+                # In a thread: deflating a multi-megabyte video is real,
+                # uninterruptible CPU+IO work, and doing it inline held the
+                # loop for the whole of it — the per-clip yield below only
+                # ever got a turn *between* files, which is precisely the
+                # blocking _YIELD_EVERY_N_CLIPS exists to avoid. The
+                # archiver's own lock means no other task can be writing
+                # this ZIP concurrently.
+                await asyncio.to_thread(self._write_member, zip_path, src, arcname)
             except (zipfile.BadZipFile, OSError) as exc:
                 _LOGGER.warning("Could not archive %s: %s", src, exc)
                 continue
@@ -278,6 +289,12 @@ class ClipArchiver:
             _LOGGER.debug("Archived %s → %s", src.name, zip_path.name)
 
         return archived
+
+    @staticmethod
+    def _write_member(zip_path: Path, src: Path, arcname: str) -> None:
+        """Append one file to *zip_path*. Runs in a worker thread."""
+        with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(src, arcname)
 
     @staticmethod
     def _quarantine_if_corrupted(zip_path: Path, month: str) -> None:

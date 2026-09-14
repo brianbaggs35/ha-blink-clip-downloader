@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -223,6 +224,31 @@ def test_min_clip_duration_filter(dl, sample_clip):
     ]
     result = dl._apply_filters(clips)
     assert [c["id"] for c in result] == [2]
+
+
+def test_min_clip_duration_keeps_clips_with_no_reported_duration(dl, sample_clip):
+    """0 from the clip list means "not reported", not "zero seconds long" —
+    some accounts never populate it, which is why _download_clip probes the
+    file afterwards. Dropping on it meant setting this option above zero
+    downloaded nothing at all on those accounts, silently."""
+    dl._config.min_clip_duration = 10
+    clips = [
+        {**sample_clip, "id": 1, "duration": 0},
+        {**sample_clip, "id": 2, "duration": None},
+        {**{k: v for k, v in sample_clip.items() if k != "duration"}, "id": 3},
+        {**sample_clip, "id": 4, "duration": 5},
+        {**sample_clip, "id": 5, "duration": 15},
+    ]
+    assert [c["id"] for c in dl._apply_filters(clips)] == [1, 2, 3, 5]
+
+
+def test_unknown_duration_warning_is_logged_once_per_run(dl, sample_clip, caplog):
+    dl._config.min_clip_duration = 10
+    clips = [{**sample_clip, "id": 1, "duration": 0}, {**sample_clip, "id": 2}]
+    with caplog.at_level(logging.WARNING):
+        dl._apply_filters(clips)
+        dl._apply_filters(clips)
+    assert sum("reported no duration" in r.message for r in caplog.records) == 1
 
 
 def test_in_time_window_returns_true_when_unconfigured(dl, sample_clip):

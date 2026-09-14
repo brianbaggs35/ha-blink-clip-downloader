@@ -777,7 +777,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._media_server.extra_status = {
             "connected": True,
             "account_id": self._downloader.account_id,
-            "disk": self._storage.disk_stats(),
+            "disk": await asyncio.to_thread(self._storage.disk_stats),
         }
 
         if self._config.watch_ha_events and self._config.supervisor_token:
@@ -952,7 +952,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             for clip in archived:
                 await self._gdrive_queue.enqueue(clip)
 
-        deleted_paths = self._storage.apply_retention_policy_paths()
+        deleted_paths = await asyncio.to_thread(
+            self._storage.apply_retention_policy_paths
+        )
         if deleted_paths:
             _LOGGER.info("Retention removed %d file(s)", len(deleted_paths))
             if self._config.enable_library_db:
@@ -963,14 +965,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 for path in deleted_paths:
                     await self._db.delete_clip_by_path(str(path))
 
-        if self._storage.is_over_quota():
+        if await asyncio.to_thread(self._storage.is_over_quota):
             msg = (
                 "Storage quota exceeded — skipping download. "
                 "Delete old clips or raise the quota in settings."
             )
             _LOGGER.warning(msg)
             await self._notifier.notify(msg, title="Blink Downloader: Storage Full")
-            self._write_stats()
+            await self._write_stats()
             return
 
         downloaded = await self._downloader.download_new_clips()
@@ -1015,9 +1017,11 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         # Always refresh disk stats so the web UI Storage section stays current
         # even when no new clips were downloaded this cycle.
-        self._media_server.extra_status["disk"] = self._storage.disk_stats()
+        self._media_server.extra_status["disk"] = await asyncio.to_thread(
+            self._storage.disk_stats
+        )
 
-        self._write_stats()
+        await self._write_stats()
         _LOGGER.debug("Poll cycle finished (%d new clip(s))", len(downloaded))
 
     async def _on_clips_downloaded(self, clips: list[dict[str, Any]]) -> None:
@@ -1049,7 +1053,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             await self._handle_downloaded_clip(clip, analyze=analyze)
 
         tracker_stats = self._tracker.stats
-        disk = self._storage.disk_stats()
+        disk = await asyncio.to_thread(self._storage.disk_stats)
         last_dl = datetime.now(UTC).isoformat()
         self._media_server.extra_status["last_download"] = last_dl
         # Keep disk stats fresh so the Storage card in the web UI is accurate.
@@ -1216,7 +1220,17 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
     # Stats
     # ------------------------------------------------------------------
 
-    def _write_stats(self) -> None:
+    async def _write_stats(self) -> None:
+        """Write the stats file, off the event loop.
+
+        ``disk_stats()`` walks and stats every file under download_path, so
+        on a library of any size this is not something to run inline twice
+        per poll cycle while the web UI and Live View are trying to serve
+        requests over the same loop.
+        """
+        await asyncio.to_thread(self._write_stats_sync)
+
+    def _write_stats_sync(self) -> None:
         payload: dict[str, Any] = {
             "last_poll": datetime.now(UTC).isoformat(),
             "session_downloads": self._session_downloads,
