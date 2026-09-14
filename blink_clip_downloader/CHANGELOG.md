@@ -330,6 +330,9 @@ damage classification.
   stored thumbnail, instead of presenting a collapsed canvas with nothing to
   draw on. Clip strips there and in Biometrics show a placeholder rather than
   a broken image.
+- The Status tab no longer replaces itself with loading placeholders when a
+  background refresh fires from another tab, and a slow refresh can no
+  longer repaint older figures over newer ones.
 - The Moondream fine-tuning "Train" endpoint now bounds how much pending
   feedback one press consumes. It was the only unclamped limit on the
   server, and the one that costs a frame extraction and a paid API call per
