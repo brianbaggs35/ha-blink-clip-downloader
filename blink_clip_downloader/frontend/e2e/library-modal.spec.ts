@@ -544,3 +544,15 @@ test("the Boxes toggle draws the detector's own boxes over the video", async ({ 
   await modal.getByRole('button', { name: '⬚ Boxes on' }).click()
   await expect(overlay).toHaveCount(0)
 })
+
+test('the Boxes toggle renders nothing for a clip the detector never ran on', async ({ page }) => {
+  // Every distribution clip has no detected_objects rows, so the overlay
+  // has nothing to draw: it must stay absent rather than paint an empty
+  // SVG over the video or surface an error for an optional decoration.
+  await page.locator('.clip-card[data-id="e2e-clip-002"]').click()
+  const modal = openModal(page)
+  await modal.getByRole('button', { name: '⬚ Boxes' }).click()
+  await expect(modal.getByRole('button', { name: '⬚ Boxes on' })).toBeVisible()
+  await expect(modal.locator('[data-testid="detection-overlay"]')).toHaveCount(0)
+  await expect(page.locator('.toast')).toHaveCount(0)
+})

@@ -219,3 +219,27 @@ test('bulk delete removes the selected clip after confirmation', async ({ page }
   await expect(page.locator('#bulk-bar')).toHaveCount(0)
   await expect(page.locator('.clip-card[data-id="e2e-scratch-delete"]')).toHaveCount(0)
 })
+
+test('the exported ZIP is a real, complete archive containing the clip', async ({ page }) => {
+  // The test above proves a download happens; this proves the bytes are
+  // actually a finished ZIP. The export is assembled in a worker thread and
+  // streamed from a scratch file with an explicit Content-Length, so a
+  // truncated stream or a wrong length is exactly the failure worth
+  // catching — and it would still produce a plausible-looking download.
+  await page.locator('.clip-card[data-id="e2e-biometrics-source"]').locator('.sel-check').click()
+
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: '⬇ ZIP' }).click()
+  const download = await downloadPromise
+  const zipPath = await download.path()
+
+  const { readFileSync } = await import('node:fs')
+  const bytes = readFileSync(zipPath)
+
+  // Local file header at the front, and — the part a truncated response
+  // loses — the end-of-central-directory record at the back.
+  expect(bytes.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
+  expect(bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]))).toBeGreaterThan(0)
+  expect(bytes.includes(Buffer.from('e2e-biometrics-source.mp4'))).toBe(true)
+  expect(bytes.length).toBeGreaterThan(1000)
+})

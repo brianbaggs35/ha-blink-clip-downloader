@@ -166,9 +166,13 @@ class StorageManager:
                 if pattern == _CLIP_GLOB:
                     deleted_clips.append(f)
 
-        _cleanup_empty_dirs(self._base)
-
         if deleted_count:
+            # Only worth doing when something was actually removed: this
+            # walks and sorts the *whole* tree (every file and directory,
+            # not just clips), and ran on every poll cycle even on the
+            # overwhelmingly common one where nothing had expired — the
+            # single most expensive thing this class did, for no effect.
+            _cleanup_empty_dirs(self._base)
             _LOGGER.info("Retention policy removed %d file(s)", deleted_count)
         return deleted_count, deleted_clips
 

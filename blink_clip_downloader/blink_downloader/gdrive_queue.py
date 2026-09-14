@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -188,7 +189,11 @@ class GDriveUploadQueue:
         temp_path: Path | None = None
         try:
             if clip.get("archived"):
-                temp_path = self._extract_archived_clip(clip)
+                # In a thread: this decompresses a whole clip out of its
+                # monthly ZIP and writes it to scratch, which is the same
+                # multi-megabyte blocking work archiver.py hands off for
+                # the same reason.
+                temp_path = await asyncio.to_thread(self._extract_archived_clip, clip)
                 if temp_path is None:
                     await self._db.update_gdrive_queue_status(
                         clip_id, "failed", error="Could not extract clip from archive"
@@ -339,7 +344,11 @@ class GDriveUploadQueue:
                         suffix=Path(original_name).suffix or ".mp4", delete=False
                     ) as tmp,
                 ):
-                    tmp.write(member.read())
+                    # Streamed, not member.read() into one bytes object:
+                    # that held a whole decompressed clip in memory on top
+                    # of the copy being written, which on a Pi-class box is
+                    # a needless spike for no gain.
+                    shutil.copyfileobj(member, tmp)
                     return Path(tmp.name)
         except (zipfile.BadZipFile, KeyError, OSError) as exc:
             _LOGGER.warning(
