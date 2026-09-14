@@ -347,7 +347,7 @@ watch(
     // see stores/clipViewer.ts.
     /* v8 ignore next */
     /* istanbul ignore next -- see v8-ignore comment above; same dead branch */
-    if (clipViewer.clipId) openModal(clipViewer.clipId)
+    if (clipViewer.clipId) openModal(clipViewer.clipId, clipViewer.startAt)
   },
 )
 
@@ -456,13 +456,23 @@ function onUploadComplete() {
   toggleSelectMode(false)
 }
 
-function openModal(id: string) {
+// Clip-relative seconds the modal should start at, set only when whoever
+// asked for the clip knows which moment matters (the Security tab opens a
+// clip at the second its event was measured at). Cleared on every other way
+// of opening one, and on prev/next, so it can never leak onto a clip it was
+// not meant for.
+const startAt = ref<number | null>(null)
+
+function openModal(id: string, at: number | null = null) {
+  startAt.value = at
   activeClipId.value = id
 }
 function closeModal() {
   activeClipId.value = null
+  startAt.value = null
 }
 function onNav(dir: number) {
+  startAt.value = null
   if (!activeClipId.value) return
   const idx = clips.value.findIndex((c) => c.id === activeClipId.value)
   // The modal can be showing a clip that is not in this list at all — the
@@ -728,6 +738,7 @@ onUnmounted(() => {
   <Teleport to="body">
     <ClipModal
       :clip-id="activeClipId"
+      :start-at="startAt"
       :ai-enabled="aiEnabled"
       :prompt-debug-enabled="promptDebugEnabled"
       :available-tags="tags"

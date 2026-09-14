@@ -2106,9 +2106,27 @@ class ClipDatabase:
                 SELECT * FROM (
                     SELECT DISTINCT ON (se.clip_id)
                            se.*, c.timestamp AS clip_timestamp, c.file_path,
-                           c.starred, c.archived
+                           c.starred, c.archived,
+                           ar.is_suspicious AS ai_suspicious,
+                           ar.confidence AS ai_confidence,
+                           ar.summary AS ai_summary,
+                           ar.risk_override_applied
                     FROM security_events se
                     JOIN clips c ON c.id = se.clip_id
+                    -- The model's own verdict, so the timeline can show
+                    -- where code and model agreed and where they did not.
+                    -- Latest run only, matching get_analysis_for_clip's
+                    -- "most recent wins" semantics: a re-analysis must not
+                    -- leave the previous verdict sitting beside the events
+                    -- that replaced it.
+                    LEFT JOIN LATERAL (
+                        SELECT is_suspicious, confidence, summary,
+                               risk_override_applied
+                        FROM analysis_results
+                        WHERE clip_id = se.clip_id
+                        ORDER BY analyzed_at DESC
+                        LIMIT 1
+                    ) ar ON TRUE
                     WHERE {clause}
                     ORDER BY se.clip_id, {_SEVERITY_RANK_SQL} DESC,
                              se.confidence DESC, se.id ASC

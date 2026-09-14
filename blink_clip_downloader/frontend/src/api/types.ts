@@ -228,6 +228,14 @@ export type SecurityTimelineRow = SecurityEventRow & {
   file_path: string
   starred: boolean
   archived: boolean
+  /** The AI model's own verdict on the same clip, from its most recent
+   *  analysis — null when the clip has no analysis row at all. Shown beside
+   *  the code-computed risk so agreement (and disagreement) between the two
+   *  is visible without opening the clip. */
+  ai_suspicious: boolean | null
+  ai_confidence: number | null
+  ai_summary: string | null
+  risk_override_applied: boolean | null
 }
 
 export interface SecurityTimelineResponse {

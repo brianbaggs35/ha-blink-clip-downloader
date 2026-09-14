@@ -7,7 +7,7 @@ import SelectButton from 'primevue/selectbutton'
 import Tag from 'primevue/tag'
 import Timeline from 'primevue/timeline'
 import { getSecurityStats, getSecurityTimeline } from '../../api/security'
-import { getCameras } from '../../api/clips'
+import { clipThumbUrl, getCameras } from '../../api/clips'
 import type { SecurityStats, SecurityTimelineRow } from '../../api/types'
 import { useClipViewerStore } from '../../stores/clipViewer'
 import { useRefreshStore } from '../../stores/refresh'
@@ -15,7 +15,7 @@ import { useToastStore } from '../../stores/toast'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import SecurityEventDetail from './SecurityEventDetail.vue'
 import SecurityStatsBar from './SecurityStatsBar.vue'
-import { formatEventType, severityTag } from './severity'
+import { formatEventType, formatOffset, severityTag } from './severity'
 
 const PAGE_SIZE = 25
 
@@ -157,8 +157,34 @@ function toggle(row: SecurityTimelineRow) {
 /** Opens the Library tab's clip modal in place, without switching tabs —
  *  the same cross-tab bridge the AI tab's suspicious feed uses. Without it,
  *  a timeline entry names a clip and then leaves you to go and find it. */
-function openClip(row: SecurityTimelineRow) {
-  clipViewer.requestOpen(row.clip_id)
+function openClip(row: SecurityTimelineRow, startAt: number | null = null) {
+  clipViewer.requestOpen(row.clip_id, startAt)
+}
+
+/** What the AI model concluded about the same clip, phrased for a badge.
+ *  `null` means the clip has no analysis row at all, which is possible for
+ *  a clip whose events were written by an older build. */
+function verdict(row: SecurityTimelineRow): { label: string; severity: string } | null {
+  if (row.ai_suspicious == null) return null
+  if (row.risk_override_applied) return { label: 'Flagged on evidence', severity: 'warn' }
+  if (row.ai_suspicious) return { label: 'AI: suspicious', severity: 'danger' }
+  return { label: 'AI: nothing unusual', severity: 'secondary' }
+}
+
+/** True when code and model reached opposite conclusions. Worth pointing at
+ *  directly: a clip the geometry rates highly and the model waved through —
+ *  or the reverse — is the one a person most needs to look at themselves.
+ *  A risk override is excluded because that is not a disagreement left
+ *  standing: the clip was already flagged on the evidence. */
+function disagrees(row: SecurityTimelineRow): boolean {
+  if (row.ai_suspicious == null || row.risk_override_applied) return false
+  const codeConcerned = row.severity === 'critical' || row.severity === 'suspicious'
+  return codeConcerned !== row.ai_suspicious
+}
+
+const thumbFailed = ref<Record<string, boolean>>({})
+function onThumbError(clipId: string) {
+  thumbFailed.value = { ...thumbFailed.value, [clipId]: true }
 }
 
 function formatWhen(timestamp: string): string {
@@ -228,23 +254,60 @@ function formatWhen(timestamp: string): string {
         </template>
         <template #content="{ item }">
           <div class="security-row">
-            <div class="security-row-head">
-              <span class="security-when-inline">{{ formatWhen(item.clip_timestamp) }}</span>
-              <Tag :value="formatEventType(item.event_type)" :severity="severityTag(item.severity)" />
-              <span class="security-camera">{{ item.camera }}</span>
-              <span class="security-risk">Risk {{ Math.round(item.risk_score) }}</span>
+            <div class="security-row-body">
+              <button
+                v-if="!thumbFailed[item.clip_id]"
+                type="button"
+                class="security-thumb"
+                :aria-label="`Open the clip from ${item.camera}`"
+                @click="openClip(item)"
+              >
+                <img :src="clipThumbUrl(item.clip_id)" loading="lazy" alt="" @error="onThumbError(item.clip_id)" />
+              </button>
+              <div class="security-row-main">
+                <div class="security-row-head">
+                  <span class="security-when-inline">{{ formatWhen(item.clip_timestamp) }}</span>
+                  <Tag :value="formatEventType(item.event_type)" :severity="severityTag(item.severity)" />
+                  <span class="security-camera">{{ item.camera }}</span>
+                  <span class="security-risk">Risk {{ Math.round(item.risk_score) }}</span>
+                  <Tag
+                    v-if="verdict(item)"
+                    :value="verdict(item)!.label"
+                    :severity="verdict(item)!.severity"
+                    class="security-verdict"
+                  />
+                  <span
+                    v-if="disagrees(item)"
+                    class="security-disagree"
+                    title="Code and model reached opposite conclusions"
+                  >
+                    ⚠ disagreement
+                  </span>
+                </div>
+                <p class="security-detail-line">{{ item.detail }}</p>
+                <p v-if="item.ai_summary" class="security-ai-line">“{{ item.ai_summary }}”</p>
+                <div class="security-row-actions">
+                  <Button
+                    :label="item.start_offset > 0 ? `View clip at ${formatOffset(item.start_offset)}` : 'View clip'"
+                    size="small"
+                    severity="secondary"
+                    outlined
+                    @click="openClip(item, item.start_offset)"
+                  />
+                  <Button
+                    :label="expanded === item.clip_id ? 'Hide evidence' : 'Show evidence'"
+                    size="small"
+                    text
+                    @click="toggle(item)"
+                  />
+                </div>
+              </div>
             </div>
-            <p class="security-detail-line">{{ item.detail }}</p>
-            <div class="security-row-actions">
-              <Button label="View clip" size="small" severity="secondary" outlined @click="openClip(item)" />
-              <Button
-                :label="expanded === item.clip_id ? 'Hide evidence' : 'Show evidence'"
-                size="small"
-                text
-                @click="toggle(item)"
-              />
-            </div>
-            <SecurityEventDetail v-if="expanded === item.clip_id" :clip-id="item.clip_id" />
+            <SecurityEventDetail
+              v-if="expanded === item.clip_id"
+              :clip-id="item.clip_id"
+              @seek="openClip(item, $event)"
+            />
           </div>
         </template>
       </Timeline>
@@ -296,6 +359,49 @@ function formatWhen(timestamp: string): string {
   }
   .security-page :deep(.p-timeline-event-opposite) {
     display: none;
+  }
+}
+.security-row-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.security-row-main {
+  flex: 1;
+  min-width: 0;
+}
+.security-thumb {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.security-thumb img {
+  width: 112px;
+  height: 63px;
+  object-fit: cover;
+  display: block;
+}
+.security-ai-line {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  opacity: 0.75;
+  font-style: italic;
+}
+.security-disagree {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--p-amber-600, #d97706);
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .security-thumb img {
+    width: 74px;
+    height: 42px;
   }
 }
 .security-row-head {

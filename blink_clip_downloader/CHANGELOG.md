@@ -53,9 +53,15 @@ were already being computed — and produces nothing when that is off.
   confidence, its timing within the clip, and the raw numbers behind it.
 - **A Security tab**: the whole property's events on one timeline, most
   recent first, collapsed to one row per clip (a single visit legitimately
-  produces half a dozen events), with camera/severity/period filters, the
-  full per-clip evidence on demand, and a button that opens the clip
-  itself without leaving the tab.
+  produces half a dozen events), with camera/severity/period filters and
+  the full per-clip evidence on demand. Every row carries the clip's own
+  thumbnail, and opening a clip jumps straight to the second its event was
+  measured at — as does clicking any timestamp in the evidence panel, so
+  reviewing "possible contact at 0:06" is not a manual scrub. Each row also
+  shows **what the AI model concluded about the same clip**, and flags the
+  rows where code and model reached opposite conclusions: a clip the
+  geometry rated highly and the model waved through is the one worth
+  looking at yourself.
 - The protected-vehicle distance rules are now suppressed entirely when
   identification concludes the car is not in frame — previously the prompt
   could say "it is not here" and "apply these distance rules to it" in the
