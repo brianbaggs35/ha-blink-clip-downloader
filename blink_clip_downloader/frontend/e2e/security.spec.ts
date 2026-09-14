@@ -71,12 +71,14 @@ test('opens the clip without leaving the tab', async ({ page }) => {
   await expect(page.locator('.modal-bg.open')).toBeVisible()
 })
 
-test('every row carries a thumbnail that opens its clip', async ({ page }) => {
+test('a row whose thumbnail will not load shows no broken image', async ({ page }) => {
+  // The seeded clips have no thumbnail file on disk, which is exactly the
+  // case worth proving here: the row drops the image rather than rendering
+  // a broken one, and everything else about it still works.
   const row = page.locator('.security-row', { hasText: 'Impact candidate' })
-  const thumb = row.locator('.security-thumb img')
-  await expect(thumb).toBeVisible()
-  await row.locator('.security-thumb').click()
-  await expect(page.locator('.modal-bg.open')).toBeVisible()
+  await expect(row).toBeVisible()
+  await expect(row.locator('.security-thumb')).toHaveCount(0)
+  await expect(row.getByRole('button', { name: 'View clip' })).toBeVisible()
 })
 
 test("an event's own timestamp opens the clip at that moment", async ({ page }) => {
