@@ -6368,6 +6368,39 @@ async def test_finetune_train_bad_json_falls_back_to_default_limit(
         await tc.close()
 
 
+@pytest.mark.parametrize(
+    ("sent", "expected"),
+    [
+        (-5, 1),  # reached Postgres as a negative LIMIT, i.e. a 500
+        ("lots", 10),  # raised out of int(), also a 500
+        (10_000, 100),  # a paid Moondream call per pending feedback row
+        (7, 7),
+    ],
+)
+async def test_finetune_train_limit_is_bounded(
+    db: ClipDatabase, tmp_path: Path, sent: object, expected: int
+) -> None:
+    """Every other limit on this server is clamped; this one was not, and it
+    is the one that spends money per row."""
+    await _add_feedback_with_clip(db)
+    server = _make_finetune_server(db, tmp_path, analyzer=_moondream_train_analyzer())
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    seen: dict[str, int] = {}
+
+    async def _capture(*_args: object, limit: int = 0, **_kw: object) -> list[dict]:
+        seen["limit"] = limit
+        return []
+
+    try:
+        with patch.object(db, "get_untrained_feedback", new=_capture):
+            resp = await tc.post("/api/ai/finetune/ft1/train", json={"limit": sent})
+        assert resp.status == 200
+        assert seen["limit"] == expected
+    finally:
+        await tc.close()
+
+
 async def test_finetune_train_skips_feedback_with_no_extractable_frames(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
