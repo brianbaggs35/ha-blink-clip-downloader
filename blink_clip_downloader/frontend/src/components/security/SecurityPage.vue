@@ -113,7 +113,14 @@ async function loadMore() {
     // Appending a page fetched under the previous filter would splice rows
     // the user has already filtered away back into the list.
     if (seq !== requestSeq) return
-    rows.value = [...rows.value, ...(page.events ?? [])]
+    // Offset paging over a list that grows at the top: a clip analyzed
+    // between the two requests shifts every row down one, so the next page
+    // starts by repeating the row that was last on this one. One row per
+    // clip is the property the whole timeline query is built around, so
+    // drop repeats rather than render the same clip twice.
+    const seen = new Set(rows.value.map((row) => row.clip_id))
+    const fresh = (page.events ?? []).filter((row) => !seen.has(row.clip_id))
+    rows.value = [...rows.value, ...fresh]
     total.value = page.total ?? rows.value.length
   } catch {
     if (seq === requestSeq) toast.show('Failed to load more events', true)

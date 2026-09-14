@@ -85,6 +85,12 @@ class Scenario:
     contact_touching: bool | None = None
     appearance_change: float | None = None
     scene_deviation: float | None = None
+    #: Optional stages that produced nothing — the shape of a low-powered
+    #: device running object detection but not the heavy torch stages.
+    unavailable_sources: list[str] = field(default_factory=list)
+    #: Highest severity any single event is allowed to claim. Used to pin
+    #: that an unconfirmed claim stays unconfirmed.
+    max_event_severity: Severity | None = None
 
 
 def _run(scenario: Scenario) -> tuple[RiskAssessment, set[SecurityEventType]]:
@@ -93,7 +99,13 @@ def _run(scenario: Scenario) -> tuple[RiskAssessment, set[SecurityEventType]]:
     asset = resolve_vehicle_asset(
         "Driveway", scenario.car_description, tracks, FRAME, zone=scenario.zone
     )
-    quality = assess_evidence(scenario.frame_count, scenario.frame_count, tracks, 2.0)
+    quality = assess_evidence(
+        scenario.frame_count,
+        scenario.frame_count,
+        tracks,
+        2.0,
+        scenario.unavailable_sources,
+    )
     events = SecurityEventDetector().detect(
         DetectionContext(
             camera="Driveway",
@@ -264,6 +276,76 @@ SCENARIOS: list[Scenario] = [
             SecurityEventType.RETREAT_AFTER_CONTACT,
         },
     ),
+    # -- the four cases the add-on is judged on day to day ------------
+    Scenario(
+        name="a dog jumps up on the protected car",
+        detections=_walk(
+            1,
+            [_person_at(90, height=55, ground=295)] * 2
+            + [(250.0, 200.0, 330.0, 300.0)] * 6,
+            label="dog",
+            confidence=0.85,
+        )
+        + _parked(2, MY_CAR, 8),
+        frame_count=8,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=(Severity.NOTEWORTHY, Severity.SUSPICIOUS),
+        expect_events={SecurityEventType.ANIMAL_ASSET_INTERACTION},
+        # Damage, not an intruder: the owner should hear about scratched
+        # paintwork without the dog being promoted to a prowler.
+        forbid_events={SecurityEventType.IMPACT_CANDIDATE},
+    ),
+    Scenario(
+        name="a stranger touches the protected car, confirmed by both stages",
+        detections=_walk(1, [_person_at(560), _person_at(480)] + [_person_at(300)] * 6)
+        + _parked(2, MY_CAR, 8),
+        frame_count=8,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=(Severity.SUSPICIOUS, Severity.CRITICAL),
+        expect_events={
+            SecurityEventType.CONTACT_CANDIDATE,
+            SecurityEventType.ASSET_PROXIMITY,
+        },
+    ),
+    Scenario(
+        name="a person walks past the car at a different distance",
+        # Their box overlaps the car in the projection the whole way — the
+        # single most common false positive a driveway camera produces.
+        detections=_walk(
+            1, [(200.0 + i * 45, 120.0, 300.0 + i * 45, 359.0) for i in range(6)]
+        )
+        + _parked(2, MY_CAR, 6),
+        frame_count=6,
+        depth_similar=False,
+        expect_severity=(Severity.ROUTINE, Severity.ROUTINE),
+        forbid_events={
+            SecurityEventType.CONTACT_CANDIDATE,
+            SecurityEventType.ASSET_PROXIMITY,
+            SecurityEventType.ASSET_APPROACHED,
+            SecurityEventType.ZONE_ENTERED,
+        },
+    ),
+    Scenario(
+        name="the same passer-by on a device with no depth or segmentation",
+        detections=_walk(
+            1, [(200.0 + i * 45, 120.0, 300.0 + i * 45, 359.0) for i in range(6)]
+        )
+        + _parked(2, MY_CAR, 6),
+        frame_count=6,
+        unavailable_sources=[
+            "depth estimation",
+            "contact segmentation",
+            "pose estimation",
+            "face recognition",
+        ],
+        # Nothing can separate "in front of the car" from "at the car" here,
+        # so the honest answer is an unconfirmed claim that never reaches the
+        # alert band on its own — not silence, and not a suspicious verdict.
+        expect_severity=(Severity.ROUTINE, Severity.NOTEWORTHY),
+        max_event_severity=Severity.NOTEWORTHY,
+    ),
     Scenario(
         name="the camera view is swamped and nothing is in it",
         detections=[],
@@ -288,6 +370,17 @@ def test_scenario(scenario: Scenario) -> None:
     assert not missing, f"{scenario.name}: missing {sorted(str(m) for m in missing)}"
     unwanted = scenario.forbid_events & types
     assert not unwanted, f"{scenario.name}: unwanted {sorted(str(u) for u in unwanted)}"
+    cap = scenario.max_event_severity
+    if cap is not None:
+        loud = [
+            e
+            for e in assessment.events
+            if severity_rank(e.severity) > severity_rank(cap)
+        ]
+        assert not loud, (
+            f"{scenario.name}: {[str(e.event_type) for e in loud]} claimed more than "
+            f"{cap} on evidence that does not support it"
+        )
 
 
 def test_the_scenario_table_covers_both_directions() -> None:
