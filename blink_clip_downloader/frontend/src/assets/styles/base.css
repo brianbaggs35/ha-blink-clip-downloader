@@ -1531,9 +1531,13 @@ body.nav-collapsed {
   flex-shrink: 0;
   font-size: 0.75rem;
 }
+/* A <button>, so the reset here is undoing the browser's own button
+   chrome rather than making a div look clickable. */
 .act-bar-wrap {
   flex: 1;
   background: var(--card2);
+  border: 0;
+  padding: 0;
   border-radius: 4px;
   height: 14px;
   overflow: hidden;
@@ -1543,7 +1547,14 @@ body.nav-collapsed {
 .act-bar-wrap:hover {
   filter: brightness(1.25);
 }
+/* Keyboard users need to see which bar they are on — the hover brightness
+   alone says nothing to them. */
+.act-bar-wrap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .act-bar {
+  display: block;
   height: 100%;
   background: linear-gradient(90deg, var(--accent2), var(--accent));
   border-radius: 4px;

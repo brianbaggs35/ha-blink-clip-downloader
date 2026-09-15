@@ -125,6 +125,12 @@ way to stop uploading short of disconnecting the account.
   falls back to the most seen in any single frame.
 - A deprecated `word-break: break-word` in the clip modal's raw-response
   box is now the standard `overflow-wrap: break-word`.
+- **The Status tab's activity chart could not be used without a mouse.**
+  Each day's bar filters the Library to that day, but was a plain `<div>`
+  with a click handler — no focus, no Enter or Space, nothing announced.
+  Each is now a real button, named for what it does ("Show the 3 clip(s)
+  from Mon, Jan 5") rather than the bare "3 clips" of its tooltip, with a
+  visible focus ring.
 - **Model-cache HTTP traffic no longer floods the add-on log.** Bringing
   up the optional vision pipeline emitted around thirty `httpx` lines in a
   row, each a 307 or 302 redirect to a CDN followed by a 200. Nothing was
