@@ -1,5 +1,36 @@
 # Changelog
 
+## 6.0.2
+
+### Bug fixes
+
+- **The SAM2 contact-segmentation model no longer warns on every start.**
+  The published `facebook/sam2.1-hiera-tiny` checkpoint still describes its
+  rotary position embedding with `memory_attention_rope_theta`, a key
+  transformers 5.x accepts only through a deprecation shim — hence the
+  `memory_attention_rope_theta is deprecated and will be removed in v5.0`
+  line in the log next to "Loading SAM2 segmentation model". Once that shim
+  goes away the value would be dropped silently rather than loudly, so the
+  add-on now translates it into the `rope_parameters` form transformers
+  reads today before handing the config over. Verified against the real
+  checkpoint: identical config, identical weights and bit-identical
+  segmentation output, minus the warning.
+- **A failing frame extraction now logs what actually went wrong.** Both
+  places that pull JPEG frames out of a clip with ffmpeg — clip analysis
+  and the AI tab's frame preview — logged the first 200 characters of
+  ffmpeg's error output, which is exactly ffmpeg's own version and build
+  banner and nothing else. So `ffmpeg exited 234 for <clip>` was followed
+  by the compiler it was built with, and never by the reason. The banner is
+  now suppressed and the *end* of the error output is kept, where ffmpeg
+  states the cause (for exit 234: a clip whose video track holds no
+  decodable frames — already handled, just never explained).
+
+### Dependencies
+
+- The Docker image's `transformers` floor was still `5.16.1` while the
+  Python package metadata asked for `5.17.0`, so the shipped image and a
+  local install could disagree about the minimum. Both now say `5.17.0`.
+
 ## 6.0.1
 
 ### Security Events tab (renamed, and redesigned)

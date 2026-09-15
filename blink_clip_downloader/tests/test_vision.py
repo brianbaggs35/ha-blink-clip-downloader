@@ -1392,6 +1392,16 @@ class _FakeMasks:
         return _FakeTensor(self._masks[obj_idx])
 
 
+def _stub_sam2_config(mock_transformers: MagicMock) -> None:
+    """Make a mocked ``transformers`` return the legacy-shaped config dict
+    the published sam2.1-hiera-tiny checkpoint still serves, so
+    ``ContactSegmenter._build_config`` exercises its real rewrite path."""
+    mock_transformers.Sam2VideoConfig.get_config_dict.return_value = (
+        {"model_type": "sam2_video", "memory_attention_rope_theta": 10000},
+        {},
+    )
+
+
 def _install_fake_transformers_for_sam2(
     monkeypatch: pytest.MonkeyPatch, masks: list[np.ndarray]
 ) -> MagicMock:
@@ -1405,6 +1415,7 @@ def _install_fake_transformers_for_sam2(
     mock_processor.init_video_session.return_value.video_width = 10
     mock_transformers.Sam2VideoModel.from_pretrained.return_value = mock_model
     mock_transformers.Sam2VideoProcessor.from_pretrained.return_value = mock_processor
+    _stub_sam2_config(mock_transformers)
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     monkeypatch.setitem(sys.modules, "torch", MagicMock())
     return mock_transformers
@@ -1435,6 +1446,7 @@ async def test_contact_segmenter_ensure_ready_concurrent_calls_load_once(
         time.sleep(0.05),
         MagicMock(),
     )[1]
+    _stub_sam2_config(mock_transformers)
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
 
     segmenter = ContactSegmenter()
@@ -1450,6 +1462,7 @@ async def test_contact_segmenter_ensure_ready_handles_generic_failure(
     mock_transformers.Sam2VideoModel.from_pretrained.side_effect = RuntimeError(
         "no weights"
     )
+    _stub_sam2_config(mock_transformers)
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     segmenter = ContactSegmenter()
     assert await segmenter.ensure_ready() is False
@@ -1459,6 +1472,7 @@ async def test_contact_segmenter_passes_huggingface_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_transformers = MagicMock()
+    _stub_sam2_config(mock_transformers)
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     segmenter = ContactSegmenter("hf_test_token")
 
@@ -1480,6 +1494,7 @@ async def test_contact_segmenter_handles_huggingface_http_auth_failure(
     error = RuntimeError("401 Client Error: Unauthorized for https://huggingface.co")
     mock_transformers = MagicMock()
     mock_transformers.Sam2VideoModel.from_pretrained.side_effect = error
+    _stub_sam2_config(mock_transformers)
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     segmenter = ContactSegmenter()
 
@@ -1487,10 +1502,81 @@ async def test_contact_segmenter_handles_huggingface_http_auth_failure(
     assert "Hugging Face authentication failed" in caplog.text
 
 
+async def test_contact_segmenter_rewrites_legacy_rope_theta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The published checkpoint's config.json still carries the deprecated
+    ``memory_attention_rope_theta``; loading it through transformers'
+    shim logs a deprecation warning on every start and is slated to stop
+    working. _build_config must move that value into ``rope_parameters``
+    itself and hand the result to from_pretrained."""
+    mock_transformers = MagicMock()
+    _stub_sam2_config(mock_transformers)
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+
+    segmenter = ContactSegmenter("hf_test_token")
+    assert await segmenter.ensure_ready() is True
+
+    mock_transformers.Sam2VideoConfig.get_config_dict.assert_called_once_with(
+        ContactSegmenter._MODEL_ID, token="hf_test_token"
+    )
+    built = mock_transformers.Sam2VideoConfig.call_args.kwargs
+    assert "memory_attention_rope_theta" not in built
+    assert built["rope_parameters"] == {"rope_theta": 10000}
+    assert (
+        mock_transformers.Sam2VideoModel.from_pretrained.call_args.kwargs["config"]
+        is mock_transformers.Sam2VideoConfig.return_value
+    )
+
+
+async def test_contact_segmenter_keeps_modern_rope_parameters_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the checkpoint is republished with a modern ``rope_parameters``
+    and no legacy key, _build_config must pass it through unchanged rather
+    than rewriting anything."""
+    mock_transformers = MagicMock()
+    mock_transformers.Sam2VideoConfig.get_config_dict.return_value = (
+        {"model_type": "sam2_video", "rope_parameters": {"rope_theta": 5000}},
+        {},
+    )
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+
+    segmenter = ContactSegmenter()
+    assert await segmenter.ensure_ready() is True
+
+    built = mock_transformers.Sam2VideoConfig.call_args.kwargs
+    assert built["rope_parameters"] == {"rope_theta": 5000}
+
+
+async def test_contact_segmenter_modern_rope_parameters_win_over_legacy_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config carrying both keys must keep the modern value — the legacy
+    one is only a fallback, never an override."""
+    mock_transformers = MagicMock()
+    mock_transformers.Sam2VideoConfig.get_config_dict.return_value = (
+        {
+            "memory_attention_rope_theta": 10000,
+            "rope_parameters": {"rope_theta": 5000, "rope_type": "axial"},
+        },
+        {},
+    )
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+
+    segmenter = ContactSegmenter()
+    assert await segmenter.ensure_ready() is True
+
+    built = mock_transformers.Sam2VideoConfig.call_args.kwargs
+    assert built["rope_parameters"] == {"rope_theta": 5000, "rope_type": "axial"}
+    assert "memory_attention_rope_theta" not in built
+
+
 async def test_contact_segmenter_ensure_ready_is_idempotent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_transformers = MagicMock()
+    _stub_sam2_config(mock_transformers)
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     segmenter = ContactSegmenter()
     assert await segmenter.ensure_ready() is True
@@ -1625,6 +1711,7 @@ async def test_contact_segmenter_returns_none_on_exception(
     mock_processor.init_video_session.side_effect = RuntimeError("boom")
     mock_transformers.Sam2VideoProcessor.from_pretrained.return_value = mock_processor
     mock_transformers.Sam2VideoModel.from_pretrained.return_value = MagicMock()
+    _stub_sam2_config(mock_transformers)
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     monkeypatch.setitem(sys.modules, "torch", MagicMock())
     monkeypatch.setitem(sys.modules, "cv2", MagicMock())
@@ -2055,6 +2142,7 @@ async def test_vision_pipeline_full_stack(monkeypatch: pytest.MonkeyPatch) -> No
     mock_processor.init_video_session.return_value.video_width = 10
     mock_transformers.Sam2VideoModel.from_pretrained.return_value = mock_sam_model
     mock_transformers.Sam2VideoProcessor.from_pretrained.return_value = mock_processor
+    _stub_sam2_config(mock_transformers)
     monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
     monkeypatch.setitem(sys.modules, "torch", MagicMock())
     mock_cv2.dilate.side_effect = lambda mask, kernel, iterations: vehicle_mask

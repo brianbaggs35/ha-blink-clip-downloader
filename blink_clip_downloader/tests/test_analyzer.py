@@ -27,6 +27,7 @@ from blink_downloader.analyzer import (
     OllamaCloudAnalyzer,
     OpenAIAnalyzer,
     _anthropic_supports_structured_output,
+    _format_ffmpeg_error,
     _openai_model_rank,
     _vision_model_score,
     create_analyzer,
@@ -103,6 +104,56 @@ async def test_extract_frames_ffmpeg_failure(analyzer: ClipAnalyzer) -> None:
         frames = await analyzer.extract_frames("/clips/test.mp4")
 
     assert frames == []
+
+
+async def test_extract_frames_suppresses_ffmpeg_banner(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """ffmpeg must be told to skip its version/build banner. Without this the
+    truncated stderr captured on failure is nothing but that banner and the
+    real error never reaches the log."""
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_TWO_JPEGS, b""))
+    mock_proc.returncode = 0
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        await analyzer.extract_frames("/clips/test.mp4")
+
+    cmd = list(mock_exec.call_args[0])
+    assert "-hide_banner" in cmd
+    assert cmd[cmd.index("-loglevel") + 1] == "error"
+
+
+async def test_extract_frames_failure_logs_the_end_of_ffmpeg_stderr(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ffmpeg states the actual reason on its last stderr line, after any
+    per-frame decode complaints, so the log must keep the tail rather than
+    the head — and keep it on one line."""
+    stderr = (
+        b"[h264] error while decoding MB 1\n" * 40
+        + b"Error opening output file pipe:1.\n"
+        + b"Error opening output files: Invalid argument\n"
+    )
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", stderr))
+    mock_proc.returncode = 234
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        assert await analyzer.extract_frames("/clips/test.mp4") == []
+
+    assert "Error opening output files: Invalid argument" in caplog.text
+    assert "\n" not in caplog.records[-1].getMessage()
+
+
+def test_format_ffmpeg_error_handles_no_stderr() -> None:
+    """A failing ffmpeg that wrote nothing to stderr must not blow up the
+    log call it feeds."""
+    assert _format_ffmpeg_error(None) == ""
+    assert _format_ffmpeg_error(b"") == ""
 
 
 async def test_extract_frames_ffmpeg_timeout(analyzer: ClipAnalyzer) -> None:

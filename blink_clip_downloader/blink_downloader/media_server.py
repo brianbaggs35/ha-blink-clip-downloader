@@ -76,6 +76,23 @@ _MAX_FINETUNE_TRAIN_BATCH = 100
 _ARCHIVE_CLIPS_PAGE_SIZE = 50
 _MAX_ARCHIVE_CLIPS_PAGE_SIZE = 200
 
+# How much of a failing ffmpeg run's stderr to keep in the log line.
+_FFMPEG_ERROR_CHARS = 200
+
+
+def _format_ffmpeg_error(stderr: bytes | None) -> str:
+    """Condense ffmpeg's stderr into one loggable line.
+
+    Mirrors ``analyzer._format_ffmpeg_error`` exactly — duplicated locally
+    for the same reason ``_split_jpeg_frames`` below is, so this module
+    doesn't need a runtime dependency on analyzer.py's heavier imports for
+    one small pure function. See that copy for why the *tail* is kept.
+    """
+    return " ".join((stderr or b"").decode(errors="replace").split())[
+        -_FFMPEG_ERROR_CHARS:
+    ]
+
+
 # Built by `npm run build` in frontend/ (vite.config.ts writes straight into
 # this directory) — the Dockerfile's frontend-builder stage runs that build
 # before the image is packaged, so this always exists in a shipped add-on.
@@ -836,6 +853,12 @@ class MediaServer:
         interval = max(duration / count, 0.5)
         cmd = [
             "ffmpeg",
+            # See BaseAnalyzer.extract_frames (analyzer.py) for why the
+            # banner is suppressed: without it the truncated stderr captured
+            # on failure below is all banner and no error.
+            "-hide_banner",
+            "-loglevel",
+            "error",
             "-i",
             clip["file_path"],
             "-vf",
@@ -873,7 +896,7 @@ class MediaServer:
                 "ffmpeg exited %d extracting frames for %s: %s",
                 proc.returncode,
                 clip_id,
-                (stderr or b"").decode(errors="replace")[:200],
+                _format_ffmpeg_error(stderr),
             )
             return web.json_response({"frames": []})
 

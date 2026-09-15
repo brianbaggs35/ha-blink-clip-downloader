@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
@@ -1074,6 +1075,53 @@ async def test_clip_frames_ffmpeg_nonzero_exit(
         resp = await client.get("/api/clips/f6/frames")
     assert resp.status == 200
     assert (await resp.json())["frames"] == []
+
+
+async def test_clip_frames_suppresses_ffmpeg_banner(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Without this, the truncated stderr logged on failure below is nothing
+    but ffmpeg's version/build banner and the real error never shows up."""
+    await db.add_clip(_make_clip("f12", path="/data/f12.mp4", duration=10))
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
+        await client.get("/api/clips/f12/frames")
+    cmd = list(mock_exec.call_args.args)
+    assert "-hide_banner" in cmd
+    assert cmd[cmd.index("-loglevel") + 1] == "error"
+
+
+async def test_clip_frames_failure_logs_the_end_of_ffmpeg_stderr(
+    client: TestClient, db: ClipDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ffmpeg names the actual reason on its last stderr line, so the log
+    must keep the tail rather than the head — and keep it on one line."""
+    await db.add_clip(_make_clip("f13", path="/data/f13.mp4", duration=10))
+    stderr = (
+        b"[h264] error while decoding MB 1\n" * 40
+        + b"Error opening output files: Invalid argument\n"
+    )
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", stderr))
+    mock_proc.returncode = 234
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        resp = await client.get("/api/clips/f13/frames")
+    assert resp.status == 200
+    assert (await resp.json())["frames"] == []
+    assert "Error opening output files: Invalid argument" in caplog.text
+    assert "\n" not in caplog.records[-1].getMessage()
+
+
+def test_format_ffmpeg_error_handles_no_stderr() -> None:
+    """A failing ffmpeg that wrote nothing to stderr must not blow up the
+    log call it feeds."""
+    assert media_server._format_ffmpeg_error(None) == ""
+    assert media_server._format_ffmpeg_error(b"") == ""
 
 
 async def test_clip_frames_ignores_truncated_trailing_data(

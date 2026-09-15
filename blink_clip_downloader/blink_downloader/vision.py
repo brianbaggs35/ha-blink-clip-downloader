@@ -1152,6 +1152,35 @@ class ContactSegmenter:
             self._lock = asyncio.Lock()
         return self._lock
 
+    def _build_config(self, config_class: Any) -> Any:
+        """Build the SAM2 model config from the checkpoint, with the legacy
+        RoPE key rewritten into its modern form.
+
+        ``facebook/sam2.1-hiera-tiny``'s published ``config.json`` still
+        carries ``memory_attention_rope_theta``. transformers 5.x only still
+        accepts it through a deprecation shim that logs a warning on every
+        load and is documented as going away, at which point the value would
+        be silently dropped instead. Reading the raw config dict and moving
+        that value into ``rope_parameters["rope_theta"]`` here — where
+        transformers reads it from now — produces a config identical to the
+        one ``from_pretrained`` builds itself (verified by comparing
+        ``to_dict()`` output both ways) without ever touching the deprecated
+        attribute.
+
+        Delete this once the checkpoint's own ``config.json`` is republished
+        with ``rope_parameters``; it is a no-op for a config that already has
+        one.
+        """
+        config_dict, _ = config_class.get_config_dict(
+            self._MODEL_ID, token=self._hf_token or None
+        )
+        theta = config_dict.pop("memory_attention_rope_theta", None)
+        if theta is not None:
+            rope_parameters = dict(config_dict.get("rope_parameters") or {})
+            rope_parameters.setdefault("rope_theta", theta)
+            config_dict["rope_parameters"] = rope_parameters
+        return config_class(**config_dict)
+
     def _load_sync(self) -> None:
         if not torch_cpu_compatible():
             raise CPUIncompatibleError(_CPU_INCOMPATIBLE_MESSAGE)
@@ -1160,6 +1189,7 @@ class ContactSegmenter:
         # for why (this method also only ever runs once per process).
         with _native_import_lock:
             from transformers import (  # type: ignore[import-not-found]
+                Sam2VideoConfig,
                 Sam2VideoModel,
                 Sam2VideoProcessor,
             )
@@ -1169,7 +1199,9 @@ class ContactSegmenter:
             # this optional pipeline trusts the HF hub the same way the rest
             # of the CV stack trusts PyPI (B615).
             self._model = Sam2VideoModel.from_pretrained(  # nosec B615
-                self._MODEL_ID, token=self._hf_token or None
+                self._MODEL_ID,
+                config=self._build_config(Sam2VideoConfig),
+                token=self._hf_token or None,
             )
             self._processor = Sam2VideoProcessor.from_pretrained(  # nosec B615
                 self._MODEL_ID, token=self._hf_token or None
