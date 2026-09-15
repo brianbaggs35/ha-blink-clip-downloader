@@ -20,6 +20,7 @@ rather than the other way round, so none of this drags in torch/opencv.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -121,6 +122,95 @@ def box_iou(a: Box, b: Box) -> float:
     return intersection / (box_area(a) + box_area(b) - intersection)
 
 
+def box_intersection_area(a: Box, b: Box) -> float:
+    """Return the area *a* and *b* share, zero when they don't meet."""
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    return max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+
+
+def box_overlap_coefficient(a: Box, b: Box) -> float:
+    """Intersection over the *smaller* box's area (0.0-1.0).
+
+    Preferred over IoU for zone matching because a zone and a detected box
+    are routinely very different sizes: a tight zone drawn inside a large
+    vehicle, or a generous zone around a small one, both score near zero on
+    IoU while being a perfect match in the sense that matters — is this
+    vehicle the thing in that region?
+    """
+    smaller = min(box_area(a), box_area(b))
+    return box_intersection_area(a, b) / smaller if smaller > 0 else 0.0
+
+
+def polygon_area(points: Sequence[tuple[float, float]]) -> float:
+    """Return the area enclosed by the closed ring *points* (shoelace).
+
+    Winding-order independent — the sign is discarded — and zero for a ring
+    of fewer than three vertices, which encloses nothing.
+    """
+    if len(points) < 3:
+        return 0.0
+    total = 0.0
+    x2, y2 = points[-1]
+    for x1, y1 in points:
+        total += x2 * y1 - x1 * y2
+        x2, y2 = x1, y1
+    return abs(total) / 2.0
+
+
+def _edge_crossing(
+    a: tuple[float, float], b: tuple[float, float], axis: int, limit: float
+) -> tuple[float, float]:
+    """Where segment *a*-*b* crosses the line ``axis == limit``.
+
+    Only called for a segment whose ends fall on opposite sides of that
+    line, and which side an end falls on depends on nothing but its own
+    ``axis`` coordinate — so the two coordinates differ and the division
+    below cannot be by zero.
+    """
+    t = (limit - a[axis]) / (b[axis] - a[axis])
+    return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
+
+def clip_polygon_to_box(
+    points: Sequence[tuple[float, float]], box: Box
+) -> list[tuple[float, float]]:
+    """Clip the ring *points* to the axis-aligned *box* (Sutherland-Hodgman).
+
+    Both arguments must be in the same coordinate space. The result is the
+    part of the polygon lying inside *box*, as a single ring — a concave
+    polygon clipped to a rectangle can come back with zero-area seams
+    joining what are visually separate pieces, which is harmless here since
+    :func:`polygon_area` is what reads the result and seams contribute
+    nothing to it.
+    """
+    x1, y1, x2, y2 = box
+    if x2 <= x1 or y2 <= y1 or len(points) < 3:
+        return []
+    output = list(points)
+    for axis, limit, keep_greater in (
+        (0, x1, True),
+        (0, x2, False),
+        (1, y1, True),
+        (1, y2, False),
+    ):
+        if not output:
+            return []
+        subject, output = output, []
+        previous = subject[-1]
+        previous_inside = (
+            previous[axis] >= limit if keep_greater else previous[axis] <= limit
+        )
+        for current in subject:
+            inside = current[axis] >= limit if keep_greater else current[axis] <= limit
+            if inside != previous_inside:
+                output.append(_edge_crossing(previous, current, axis, limit))
+            if inside:
+                output.append(current)
+            previous, previous_inside = current, inside
+    return output
+
+
 def point_in_polygon(x: float, y: float, points: list[tuple[float, float]]) -> bool:
     """Ray-casting point-in-polygon test.
 
@@ -218,6 +308,82 @@ class Zone:
         return x1 <= x <= x2 and y1 <= y <= y2
 
     def to_pixel_box(self, width: float, height: float) -> Box:
-        """Return this zone's bounding box scaled to a *width* × *height* frame."""
+        """Return this zone's *bounding box* scaled to a *width* × *height* frame.
+
+        For a polygon this is an approximation of the drawn shape — use
+        :meth:`overlap_with_box` wherever the answer decides something
+        (which car is the protected one, say) rather than merely ranks or
+        offers a coarse reference.
+        """
         x1, y1, x2, y2 = self.bounds
         return (x1 * width, y1 * height, x2 * width, y2 * height)
+
+    def to_pixel_points(self, width: float, height: float) -> list[tuple[float, float]]:
+        """Return this zone's outline scaled to a *width* × *height* frame.
+
+        A rectangle zone reports its four corners, so callers get a real
+        ring either way and never have to branch on :attr:`is_polygon`.
+        """
+        if self.points:
+            return [(x * width, y * height) for x, y in self.points]
+        x1, y1, x2, y2 = self.to_pixel_box(width, height)
+        return [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+
+    def _outline(self, width: float, height: float) -> list[tuple[float, float]]:
+        """This zone's traced ring, or ``[]`` when it can't be measured.
+
+        The Vehicles tab draws freeform zones with a lasso, and a lasso can
+        cross itself — a sloppy trace that doubles back, or one released
+        well away from where it started. :meth:`contains` copes (ray
+        casting is an even-odd test, so a crossing just flips parity) but
+        the shoelace area does not: the two halves of a figure-of-eight
+        cancel out and the whole zone measures as empty, which would
+        quietly switch off car protection for that camera. An outline that
+        measures as nothing is reported as unusable so callers fall back to
+        the bounding box, exactly as they did before this was exact.
+        """
+        ring = self.to_pixel_points(width, height)
+        if polygon_area(ring) <= 0.0:
+            return []
+        return ring
+
+    def covered_share_of(self, box: Box, width: float, height: float) -> float:
+        """The fraction of *box*'s own area (pixel space, on a
+        *width* × *height* frame) that lies inside this zone.
+
+        Same exact-outline treatment as :meth:`overlap_with_box`, but
+        asking the other question: not "do these two describe the same
+        thing" but "how much of this object is in there".
+        """
+        if width <= 0 or height <= 0:
+            return 0.0
+        own = box_area(box)
+        if own <= 0:
+            return 0.0
+        ring = self._outline(width, height) if self.points else []
+        if not ring:
+            return box_intersection_area(box, self.to_pixel_box(width, height)) / own
+        return min(1.0, polygon_area(clip_polygon_to_box(ring, box)) / own)
+
+    def overlap_with_box(self, box: Box, width: float, height: float) -> float:
+        """How much of *box* (pixel space, on a *width* × *height* frame)
+        this zone actually covers, as a 0.0-1.0 fraction of whichever of the
+        two is smaller.
+
+        A polygon is measured against its **traced outline**, not its
+        bounding box: a driveway traced as a perspective trapezoid has a
+        bounding box that reaches out over the street beside it, and a
+        neighbour's car parked there would otherwise score full marks
+        against a zone it is nowhere near — the precise confusion the
+        protected-vehicle logic exists to prevent. A rectangle zone takes
+        the plain box arithmetic, which this reduces to exactly.
+        """
+        if width <= 0 or height <= 0:
+            return 0.0
+        ring = self._outline(width, height) if self.points else []
+        if not ring:
+            return box_overlap_coefficient(box, self.to_pixel_box(width, height))
+        smaller = min(box_area(box), polygon_area(ring))
+        if smaller <= 0:
+            return 0.0
+        return min(1.0, polygon_area(clip_polygon_to_box(ring, box)) / smaller)

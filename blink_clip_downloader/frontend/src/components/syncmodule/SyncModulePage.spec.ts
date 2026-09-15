@@ -1072,6 +1072,41 @@ describe('SyncModulePage', () => {
       expect(clipsCallCount).toBe(2)
     })
 
+    it('ignores a slow clip fetch that lands after a newer one', async () => {
+      // The clip request is a second round trip fired off *after* the
+      // module list resolves, so a poll started earlier can still be in
+      // flight when a newer one has already painted -- and without a
+      // sequence check it wins by arriving last.
+      const clipResolvers: ((value: Response) => void)[] = []
+      vi.stubGlobal(
+        'fetch',
+        routedFetch((url) => {
+          if (url === '/api/sync-modules') return Promise.resolve(jsonResponse([makeModule({ local_storage: true })]))
+          if (url === '/api/clips?source=local_storage') {
+            return new Promise<Response>((resolve) => clipResolvers.push(resolve))
+          }
+          return undefined
+        }),
+      )
+      const wrapper = mountPage()
+      await flushPromises()
+      expect(clipResolvers).toHaveLength(1)
+
+      // A refresh tick starts a second, newer load.
+      useRefreshStore().bump()
+      await flushPromises()
+      expect(clipResolvers).toHaveLength(2)
+
+      // The newer one answers first, then the stale one straggles in.
+      clipResolvers[1](jsonResponse([clip({ id: 'fresh' })]))
+      await flushPromises()
+      clipResolvers[0](jsonResponse([clip({ id: 'stale' })]))
+      await flushPromises()
+
+      const clips = wrapper.findComponent(SyncModuleCard).props('localStorageClips') as { id: string }[]
+      expect(clips.map((c) => c.id)).toEqual(['fresh'])
+    })
+
     it('leaves the clip list empty (not broken) when the clips request fails', async () => {
       vi.stubGlobal(
         'fetch',

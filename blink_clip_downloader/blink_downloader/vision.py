@@ -660,6 +660,11 @@ def _select_scan_frames(
     subset keeps the arithmetic honest at a bounded cost: *cap* frames of
     detection, whatever the clip's length.
 
+    A *cap* of zero means the caller has already narrowed the pool to the
+    prompt's own frames (``ai_temporal_scan_frames: 0``, documented as
+    disabling the wider scan) — there is nothing left to subsample, so the
+    list is returned as given.
+
     Returns the frames alongside the real seconds between them.
     """
     if cap <= 0 or len(frames) <= cap:
@@ -668,19 +673,34 @@ def _select_scan_frames(
     return frames[::step], interval * step
 
 
-def _car_zone_pixel_box(
-    zone: dict[str, Any], frame: bytes
-) -> tuple[float, float, float, float] | None:
-    """Convert a normalized (0-1) ``car_zone`` dict — a rectangle or a
+@dataclass(frozen=True)
+class _ZoneReference:
+    """A camera's configured car zone, resolved against a real frame size.
+
+    Carries the zone itself rather than only its pixel bounds so the two
+    questions it gets asked stay separate: *is this vehicle in the zone*
+    is answered against the traced outline (:meth:`covers`), while the
+    coarse "how far from roughly there" reference the distance hint falls
+    back to keeps using :attr:`box`, where bounding-box precision is all
+    the estimate claims anyway.
+    """
+
+    zone: Zone
+    size: tuple[float, float]
+    box: Box
+
+    def covers(self, box: Box) -> bool:
+        """True when *box* (pixel space) genuinely overlaps the drawn zone."""
+        return self.zone.overlap_with_box(box, *self.size) > 0.0
+
+
+def _car_zone_reference(zone: dict[str, Any], frame: bytes) -> _ZoneReference | None:
+    """Resolve a normalized (0-1) ``car_zone`` dict — a rectangle or a
     freeform polygon, see ``media_server.py``'s ``_normalize_car_zone`` —
-    into a pixel-space ``(x1, y1, x2, y2)`` box sized to *frame*'s actual
-    resolution, for disambiguating which YOLO vehicle detection is the
-    protected car (see :func:`_best_subject_vehicle_pair`). A polygon is
-    reduced to its axis-aligned bounding box — the same approximation
-    ``analyzer.py``'s own ``_car_zone_bbox`` already makes for the same
-    reason: this is a coarse "which detected box is nearest the configured
-    zone" comparison, not exact geometry. None if *frame* fails to decode
-    or the zone has no usable points.
+    against *frame*'s actual resolution, for disambiguating which YOLO
+    vehicle detection is the protected car (see
+    :func:`_best_subject_vehicle_pair`). None if *frame* fails to decode or
+    the zone has no usable points.
     """
     parsed = Zone.from_config(zone)
     if parsed is None:
@@ -688,12 +708,12 @@ def _car_zone_pixel_box(
     size = _frame_dimensions(frame)
     if size is None:
         return None
-    return parsed.to_pixel_box(*size)
+    return _ZoneReference(zone=parsed, size=size, box=parsed.to_pixel_box(*size))
 
 
 def _best_subject_vehicle_pair(
     detections: list[DetectedObject],
-    zone_box: tuple[float, float, float, float] | None = None,
+    zone_ref: _ZoneReference | None = None,
 ) -> tuple[DetectedObject, DetectedObject, int] | None:
     """Return the (subject, vehicle, frame_index) pair with the smallest gap.
 
@@ -704,7 +724,7 @@ def _best_subject_vehicle_pair(
     stages spend their budget refining. None if no sampled frame contains
     both a subject and a vehicle detection.
 
-    *zone_box* (see :func:`_car_zone_pixel_box`), when given, disambiguates
+    *zone_ref* (see :func:`_car_zone_reference`), when given, disambiguates
     which detected vehicle is actually "the protected car" whenever a frame
     has more than one vehicle-class detection (a driveway camera that also
     sees the street, a second household vehicle, a neighbor's parked car,
@@ -724,8 +744,15 @@ def _best_subject_vehicle_pair(
     for frame_idx, items in by_frame.items():
         subjects = [d for d in items if d.label in _SUBJECT_CLASSES]
         vehicles = [d for d in items if d.label in _VEHICLE_CLASSES]
-        if zone_box is not None and len(vehicles) > 1:
-            vehicles = [min(vehicles, key=lambda v: _box_gap(v.box, zone_box))]
+        if zone_ref is not None and len(vehicles) > 1:
+            # Vehicles actually inside the drawn zone win outright; only
+            # when none is does proximity to its bounds decide, which is
+            # all there was to go on before. For a rectangle zone the two
+            # rules pick the same vehicle in every case — an overlapping
+            # box always has a smaller (negative) gap than a separated one.
+            inside = [v for v in vehicles if zone_ref.covers(v.box)]
+            pool = inside or vehicles
+            vehicles = [min(pool, key=lambda v: _box_gap(v.box, zone_ref.box))]
         for s in subjects:
             for v in vehicles:
                 gap = _box_gap(s.box, v.box)
@@ -737,7 +764,7 @@ def _best_subject_vehicle_pair(
 
 def _detection_distance_pair(
     detections: list[DetectedObject],
-    zone_box: tuple[float, float, float, float] | None,
+    zone_ref: _ZoneReference | None,
     asset_box: Box | None,
     car_description: str,
 ) -> tuple[DetectedObject, Box] | None:
@@ -749,14 +776,14 @@ def _detection_distance_pair(
         if not subjects:
             return None
         return (min(subjects, key=lambda d: _box_gap(d.box, asset_box)), asset_box)
-    legacy = _best_subject_vehicle_pair(detections, zone_box)
+    legacy = _best_subject_vehicle_pair(detections, zone_ref)
     return (legacy[0], legacy[1].box) if legacy is not None else None
 
 
 def _build_detection_hint(
     detections: list[DetectedObject],
     car_description: str,
-    zone_box: tuple[float, float, float, float] | None = None,
+    zone_ref: _ZoneReference | None = None,
     asset_box: Box | None = None,
 ) -> str | None:
     """Render detections into an OBJECT DETECTION prompt hint, or None if empty.
@@ -770,7 +797,7 @@ def _build_detection_hint(
     *asset_box*, when the security layer has identified the protected
     vehicle, is the box this hint measures against — so the distance it
     states is a distance to *your* car, not to whichever vehicle a subject
-    happened to stand nearest. *zone_box* is the fallback used when no
+    happened to stand nearest. *zone_ref* is the fallback used when no
     identification was made, matching the behaviour before that existed.
     """
     if not detections:
@@ -778,7 +805,7 @@ def _build_detection_hint(
     labels = sorted({d.label for d in detections})
     lines = [f"Detected object classes across sampled frames: {', '.join(labels)}."]
 
-    pair = _detection_distance_pair(detections, zone_box, asset_box, car_description)
+    pair = _detection_distance_pair(detections, zone_ref, asset_box, car_description)
     if pair is not None:
         subject, vehicle_box = pair
         vehicle_width = vehicle_box[2] - vehicle_box[0]
@@ -2019,8 +2046,13 @@ class VisionPipeline:
         """Frame preprocessing, detection, tracking and vehicle identification."""
         hints.enhanced_frames = FrameEnhancer.enhance(frames)
 
+        # `0` means "no wider scan" (see DOCS.md's ai_temporal_scan_frames):
+        # detect over the frames the prompt already uses, not over the whole
+        # raw extraction, which would be the most expensive setting there is
+        # rather than the cheapest one the option promises.
+        cap = self._config.temporal_scan_frames
         selected, scan_interval = _select_scan_frames(
-            raw_pool, self._config.temporal_scan_frames, frame_interval
+            raw_pool if cap > 0 else frames, cap, frame_interval
         )
         # Enhancement includes denoising, which is the most expensive thing
         # this module does without a model behind it. When the scan set is
@@ -2067,18 +2099,18 @@ class VisionPipeline:
                 hints, scan_frames, camera, car_description, car_zone, vehicle_signature
             )
 
-        zone_box = (
-            _car_zone_pixel_box(car_zone, scan_frames[0])
+        zone_ref = (
+            _car_zone_reference(car_zone, scan_frames[0])
             if car_zone and car_description
             else None
         )
         asset_box = hints.asset.box if hints.asset and hints.asset.present else None
         hints.detection_hint = _build_detection_hint(
-            detections, car_description, zone_box, asset_box
+            detections, car_description, zone_ref, asset_box
         )
         hints.tracking_hint = _build_tracking_hint(detections, len(scan_frames))
 
-        await self._run_pair_stages(hints, scan_frames, detections, zone_box)
+        await self._run_pair_stages(hints, scan_frames, detections, zone_ref)
 
     def _resolve_asset(
         self,
@@ -2121,10 +2153,12 @@ class VisionPipeline:
             signature=vehicle_signature,
             histograms=histograms,
         )
-        if asset is not None:
-            hints.vehicle_signature_update = self._learn_signature(
-                asset, hints, scan_frames, vehicle_signature
-            )
+        # resolve_vehicle_asset only declines when it is given no
+        # description, and this method returned above if that were the case.
+        assert asset is not None
+        hints.vehicle_signature_update = self._learn_signature(
+            asset, hints, scan_frames, vehicle_signature
+        )
         return asset
 
     @staticmethod
@@ -2151,8 +2185,24 @@ class VisionPipeline:
             or not scan_frames
         ):
             return None
-        normalized = identification.protected.normalized_box
-        histogram = _vehicle_histogram(scan_frames[0], identification.protected.box)
+        protected = identification.protected
+        normalized = protected.normalized_box
+        # `protected.box` is a median across sightings and belongs to no
+        # single frame; cropping it out of frame 0 samples whatever was
+        # there then, which for a car that pulls in mid-clip is empty
+        # driveway. Use the sighting the detector was surest of — the same
+        # choice `_resolve_asset` makes for the fingerprints this one is
+        # later compared against, so both are measured the same way.
+        # The range check mirrors `_resolve_asset`'s own: the sighting index
+        # addresses the scan frames the detector ran over, so a caller
+        # holding a shorter list falls back to the median box rather than
+        # indexing off the end.
+        sample = protected.sample
+        if sample is not None and 0 <= sample.frame_index < len(scan_frames):
+            crop_frame, crop_box = scan_frames[sample.frame_index], sample.box
+        else:
+            crop_frame, crop_box = scan_frames[0], protected.box
+        histogram = _vehicle_histogram(crop_frame, crop_box)
         if current is None:
             return VehicleSignature.from_observation(normalized, histogram)
         return current.blend(normalized, histogram)
@@ -2162,7 +2212,7 @@ class VisionPipeline:
         hints: VisionHints,
         scan_frames: list[bytes],
         detections: list[DetectedObject],
-        zone_box: tuple[float, float, float, float] | None,
+        zone_ref: _ZoneReference | None,
     ) -> None:
         """Depth and contact analysis for the subject nearest the asset.
 
@@ -2172,7 +2222,7 @@ class VisionPipeline:
         closest, and their verdict is tagged with that subject's track id so
         nothing downstream misapplies it to somebody else in frame.
         """
-        pair = self._select_pair(hints, detections, zone_box)
+        pair = self._select_pair(hints, detections, zone_ref)
         if pair is None:
             hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
             hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
@@ -2249,7 +2299,7 @@ class VisionPipeline:
     def _select_pair(
         hints: VisionHints,
         detections: list[DetectedObject],
-        zone_box: tuple[float, float, float, float] | None,
+        zone_ref: _ZoneReference | None,
     ) -> tuple[DetectedObject, Box, int, int | None] | None:
         """Pick the subject/asset box pair the heavy stages should examine.
 
@@ -2267,7 +2317,7 @@ class VisionPipeline:
             nearest = min(subjects, key=lambda d: box_gap(d.box, asset.box))  # type: ignore[arg-type]
             return (nearest, asset.box, nearest.frame_index, nearest.track_id)
 
-        legacy = _best_subject_vehicle_pair(detections, zone_box)
+        legacy = _best_subject_vehicle_pair(detections, zone_ref)
         if legacy is None:
             return None
         subject, vehicle, frame_idx = legacy

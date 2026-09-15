@@ -304,6 +304,27 @@ def test_nearest_vehicle_uses_whichever_subject_got_closest() -> None:
     assert nearest_vehicle_for_subjects(subjects, identification) == "other"
 
 
+def test_nearest_vehicle_keeps_the_closest_subject_when_a_later_one_is_farther() -> (
+    None
+):
+    """Same scene as above with the two subjects the other way round, so
+    the running best is the *first* one examined -- a later, more distant
+    passer-by must not displace the person actually at a car."""
+    identification = _identification_with_both_cars()
+    subjects = subject_tracks(
+        build_tracks(
+            [
+                ("person", 0.9, (600.0, 200.0, 640.0, 300.0), 8, 0),
+                ("person", 0.9, (0.0, 0.0, 20.0, 60.0), 9, 0),
+            ],
+            2.0,
+            FRAME,
+        )
+    )
+    assert [t.track_id for t in subjects] == [8, 9]
+    assert nearest_vehicle_for_subjects(subjects, identification) == "other"
+
+
 def test_nearest_vehicle_needs_another_vehicle_to_compare_against() -> None:
     tracks = _tracks([("car", MY_CAR, 1)])
     identification = identify_protected_vehicle(tracks, FRAME, zone=ZONE)
@@ -366,3 +387,86 @@ def test_untracked_vehicles_get_no_appearance_evidence() -> None:
     assert all(
         c.appearance_similarity == 0.0 for c in [result.protected, *result.others]
     )
+
+
+# ----------------------------------------------------------------------
+# Freeform zones are matched against the outline, not its bounding box
+# ----------------------------------------------------------------------
+
+#: A driveway traced as a perspective trapezoid: narrow at the top of the
+#: frame where it meets the street, wide at the bottom where it meets the
+#: camera. Its axis-aligned bounding box reaches right across the frame at
+#: the top, out over the neighbour's parking spot -- which is the whole
+#: reason a user reaches for the freeform tool in the first place.
+DRIVEWAY = Zone.from_config(
+    {
+        "shape": "polygon",
+        "points": [[0.40, 0.45], [0.60, 0.45], [0.95, 0.95], [0.05, 0.95]],
+    }
+)
+#: Parked off to the right, on the street. Wholly inside DRIVEWAY's
+#: bounding box, comfortably outside the traced shape itself.
+ACROSS_THE_STREET: Box = (500.0, 170.0, 560.0, 200.0)
+#: Parked in the drive, where the trapezoid is wide.
+IN_THE_DRIVE: Box = (200.0, 300.0, 440.0, 340.0)
+
+
+def test_polygon_zone_does_not_credit_a_car_outside_the_traced_outline() -> None:
+    """The bug this replaces: the neighbour's car scored a perfect 1.0 zone
+    overlap against the trapezoid's *bounding box* and could be picked as
+    the protected vehicle, which is precisely the confusion this module
+    exists to prevent."""
+    assert DRIVEWAY is not None
+    tracks = _tracks([("car", ACROSS_THE_STREET, 1)])
+    result = identify_protected_vehicle(tracks, FRAME, zone=DRIVEWAY)
+
+    assert result.protected is None
+    assert result.others[0].zone_overlap == 0.0
+    # ... while the same car scores full marks on the bounding box alone.
+    assert (
+        Zone(bounds=DRIVEWAY.bounds).overlap_with_box(ACROSS_THE_STREET, *FRAME) == 1.0
+    )
+
+
+def test_polygon_zone_picks_the_car_inside_the_outline_over_a_closer_one() -> None:
+    """Both cars are inside the bounding box; only one is in the drive."""
+    assert DRIVEWAY is not None
+    tracks = _tracks([("car", ACROSS_THE_STREET, 1), ("car", IN_THE_DRIVE, 2)])
+    result = identify_protected_vehicle(tracks, FRAME, zone=DRIVEWAY)
+
+    assert result.protected is not None
+    assert result.protected.track_id == 2
+    assert result.protected.box == IN_THE_DRIVE
+    assert [c.zone_overlap for c in result.others] == [0.0]
+
+
+def test_rectangle_zones_score_exactly_as_they_did_before() -> None:
+    """The polygon path must not disturb the overwhelmingly common case."""
+    tracks = _tracks([("car", MY_CAR, 1), ("car", NEIGHBOUR, 2)])
+    assert ZONE is not None
+    result = identify_protected_vehicle(tracks, FRAME, zone=ZONE)
+
+    assert result.protected is not None
+    assert result.protected.track_id == 1  # MY_CAR; the zone is drawn on it
+    # The same number the plain bounding-box arithmetic produced before.
+    assert result.protected.zone_overlap == pytest.approx(0.995, abs=1e-6)
+
+
+def test_candidates_point_at_the_frame_they_were_seen_most_clearly_in() -> None:
+    """The colour fingerprint is cropped from this, so it has to be a real
+    sighting rather than the median box -- which belongs to no frame."""
+    detections = [
+        ("car", 0.4, (300.0, 180.0, 460.0, 280.0), 1, 0),
+        ("car", 0.95, (310.0, 182.0, 470.0, 284.0), 1, 1),
+        ("car", 0.5, (320.0, 184.0, 480.0, 288.0), 1, 2),
+    ]
+    tracks = build_tracks(detections, 2.0, FRAME)
+    assert ZONE is not None
+    result = identify_protected_vehicle(tracks, FRAME, zone=ZONE)
+
+    assert result.protected is not None
+    assert result.protected.sample is not None
+    assert result.protected.sample.frame_index == 1
+    assert result.protected.sample.box == (310.0, 182.0, 470.0, 284.0)
+    # Not persisted: a frame index means nothing once the clip is gone.
+    assert "sample" not in result.protected.to_dict()

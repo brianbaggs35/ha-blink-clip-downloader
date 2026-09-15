@@ -494,6 +494,51 @@ def test_segmentation_contact_outranks_everything_else() -> None:
     assert "segmentation" in contact.detail
 
 
+def test_depth_overrules_segmentation_when_the_two_disagree() -> None:
+    """A person walking *in front of* the car: their silhouettes genuinely
+    abut in the image, so segmentation reports a touch, while depth places
+    them metres apart. Asserting contact on evidence this layer's own
+    stages contradict is the false positive that makes people switch a
+    security system off."""
+    passing_by = _track([(340, 200, 380, 280)] * 3)
+    events = SecurityEventDetector().detect(
+        _ctx(
+            [passing_by],
+            asset=_asset(),
+            contact_touching=True,
+            depth_similar=False,
+        )
+    )
+    assert SecurityEventType.CONTACT_CANDIDATE not in _types(events)
+    assert SecurityEventType.IMPACT_CANDIDATE not in _types(events)
+
+
+def test_segmentation_still_wins_when_depth_has_nothing_to_say() -> None:
+    """Depth unavailable (no torch, or the stage failed) must not weaken
+    segmentation — that is the pre-existing behaviour and the reason the
+    veto is written against an explicit False rather than a falsy value."""
+    apart = _track([(500, 200, 520, 280)] * 3)
+    contact = _of(
+        SecurityEventDetector().detect(
+            _ctx([apart], asset=_asset(), contact_touching=True, depth_similar=None)
+        ),
+        SecurityEventType.CONTACT_CANDIDATE,
+    )
+    assert contact.confidence == pytest.approx(0.8)
+
+
+def test_segmentation_and_depth_agreeing_is_the_strongest_contact() -> None:
+    apart = _track([(500, 200, 520, 280)] * 3)
+    contact = _of(
+        SecurityEventDetector().detect(
+            _ctx([apart], asset=_asset(), contact_touching=True, depth_similar=True)
+        ),
+        SecurityEventType.CONTACT_CANDIDATE,
+    )
+    assert contact.confidence == pytest.approx(0.8)
+    assert "segmentation" in contact.detail
+
+
 def test_overlap_with_matching_depth_is_stronger_than_overlap_alone() -> None:
     with_depth = _of(
         SecurityEventDetector().detect(

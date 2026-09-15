@@ -671,13 +671,23 @@ class SecurityEventDetector:
         says the subject was at a different distance or not touching, no
         contact event is emitted at all.
         """
+        if cv_applies and ctx.depth_similar is False:
+            # Segmentation and depth answer different questions, and this is
+            # the case where they disagree: a person walking *in front of*
+            # the car has silhouettes that genuinely abut in the image while
+            # the two are metres apart on the ground. Depth is the only
+            # stage that can tell those apart, so its negative verdict wins
+            # over segmentation's positive one — the same precedence every
+            # other rule here gives it. The contact *hint* still reaches the
+            # prompt either way (see vision.py's _run_pair_stages), so the
+            # model can still see and judge it; what is withheld is this
+            # layer asserting a contact its own evidence contradicts.
+            return None
         if cv_applies and ctx.contact_touching is True:
             return 0.8, "pixel-level segmentation found the outlines touching"
         if profile.min_box_gap > 0 or not self._overlap_is_deep(track, profile):
             return None
         if cv_applies and ctx.contact_touching is False:
-            return None
-        if cv_applies and ctx.depth_similar is False:
             return None
         if cv_applies and ctx.depth_similar is True:
             return 0.7, "the outlines overlapped at a similar distance from the camera"

@@ -42,6 +42,29 @@ ZONE = Zone.from_config({"x_min": 0.38, "y_min": 0.47, "x_max": 0.66, "y_max": 0
 #: A looser zone covering the whole parking area rather than just the car —
 #: the other common way users draw one.
 WIDE_ZONE = Zone.from_config({"x_min": 0.2, "y_min": 0.45, "x_max": 0.85, "y_max": 1.0})
+#: A drive traced with the Vehicles tab's freeform lasso: down the left of
+#: the plot and then along the front of the house, an L. Its axis-aligned
+#: bounding box also covers the lawn and the kerb on the right — ground the
+#: user deliberately traced *around*, and where a neighbour's or visitor's
+#: car routinely sits.
+TRACED_DRIVE = Zone.from_config(
+    {
+        "shape": "polygon",
+        "points": [
+            [0.05, 0.35],
+            [0.34, 0.35],
+            [0.34, 0.72],
+            [0.95, 0.72],
+            [0.95, 0.95],
+            [0.05, 0.95],
+        ],
+    }
+)
+#: A car on the kerb: inside TRACED_DRIVE's bounding box, nowhere near the
+#: drive itself.
+ON_THE_KERB: Box = (420.0, 150.0, 600.0, 240.0)
+#: A car actually parked on the traced drive.
+ON_THE_DRIVE: Box = (60.0, 270.0, 280.0, 340.0)
 
 Detection = tuple[str, float, Box, int | None, int]
 
@@ -353,6 +376,100 @@ SCENARIOS: list[Scenario] = [
         scene_deviation=0.9,
         expect_severity=(Severity.NOTEWORTHY, Severity.SUSPICIOUS),
         expect_events={SecurityEventType.CAMERA_OBSTRUCTION},
+    ),
+    Scenario(
+        name="a passer-by crosses in front of the car, segmentation says touching",
+        # Walking across the frame between the camera and the car. Their
+        # silhouettes genuinely abut in the image, so the segmenter reports
+        # a touch -- and depth is the one stage that can say they are metres
+        # apart. This is the single most common thing a driveway camera
+        # sees, and calling it contact is how a security system loses its
+        # owner's trust.
+        detections=_walk(
+            1, [_person_at(x, height=160, ground=330) for x in (60, 150, 240, 330, 420)]
+        )
+        + _parked(2, MY_CAR, 5),
+        frame_count=5,
+        contact_touching=True,
+        depth_similar=False,
+        expect_severity=ROUTINE_ONLY,
+        forbid_events={
+            SecurityEventType.CONTACT_CANDIDATE,
+            SecurityEventType.IMPACT_CANDIDATE,
+            SecurityEventType.ASSET_PROXIMITY,
+        },
+    ),
+    # -- a freeform zone must be enforced as drawn, not as its bounds ---
+    Scenario(
+        name="a visitor parks on the kerb while our car is out",
+        detections=[("car", 0.95, ON_THE_KERB, 3, i) for i in range(4)]
+        + _walk(
+            1,
+            [
+                (610.0, 140.0, 640.0, 250.0),
+                (596.0, 141.0, 632.0, 251.0),
+                (584.0, 140.0, 620.0, 250.0),
+                (580.0, 140.0, 616.0, 250.0),
+            ],
+        ),
+        frame_count=4,
+        zone=TRACED_DRIVE,
+        # The contact stage is aimed at whichever subject is nearest the
+        # asset, so if the kerb car were mistaken for the protected one it
+        # would return a genuine "touching" for the person getting into it
+        # — a real measurement of the wrong car. The zone answering "none of
+        # these is yours" is what has to stop that becoming an alert.
+        contact_touching=True,
+        depth_similar=True,
+        expect_severity=ROUTINE_ONLY,
+        forbid_events={
+            SecurityEventType.ASSET_PROXIMITY,
+            SecurityEventType.CONTACT_CANDIDATE,
+            SecurityEventType.ZONE_ENTERED,
+        },
+    ),
+    Scenario(
+        name="a neighbour on the kerb while our car sits on the traced drive",
+        detections=[("car", 0.95, ON_THE_DRIVE, 2, i) for i in range(4)]
+        + [("car", 0.95, ON_THE_KERB, 3, i) for i in range(4)]
+        + _walk(
+            1,
+            [
+                (610.0, 140.0, 640.0, 250.0),
+                (596.0, 141.0, 632.0, 251.0),
+                (584.0, 140.0, 620.0, 250.0),
+                (580.0, 140.0, 616.0, 250.0),
+            ],
+        ),
+        frame_count=4,
+        zone=TRACED_DRIVE,
+        contact_touching=False,
+        depth_similar=False,
+        expect_severity=ROUTINE_ONLY,
+        forbid_events={
+            SecurityEventType.CONTACT_CANDIDATE,
+            SecurityEventType.ZONE_ENTERED,
+        },
+    ),
+    Scenario(
+        name="a stranger at our car on the traced drive is still caught",
+        detections=[("car", 0.95, ON_THE_DRIVE, 2, i) for i in range(5)]
+        + _walk(
+            1,
+            [
+                (400.0, 200.0, 440.0, 340.0),
+                (330.0, 200.0, 370.0, 340.0),
+                (270.0, 200.0, 310.0, 340.0),
+                (250.0, 200.0, 290.0, 340.0),
+                (250.0, 200.0, 290.0, 340.0),
+            ],
+        ),
+        frame_count=5,
+        zone=TRACED_DRIVE,
+        contact_touching=True,
+        depth_similar=True,
+        expect_severity=(Severity.SUSPICIOUS, Severity.CRITICAL),
+        expect_events={SecurityEventType.CONTACT_CANDIDATE},
     ),
 ]
 

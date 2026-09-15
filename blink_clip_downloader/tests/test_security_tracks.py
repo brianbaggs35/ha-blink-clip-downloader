@@ -494,3 +494,49 @@ def test_build_tracks_tolerates_one_missed_frame() -> None:
     ]
     (track,) = build_tracks(detections, 2.0, FRAME)
     assert track.frame_count == 2
+
+
+# ----------------------------------------------------------------------
+# Zone membership honours a freeform outline
+# ----------------------------------------------------------------------
+
+
+def test_zone_membership_box_overlap_respects_a_freeform_outline() -> None:
+    """The box-overlap half of the membership test used to run against the
+    zone's bounding box, so a subject standing in a corner the user
+    deliberately traced *around* still counted as being at the car -- and a
+    zone event is what raises a clip's risk score."""
+    # A driveway running from the top-left corner down to the bottom-left,
+    # widening toward the camera. Its bounding box is the entire frame.
+    drive = Zone.from_config(
+        {"shape": "polygon", "points": [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]}
+    )
+    assert drive is not None
+    assert drive.to_pixel_box(*FRAME) == (0.0, 0.0, *FRAME)
+
+    # Someone down in the bottom-right corner, the part of the frame the
+    # outline deliberately excludes. Their feet were always outside it;
+    # their *box* used to put them in the zone anyway, because it overlaps
+    # the bounding box completely.
+    away = _track([(500.0, 250.0, 600.0, 340.0)] * 3)
+    assert drive.contains(550.0 / FRAME[0], 340.0 / FRAME[1]) is False
+    assert away.zone_membership(drive) == [False, False, False]
+    assert away.entered_zone(drive) is False
+    assert away.zone_dwell(drive) == 0.0
+
+    # Someone actually in the drive still counts, feet or box.
+    at_the_car = _track([(20.0, 40.0, 120.0, 130.0)] * 3)
+    assert at_the_car.zone_membership(drive) == [True, True, True]
+
+
+def test_zone_membership_box_overlap_still_counts_for_rectangles() -> None:
+    """Unchanged for the common case: a subject whose feet fall outside a
+    rectangle zone but whose box substantially overlaps it is still "at the
+    car" -- that is what a zone drawn around a parked vehicle looks like."""
+    zone = Zone.from_config({"x_min": 0.0, "y_min": 0.0, "x_max": 0.5, "y_max": 0.5})
+    assert zone is not None
+    # Feet at y=280 (0.78 of the frame) -- below the zone -- but most of
+    # the box is inside it.
+    leaning_in = _track([(10.0, 20.0, 200.0, 280.0)] * 2)
+    assert zone.contains(105.0 / FRAME[0], 280.0 / FRAME[1]) is False
+    assert leaning_in.zone_membership(zone) == [True, True]

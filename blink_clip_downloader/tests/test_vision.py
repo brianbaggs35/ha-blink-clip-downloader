@@ -24,8 +24,16 @@ from PIL import Image
 
 from blink_downloader import vision as vision_module
 from blink_downloader.database import ClipDatabase
-from blink_downloader.security.vehicles import VehicleSignature
+from blink_downloader.security.assets import AssetLocation, AssetType, ProtectedAsset
+from blink_downloader.security.geometry import Box, Zone
+from blink_downloader.security.tracks import build_tracks
+from blink_downloader.security.vehicles import (
+    VehicleSignature,
+    identify_protected_vehicle,
+)
 from blink_downloader.vision import (
+    SOURCE_DEPTH_ESTIMATION,
+    SOURCE_OBJECT_DETECTION,
     ContactResult,
     ContactSegmenter,
     CPUIncompatibleError,
@@ -50,7 +58,7 @@ from blink_downloader.vision import (
     _build_posture_hint,
     _build_recognition_hint,
     _build_tracking_hint,
-    _car_zone_pixel_box,
+    _car_zone_reference,
     _crop_region,
     _detection_distance_pair,
     _is_huggingface_auth_error,
@@ -62,6 +70,7 @@ from blink_downloader.vision import (
     _region_appearance_change,
     _select_scan_frames,
     _vehicle_histogram,
+    _ZoneReference,
     cosine_similarity,
     is_face_recognition_available,
     torch_cpu_compatible,
@@ -600,8 +609,8 @@ def test_best_subject_vehicle_pair_zone_box_disambiguates_multiple_vehicles() ->
             "car", 0.9, (100, 100, 110, 110), None, 0
         ),  # the actual protected car
     ]
-    zone_box = (95.0, 95.0, 115.0, 115.0)
-    pair = _best_subject_vehicle_pair(detections, zone_box)
+    zone_ref = _rect_zone_ref(0.95, 0.95, 1.15, 1.15)
+    pair = _best_subject_vehicle_pair(detections, zone_ref)
     assert pair is not None
     _subject, vehicle, _frame_idx = pair
     assert vehicle.box == (100, 100, 110, 110)
@@ -629,19 +638,94 @@ def test_best_subject_vehicle_pair_zone_box_ignored_with_single_vehicle() -> Non
         DetectedObject("person", 0.9, (0, 0, 2, 2), None, 0),
         DetectedObject("car", 0.9, (2, 2, 4, 4), None, 0),
     ]
-    zone_box = (500.0, 500.0, 600.0, 600.0)
-    pair = _best_subject_vehicle_pair(detections, zone_box)
+    zone_ref = _rect_zone_ref(5.0, 5.0, 6.0, 6.0)
+    pair = _best_subject_vehicle_pair(detections, zone_ref)
     assert pair is not None
     _subject, vehicle, _frame_idx = pair
     assert vehicle.box == (2, 2, 4, 4)
 
 
 # ------------------------------------------------------------------
-# _car_zone_pixel_box
+# _car_zone_reference
 # ------------------------------------------------------------------
 
 
-def test_car_zone_pixel_box_converts_rect_to_pixel_coords(
+def _rect_zone_ref(
+    x_min: float, y_min: float, x_max: float, y_max: float
+) -> _ZoneReference:
+    """A rectangle zone already resolved against a 100x100 frame."""
+    zone = Zone.from_config(
+        {
+            "shape": "rect",
+            "x_min": x_min,
+            "y_min": y_min,
+            "x_max": x_max,
+            "y_max": y_max,
+        }
+    )
+    assert zone is not None
+    return _ZoneReference(
+        zone=zone, size=(100.0, 100.0), box=zone.to_pixel_box(100, 100)
+    )
+
+
+def _polygon_zone_ref(points: list[list[float]]) -> _ZoneReference:
+    """A freeform zone already resolved against a 100x100 frame."""
+    zone = Zone.from_config({"shape": "polygon", "points": points})
+    assert zone is not None
+    return _ZoneReference(
+        zone=zone, size=(100.0, 100.0), box=zone.to_pixel_box(100, 100)
+    )
+
+
+def test_best_subject_vehicle_pair_polygon_zone_ignores_a_car_outside_the_outline() -> (
+    None
+):
+    """The neighbour's car sits in the *bounding box* of a traced driveway
+    but outside the drawn outline itself. Reducing the zone to those bounds
+    (what this used to do) hands it the disambiguation win, because the
+    person is standing right beside it; the traced outline must not."""
+    # An L: the driveway runs down the left edge and along the bottom. Its
+    # bounding box covers the whole frame, including the top-right corner
+    # the drive never reaches.
+    zone_ref = _polygon_zone_ref(
+        [[0.0, 0.0], [0.3, 0.0], [0.3, 0.7], [1.0, 0.7], [1.0, 1.0], [0.0, 1.0]]
+    )
+    detections = [
+        # Standing next to the neighbour's car, up in the excluded corner.
+        DetectedObject("person", 0.9, (70, 10, 78, 30), None, 0),
+        DetectedObject("car", 0.9, (80, 10, 95, 25), None, 0),  # neighbour's
+        DetectedObject("car", 0.9, (5, 75, 25, 95), None, 0),  # in the drive
+    ]
+    assert zone_ref.covers((5, 75, 25, 95)) is True
+    assert zone_ref.covers((80, 10, 95, 25)) is False
+    # The bounding box alone cannot tell them apart at all.
+    assert zone_ref.box == (0.0, 0.0, 100.0, 100.0)
+
+    pair = _best_subject_vehicle_pair(detections, zone_ref)
+    assert pair is not None
+    _subject, vehicle, _frame_idx = pair
+    assert vehicle.box == (5, 75, 25, 95)
+
+
+def test_best_subject_vehicle_pair_polygon_zone_falls_back_when_none_are_inside() -> (
+    None
+):
+    """No vehicle is inside the traced outline, so proximity to its bounds
+    decides - exactly what happened before there was an outline test."""
+    zone_ref = _polygon_zone_ref([[0.0, 0.8], [0.2, 0.8], [0.2, 1.0], [0.0, 1.0]])
+    detections = [
+        DetectedObject("person", 0.9, (48, 48, 52, 52), None, 0),
+        DetectedObject("car", 0.9, (50, 50, 60, 60), None, 0),
+        DetectedObject("car", 0.9, (25, 85, 35, 95), None, 0),  # nearer the zone
+    ]
+    pair = _best_subject_vehicle_pair(detections, zone_ref)
+    assert pair is not None
+    _subject, vehicle, _frame_idx = pair
+    assert vehicle.box == (25, 85, 35, 95)
+
+
+def test_car_zone_reference_converts_rect_to_pixel_coords(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_cv2 = MagicMock()
@@ -652,12 +736,17 @@ def test_car_zone_pixel_box_converts_rect_to_pixel_coords(
     monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
 
     zone = {"shape": "rect", "x_min": 0.25, "y_min": 0.5, "x_max": 0.75, "y_max": 1.0}
-    assert _car_zone_pixel_box(zone, b"frame") == (10.0, 10.0, 30.0, 20.0)
+    ref = _car_zone_reference(zone, b"frame")
+    assert ref is not None
+    assert ref.box == (10.0, 10.0, 30.0, 20.0)
+    assert ref.size == (40.0, 20.0)
 
 
-def test_car_zone_pixel_box_reduces_polygon_to_bounding_box(
+def test_car_zone_reference_keeps_the_polygon_beside_its_bounding_box(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The coarse bounds stay available for the distance hint, but the
+    traced outline travels with them so membership stays exact."""
     mock_cv2 = MagicMock()
     mock_cv2.IMREAD_COLOR = 1
     mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -667,10 +756,16 @@ def test_car_zone_pixel_box_reduces_polygon_to_bounding_box(
         "shape": "polygon",
         "points": [[0.1, 0.1], [0.5, 0.0], [0.9, 0.9], [0.2, 0.8]],
     }
-    assert _car_zone_pixel_box(zone, b"frame") == (1.0, 0.0, 9.0, 9.0)
+    ref = _car_zone_reference(zone, b"frame")
+    assert ref is not None
+    assert ref.box == (1.0, 0.0, 9.0, 9.0)
+    assert ref.zone.is_polygon is True
+    # Inside the bounds, outside the traced shape.
+    assert ref.covers((8.2, 0.1, 8.9, 0.6)) is False
+    assert ref.covers((3.0, 3.0, 5.0, 5.0)) is True
 
 
-def test_car_zone_pixel_box_none_on_decode_failure(
+def test_car_zone_reference_none_on_decode_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_cv2 = MagicMock()
@@ -679,10 +774,10 @@ def test_car_zone_pixel_box_none_on_decode_failure(
     monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
 
     zone = {"shape": "rect", "x_min": 0.0, "y_min": 0.0, "x_max": 1.0, "y_max": 1.0}
-    assert _car_zone_pixel_box(zone, b"frame") is None
+    assert _car_zone_reference(zone, b"frame") is None
 
 
-def test_car_zone_pixel_box_none_for_polygon_with_no_points(
+def test_car_zone_reference_none_for_polygon_with_no_points(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mock_cv2 = MagicMock()
@@ -690,7 +785,7 @@ def test_car_zone_pixel_box_none_for_polygon_with_no_points(
     mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
     monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
 
-    assert _car_zone_pixel_box({"shape": "polygon", "points": []}, b"frame") is None
+    assert _car_zone_reference({"shape": "polygon", "points": []}, b"frame") is None
 
 
 def test_build_detection_hint_empty_detections_returns_none() -> None:
@@ -2598,6 +2693,49 @@ async def test_pipeline_builds_tracks_over_the_temporal_scan_not_the_prompt_fram
     assert hints.frame_size == (200.0, 200.0)
 
 
+async def test_pipeline_zero_scan_cap_detects_over_the_prompt_frames_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ai_temporal_scan_frames: 0`` is documented as disabling the wider
+    scan. It used to hand the detector the *entire* raw extraction instead,
+    making the one value a user picks to spend less the most expensive
+    setting available."""
+    _yolo_env(
+        monkeypatch,
+        _FakeBoxes(
+            cls=[0],
+            conf=[0.9],
+            xyxy=[(10.0, 10.0, 30.0, 90.0)],
+            ids=[1],
+        ),
+        {0: "person"},
+    )
+    pipeline = VisionPipeline(
+        VisionConfig(enhanced_detection_enabled=True, temporal_scan_frames=0)
+    )
+    hints = await pipeline.process_clip(
+        [_real_jpeg_bytes(size=(200, 200))] * 2,
+        raw_frames=[_real_jpeg_bytes(size=(200, 200))] * 30,
+        frame_interval=2.0,
+    )
+    assert hints.scan_frame_count == 2
+
+
+async def test_pipeline_reports_only_the_dependent_stages_when_nothing_is_detected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty detection list means the detector ran and saw nothing —
+    unlike None, which means it could not run at all, so only that case
+    reports object detection itself as unavailable."""
+    _yolo_env(monkeypatch, _FakeBoxes(cls=[], conf=[], xyxy=[], ids=[]), {})
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    hints = await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
+
+    assert hints.detections == []
+    assert SOURCE_OBJECT_DETECTION not in hints.unavailable_sources
+    assert SOURCE_DEPTH_ESTIMATION in hints.unavailable_sources
+
+
 async def test_pipeline_skips_the_security_layer_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2668,6 +2806,144 @@ async def test_pipeline_learns_a_vehicle_signature_from_a_confident_sighting(
     assert hints.vehicle_signature_update is not None
     assert hints.vehicle_signature_update.sample_count == 1
     assert hints.vehicle_signature_update.histogram == (1.0, 0.0)
+
+
+def test_resolve_asset_skips_a_fingerprint_it_has_no_frame_for() -> None:
+    """A sighting index that doesn't address the frames in hand is skipped
+    rather than indexed off the end -- the vehicle simply contributes no
+    appearance evidence, which is how every other missing source behaves."""
+    frame_size = (200.0, 200.0)
+    tracks = build_tracks(
+        [
+            # Frame 9 is past the end of the two-frame list below.
+            ("car", 0.95, (40.0, 40.0, 120.0, 100.0), 7, 9),
+            ("car", 0.90, (44.0, 42.0, 124.0, 102.0), 7, 1),
+        ],
+        2.0,
+        frame_size,
+    )
+    hints = vision_module.VisionHints()
+    hints.tracks = tracks
+    hints.frame_size = frame_size
+    signature = VehicleSignature(
+        box=(0.2, 0.2, 0.6, 0.5), histogram=(0.4, 0.6), sample_count=5
+    )
+
+    calls: list[bytes] = []
+
+    def _record(frame: bytes, _box: Box) -> tuple[float, ...]:
+        calls.append(frame)
+        return (1.0, 0.0)
+
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    with patch.object(vision_module, "_vehicle_histogram", _record):
+        asset = pipeline._resolve_asset(
+            hints, [b"frame-0", b"frame-1"], "Driveway", "Silver Kia", None, signature
+        )
+
+    assert asset is not None
+    # Cropping scan_frames[9] would have raised. The only crop that happens
+    # is _learn_signature's own fallback to the first frame, which is the
+    # same thing it does for any candidate it cannot place precisely.
+    assert calls == [b"frame-0"]
+
+
+def test_learn_signature_crops_the_frame_the_car_was_actually_seen_in() -> None:
+    """The learned colour fingerprint used to be cropped out of frame 0 with
+    the track's *median* box -- so a car that pulls in halfway through a clip
+    taught the signature whatever was parked there before it, or nothing at
+    all. It must use the sighting the detector was surest of, which is the
+    same frame/box the fingerprints it gets compared against come from."""
+    detections = [
+        # Empty driveway for the first two frames; the car arrives at 2.
+        ("car", 0.90, (40.0, 40.0, 120.0, 100.0), 7, 2),
+        ("car", 0.97, (44.0, 42.0, 124.0, 102.0), 7, 3),
+    ]
+    frame_size = (200.0, 200.0)
+    tracks = build_tracks(detections, 2.0, frame_size)
+    zone = Zone.from_config({"x_min": 0.2, "y_min": 0.2, "x_max": 0.62, "y_max": 0.51})
+    assert zone is not None
+    identification = identify_protected_vehicle(tracks, frame_size, zone=zone)
+    assert identification.protected is not None
+    assert identification.confident
+
+    hints = vision_module.VisionHints()
+    hints.tracks = tracks
+    hints.frame_size = frame_size
+    asset = ProtectedAsset(
+        name="Silver Kia",
+        asset_type=AssetType.VEHICLE,
+        camera="Driveway",
+        box=identification.protected.box,
+        location=AssetLocation.DETECTED,
+        identification=identification,
+    )
+
+    seen: list[tuple[bytes, Box]] = []
+
+    def _record(frame: bytes, box: Box) -> tuple[float, ...]:
+        seen.append((frame, box))
+        return (1.0,)
+
+    with patch.object(vision_module, "_vehicle_histogram", _record):
+        result = VisionPipeline._learn_signature(
+            asset, hints, [b"frame-0", b"frame-1", b"frame-2", b"frame-3"], None
+        )
+
+    assert result is not None
+    assert seen == [(b"frame-3", (44.0, 42.0, 124.0, 102.0))]
+
+
+@pytest.mark.parametrize(
+    ("drop_sample", "scan_frames"),
+    [
+        (False, [b"frame-0"]),
+        (True, [b"frame-0", b"frame-1", b"frame-2", b"frame-3"]),
+    ],
+    ids=["index-past-the-end", "candidate-without-a-sighting"],
+)
+def test_learn_signature_falls_back_to_the_median_box_when_it_cannot_do_better(
+    drop_sample: bool, scan_frames: list[bytes]
+) -> None:
+    """Both ways the preferred sighting can be unusable end at the same
+    safe place: the first frame and the track's median box, which is what
+    this did before it knew any better."""
+    detections = [
+        ("car", 0.90, (40.0, 40.0, 120.0, 100.0), 7, 2),
+        ("car", 0.97, (44.0, 42.0, 124.0, 102.0), 7, 3),
+    ]
+    frame_size = (200.0, 200.0)
+    tracks = build_tracks(detections, 2.0, frame_size)
+    zone = Zone.from_config({"x_min": 0.2, "y_min": 0.2, "x_max": 0.62, "y_max": 0.51})
+    assert zone is not None
+    identification = identify_protected_vehicle(tracks, frame_size, zone=zone)
+    assert identification.protected is not None
+    if drop_sample:
+        identification.protected.sample = None
+    median_box = identification.protected.box
+
+    hints = vision_module.VisionHints()
+    hints.tracks = tracks
+    hints.frame_size = frame_size
+    asset = ProtectedAsset(
+        name="Silver Kia",
+        asset_type=AssetType.VEHICLE,
+        camera="Driveway",
+        box=median_box,
+        location=AssetLocation.DETECTED,
+        identification=identification,
+    )
+
+    seen: list[tuple[bytes, Box]] = []
+
+    def _record(frame: bytes, box: Box) -> tuple[float, ...]:
+        seen.append((frame, box))
+        return (1.0,)
+
+    with patch.object(vision_module, "_vehicle_histogram", _record):
+        assert VisionPipeline._learn_signature(asset, hints, scan_frames, None)
+
+    assert seen == [(b"frame-0", median_box)]
 
 
 async def test_pipeline_blends_into_an_existing_vehicle_signature(
@@ -3063,6 +3339,19 @@ async def test_pose_estimator_resolves_a_bare_model_name_to_the_cache_dir(
     monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
     assert await PoseEstimator("yolo26n-pose.pt").ensure_ready() is True
     assert mock_ultra.YOLO.call_args[0][0] == str(tmp_path / "yolo26n-pose.pt")
+
+
+async def test_pose_estimator_keeps_an_absolute_model_path_as_given(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A path (rather than a bare weights filename) is somewhere the user
+    put the file — it must not be rewritten into the cache directory."""
+    monkeypatch.setattr(vision_module, "_YOLO_MODEL_CACHE_DIR", str(tmp_path))
+    mock_ultra = MagicMock()
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+    explicit = str(tmp_path / "custom" / "pose.pt")
+    assert await PoseEstimator(explicit).ensure_ready() is True
+    assert mock_ultra.YOLO.call_args[0][0] == explicit
 
 
 async def test_pose_estimator_analyzes_the_subject(
