@@ -237,6 +237,22 @@ const hasDraft = computed(() => {
   return !!rect.value && rect.value.width >= MIN_RECT_SIZE && rect.value.height >= MIN_RECT_SIZE
 })
 
+// What Save is allowed to act on, which is narrower than what Clear is:
+// a stray two-pixel scribble is still a draft worth offering to wipe, but
+// polygonToFraction rejects it, and an enabled Save button that silently
+// does nothing would leave someone believing their vehicle is protected by
+// a zone that was never stored. hasDraft's rectangle branch already
+// mirrors rectToFraction's own minimum for exactly this reason; the
+// freeform branch only counted points, and never its minimum span.
+const canSave = computed(() => {
+  const { width, height } = containerSize.value
+  if (!hasDraft.value) return false
+  if (drawShape.value === 'polygon') {
+    return polygonToFraction(freeformPath.value, width, height) !== null
+  }
+  return rect.value !== null && rectToFraction(rect.value, width, height) !== null
+})
+
 async function saveZone() {
   const { width, height } = containerSize.value
   let zone: CarZone | null = null
@@ -468,7 +484,7 @@ const previewPolygonAttr = computed(() => {
         </Message>
 
         <div class="picker-actions">
-          <Button size="small" :disabled="!hasDraft || saving" :loading="saving" @click="saveZone">
+          <Button size="small" :disabled="!canSave || saving" :loading="saving" @click="saveZone">
             {{ saving ? 'Saving…' : 'Save zone' }}
           </Button>
           <Button v-if="hasDraft" size="small" outlined severity="secondary" :disabled="saving" @click="clearDraft"

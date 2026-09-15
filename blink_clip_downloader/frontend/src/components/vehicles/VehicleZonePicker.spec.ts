@@ -456,6 +456,27 @@ describe('VehicleZonePicker', () => {
       expect(saveBtn.attributes('disabled')).toBeUndefined()
     })
 
+    it('keeps "Save zone" disabled for a trace too small to be a real zone', async () => {
+      // Three points inside a few pixels clears the "at least 3 points"
+      // bar but not polygonToFraction's minimum span, so saving it used to
+      // enable the button and then silently do nothing -- leaving someone
+      // believing their vehicle was protected by a zone never stored.
+      const wrapper = await mountInEditMode()
+      await switchToFreeform(wrapper)
+      const overlay = wrapper.find('.picker-overlay')
+
+      await firePointer(overlay.element, 'pointerdown', 40, 30)
+      await firePointer(overlay.element, 'pointermove', 45, 31)
+      await firePointer(overlay.element, 'pointermove', 46, 36)
+      await firePointer(overlay.element, 'pointerup', 46, 36)
+
+      // Still a draft worth offering to wipe...
+      expect(wrapper.findAll('button').some((b) => b.text().trim() === 'Clear')).toBe(true)
+      // ...but not one that can be saved.
+      const saveBtn = wrapper.findAll('button').find((b) => b.text().includes('Save zone'))!
+      expect(saveBtn.attributes('disabled')).toBeDefined()
+    })
+
     it('saves a polygon zone with fractional points', async () => {
       vi.stubGlobal(
         'fetch',
