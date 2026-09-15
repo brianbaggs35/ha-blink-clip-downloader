@@ -636,6 +636,37 @@ test("the Boxes toggle draws the detector's own boxes over the video", async ({ 
   await expect(overlay.locator('.detection-person')).toHaveAttribute('x', '10')
   await expect(overlay.locator('.detection-person')).toHaveAttribute('width', '15')
 
+  // ...and the attributes being right is not the same as the box landing
+  // in the right place. An <svg> is a replaced element, so `inset: 0` on
+  // its own left it sized by the viewBox's 1:1 intrinsic ratio — as tall as
+  // the player is wide — which drew every box stretched and shoved down the
+  // frame while the labels, laid out as a plain block, stayed correct. Only
+  // rendered geometry catches that, so assert the two layers agree.
+  const geometry = await overlay.evaluate((svg) => {
+    const labels = svg.parentElement!.querySelector('.detection-labels')!
+    const rect = (el: Element) => {
+      const r = el.getBoundingClientRect()
+      return { top: r.top, height: r.height }
+    }
+    return {
+      svg: rect(svg),
+      labels: rect(labels),
+      box: rect(svg.querySelector('.detection-person')!),
+      label: rect(svg.parentElement!.querySelector('.detection-label')!),
+    }
+  })
+  // The overlay must cover exactly the area the label layer does.
+  expect(Math.abs(geometry.svg.top - geometry.labels.top)).toBeLessThan(1)
+  expect(Math.abs(geometry.svg.height - geometry.labels.height)).toBeLessThan(1)
+  // The seeded person box spans 20%-80% of frame height, so it must start a
+  // fifth of the way down the player — not below it, as the square overlay
+  // pushed it.
+  const expectedTop = geometry.svg.top + geometry.svg.height * 0.2
+  expect(Math.abs(geometry.box.top - expectedTop)).toBeLessThan(2)
+  // A label sits directly on top of its own box (translateY(-100%)).
+  const labelBottom = geometry.label.top + geometry.label.height
+  expect(Math.abs(labelBottom - geometry.box.top)).toBeLessThan(2)
+
   await modal.getByRole('button', { name: '⬚ Boxes on' }).click()
   await expect(overlay).toHaveCount(0)
 })

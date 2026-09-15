@@ -2,7 +2,45 @@
 
 ## 6.0.2
 
-### Bug fixes
+### The AI described a person who was never there
+
+A clip of four parked cars and nobody in it came back as *"A person is
+walking along the street in the distance and does not approach or touch
+any vehicle."* Two things in the prompt caused that, and both are fixed.
+
+- **The detector's clearest finding never reached the model.** Object
+  detection sweeps every sampled frame, so "not one person in any of
+  them" is the strongest single fact this add-on produces about a clip —
+  and the prompt only ever listed the classes that *were* found, which
+  says nothing about the one that wasn't. The OBJECT DETECTION section
+  now states it outright. It stays evidence rather than a rule: a person
+  who is distant, small, or partly hidden is exactly what a compact
+  detector misses, so the model is told to describe one it can plainly
+  see and disregard the line — and the line never touches the suspicious
+  verdict, since a vehicle can damage another vehicle with nobody
+  present. A detector that was switched off or unavailable still says
+  nothing at all, which is not the same as finding nothing.
+- **Every example in the output rules described a person.** In a prompt
+  of some nine thousand characters, the examples are the strongest prior
+  a small model has, and all of them pointed the same way. Each set now
+  pairs a person with a subject-free alternative, and the rules say
+  outright that the examples govern length and tone, not content — plus
+  that a clip where nothing happened is a normal result to report as
+  such, not a failure to find something.
+
+### Detection boxes were drawn in the wrong place
+
+The clip modal's **Boxes** overlay drew every box stretched downward, well
+below the thing it belonged to, while the labels sat correctly on the cars
+they named. An `<svg>` is a replaced element, so pinning it with `inset: 0`
+alone did not stretch it the way it does an ordinary `<div>`: with no width
+or height of its own it took the 1:1 ratio of its `viewBox` and rendered as
+a square as tall as the player is wide, so every box was displaced by the
+video's aspect ratio. The overlay is now given an explicit size. The e2e
+test covering this checked the SVG's coordinate attributes, which were
+right all along — it now also checks where the boxes actually land.
+
+### Other bug fixes
 
 - **The SAM2 contact-segmentation model no longer warns on every start.**
   The published `facebook/sam2.1-hiera-tiny` checkpoint still describes its

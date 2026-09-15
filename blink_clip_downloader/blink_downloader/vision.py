@@ -792,6 +792,38 @@ def _detection_distance_pair(
     return (legacy[0], legacy[1].box) if legacy is not None else None
 
 
+def _no_subject_sentence(detections: list[DetectedObject]) -> str:
+    """State plainly that no person or animal was found, when none was.
+
+    The detector sweeps every sampled frame, so "not one person in any of
+    them" is the strongest single fact this pipeline produces about a clip
+    — and it used to be the one fact the prompt never carried. Listing the
+    classes that *were* found says nothing about the class that wasn't, and
+    a small model handed several thousand words of person-centric rules
+    plus a couple of frames would narrate a person into an empty driveway.
+    The security layer already records this same observation as an evidence
+    note, but that note rides along with the SECURITY EVIDENCE section,
+    which is suppressed precisely when there are no events to report — so
+    in the no-subject case it reached nothing.
+
+    Deliberately evidence, not a verdict, and deliberately overridable: a
+    person who is distant, partly hidden, or small in frame is exactly what
+    a nano-scale detector misses, and a clip where that happens must still
+    be describable as what it is. It never speaks to ``suspicious`` either
+    — a vehicle can damage another vehicle with nobody present at all.
+    Returns "" when a subject *was* detected, so the caller can drop it.
+    """
+    if any(d.label in _SUBJECT_CLASSES for d in detections):
+        return ""
+    return (
+        "No person and no animal was detected in any sampled frame of this "
+        "clip. Do not describe a person, or anyone's actions, unless you can "
+        "plainly see one in these frames yourself — if you can, describe them "
+        "and disregard this line, since a distant, small or partly hidden "
+        "person can be missed."
+    )
+
+
 def _build_detection_hint(
     detections: list[DetectedObject],
     car_description: str,
@@ -811,11 +843,20 @@ def _build_detection_hint(
     states is a distance to *your* car, not to whichever vehicle a subject
     happened to stand nearest. *zone_ref* is the fallback used when no
     identification was made, matching the behaviour before that existed.
+
+    An empty *detections* still produces a hint, rather than None: "the
+    detector swept this clip and found nothing" is evidence, and saying
+    nothing at all is what let a model narrate a subject into an empty
+    driveway (see :func:`_no_subject_sentence`).
     """
-    if not detections:
-        return None
     labels = sorted({d.label for d in detections})
-    lines = [f"Detected object classes across sampled frames: {', '.join(labels)}."]
+    lines = [
+        f"Detected object classes across sampled frames: {', '.join(labels)}."
+        if labels
+        else "No objects of any tracked class were detected in any sampled frame."
+    ]
+    lines.append(_no_subject_sentence(detections))
+    lines = [line for line in lines if line]
 
     pair = _detection_distance_pair(detections, zone_ref, asset_box, car_description)
     if pair is not None:
@@ -2116,6 +2157,12 @@ class VisionPipeline:
         if not detections:
             if detections is None:
                 hints.unavailable_sources.append(SOURCE_OBJECT_DETECTION)
+            else:
+                # Ran and found nothing, which is not the same as not having
+                # run — only the former is evidence, and conflating the two
+                # would tell the model "nobody was here" on a clip the
+                # detector never actually looked at.
+                hints.detection_hint = _build_detection_hint([], car_description)
             hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
             hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
             hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)

@@ -94,6 +94,17 @@ const visible = computed(() =>
   pointer-events: none;
   z-index: 2;
 }
+/* An <svg> is a replaced element, so `inset: 0` alone does NOT stretch it
+   the way it does the sibling label <div>: with width and height both
+   auto, the used size comes from the intrinsic ratio (1:1 here, from
+   `viewBox="0 0 100 100"`) and the over-constrained `bottom` is dropped.
+   The overlay ended up square — as tall as the player is wide — so every
+   box was drawn stretched and pushed down the frame by the video's aspect
+   ratio while the labels, being a plain block box, stayed correct. */
+.detection-overlay {
+  width: 100%;
+  height: 100%;
+}
 .detection-box {
   fill: none;
   /* vector-effect keeps the stroke one pixel wide despite the

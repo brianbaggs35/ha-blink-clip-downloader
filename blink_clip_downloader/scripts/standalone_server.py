@@ -325,13 +325,20 @@ _DELETE_TEST_CLIP_ID = "e2e-scratch-delete"
 
 
 async def _generate_test_video(path: Path, duration: int) -> None:
+    # 16:9, matching the 640x360 frame the seeded detected_objects rows
+    # declare (see _seed_detected_objects) rather than contradicting it.
+    # The size itself is load-bearing: a square fixture made the clip
+    # modal's player square too, which is exactly the shape that hid a
+    # detection-overlay bug where the <svg> resolved to its viewBox's 1:1
+    # ratio instead of the player's — invisible when those happen to
+    # agree. Still tiny; only the aspect ratio matters here.
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg",
         "-y",
         "-f",
         "lavfi",
         "-i",
-        f"testsrc=duration={duration}:size=64x64:rate=5",
+        f"testsrc=duration={duration}:size=320x180:rate=5",
         "-pix_fmt",
         "yuv420p",
         str(path),
