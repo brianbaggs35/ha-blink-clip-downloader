@@ -244,11 +244,26 @@ jobs:
       - name: Wait for inner Docker daemon
         run: scripts/ci/ha_integration_setup.sh wait-docker
 
+      - name: Start Supervisor
+        run: |
+          docker exec -d "$CONTAINER_NAME" \
+            bash -c "supervisor_run > /var/log/supervisor_run.log 2>&1"
+
+      - name: Wait for Home Assistant Core
+        run: scripts/ci/ha_integration_setup.sh wait-core
+
       # Hands the licensed image to the devcontainer's own daemon and
       # serves it from a loopback registry in there, so Supervisor can pull
       # it without anything being published to a real registry. Supervisor
       # still pulls Home Assistant's own images from ghcr anonymously, as
       # any local devcontainer run does.
+      #
+      # Must come *after* Supervisor is up, not before: `supervisor_run`
+      # stops and removes every container on the inner daemon as one of its
+      # first actions ("Stopping and removing containers..." in
+      # supervisor_run.log). Started any earlier, the registry is wiped
+      # before Supervisor ever tries to pull, and the only symptom is a
+      # "connection refused" buried in the Supervisor log.
       - name: Serve the licensed image inside the devcontainer
         env:
           INTEGRATION_IMAGE: ${{ steps.integration-image.outputs.image }}
@@ -266,14 +281,6 @@ jobs:
             -o "${RUNNER_TEMP}/integration-image.tar"
           scripts/ci/ha_integration_setup.sh serve-local-image \
             "${RUNNER_TEMP}/integration-image.tar"
-
-      - name: Start Supervisor
-        run: |
-          docker exec -d "$CONTAINER_NAME" \
-            bash -c "supervisor_run > /var/log/supervisor_run.log 2>&1"
-
-      - name: Wait for Home Assistant Core
-        run: scripts/ci/ha_integration_setup.sh wait-core
 
       - name: Discover the add-on as a local app
         run: scripts/ci/ha_integration_setup.sh discover
