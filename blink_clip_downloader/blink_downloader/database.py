@@ -1970,21 +1970,49 @@ class ClipDatabase:
 
     async def get_detected_objects_summary(self, clip_id: str) -> list[dict[str, Any]]:
         """Detections for *clip_id*, aggregated by label — {label, count,
-        max_confidence} per distinct label, most-frequent first. This is
-        all the clip modal's compact chip summary needs; per-detection
-        boxes/frame indices stay in the database for now. Empty if
-        detection was never enabled for this clip or nothing was found.
+        detections, max_confidence} per distinct label, most-numerous
+        first. Empty if detection was never enabled for this clip or
+        nothing was found.
+
+        ``count`` is **how many of that label were in frame at once at the
+        peak**, not how many boxes were stored: the detector runs over
+        every sampled frame, so one car parked through a twelve-frame clip
+        contributes twelve rows. Counting those rows is what made the clip
+        modal's chips read "33 cars" for a driveway with three in it — the
+        per-frame peak is the honest answer to "how many were there", and
+        can never be inflated by the same object simply being seen again.
+
+        Distinct ``track_id`` is deliberately *not* used for this even
+        though the column exists: this pipeline hands the tracker frames
+        seconds apart rather than consecutive video (see ObjectDetector's
+        own note in vision.py), so ids are best-effort and an object that
+        picks up a fresh id each frame would put the inflated count
+        straight back.
+
+        ``detections`` keeps the raw box total, which is still worth
+        showing as supporting detail — it says how much evidence the count
+        rests on.
         """
         if self._pool is None:
             return []
         rows = await self._pool.fetch(
             _qm(
                 """
-                SELECT label, COUNT(*) AS count, MAX(confidence) AS max_confidence
-                FROM detected_objects
-                WHERE clip_id=?
+                SELECT label,
+                       MAX(per_frame)::int AS count,
+                       SUM(per_frame)::int AS detections,
+                       MAX(frame_best) AS max_confidence
+                FROM (
+                    SELECT label,
+                           frame_index,
+                           COUNT(*) AS per_frame,
+                           MAX(confidence) AS frame_best
+                    FROM detected_objects
+                    WHERE clip_id=?
+                    GROUP BY label, frame_index
+                ) per_frame_counts
                 GROUP BY label
-                ORDER BY count DESC, label ASC
+                ORDER BY count DESC, detections DESC, label ASC
                 """
             ),
             clip_id,

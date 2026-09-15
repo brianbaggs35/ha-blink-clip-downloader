@@ -3354,7 +3354,12 @@ async def test_ai_clip_result_includes_detected_objects_summary(
     resp = await client.get("/api/ai/results/ar4")
     data = await resp.json()
     assert data["detected_objects"] == [
-        {"label": "person", "count": 1, "max_confidence": pytest.approx(0.9)}
+        {
+            "label": "person",
+            "count": 1,
+            "detections": 1,
+            "max_confidence": pytest.approx(0.9),
+        }
     ]
 
 
@@ -3633,7 +3638,12 @@ async def test_ai_analyze_now_saves_detected_objects(
         assert resp.status == 200
         summary = await db.get_detected_objects_summary("an3")
         assert summary == [
-            {"label": "dog", "count": 1, "max_confidence": pytest.approx(0.85)}
+            {
+                "label": "dog",
+                "count": 1,
+                "detections": 1,
+                "max_confidence": pytest.approx(0.85),
+            }
         ]
     finally:
         await tc.close()
@@ -3724,7 +3734,12 @@ async def test_ai_test_saves_detected_objects(db: ClipDatabase, tmp_path: Path) 
         assert resp.status == 200
         summary = await db.get_detected_objects_summary("at3")
         assert summary == [
-            {"label": "car", "count": 1, "max_confidence": pytest.approx(0.77)}
+            {
+                "label": "car",
+                "count": 1,
+                "detections": 1,
+                "max_confidence": pytest.approx(0.77),
+            }
         ]
     finally:
         await tc.close()

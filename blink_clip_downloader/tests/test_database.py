@@ -1564,12 +1564,89 @@ async def test_save_and_get_detected_objects_summary(db: ClipDatabase) -> None:
 
     summary = await db.get_detected_objects_summary("c1")
     by_label = {row["label"]: row for row in summary}
-    assert by_label["person"]["count"] == 2
+    # One person, seen in two frames — one person, not two. The raw box
+    # total is kept separately as supporting detail.
+    assert by_label["person"]["count"] == 1
+    assert by_label["person"]["detections"] == 2
     assert by_label["person"]["max_confidence"] == pytest.approx(0.9)
     assert by_label["car"]["count"] == 1
+    assert by_label["car"]["detections"] == 1
     assert by_label["car"]["max_confidence"] == pytest.approx(0.95)
-    # Most-frequent label first.
+    # Ties on the count break on how much evidence there is for it.
     assert summary[0]["label"] == "person"
+
+
+async def test_detected_objects_summary_counts_the_peak_not_every_box(
+    db: ClipDatabase,
+) -> None:
+    """One car parked through a whole clip is one car.
+
+    The detector runs over every sampled frame, so counting stored rows
+    reported a driveway with three cars in it as "33 cars" — once per car
+    per frame. The count is the most of that label in frame at any one
+    moment; the raw box total stays available as `detections`.
+    """
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="car",
+                confidence=0.8,
+                box=(float(car), 0.0, float(car) + 5.0, 5.0),
+                # Deliberately a fresh track id per frame, which is what
+                # frames sampled seconds apart actually produce — the count
+                # must not follow it.
+                track_id=frame * 10 + car,
+                frame_index=frame,
+            )
+            for frame in range(11)
+            for car in range(3)
+        ],
+    )
+
+    summary = await db.get_detected_objects_summary("c1")
+    assert summary == [
+        {
+            "label": "car",
+            "count": 3,
+            "detections": 33,
+            "max_confidence": pytest.approx(0.8),
+        }
+    ]
+
+
+async def test_detected_objects_summary_counts_a_later_crowd_not_the_first_frame(
+    db: ClipDatabase,
+) -> None:
+    """The peak is over the whole clip, not just whichever frame came first."""
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="person",
+                confidence=0.6,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=None,
+                frame_index=0,
+            ),
+            *[
+                DetectedObject(
+                    label="person",
+                    confidence=0.6,
+                    box=(float(i), 0.0, float(i) + 4.0, 5.0),
+                    track_id=None,
+                    frame_index=1,
+                )
+                for i in range(4)
+            ],
+        ],
+    )
+
+    summary = await db.get_detected_objects_summary("c1")
+    assert summary[0]["count"] == 4
+    assert summary[0]["detections"] == 5
 
 
 async def test_save_detected_objects_replaces_not_accumulates(

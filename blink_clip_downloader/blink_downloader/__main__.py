@@ -11,6 +11,30 @@ from .app import BlinkClipDownloaderApp
 from .config import AppConfig, load_config
 
 
+class _HuggingFaceRequestFilter(logging.Filter):
+    """Drops httpx's per-request lines for huggingface.co.
+
+    Bringing up the optional vision pipeline's transformers models emits
+    roughly thirty of these back to back — the Hub revalidating each
+    cached config file, every one a 307/302 redirect to a CDN followed by
+    a 200. That is normal, successful behaviour (the models themselves are
+    already cached under HF_HOME; only the small metadata files are
+    re-checked), but it reads like a wall of errors and buries the
+    add-on's own startup lines between the two "model ready" messages.
+
+    Only these are dropped: httpx stays at INFO otherwise, because its one
+    concise line per AI-provider request is genuinely useful.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "huggingface.co" not in record.getMessage()
+
+
+# Module-level singleton so repeated _setup_logging() calls cannot stack
+# duplicate copies of it (Logger.addFilter ignores one already attached).
+_HF_REQUEST_FILTER = _HuggingFaceRequestFilter()
+
+
 def _setup_logging(level: str) -> None:
     numeric = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
@@ -45,15 +69,20 @@ def _setup_logging(level: str) -> None:
     # log effectively unreadable without adding anything a user
     # troubleshooting *this add-on's* behavior can act on. Capped at
     # WARNING (rather than removed) so a genuine SDK-level problem —
-    # retries, deprecation notices — still surfaces; httpx is deliberately
-    # left alone, since its own contribution is a single concise INFO line
-    # per request ("HTTP Request: POST ... 200 OK") that's actually useful.
+    # retries, deprecation notices — still surfaces. httpx keeps its level,
+    # since its own contribution is a single concise INFO line per request
+    # ("HTTP Request: POST ... 200 OK") that's actually useful; only its
+    # model-cache traffic is filtered out, see below.
     logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     # matplotlib logs its font-cache setup at DEBUG once per process
     # (triggered by the first YOLO/object-detection import) — a one-time
     # startup detail, not per-clip signal, so it's noise the same way.
     logging.getLogger("matplotlib").setLevel(logging.WARNING)
+    # See _HuggingFaceRequestFilter above: the model cache's own HTTP
+    # chatter, not this add-on's.
+    logging.getLogger("httpx").addFilter(_HF_REQUEST_FILTER)
+    logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
 
 def main() -> None:

@@ -618,7 +618,7 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
                 event_type=SecurityEventType.SUBJECT_PRESENT,
                 severity=Severity.ROUTINE,
                 confidence=0.91,
-                detail="A person was visible for at least 6s, moving left.",
+                detail="A person was visible for at least 6s, moving left across the frame.",
                 subject_label="person",
                 track_id=1,
                 start_offset=0.0,

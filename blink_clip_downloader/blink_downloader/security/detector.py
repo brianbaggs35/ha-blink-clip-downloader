@@ -220,14 +220,19 @@ class SecurityEventDetector:
         self, track: ObjectTrack, ctx: DetectionContext
     ) -> SecurityEvent:
         """The baseline "something was here" event, always routine."""
+        # A track seen in a single frame has no measurable dwell, and
+        # "visible for at least 0s" is not a sentence anyone should be shown
+        # — say "briefly" rather than round a sub-second sighting to zero.
+        dwell = (
+            f"was visible for at least {track.dwell_seconds:.0f}s"
+            if track.dwell_seconds >= 1
+            else "was visible only briefly"
+        )
         return SecurityEvent(
             event_type=SecurityEventType.SUBJECT_PRESENT,
             severity=Severity.ROUTINE,
             confidence=track.mean_confidence,
-            detail=(
-                f"{_article(track.label)} {track.label} was visible for at least "
-                f"{track.dwell_seconds:.0f}s, {track.direction}."
-            ),
+            detail=f"{_article(track.label)} {track.label} {dwell}, {track.direction}.",
             subject_label=track.label,
             track_id=track.track_id,
             start_offset=track.first_offset,
