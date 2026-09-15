@@ -163,6 +163,20 @@ cmd_serve_local_image() {
   local tar="${1:?image tar path required}"
   local ref="${INTEGRATION_IMAGE:?INTEGRATION_IMAGE must be set}:${INTEGRATION_VERSION:?INTEGRATION_VERSION must be set}"
 
+  # This function exists so that nothing is published, so make that a rule
+  # rather than a property of today's configuration: an edit that repoints
+  # INTEGRATION_IMAGE at a real registry fails here instead of quietly
+  # publishing a CI-only image again, which is how the ghcr packages this
+  # replaced came about in the first place.
+  case "$ref" in
+    127.0.0.1:* | localhost:*) ;;
+    *)
+      echo "refusing to push ${ref}: serve-local-image publishes only to a" \
+        "loopback registry inside the devcontainer" >&2
+      return 1
+      ;;
+  esac
+
   docker cp "$tar" "${CONTAINER_NAME}:/tmp/integration-image.tar"
   docker exec "$CONTAINER_NAME" docker load -i /tmp/integration-image.tar
   docker exec "$CONTAINER_NAME" rm -f /tmp/integration-image.tar
