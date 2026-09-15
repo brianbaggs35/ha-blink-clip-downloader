@@ -148,6 +148,42 @@ poll() {
   echo "OK (after ~${waited}s): $description"
 }
 
+cmd_serve_local_image() {
+  # Supervisor installs the add-on by *pulling* the image config.yaml names,
+  # through the devcontainer's own inner Docker daemon. That is the only
+  # reason this job ever published anything: the image had to sit somewhere
+  # that daemon could reach, and ghcr was the obvious somewhere — at the
+  # cost of a real package, in a real registry, for an artifact that never
+  # outlives the job.
+  #
+  # A registry on the loopback interface *inside* the devcontainer is
+  # reachable by that same daemon and needs no credentials and no
+  # daemon configuration: Docker exempts 127.0.0.1 from its HTTPS
+  # requirement, so plain HTTP is accepted as-is. Nothing leaves the job.
+  local tar="${1:?image tar path required}"
+  local ref="${INTEGRATION_IMAGE:?INTEGRATION_IMAGE must be set}:${INTEGRATION_VERSION:?INTEGRATION_VERSION must be set}"
+
+  docker cp "$tar" "${CONTAINER_NAME}:/tmp/integration-image.tar"
+  docker exec "$CONTAINER_NAME" docker load -i /tmp/integration-image.tar
+  docker exec "$CONTAINER_NAME" rm -f /tmp/integration-image.tar
+
+  # registry:2 arrived in the same tar as the app image, so this starts
+  # from what was just loaded and never reaches Docker Hub.
+  #
+  # --restart=always so it survives anything Supervisor's own startup does
+  # to the daemon; published on loopback only, so it is not reachable from
+  # outside the container even within the job.
+  docker exec "$CONTAINER_NAME" docker run -d --restart=always \
+    --name integration-registry -p 127.0.0.1:5000:5000 registry:2
+
+  poll "local registry ready" 60 2 \
+    docker exec "$CONTAINER_NAME" \
+    curl -sf http://127.0.0.1:5000/v2/
+
+  docker exec "$CONTAINER_NAME" docker push "$ref"
+  echo "OK: ${ref} is served from a registry inside the devcontainer"
+}
+
 cmd_wait_docker() {
   # The outer devcontainer image runs a full init system that starts its
   # own inner dockerd as one of its managed services -- it is not
@@ -404,6 +440,10 @@ cmd_diagnostics() {
 case "${1:-}" in
   prepare-addon-copy) cmd_prepare_addon_copy ;;
   wait-docker) cmd_wait_docker ;;
+  serve-local-image)
+    shift
+    cmd_serve_local_image "$@"
+    ;;
   wait-core) cmd_wait_core ;;
   discover) cmd_discover ;;
   install) cmd_install ;;
@@ -424,7 +464,7 @@ case "${1:-}" in
     cmd_diagnostics "$@"
     ;;
   *)
-    echo "Usage: $0 {prepare-addon-copy|wait-docker|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|diagnostics <dir>}" >&2
+    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|diagnostics <dir>}" >&2
     exit 64
     ;;
 esac
