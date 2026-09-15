@@ -788,8 +788,59 @@ def test_car_zone_reference_none_for_polygon_with_no_points(
     assert _car_zone_reference({"shape": "polygon", "points": []}, b"frame") is None
 
 
-def test_build_detection_hint_empty_detections_returns_none() -> None:
-    assert _build_detection_hint([], "Silver Kia") is None
+def test_build_detection_hint_reports_an_empty_sweep_rather_than_nothing() -> None:
+    """A detector that ran and found nothing is evidence, not silence.
+
+    This used to return None, so a clip the detector swept clean reached
+    the model with no grounding at all — the case where grounding matters
+    most.
+    """
+    hint = _build_detection_hint([], "Silver Kia")
+    assert hint is not None
+    assert "No objects of any tracked class were detected" in hint
+    assert "No person and no animal was detected" in hint
+
+
+def test_build_detection_hint_states_no_person_when_only_vehicles_found() -> None:
+    """The bug this exists for: four parked cars, nobody in frame, and a
+    prompt that never once said so — leaving a small model to narrate "a
+    person is walking along the street" into an empty driveway."""
+    detections = [
+        DetectedObject("car", 0.9, (0, 0, 10, 10), 1, 0),
+        DetectedObject("car", 0.9, (20, 0, 30, 10), 2, 0),
+    ]
+    hint = _build_detection_hint(detections, "Silver Kia")
+    assert hint is not None
+    assert "No person and no animal was detected in any sampled frame" in hint
+
+
+def test_build_detection_hint_no_subject_line_stays_overridable() -> None:
+    """Never a gag order: a distant or partly hidden person is exactly what
+    a nano-scale detector misses, so the model must stay free to report one
+    it can actually see. Nor does the line touch the verdict — a vehicle can
+    damage another vehicle with nobody present."""
+    hint = _build_detection_hint([DetectedObject("car", 0.9, (0, 0, 9, 9), 1, 0)], "")
+    assert hint is not None
+    assert "unless you can plainly see one in these frames yourself" in hint
+    assert "suspicious" not in hint.lower()
+
+
+def test_build_detection_hint_omits_no_subject_line_when_a_person_is_found() -> None:
+    detections = [
+        DetectedObject("person", 0.9, (0, 0, 10, 10), 1, 0),
+        DetectedObject("car", 0.9, (20, 0, 30, 10), 2, 0),
+    ]
+    hint = _build_detection_hint(detections, "")
+    assert hint is not None
+    assert "No person and no animal" not in hint
+
+
+def test_build_detection_hint_omits_no_subject_line_for_an_animal() -> None:
+    """A dog is a subject in its own right (SUBJECT_LABELS), so a clip with
+    one must not be described as having no animal in it."""
+    hint = _build_detection_hint([DetectedObject("dog", 0.9, (0, 0, 9, 9), 1, 0)], "")
+    assert hint is not None
+    assert "No person and no animal" not in hint
 
 
 def test_build_detection_hint_lists_labels() -> None:
@@ -2401,6 +2452,28 @@ async def test_vision_pipeline_tracking_hint_across_multiple_frames(
     hints = await pipeline.process_clip(frames)
     assert hints.tracking_hint is not None
     assert "lingering or casing" in hints.tracking_hint
+
+
+async def test_vision_pipeline_hints_an_empty_sweep_when_detector_found_nothing() -> (
+    None
+):
+    """A detector that ran and returned zero boxes must still say so."""
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    with patch.object(ObjectDetector, "detect", return_value=[]):
+        hints = await pipeline.process_clip([_real_jpeg_bytes()])
+    assert hints.detection_hint is not None
+    assert "No person and no animal was detected" in hints.detection_hint
+
+
+async def test_vision_pipeline_stays_silent_when_the_detector_never_ran() -> None:
+    """The safety-relevant half of the distinction above: an unavailable
+    detector returns None, not an empty list, and must never produce
+    "nobody was here" about frames nothing ever looked at."""
+    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
+    with patch.object(ObjectDetector, "detect", return_value=None):
+        hints = await pipeline.process_clip([_real_jpeg_bytes()])
+    assert hints.detection_hint is None
+    assert SOURCE_OBJECT_DETECTION in hints.unavailable_sources
 
 
 async def test_vision_pipeline_face_recognition(db: ClipDatabase) -> None:

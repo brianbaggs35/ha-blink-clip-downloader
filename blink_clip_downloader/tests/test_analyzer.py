@@ -424,6 +424,54 @@ def test_build_prompt_output_rules_favor_brief_security_focused_descriptions(
     assert "power lines" in prompt
 
 
+def test_build_prompt_output_rules_do_not_prime_a_person(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """Every OUTPUT RULES example used to describe a person.
+
+    In a ~9,000-character prompt, the examples are the strongest prior a
+    small model has, and all of them pointed the same way — which is how a
+    clip of four parked cars and nobody in it came back as "A person is
+    walking along the street". Each example set now pairs a person with a
+    subject-free alternative, and the rules say outright that the examples
+    govern length and tone rather than content.
+    """
+    prompt = analyzer._build_prompt("Front Door")
+    assert "only a guide to LENGTH and TONE — never to content" in prompt
+    assert "if no person is present, do not put one in the description" in prompt
+    assert "nothing is happening at all, say so plainly" in prompt
+    # A clean clip is a result, not a failure to find something.
+    assert "normal and expected result" in prompt
+
+
+def test_build_prompt_offers_a_subject_free_example_on_a_car_camera() -> None:
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Silver Kia Forte",
+        car_cameras=["Driveway"],
+    )
+    prompt = a._build_prompt("Driveway")
+    assert "standing about 2 feet from the car" in prompt
+    assert "the car is parked as usual with nobody near it" in prompt
+
+
+def test_build_prompt_offers_a_subject_free_example_on_a_non_car_camera() -> None:
+    """The camera-agnostic example set needs the same balance — a front-door
+    camera can just as easily be shown an empty porch."""
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="Analyze.",
+        car_description="Silver Kia Forte",
+        car_cameras=["Driveway"],
+    )
+    prompt = a._build_prompt("Front Door")
+    assert "the yard is empty and nothing is moving" in prompt
+    assert "the car is parked as usual with nobody near it" not in prompt
+
+
 def test_base_prompt_for_camera_matches_build_prompt_default(
     analyzer: ClipAnalyzer,
 ) -> None:

@@ -2412,10 +2412,17 @@ class BaseAnalyzer(abc.ABC):
         camera-agnostic example so smaller models aren't nudged into
         inventing a car or driveway that this camera cannot actually see
         (each camera has its own field of view)."""
+        # Both variants deliberately pair a person-shaped phrase with a
+        # subject-free one. When every example named a person, a small model
+        # handed a clip of an empty driveway would reliably produce one
+        # anyway — the examples are the strongest prior in a prompt this
+        # long, and they all pointed the same way.
         example_phrase = (
-            "Use natural phrases like 'standing about 2 feet from the car' or 'walking past the driveway'. "
+            "Use natural phrases like 'standing about 2 feet from the car', "
+            "'walking past the driveway', or 'the car is parked as usual with nobody near it'. "
             if car_applies
-            else "Use natural phrases like 'standing near the front steps' or 'walking across the yard'. "
+            else "Use natural phrases like 'standing near the front steps', "
+            "'walking across the yard', or 'the yard is empty and nothing is moving'. "
         )
         return (
             "\n\nOUTPUT RULES: The 'description' field must be written in plain English "
@@ -2423,10 +2430,17 @@ class BaseAnalyzer(abc.ABC):
             f"actually visible in these specific frames from the {camera} camera — never assume "
             "objects or areas seen by other cameras on the property are visible here. "
             "Keep it SHORT: one sentence, or at most two only when genuinely necessary — "
-            "about the length of 'A person is walking past the car' or 'A person is standing "
-            "very close to the car and appears to be looking inside it'. State only the "
+            "about the length of 'A person is walking past the car', 'A car is parked in the "
+            "driveway with nobody around it', or 'A person is standing very close to the car "
+            "and appears to be looking inside it'. State only the "
             "notable person, vehicle, or animal and what they are doing, from a security-"
-            "monitoring perspective focused on this property's assets. Do NOT list or "
+            "monitoring perspective focused on this property's assets. "
+            "Every example above is only a guide to LENGTH and TONE — never to content. "
+            "Describe the subjects that are actually in these frames: if no person is "
+            "present, do not put one in the description, and if nothing is happening at "
+            "all, say so plainly (e.g. 'Nothing notable — the parked cars are "
+            "undisturbed and nobody is around'). A clip where nothing happened is a "
+            "normal and expected result, not a failure to find something. Do NOT list or "
             "describe static background scenery that isn't part of the notable activity — "
             "other parked vehicles that aren't involved, houses, weather, foliage or grass, "
             "utility poles, power lines, and general neighborhood description all add nothing "
