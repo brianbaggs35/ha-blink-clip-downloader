@@ -711,6 +711,25 @@ def _car_zone_reference(zone: dict[str, Any], frame: bytes) -> _ZoneReference | 
     return _ZoneReference(zone=parsed, size=size, box=parsed.to_pixel_box(*size))
 
 
+def _zone_preferred_vehicles(
+    vehicles: list[DetectedObject], zone_ref: _ZoneReference | None
+) -> list[DetectedObject]:
+    """Narrow one frame's vehicles to the one the drawn zone points at.
+
+    Vehicles actually inside the zone win outright; only when none is does
+    proximity to its bounds decide, which is all there was to go on before
+    the outline was honoured exactly. For a rectangle zone the two rules
+    pick the same vehicle in every case — an overlapping box always has a
+    smaller (negative) gap than a separated one. A frame with no zone, or
+    with nothing to disambiguate, is handed back untouched.
+    """
+    if zone_ref is None or len(vehicles) <= 1:
+        return vehicles
+    inside = [v for v in vehicles if zone_ref.covers(v.box)]
+    pool = inside or vehicles
+    return [min(pool, key=lambda v: _box_gap(v.box, zone_ref.box))]
+
+
 def _best_subject_vehicle_pair(
     detections: list[DetectedObject],
     zone_ref: _ZoneReference | None = None,
@@ -743,16 +762,9 @@ def _best_subject_vehicle_pair(
         by_frame.setdefault(d.frame_index, []).append(d)
     for frame_idx, items in by_frame.items():
         subjects = [d for d in items if d.label in _SUBJECT_CLASSES]
-        vehicles = [d for d in items if d.label in _VEHICLE_CLASSES]
-        if zone_ref is not None and len(vehicles) > 1:
-            # Vehicles actually inside the drawn zone win outright; only
-            # when none is does proximity to its bounds decide, which is
-            # all there was to go on before. For a rectangle zone the two
-            # rules pick the same vehicle in every case — an overlapping
-            # box always has a smaller (negative) gap than a separated one.
-            inside = [v for v in vehicles if zone_ref.covers(v.box)]
-            pool = inside or vehicles
-            vehicles = [min(pool, key=lambda v: _box_gap(v.box, zone_ref.box))]
+        vehicles = _zone_preferred_vehicles(
+            [d for d in items if d.label in _VEHICLE_CLASSES], zone_ref
+        )
         for s in subjects:
             for v in vehicles:
                 gap = _box_gap(s.box, v.box)

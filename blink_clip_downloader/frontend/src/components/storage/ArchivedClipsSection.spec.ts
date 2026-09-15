@@ -883,23 +883,31 @@ describe('ArchivedClipsSection', () => {
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore)
   })
 
-  it('toggles an archive open via keyboard (Enter/Space), not just a click', async () => {
+  it('exposes the archive toggle as a real button, so Enter/Space work natively', async () => {
+    // This used to be a div with role="button", tabindex and hand-rolled
+    // keydown.enter/keydown.space handlers. It is a real <button> now, so
+    // the browser supplies focus, the role and both activation keys --
+    // which is the actual guarantee, and one jsdom cannot demonstrate
+    // (it never synthesizes a click from a keydown on a button). The
+    // keyboard round trip is covered for real in a browser by
+    // e2e/storage.spec.ts instead.
     const group = makeGroup()
     vi.stubGlobal('fetch', routedFetch({ groups: [group], clips: { [group.archive_path]: [makeClip()] } }))
     const wrapper = mountSection()
     await flushPromises()
 
     const header = wrapper.find('.archive-panel-header')
-    expect(header.attributes('aria-expanded')).toBe('false')
+    expect(header.element.tagName).toBe('BUTTON')
+    // type="button" matters: a bare <button> inside a form would submit it.
+    expect(header.attributes('type')).toBe('button')
+    expect(header.attributes('role')).toBeUndefined()
+    expect(header.attributes('tabindex')).toBeUndefined()
 
-    await header.trigger('keydown.enter')
+    expect(header.attributes('aria-expanded')).toBe('false')
+    await header.trigger('click')
     await flushPromises()
     expect(header.attributes('aria-expanded')).toBe('true')
     expect(wrapper.text()).toContain('Not backed up')
-
-    await header.trigger('keydown.space')
-    await flushPromises()
-    expect(header.attributes('aria-expanded')).toBe('false')
   })
 
   it("toggles via PrimeVue's own Panel toggle button, not just the custom header", async () => {

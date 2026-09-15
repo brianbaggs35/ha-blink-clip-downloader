@@ -33,6 +33,25 @@ test('expanding an archive groups its clips by camera', async ({ page }) => {
   await expect(multiPanel.getByText('Not backed up')).toHaveCount(2)
 })
 
+test('an archive expands from the keyboard alone, with focus reaching it by Tab', async ({ page }) => {
+  // The expand control is a real <button>, so the browser supplies focus,
+  // the role and both activation keys rather than the component
+  // re-implementing them. jsdom cannot show this (it never synthesizes a
+  // click from a keydown), so the round trip belongs here.
+  const panel = page.locator('.archive-panel', { hasText: '2024-01-e2e.zip' })
+  const header = panel.locator('.archive-panel-header')
+  await expect(header).toHaveAttribute('aria-expanded', 'false')
+
+  await header.focus()
+  await expect(header).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(header).toHaveAttribute('aria-expanded', 'true')
+  await expect(panel.getByText('Front Door (1 clip)')).toBeVisible()
+
+  await page.keyboard.press(' ')
+  await expect(header).toHaveAttribute('aria-expanded', 'false')
+})
+
 test('filtering by camera narrows both the archive list and its counts', async ({ page }) => {
   await page.getByRole('combobox', { name: 'Filter by camera' }).click()
   await page.getByRole('option', { name: 'Front Door' }).click()

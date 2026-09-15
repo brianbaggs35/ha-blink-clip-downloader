@@ -202,7 +202,7 @@ async function loadArchivePage(path: string, offset: number): Promise<void> {
     if (requestGeneration !== filterGeneration.value) return
     clipsByArchivePage.value = {
       ...clipsByArchivePage.value,
-      [path]: { ...(clipsByArchivePage.value[path] ?? {}), [offset]: response.items },
+      [path]: { ...clipsByArchivePage.value[path], [offset]: response.items },
     }
     archiveTotals.value = { ...archiveTotals.value, [path]: response.total }
     archiveFirst.value = { ...archiveFirst.value, [path]: offset }
@@ -367,21 +367,22 @@ async function removeArchive(group: ArchiveGroup) {
               it isn't nested inside this element. A real <button> can't be
               used for the whole row without nesting an interactive element
               inside another (invalid HTML) once PrimeVue's own toggle
-              button renders alongside it. The delete button below is a
-              sibling of this element, not a child of it, for the same
-              reason: nesting it inside this role="button" div would make
-              its aria-label bleed into this div's own name-from-content
-              accessible name (per the ARIA accname algorithm), announcing
-              a confusing "...Delete archive" on the toggle itself.
+              button renders alongside it. Both that toggle and the delete
+              button below are therefore *siblings* of this element rather
+              than children -- which also keeps the delete button's
+              aria-label out of this one's name-from-content accessible
+              name (per the ARIA accname algorithm), where it would
+              otherwise announce a confusing "...Delete archive" on the
+              expand control itself. Since nothing interactive ends up
+              inside it, this is a real <button>: native Enter/Space
+              handling, native focus, and a real role, rather than a div
+              re-implementing all three.
             -->
-            <div
+            <button
+              type="button"
               class="archive-panel-header"
-              role="button"
-              tabindex="0"
               :aria-expanded="expandedArchives.has(group.archive_path)"
               @click="toggleArchive(group.archive_path)"
-              @keydown.enter="toggleArchive(group.archive_path)"
-              @keydown.space.prevent="toggleArchive(group.archive_path)"
             >
               <Tag severity="secondary" value="ZIP" />
               <span class="archive-name">{{ archiveLabel(group.archive_path) }}</span>
@@ -389,7 +390,7 @@ async function removeArchive(group: ArchiveGroup) {
                 >{{ group.clip_count }} clip{{ group.clip_count === 1 ? '' : 's' }} ·
                 {{ fmtSize(group.total_size) }}</span
               >
-            </div>
+            </button>
             <Button
               size="small"
               severity="danger"
@@ -578,6 +579,16 @@ async function removeArchive(group: ArchiveGroup) {
   min-width: 0;
   cursor: pointer;
   border-radius: 6px;
+  /* Strip the UA button chrome -- this is a whole header row that happens
+     to be activatable, not a control that should look like one. */
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
 }
 
 .archive-panel-header:hover,

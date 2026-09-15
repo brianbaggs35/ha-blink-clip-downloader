@@ -86,19 +86,26 @@ describe('BatteryHistoryModal', () => {
     expect(body.text()).toContain('Back to normal')
   })
 
-  it('computes how long the battery stayed low between a low row and its recovery', async () => {
+  // One low row at a fixed moment, recovering at three different removes
+  // from it -- the only thing under test is which unit the gap is rendered
+  // in, so three copies of the same fetch stub only obscured that.
+  it.each([
+    ['days and hours', '2026-01-03T09:00:00Z', '2d 0h'],
+    ['whole hours', '2026-01-01T12:00:00Z', '3h'],
+    ['under an hour', '2026-01-01T09:20:00Z', '<1h'],
+  ])('formats a recovery %s after going low', async (_label, recoveredAt, expected) => {
     vi.stubGlobal(
       'fetch',
       vi.fn(() =>
         Promise.resolve(
+          // Newest-first, as the endpoint returns it.
           jsonResponse([
-            // Newest-first: recovered 2 days after going low.
             {
               camera: 'Backyard',
               battery_state: 'ok',
               battery_level: 3,
               battery_voltage: 170,
-              recorded_at: '2026-01-03T09:00:00Z',
+              recorded_at: recoveredAt,
             },
             {
               camera: 'Backyard',
@@ -114,67 +121,7 @@ describe('BatteryHistoryModal', () => {
     mountModal()
     await flushPromises()
     const body = new DOMWrapper(document.body)
-    expect(body.text()).toContain('2d 0h')
-  })
-
-  it('formats a sub-day recovery in hours', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() =>
-        Promise.resolve(
-          jsonResponse([
-            {
-              camera: 'Backyard',
-              battery_state: 'ok',
-              battery_level: 3,
-              battery_voltage: 170,
-              recorded_at: '2026-01-01T12:00:00Z',
-            },
-            {
-              camera: 'Backyard',
-              battery_state: 'low',
-              battery_level: 0,
-              battery_voltage: 105,
-              recorded_at: '2026-01-01T09:00:00Z',
-            },
-          ]),
-        ),
-      ),
-    )
-    mountModal()
-    await flushPromises()
-    const body = new DOMWrapper(document.body)
-    expect(body.text()).toContain('3h')
-  })
-
-  it('formats a sub-hour recovery as "<1h"', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() =>
-        Promise.resolve(
-          jsonResponse([
-            {
-              camera: 'Backyard',
-              battery_state: 'ok',
-              battery_level: 3,
-              battery_voltage: 170,
-              recorded_at: '2026-01-01T09:20:00Z',
-            },
-            {
-              camera: 'Backyard',
-              battery_state: 'low',
-              battery_level: 0,
-              battery_voltage: 105,
-              recorded_at: '2026-01-01T09:00:00Z',
-            },
-          ]),
-        ),
-      ),
-    )
-    mountModal()
-    await flushPromises()
-    const body = new DOMWrapper(document.body)
-    expect(body.text()).toContain('<1h')
+    expect(body.text()).toContain(expected)
   })
 
   it('shows "Ongoing" for a currently-low camera with no recovery yet', async () => {

@@ -172,6 +172,40 @@ def _edge_crossing(
     return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
 
 
+def _clip_to_half_plane(
+    points: Sequence[tuple[float, float]],
+    axis: int,
+    limit: float,
+    keep_greater: bool,
+) -> list[tuple[float, float]]:
+    """Keep the part of ring *points* on one side of ``axis == limit``.
+
+    One Sutherland-Hodgman pass: vertices on the kept side survive, and an
+    edge that crosses the line contributes its crossing point. Clipping to
+    a rectangle is four of these.
+    """
+    if keep_greater:
+
+        def inside_of(point: tuple[float, float]) -> bool:
+            return point[axis] >= limit
+    else:
+
+        def inside_of(point: tuple[float, float]) -> bool:
+            return point[axis] <= limit
+
+    output: list[tuple[float, float]] = []
+    previous = points[-1]
+    previous_inside = inside_of(previous)
+    for current in points:
+        inside = inside_of(current)
+        if inside != previous_inside:
+            output.append(_edge_crossing(previous, current, axis, limit))
+        if inside:
+            output.append(current)
+        previous, previous_inside = current, inside
+    return output
+
+
 def clip_polygon_to_box(
     points: Sequence[tuple[float, float]], box: Box
 ) -> list[tuple[float, float]]:
@@ -196,18 +230,7 @@ def clip_polygon_to_box(
     ):
         if not output:
             return []
-        subject, output = output, []
-        previous = subject[-1]
-        previous_inside = (
-            previous[axis] >= limit if keep_greater else previous[axis] <= limit
-        )
-        for current in subject:
-            inside = current[axis] >= limit if keep_greater else current[axis] <= limit
-            if inside != previous_inside:
-                output.append(_edge_crossing(previous, current, axis, limit))
-            if inside:
-                output.append(current)
-            previous, previous_inside = current, inside
+        output = _clip_to_half_plane(output, axis, limit, keep_greater)
     return output
 
 
