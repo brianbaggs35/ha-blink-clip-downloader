@@ -1029,6 +1029,88 @@ async def test_object_detector_detect_returns_none_for_empty_frames() -> None:
     assert await detector.detect([]) is None
 
 
+def _yolo_frame_env(monkeypatch: pytest.MonkeyPatch, boxes, names) -> None:
+    """Point ObjectDetector at a fake ultralytics returning *boxes*."""
+    mock_cv2 = MagicMock()
+    mock_cv2.IMREAD_COLOR = 1
+    mock_cv2.imdecode.return_value = np.zeros((10, 10, 3), dtype=np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", mock_cv2)
+    fake_model = MagicMock()
+    fake_model.track.return_value = [_FakeYoloResult(boxes, names)]
+    mock_ultra = MagicMock()
+    mock_ultra.YOLO.return_value = fake_model
+    monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
+
+
+async def test_object_detector_drops_untracked_low_confidence_boxes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One real dog must count as one dog.
+
+    ``model.track()`` forces conf=0.1 for ByteTrack's own second-stage
+    association, and on any frame where the tracker returns no activated
+    track ultralytics hands back the raw predictions unfiltered and
+    id-less. Storing those is what made a single subject read as two or
+    three: measured on a synthetic clip of one person crossing a backdrop
+    that detects nothing on its own, the junk arrived as "person" boxes at
+    0.13-0.22 and a phantom "car" at 0.12.
+    """
+    boxes = _FakeBoxes(
+        cls=[16, 16, 2],
+        conf=[0.88, 0.14, 0.12],  # one real dog, one junk dog, one junk car
+        xyxy=[(0.0, 0.0, 9.0, 9.0), (30.0, 30.0, 34.0, 34.0), (50.0, 50.0, 55.0, 55.0)],
+        ids=None,  # the tracker returned nothing for this frame
+    )
+    _yolo_frame_env(monkeypatch, boxes, {16: "dog", 2: "car"})
+
+    detections = await ObjectDetector("yolo26n.pt").detect([b"frame0"])
+
+    assert detections is not None
+    assert [(d.label, d.confidence) for d in detections] == [("dog", 0.88)]
+
+
+async def test_object_detector_keeps_a_low_confidence_box_the_tracker_owns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The floor applies only to *orphan* boxes.
+
+    A weak box carrying a track id was matched to an established track by
+    ByteTrack itself — that is the recall the low threshold exists to buy,
+    and dropping it would lose a real subject mid-track.
+    """
+    boxes = _FakeBoxes(
+        cls=[0],
+        conf=[0.13],
+        xyxy=[(0.0, 0.0, 9.0, 9.0)],
+        ids=[7],
+    )
+    _yolo_frame_env(monkeypatch, boxes, {0: "person"})
+
+    detections = await ObjectDetector("yolo26n.pt").detect([b"frame0"])
+
+    assert detections is not None
+    assert [(d.label, d.track_id) for d in detections] == [("person", 7)]
+
+
+async def test_object_detector_keeps_every_confident_subject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The floor must not cost a real count: three people genuinely in
+    frame together stay three, tracked or not."""
+    boxes = _FakeBoxes(
+        cls=[0, 0, 0],
+        conf=[0.88, 0.64, 0.26],
+        xyxy=[(0.0, 0.0, 9.0, 9.0), (20.0, 0.0, 29.0, 9.0), (40.0, 0.0, 49.0, 9.0)],
+        ids=None,
+    )
+    _yolo_frame_env(monkeypatch, boxes, {0: "person"})
+
+    detections = await ObjectDetector("yolo26n.pt").detect([b"frame0"])
+
+    assert detections is not None
+    assert len(detections) == 3
+
+
 async def test_object_detector_detect_filters_and_maps_boxes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

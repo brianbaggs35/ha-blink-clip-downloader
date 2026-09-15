@@ -1651,6 +1651,38 @@ async def test_detected_objects_summary_counts_two_that_never_share_a_frame(
     assert summary[0]["detections"] == 6
 
 
+async def test_detected_objects_summary_counts_one_moving_subject_once(
+    db: ClipDatabase,
+) -> None:
+    """The shape a real moving subject actually arrives in.
+
+    ByteTrack auto-activates a track only on its first frame and cannot
+    re-match a subject that has moved between frames sampled seconds
+    apart, so one dog crossing the yard is stored as an id on frame 0 and
+    then id-less rows for the rest. That must still read as one dog — the
+    per-frame peak is 1 and the only id present is 1.
+    """
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="dog",
+                confidence=0.87,
+                box=(float(frame * 40), 0.0, float(frame * 40 + 20), 30.0),
+                track_id=1 if frame == 0 else None,
+                frame_index=frame,
+            )
+            for frame in range(8)
+        ],
+    )
+
+    summary = await db.get_detected_objects_summary("c1")
+    assert summary[0]["label"] == "dog"
+    assert summary[0]["count"] == 1
+    assert summary[0]["detections"] == 8
+
+
 async def test_detected_objects_summary_falls_back_to_the_peak_without_tracking(
     db: ClipDatabase,
 ) -> None:

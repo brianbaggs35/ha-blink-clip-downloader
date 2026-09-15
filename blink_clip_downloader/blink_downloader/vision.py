@@ -139,6 +139,36 @@ _YOLO_MODEL_CACHE_DIR = "/data/model_cache/yolo"
 # one definition, not two that can drift apart. This module adds only the
 # carryable classes and the bicycle, which the detector surfaces for the
 # prompt but which no security rule treats as a subject or a vehicle.
+#: Confidence a detection must clear to be kept at all, unless the tracker
+#: itself vouched for it with a track id.
+#:
+#: Ultralytics' ``model.track()`` hard-sets ``conf=0.1`` — deliberately, and
+#: not as a detection threshold: ByteTrack's second association stage wants
+#: weak boxes so it can re-attach them to tracks it already trusts. ByteTrack
+#: never *starts* a track from one (``new_track_thresh: 0.25`` in
+#: bytetrack.yaml), so a sub-0.25 box with no id is a box ultralytics itself
+#: would not have believed.
+#:
+#: Those boxes reach us in bulk, because ultralytics skips filtering results
+#: entirely on any frame where the tracker returns no activated track
+#: ("if len(tracks) == 0: continue" in trackers/track.py) — which, on frames
+#: sampled seconds apart, is most of them: ByteTrack auto-activates a new
+#: track only on its first frame, and a subject that has moved cannot be
+#: re-matched by IoU. The raw 0.1-threshold predictions are then left in
+#: place with no ids at all. Measured on a synthetic clip of one person
+#: crossing an empty backdrop: spurious "person" boxes at 0.13-0.22 and a
+#: phantom "car" at 0.12, on frames whose backdrop alone detects nothing.
+#:
+#: Storing those cost real accuracy: the clip modal counted them ("2 dogs"
+#: for one dog), they entered the prompt's detected-classes line, and a
+#: single junk "person" was enough to suppress the no-subject grounding in
+#: _no_subject_sentence.
+#:
+#: A box the tracker *did* id is kept whatever its score: that one has been
+#: matched to an established track, which is ByteTrack vouching for it, and
+#: is exactly the recall the low threshold exists to buy.
+_MIN_DETECTION_CONFIDENCE = 0.25
+
 _VEHICLE_CLASSES = VEHICLE_LABELS
 _SUBJECT_CLASSES = SUBJECT_LABELS
 _RELEVANT_CLASSES = (
@@ -445,12 +475,18 @@ class ObjectDetector:
             label = names.get(int(boxes.cls[i]), "")
             if label not in _RELEVANT_CLASSES:
                 continue
-            x1, y1, x2, y2 = (float(v) for v in boxes.xyxy[i])
             track_id = int(ids[i]) if ids is not None else None
+            confidence = float(boxes.conf[i])
+            # See _MIN_DETECTION_CONFIDENCE: an un-tracked box under the
+            # threshold is one the tracker itself would not have opened a
+            # track for, and on most frames these arrive unfiltered.
+            if track_id is None and confidence < _MIN_DETECTION_CONFIDENCE:
+                continue
+            x1, y1, x2, y2 = (float(v) for v in boxes.xyxy[i])
             detections.append(
                 DetectedObject(
                     label=label,
-                    confidence=float(boxes.conf[i]),
+                    confidence=confidence,
                     box=(x1, y1, x2, y2),
                     track_id=track_id,
                     frame_index=idx,

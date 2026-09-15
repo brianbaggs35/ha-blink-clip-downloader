@@ -28,6 +28,41 @@ any vehicle."* Two things in the prompt caused that, and both are fixed.
   that a clip where nothing happened is a normal result to report as
   such, not a failure to find something.
 
+### One dog counted as two
+
+Object detection reported more of a thing than was ever there — a single
+subject crossing the frame could come back as two or three, and classes
+appeared that the clip did not contain.
+
+The cause is a threshold that was never meant to be ours. Ultralytics'
+`track()` forces a confidence floor of 0.1, deliberately: ByteTrack's
+second matching stage wants weak boxes so it can re-attach them to tracks
+it already trusts. It never *starts* a track from one — that needs 0.25.
+On top of that, ultralytics skips filtering its results altogether on any
+frame where the tracker produced no active track, handing back the raw
+0.1-threshold predictions with no track ids at all. On frames sampled
+seconds apart that is most frames, because ByteTrack activates a new track
+only on its first frame and cannot re-match a subject that has moved.
+
+So every weak guess was being stored as a real detection. Measured on a
+synthetic clip of one person crossing a backdrop that yields no detections
+on its own: spurious people at 0.13–0.22 and a phantom car at 0.12, and a
+count of two for one person. Detections now have to clear the same 0.25
+the tracker uses to open a track, unless the tracker itself gave the box
+an id — a box it matched to an established track is the recall that low
+threshold exists to buy, and is kept whatever its score.
+
+Genuine subjects are nowhere near the line: in the same measurements a
+real person scored 0.64–0.88 all the way down to 14% of the frame height,
+and below that was not detected at all, at any threshold. The same
+measurements now return one person for one person, two for two, and three
+for three.
+
+This also mattered beyond the count. Those phantom classes went into the
+analysis prompt's list of what was detected, and a single junk "person"
+box was enough to suppress the new "no person was detected" grounding
+described above.
+
 ### Detection boxes were drawn in the wrong place
 
 The clip modal's **Boxes** overlay drew every box stretched downward, well
