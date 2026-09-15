@@ -157,9 +157,9 @@ cmd_serve_local_image() {
   # outlives the job.
   #
   # A registry on the loopback interface *inside* the devcontainer is
-  # reachable by that same daemon and needs no credentials and no
-  # daemon configuration: Docker exempts 127.0.0.1 from its HTTPS
-  # requirement, so plain HTTP is accepted as-is. Nothing leaves the job.
+  # reachable by that same daemon and needs no credentials and no daemon
+  # configuration: Docker exempts 127.0.0.1 from its HTTPS requirement, so
+  # plain HTTP is accepted as-is. Nothing leaves the job.
   local tar="${1:?image tar path required}"
   local ref="${INTEGRATION_IMAGE:?INTEGRATION_IMAGE must be set}:${INTEGRATION_VERSION:?INTEGRATION_VERSION must be set}"
 
@@ -177,24 +177,56 @@ cmd_serve_local_image() {
       ;;
   esac
 
-  docker cp "$tar" "${CONTAINER_NAME}:/tmp/integration-image.tar"
-  docker exec "$CONTAINER_NAME" docker load -i /tmp/integration-image.tar
-  docker exec "$CONTAINER_NAME" rm -f /tmp/integration-image.tar
+  # /var/tmp, not /tmp: the devcontainer is started with `--tmpfs /tmp`, and
+  # `docker cp` into a tmpfs mount does not reach what the running container
+  # actually sees there. The first version of this used /tmp, the copy
+  # vanished, and the only symptom was Supervisor failing to install the
+  # add-on two steps later.
+  local dest=/var/tmp/integration-image.tar
 
-  # registry:2 arrived in the same tar as the app image, so this starts
-  # from what was just loaded and never reaches Docker Hub.
+  # Every step checked explicitly: this script runs without `set -e`, and a
+  # silent failure here surfaces much later as "App is not installed", which
+  # says nothing about what actually went wrong.
+  if ! docker cp "$tar" "${CONTAINER_NAME}:${dest}"; then
+    echo "could not copy ${tar} into ${CONTAINER_NAME}:${dest}" >&2
+    return 1
+  fi
+  if ! docker exec "$CONTAINER_NAME" docker load -i "$dest"; then
+    echo "docker load of ${dest} failed inside ${CONTAINER_NAME}" >&2
+    return 1
+  fi
+  docker exec "$CONTAINER_NAME" rm -f "$dest" || true
+
+  # The load is what puts both the app image and registry:2 in there, so
+  # confirm the tag arrived rather than discovering it missing at push time,
+  # where the error ("tag does not exist") reads like a tagging mistake.
+  if ! docker exec "$CONTAINER_NAME" docker image inspect "$ref" >/dev/null 2>&1; then
+    echo "${ref} is not present after docker load — the image tar did not" \
+      "contain it" >&2
+    docker exec "$CONTAINER_NAME" docker images >&2 || true
+    return 1
+  fi
+
+  # registry:2 arrived in the same tar as the app image, so this starts from
+  # what was just loaded and never reaches Docker Hub.
   #
   # --restart=always so it survives anything Supervisor's own startup does
   # to the daemon; published on loopback only, so it is not reachable from
   # outside the container even within the job.
-  docker exec "$CONTAINER_NAME" docker run -d --restart=always \
-    --name integration-registry -p 127.0.0.1:5000:5000 registry:2
+  if ! docker exec "$CONTAINER_NAME" docker run -d --restart=always \
+    --name integration-registry -p 127.0.0.1:5000:5000 registry:2; then
+    echo "could not start the loopback registry inside ${CONTAINER_NAME}" >&2
+    return 1
+  fi
 
   poll "local registry ready" 60 2 \
     docker exec "$CONTAINER_NAME" \
     curl -sf http://127.0.0.1:5000/v2/
 
-  docker exec "$CONTAINER_NAME" docker push "$ref"
+  if ! docker exec "$CONTAINER_NAME" docker push "$ref"; then
+    echo "could not push ${ref} to the loopback registry" >&2
+    return 1
+  fi
   echo "OK: ${ref} is served from a registry inside the devcontainer"
 }
 

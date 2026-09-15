@@ -9028,3 +9028,47 @@ async def test_v6_vehicle_signature_delete_survives_hostile_names(
 ) -> None:
     resp = await client.delete(f"/api/vehicle/signature/{value}")
     assert resp.status < 500, f"DELETE signature {value!r} -> {resp.status}"
+
+
+# ----------------------------------------------------------------------
+# Precompressed static assets
+# ----------------------------------------------------------------------
+
+
+async def test_assets_are_served_precompressed_when_a_gz_exists(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """frontend/scripts/gzip-static-assets.mjs writes a .gz beside each built
+    asset, and aiohttp's add_static serves it with Content-Encoding: gzip.
+    That is the whole mechanism — there is no server-side code for it — so
+    this is what would notice an aiohttp upgrade quietly dropping the
+    behaviour and doubling what every first page load transfers.
+    """
+    import gzip as _gzip
+
+    assets = tmp_path / "static" / "assets"
+    payload = b"// built JS bundle stand-in\n" + b"x = 1;\n" * 500
+    (assets / "big.js").write_bytes(payload)
+    (assets / "big.js.gz").write_bytes(_gzip.compress(payload))
+
+    resp = await client.get("/assets/big.js", headers={"Accept-Encoding": "gzip"})
+    assert resp.status == 200
+    assert resp.headers.get("Content-Encoding") == "gzip"
+    # aiohttp hands the compressed bytes over; the client decodes them, so
+    # what the page actually receives has to be unchanged.
+    assert await resp.read() == payload
+
+
+async def test_assets_still_serve_without_a_precompressed_sibling(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """The .gz files are a build-time nicety. A build that never produced
+    them (or an older image) must still serve the asset, uncompressed."""
+    assets = tmp_path / "static" / "assets"
+    payload = b"// no gz for this one\n"
+    (assets / "plain.js").write_bytes(payload)
+
+    resp = await client.get("/assets/plain.js", headers={"Accept-Encoding": "gzip"})
+    assert resp.status == 200
+    assert resp.headers.get("Content-Encoding") is None
+    assert await resp.read() == payload
