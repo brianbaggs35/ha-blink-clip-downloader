@@ -60,6 +60,14 @@ were already being computed — and produces nothing when that is off.
   reaches the AI provider either way, so nothing is hidden from the model —
   what is withheld is the security layer asserting a contact its own
   evidence contradicts.
+- **A zone traced too small to be a real selection can no longer be
+  "saved" into nothing.** The Vehicles tab enabled Save as soon as a
+  freeform trace had three points, but the save itself rejects anything
+  under a minimum span — so a stray scribble enabled the button and then
+  silently did nothing, leaving someone believing their vehicle was
+  protected by a zone that was never stored. Save is now offered only for
+  a draft that can actually be saved; Clear still appears for any draft at
+  all, so stray marks can be wiped.
 - **"Walked past the car" is now distinguishable from "stood right at it".**
   Three changes, all addressing the same 2D-projection blindness: proximity
   is measured foot-point to the vehicle's ground line with vertical
