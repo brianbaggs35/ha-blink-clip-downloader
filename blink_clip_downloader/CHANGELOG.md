@@ -173,6 +173,12 @@ damage classification.
 
 ### Changed
 
+- **The web UI's first load transfers about a quarter of what it did.** The
+  built JavaScript and CSS are now gzipped at build time and served
+  precompressed — 2.0 MB down to 511 KB on the wire. Barely noticeable over
+  the LAN; a real difference over Nabu Casa, a VPN, or mobile data. Nothing
+  about the page changes, and an image built without the compressed files
+  still serves the originals.
 - **The web UI is reachable without a mouse.** A clip card's body is a real
   button now, so it is in the tab order, opens on Enter or Space and
   announces itself, instead of being a `<div>` that only answered a
