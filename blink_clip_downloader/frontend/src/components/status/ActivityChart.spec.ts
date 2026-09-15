@@ -46,4 +46,19 @@ describe('ActivityChart', () => {
     await wrapper.find('.act-bar-wrap').trigger('click')
     expect(wrapper.emitted('select-date')).toEqual([['2026-01-05']])
   })
+
+  it('makes each bar a real button, so it is reachable without a mouse', async () => {
+    // It was a <div> with a click handler, which meant this filter simply
+    // did not exist for anyone navigating by keyboard. A button brings
+    // focus, Enter/Space and the right role with it.
+    const wrapper = mount(ActivityChart, {
+      props: { rows: [{ date: '2026-01-05', hour: 8, count: 3 }] },
+    })
+
+    const bar = wrapper.find('.act-bar-wrap')
+    expect(bar.element.tagName).toBe('BUTTON')
+    expect(bar.attributes('type')).toBe('button')
+    // Named for what it does, rather than the bare "3 clips" of the tooltip.
+    expect(bar.attributes('aria-label')).toContain('Show the 3 clip(s) from')
+  })
 })

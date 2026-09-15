@@ -44,9 +44,19 @@ const days = computed<DayBar[]>(() => {
   <div v-else id="act-chart">
     <div v-for="day in days" :key="day.date" class="act-row">
       <span class="act-date">{{ day.label }}</span>
-      <div class="act-bar-wrap" :title="`${day.total} clips`" @click="emit('select-date', day.date)">
-        <div class="act-bar" :style="{ width: `${day.pct.toFixed(1)}%` }"></div>
-      </div>
+      <!-- A real button, not a div with a click handler: this filters the
+           Library to that day, and as a div it was unreachable by keyboard
+           entirely. Being a button brings focus, Enter/Space and the right
+           role with it, rather than bolting tabindex/role/@keydown on. -->
+      <button
+        type="button"
+        class="act-bar-wrap"
+        :aria-label="`Show the ${day.total} clip(s) from ${day.label}`"
+        :title="`${day.total} clips`"
+        @click="emit('select-date', day.date)"
+      >
+        <span class="act-bar" :style="{ width: `${day.pct.toFixed(1)}%` }"></span>
+      </button>
       <span class="act-count">{{ day.total }}</span>
     </div>
   </div>
