@@ -97,7 +97,10 @@ test('the security assessment leads with the most severe thing that happened', a
   const panel = modal.locator('[data-testid="ai-security"]')
   await expect(panel).toBeVisible()
   await expect(panel.getByText('Critical · risk 81')).toBeVisible()
-  await expect(panel.getByText('Evidence 92% (strong)')).toBeVisible()
+  // Risk and evidence quality are labelled bars rather than a run-on
+  // sentence, so each is asserted as its own value.
+  await expect(panel.locator('.ai-score', { hasText: 'Risk' })).toContainText('81/100')
+  await expect(panel.locator('.ai-score', { hasText: 'Evidence' })).toContainText('92% strong')
 
   const rows = panel.locator('.ai-security-list li')
   await expect(rows).toHaveCount(4)
@@ -126,7 +129,7 @@ test('a clip flagged by the risk threshold says the model itself found nothing',
   await expect(
     panel.getByText('Flagged on detection evidence — the AI model itself reported nothing unusual.'),
   ).toBeVisible()
-  await expect(panel.getByText('Evidence 55% (moderate)')).toBeVisible()
+  await expect(panel.locator('.ai-score', { hasText: 'Evidence' })).toContainText('55% moderate')
 })
 
 test('weak evidence is labelled as weak rather than quietly shown as a number', async ({ page }) => {
@@ -138,7 +141,80 @@ test('weak evidence is labelled as weak rather than quietly shown as a number', 
     security_events: [event({ severity: 'noteworthy' })],
   })
   const modal = await openPanel(page)
-  await expect(modal.locator('[data-testid="ai-security"]').getByText('Evidence 21% (weak)')).toBeVisible()
+  await expect(
+    modal.locator('[data-testid="ai-security"]').locator('.ai-score', { hasText: 'Evidence' }),
+  ).toContainText('21% weak')
+})
+
+test('the panel is divided into named sections rather than one flat block', async ({ page }) => {
+  // Everything below the verdict used to run together at the same size and
+  // weight, which left the feedback and face-report buttons at the bottom
+  // reading as stray controls with no subject.
+  await serveAiResult(page, {
+    ...BASE,
+    severity: 'suspicious',
+    risk_score: 65,
+    evidence_quality: 0.66,
+    detected_objects: [
+      { label: 'car', count: 3, detections: 33, max_confidence: 0.94 },
+      { label: 'person', count: 1, detections: 3, max_confidence: 0.88 },
+    ],
+    security_events: [event({ severity: 'suspicious', event_type: 'contact_candidate' })],
+  })
+
+  const modal = await openPanel(page)
+  const titles = modal.locator('.ai-section-title')
+  await expect(titles).toHaveText(['What was detected', 'Security evidence', 'Verdict feedback', 'Face recognition'])
+})
+
+test('a detection chip names what it counted, and says what the number means', async ({ page }) => {
+  // The count is the most of that label in frame at once, not the stored
+  // box total — counting the boxes is what reported three cars as "33".
+  await serveAiResult(page, {
+    ...BASE,
+    detected_objects: [{ label: 'car', count: 3, detections: 33, max_confidence: 0.94 }],
+    security_events: [],
+  })
+
+  const modal = await openPanel(page)
+  const chip = modal.locator('.detection-chip')
+  await expect(chip).toHaveCount(1)
+  await expect(chip).toContainText('3 cars')
+  await expect(chip).not.toContainText('33')
+  await expect(chip).toHaveAttribute(
+    'title',
+    'up to 3 cars in frame at once · 33 detection(s) across the sampled frames · up to 94% confidence',
+  )
+})
+
+test('the panel opens to its full height rather than a fixed cap', async ({ page }) => {
+  // It used to collapse against a hardcoded 500px its content had long
+  // since outgrown: everything past that was cut off, with no scrollbar
+  // and no way to reach it.
+  await serveAiResult(page, {
+    ...BASE,
+    severity: 'critical',
+    risk_score: 88,
+    evidence_quality: 0.7,
+    detected_objects: [{ label: 'car', count: 2, detections: 20, max_confidence: 0.9 }],
+    security_events: [
+      event({ id: 1, severity: 'critical', event_type: 'impact_candidate', start_offset: 1 }),
+      event({ id: 2, severity: 'suspicious', event_type: 'contact_candidate', start_offset: 2 }),
+      event({ id: 3, severity: 'noteworthy', event_type: 'zone_entered', start_offset: 3 }),
+      event({ id: 4, severity: 'routine', start_offset: 4 }),
+    ],
+  })
+
+  const modal = await openPanel(page)
+  // The last thing in the panel being reachable at all is the actual
+  // point, and waiting on it also waits out the expand transition —
+  // everything inside a still-collapsed panel has zero height.
+  await expect(modal.getByRole('button', { name: 'Report a missed face match' })).toBeVisible()
+  const body = modal.locator('.ai-panel-body')
+  await expect.poll(() => body.evaluate((el) => el.scrollHeight)).toBeGreaterThan(500)
+  const sizes = await body.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }))
+  // Nothing is cut off: everything it can scroll to, it already shows.
+  expect(sizes.client).toBe(sizes.scroll)
 })
 
 test('a clip the security layer found nothing in shows no empty assessment block', async ({ page }) => {

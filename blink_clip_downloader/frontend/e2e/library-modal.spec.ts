@@ -19,6 +19,40 @@ function openModal(page: Page) {
   return page.locator('.modal-bg.open')
 }
 
+test('a clip that is still loading stands in for itself rather than opening blank', async ({ page }) => {
+  // It used to open as an unsized black strip with no title and no
+  // metadata, then shove everything below it down once the request landed.
+  await page.route('**/api/clips/*', async (route) => {
+    if (/\/api\/clips\/[^/?]+(\?|$)/.test(route.request().url())) {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+    }
+    await route.continue()
+  })
+
+  await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
+  const modal = openModal(page)
+  // The clip's own thumbnail stands in for the first frame...
+  await expect(modal.locator('.video-poster img')).toHaveAttribute('src', /e2e-clip-000\/thumb/)
+  await expect(modal.locator('.video-wrap')).toHaveClass(/video-wrap-loading/)
+  // ...and the metadata grid keeps all six of its rows as placeholders, so
+  // the actions below it are already where they will stay.
+  await expect(modal.locator('.meta-grid .skel')).toHaveCount(6)
+  // ...because the video area is already held at the box a real clip
+  // settles into — 16:9, capped at 62vh — rather than being the ~150px
+  // unsized strip an untouched <video> element renders as before Video.js
+  // takes it over. (The seeded clips are placeholder bytes with no
+  // thumbnail on disk, so what this one settles into *afterwards* is the
+  // download fallback rather than a picture; the end-to-end "nothing
+  // moved" measurement was done by hand against a real 16:9 clip.)
+  const box = (await modal.locator('.video-wrap').boundingBox())!
+  expect(box.height).toBeGreaterThan(400)
+  expect(box.height).toBeLessThanOrEqual((box.width * 9) / 16 + 1)
+
+  await expect(modal.locator('.meta-grid')).toContainText('pir')
+  await expect(modal.locator('.meta-grid .skel')).toHaveCount(0)
+  await expect(modal.locator('.video-poster')).toHaveCount(0)
+})
+
 test('opening a clip shows its real seeded metadata', async ({ page }) => {
   await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
   const modal = openModal(page)

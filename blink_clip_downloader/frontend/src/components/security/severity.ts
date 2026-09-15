@@ -18,6 +18,27 @@ export const SEVERITY_TAG: Record<SecuritySeverity, string> = {
   critical: 'danger',
 }
 
+/** Per-band accent, as a bare `R G B` triple so one table serves both the
+ *  solid colour and every translucent tint of it (`rgb(<triple> / 0.16)`)
+ *  without a second set of values to keep in step. Deliberately the same
+ *  four hues the theme gives the PrimeVue `Tag` severities above, so a
+ *  band's dot, its bar segment and its tag all read as one thing.
+ *
+ *  Used for backgrounds, rails and dots only — never for text on its own,
+ *  where amber on white would not carry in the light theme. */
+export const SEVERITY_RGB: Record<SecuritySeverity, string> = {
+  routine: '100 116 139',
+  noteworthy: '59 130 246',
+  suspicious: '245 158 11',
+  critical: '239 68 68',
+}
+
+/** The band's accent, optionally as a tint of itself. */
+export function severityColor(severity: string, alpha = 1): string {
+  const rgb = SEVERITY_RGB[severity as SecuritySeverity] ?? SEVERITY_RGB.routine
+  return alpha >= 1 ? `rgb(${rgb})` : `rgb(${rgb} / ${alpha})`
+}
+
 const SEVERITY_RANK: Record<SecuritySeverity, number> = {
   routine: 0,
   noteworthy: 1,

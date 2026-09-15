@@ -54,15 +54,23 @@ const summary = computed(() => events.value[0] ?? null)
     </Message>
     <template v-else>
       <div v-if="summary" class="security-detail-scores">
-        <span
-          >Risk <strong>{{ Math.round(summary.risk_score) }}</strong
-          >/100</span
-        >
-        <span>
-          Evidence
-          <strong>{{ Math.round(summary.evidence_quality * 100) }}%</strong>
-          ({{ evidenceLabel(summary.evidence_quality) }})
-        </span>
+        <div class="security-score">
+          <span class="security-score-label">Risk</span>
+          <span class="security-score-value">{{ Math.round(summary.risk_score) }}<small>/100</small></span>
+          <span class="security-score-track">
+            <span class="security-score-fill is-risk" :style="{ width: `${Math.round(summary.risk_score)}%` }" />
+          </span>
+        </div>
+        <div class="security-score">
+          <span class="security-score-label">Evidence</span>
+          <span class="security-score-value">
+            {{ Math.round(summary.evidence_quality * 100)
+            }}<small>% {{ evidenceLabel(summary.evidence_quality) }}</small>
+          </span>
+          <span class="security-score-track">
+            <span class="security-score-fill" :style="{ width: `${Math.round(summary.evidence_quality * 100)}%` }" />
+          </span>
+        </div>
       </div>
       <p class="security-detail-note">
         Computed from object detection and tracking. The AI model judges the frames themselves and may disagree.
@@ -79,7 +87,9 @@ const summary = computed(() => events.value[0] ?? null)
           </button>
           <Tag :value="formatEventType(event.event_type)" :severity="severityTag(event.severity)" />
           <span class="security-detail-text">{{ event.detail }}</span>
-          <span class="security-detail-confidence">{{ Math.round(event.confidence * 100) }}%</span>
+          <span class="security-detail-confidence" title="How sure the detector is, given the evidence it had">
+            {{ Math.round(event.confidence * 100) }}%
+          </span>
         </li>
       </ul>
     </template>
@@ -87,20 +97,68 @@ const summary = computed(() => events.value[0] ?? null)
 </template>
 
 <style scoped>
+/* Sits inside the timeline row's own card, so it opens as an inset panel
+   ruled off from the row above rather than as loose text running into it. */
 .security-detail {
-  padding: 10px 0 4px;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
 }
 .security-detail-scores {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  font-size: 0.85rem;
-  margin-bottom: 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: 0.5rem 1.1rem;
+  margin-bottom: 0.6rem;
+}
+.security-score {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 0.1rem 0.5rem;
+}
+.security-score-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.security-score-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.security-score-value small {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+/* Both numbers are 0-100 scales, so a bar apiece says "how much of the
+   way" at a glance in a way two bare percentages do not. */
+.security-score-track {
+  grid-column: 1 / -1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--card-hover);
+  overflow: hidden;
+  margin-top: 0.15rem;
+}
+.security-score-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+/* Risk is the row's own severity band; evidence quality is not a severity
+   at all, so it stays on the neutral accent above. */
+.security-score-fill.is-risk {
+  background: var(--sev, var(--accent));
 }
 .security-detail-note {
-  margin: 0 0 8px;
-  font-size: 0.78rem;
-  color: var(--text-muted);
+  margin: 0 0 0.6rem;
+  font-size: 0.76rem;
+  color: var(--muted);
 }
 .security-detail-list {
   list-style: none;
@@ -108,31 +166,45 @@ const summary = computed(() => events.value[0] ?? null)
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0.3rem;
 }
 .security-detail-list li {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  font-size: 0.85rem;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.55rem;
 }
+/* A time that opens the clip there is an action, so it looks like one —
+   the bare underlined number it used to be read as body text. */
 .security-detail-time {
-  background: none;
-  border: 0;
-  padding: 0;
+  background: var(--card2);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
   cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
   font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  min-width: 3em;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  transition:
+    color 0.15s var(--ease),
+    border-color 0.15s var(--ease);
+}
+.security-detail-time:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 .security-detail-text {
   flex: 1 1 min(320px, 100%);
 }
 .security-detail-confidence {
-  font-size: 0.78rem;
-  color: var(--text-muted);
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 </style>

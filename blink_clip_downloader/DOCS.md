@@ -693,7 +693,7 @@ you'll see them report unavailable there.
 
 | Option | Default | What it adds |
 |---|---|---|
-| `ai_enhanced_detection_enabled` | `false` | Frame preprocessing (CLAHE contrast enhancement + light denoising, OpenCV), object detection + tracking (YOLO + ByteTrack, via Ultralytics), monocular depth estimation (Depth Anything V2, via transformers), and pixel-level contact segmentation (SAM2, via transformers) — one switch for all four. Depth estimation and contact segmentation have always required object detection to run at all, and there was no real value in toggling preprocessing/detection independently, so earlier versions' four separate settings just multiplied untested on/off combinations without a matching benefit. Adds a code-computed **OBJECT DETECTION** hint (what was detected — people, vehicles, and animals — and how close a detected person or animal is to a detected vehicle), a **TRACKING** hint (lingering/casing vs. briefly passing through, via ByteTrack's frame-to-frame continuity), a **DEPTH ESTIMATE** hint ("overlapping in the 2D frame" vs. "actually at the same distance from the camera" — catches the case where a person or animal only *looks* close to the protected vehicle because of the camera angle), and a **CONTACT ANALYSIS** hint (refining a bounding-box overlap into an actual touching-or-not judgment, e.g. a dog jumping on the car vs. merely standing nearby, using each object's real visible outline). Vehicle-distance/depth/contact language only ever applies on a camera actually designated to view the protected vehicle (`ai_car_cameras`) — other cameras stay isolated even if they happen to detect an unrelated car. Detected objects also show up as a compact chip summary (e.g. "🧍 2 🚗 1") in the Library clip modal's AI panel — a quick at-a-glance count, not a bounding-box overlay, so it stays out of the way for anyone with this feature off. |
+| `ai_enhanced_detection_enabled` | `false` | Frame preprocessing (CLAHE contrast enhancement + light denoising, OpenCV), object detection + tracking (YOLO + ByteTrack, via Ultralytics), monocular depth estimation (Depth Anything V2, via transformers), and pixel-level contact segmentation (SAM2, via transformers) — one switch for all four. Depth estimation and contact segmentation have always required object detection to run at all, and there was no real value in toggling preprocessing/detection independently, so earlier versions' four separate settings just multiplied untested on/off combinations without a matching benefit. Adds a code-computed **OBJECT DETECTION** hint (what was detected — people, vehicles, and animals — and how close a detected person or animal is to a detected vehicle), a **TRACKING** hint (lingering/casing vs. briefly passing through, via ByteTrack's frame-to-frame continuity), a **DEPTH ESTIMATE** hint ("overlapping in the 2D frame" vs. "actually at the same distance from the camera" — catches the case where a person or animal only *looks* close to the protected vehicle because of the camera angle), and a **CONTACT ANALYSIS** hint (refining a bounding-box overlap into an actual touching-or-not judgment, e.g. a dog jumping on the car vs. merely standing nearby, using each object's real visible outline). Vehicle-distance/depth/contact language only ever applies on a camera actually designated to view the protected vehicle (`ai_car_cameras`) — other cameras stay isolated even if they happen to detect an unrelated car. Detected objects also show up as a compact chip summary (e.g. "🧍 2 people 🚗 1 car") in the Library clip modal's AI panel — a quick at-a-glance count, not a bounding-box overlay, so it stays out of the way for anyone with this feature off. Each chip's number is how many of that label were in frame **at once** at the peak, not how many boxes the detector stored: it runs over every sampled frame, so one parked car across a twelve-frame clip is one car, not twelve. Hover a chip for the raw box total behind it and the detector's best confidence. |
 | `ai_object_detection_model` | `yolo26n.pt` | Which Ultralytics model the detection stage above runs. YOLO26 (`yolo26n/s/m/l/x.pt`) is the current generation — end-to-end inference, lighter and more accurate than YOLO11 at every size — and is the default; `yolo11n/s/m/l/x.pt` remain selectable for compatibility with existing configurations. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the most accurate and much slower. |
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
@@ -727,7 +727,7 @@ detection off, it simply produces nothing.
 
 | Option | Default | What it does |
 |---|---|---|
-| `ai_security_events_enabled` | `true` | Turns the whole layer on. Produces the security events, the risk score, the evidence-quality score, the **SECURITY EVIDENCE** and **WHICH VEHICLE IS PROTECTED** prompt sections, and the Security tab's timeline. |
+| `ai_security_events_enabled` | `true` | Turns the whole layer on. Produces the security events, the risk score, the evidence-quality score, the **SECURITY EVIDENCE** and **WHICH VEHICLE IS PROTECTED** prompt sections, and the Security Events tab's timeline. |
 | `ai_temporal_scan_frames` | `12` | How many evenly-spaced frames object detection runs over. This is the one knob that trades detection cost against how much of a clip's *behaviour* can be seen. It does **not** change how many frames the AI model itself receives (that is still `ai_max_frames`). `0` disables the wider scan — detection then runs only over the frames the model itself sees, which are chosen by motion rather than evenly spaced, so every reported duration becomes unreliable. |
 | `ai_risk_alert_threshold` | `75` | Risk score at or above which a clip is flagged suspicious **even when the AI model judged it unremarkable**. The default covers the "critical" band only. `0` disables the override and leaves the model's verdict final. |
 
@@ -775,7 +775,7 @@ what changes:
   tell "walked past the car" from "stood at the car".
 - So a contact claim resting on nothing but that overlap is reported as
   **noteworthy**, not suspicious, and says so in its own text. It reaches
-  the prompt and the Security tab either way; what it does not do is carry
+  the prompt and the Security Events tab either way; what it does not do is carry
   the weight of a confirmed one, or raise a possible-impact alert.
 - With the stages available, the same geometry is **believed**: contact
   becomes suspicious, and impact candidates become possible. That is the
@@ -803,23 +803,32 @@ three dark frames of a figure spanning 6% of the frame height. Weak evidence
 damps the risk score, so a pile of confident-sounding events built on almost
 nothing cannot manufacture a critical alert on its own.
 
-#### The Security tab
+#### The Security Events tab
 
-A timeline of everything the layer observed across every camera, most recent
+A day-grouped timeline of everything the layer observed across every camera, most recent
 first. Each row is **one clip**, represented by its most severe event — a
 single visit legitimately produces half a dozen events (present, approached,
 near, lingered, retreated), and a timeline that repeats one clip six times is
 a worse view of the property than no timeline at all.
 
-Filter by camera, by minimum severity, or by period. **Show evidence**
-expands a row into that clip's full event list with the risk score and
-evidence quality behind it.
+Filter by camera, by minimum severity, or by period — a filter that matches
+nothing says so, and offers to clear itself, rather than claiming nothing has
+been analyzed. **Show evidence** expands a row into that clip's full event
+list with the risk score and evidence quality behind it.
 
 Every row carries the clip's own thumbnail, so the timeline can be scanned
-rather than read, and **View clip** opens the player at the second that
-row's event was measured at rather than from the top — as does clicking any
-timestamp inside the evidence list, so checking "possible contact at 0:06"
-does not mean scrubbing for it by hand.
+rather than read — with the second its event was measured at marked on the
+picture — and **View clip** opens the player at exactly that second rather
+than from the top, as does clicking any timestamp inside the evidence list,
+so checking "possible contact at 0:06" does not mean scrubbing for it by
+hand.
+
+Rows sit on a rail under a heading for the day they were recorded ("Today",
+"Yesterday", then the date), each carrying a dot and a card edge coloured by
+its severity band, so a bad afternoon is visible before a word of it is
+read. The summary card at the top of the tab counts the last seven days by
+band, including the zeroes — a confirmed "0 critical" being the thing most
+people open this tab for.
 
 Each row also shows **what the AI model concluded about the same clip**, and
 marks the rows where the two disagreed. That marker is the most useful thing

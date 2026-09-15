@@ -263,7 +263,14 @@ export interface VehicleSignatureInfo {
 // absent/empty unless that pipeline was on and found something.
 export interface DetectedObjectSummary {
   label: string
+  /** How many of this label were in frame *at once* at the peak — not how
+   *  many boxes were stored. The detector runs over every sampled frame,
+   *  so one parked car contributes a box per frame; counting those is what
+   *  reported three cars as "33". See database.py's own note. */
   count: number
+  /** The raw box total behind that count, kept as supporting detail.
+   *  Optional: a result stored by an older build has no such field. */
+  detections?: number
   max_confidence: number
 }
 

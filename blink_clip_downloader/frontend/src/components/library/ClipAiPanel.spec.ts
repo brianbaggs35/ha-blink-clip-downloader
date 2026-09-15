@@ -120,7 +120,7 @@ describe('ClipAiPanel', () => {
       '/api/ai/results/c1': {
         ...RESULT,
         detected_objects: [
-          { label: 'person', count: 2, max_confidence: 0.91 },
+          { label: 'person', count: 2, detections: 9, max_confidence: 0.91 },
           { label: 'zebra', count: 1, max_confidence: 0.8 },
         ],
       },
@@ -131,12 +131,46 @@ describe('ClipAiPanel', () => {
     await flushPromises()
     const chips = wrapper.findAll('.detection-chip')
     expect(chips).toHaveLength(2)
+    // Named, not just a bare number — which said nothing about what was
+    // counted, least of all behind the generic fallback emoji.
     expect(chips[0].text()).toContain('🧍')
-    expect(chips[0].text()).toContain('2')
+    expect(chips[0].text()).toContain('2 people')
     // An unmapped label falls back to the generic box emoji instead of
-    // silently dropping the chip.
+    // silently dropping the chip, and stays singular at a count of one.
     expect(chips[1].text()).toContain('📦')
-    expect(chips[1].text()).toContain('1')
+    expect(chips[1].text()).toContain('1 zebra')
+  })
+
+  it('explains what a detection count actually counts', async () => {
+    // The number is the peak in any one frame, not the stored box total —
+    // the chip has room for one of those, so the tooltip carries the rest.
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        detected_objects: [{ label: 'car', count: 3, detections: 33, max_confidence: 0.94 }],
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.detection-chip').attributes('title')).toBe(
+      'up to 3 cars in frame at once · 33 detection(s) across the sampled frames · up to 94% confidence',
+    )
+  })
+
+  it('leaves out the box total for a result stored before it was recorded', async () => {
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        detected_objects: [{ label: 'person', count: 1, max_confidence: 0.5 }],
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.detection-chip').attributes('title')).toBe('1 person in frame at once · up to 50% confidence')
   })
 
   it('shows the security assessment when the security layer found something', async () => {
@@ -214,7 +248,7 @@ describe('ClipAiPanel', () => {
     const panel = wrapper.find('[data-testid="ai-security"]')
     expect(panel.exists()).toBe(true)
     expect(panel.text()).toContain('Critical · risk 82')
-    expect(panel.text()).toContain('Evidence 58% (moderate)')
+    expect(panel.text()).toContain('58% moderate')
     // Most severe first — a list led by "a person was visible" buries the
     // reason the clip matters — then earliest within a severity.
     const rows = panel.findAll('.ai-security-list li')
@@ -295,7 +329,7 @@ describe('ClipAiPanel', () => {
     await flushPromises()
     const panel = wrapper.find('[data-testid="ai-security"]')
     expect(panel.text()).toContain('Routine · risk 0')
-    expect(panel.text()).toContain('Evidence 0% (weak)')
+    expect(panel.text()).toContain('0% weak')
   })
 
   it('hides the security section entirely when the layer produced nothing', async () => {

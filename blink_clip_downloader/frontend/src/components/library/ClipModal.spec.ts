@@ -292,6 +292,70 @@ describe('ClipModal', () => {
     expect(wrapper.find('.video-js-wrap').classes()).not.toContain('video-hidden')
   })
 
+  it('stands in for the clip while it loads rather than opening as a black void', async () => {
+    // What the modal showed before its request landed was an unsized black
+    // strip, no title and no metadata — then everything below reflowed the
+    // moment the details arrived.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.video-wrap').classes()).toContain('video-wrap-loading')
+    expect(wrapper.find('.video-poster img').attributes('src')).toBe('/api/clips/c1/thumb')
+    // The metadata grid keeps its six rows, so the actions and tags below
+    // it are already where they will stay.
+    expect(wrapper.find('.meta-grid').text()).toContain('Camera')
+    expect(wrapper.findAll('.meta-grid .skel')).toHaveLength(6)
+    expect(wrapper.find('.modal-title .skel').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('retires the placeholder once the first frame is decoded', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    // Still standing in: the fake player reports nothing decoded yet.
+    expect(wrapper.find('.video-poster').exists()).toBe(true)
+    const loaded = fakePlayer.on.mock.calls.find(([event]) => event === 'loadeddata')![1] as () => void
+    loaded()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.video-poster').exists()).toBe(false)
+    expect(wrapper.find('.video-wrap').classes()).not.toContain('video-wrap-loading')
+  })
+
+  it('retires the placeholder on playback too, for a browser that blocked autoplay', async () => {
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    const playing = fakePlayer.on.mock.calls.find(([event]) => event === 'playing')![1] as () => void
+    playing()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.video-poster').exists()).toBe(false)
+  })
+
+  it("does not show the previous clip's star and tags while the next one loads", async () => {
+    // Worse than cosmetic for the star: toggling it would have read the
+    // previous clip's state and written its opposite onto this one.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/clips/c1') return Promise.resolve(jsonResponse({ ...CLIP, starred: true }))
+        return new Promise(() => {})
+      }),
+    )
+    const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
+    await flushPromises()
+    expect(tagNames(wrapper)).toEqual(['delivery'])
+    expect(wrapper.text()).toContain('★ Starred')
+
+    await wrapper.setProps({ clipId: 'c2' })
+    await wrapper.vm.$nextTick()
+    expect(tagNames(wrapper)).toEqual([])
+    expect(wrapper.text()).toContain('☆ Star')
+    expect(wrapper.text()).not.toContain('★ Starred')
+    wrapper.unmount()
+  })
+
   it('emits close on backdrop click and close button', async () => {
     const wrapper = mount(ClipModal, { props: { clipId: 'c1', aiEnabled: false, promptDebugEnabled: false } })
     await flushPromises()
