@@ -1185,12 +1185,21 @@ async def test_start_logs_exception_and_continues(manager: LiveViewManager) -> N
 
 
 async def test_stop_during_sleep_returns_promptly(manager: LiveViewManager) -> None:
+    """start()'s wait between sweeps is chunked so stop() takes effect within
+    one chunk (1s) rather than a whole sweep interval.
+
+    The timeout has to sit between those two: above the 1s chunk the loop is
+    already sleeping in when stop() lands, and well below the 5s interval a
+    non-interruptible sleep would take. It used to be 1.0, which is the chunk
+    length itself — leaving ~20ms of margin and failing roughly one run in
+    six.
+    """
     manager._sweep_interval = 5.0  # would time out below if not interruptible
     task = asyncio.create_task(manager.start())
     await asyncio.sleep(0.02)
 
     manager.stop()
-    await asyncio.wait_for(task, timeout=1.0)
+    await asyncio.wait_for(task, timeout=3.0)
 
 
 async def test_close_stops_loop_and_tears_down_active_session(

@@ -57,6 +57,9 @@ _CONTENT_TYPE_JSON = "application/json"
 # 10s of a 60s clip) and anything that happens later is never seen.
 _MAX_CLIP_COVERAGE_SECONDS: float = 60.0
 
+# How much of a failing ffmpeg run's stderr to keep in its log line.
+_FFMPEG_ERROR_CHARS = 200
+
 # Floor applied to a clip's confidence when the deterministic risk score
 # overrides the model's "nothing unusual" verdict (see
 # ai_risk_alert_threshold). Above the default notification threshold, since
@@ -139,6 +142,19 @@ from .model_catalog import (
     is_vision_model,
     lookup_model_pricing,
 )
+
+
+def _format_ffmpeg_error(stderr: bytes | None) -> str:
+    """Condense a failing ffmpeg run's stderr into one loggable line.
+
+    Keeps the *tail* rather than the head: ffmpeg's conclusive
+    "Error ...: <reason>" line comes last, after any per-frame decode
+    complaints, so truncating from the front is what drops the answer.
+    Newlines are collapsed so one failure stays one log record.
+    """
+    return " ".join((stderr or b"").decode(errors="replace").split())[
+        -_FFMPEG_ERROR_CHARS:
+    ]
 
 
 @dataclass
@@ -1663,6 +1679,14 @@ class BaseAnalyzer(abc.ABC):
         extract_count = max(base_count, coverage_count)
         cmd = [
             "ffmpeg",
+            # Without these, ffmpeg's multi-line version/build banner is the
+            # first thing on stderr, and the truncated copy captured below
+            # on failure contains nothing but that banner — the actual error
+            # never reaches the log. Matches the other ffmpeg call sites
+            # (downloader.py, live_view.py).
+            "-hide_banner",
+            "-loglevel",
+            "error",
             "-i",
             clip_path,
             "-vf",
@@ -1703,7 +1727,7 @@ class BaseAnalyzer(abc.ABC):
                 "ffmpeg exited %d for %s: %s",
                 proc.returncode,
                 clip_path,
-                (stderr or b"").decode(errors="replace")[:200],
+                _format_ffmpeg_error(stderr),
             )
             return []
 

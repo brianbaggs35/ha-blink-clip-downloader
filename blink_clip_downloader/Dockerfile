@@ -294,7 +294,7 @@ RUN ( \
             # backward-compatible surface across major versions, and this
             # add-on's usage here is exactly that surface, never
             # trust_remote_code (which stays at its safe default of False).
-            "transformers>=5.16.1,<6" \
+            "transformers>=5.17.0,<6" \
         && pip3 install --no-cache-dir --no-deps "facenet-pytorch>=2.6.0,<3" \
         2>&1 | tail -20 \
     ) || echo "INFO: computer-vision pipeline install failed; ai_object_detection_enabled \
