@@ -115,8 +115,15 @@ jobs:
         run: |
           # Supervisor appends config.yaml's version to the image repository
           # itself; the image field must not contain a tag.
-          VERSION=$(grep '^version:' blink_clip_downloader/config.yaml | awk '{print $2}' | tr -d '"')
-          PACKAGE="blink_clip_downloader-ha-integration-${GITHUB_SHA}"
+          #
+          # One fixed package, with the per-commit uniqueness carried by the
+          # *tag* instead of the package name. prepare-addon-copy rewrites
+          # the add-on copy's `version:` to match, so Supervisor asks for
+          # exactly this tag. The package name used to carry the SHA, which
+          # left a new, undeletable ghcr package behind on every run — see
+          # that function's own comment for why undeletable.
+          VERSION="0.0.0-${GITHUB_SHA::12}"
+          PACKAGE="blink_clip_downloader-ha-integration"
           {
             echo "package=${PACKAGE}"
             echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${PACKAGE}"
@@ -210,6 +217,7 @@ jobs:
         run: scripts/ci/ha_integration_setup.sh prepare-addon-copy
         env:
           INTEGRATION_IMAGE: ${{ steps.integration-image.outputs.image }}
+          INTEGRATION_VERSION: ${{ steps.integration-image.outputs.version }}
 
       # Real nested Docker-in-Docker (this container runs its own dockerd
       # against the volumes below, not a socket-passthrough to the
@@ -332,12 +340,22 @@ jobs:
         if: always()
         run: docker rm -f "$CONTAINER_NAME" || true
 
-      - name: Delete temporary integration image package
+      # Prunes the shared package's older tags rather than trying to remove
+      # the package: GitHub rejects deleting a package's last tagged version
+      # ("You must delete the package instead"), which GITHUB_TOKEN cannot do
+      # for a user-namespace package — so asking for zero always failed, and
+      # continue-on-error hid it.
+      #
+      # Three rather than one because runs on different refs are not mutually
+      # exclusive (the concurrency group is per-ref), and pruning to a single
+      # version could delete an image another in-flight run is still
+      # installing. Three keeps the package to a handful of tags either way.
+      - name: Prune old integration image versions
         if: always()
         continue-on-error: true
         uses: actions/delete-package-versions@v5
         with:
           package-name: ${{ steps.integration-image.outputs.package }}
           package-type: container
-          min-versions-to-keep: 0
+          min-versions-to-keep: 3
           token: ${{ secrets.GITHUB_TOKEN }}

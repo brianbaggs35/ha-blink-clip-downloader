@@ -86,6 +86,24 @@ cmd_prepare_addon_copy() {
       printf 'image: "%s"\n' "$INTEGRATION_IMAGE" >>"$dest/config.yaml"
     fi
   fi
+
+  # ...and, for the same reason, the version Supervisor appends to it.
+  #
+  # The tag has to be unique per commit or two runs would overwrite each
+  # other's image and each could end up testing the other's build. That
+  # uniqueness used to live in the *package name* (one ghcr package per
+  # commit), which meant a new package on the account's Packages page every
+  # run and no way to clean them up: GitHub refuses to delete a package's
+  # last tagged version, and deleting the package itself needs a PAT the
+  # job does not have. Putting the uniqueness in the tag instead leaves a
+  # single package whose old versions the job *can* prune.
+  if [[ -n "${INTEGRATION_VERSION:-}" ]]; then
+    if grep -q '^version:' "$dest/config.yaml"; then
+      sed -i "s|^version:.*|version: \"${INTEGRATION_VERSION}\"|" "$dest/config.yaml"
+    else
+      printf 'version: "%s"\n' "$INTEGRATION_VERSION" >>"$dest/config.yaml"
+    fi
+  fi
 }
 
 ha_cli() {
