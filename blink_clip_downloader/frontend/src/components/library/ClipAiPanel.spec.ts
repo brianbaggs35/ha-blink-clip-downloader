@@ -155,7 +155,7 @@ describe('ClipAiPanel', () => {
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
     expect(wrapper.find('.detection-chip').attributes('title')).toBe(
-      'up to 3 cars in frame at once · 33 detection(s) across the sampled frames · up to 94% confidence',
+      '3 distinct cars tracked across the clip · 33 detection(s) over the sampled frames · up to 94% confidence',
     )
   })
 
@@ -170,7 +170,9 @@ describe('ClipAiPanel', () => {
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.detection-chip').attributes('title')).toBe('1 person in frame at once · up to 50% confidence')
+    expect(wrapper.find('.detection-chip').attributes('title')).toBe(
+      '1 distinct person tracked across the clip · up to 50% confidence',
+    )
   })
 
   it('shows the security assessment when the security layer found something', async () => {

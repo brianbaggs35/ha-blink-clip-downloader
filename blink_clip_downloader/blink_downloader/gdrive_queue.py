@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import time
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,15 @@ if TYPE_CHECKING:
     from .notifier import HANotifier
 
 _LOGGER = logging.getLogger(__name__)
+
+# What the queue records on itself when a full Drive stops it, so the
+# Storage tab can say why uploads are paused rather than leaving a stalled
+# queue looking broken.
+_QUOTA_PAUSE_REASON = "Google Drive storage quota exceeded"
+# A rate limit clears on its own — unlike a full Drive, it needs no human
+# action, so it gets a timed hold-off rather than a pause someone has to
+# come back and undo. Only has to outlast the window Drive counts over.
+_RATE_LIMIT_HOLD_OFF_SECONDS = 900
 
 
 def _local_date_str(timestamp: str) -> str:
@@ -69,6 +79,10 @@ class GDriveUploadQueue:
         self._batch_size = batch_size
         self._check_interval = check_interval
         self._running = False
+        # Monotonic deadline before which no upload is attempted at all —
+        # see _hold_off(). Zero means "nothing is holding us back".
+        self._hold_off_until = 0.0
+        self._hold_off_reason = ""
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -89,7 +103,12 @@ class GDriveUploadQueue:
                 # with nothing queued never has to reach out to Drive just
                 # to immediately find no work.
                 counts = await self._db.get_gdrive_queue_counts()
-                if counts.get("pending") and self._client.connected:
+                if (
+                    counts.get("pending")
+                    and self._client.connected
+                    and not self._client.uploads_paused
+                    and not self.holding_off
+                ):
                     await self._process_pending()
             except asyncio.CancelledError:
                 _LOGGER.info("Google Drive upload queue stopped")
@@ -154,17 +173,14 @@ class GDriveUploadQueue:
             if not self._running:
                 break
             await self._process_one(item)
-            if self._client.rate_limited or self._client.quota_exceeded:
+            if await self._hold_off_for_drive_state():
                 # Every remaining clip in this batch would hit the exact same
-                # rate limit or full-quota error immediately — stop now and
-                # let the next check_interval cycle retry (rate limit) or
-                # wait for the user to free up space (quota) instead of
-                # burning through the whole batch and spamming a duplicate
-                # "Drive full" notification per remaining clip (same
-                # reasoning as AnalysisQueue._process_pending).
+                # rate limit or full-quota error immediately, so stop here —
+                # and the hold-off is what keeps the *next* cycle from
+                # picking straight up where this one left off.
                 _LOGGER.info(
-                    "Pausing this batch after a rate limit or quota error — %d "
-                    "clip(s) remain pending and will be retried next cycle",
+                    "Holding off after a %s — %d clip(s) remain pending",
+                    self._hold_off_reason or "Drive error",
                     len(pending) - (i + 1),
                 )
                 break
@@ -247,11 +263,18 @@ class GDriveUploadQueue:
             )
 
             if not file_id:
-                if self._client.quota_exceeded:
-                    await self._db.update_gdrive_queue_status(
-                        clip_id, "failed", error="Google Drive storage quota exceeded"
-                    )
-                    await self._notify_quota_exceeded()
+                # A full Drive or a rate limit says nothing about this clip
+                # — it will upload perfectly once there is room, or once the
+                # limit resets. Recording it as *failed* was what buried the
+                # Storage tab under hundreds of identical "Google Drive
+                # storage quota exceeded" rows: one more clip was consumed
+                # and written off on every single cycle, for as long as the
+                # Drive stayed full. It goes back to pending instead,
+                # keeping its place in the queue, while
+                # _hold_off_for_drive_state stops the next cycle from
+                # immediately doing the same thing again.
+                if self._client.quota_exceeded or self._client.rate_limited:
+                    await self._db.update_gdrive_queue_status(clip_id, "pending")
                 else:
                     await self._db.update_gdrive_queue_status(
                         clip_id, "failed", error="Upload failed"
@@ -356,12 +379,101 @@ class GDriveUploadQueue:
             )
             return None
 
+    # ------------------------------------------------------------------
+    # Hold-off
+    # ------------------------------------------------------------------
+
+    @property
+    def holding_off(self) -> bool:
+        """Whether a Drive-side condition is currently stopping uploads."""
+        return time.monotonic() < self._hold_off_until
+
+    @property
+    def hold_off_seconds(self) -> int:
+        """Seconds left before uploads resume, or 0 when nothing is holding
+        them back — so the Storage tab can say when it will try again
+        rather than leaving a stalled queue looking broken."""
+        remaining = self._hold_off_until - time.monotonic()
+        return max(0, int(remaining))
+
+    async def _hold_off_for_drive_state(self) -> bool:
+        """Stop uploading if Drive has just told us to. Returns whether it did.
+
+        Deliberately checked after *every* clip, including one that
+        uploaded successfully: the folder lookups on the way to an upload
+        share the same session and the same limits, so a clip can go up
+        having already been told to slow down.
+
+        The two conditions are treated differently on purpose. A rate limit
+        clears on its own, so it gets a timed hold-off. A full Drive does
+        not clear on its own — it clears when a person deletes something or
+        buys more space — so there is no point in any amount of retrying,
+        and the queue pauses itself outright and says so.
+        """
+        if self._client.quota_exceeded:
+            await self._pause_for_quota()
+            return True
+        if self._client.rate_limited:
+            await self._hold_off(
+                "Google Drive rate limit", _RATE_LIMIT_HOLD_OFF_SECONDS
+            )
+        return self.holding_off
+
+    async def _pause_for_quota(self) -> None:
+        """Pause uploads because Drive is full, and say so once.
+
+        Nothing here is retryable: every attempt costs a round trip to be
+        told the same thing, which is how the Storage tab ended up buried
+        under hundreds of identical "quota exceeded" rows. Resuming is the
+        user's to do, from the Storage tab, once they have made room —
+        which is also the signal that it is worth trying again at all.
+        """
+        if self._client.uploads_paused:
+            return
+        try:
+            self._client.set_uploads_paused(True, _QUOTA_PAUSE_REASON)
+        except OSError as exc:
+            # set_uploads_paused updates in memory before persisting, so
+            # uploads are already stopped for this session; only the
+            # survives-a-restart part is lost.
+            _LOGGER.warning("Could not persist the Drive upload pause: %s", exc)
+        _LOGGER.warning("%s — pausing Drive uploads until resumed", _QUOTA_PAUSE_REASON)
+        await self._notify_quota_exceeded()
+
+    async def _hold_off(self, reason: str, seconds: int) -> None:
+        """Stop attempting uploads for *seconds*, and log why once.
+
+        Extending an already-running hold-off deliberately does not log
+        again — a rate limit that is still in force a cycle later is not
+        news, and a line per cycle for as long as it lasts is its own kind
+        of noise. Nothing here notifies: a hold-off resolves itself, so
+        there is nothing for a person to do about it.
+        """
+        already_holding = self.holding_off and self._hold_off_reason == reason
+        self._hold_off_until = time.monotonic() + seconds
+        self._hold_off_reason = reason
+        if not already_holding:
+            _LOGGER.warning("%s — holding off Drive uploads for %ds", reason, seconds)
+
+    def resume(self) -> None:
+        """Clear any hold-off so the next cycle tries again immediately.
+
+        What Retry (and Resume Uploads) on the Storage tab is for: someone
+        who has just fixed the problem should not sit out the rest of a
+        window that is no longer true. Note this only clears the queue's own
+        timed hold-off — an outright pause is the client's state, cleared by
+        the same endpoint that calls this.
+        """
+        self._hold_off_until = 0.0
+        self._hold_off_reason = ""
+
     async def _notify_quota_exceeded(self) -> None:
         if not self._notifier:
             return
         await self._notifier.notify(
-            "Google Drive storage quota exceeded — new backups are paused. Free "
-            "up space in Drive (or upgrade your plan) to resume.",
+            "Google Drive storage quota exceeded — backups are paused. Free up "
+            "space in Drive (or upgrade your plan), then press Resume Uploads "
+            "on the add-on's Storage tab.",
             title="Blink Downloader: Google Drive Full",
         )
 
@@ -371,4 +483,11 @@ class GDriveUploadQueue:
 
     async def get_queue_status(self) -> dict[str, Any]:
         counts = await self._db.get_gdrive_queue_counts()
-        return {"connected": self._client.connected, **counts}
+        return {
+            "connected": self._client.connected,
+            "uploads_paused": self._client.uploads_paused,
+            "pause_reason": self._client.pause_reason,
+            "hold_off_reason": self._hold_off_reason if self.holding_off else "",
+            "hold_off_seconds": self.hold_off_seconds,
+            **counts,
+        }

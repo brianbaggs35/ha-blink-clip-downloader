@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  clearFailedGDriveUploads,
   createGDriveFolder,
   disconnectGDrive,
   getFailedGDriveUploads,
@@ -12,6 +13,7 @@ import {
   retryFailedGDriveUploads,
   saveGDriveSettings,
   selectGDriveFolder,
+  setGDriveUploadsPaused,
   startGDriveConnect,
   triggerGDriveBackupNow,
   uploadClipsToGDrive,
@@ -154,7 +156,39 @@ describe('gdrive api', () => {
 
   it('getFailedGDriveUploads()', async () => {
     await getFailedGDriveUploads()
-    expect(fetch).toHaveBeenCalledWith('/api/storage/gdrive/queue/failed', {})
+    expect(fetch).toHaveBeenCalledWith('/api/storage/gdrive/queue/failed?limit=25&offset=0', {})
+  })
+
+  it('getFailedGDriveUploads() with an explicit page', async () => {
+    await getFailedGDriveUploads(10, 30)
+    expect(fetch).toHaveBeenCalledWith('/api/storage/gdrive/queue/failed?limit=10&offset=30', {})
+  })
+
+  it('clearFailedGDriveUploads() with a clip id', async () => {
+    await clearFailedGDriveUploads('c1')
+    expect(fetch).toHaveBeenCalledWith('/api/storage/gdrive/queue/failed/clear', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clip_id: 'c1' }),
+    })
+  })
+
+  it('clearFailedGDriveUploads() with no clip id clears them all', async () => {
+    await clearFailedGDriveUploads()
+    expect(fetch).toHaveBeenCalledWith('/api/storage/gdrive/queue/failed/clear', {
+      method: 'POST',
+      headers: undefined,
+      body: undefined,
+    })
+  })
+
+  it('setGDriveUploadsPaused()', async () => {
+    await setGDriveUploadsPaused(true)
+    expect(fetch).toHaveBeenCalledWith('/api/storage/gdrive/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paused: true }),
+    })
   })
 
   it('retryFailedGDriveUploads() with a clip id', async () => {

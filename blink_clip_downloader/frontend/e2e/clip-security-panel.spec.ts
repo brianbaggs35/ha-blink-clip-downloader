@@ -168,8 +168,8 @@ test('the panel is divided into named sections rather than one flat block', asyn
 })
 
 test('a detection chip names what it counted, and says what the number means', async ({ page }) => {
-  // The count is the most of that label in frame at once, not the stored
-  // box total — counting the boxes is what reported three cars as "33".
+  // The count is how many distinct ones the tracker followed through the
+  // clip, not the stored box total — counting boxes reported 3 cars as "33".
   await serveAiResult(page, {
     ...BASE,
     detected_objects: [{ label: 'car', count: 3, detections: 33, max_confidence: 0.94 }],
@@ -183,7 +183,7 @@ test('a detection chip names what it counted, and says what the number means', a
   await expect(chip).not.toContainText('33')
   await expect(chip).toHaveAttribute(
     'title',
-    'up to 3 cars in frame at once · 33 detection(s) across the sampled frames · up to 94% confidence',
+    '3 distinct cars tracked across the clip · 33 detection(s) over the sampled frames · up to 94% confidence',
   )
 })
 

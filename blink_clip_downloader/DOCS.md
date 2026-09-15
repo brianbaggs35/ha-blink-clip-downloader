@@ -693,7 +693,7 @@ you'll see them report unavailable there.
 
 | Option | Default | What it adds |
 |---|---|---|
-| `ai_enhanced_detection_enabled` | `false` | Frame preprocessing (CLAHE contrast enhancement + light denoising, OpenCV), object detection + tracking (YOLO + ByteTrack, via Ultralytics), monocular depth estimation (Depth Anything V2, via transformers), and pixel-level contact segmentation (SAM2, via transformers) — one switch for all four. Depth estimation and contact segmentation have always required object detection to run at all, and there was no real value in toggling preprocessing/detection independently, so earlier versions' four separate settings just multiplied untested on/off combinations without a matching benefit. Adds a code-computed **OBJECT DETECTION** hint (what was detected — people, vehicles, and animals — and how close a detected person or animal is to a detected vehicle), a **TRACKING** hint (lingering/casing vs. briefly passing through, via ByteTrack's frame-to-frame continuity), a **DEPTH ESTIMATE** hint ("overlapping in the 2D frame" vs. "actually at the same distance from the camera" — catches the case where a person or animal only *looks* close to the protected vehicle because of the camera angle), and a **CONTACT ANALYSIS** hint (refining a bounding-box overlap into an actual touching-or-not judgment, e.g. a dog jumping on the car vs. merely standing nearby, using each object's real visible outline). Vehicle-distance/depth/contact language only ever applies on a camera actually designated to view the protected vehicle (`ai_car_cameras`) — other cameras stay isolated even if they happen to detect an unrelated car. Detected objects also show up as a compact chip summary (e.g. "🧍 2 people 🚗 1 car") in the Library clip modal's AI panel — a quick at-a-glance count, not a bounding-box overlay, so it stays out of the way for anyone with this feature off. Each chip's number is how many of that label were in frame **at once** at the peak, not how many boxes the detector stored: it runs over every sampled frame, so one parked car across a twelve-frame clip is one car, not twelve. Hover a chip for the raw box total behind it and the detector's best confidence. |
+| `ai_enhanced_detection_enabled` | `false` | Frame preprocessing (CLAHE contrast enhancement + light denoising, OpenCV), object detection + tracking (YOLO + ByteTrack, via Ultralytics), monocular depth estimation (Depth Anything V2, via transformers), and pixel-level contact segmentation (SAM2, via transformers) — one switch for all four. Depth estimation and contact segmentation have always required object detection to run at all, and there was no real value in toggling preprocessing/detection independently, so earlier versions' four separate settings just multiplied untested on/off combinations without a matching benefit. Adds a code-computed **OBJECT DETECTION** hint (what was detected — people, vehicles, and animals — and how close a detected person or animal is to a detected vehicle), a **TRACKING** hint (lingering/casing vs. briefly passing through, via ByteTrack's frame-to-frame continuity), a **DEPTH ESTIMATE** hint ("overlapping in the 2D frame" vs. "actually at the same distance from the camera" — catches the case where a person or animal only *looks* close to the protected vehicle because of the camera angle), and a **CONTACT ANALYSIS** hint (refining a bounding-box overlap into an actual touching-or-not judgment, e.g. a dog jumping on the car vs. merely standing nearby, using each object's real visible outline). Vehicle-distance/depth/contact language only ever applies on a camera actually designated to view the protected vehicle (`ai_car_cameras`) — other cameras stay isolated even if they happen to detect an unrelated car. Detected objects also show up as a compact chip summary (e.g. "🧍 2 people 🚗 1 car") in the Library clip modal's AI panel — a quick at-a-glance count, not a bounding-box overlay, so it stays out of the way for anyone with this feature off. Each chip's number is how many distinct ones **appeared in the clip**, not how many boxes the detector stored: it runs over every sampled frame, so one parked car across a twelve-frame clip is one car, not twelve. They are counted by the tracker's own identities, the same ones the security layer groups its events by — so the chips and a "2 separate people were tracked" event can never disagree — which also means the count is only as good as the tracking, and tracking is only as good as the number of frames analyzed. Hover a chip for the raw box total behind it and the detector's best confidence. |
 | `ai_object_detection_model` | `yolo26n.pt` | Which Ultralytics model the detection stage above runs. YOLO26 (`yolo26n/s/m/l/x.pt`) is the current generation — end-to-end inference, lighter and more accurate than YOLO11 at every size — and is the default; `yolo11n/s/m/l/x.pt` remain selectable for compatibility with existing configurations. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the most accurate and much slower. |
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
@@ -1342,16 +1342,43 @@ under the current policy — without it, connecting Drive for the first time
 would only cover clips going forward. It also retries anything that
 previously failed (see below), not just clips that were never queued.
 
+### Pausing backups
+
+**Pause Uploads** on the Google Drive card stops the backup queue without
+touching the connection — the account, the OAuth tokens and the chosen
+folder all stay exactly as they are, and queued clips stay queued. The
+choice survives a restart.
+
+The queue also pauses *itself* when Google Drive reports the account is
+full, and says so on the tab and as a notification. Nothing is retried in
+that state, on purpose: a full Drive clears when you delete something or
+buy more space, not on a timer, so every attempt in between is a round
+trip to be told the same thing. Free up space, then press **Resume
+Uploads**. A rate limit is treated differently — that does clear on its
+own, so the queue waits it out and tells you roughly how long.
+
+Clips that could not upload because the Drive was full (or rate-limited)
+stay **queued** rather than being recorded as failures. They were never the
+problem, and they upload normally once there is room.
+
 ### Failed uploads
 
-An individual clip can fail to upload (a dropped connection, a Drive API
-error, a full quota) without affecting the rest of the queue. When at least
-one clip has failed, a **Failed Uploads** list appears on the Google Drive
-card showing each one's camera and error message, with a **Retry** button
-per clip and a **Retry All Failed** button for all of them at once — both
-just reset the clip back to pending, so it's picked up by the same upload
-queue as anything else. **Back Up Existing Clips Now** above also retries
-every failed clip as part of its normal sweep.
+An individual clip can fail to upload — a dropped connection, a Drive API
+error, a source file that has since gone — without affecting the rest of
+the queue. When at least one has, a **Failed Uploads** list appears on the
+Google Drive card showing each one's camera and error message, a page at a
+time, with the full count and a one-line summary of the distinct reasons.
+
+**Retry** (per clip) and **Retry All Failed** reset the clips back to
+pending, so they are picked up by the same upload queue as anything else;
+either also clears a rate-limit hold-off, since pressing Retry usually
+means you believe the problem is gone. **Back Up Existing Clips Now** above
+retries every failed clip as part of its normal sweep.
+
+**✕** on a row, and **Clear All**, discard failures instead of retrying
+them — for the ones that are never going to succeed. Clearing removes only
+the queue row: the clip itself is untouched, is not marked as backed up,
+and remains eligible for backup later.
 
 ### What this does and doesn't do
 

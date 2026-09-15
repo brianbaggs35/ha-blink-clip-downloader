@@ -47,6 +47,19 @@ def _make_client_mock(**kwargs: Any) -> MagicMock:
     # test_analysis_queue.py's identical concern for ClipAnalyzer.rate_limited.
     m.rate_limited = kwargs.get("rate_limited", False)
     m.quota_exceeded = kwargs.get("quota_exceeded", False)
+    # Same reason as the two above: a truthy child Mock here would read as
+    # "the user paused uploads" and stop the queue in every single test.
+    m.uploads_paused = kwargs.get("uploads_paused", False)
+    m.pause_reason = kwargs.get("pause_reason", "")
+
+    def _set_uploads_paused(paused: bool, reason: str = "") -> None:
+        # The real client updates in memory and persists; the queue reads
+        # uploads_paused straight back to decide whether it has already
+        # stopped, so the mock has to actually hold the value.
+        m.uploads_paused = paused
+        m.pause_reason = reason if paused else ""
+
+    m.set_uploads_paused = MagicMock(side_effect=_set_uploads_paused)
     # Empty by default (matches a real, unconnected GDriveClient's own
     # _folder_id default) so tests that don't care about the date/camera
     # folder hierarchy skip that branch entirely instead of following
@@ -265,7 +278,7 @@ async def test_process_one_upload_failure_marks_failed(
     assert updated["gdrive_backed_up"] is False
 
 
-async def test_process_one_quota_exceeded_notifies_and_marks_failed(
+async def test_process_one_quota_exceeded_notifies_and_stays_pending(
     db: ClipDatabase, tmp_path: Path
 ) -> None:
     src = tmp_path / "c1.mp4"
@@ -288,8 +301,21 @@ async def test_process_one_quota_exceeded_notifies_and_marks_failed(
         notifier.notify.call_args.kwargs.get("title") or notifier.notify.call_args[0][1]
     )
     assert "Google Drive" in str(title)
+    # Left pending, not failed: a full Drive says nothing about this clip,
+    # which will upload perfectly once there is room. Writing it off as a
+    # failure is what buried the Storage tab under hundreds of identical
+    # rows — one more clip consumed on every cycle for as long as the Drive
+    # stayed full.
     counts = await db.get_gdrive_queue_counts()
-    assert counts["failed"] == 1
+    assert counts["failed"] == 0
+    assert counts["pending"] == 1
+    # ...and the queue stops outright rather than retrying: a full Drive
+    # clears when a person makes room, not on a timer, so every attempt in
+    # between just costs a round trip to be told the same thing.
+    client.set_uploads_paused.assert_called_once_with(
+        True, "Google Drive storage quota exceeded"
+    )
+    assert client.uploads_paused is True
 
 
 async def test_process_one_quota_exceeded_without_notifier_does_not_raise(
@@ -309,7 +335,8 @@ async def test_process_one_quota_exceeded_without_notifier_does_not_raise(
     await queue._process_pending()  # must not raise with no notifier configured
 
     counts = await db.get_gdrive_queue_counts()
-    assert counts["failed"] == 1
+    assert counts["failed"] == 0
+    assert counts["pending"] == 1
 
 
 async def test_process_one_missing_clip_marks_failed(db: ClipDatabase) -> None:
@@ -866,6 +893,187 @@ async def test_start_skips_processing_when_not_connected(
         await queue.start()
 
     client.upload_file.assert_not_awaited()
+
+
+async def test_start_skips_processing_while_uploads_are_paused(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Pausing used to mean disconnecting, which throws away the OAuth
+    tokens and the chosen backup folder to achieve it. A paused-but-
+    connected client must simply not upload."""
+    src = tmp_path / "c1.mp4"
+    src.write_bytes(b"data")
+    client = _make_client_mock(uploads_paused=True)
+    queue = _make_queue(client, db, check_interval=1)
+
+    clip = _add_clip("c1")
+    clip["path"] = str(src)
+    await db.add_clip(clip)
+    await queue.enqueue(clip)
+
+    async def fake_sleep(_delay: float) -> None:
+        queue._running = False
+
+    with patch("asyncio.sleep", fake_sleep):
+        await queue.start()
+
+    client.upload_file.assert_not_awaited()
+    # ...and the clip is still queued, waiting rather than written off.
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["pending"] == 1
+
+
+async def test_start_skips_processing_while_holding_off(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The fix for the bug that filled the Storage tab: a rate limit used
+    to consume one more clip per cycle. The hold-off is what stops the
+    cycle after it from trying again straight away."""
+    src = tmp_path / "c1.mp4"
+    src.write_bytes(b"data")
+    client = _make_client_mock()
+    queue = _make_queue(client, db, check_interval=1)
+    await queue._hold_off("Google Drive rate limit", 900)
+
+    clip = _add_clip("c1")
+    clip["path"] = str(src)
+    await db.add_clip(clip)
+    await queue.enqueue(clip)
+
+    async def fake_sleep(_delay: float) -> None:
+        queue._running = False
+
+    with patch("asyncio.sleep", fake_sleep):
+        await queue.start()
+
+    client.upload_file.assert_not_awaited()
+
+
+async def test_quota_pause_notifies_once_however_long_it_lasts(
+    db: ClipDatabase,
+) -> None:
+    """A Drive that is still full is not news twice. One push per cycle for
+    as long as it stays full is its own kind of spam."""
+    notifier = MagicMock()
+    notifier.notify = AsyncMock(return_value=True)
+    client = _make_client_mock(quota_exceeded=True)
+    queue = _make_queue(client, db, notifier=notifier)
+
+    await queue._pause_for_quota()
+    await queue._pause_for_quota()
+    await queue._pause_for_quota()
+
+    notifier.notify.assert_awaited_once()
+    client.set_uploads_paused.assert_called_once()
+
+
+async def test_quota_pause_still_stops_uploads_when_it_cannot_be_persisted(
+    db: ClipDatabase,
+) -> None:
+    """Only the survives-a-restart part is lost — this session must still
+    stop, because the alternative is carrying on against a full Drive."""
+    client = _make_client_mock()
+    client.set_uploads_paused = MagicMock(side_effect=OSError("read-only /data"))
+    queue = _make_queue(client, db)
+
+    await queue._pause_for_quota()  # must not raise
+
+    client.set_uploads_paused.assert_called_once()
+
+
+async def test_resume_clears_the_hold_off(db: ClipDatabase) -> None:
+    """What Retry (and Resume) on the Storage tab is for: someone who has
+    just fixed the problem should not wait out the rest of a window that is
+    no longer true."""
+    queue = _make_queue(_make_client_mock(), db)
+    await queue._hold_off("Google Drive rate limit", 900)
+    assert queue.holding_off
+
+    queue.resume()
+
+    assert not queue.holding_off
+    assert queue.hold_off_seconds == 0
+    status = await queue.get_queue_status()
+    assert status["hold_off_reason"] == ""
+
+
+async def test_queue_status_reports_pause_and_hold_off(db: ClipDatabase) -> None:
+    queue = _make_queue(
+        _make_client_mock(uploads_paused=True, pause_reason="Drive is full"), db
+    )
+    await queue._hold_off("Google Drive rate limit", 900)
+
+    status = await queue.get_queue_status()
+
+    assert status["uploads_paused"] is True
+    assert status["pause_reason"] == "Drive is full"
+    assert status["hold_off_reason"] == "Google Drive rate limit"
+    assert status["hold_off_seconds"] > 0
+
+
+async def test_rate_limited_upload_stays_pending_rather_than_failing(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Same reasoning as the quota case: a rate limit is about the moment,
+    not about the clip, and it clears on its own."""
+    src = tmp_path / "c1.mp4"
+    src.write_bytes(b"data")
+    client = _make_client_mock(file_id=None, rate_limited=True)
+    queue = _make_queue(client, db)
+    queue._running = True
+
+    clip = _add_clip("c1")
+    clip["path"] = str(src)
+    await db.add_clip(clip)
+    await queue.enqueue(clip)
+
+    await queue._process_pending()
+
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["failed"] == 0
+    assert counts["pending"] == 1
+    assert queue.holding_off
+
+
+async def test_a_full_drive_stops_the_queue_instead_of_burning_a_clip_a_cycle(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The bug this whole change exists for.
+
+    A full Drive used to consume one more clip on every single cycle and
+    write it off as failed, for as long as the Drive stayed full — which is
+    how the Storage tab ended up under hundreds of identical "quota
+    exceeded" rows. Every clip must survive as pending, and the second
+    cycle must not attempt anything at all.
+    """
+    src = tmp_path / "c1.mp4"
+    src.write_bytes(b"data")
+    client = _make_client_mock(file_id=None, quota_exceeded=True)
+    queue = _make_queue(client, db, check_interval=1)
+
+    for clip_id in ("c1", "c2", "c3"):
+        clip = _add_clip(clip_id)
+        clip["path"] = str(src)
+        await db.add_clip(clip)
+        await queue.enqueue(clip)
+
+    cycles = 0
+
+    async def fake_sleep(_delay: float) -> None:
+        nonlocal cycles
+        cycles += 1
+        if cycles >= 2:
+            queue._running = False
+
+    with patch("asyncio.sleep", fake_sleep):
+        await queue.start()
+
+    # One attempt in total, across both cycles — not one per clip, and not
+    # one more on the cycle after.
+    client.upload_file.assert_awaited_once()
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["failed"] == 0
+    assert counts["pending"] == 3
 
 
 async def test_start_exits_on_cancelled_error(db: ClipDatabase, tmp_path: Path) -> None:

@@ -1564,8 +1564,8 @@ async def test_save_and_get_detected_objects_summary(db: ClipDatabase) -> None:
 
     summary = await db.get_detected_objects_summary("c1")
     by_label = {row["label"]: row for row in summary}
-    # One person, seen in two frames — one person, not two. The raw box
-    # total is kept separately as supporting detail.
+    # One person (one track id), seen in two frames — one person, not two.
+    # The raw box total is kept separately as supporting detail.
     assert by_label["person"]["count"] == 1
     assert by_label["person"]["detections"] == 2
     assert by_label["person"]["max_confidence"] == pytest.approx(0.9)
@@ -1576,15 +1576,15 @@ async def test_save_and_get_detected_objects_summary(db: ClipDatabase) -> None:
     assert summary[0]["label"] == "person"
 
 
-async def test_detected_objects_summary_counts_the_peak_not_every_box(
+async def test_detected_objects_summary_counts_objects_not_boxes(
     db: ClipDatabase,
 ) -> None:
-    """One car parked through a whole clip is one car.
+    """Three cars parked through a whole clip are three cars.
 
     The detector runs over every sampled frame, so counting stored rows
     reported a driveway with three cars in it as "33 cars" — once per car
-    per frame. The count is the most of that label in frame at any one
-    moment; the raw box total stays available as `detections`.
+    per frame. The count follows the tracker's identities; the raw box
+    total stays available as `detections`.
     """
     await db.add_clip(_make_clip("c1"))
     await db.save_detected_objects(
@@ -1594,10 +1594,9 @@ async def test_detected_objects_summary_counts_the_peak_not_every_box(
                 label="car",
                 confidence=0.8,
                 box=(float(car), 0.0, float(car) + 5.0, 5.0),
-                # Deliberately a fresh track id per frame, which is what
-                # frames sampled seconds apart actually produce — the count
-                # must not follow it.
-                track_id=frame * 10 + car,
+                # A parked car holds its track id across sampled frames —
+                # its box barely moves, so it is matched trivially.
+                track_id=car,
                 frame_index=frame,
             )
             for frame in range(11)
@@ -1616,10 +1615,48 @@ async def test_detected_objects_summary_counts_the_peak_not_every_box(
     ]
 
 
-async def test_detected_objects_summary_counts_a_later_crowd_not_the_first_frame(
+async def test_detected_objects_summary_counts_two_that_never_share_a_frame(
     db: ClipDatabase,
 ) -> None:
-    """The peak is over the whole clip, not just whichever frame came first."""
+    """One car leaves, another arrives: two cars were in the clip, even
+    though only ever one was in frame. Counting the per-frame peak alone
+    would report one."""
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="car",
+                confidence=0.8,
+                box=(0.0, 0.0, 5.0, 5.0),
+                track_id=1,
+                frame_index=frame,
+            )
+            for frame in range(3)
+        ]
+        + [
+            DetectedObject(
+                label="car",
+                confidence=0.8,
+                box=(9.0, 0.0, 14.0, 5.0),
+                track_id=2,
+                frame_index=frame,
+            )
+            for frame in range(4, 7)
+        ],
+    )
+
+    summary = await db.get_detected_objects_summary("c1")
+    assert summary[0]["count"] == 2
+    assert summary[0]["detections"] == 6
+
+
+async def test_detected_objects_summary_falls_back_to_the_peak_without_tracking(
+    db: ClipDatabase,
+) -> None:
+    """Rows stored with no track_id at all (tracking off, or written by an
+    older build) would count zero by identity — the per-frame peak is the
+    floor precisely so they do not vanish."""
     await db.add_clip(_make_clip("c1"))
     await db.save_detected_objects(
         "c1",
@@ -1647,6 +1684,30 @@ async def test_detected_objects_summary_counts_a_later_crowd_not_the_first_frame
     summary = await db.get_detected_objects_summary("c1")
     assert summary[0]["count"] == 4
     assert summary[0]["detections"] == 5
+
+
+async def test_detected_objects_summary_peak_wins_over_partial_tracking(
+    db: ClipDatabase,
+) -> None:
+    """Three in frame together, only one of them tracked: the count can
+    never be lower than what was demonstrably there at once."""
+    await db.add_clip(_make_clip("c1"))
+    await db.save_detected_objects(
+        "c1",
+        [
+            DetectedObject(
+                label="car",
+                confidence=0.7,
+                box=(float(i), 0.0, float(i) + 4.0, 5.0),
+                track_id=1 if i == 0 else None,
+                frame_index=0,
+            )
+            for i in range(3)
+        ],
+    )
+
+    summary = await db.get_detected_objects_summary("c1")
+    assert summary[0]["count"] == 3
 
 
 async def test_save_detected_objects_replaces_not_accumulates(
@@ -2205,6 +2266,80 @@ async def test_get_failed_gdrive_uploads_excludes_other_statuses(
 
 async def test_get_failed_gdrive_uploads_empty(db: ClipDatabase) -> None:
     assert await db.get_failed_gdrive_uploads() == []
+
+
+async def test_get_failed_gdrive_uploads_pages_through_a_long_list(
+    db: ClipDatabase,
+) -> None:
+    """A spell of Drive being unreachable fails every queued clip at once,
+    so this list is routinely hundreds long — the tab used to render all of
+    them in one unbounded column."""
+    for i in range(12):
+        clip_id = f"c{i:02d}"
+        await db.add_clip(_make_clip(clip_id))
+        await db.enqueue_for_gdrive_upload(clip_id, "Front Door", f"/{clip_id}.mp4")
+        await db.update_gdrive_queue_status(clip_id, "failed", error="quota exceeded")
+
+    first = await db.get_failed_gdrive_uploads(limit=5)
+    second = await db.get_failed_gdrive_uploads(limit=5, offset=5)
+    last = await db.get_failed_gdrive_uploads(limit=5, offset=10)
+
+    assert [len(page) for page in (first, second, last)] == [5, 5, 2]
+    # Every row appears on exactly one page — the ordering is stable enough
+    # to page through without repeating or skipping one.
+    seen = [row["clip_id"] for page in (first, second, last) for row in page]
+    assert len(set(seen)) == 12
+
+
+async def test_clear_failed_gdrive_uploads_all(db: ClipDatabase) -> None:
+    """A failure a user has looked at and decided not to act on should not
+    be stuck on their Storage tab forever with Retry as the only way out."""
+    for clip_id in ("c1", "c2"):
+        await db.add_clip(_make_clip(clip_id))
+        await db.enqueue_for_gdrive_upload(clip_id, "Front Door", f"/{clip_id}.mp4")
+        await db.update_gdrive_queue_status(clip_id, "failed", error="nope")
+
+    cleared = await db.clear_failed_gdrive_uploads()
+
+    assert cleared == 2
+    assert await db.get_failed_gdrive_uploads() == []
+    # The clips themselves are untouched — only the queue rows went.
+    assert await db.get_clip("c1") is not None
+
+
+async def test_clear_failed_gdrive_uploads_one(db: ClipDatabase) -> None:
+    for clip_id in ("c1", "c2"):
+        await db.add_clip(_make_clip(clip_id))
+        await db.enqueue_for_gdrive_upload(clip_id, "Front Door", f"/{clip_id}.mp4")
+        await db.update_gdrive_queue_status(clip_id, "failed", error="nope")
+
+    assert await db.clear_failed_gdrive_uploads("c1") == 1
+
+    remaining = await db.get_failed_gdrive_uploads()
+    assert [row["clip_id"] for row in remaining] == ["c2"]
+
+
+async def test_clear_failed_gdrive_uploads_leaves_pending_work_alone(
+    db: ClipDatabase,
+) -> None:
+    """A mistimed "Clear All" must not drop a clip that is queued or
+    mid-upload out of the queue."""
+    for clip_id, status in (("c1", "failed"), ("c2", "pending"), ("c3", "processing")):
+        await db.add_clip(_make_clip(clip_id))
+        await db.enqueue_for_gdrive_upload(clip_id, "Front Door", f"/{clip_id}.mp4")
+        await db.update_gdrive_queue_status(clip_id, status)
+
+    assert await db.clear_failed_gdrive_uploads() == 1
+
+    counts = await db.get_gdrive_queue_counts()
+    assert counts["pending"] == 1
+    assert counts["processing"] == 1
+    assert counts["failed"] == 0
+
+
+async def test_clear_failed_gdrive_uploads_without_init_returns_zero() -> None:
+    d = ClipDatabase()
+    assert await d.clear_failed_gdrive_uploads() == 0
 
 
 async def test_get_failed_gdrive_uploads_without_init_returns_empty() -> None:

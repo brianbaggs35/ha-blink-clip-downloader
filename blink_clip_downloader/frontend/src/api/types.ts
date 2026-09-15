@@ -263,10 +263,11 @@ export interface VehicleSignatureInfo {
 // absent/empty unless that pipeline was on and found something.
 export interface DetectedObjectSummary {
   label: string
-  /** How many of this label were in frame *at once* at the peak — not how
-   *  many boxes were stored. The detector runs over every sampled frame,
-   *  so one parked car contributes a box per frame; counting those is what
-   *  reported three cars as "33". See database.py's own note. */
+  /** How many distinct ones appeared in the clip, by the tracker's own
+   *  identities — not how many boxes were stored. The detector runs over
+   *  every sampled frame, so one parked car contributes a box per frame;
+   *  counting those is what reported three cars as "33". See database.py's
+   *  own note for the accuracy this rests on. */
   count: number
   /** The raw box total behind that count, kept as supporting detail.
    *  Optional: a result stored by an older build has no such field. */
@@ -551,6 +552,13 @@ export interface GDriveStatus {
   account_email: string
   folder_id: string
   folder_name: string
+  /** Uploads held independently of the connection — pausing used to mean
+   *  disconnecting, which throws away the OAuth tokens and the chosen
+   *  folder to achieve it. */
+  uploads_paused: boolean
+  /** Why, when the queue paused *itself* (a full Drive). Empty for a pause
+   *  the user chose, which needs no explaining back to them. */
+  pause_reason: string
 }
 
 export type GDriveConnectPhase = 'idle' | 'pending' | 'connected' | 'expired' | 'error'
@@ -573,6 +581,12 @@ export interface GDriveQuota {
 
 export interface GDriveQueueStatus {
   connected: boolean
+  uploads_paused: boolean
+  pause_reason: string
+  /** Why the queue has stopped trying by itself (a full Drive, a rate
+   *  limit), empty when nothing is holding it back. */
+  hold_off_reason: string
+  hold_off_seconds: number
   pending: number
   processing: number
   completed: number
@@ -585,6 +599,14 @@ export interface GDriveFailedUpload {
   clip_path: string
   error_message: string
   completed_at: string
+}
+
+/** One page of failed uploads plus how many there are in all — a spell of
+ *  Drive being unreachable can fail every clip in the library, so the page
+ *  on screen is not the size of the problem. */
+export interface GDriveFailedUploadsPage {
+  items: GDriveFailedUpload[]
+  total: number
 }
 
 export interface GDriveFolder {

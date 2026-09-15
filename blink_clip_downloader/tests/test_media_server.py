@@ -6823,7 +6823,12 @@ def _make_gdrive_client_mock(**kwargs) -> MagicMock:
     m.account_email = kwargs.get("account_email", "")
     m.folder_id = kwargs.get("folder_id", "")
     m.folder_name = kwargs.get("folder_name", "")
+    # An instance attribute, so MagicMock(spec=...) would otherwise resolve
+    # it to a truthy child Mock and report every client as paused.
+    m.uploads_paused = kwargs.get("uploads_paused", False)
+    m.pause_reason = kwargs.get("pause_reason", "")
     m.set_settings = MagicMock()
+    m.set_uploads_paused = MagicMock()
     m.select_folder = MagicMock()
     m.start_device_flow = AsyncMock(return_value=kwargs.get("device_flow_info"))
     m.disconnect = AsyncMock()
@@ -6950,6 +6955,8 @@ async def test_gdrive_status_reflects_client(db: ClipDatabase) -> None:
             "account_email": "me@example.com",
             "folder_id": "f1",
             "folder_name": "Blink Clips",
+            "uploads_paused": False,
+            "pause_reason": "",
         }
     finally:
         await tc.close()
@@ -7309,6 +7316,10 @@ async def test_gdrive_queue_status_no_queue_configured(client: TestClient) -> No
     data = await resp.json()
     assert data == {
         "connected": False,
+        "uploads_paused": False,
+        "pause_reason": "",
+        "hold_off_reason": "",
+        "hold_off_seconds": 0,
         "pending": 0,
         "processing": 0,
         "completed": 0,
@@ -7580,7 +7591,7 @@ async def test_archive_run_now_zero_when_nothing_eligible(db: ClipDatabase) -> N
 async def test_gdrive_queue_failed_empty(client: TestClient) -> None:
     resp = await client.get("/api/storage/gdrive/queue/failed")
     assert resp.status == 200
-    assert await resp.json() == []
+    assert await resp.json() == {"items": [], "total": 0}
 
 
 async def test_gdrive_queue_failed_lists_error_details(
@@ -7592,9 +7603,10 @@ async def test_gdrive_queue_failed_lists_error_details(
 
     resp = await client.get("/api/storage/gdrive/queue/failed")
     data = await resp.json()
-    assert len(data) == 1
-    assert data[0]["clip_id"] == "c1"
-    assert data[0]["error_message"] == "quota exceeded"
+    assert data["total"] == 1
+    assert len(data["items"]) == 1
+    assert data["items"][0]["clip_id"] == "c1"
+    assert data["items"][0]["error_message"] == "quota exceeded"
 
 
 async def test_gdrive_queue_failed_works_without_gdrive_client_configured(
@@ -7652,6 +7664,164 @@ async def test_gdrive_retry_invalid_json_still_retries_all(
     assert resp.status == 200
     data = await resp.json()
     assert data["retried"] == 1
+
+
+async def test_gdrive_queue_failed_pages(client: TestClient, db: ClipDatabase) -> None:
+    """A spell of Drive being unreachable fails every queued clip at once,
+    so the page on screen is not the size of the problem — hence `total`."""
+    for i in range(8):
+        clip_id = f"c{i}"
+        await db.add_clip(_make_clip(clip_id))
+        await db.enqueue_for_gdrive_upload(clip_id, "Front Door", f"/{clip_id}.mp4")
+        await db.update_gdrive_queue_status(clip_id, "failed", error="quota exceeded")
+
+    resp = await client.get("/api/storage/gdrive/queue/failed?limit=3&offset=3")
+    data = await resp.json()
+
+    assert len(data["items"]) == 3
+    assert data["total"] == 8
+
+
+async def test_gdrive_clear_failed_one(client: TestClient, db: ClipDatabase) -> None:
+    for clip_id in ("c1", "c2"):
+        await db.add_clip(_make_clip(clip_id))
+        await db.enqueue_for_gdrive_upload(clip_id, "A", f"/{clip_id}.mp4")
+        await db.update_gdrive_queue_status(clip_id, "failed", error="e")
+
+    resp = await client.post(
+        "/api/storage/gdrive/queue/failed/clear", json={"clip_id": "c1"}
+    )
+
+    assert resp.status == 200
+    assert (await resp.json())["cleared"] == 1
+    assert (await db.get_gdrive_queue_counts())["failed"] == 1
+
+
+async def test_gdrive_clear_failed_all_with_no_body(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Same optional-body contract as retry: no body means "all of them",
+    not a 400."""
+    for clip_id in ("c1", "c2"):
+        await db.add_clip(_make_clip(clip_id))
+        await db.enqueue_for_gdrive_upload(clip_id, "A", f"/{clip_id}.mp4")
+        await db.update_gdrive_queue_status(clip_id, "failed", error="e")
+
+    resp = await client.post("/api/storage/gdrive/queue/failed/clear")
+
+    assert resp.status == 200
+    assert (await resp.json())["cleared"] == 2
+    assert (await db.get_gdrive_queue_counts())["failed"] == 0
+
+
+async def test_gdrive_clear_failed_invalid_json_clears_all(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "A", "/c1.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="e")
+
+    resp = await client.post("/api/storage/gdrive/queue/failed/clear", data="not json")
+
+    assert resp.status == 200
+    assert (await resp.json())["cleared"] == 1
+
+
+async def test_gdrive_pause_not_configured_returns_503(client: TestClient) -> None:
+    resp = await client.post("/api/storage/gdrive/pause", json={"paused": True})
+    assert resp.status == 503
+
+
+async def test_gdrive_pause_and_resume(db: ClipDatabase) -> None:
+    """Pausing used to mean disconnecting, which throws away the OAuth
+    tokens and the chosen backup folder to achieve it."""
+    gdrive_client = _make_gdrive_client_mock(is_configured=True, connected=True)
+    gdrive_queue = MagicMock(spec=GDriveUploadQueue)
+    gdrive_queue.resume = MagicMock()
+    server = MediaServer(
+        db=db, port=0, gdrive_client=gdrive_client, gdrive_queue=gdrive_queue
+    )
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/pause", json={"paused": True})
+        assert (await resp.json())["paused"] is True
+        gdrive_client.set_uploads_paused.assert_called_once_with(True)
+        # Pausing must not clear a hold-off — only resuming does.
+        gdrive_queue.resume.assert_not_called()
+
+        resp = await tc.post("/api/storage/gdrive/pause", json={"paused": False})
+        assert (await resp.json())["paused"] is False
+        gdrive_client.set_uploads_paused.assert_called_with(False)
+        # Someone pressing Resume has usually just fixed whatever caused
+        # the queue to hold off, so it should not sit out the rest of it.
+        gdrive_queue.resume.assert_called_once()
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_status_reports_why_the_queue_paused_itself(
+    db: ClipDatabase,
+) -> None:
+    """So the Storage tab can explain a stalled queue rather than leaving it
+    looking broken."""
+    gdrive_client = _make_gdrive_client_mock(
+        is_configured=True,
+        connected=True,
+        uploads_paused=True,
+        pause_reason="Google Drive storage quota exceeded",
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        data = await (await tc.get("/api/storage/gdrive/status")).json()
+        assert data["uploads_paused"] is True
+        assert data["pause_reason"] == "Google Drive storage quota exceeded"
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_pause_write_failure_returns_500(db: ClipDatabase) -> None:
+    gdrive_client = _make_gdrive_client_mock(is_configured=True)
+    gdrive_client.set_uploads_paused = MagicMock(side_effect=OSError("disk full"))
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/pause", json={"paused": True})
+        assert resp.status == 500
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_pause_without_a_queue_still_saves(db: ClipDatabase) -> None:
+    """Resuming with no queue wired up (web-only mode) must not blow up on
+    the queue.resume() call."""
+    gdrive_client = _make_gdrive_client_mock(is_configured=True)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/pause", json={"paused": False})
+        assert resp.status == 200
+        gdrive_client.set_uploads_paused.assert_called_once_with(False)
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_retry_clears_the_hold_off(db: ClipDatabase) -> None:
+    """Waiting out the rest of an hour-long hold-off that is no longer true
+    would look exactly like the Retry button not working."""
+    await db.add_clip(_make_clip("c1"))
+    await db.enqueue_for_gdrive_upload("c1", "A", "/c1.mp4")
+    await db.update_gdrive_queue_status("c1", "failed", error="e")
+    gdrive_queue = MagicMock(spec=GDriveUploadQueue)
+    gdrive_queue.resume = MagicMock()
+    server = MediaServer(db=db, port=0, gdrive_queue=gdrive_queue)
+    tc = await _start_server(server)
+    try:
+        resp = await tc.post("/api/storage/gdrive/retry")
+        assert (await resp.json())["retried"] == 1
+        gdrive_queue.resume.assert_called_once()
+    finally:
+        await tc.close()
 
 
 async def test_gdrive_upload_not_configured_returns_503(client: TestClient) -> None:
