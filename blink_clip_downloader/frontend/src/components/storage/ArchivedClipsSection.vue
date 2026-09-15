@@ -357,26 +357,22 @@ async function removeArchive(group: ArchiveGroup) {
           <div class="archive-panel-header-row">
             <!-- NOSONAR: prose explaining a deliberate design choice below,
               not commented-out code.
-              PrimeVue's own toggle button (rendered after this #header slot,
-              as a sibling — see p-panel-header-actions) only wires *itself*
-              up as clickable, not the rest of the header — clicking anywhere
-              else in the header row would otherwise silently do nothing.
-              role="button" + the click/keydown handlers here make the whole
-              row toggle, which is what people actually expect to be able to
-              click; the real toggle button still works independently since
-              it isn't nested inside this element. A real <button> can't be
-              used for the whole row without nesting an interactive element
-              inside another (invalid HTML) once PrimeVue's own toggle
-              button renders alongside it. Both that toggle and the delete
-              button below are therefore *siblings* of this element rather
-              than children -- which also keeps the delete button's
-              aria-label out of this one's name-from-content accessible
-              name (per the ARIA accname algorithm), where it would
-              otherwise announce a confusing "...Delete archive" on the
-              expand control itself. Since nothing interactive ends up
-              inside it, this is a real <button>: native Enter/Space
-              handling, native focus, and a real role, rather than a div
-              re-implementing all three.
+              PrimeVue's own collapse toggle (rendered after this #header
+              slot, as a sibling — see p-panel-header-actions) wires up only
+              *itself* as clickable, so clicking anywhere else along the
+              header row would otherwise do nothing. This element makes the
+              whole row activate the same toggle, which is what people
+              expect to be able to click.
+              It holds a Tag and two spans and nothing interactive, so it is
+              a real <button>: focus, role, and Enter/Space all come from
+              the browser rather than from a div re-implementing them with
+              tabindex and keydown handlers. Both PrimeVue's toggle and the
+              delete button below stay *siblings* rather than children —
+              nesting either would be invalid HTML, and nesting the delete
+              button in particular would pull its aria-label into this
+              element's name-from-content accessible name (per the ARIA
+              accname algorithm), announcing a confusing "...Delete archive"
+              on the expand control itself.
             -->
             <button
               type="button"
