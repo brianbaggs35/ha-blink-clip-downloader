@@ -737,10 +737,11 @@ work).
 - `detected_objects` rows are **per box per sampled frame**, so counting
   them is never the answer to "how many were there" — one parked car across
   twelve frames is twelve rows. `get_detected_objects_summary`'s `count` is
-  the per-frame peak for that reason (`detections` keeps the raw total);
-  distinct `track_id` is deliberately not used, since this pipeline samples
-  frames seconds apart and ids are best-effort (see `ObjectDetector`'s own
-  note in `vision.py`).
+  distinct `track_id`s (the same identity `security/tracks.py` groups its
+  `ObjectTrack`s by, so the chips and the security events can never
+  disagree about how many people were in a clip), floored by the per-frame
+  peak so rows stored with no `track_id` still count. `detections` keeps
+  the raw box total.
 - Distance has two meanings in this codebase and they answer different
   questions: `box_gap` is outline-to-outline (negative when boxes overlap) and
   is what contact rules need; `ground_gap` is feet-to-ground-line with vertical

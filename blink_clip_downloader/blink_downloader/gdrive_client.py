@@ -134,6 +134,15 @@ class GDriveClient:
         self._client_id = ""
         self._client_secret = ""  # nosec B105
         self.backup_policy = "archived_only"
+        # Stops the upload queue without tearing down the connection. The
+        # only way to stop uploading used to be Disconnect, which throws
+        # away the OAuth tokens and the chosen backup folder with it — far
+        # too blunt for "hold off until I've cleared some space in Drive".
+        self.uploads_paused = False
+        # Why, when the queue paused itself rather than the user doing it
+        # (see GDriveUploadQueue._pause_for_quota). Empty for a pause the
+        # user chose, which needs no explaining back to them.
+        self.pause_reason = ""
         self._session: aiohttp.ClientSession | None = None
 
         self.connected = False
@@ -242,6 +251,8 @@ class GDriveClient:
             self.backup_policy = (
                 policy if policy in _BACKUP_POLICIES else "archived_only"
             )
+            self.uploads_paused = bool(data.get("uploads_paused", False))
+            self.pause_reason = str(data.get("pause_reason", "") or "")
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Could not load Google Drive settings: %s", exc)
 
@@ -266,12 +277,41 @@ class GDriveClient:
         self.backup_policy = (
             backup_policy if backup_policy in _BACKUP_POLICIES else "archived_only"
         )
+        self._write_settings()
+
+    def set_uploads_paused(self, paused: bool, reason: str = "") -> None:
+        """Pause or resume the upload queue, and persist the choice.
+
+        Deliberately its own method rather than another argument to
+        set_settings: pausing is a one-click action from the Storage tab
+        that must not require re-submitting (or risk overwriting) the OAuth
+        client id and secret alongside it. Persisting matters because the
+        add-on restarting is exactly when someone who paused because Drive
+        was full would least expect uploads to start again on their own.
+
+        *reason* is set only when the queue pauses itself (a full Drive);
+        a pause the user chose carries none, and resuming always clears it.
+        """
+        self.uploads_paused = paused
+        self.pause_reason = reason if paused else ""
+        self._write_settings()
+
+    def _write_settings(self) -> None:
+        """Persist every settings field at once.
+
+        One writer for the whole file, so adding a field cannot leave some
+        other caller silently writing a copy without it — which is exactly
+        how saving the OAuth form would have wiped a pause that was set
+        from the queue controls.
+        """
         SETTINGS_FILE.write_text(
             json.dumps(
                 {
                     "client_id": self._client_id,
                     "client_secret": self._client_secret,
                     "backup_policy": self.backup_policy,
+                    "uploads_paused": self.uploads_paused,
+                    "pause_reason": self.pause_reason,
                 },
                 indent=2,
             )

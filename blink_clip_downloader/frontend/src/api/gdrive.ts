@@ -2,7 +2,7 @@ import { apiGet, apiPost, apiPut } from './client'
 import type {
   GDriveBackupPolicy,
   GDriveConnectState,
-  GDriveFailedUpload,
+  GDriveFailedUploadsPage,
   GDriveFolder,
   GDriveFoldersResponse,
   GDriveQueueStatus,
@@ -71,11 +71,22 @@ export function uploadClipsToGDrive(clipIds: string[], folderId = ''): Promise<{
   return apiPost('/api/storage/gdrive/upload', { clip_ids: clipIds, folder_id: folderId })
 }
 
-export function getFailedGDriveUploads(): Promise<GDriveFailedUpload[]> {
-  return apiGet('/api/storage/gdrive/queue/failed')
+export function getFailedGDriveUploads(limit = 25, offset = 0): Promise<GDriveFailedUploadsPage> {
+  return apiGet(`/api/storage/gdrive/queue/failed?limit=${limit}&offset=${offset}`)
 }
 
 /** Omit clipId to retry every currently-failed upload. */
 export function retryFailedGDriveUploads(clipId?: string): Promise<{ retried: number }> {
   return apiPost('/api/storage/gdrive/retry', clipId ? { clip_id: clipId } : undefined)
+}
+
+/** Discard failed upload rows instead of retrying them. Omit clipId to
+ *  clear every one. Deletes only the queue row — never the clip. */
+export function clearFailedGDriveUploads(clipId?: string): Promise<{ cleared: number }> {
+  return apiPost('/api/storage/gdrive/queue/failed/clear', clipId ? { clip_id: clipId } : undefined)
+}
+
+/** Stop (or resume) uploading without disconnecting the account. */
+export function setGDriveUploadsPaused(paused: boolean): Promise<{ paused: boolean }> {
+  return apiPost('/api/storage/gdrive/pause', { paused })
 }

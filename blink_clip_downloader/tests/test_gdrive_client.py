@@ -100,6 +100,8 @@ def test_set_settings_persists_and_updates_in_memory(client: GDriveClient) -> No
         "client_id": "cid",
         "client_secret": "csecret",
         "backup_policy": "all_clips",
+        "uploads_paused": False,
+        "pause_reason": "",
     }
 
 
@@ -115,6 +117,86 @@ def test_set_settings_keeps_existing_secret_when_none_given(
 
     saved = json.loads(SETTINGS_FILE.read_text())
     assert saved["client_secret"] == "original-secret"
+
+
+def test_set_uploads_paused_persists_without_touching_credentials(
+    client: GDriveClient,
+) -> None:
+    """Pausing is a one-click action from the Storage tab — it must not
+    require re-submitting the OAuth client id and secret alongside it."""
+    client.set_settings("cid", "csecret", "all_clips")
+
+    client.set_uploads_paused(True)
+
+    assert client.uploads_paused is True
+    from blink_downloader.gdrive_client import SETTINGS_FILE
+
+    saved = json.loads(SETTINGS_FILE.read_text())
+    assert saved["uploads_paused"] is True
+    assert saved["client_id"] == "cid"
+    assert saved["client_secret"] == "csecret"
+    assert saved["backup_policy"] == "all_clips"
+
+
+def test_saving_the_oauth_form_does_not_silently_resume_uploads(
+    client: GDriveClient,
+) -> None:
+    """One writer for the whole settings file, so a save from the OAuth
+    form cannot drop a field it does not know about — which is exactly how
+    it would have wiped a pause set from the queue controls."""
+    client.set_uploads_paused(True)
+
+    client.set_settings("cid", "csecret", "archived_only")
+
+    assert client.uploads_paused is True
+    from blink_downloader.gdrive_client import SETTINGS_FILE
+
+    assert json.loads(SETTINGS_FILE.read_text())["uploads_paused"] is True
+
+
+def test_an_automatic_pause_records_why(client: GDriveClient) -> None:
+    """So the Storage tab can say why uploads stopped rather than leaving a
+    stalled queue looking broken."""
+    client.set_uploads_paused(True, "Google Drive storage quota exceeded")
+
+    assert client.pause_reason == "Google Drive storage quota exceeded"
+    from blink_downloader.gdrive_client import SETTINGS_FILE
+
+    assert (
+        json.loads(SETTINGS_FILE.read_text())["pause_reason"]
+        == "Google Drive storage quota exceeded"
+    )
+
+
+def test_resuming_clears_the_recorded_reason(client: GDriveClient) -> None:
+    client.set_uploads_paused(True, "Google Drive storage quota exceeded")
+
+    client.set_uploads_paused(False)
+
+    assert client.uploads_paused is False
+    assert client.pause_reason == ""
+
+
+def test_a_user_chosen_pause_carries_no_reason(client: GDriveClient) -> None:
+    """Nothing to explain back to someone who pressed the button."""
+    client.set_uploads_paused(True)
+    assert client.pause_reason == ""
+
+
+def test_a_pause_survives_a_restart(client: GDriveClient) -> None:
+    """The add-on restarting is exactly when someone who paused because
+    Drive was full would least expect uploads to start again on their own."""
+    client.set_uploads_paused(True, "Google Drive storage quota exceeded")
+
+    reloaded = GDriveClient()
+
+    assert reloaded.uploads_paused is True
+    assert reloaded.pause_reason == "Google Drive storage quota exceeded"
+
+
+def test_uploads_are_not_paused_by_default(client: GDriveClient) -> None:
+    client.set_settings("cid", "csecret", "archived_only")
+    assert GDriveClient().uploads_paused is False
 
 
 def test_set_settings_invalid_policy_falls_back_to_archived_only(

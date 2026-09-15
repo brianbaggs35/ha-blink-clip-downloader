@@ -411,7 +411,14 @@ const days = computed(() => {
 
 <style scoped>
 .security-page {
-  padding: 0.25rem 0 3rem;
+  /* The same gutter every other tab uses (Storage, Vehicles, Live View,
+     Security Feed, Biometrics) — without it the heading sat against the
+     very top of the viewport and the timeline rail against the sidebar. */
+  padding: 1.75rem;
+  padding-bottom: 3rem;
+  /* Wider than the 900px those pages settle on: a row here is a thumbnail,
+     a heading, two lines of prose and a risk pill on one line, and 900px
+     wraps the prose more than it needs to. */
   max-width: 1080px;
   /* Flex items default to min-width:auto, refusing to shrink below their
      content's natural width — on a narrow viewport that pushes the whole

@@ -217,6 +217,21 @@ def _paging(
     return limit, offset
 
 
+async def _optional_clip_id(request: web.Request) -> str | None:
+    """Read an optional ``clip_id`` from a request body that may not exist.
+
+    Shared by the retry and clear handlers, whose bodies are entirely
+    optional (unlike most POST handlers here): no body, an empty body and
+    invalid JSON all mean "every failed upload", not a 400.
+    """
+    try:
+        body = await request.json()
+        raw = body.get("clip_id")
+    except Exception:  # noqa: BLE001
+        return None
+    return str(raw) if raw else None
+
+
 @web.middleware
 async def _security_middleware(
     request: web.Request, handler: Callable
@@ -529,6 +544,10 @@ class MediaServer:
             "/api/storage/gdrive/queue/failed", self._handle_gdrive_queue_failed
         )
         app.router.add_post("/api/storage/gdrive/retry", self._handle_gdrive_retry)
+        app.router.add_post(
+            "/api/storage/gdrive/queue/failed/clear", self._handle_gdrive_clear_failed
+        )
+        app.router.add_post("/api/storage/gdrive/pause", self._handle_gdrive_pause)
         app.router.add_get(
             "/api/storage/gdrive/settings", self._handle_gdrive_settings_get
         )
@@ -2631,6 +2650,8 @@ class MediaServer:
                     "account_email": "",
                     "folder_id": "",
                     "folder_name": "",
+                    "uploads_paused": False,
+                    "pause_reason": "",
                 }
             )
         return web.json_response(
@@ -2640,6 +2661,8 @@ class MediaServer:
                 "account_email": self._gdrive_client.account_email,
                 "folder_id": self._gdrive_client.folder_id,
                 "folder_name": self._gdrive_client.folder_name,
+                "uploads_paused": self._gdrive_client.uploads_paused,
+                "pause_reason": self._gdrive_client.pause_reason,
             }
         )
 
@@ -2740,6 +2763,10 @@ class MediaServer:
             return web.json_response(
                 {
                     "connected": False,
+                    "uploads_paused": False,
+                    "pause_reason": "",
+                    "hold_off_reason": "",
+                    "hold_off_seconds": 0,
                     "pending": 0,
                     "processing": 0,
                     "completed": 0,
@@ -2748,14 +2775,59 @@ class MediaServer:
             )
         return web.json_response(await self._gdrive_queue.get_queue_status())
 
-    async def _handle_gdrive_queue_failed(self, _request: web.Request) -> web.Response:
-        """Failed upload rows with their error message (Storage tab's
-        failed-uploads list) — deliberately gated on self._db only, not
-        gdrive_client/gdrive_queue: a failed row and its error message are
-        meaningful to look at (and retry) even while currently
+    async def _handle_gdrive_queue_failed(self, request: web.Request) -> web.Response:
+        """One page of failed upload rows with their error message (Storage
+        tab's failed-uploads list) — deliberately gated on self._db only,
+        not gdrive_client/gdrive_queue: a failed row and its error message
+        are meaningful to look at (and retry) even while currently
         disconnected, same as enqueueing before ever connecting.
+
+        Returns ``total`` alongside the page because the list this powers
+        needs to say how many there are in all — a spell of Drive being
+        unreachable can fail every clip in the library, and the page on
+        screen is then a small fraction of the problem.
         """
-        return web.json_response(await self._db.get_failed_gdrive_uploads())
+        limit, offset = _paging(request.rel_url.query, 25, 100, min_limit=1)
+        items = await self._db.get_failed_gdrive_uploads(limit=limit, offset=offset)
+        counts = await self._db.get_gdrive_queue_counts()
+        return web.json_response({"items": items, "total": counts.get("failed", 0)})
+
+    async def _handle_gdrive_clear_failed(self, request: web.Request) -> web.Response:
+        """Discard one (or, with no clip_id, every) failed upload row.
+
+        The counterpart to _handle_gdrive_retry, and takes the same
+        optional body for the same reason: a failure a user has looked at
+        and decided not to act on should not be stuck on their Storage tab
+        forever with Retry as the only way to make it go away.
+        """
+        cleared = await self._db.clear_failed_gdrive_uploads(
+            await _optional_clip_id(request)
+        )
+        return web.json_response({"cleared": cleared})
+
+    async def _handle_gdrive_pause(self, request: web.Request) -> web.Response:
+        """Pause or resume Drive uploads without touching the connection.
+
+        Disconnecting was the only way to stop uploading, which throws away
+        the OAuth tokens and the chosen backup folder to achieve it.
+        Resuming also clears any hold-off the queue put itself into, since
+        someone pressing Resume has usually just fixed the thing that
+        caused it — and, when the queue paused *itself* because Drive was
+        full, resuming is the only signal that there is any point in trying
+        again at all.
+        """
+        if self._gdrive_client is None:
+            raise web.HTTPServiceUnavailable(text=_GDRIVE_NOT_AVAILABLE)
+        body = await _json_object(request)
+        paused = bool(body.get("paused"))
+        try:
+            self._gdrive_client.set_uploads_paused(paused)
+        except OSError as exc:
+            _LOGGER.warning("Could not save the Google Drive pause state: %s", exc)
+            raise web.HTTPInternalServerError(text=_SETTINGS_WRITE_FAILED) from exc
+        if not paused and self._gdrive_queue is not None:
+            self._gdrive_queue.resume()
+        return web.json_response({"paused": paused})
 
     async def _handle_gdrive_retry(self, request: web.Request) -> web.Response:
         """Reset one (or, with no clip_id, every) failed upload back to
@@ -2766,15 +2838,17 @@ class MediaServer:
         this file) — no body/an empty body/invalid JSON are all treated the
         same as "no clip_id", meaning "retry everything failed", rather
         than a 400.
+
+        Retrying also clears any hold-off the queue is sitting in: the
+        usual reason to press Retry is having just freed up space, and
+        waiting out the rest of an hour that is no longer true would look
+        exactly like the button not working.
         """
-        clip_id: str | None = None
-        try:
-            body = await request.json()
-            raw = body.get("clip_id")
-            clip_id = str(raw) if raw else None
-        except Exception:  # noqa: BLE001
-            clip_id = None
-        retried = await self._db.retry_failed_gdrive_uploads(clip_id)
+        retried = await self._db.retry_failed_gdrive_uploads(
+            await _optional_clip_id(request)
+        )
+        if self._gdrive_queue is not None:
+            self._gdrive_queue.resume()
         return web.json_response({"retried": retried})
 
     async def _handle_gdrive_folders(self, request: web.Request) -> web.Response:

@@ -22,9 +22,28 @@ async function patchAiStatus(page: import('@playwright/test').Page, patch: Recor
   })
 }
 
-async function mockGDriveApi(page: import('@playwright/test').Page, options: { connected?: boolean } = {}) {
+async function mockGDriveApi(
+  page: import('@playwright/test').Page,
+  options: {
+    connected?: boolean
+    uploadsPaused?: boolean
+    pauseReason?: string
+    failedCount?: number
+  } = {},
+) {
   let connected = options.connected ?? true
   let connectPhase = 'idle'
+  let uploadsPaused = options.uploadsPaused ?? false
+  let pauseReason = options.pauseReason ?? ''
+  // Enough rows to page through: the real list is routinely hundreds long
+  // when a spell of Drive trouble has failed every queued clip at once.
+  let failedUploads = Array.from({ length: options.failedCount ?? 1 }, (_unused, i) => ({
+    clip_id: `e2e-failed-${i}`,
+    camera: i % 2 === 0 ? 'Front Door' : 'Backyard',
+    clip_path: `/share/blink-clips/e2e-failed-${i}.mp4`,
+    error_message: 'mocked quota exceeded',
+    completed_at: '2026-01-01T00:00:00Z',
+  }))
   let folder = { id: 'folder-root', name: 'E2E Backups' }
   let folders = [
     { id: folder.id, name: folder.name, modified_time: '2026-01-01T00:00:00Z' },
@@ -51,7 +70,16 @@ async function mockGDriveApi(page: import('@playwright/test').Page, options: { c
         account_email: connected ? 'e2e@example.com' : '',
         folder_id: connected ? folder.id : '',
         folder_name: connected ? folder.name : '',
+        uploads_paused: uploadsPaused,
+        pause_reason: pauseReason,
       })
+      return
+    }
+    if (url.pathname === '/api/storage/gdrive/pause' && method === 'POST') {
+      const body = JSON.parse(request.postData() ?? '{}') as { paused?: boolean }
+      uploadsPaused = Boolean(body.paused)
+      if (!uploadsPaused) pauseReason = ''
+      await fulfillJson(route, { paused: uploadsPaused })
       return
     }
     if (url.pathname === '/api/storage/gdrive/connect' && method === 'POST') {
@@ -81,20 +109,34 @@ async function mockGDriveApi(page: import('@playwright/test').Page, options: { c
       })
       return
     }
+    if (url.pathname === '/api/storage/gdrive/queue/failed/clear' && method === 'POST') {
+      const body = JSON.parse(request.postData() ?? '{}') as { clip_id?: string }
+      const before = failedUploads.length
+      failedUploads = body.clip_id ? failedUploads.filter((f) => f.clip_id !== body.clip_id) : []
+      await fulfillJson(route, { cleared: before - failedUploads.length })
+      return
+    }
     if (url.pathname === '/api/storage/gdrive/queue/failed') {
-      await fulfillJson(route, [
-        {
-          clip_id: 'e2e-clip-000',
-          camera: 'Front Door',
-          clip_path: '/share/blink-clips/e2e-clip-000.mp4',
-          error_message: 'mocked quota exceeded',
-          completed_at: '2026-01-01T00:00:00Z',
-        },
-      ])
+      const limit = Number(url.searchParams.get('limit') ?? 25)
+      const offset = Number(url.searchParams.get('offset') ?? 0)
+      await fulfillJson(route, {
+        items: failedUploads.slice(offset, offset + limit),
+        total: failedUploads.length,
+      })
       return
     }
     if (url.pathname === '/api/storage/gdrive/queue') {
-      await fulfillJson(route, { connected, pending: 2, processing: 1, completed: 5, failed: 1 })
+      await fulfillJson(route, {
+        connected,
+        uploads_paused: uploadsPaused,
+        pause_reason: pauseReason,
+        hold_off_reason: '',
+        hold_off_seconds: 0,
+        pending: 2,
+        processing: 1,
+        completed: 5,
+        failed: failedUploads.length,
+      })
       return
     }
     if (url.pathname === '/api/storage/gdrive/folders' && method === 'GET') {
@@ -607,6 +649,85 @@ test('exercises mocked Moondream fine-tuning controls without cloud credentials'
   await page.getByRole('button', { name: 'Confirm' }).click()
   await expect(page.getByText('Fine-tune deleted')).toBeVisible()
   await expect(fineTuneCard).toContainText('No fine-tunes yet')
+})
+
+test('pauses and resumes Drive uploads without disconnecting the account', async ({ page }) => {
+  // Disconnect was the only way to stop uploading, and it throws away the
+  // OAuth tokens and the chosen backup folder to achieve it.
+  await mockGDriveApi(page)
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="storage"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="storage"]')
+
+  const connection = page.locator('.gdrive-connection-card')
+  await expect(connection).toContainText('Uploads: Running')
+
+  await connection.getByRole('button', { name: 'Pause Uploads' }).click()
+  await expect(page.getByText('Drive uploads paused')).toBeVisible()
+  await expect(connection).toContainText('Uploads: Paused')
+  await expect(connection).toContainText('Queued clips stay queued')
+  // Still connected, still pointed at the same folder.
+  await expect(connection).toContainText('Connected as e2e@example.com')
+  await expect(connection).toContainText('E2E Backups')
+
+  await connection.getByRole('button', { name: 'Resume Uploads' }).click()
+  await expect(page.getByText('Drive uploads resumed')).toBeVisible()
+  await expect(connection).toContainText('Uploads: Running')
+})
+
+test('says why the queue paused itself when Drive is full, and resuming clears it', async ({ page }) => {
+  // A full Drive used to mean uploads silently kept failing forever. Now
+  // they stop, and the tab says so rather than looking broken.
+  await mockGDriveApi(page, {
+    uploadsPaused: true,
+    pauseReason: 'Google Drive storage quota exceeded',
+  })
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="storage"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="storage"]')
+
+  const connection = page.locator('.gdrive-connection-card')
+  await expect(connection).toContainText('Google Drive storage quota exceeded — uploads paused automatically')
+  await expect(connection).toContainText('press Resume Uploads')
+
+  await connection.getByRole('button', { name: 'Resume Uploads' }).click()
+  await expect(connection).toContainText('Uploads: Running')
+  await expect(connection).not.toContainText('uploads paused automatically')
+})
+
+test('pages through a long failed-upload list, and clears it', async ({ page }) => {
+  // The list used to render every failed clip in one unbounded column with
+  // no pagination and no way to make any of them go away.
+  await mockGDriveApi(page, { failedCount: 25 })
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="storage"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="storage"]')
+
+  const failed = page.locator('[data-testid="gdrive-failed"]')
+  await expect(failed).toContainText('Failed Uploads (25)')
+  // Ten on the page, not all twenty-five.
+  await expect(failed.locator('.gdrive-failed-row')).toHaveCount(10)
+  // One line for the one reason they share, rather than ten.
+  await expect(failed).toContainText('mocked quota exceeded — 10 on this page')
+
+  // Paginator page buttons are labelled "Page N"; stepping with Next Page
+  // is what storage-archive-paging.spec.ts already does.
+  await failed.getByRole('button', { name: 'Next Page' }).click()
+  await failed.getByRole('button', { name: 'Next Page' }).click()
+  await expect(failed.locator('.gdrive-failed-row')).toHaveCount(5)
+
+  // Dismissing one row leaves the rest alone.
+  await failed
+    .getByRole('button', { name: /^Dismiss the failed upload/ })
+    .first()
+    .click()
+  await expect(failed).toContainText('Failed Uploads (24)')
+
+  await failed.getByRole('button', { name: 'Clear All' }).click()
+  await expect(page.getByText(/Discard all 24 failed upload\(s\)/)).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+  await expect(page.getByText('Cleared 24 failed upload(s)')).toBeVisible()
+  await expect(failed).toHaveCount(0)
 })
 
 test('covers connected Google Drive, folder management, retries, and library upload with stubs', async ({ page }) => {

@@ -47,7 +47,7 @@ interface Routes {
   queue?: unknown
   connectStatus?: unknown
   folders?: unknown
-  failedUploads?: unknown
+  failedUploads?: unknown[]
 }
 
 function routedFetch(routes: Routes) {
@@ -69,6 +69,9 @@ function routedFetch(routes: Routes) {
       return Promise.resolve(jsonResponse(routes.connectStatus ?? IDLE_CONNECT))
     if (url === '/api/storage/gdrive/disconnect') return Promise.resolve(jsonResponse({ disconnected: true }))
     if (url === '/api/storage/gdrive/backup-now') return Promise.resolve(jsonResponse({ enqueued: 3 }))
+    if (url === '/api/storage/gdrive/pause' && method === 'POST') {
+      return Promise.resolve(jsonResponse({ paused: JSON.parse(String(opts?.body ?? '{}')).paused }))
+    }
     if (url === '/api/storage/gdrive/retry' && method === 'POST') return Promise.resolve(jsonResponse({ retried: 1 }))
     if (url === '/api/storage/gdrive/folder' && method === 'PUT') return Promise.resolve(jsonResponse({ saved: true }))
     if (url.startsWith('/api/storage/gdrive/status')) return Promise.resolve(jsonResponse(routes.status))
@@ -76,8 +79,11 @@ function routedFetch(routes: Routes) {
       return Promise.resolve(jsonResponse(routes.quota ?? { available: false }))
     // Must come before the /api/storage/gdrive/queue prefix check below —
     // that check's startsWith would otherwise also swallow this route.
-    if (url.startsWith('/api/storage/gdrive/queue/failed'))
-      return Promise.resolve(jsonResponse(routes.failedUploads ?? []))
+    if (url.startsWith('/api/storage/gdrive/queue/failed')) {
+      // One page plus the overall total — see GDriveFailedUploadsPage.
+      const items = routes.failedUploads ?? []
+      return Promise.resolve(jsonResponse({ items, total: items.length }))
+    }
     if (url.startsWith('/api/storage/gdrive/queue'))
       return Promise.resolve(
         jsonResponse(routes.queue ?? { connected: false, pending: 0, processing: 0, completed: 0, failed: 0 }),
@@ -529,6 +535,119 @@ describe('GoogleDriveCard', () => {
       body: JSON.stringify({ clip_id: 'c1' }),
     })
     expect(wrapper.text()).toContain('1 pending')
+  })
+
+  it('pauses uploads without disconnecting the account', async () => {
+    // Disconnect was the only way to stop uploading, and it throws away the
+    // OAuth tokens and the chosen backup folder to achieve it.
+    const fetchMock = routedFetch({ settings: CONFIGURED, status: CONNECTED_WITH_FOLDER })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    const pauseBtn = wrapper.findAll('button').find((b) => b.text() === 'Pause Uploads')
+    await pauseBtn!.trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/storage/gdrive/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paused: true }),
+    })
+    // The button flips, and the account is still connected.
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Resume Uploads')).toBe(true)
+    expect(wrapper.text()).toContain('me@example.com')
+  })
+
+  it('resumes uploads again', async () => {
+    const fetchMock = routedFetch({
+      settings: CONFIGURED,
+      status: { ...CONNECTED_WITH_FOLDER, uploads_paused: true, pause_reason: '' },
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Resume Uploads')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/storage/gdrive/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paused: false }),
+    })
+  })
+
+  it('says why the queue paused itself, rather than leaving it looking broken', async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch({
+        settings: CONFIGURED,
+        status: {
+          ...CONNECTED_WITH_FOLDER,
+          uploads_paused: true,
+          pause_reason: 'Google Drive storage quota exceeded',
+        },
+      }),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Google Drive storage quota exceeded')
+    expect(wrapper.text()).toContain('press Resume Uploads')
+    // The neutral "you paused this" wording is for a pause the user chose.
+    expect(wrapper.text()).not.toContain('Uploads are paused. Queued clips stay queued')
+  })
+
+  it('reports a pause that could not be saved', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url === '/api/storage/gdrive/pause') return Promise.reject(new Error('down'))
+        return routedFetch({ settings: CONFIGURED, status: CONNECTED_WITH_FOLDER })(url)
+      }),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Pause Uploads')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(useToastStore().message).toBe('Could not change the upload state')
+    // ...and the button has not lied about the state.
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Pause Uploads')).toBe(true)
+  })
+
+  it('explains a rate limit the queue is waiting out on its own', async () => {
+    vi.stubGlobal(
+      'fetch',
+      routedFetch({
+        settings: CONFIGURED,
+        status: CONNECTED_WITH_FOLDER,
+        queue: {
+          connected: true,
+          uploads_paused: false,
+          pause_reason: '',
+          hold_off_reason: 'Google Drive rate limit',
+          hold_off_seconds: 600,
+          pending: 3,
+          processing: 0,
+          completed: 0,
+          failed: 0,
+        },
+      }),
+    )
+    const wrapper = mountCard()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Google Drive rate limit')
+    expect(wrapper.text()).toContain('about 10 minute(s)')
   })
 
   it('does not show the failed uploads section when nothing has failed', async () => {

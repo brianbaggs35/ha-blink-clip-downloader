@@ -255,8 +255,8 @@ const detectionLabel = (obj: DetectedObjectSummary) => `${obj.count} ${detection
  *  evidence sits behind it, and how sure the detector was at its best. */
 function detectionTitle(obj: DetectedObjectSummary): string {
   const noun = detectionNoun(obj.label, obj.count)
-  const parts = [obj.count === 1 ? `1 ${noun} in frame at once` : `up to ${obj.count} ${noun} in frame at once`]
-  if (obj.detections) parts.push(`${obj.detections} detection(s) across the sampled frames`)
+  const parts = [`${obj.count} distinct ${noun} tracked across the clip`]
+  if (obj.detections) parts.push(`${obj.detections} detection(s) over the sampled frames`)
   parts.push(`up to ${Math.round(obj.max_confidence * 100)}% confidence`)
   return parts.join(' · ')
 }
@@ -720,7 +720,10 @@ const faceReportNameOptions = computed(() => [
   border-radius: var(--radius-sm);
   padding: 0.45rem 0.55rem;
   white-space: pre-wrap;
-  word-break: break-word;
+  /* overflow-wrap is the standard property for this — word-break:
+     break-word was only ever a non-standard value browsers happened to
+     treat the same way (same note as base.css's .status-row .val.wrap). */
+  overflow-wrap: break-word;
   color: var(--muted);
   max-height: 160px;
   overflow-y: auto;

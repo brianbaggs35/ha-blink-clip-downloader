@@ -17,6 +17,7 @@ import {
   getGDriveStatus,
   saveGDriveSettings,
   selectGDriveFolder,
+  setGDriveUploadsPaused,
   startGDriveConnect,
   triggerGDriveBackupNow,
 } from '../../api/gdrive'
@@ -54,6 +55,8 @@ const status = ref<GDriveStatus>({
   account_email: '',
   folder_id: '',
   folder_name: '',
+  uploads_paused: false,
+  pause_reason: '',
 })
 const quota = ref<GDriveQuota | null>(null)
 const queueStatus = ref<GDriveQueueStatus | null>(null)
@@ -66,6 +69,7 @@ const savingSettings = ref(false)
 const connecting = ref(false)
 const backingUpNow = ref(false)
 const showFolderDialog = ref(false)
+const pausing = ref(false)
 
 let connectPollTimer: ReturnType<typeof setInterval> | undefined
 
@@ -75,6 +79,36 @@ const quotaPercent = computed(() => {
   if (!quota.value?.available || !quota.value.limit) return null
   return Math.min(100, Math.round(((quota.value.usage || 0) / quota.value.limit) * 100))
 })
+
+/** Why the queue has stopped on its own, phrased for the person looking at
+ *  a queue that is not moving. Without this a full Drive looked exactly
+ *  like a broken add-on: pending clips, nothing happening, no explanation. */
+const holdOffNote = computed(() => {
+  // Read once: having already returned for a missing reason, the rest of
+  // the status is known to be here, so no second fallback is needed (nor
+  // reachable, which is the other half of the reason).
+  const status = queueStatus.value
+  if (!status?.hold_off_reason) return ''
+  const minutes = Math.ceil(status.hold_off_seconds / 60)
+  return `${status.hold_off_reason} — uploads resume automatically in about ${minutes} minute(s). Retry or Resume tries again now.`
+})
+
+async function togglePaused() {
+  const next = !status.value.uploads_paused
+  pausing.value = true
+  try {
+    await setGDriveUploadsPaused(next)
+    // Resuming clears the recorded reason too, so a Drive that was full
+    // does not keep explaining itself after being dealt with.
+    status.value = { ...status.value, uploads_paused: next, pause_reason: next ? status.value.pause_reason : '' }
+    toast.show(next ? 'Drive uploads paused' : 'Drive uploads resumed')
+    await loadQueueStatus()
+  } catch {
+    toast.show('Could not change the upload state', true)
+  } finally {
+    pausing.value = false
+  }
+}
 
 async function loadSettings() {
   settings.value = await getGDriveSettings()
@@ -358,6 +392,37 @@ onUnmounted(stopConnectPolling)
               }}
             </p>
           </template>
+
+          <div class="gdrive-connected-row">
+            <span>
+              Uploads:
+              <strong>{{ status.uploads_paused ? 'Paused' : 'Running' }}</strong>
+            </span>
+            <Button
+              size="small"
+              severity="secondary"
+              outlined
+              :disabled="pausing"
+              :loading="pausing"
+              :label="status.uploads_paused ? 'Resume Uploads' : 'Pause Uploads'"
+              @click="togglePaused"
+            />
+          </div>
+
+          <!-- The queue stopped itself, which is worth saying loudly: the
+               clips are queued and nothing is wrong with the add-on, but
+               nothing will move until someone makes room. -->
+          <Message v-if="status.pause_reason" severity="error" :closable="false">
+            {{ status.pause_reason }} — uploads paused automatically. Free up space in Drive (or upgrade your plan),
+            then press Resume Uploads. Queued clips are waiting, not lost.
+          </Message>
+          <Message v-else-if="status.uploads_paused" severity="info" :closable="false">
+            Uploads are paused. Queued clips stay queued — the connection, the account and the backup folder are all
+            kept.
+          </Message>
+          <!-- Only when the queue stopped itself. A user-chosen pause is
+               already explained by the message above it. -->
+          <Message v-else-if="holdOffNote" severity="warn" :closable="false">{{ holdOffNote }}</Message>
 
           <p v-if="queueStatus" class="muted-note">
             Backup queue: {{ queueStatus.pending }} pending, {{ queueStatus.processing }} uploading,

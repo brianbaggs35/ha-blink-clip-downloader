@@ -62,19 +62,53 @@ everything else in the panel.
   scrollbar and no way to reach it. It now expands to whatever its content
   actually needs.
 
+### Google Drive backup
+
+A full Google Drive was a bad day for this add-on. It kept trying, one
+clip per cycle for as long as the Drive stayed full, writing each one off
+as a permanent failure — which is how the Storage tab ended up under
+hundreds of rows all reading "Google Drive storage quota exceeded", in a
+single unbounded list with no pagination, no way to dismiss them, and no
+way to stop uploading short of disconnecting the account.
+
+- **Uploads now pause themselves when Drive is full**, and say so — on the
+  Storage tab and as a notification. There is nothing to retry against a
+  full Drive: it clears when someone makes room, not on a timer. Press
+  **Resume Uploads** once there is space.
+- **A Pause Uploads / Resume Uploads button**, so stopping backups no
+  longer means Disconnect — which throws away the OAuth tokens and the
+  chosen backup folder to achieve it. The choice persists across restarts,
+  since a restart is exactly when someone who paused because Drive was
+  full would least expect uploads to start again on their own.
+- **A clip that could not upload because the Drive was full or rate-limited
+  stays queued** rather than being recorded as failed. It was never the
+  clip's fault, and it will upload fine once there is room. This is what
+  stops the failure list growing in the first place.
+- A rate limit — which does clear on its own — gets a timed hold-off
+  instead of a pause, and the tab says when it will try again.
+- **The failed-uploads list is paginated**, shows the true total rather
+  than however many fit, and summarizes the distinct reasons so one
+  problem reads as one problem.
+- **Failures can be dismissed**, individually or all at once, instead of
+  Retry being the only way to make one go away. Clearing only removes the
+  queue row: the clips themselves are untouched, and are still eligible
+  for backup later.
+
 ### Bug fixes
 
 - **Object-detection chips counted every box, not every object.** The
   detector runs over every sampled frame, so a driveway with three cars
   parked in it across eleven frames reported "33 cars". The count is now
-  the most of that label in frame at any one moment — an honest answer
-  that the same object being seen again cannot inflate — and each chip
-  names what it counted ("3 cars", not "33"), with the raw box total kept
-  in its tooltip as supporting detail. Distinct track ids are deliberately
-  not used for this: this pipeline hands the tracker frames seconds apart
-  rather than consecutive video, so ids are best-effort and an object that
-  picks up a fresh id each frame would put the inflated count straight
-  back.
+  how many distinct ones appeared in the clip, by the tracker's own
+  identities — the same ones the security layer groups its events by, so a
+  clip whose events read "2 separate people were tracked" can no longer sit
+  above a chip saying 1. Each chip also names what it counted ("3 cars",
+  not "33"), with the raw box total kept in its tooltip. The count is
+  therefore only as good as the tracking, which is only as good as the
+  number of frames analyzed; where no track ids were recorded at all it
+  falls back to the most seen in any single frame.
+- A deprecated `word-break: break-word` in the clip modal's raw-response
+  box is now the standard `overflow-wrap: break-word`.
 - **Model-cache HTTP traffic no longer floods the add-on log.** Bringing
   up the optional vision pipeline emitted around thirty `httpx` lines in a
   row, each a 307 or 302 redirect to a CDN followed by a 200. Nothing was
@@ -95,6 +129,9 @@ everything else in the panel.
 - The About dialog advertised the version it was built at, hardcoded, and
   had been left behind at 6.0.0 — it now moves with the release like the
   other six places the version lives.
+- The Security Events tab had no page gutter, so its heading sat against
+  the top of the viewport and the timeline rail against the sidebar. It
+  now uses the same 1.75rem every other tab does.
 - A security event for a subject caught in a single frame said "was
   visible for at least 0s, seen once"; it now says "was visible only
   briefly". A subject crossing leftwards is described as "moving left

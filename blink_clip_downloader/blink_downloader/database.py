@@ -1974,23 +1974,28 @@ class ClipDatabase:
         first. Empty if detection was never enabled for this clip or
         nothing was found.
 
-        ``count`` is **how many of that label were in frame at once at the
-        peak**, not how many boxes were stored: the detector runs over
-        every sampled frame, so one car parked through a twelve-frame clip
-        contributes twelve rows. Counting those rows is what made the clip
-        modal's chips read "33 cars" for a driveway with three in it — the
-        per-frame peak is the honest answer to "how many were there", and
-        can never be inflated by the same object simply being seen again.
+        ``count`` is **how many distinct ones appeared in the clip**, not
+        how many boxes were stored: the detector runs over every sampled
+        frame, so one car parked through a twelve-frame clip contributes
+        twelve rows. Counting those rows is what made the clip modal's
+        chips read "33 cars" for a driveway with three in it.
 
-        Distinct ``track_id`` is deliberately *not* used for this even
-        though the column exists: this pipeline hands the tracker frames
-        seconds apart rather than consecutive video (see ObjectDetector's
-        own note in vision.py), so ids are best-effort and an object that
-        picks up a fresh id each frame would put the inflated count
-        straight back.
+        Distinct objects are counted by ``track_id``, the same identity the
+        security layer groups its own ``ObjectTrack``s by — so a clip whose
+        events read "2 separate people were tracked" can no longer sit
+        above a chip saying 1. Accuracy therefore rests on the tracker,
+        which is handed frames seconds apart rather than consecutive video
+        (see ObjectDetector's own note in vision.py): a static object like
+        a parked car is matched trivially, while something crossing the
+        frame fast across few sampled frames can be counted twice.
+
+        The per-frame peak is the floor. It covers rows stored with no
+        ``track_id`` at all (tracking off, or written by an older build),
+        where counting ids would return zero, and it can never exceed the
+        truth — those objects were genuinely in frame together.
 
         ``detections`` keeps the raw box total, which is still worth
-        showing as supporting detail — it says how much evidence the count
+        showing as supporting detail: it says how much evidence the count
         rests on.
         """
         if self._pool is None:
@@ -1998,10 +2003,10 @@ class ClipDatabase:
         rows = await self._pool.fetch(
             _qm(
                 """
-                SELECT label,
-                       MAX(per_frame)::int AS count,
-                       SUM(per_frame)::int AS detections,
-                       MAX(frame_best) AS max_confidence
+                SELECT f.label,
+                       GREATEST(MAX(f.per_frame), MAX(t.tracked))::int AS count,
+                       SUM(f.per_frame)::int AS detections,
+                       MAX(f.frame_best) AS max_confidence
                 FROM (
                     SELECT label,
                            frame_index,
@@ -2010,11 +2015,21 @@ class ClipDatabase:
                     FROM detected_objects
                     WHERE clip_id=?
                     GROUP BY label, frame_index
-                ) per_frame_counts
-                GROUP BY label
-                ORDER BY count DESC, detections DESC, label ASC
+                ) f
+                JOIN (
+                    -- COUNT(DISTINCT ...) skips NULLs, so a label detected
+                    -- with tracking off scores zero here and falls through
+                    -- to the per-frame peak beside it.
+                    SELECT label, COUNT(DISTINCT track_id) AS tracked
+                    FROM detected_objects
+                    WHERE clip_id=?
+                    GROUP BY label
+                ) t ON t.label = f.label
+                GROUP BY f.label
+                ORDER BY count DESC, detections DESC, f.label ASC
                 """
             ),
+            clip_id,
             clip_id,
         )
         return [dict(r) for r in rows]
@@ -3297,9 +3312,18 @@ class ClipDatabase:
             clip_id,
         )
 
-    async def get_failed_gdrive_uploads(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Failed upload rows with their error message, newest-failure
-        first — powers the Storage tab's failed-uploads list."""
+    async def get_failed_gdrive_uploads(
+        self, limit: int = 25, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """One page of failed upload rows with their error message,
+        newest-failure first — powers the Storage tab's failed-uploads list.
+
+        Paged rather than a flat "first 50": a spell of Drive being
+        unreachable can fail every clip in the library, and the tab used to
+        render every one of them in a single unbounded column with no way
+        to move through it. ``clear_failed_gdrive_uploads`` is the other
+        half of that — a list this long also needs a way out.
+        """
         if self._pool is None:
             return []
         rows = await self._pool.fetch(
@@ -3308,13 +3332,34 @@ class ClipDatabase:
                 SELECT clip_id, camera, clip_path, error_message, completed_at
                 FROM gdrive_upload_queue
                 WHERE status='failed'
-                ORDER BY completed_at DESC
-                LIMIT ?
+                ORDER BY completed_at DESC, clip_id
+                LIMIT ? OFFSET ?
                 """
             ),
             limit,
+            offset,
         )
         return [dict(r) for r in rows]
+
+    async def clear_failed_gdrive_uploads(self, clip_id: str | None = None) -> int:
+        """Delete failed upload row(s) outright. Returns how many went.
+
+        Only ever touches ``status='failed'`` rows, so a clip that is
+        pending or mid-upload cannot be dropped from the queue by a
+        mistimed "Clear All". Deleting the row does not delete the clip,
+        and does not mark it as backed up — it only stops the Storage tab
+        reporting a failure the user has decided not to act on. The clip is
+        still eligible to be queued again later by the normal backup path.
+        """
+        if self._pool is None:
+            return 0
+        sql = "DELETE FROM gdrive_upload_queue WHERE status='failed'"
+        params: list[Any] = []
+        if clip_id is not None:
+            sql += " AND clip_id=?"
+            params.append(clip_id)
+        status = await self._pool.execute(_qm(sql), *params)
+        return _affected(status)
 
     async def retry_failed_gdrive_uploads(self, clip_id: str | None = None) -> int:
         """Reset failed upload(s) back to pending so the queue retries them.
