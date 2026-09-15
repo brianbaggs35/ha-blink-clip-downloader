@@ -23,6 +23,10 @@ test('shows one row per clip, collapsed to its most severe event', async ({ page
   await expect(timeline.getByText('Subject present')).toHaveCount(1)
 })
 
+test('says how much of the timeline is on screen', async ({ page }) => {
+  await expect(page.locator('.security-toolbar-count')).toHaveText('Showing 3 of 3')
+})
+
 test('summarizes the recent window by severity', async ({ page }) => {
   const stats = page.locator('[data-testid="security-stats"]')
   await expect(stats).toContainText('Critical')
@@ -97,6 +101,19 @@ test('the empty state explains itself rather than showing a blank tab', async ({
   await page.reload()
   await page.locator('.app-nav-tab[data-tab="security"]').click()
   await expect(page.getByText('No security events yet')).toBeVisible()
+})
+
+test('a filter that matches nothing says so, rather than claiming nothing was analyzed', async ({ page }) => {
+  // "No security events yet" is a claim about the whole install. Someone
+  // who has just picked a camera with no events has not learned that.
+  await page.locator('.security-filter').first().click()
+  await page.getByRole('option', { name: 'Test Scratch', exact: true }).click()
+  await expect(page.getByText('Nothing matches these filters')).toBeVisible()
+  await expect(page.getByText('No security events yet')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Clear filters' }).click()
+  await expect(page.locator('[data-testid="security-timeline"]')).toBeVisible()
+  await expect(page.locator('.security-row')).toHaveCount(3)
 })
 
 test('the severity filter includes everything at or above the chosen band', async ({ page }) => {
@@ -223,6 +240,71 @@ function timelineRow(clipId: string, overrides: Record<string, unknown> = {}) {
     ...overrides,
   }
 }
+
+test('files rows under the day they were recorded', async ({ page }) => {
+  // The date used to be repeated on every row in a fixed column that took
+  // half the width of the tab with it. Timestamps are served directly
+  // here, anchored to local *midday* rather than to "N hours ago" — an
+  // hours-ago offset run shortly after midnight would straddle the day
+  // boundary this test is about and split the first group in two.
+  const midday = new Date()
+  midday.setHours(12, 0, 0, 0)
+  const earlier = new Date(midday)
+  earlier.setHours(11)
+  const lastWeek = new Date(midday)
+  lastWeek.setDate(lastWeek.getDate() - 6)
+  await page.route('**/api/security/timeline*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        // Newest first, the order the real query returns.
+        events: [
+          timelineRow('day-a', { clip_timestamp: midday.toISOString() }),
+          timelineRow('day-b', { clip_timestamp: earlier.toISOString() }),
+          timelineRow('day-c', { clip_timestamp: lastWeek.toISOString() }),
+        ],
+        total: 3,
+      }),
+    }),
+  )
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="security"]').click()
+
+  const headings = page.locator('.security-day-head')
+  await expect(headings).toHaveCount(2)
+  await expect(headings.first()).toContainText('Today')
+  // The count beside the heading, so a busy day says so before it is read.
+  await expect(headings.first().locator('.security-day-count')).toHaveText('2')
+  await expect(headings.nth(1)).not.toContainText('Today')
+  await expect(headings.nth(1).locator('.security-day-count')).toHaveText('1')
+})
+
+test("a row's thumbnail carries the second its event was measured at", async ({ page }) => {
+  // The seeded clips have no thumbnail on disk (the row correctly drops
+  // the image entirely, covered above), so the picture is served here —
+  // the badge only exists on a thumbnail that actually loaded.
+  const pixel = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  await page.route('**/api/clips/*/thumb*', (route) => route.fulfill({ contentType: 'image/png', body: pixel }))
+  await page.route('**/api/security/timeline*', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        events: [timelineRow('badge-a', { start_offset: 18 }), timelineRow('badge-b', { start_offset: 0 })],
+        total: 2,
+      }),
+    }),
+  )
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="security"]').click()
+
+  const rows = page.locator('.security-row')
+  await expect(rows.nth(0).locator('.security-thumb-at')).toHaveText('0:18')
+  // Nothing to mark for an event at the very start of the clip.
+  await expect(rows.nth(1).locator('.security-thumb-at')).toHaveCount(0)
+})
 
 test('says so when the timeline cannot be loaded at all', async ({ page }) => {
   await page.route('**/api/security/timeline*', (route) => route.fulfill({ status: 500, body: 'boom' }))

@@ -14,6 +14,7 @@ import { usePromptOverlayStore } from '../../stores/promptOverlay'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import AppIcon from '../icons/AppIcon.vue'
+import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import ClipDetectionOverlay from './ClipDetectionOverlay.vue'
 import ClipAiPanel from './ClipAiPanel.vue'
 
@@ -73,6 +74,28 @@ const loopClip = ref(false)
 // the player chrome; fall back to the clip's own thumbnail instead of
 // leaking that browser-level message.
 const videoError = ref(false)
+// True from the moment a clip is asked for until its own first frame is
+// decoded. Until then the modal has nothing real to show — the previous
+// version simply rendered a black void where the video would be and no
+// title or metadata at all, then reflowed everything downwards once the
+// request landed. Both placeholders below are driven by this.
+const videoReady = ref(false)
+
+/** Label/value pairs for the metadata grid, with `null` values until the
+ *  clip's details arrive. The grid renders its six rows either way, so the
+ *  actions and tags below it sit where they will stay rather than jumping
+ *  down the moment the request resolves. */
+const metaRows = computed(() => {
+  const c = clip.value
+  return [
+    { label: 'Camera', value: c ? c.camera : null },
+    { label: 'Recorded', value: c ? fmtTs(c.timestamp) : null },
+    { label: 'Duration', value: c ? fmtDur(c.duration) || '—' : null },
+    { label: 'Size', value: c ? fmtSize(c.size_bytes) || '—' : null },
+    { label: 'Source', value: c ? c.source || '—' : null },
+    { label: 'Added', value: c ? fmtRelative(c.downloaded_at) : null },
+  ]
+})
 
 function ensurePlayer(): Player {
   if (player) return player
@@ -114,6 +137,16 @@ function ensurePlayer(): Player {
   player.on('error', () => {
     videoError.value = true
   })
+  // Whichever of these lands first retires the poster placeholder below.
+  // 'playing' alone would strand it forever when the browser refuses to
+  // autoplay, which leaves the clip sitting on its big play button —
+  // ready, just not started.
+  player.on('loadeddata', () => {
+    videoReady.value = true
+  })
+  player.on('playing', () => {
+    videoReady.value = true
+  })
   return player
 }
 
@@ -127,6 +160,14 @@ let requestSeq = 0
 async function load(id: string) {
   const seq = ++requestSeq
   videoError.value = false
+  videoReady.value = false
+  // A clip's title, metadata, star and tags belong to that clip alone.
+  // Leaving the previous one's on screen while this one loads showed the
+  // wrong values outright — and, for the star, would have toggled *from*
+  // them, writing the previous clip's state onto this one.
+  clip.value = null
+  currentTags.value = []
+  starred.value = false
   try {
     const c = await getClip(id)
     if (seq !== requestSeq) return
@@ -372,7 +413,7 @@ onUnmounted(() => {
       <button type="button" class="modal-close" title="Close (Esc)" aria-label="Close" @click="emit('close')">
         <AppIcon name="close" />
       </button>
-      <div class="video-wrap">
+      <div class="video-wrap" :class="{ 'video-wrap-loading': !videoReady && !videoError }">
         <!--
           Video.js takes over the <video> tag on init and wraps it in its
           own outer chrome div (controls, big-play button, and — the reason
@@ -386,6 +427,15 @@ onUnmounted(() => {
           <video ref="videoEl" class="video-js vjs-big-play-centered" preload="auto" playsinline>
             <p class="vjs-no-js">JavaScript is required to play videos.</p>
           </video>
+        </div>
+        <!-- Stands in for the picture until the first frame is decoded.
+             The clip's own thumbnail is almost always already in the
+             browser cache (it is what was clicked in the grid), so this
+             paints immediately, in the right aspect ratio, instead of the
+             black void the modal used to open as. -->
+        <div v-if="clipId && !videoReady && !videoError" class="video-poster">
+          <img :src="clipThumbUrl(clipId)" alt="" class="video-poster-img" />
+          <LoadingIndicator class="video-poster-msg" label="Loading clip…" />
         </div>
         <div v-if="videoError && clipId" class="video-fallback">
           <img :src="clipThumbUrl(clipId)" alt="" class="video-fallback-thumb" />
@@ -407,20 +457,16 @@ onUnmounted(() => {
         </div>
       </div>
       <div class="modal-body">
-        <div class="modal-title">{{ clip ? `${clip.camera} — ${fmtTs(clip.timestamp)}` : '' }}</div>
-        <div v-if="clip" class="meta-grid">
-          <div>Camera</div>
-          <span>{{ clip.camera }}</span>
-          <div>Recorded</div>
-          <span>{{ fmtTs(clip.timestamp) }}</span>
-          <div>Duration</div>
-          <span>{{ fmtDur(clip.duration) || '—' }}</span>
-          <div>Size</div>
-          <span>{{ fmtSize(clip.size_bytes) || '—' }}</span>
-          <div>Source</div>
-          <span>{{ clip.source || '—' }}</span>
-          <div>Added</div>
-          <span>{{ fmtRelative(clip.downloaded_at) }}</span>
+        <div class="modal-title">
+          <template v-if="clip">{{ `${clip.camera} — ${fmtTs(clip.timestamp)}` }}</template>
+          <span v-else-if="clipId" class="skel skel-title" aria-hidden="true"></span>
+        </div>
+        <div v-if="clipId" class="meta-grid">
+          <template v-for="meta in metaRows" :key="meta.label">
+            <div>{{ meta.label }}</div>
+            <span v-if="meta.value !== null">{{ meta.value }}</span>
+            <span v-else class="skel" aria-hidden="true"></span>
+          </template>
         </div>
         <div class="modal-actions">
           <Button

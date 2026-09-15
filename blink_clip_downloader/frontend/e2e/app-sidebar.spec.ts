@@ -19,6 +19,16 @@ test('theme toggle switches the dark/light aria-label back and forth', async ({ 
   await expect(page.getByRole('button', { name: 'Switch to light theme' })).toBeVisible()
 })
 
+test('the structured security timeline is called Security Events, not Security', async ({ page }) => {
+  // Renamed in 6.0.1 — "Security" sat one letter away from "Security Feed"
+  // (the near-live snapshot grid) and said nothing about what it lists.
+  // Only the label changed: the tab id stays `security`.
+  const tab = page.locator('.app-nav-tab[data-tab="security"]')
+  await expect(tab).toContainText('Security Events')
+  await tab.click()
+  await expect(page.locator('#page-security h2')).toHaveText('Security Events')
+})
+
 test('the help button opens the keyboard shortcuts overlay', async ({ page }) => {
   await page.getByRole('button', { name: 'Keyboard shortcuts' }).click()
   const overlay = page.locator('.modal-bg.open')
@@ -30,7 +40,7 @@ test('the help button opens the keyboard shortcuts overlay', async ({ page }) =>
 
 test('the About dialog shows the repo links', async ({ page }) => {
   await page.getByRole('button', { name: 'About this app' }).click()
-  const dialog = page.getByRole('dialog', { name: 'About Blink Clips 6.0.0' })
+  const dialog = page.getByRole('dialog', { name: 'About Blink Clips 6.0.1' })
   await expect(dialog).toContainText('Built by Brian Baggs.')
   await expect(dialog.getByRole('link', { name: /ha-blink-clip-downloader/ })).toBeVisible()
 })

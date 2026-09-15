@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { evidenceLabel, formatEventType, formatOffset, severityLabel, severityRank, severityTag } from './severity'
+import {
+  evidenceLabel,
+  formatEventType,
+  formatOffset,
+  severityColor,
+  severityLabel,
+  severityRank,
+  severityTag,
+} from './severity'
 
 describe('severity helpers', () => {
   it('ranks severities in ascending order', () => {
@@ -38,6 +46,23 @@ describe('severity helpers', () => {
 
   it('clamps a negative offset rather than rendering "-0:01"', () => {
     expect(formatOffset(-5)).toBe('0:00')
+  })
+
+  it('gives each band its own accent, solid or tinted', () => {
+    // One table serves both, so a band's dot, its bar segment and its card
+    // edge can never drift apart.
+    expect(severityColor('critical')).toBe('rgb(239 68 68)')
+    expect(severityColor('suspicious')).toBe('rgb(245 158 11)')
+    expect(severityColor('noteworthy')).toBe('rgb(59 130 246)')
+    expect(severityColor('routine')).toBe('rgb(100 116 139)')
+    expect(severityColor('critical', 0.14)).toBe('rgb(239 68 68 / 0.14)')
+  })
+
+  it('falls back to the routine accent for a severity it does not know', () => {
+    // Same rule as severityRank: a band a future build invented must not
+    // paint itself as an alarm here.
+    expect(severityColor('apocalyptic')).toBe('rgb(100 116 139)')
+    expect(severityColor('apocalyptic', 0.5)).toBe('rgb(100 116 139 / 0.5)')
   })
 
   it('bands evidence quality the same way the backend does', () => {

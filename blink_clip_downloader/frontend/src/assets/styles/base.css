@@ -1061,6 +1061,77 @@ body.nav-collapsed {
 .video-hidden {
   display: none !important;
 }
+/* Holds the video area at the shape it will settle into while the clip
+   is still loading. Without it the un-initialised <video> element is a
+   ~150px-tall black strip that jumps to a 16:9 box the instant Video.js
+   takes over, shoving the whole modal body down with it. Dropped again
+   once the first frame is decoded, so a clip that is not 16:9 is sized by
+   its own picture rather than by this. */
+.video-wrap-loading {
+  aspect-ratio: 16 / 9;
+  max-height: 62vh;
+}
+.modal.theater .video-wrap-loading {
+  max-height: 82vh;
+}
+/* The clip's own thumbnail, blurred, standing in for the first frame.
+   pointer-events are off so it never swallows a click meant for the
+   prev/next arrows sitting above it. */
+.video-poster {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #000;
+  pointer-events: none;
+}
+.video-poster-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Scaled up slightly so the blur has no soft edge against the frame. */
+  transform: scale(1.08);
+  filter: blur(14px) brightness(0.42);
+}
+.video-poster-msg {
+  position: absolute;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+
+/* Shimmering placeholder for a value that is still being fetched. Used by
+   the clip modal's title and metadata grid so the panel below them is laid
+   out once, at its final position, rather than reflowing on arrival. */
+.skel {
+  display: inline-block;
+  width: 5.5em;
+  height: 0.78em;
+  border-radius: 999px;
+  vertical-align: middle;
+  background: linear-gradient(90deg, var(--card2) 8%, var(--card-hover) 26%, var(--card2) 44%);
+  background-size: 300% 100%;
+  animation: skelShimmer 1.3s linear infinite;
+}
+.skel-title {
+  width: min(17em, 70%);
+  height: 0.95em;
+}
+@keyframes skelShimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel {
+    animation: none;
+  }
+}
+
 .video-fallback {
   position: relative;
   display: flex;
@@ -1706,13 +1777,19 @@ body.nav-collapsed {
 .ai-panel-hdr.open .chevron {
   transform: rotate(90deg);
 }
+/* Collapses on grid rows rather than on a max-height guess. The old
+   500px cap was a number the panel's content has long since outgrown:
+   with a security assessment, a raw-response dump or a feedback form
+   open, everything past that height was simply cut off with no scrollbar
+   and no way to reach it. 0fr → 1fr animates to the content's own height,
+   whatever that turns out to be. */
 .ai-panel-body {
-  overflow: hidden;
-  max-height: 0;
-  transition: max-height 0.28s var(--ease);
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s var(--ease);
 }
 .ai-panel-body.open {
-  max-height: 500px;
+  grid-template-rows: 1fr;
 }
 .ai-result-box {
   background: var(--card2);

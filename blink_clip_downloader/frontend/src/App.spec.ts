@@ -149,7 +149,7 @@ describe('App', () => {
     await wrapper.find('[data-tab="security"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('#page-security').classes()).toContain('active')
-    expect(wrapper.text()).toContain('Security Timeline')
+    expect(wrapper.text()).toContain('Security Events')
     wrapper.unmount()
   })
 

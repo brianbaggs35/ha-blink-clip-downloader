@@ -230,10 +230,14 @@ removed in 5.0.0.
   once; it only surfaced via live browser testing under a real Home
   Assistant OS install, not any automated test. Current nav order: Library,
   Live View, Security Feed, Automations, Sync Module, Status, AI, AI Usage,
-  Models, Security, Vehicles, Biometrics, Storage. Note the two
+  Models, Security Events, Vehicles, Biometrics, Storage. Note the two
   similarly-named tabs are unrelated: **Security Feed** is the grid of
-  near-live camera snapshots; **Security** is the structured security-event
-  timeline (`components/security/`, backed by `blink_downloader/security/`).
+  near-live camera snapshots; **Security Events** is the structured
+  security-event timeline (`components/security/`, backed by
+  `blink_downloader/security/`). The latter's tab *id* is still `security`
+  (`data-tab="security"`, `#page-security`, `components/security/`) —
+  6.0.1 renamed only the label and the page heading, deliberately leaving
+  the id alone so no selector, route or persisted state had to migrate.
 - **API client**: every backend call goes through `api/<area>.ts` modules
   built on `api/client.ts`'s `apiGet`/`apiPost`/`apiPut`/`apiPatch`/`apiDelete`
   helpers (thin `fetch` wrappers, ingress-path-aware via `env.ts`). Add new
@@ -662,7 +666,7 @@ hands-on discovery and aren't documented anywhere upstream.
 
 ## Versioning
 
-The add-on version appears in **five places** that must all be updated
+The add-on version appears in **seven places** that must all be updated
 together for any user-facing change (bug fix, feature, dependency bump):
 
 1. `blink_clip_downloader/config.yaml` — `version: "vX.Y.Z"`
@@ -674,6 +678,14 @@ together for any user-facing change (bug fix, feature, dependency bump):
 5. `blink_clip_downloader/CHANGELOG.md` — add a new `## X.Y.Z` section
    describing the change (follow the existing "Bug fixes" / "Dependencies" /
    feature-heading style)
+6. `blink_clip_downloader/frontend/src/components/layout/AppSidebar.vue` —
+   the About dialog's `header="About Blink Clips X.Y.Z"`. **Hardcoded**, not
+   read from any of the above, and it is the version a user actually sees in
+   the UI — 6.0.1 found it still advertising 6.0.0. `e2e/app-sidebar.spec.ts`
+   asserts the dialog by that exact name, so it has to move with it.
+7. `blink_clip_downloader/frontend/package.json` — `"version"`, kept in step
+   with the rest purely so the two never disagree; nothing reads it at
+   runtime.
 
 Missing any of these breaks Docker image tagging or version sync between the
 add-on manifest and the Python package.
@@ -722,6 +734,13 @@ work).
   resolution change) and **pixel** (what the detector returns).
   `security/geometry.py`'s `Zone` owns the conversion; every `box_*` helper is
   scale-independent but requires both arguments in the *same* space.
+- `detected_objects` rows are **per box per sampled frame**, so counting
+  them is never the answer to "how many were there" — one parked car across
+  twelve frames is twelve rows. `get_detected_objects_summary`'s `count` is
+  the per-frame peak for that reason (`detections` keeps the raw total);
+  distinct `track_id` is deliberately not used, since this pipeline samples
+  frames seconds apart and ids are best-effort (see `ObjectDetector`'s own
+  note in `vision.py`).
 - Distance has two meanings in this codebase and they answer different
   questions: `box_gap` is outline-to-outline (negative when boxes overlap) and
   is what contact rules need; `ground_gap` is feet-to-ground-line with vertical

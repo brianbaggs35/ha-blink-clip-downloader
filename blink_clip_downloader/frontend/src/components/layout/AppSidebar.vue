@@ -42,7 +42,7 @@ const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'ai', label: 'AI', icon: 'tab-ai' },
   { name: 'usage', label: 'AI Usage', icon: 'tab-usage' },
   { name: 'models', label: 'Models', icon: 'tab-models' },
-  { name: 'security', label: 'Security', icon: 'tab-security' },
+  { name: 'security', label: 'Security Events', icon: 'tab-security' },
   { name: 'vehicles', label: 'Vehicles', icon: 'tab-vehicles' },
   { name: 'biometrics', label: 'Biometrics', icon: 'tab-biometrics' },
   { name: 'storage', label: 'Storage', icon: 'tab-storage' },
@@ -387,7 +387,7 @@ onUnmounted(() => {
       v-model:visible="showAbout"
       modal
       dismissable-mask
-      header="About Blink Clips 6.0.0"
+      header="About Blink Clips 6.0.1"
       :style="{ width: '26rem' }"
       :draggable="false"
     >

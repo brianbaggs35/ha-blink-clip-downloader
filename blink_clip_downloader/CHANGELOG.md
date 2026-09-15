@@ -1,5 +1,105 @@
 # Changelog
 
+## 6.0.1
+
+### Security Events tab (renamed, and redesigned)
+
+The **Security** tab is now called **Security Events**, which is what it
+actually lists. It has also been rebuilt visually. It previously used
+PrimeVue's `Timeline` with its "opposite" slot, which spent roughly half
+the tab's width on a column containing nothing but a repeated date, and
+every "muted" piece of text on the page referenced a `--text-muted`
+custom property this design system has never defined — so timestamps,
+risk scores, the intro and the AI's own summary all rendered at
+full-strength body colour, flattening the page into one undifferentiated
+block of white text.
+
+- Rows are now day-grouped ("Today" / "Yesterday" / "Monday, Sep 15")
+  along a real timeline rail, each event a card carrying a severity-
+  coloured edge and rail dot, a larger thumbnail (with the event's own
+  timestamp on it, and a play affordance on hover), the camera and time
+  as the row's heading, and a risk pill tinted in the row's own band.
+- The AI model's summary is set apart as a quotation rather than running
+  into the code-computed line above it, since the two are different
+  claims about the same clip.
+- The severity summary is now a card: a proportion bar over four
+  severity tiles with real numbers. Its meter was a PrimeVue
+  `MeterGroup` passed a `labels-visible` prop that does not exist, so
+  the legend it was meant to suppress rendered anyway, duplicating the
+  counts beside it; it is now a hand-rolled bar with no such surprise.
+- The evidence panel opens as an inset panel inside its own row, with
+  risk and evidence-quality as labelled bars, and each event's timestamp
+  as a real button rather than an underlined number.
+- The filters moved into a toolbar that also says how much of the
+  timeline is on screen, and the empty state explains itself instead of
+  being a bare grey strip — including telling apart "nothing has been
+  analyzed yet" from "nothing matches the filters you picked", which it
+  previously reported as the former either way, with a one-click way out
+  of the latter.
+
+### The clip modal's AI Analysis panel
+
+The panel's security-assessment block referenced a set of CSS classes
+(`.ai-security`, `.ai-security-list`, and the rest) that were never given
+any styles at all, so the deterministic layer's findings rendered as a
+default browser bullet list — long detail lines wrapping back under the
+marker — directly underneath text set at the same size and weight as
+everything else in the panel.
+
+- The verdict, its confidence (now a meter as well as a number) and the
+  model's own sentence are banded together as one tinted statement rather
+  than three loose lines.
+- The panel is divided into labelled sections — **What was detected**,
+  **Security evidence**, **Verdict feedback**, **Face recognition** — so
+  the feedback and face-report buttons at the bottom no longer read as
+  stray controls with no subject.
+- Security events are proper rows with a timestamp chip, and risk and
+  evidence quality are labelled bars, matching the Security Events tab's
+  evidence panel.
+- The panel used to collapse with a hardcoded 500px cap its content had
+  long since outgrown: with a security assessment, the raw response or the
+  feedback form open, everything past that height was cut off with no
+  scrollbar and no way to reach it. It now expands to whatever its content
+  actually needs.
+
+### Bug fixes
+
+- **Object-detection chips counted every box, not every object.** The
+  detector runs over every sampled frame, so a driveway with three cars
+  parked in it across eleven frames reported "33 cars". The count is now
+  the most of that label in frame at any one moment — an honest answer
+  that the same object being seen again cannot inflate — and each chip
+  names what it counted ("3 cars", not "33"), with the raw box total kept
+  in its tooltip as supporting detail. Distinct track ids are deliberately
+  not used for this: this pipeline hands the tracker frames seconds apart
+  rather than consecutive video, so ids are best-effort and an object that
+  picks up a fresh id each frame would put the inflated count straight
+  back.
+- **Model-cache HTTP traffic no longer floods the add-on log.** Bringing
+  up the optional vision pipeline emitted around thirty `httpx` lines in a
+  row, each a 307 or 302 redirect to a CDN followed by a 200. Nothing was
+  wrong — that is the Hub revalidating each cached config file, and the
+  model weights themselves were already on disk — but it read like a wall
+  of errors and buried the add-on's own startup lines. Those requests are
+  now filtered out; `httpx` otherwise keeps its level, since its one line
+  per AI-provider request is worth having.
+- The clip modal no longer opens as a black void. Its video area is held
+  at the shape it will settle into and filled with the clip's own
+  thumbnail plus a spinner, and the title and metadata grid render as
+  placeholders, so nothing below them moves when the details arrive —
+  measured at a 246px jump before this change and none after.
+- The clip modal no longer carried the previous clip's star state and
+  tags into the next one while it loaded. Beyond showing the wrong
+  values, the star toggled *from* them — clicking it during that window
+  could write the previous clip's state onto the clip on screen.
+- The About dialog advertised the version it was built at, hardcoded, and
+  had been left behind at 6.0.0 — it now moves with the release like the
+  other six places the version lives.
+- A security event for a subject caught in a single frame said "was
+  visible for at least 0s, seen once"; it now says "was visible only
+  briefly". A subject crossing leftwards is described as "moving left
+  across the frame", matching the rightwards phrasing.
+
 ## 6.0.0
 
 The v6.0.0 upgrade series so far: a Python floor bump, a full dependency

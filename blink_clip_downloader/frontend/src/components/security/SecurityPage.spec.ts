@@ -4,7 +4,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import Button from 'primevue/button'
 import Select from 'primevue/select'
 import SelectButton from 'primevue/selectbutton'
-import Timeline from 'primevue/timeline'
 import SecurityPage from './SecurityPage.vue'
 import SecurityEventDetail from './SecurityEventDetail.vue'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
@@ -126,6 +125,35 @@ describe('SecurityPage', () => {
     expect(wrapper.find('[data-testid="security-timeline"]').exists()).toBe(false)
   })
 
+  it('does not tell a filtering user that nothing has ever been analyzed', async () => {
+    // "No security events yet" is a claim about the whole install. Someone
+    // who has just picked "Critical only" and got nothing back has not
+    // learned that; they have learned their filter is empty.
+    const wrapper = await mountPage({ rows: [row()] })
+    await wrapper.findAllComponents(Select)[1].setValue('critical')
+    timelineCalls = []
+    vi.stubGlobal('fetch', routedFetch({ rows: [] }))
+    await wrapper.findAllComponents(Select)[0].setValue('Back Yard')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Nothing matches these filters')
+    expect(wrapper.text()).not.toContain('No security events yet')
+  })
+
+  it('clears every filter at once from the empty state', async () => {
+    const wrapper = await mountPage({ rows: [] })
+    await wrapper.findAllComponents(Select)[0].setValue('Back Yard')
+    await flushPromises()
+    await wrapper
+      .findAllComponents(Button)
+      .filter((b) => b.props('label') === 'Clear filters')[0]
+      .trigger('click')
+    await flushPromises()
+    // Back to the claim about the whole install, and a request with no
+    // filter on it at all.
+    expect(wrapper.text()).toContain('No security events yet')
+    expect(timelineCalls.at(-1)).not.toContain('camera=')
+  })
+
   it('reports a load failure', async () => {
     const wrapper = await mountPage({ timelineFail: true })
     expect(wrapper.text()).toContain('Failed to load the security timeline')
@@ -229,9 +257,8 @@ describe('SecurityPage', () => {
       .filter((b) => b.props('label') === 'Load more')[0]
       .trigger('click')
     await flushPromises()
-    const timeline = wrapper.findComponent(Timeline)
-    const shown = (timeline.props('value') as SecurityTimelineRow[]).map((r) => r.clip_id)
-    expect(shown).toEqual(['c1', 'c2'])
+    expect(wrapper.findAll('.security-row')).toHaveLength(2)
+    expect(wrapper.findAll('.security-camera').map((el) => el.text())).toEqual(['Driveway', 'Back Yard'])
   })
 
   it('hides "load more" once everything is shown', async () => {
@@ -507,6 +534,51 @@ describe('SecurityPage', () => {
 
   it('falls back to the raw string for an unparseable timestamp', async () => {
     const wrapper = await mountPage({ rows: [row({ clip_timestamp: 'not-a-date' })] })
-    expect(wrapper.text()).toContain('not-a-date')
+    expect(wrapper.find('.security-when').text()).toBe('not-a-date')
+    // ...and it heads its own day rather than rendering "Invalid Date".
+    expect(wrapper.find('.security-day-head').text()).toContain('not-a-date')
+  })
+
+  it('files rows under the day they were recorded', async () => {
+    // The date used to be repeated on every single row, in a fixed column
+    // that took half the width of the tab with it.
+    const now = new Date()
+    const yesterday = new Date(now.getTime() - 86_400_000)
+    const wrapper = await mountPage({
+      rows: [
+        row({ clip_id: 'a', clip_timestamp: now.toISOString() }),
+        row({ clip_id: 'b', clip_timestamp: new Date(now.getTime() - 3_600_000).toISOString() }),
+        row({ clip_id: 'c', clip_timestamp: yesterday.toISOString() }),
+      ],
+    })
+    const headings = wrapper.findAll('.security-day-head')
+    expect(headings).toHaveLength(2)
+    expect(headings[0].text()).toContain('Today')
+    // The count beside the heading, so a busy day says so before it is read.
+    expect(headings[0].find('.security-day-count').text()).toBe('2')
+    expect(headings[1].text()).toContain('Yesterday')
+    expect(wrapper.findAll('.security-day')[1].findAll('.security-row')).toHaveLength(1)
+  })
+
+  it('names an older day outright rather than counting back to it', async () => {
+    const wrapper = await mountPage({ rows: [row({ clip_timestamp: '2026-01-05T02:17:00Z' })] })
+    const heading = wrapper.find('.security-day-head').text()
+    expect(heading).not.toContain('Today')
+    expect(heading).toContain('Jan')
+  })
+
+  it('marks the second an event was measured at on its own thumbnail', async () => {
+    const wrapper = await mountPage({ rows: [row({ start_offset: 18 })] })
+    expect(wrapper.find('.security-thumb-at').text()).toBe('0:18')
+  })
+
+  it('has nothing to mark on the thumbnail for an event at the very start', async () => {
+    const wrapper = await mountPage({ rows: [row({ start_offset: 0 })] })
+    expect(wrapper.find('.security-thumb-at').exists()).toBe(false)
+  })
+
+  it('says how much of the timeline is on screen', async () => {
+    const wrapper = await mountPage({ rows: [row()], total: 9 })
+    expect(wrapper.find('.security-toolbar-count').text()).toBe('Showing 1 of 9')
   })
 })
