@@ -144,6 +144,21 @@ def test_presence_event_is_emitted_per_subject_and_is_routine() -> None:
     assert _of(events, SecurityEventType.SUBJECT_PRESENT).evidence["frames_seen"] == 3
 
 
+def test_presence_event_says_briefly_rather_than_rounding_to_zero_seconds() -> None:
+    # A subject caught in a single frame has no measurable dwell, and
+    # "was visible for at least 0s, seen once" is not a sentence to put in
+    # front of anyone.
+    events = SecurityEventDetector().detect(_ctx([_track([(0, 0, 20, 60)])]))
+    presence = _of(events, SecurityEventType.SUBJECT_PRESENT)
+    assert presence.detail == "A person was visible only briefly, seen once."
+
+
+def test_presence_event_reports_a_measurable_dwell_in_seconds() -> None:
+    events = SecurityEventDetector().detect(_ctx([_track([(0, 0, 20, 60)] * 3)]))
+    presence = _of(events, SecurityEventType.SUBJECT_PRESENT)
+    assert presence.detail.startswith("A person was visible for at least 4s,")
+
+
 def test_vehicles_do_not_produce_presence_events() -> None:
     events = SecurityEventDetector().detect(
         _ctx([_track([CAR] * 3, label="car", track_id=5)])

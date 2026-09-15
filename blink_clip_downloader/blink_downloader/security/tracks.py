@@ -285,7 +285,11 @@ class ObjectTrack:
         if abs(dx) < _STATIONARY_DRIFT and abs(dy) < _STATIONARY_DRIFT:
             return "staying in roughly one place"
         if abs(dx) >= abs(dy):
-            return "moving right across the frame" if dx > 0 else "moving left"
+            return (
+                "moving right across the frame"
+                if dx > 0
+                else "moving left across the frame"
+            )
         return "moving down the frame" if dy > 0 else "moving up the frame"
 
     @property

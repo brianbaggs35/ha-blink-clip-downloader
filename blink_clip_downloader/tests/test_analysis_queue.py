@@ -222,7 +222,12 @@ async def test_process_pending_saves_detected_objects(db: ClipDatabase) -> None:
 
     summary = await db.get_detected_objects_summary("c1")
     assert summary == [
-        {"label": "person", "count": 1, "max_confidence": pytest.approx(0.9)}
+        {
+            "label": "person",
+            "count": 1,
+            "detections": 1,
+            "max_confidence": pytest.approx(0.9),
+        }
     ]
 
 

@@ -308,7 +308,7 @@ def test_area_ratio_degenerate_first_box_is_one() -> None:
         ([(0, 0, 30, 30), (0, 0, 10, 10)], "moving away from the camera"),
         ([(0, 0, 10, 10), (2, 0, 12, 10)], "staying in roughly one place"),
         ([(0, 0, 10, 10), (200, 0, 210, 10)], "moving right across the frame"),
-        ([(200, 0, 210, 10), (0, 0, 10, 10)], "moving left"),
+        ([(200, 0, 210, 10), (0, 0, 10, 10)], "moving left across the frame"),
         ([(0, 0, 10, 10), (0, 200, 10, 210)], "moving down the frame"),
         ([(0, 200, 10, 210), (0, 0, 10, 10)], "moving up the frame"),
     ],
