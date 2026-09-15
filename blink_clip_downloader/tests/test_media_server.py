@@ -8638,19 +8638,36 @@ def _sec_event(
 
 
 async def _seed_security(db: ClipDatabase) -> None:
-    # Recent clip timestamps: both the timeline's period filter and the
-    # stats window are measured against when the clip was recorded.
-    now = datetime.now(UTC)
+    # Both the timeline's period filter and the stats window are measured
+    # against when the clip was recorded, so these have to land inside
+    # "today" — and "today" is a *local* calendar day resolved by
+    # _local_day_bounds, not a rolling 24 hours.
+    #
+    # Anchored just after local midnight rather than at "now minus a couple
+    # of hours" for exactly that reason: the now-relative version put sec1
+    # in yesterday whenever the suite ran within two hours of local
+    # midnight, which on a UTC CI runner is 00:00-02:00 — roughly one run in
+    # twelve, failing with a bare "assert 1 == 2". Converted back to UTC
+    # text because that is what the schema stores and what the bounds are
+    # compared against.
+    local_midnight = (
+        datetime.now(UTC)
+        .astimezone()
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+    )
+    start = local_midnight.astimezone(UTC)
     await db.add_clip(
         _make_clip(
             "sec1",
             camera="Front Door",
-            timestamp=(now - timedelta(hours=2)).isoformat(),
+            timestamp=(start + timedelta(minutes=1)).isoformat(),
         )
     )
     await db.add_clip(
         _make_clip(
-            "sec2", camera="Driveway", timestamp=(now - timedelta(hours=1)).isoformat()
+            "sec2",
+            camera="Driveway",
+            timestamp=(start + timedelta(minutes=2)).isoformat(),
         )
     )
     await db.save_security_events(
