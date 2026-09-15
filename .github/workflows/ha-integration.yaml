@@ -100,9 +100,8 @@ jobs:
     timeout-minutes: 40
     permissions:
       contents: read
-      packages: write
-    # Fork pull requests cannot receive the PrimeVue license or publish the
-    # temporary licensed image that Supervisor must pull.
+    # Fork pull requests cannot receive the PrimeVue license, so they cannot
+    # build the image Supervisor has to pull.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -116,41 +115,35 @@ jobs:
           # Supervisor appends config.yaml's version to the image repository
           # itself; the image field must not contain a tag.
           #
-          # One fixed package, with the per-commit uniqueness carried by the
-          # *tag* instead of the package name. prepare-addon-copy rewrites
-          # the add-on copy's `version:` to match, so Supervisor asks for
-          # exactly this tag. The package name used to carry the SHA, which
-          # left a new, undeletable ghcr package behind on every run — see
-          # that function's own comment for why undeletable.
+          # 127.0.0.1:5000 is a registry this job starts *inside* the
+          # devcontainer (see serve-local-image) — the image never leaves
+          # the job. prepare-addon-copy rewrites the add-on copy's
+          # `version:` to match this tag, so Supervisor asks for exactly
+          # what was pushed there.
           VERSION="0.0.0-${GITHUB_SHA::12}"
-          PACKAGE="blink_clip_downloader-ha-integration"
           {
-            echo "package=${PACKAGE}"
-            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${PACKAGE}"
+            echo "image=127.0.0.1:5000/blink_clip_downloader-ha-integration"
             echo "version=${VERSION}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ env.GHCR_USERNAME || github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       # Supervisor's nested Docker build does not expose a way to forward
-      # BuildKit secrets. Build the licensed image on the runner instead, then
-      # make the CI-only add-on copy reference this image so Supervisor pulls
-      # it rather than attempting an unlicensed source build.
-      - name: Build and publish licensed integration image
+      # BuildKit secrets, so it cannot build this image itself — the
+      # PrimeVue license would be missing and the build would fail. Build it
+      # on the runner, where the secret is available, and make the CI-only
+      # add-on copy reference it so Supervisor pulls rather than builds.
+      - name: Build the licensed integration image
         uses: docker/build-push-action@v7
         with:
           context: blink_clip_downloader
           file: blink_clip_downloader/Dockerfile
           platforms: linux/amd64
-          push: true
+          # Into the runner's own daemon, not a registry: serve-local-image
+          # hands it to the devcontainer directly further down.
+          push: false
+          load: true
           provenance: false
           tags: ${{ steps.integration-image.outputs.image }}:${{ steps.integration-image.outputs.version }}
           build-args: |
@@ -251,14 +244,28 @@ jobs:
       - name: Wait for inner Docker daemon
         run: scripts/ci/ha_integration_setup.sh wait-docker
 
-      - name: Log in to GHCR from Supervisor's Docker daemon
+      # Hands the licensed image to the devcontainer's own daemon and
+      # serves it from a loopback registry in there, so Supervisor can pull
+      # it without anything being published to a real registry. Supervisor
+      # still pulls Home Assistant's own images from ghcr anonymously, as
+      # any local devcontainer run does.
+      - name: Serve the licensed image inside the devcontainer
         env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USERNAME: ${{ env.GHCR_USERNAME || github.actor }}
+          INTEGRATION_IMAGE: ${{ steps.integration-image.outputs.image }}
+          INTEGRATION_VERSION: ${{ steps.integration-image.outputs.version }}
         run: |
-          printf '%s' "$GHCR_TOKEN" | \
-            docker exec -i "$CONTAINER_NAME" docker login ghcr.io \
-              -u "$GHCR_USERNAME" --password-stdin
+          # registry:2 travels in the same tar rather than being pulled
+          # inside the devcontainer: that pull would be an anonymous Docker
+          # Hub request from a shared runner IP, which is exactly the kind
+          # of rate-limited dependency that turns a green job red for
+          # reasons having nothing to do with this repo.
+          docker pull registry:2
+          docker save \
+            "${{ steps.integration-image.outputs.image }}:${{ steps.integration-image.outputs.version }}" \
+            registry:2 \
+            -o "${RUNNER_TEMP}/integration-image.tar"
+          scripts/ci/ha_integration_setup.sh serve-local-image \
+            "${RUNNER_TEMP}/integration-image.tar"
 
       - name: Start Supervisor
         run: |
@@ -339,23 +346,3 @@ jobs:
       - name: Stop and remove the devcontainer
         if: always()
         run: docker rm -f "$CONTAINER_NAME" || true
-
-      # Prunes the shared package's older tags rather than trying to remove
-      # the package: GitHub rejects deleting a package's last tagged version
-      # ("You must delete the package instead"), which GITHUB_TOKEN cannot do
-      # for a user-namespace package — so asking for zero always failed, and
-      # continue-on-error hid it.
-      #
-      # Three rather than one because runs on different refs are not mutually
-      # exclusive (the concurrency group is per-ref), and pruning to a single
-      # version could delete an image another in-flight run is still
-      # installing. Three keeps the package to a handful of tags either way.
-      - name: Prune old integration image versions
-        if: always()
-        continue-on-error: true
-        uses: actions/delete-package-versions@v5
-        with:
-          package-name: ${{ steps.integration-image.outputs.package }}
-          package-type: container
-          min-versions-to-keep: 3
-          token: ${{ secrets.GITHUB_TOKEN }}

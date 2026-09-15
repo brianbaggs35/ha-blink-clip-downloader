@@ -632,7 +632,8 @@ doesn't, confirmed via `/sys/module/apparmor/parameters/enabled`) to
 validate against, and prefer extending the CI-only bypass over touching
 the production profile again on circumstantial evidence alone.
 `scripts/ci/ha_integration_setup.sh`'s subcommands (`prepare-addon-copy`/
-`wait-docker`/`wait-core`/`discover`/`install`/`start`/
+`wait-docker`/`serve-local-image`/`wait-core`/`discover`/`install`/`start`/
+`restart`/`assert-clean-log`/`assert-persisted`/`assert-version`/
 `enable-ingress-panel`/`diagnostics`) can each be run independently
 against an already-running container for local debugging, and
 `scripts/run-act-ha-integration.sh` runs the whole workflow locally via
