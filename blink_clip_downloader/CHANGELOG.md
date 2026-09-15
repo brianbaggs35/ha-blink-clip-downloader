@@ -37,6 +37,29 @@ were already being computed — and produces nothing when that is off.
   to answer "none of these is the protected vehicle", so a car parked in a
   vacated space is no longer silently promoted. When the protected vehicle
   is judged absent, proximity and contact rules stand down entirely.
+- **Freeform zones are now honoured as drawn.** A zone traced with the
+  Vehicles tab's lasso was measured by its axis-aligned bounding box
+  everywhere it mattered, so a driveway traced as a perspective trapezoid
+  effectively reached out over the street beside it: a neighbour's car
+  parked there could score a *perfect* zone match and be picked as the
+  protected vehicle, and a person standing in a corner deliberately traced
+  around still counted as being at the car. Zone occupancy, zone
+  membership and the detection pipeline's own vehicle disambiguation now
+  all measure against the traced outline itself. Rectangle zones — the
+  default, and the overwhelmingly common case — score exactly as before.
+- **A passer-by crossing in front of the car is no longer reported as
+  touching it.** Pixel-level segmentation and depth estimation answer
+  different questions, and this is the case where they disagree: someone
+  walking between the camera and the car has a silhouette that genuinely
+  abuts the car's, so the segmenter reports a touch, while depth places the
+  two metres apart. Segmentation's positive verdict used to win outright —
+  turning the single most common thing a driveway camera sees into a
+  "possible contact" event. A clear negative from depth now overrules it,
+  matching the precedence every other rule in the layer already gave depth,
+  and what the module documented all along. The contact observation still
+  reaches the AI provider either way, so nothing is hidden from the model —
+  what is withheld is the security layer asserting a contact its own
+  evidence contradicts.
 - **"Walked past the car" is now distinguishable from "stood right at it".**
   Three changes, all addressing the same 2D-projection blindness: proximity
   is measured foot-point to the vehicle's ground line with vertical

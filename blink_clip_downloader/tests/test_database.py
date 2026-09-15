@@ -4002,6 +4002,31 @@ async def test_timeline_filters_by_when_the_clip_was_recorded(
     assert (await db.get_security_timeline(period="today"))["total"] == 1
 
 
+async def test_timeline_rolling_period_has_no_upper_bound(
+    db: ClipDatabase,
+) -> None:
+    """ "week"/"month" are rolling windows open through now, so only a lower
+    bound is applied -- unlike "today", which is a closed calendar day."""
+    await db.add_clip(_make_clip("old", timestamp="2020-01-01T08:00:00+00:00"))
+    await db.save_security_events("old", "Front Door", [_event()])
+    await db.add_clip(_make_clip("new", timestamp=datetime.now(UTC).isoformat()))
+    await db.save_security_events("new", "Front Door", [_event()])
+
+    for rolling in ("week", "month"):
+        page = await db.get_security_timeline(period=rolling)
+        assert [e["clip_id"] for e in page["events"]] == ["new"], rolling
+        assert page["total"] == 1
+
+
+async def test_timeline_unknown_period_filters_nothing(db: ClipDatabase) -> None:
+    """An unrecognised keyword resolves to no bounds at all rather than to
+    an empty window, matching get_suspicious_clips' own behaviour."""
+    await db.add_clip(_make_clip("old", timestamp="2020-01-01T08:00:00+00:00"))
+    await db.save_security_events("old", "Front Door", [_event()])
+    page = await db.get_security_timeline(period="decade")
+    assert page["total"] == 1
+
+
 async def test_timeline_without_a_pool_is_empty() -> None:
     assert await ClipDatabase().get_security_timeline() == {"events": [], "total": 0}
 

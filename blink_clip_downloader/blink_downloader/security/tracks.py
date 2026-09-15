@@ -353,7 +353,9 @@ class ObjectTrack:
         person's box centre floats well above where their feet actually are
         — or by overlapping a substantial share of their own box with it,
         which is what "at the car" looks like for a zone drawn around a
-        parked vehicle rather than around a patch of ground.
+        parked vehicle rather than around a patch of ground. Both tests go
+        against the zone's real outline, so a freeform shape never lends
+        its bounding box's reach to either.
 
         Cached per zone *value* (Zone is a frozen dataclass, so it hashes by
         its coordinates): the detector asks the same question from several
@@ -367,14 +369,14 @@ class ObjectTrack:
         if width <= 0 or height <= 0:
             result = [False] * len(self.points)
         else:
-            zone_box = zone.to_pixel_box(width, height)
             result = []
             for point in self.points:
                 fx, fy = box_foot_point(point.box)
                 standing_in = zone.contains(fx / width, fy / height)
                 result.append(
                     standing_in
-                    or _overlap_share(point.box, zone_box) >= _ZONE_BOX_OVERLAP
+                    or zone.covered_share_of(point.box, width, height)
+                    >= _ZONE_BOX_OVERLAP
                 )
         self._zone_cache[zone] = result
         return result
@@ -393,15 +395,6 @@ class ObjectTrack:
     def in_zone(self, zone: Zone) -> bool:
         """True if any sighting of this track fell inside *zone*."""
         return any(self.zone_membership(zone))
-
-
-def _overlap_share(box: Box, zone_box: Box) -> float:
-    """Fraction of *box*'s own area that falls inside *zone_box*."""
-    ix1, iy1 = max(box[0], zone_box[0]), max(box[1], zone_box[1])
-    ix2, iy2 = min(box[2], zone_box[2]), min(box[3], zone_box[3])
-    intersection = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-    own = box_area(box)
-    return intersection / own if own > 0 else 0.0
 
 
 #: One raw detection: ``(label, confidence, box, track_id, frame_index)``.

@@ -58,7 +58,7 @@ async function load() {
     const result = await getSyncModules()
     if (seq !== loadSeq) return
     syncModules.value = result
-    void loadLocalStorageClips(result)
+    void loadLocalStorageClips(result, seq)
   } catch {
     if (seq === loadSeq) loadError.value = true
   } finally {
@@ -75,7 +75,7 @@ async function silentReload() {
     const result = await getSyncModules()
     if (seq === loadSeq) {
       syncModules.value = result
-      void loadLocalStorageClips(result)
+      void loadLocalStorageClips(result, seq)
       // Also clears the initial spinner if this call wins the race against
       // onMounted's own load() (e.g. a refresh.tick from another tab lands
       // before the very first fetch does) -- load()'s own seq check would
@@ -96,13 +96,22 @@ async function silentReload() {
 // supplementary view, not core to the arm/disarm page, so it silently
 // leaves the previous (or empty) list in place rather than surfacing an
 // error state of its own.
-async function loadLocalStorageClips(modules: SyncModuleInfo[]) {
+// *seq* is the loadSeq ticket of the load() / silentReload() that asked for
+// this list. The clip fetch is a second round trip fired off after the
+// module fetch that triggers it, so without the check a poll started
+// earlier can still be in flight when a newer one finishes and overwrite
+// the fresher list with its stale one -- the same guard load() already
+// applies to its own result. Only the post-await assignment needs it: both
+// callers check their own seq before calling, and everything above the
+// await runs synchronously within that same check.
+async function loadLocalStorageClips(modules: SyncModuleInfo[], seq: number) {
   if (!modules.some((m) => m.local_storage)) {
     localStorageClips.value = []
     return
   }
   try {
-    localStorageClips.value = await listClips({ source: 'local_storage' })
+    const clips = await listClips({ source: 'local_storage' })
+    if (seq === loadSeq) localStorageClips.value = clips
   } catch {
     // Transient — keep showing whatever's already on screen.
   }

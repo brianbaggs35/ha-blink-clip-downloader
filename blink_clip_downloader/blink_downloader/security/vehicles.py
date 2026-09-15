@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .geometry import Box, Zone, box_area, box_iou
-from .tracks import VEHICLE_LABELS, ObjectTrack
+from .tracks import VEHICLE_LABELS, ObjectTrack, TrackPoint
 
 #: Weight each evidence source carries when all are available. Zone overlap
 #: dominates because it is the user's own explicit statement of where their
@@ -73,22 +73,6 @@ SIGNATURE_MIN_SAMPLES = 4
 #: one bad frame (a delivery van stopped in the space) cannot redefine where
 #: the protected vehicle lives.
 _MAX_BLEND_WEIGHT = 0.25
-
-
-def _overlap_coefficient(a: Box, b: Box) -> float:
-    """Intersection over the *smaller* box's area (0.0-1.0).
-
-    Preferred over IoU for zone matching because a zone and a vehicle box
-    are routinely very different sizes: a tight zone drawn inside a large
-    vehicle, or a generous zone around a small one, both score near zero on
-    IoU while being a perfect match in the sense that matters — is this
-    vehicle the thing in that region?
-    """
-    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
-    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
-    intersection = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-    smaller = min(box_area(a), box_area(b))
-    return intersection / smaller if smaller > 0 else 0.0
 
 
 def _cosine(a: tuple[float, ...], b: tuple[float, ...]) -> float:
@@ -185,6 +169,12 @@ class VehicleCandidate:
     appearance_similarity: float = 0.0
     score: float = 0.0
     position_label: str = ""
+    #: The sighting this vehicle was seen most confidently in — which
+    #: frame, and its real box in that frame, so a colour fingerprint of
+    #: *this* vehicle can be cropped from somewhere it actually was.
+    #: Deliberately absent from :meth:`to_dict`: a pointer into one clip's
+    #: frame list means nothing once persisted.
+    sample: TrackPoint | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -302,7 +292,7 @@ def _normalize(box: Box, frame_size: tuple[float, float]) -> Box:
 def _score_candidate(
     track: ObjectTrack,
     frame_size: tuple[float, float],
-    zone_box: Box | None,
+    zone: Zone | None,
     signature: VehicleSignature | None,
     histograms: dict[int | None, tuple[float, ...]],
 ) -> VehicleCandidate:
@@ -315,17 +305,25 @@ def _score_candidate(
     """
     box = _median_box(track)
     normalized = _normalize(box, frame_size)
+    # The frame the detector was most sure of, and that frame's real box —
+    # `box` above is a median across sightings and so belongs to no single
+    # frame, which makes it the wrong thing to crop a colour sample out of.
+    # Every track build_tracks produces has at least one point.
+    sample = max(track.points, key=lambda pt: pt.confidence)
     candidate = VehicleCandidate(
         track_id=track.track_id,
         label=track.label,
         box=box,
         normalized_box=normalized,
         position_label=describe_region(box, frame_size),
+        sample=sample,
     )
 
     components: list[tuple[float, float]] = []
-    if zone_box is not None:
-        candidate.zone_overlap = _overlap_coefficient(box, zone_box)
+    if zone is not None:
+        # Measured against the zone's real outline, so a freeform shape
+        # only credits vehicles actually inside what the user drew.
+        candidate.zone_overlap = zone.overlap_with_box(box, *frame_size)
         components.append((candidate.zone_overlap, _WEIGHT_ZONE))
     if signature is not None and signature.established:
         candidate.position_similarity = signature.position_similarity(normalized)
@@ -382,17 +380,15 @@ def identify_protected_vehicle(
     # scores zero against — reporting the protected vehicle as absent when
     # the truth is simply that we could not measure.
     has_frame = frame_size[0] > 0 and frame_size[1] > 0
-    zone_box = (
-        zone.to_pixel_box(*frame_size) if zone is not None and has_frame else None
-    )
+    scoring_zone = zone if zone is not None and has_frame else None
     use_signature = signature is not None and signature.established
 
     candidates = [
-        _score_candidate(track, frame_size, zone_box, signature, hist_map)
+        _score_candidate(track, frame_size, scoring_zone, signature, hist_map)
         for track in vehicles
     ]
 
-    if zone_box is None and not use_signature:
+    if scoring_zone is None and not use_signature:
         return _identify_without_evidence(candidates)
 
     ranked = sorted(candidates, key=lambda c: c.score, reverse=True)
@@ -411,7 +407,7 @@ def identify_protected_vehicle(
     return VehicleIdentification(
         protected=best,
         others=ranked[1:],
-        basis=_describe_basis(best, zone_box is not None, use_signature),
+        basis=_describe_basis(best, scoring_zone is not None, use_signature),
         confidence=confidence,
     )
 

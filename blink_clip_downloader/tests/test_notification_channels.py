@@ -373,6 +373,30 @@ async def test_discord_alert_carries_the_deterministic_assessment() -> None:
     assert "not by the AI model" in fields["Why"]
 
 
+async def test_discord_alert_reports_a_risk_score_with_no_severity_name() -> None:
+    """A clip can carry a score without a severity label (an older row, or
+    an assessment that scored but never crossed a named band) -- the number
+    is still worth showing, without an empty "()" after it."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 204
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    dispatcher = NotificationDispatcher(
+        discord_enabled=True,
+        discord_webhook_url="https://discord.com/api/webhooks/123/abc",
+    )
+    dispatcher._session = _mock_session(post=MagicMock(return_value=mock_resp))
+
+    await dispatcher.dispatch(
+        _make_result(risk_score=42.0, severity=""),
+        {"id": "c1", "camera": "Driveway", "path": "/clips/c1.mp4"},
+    )
+    payload = dispatcher._session.post.call_args.kwargs["json"]
+    fields = {f["name"]: f["value"] for f in payload["embeds"][0]["fields"]}
+    assert fields["Risk"] == "42/100"
+
+
 async def test_discord_alert_omits_risk_when_there_is_none() -> None:
     mock_resp = AsyncMock()
     mock_resp.status = 204

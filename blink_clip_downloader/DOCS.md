@@ -728,7 +728,7 @@ detection off, it simply produces nothing.
 | Option | Default | What it does |
 |---|---|---|
 | `ai_security_events_enabled` | `true` | Turns the whole layer on. Produces the security events, the risk score, the evidence-quality score, the **SECURITY EVIDENCE** and **WHICH VEHICLE IS PROTECTED** prompt sections, and the Security tab's timeline. |
-| `ai_temporal_scan_frames` | `12` | How many evenly-spaced frames object detection runs over. This is the one knob that trades detection cost against how much of a clip's *behaviour* can be seen. It does **not** change how many frames the AI model itself receives (that is still `ai_max_frames`). `0` disables the wider scan, which makes every reported duration unreliable. |
+| `ai_temporal_scan_frames` | `12` | How many evenly-spaced frames object detection runs over. This is the one knob that trades detection cost against how much of a clip's *behaviour* can be seen. It does **not** change how many frames the AI model itself receives (that is still `ai_max_frames`). `0` disables the wider scan — detection then runs only over the frames the model itself sees, which are chosen by motion rather than evenly spaced, so every reported duration becomes unreliable. |
 | `ai_risk_alert_threshold` | `75` | Risk score at or above which a clip is flagged suspicious **even when the AI model judged it unremarkable**. The default covers the "critical" band only. `0` disables the override and leaves the model's verdict final. |
 
 #### Why the frames it scans are different from the frames the AI sees
