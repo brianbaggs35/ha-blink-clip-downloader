@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -1185,12 +1186,159 @@ async def test_delete_file_success(client: GDriveClient) -> None:
     assert body == {"trashed": True}
 
 
-async def test_delete_file_failure_returns_false(client: GDriveClient) -> None:
+async def test_delete_file_already_gone_counts_as_deleted(
+    client: GDriveClient,
+) -> None:
+    """A 404 means the file is not there, which is the state the caller
+    asked for. Reporting failure made "deleted N Drive backups" under-report
+    on every re-run."""
     _connect(client)
-    resp = _mock_response(404, {})
+    client._session = _mock_session(patch=_mock_response(404, {}))
+
+    assert await client.delete_file("f1") is True
+
+
+async def test_delete_file_refusal_returns_false_and_says_why(
+    client: GDriveClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """It used to return False in silence, so a Drive-side refusal looked
+    exactly like having nothing to delete — with nothing in the log to tell
+    a user why their backup was still sitting in Drive."""
+    _connect(client)
+    resp = _mock_response(403, {})
+    resp.text = AsyncMock(return_value='{"error": "insufficientFilePermissions"}')
     client._session = _mock_session(patch=resp)
 
-    assert await client.delete_file("f1") is False
+    with caplog.at_level(logging.WARNING):
+        assert await client.delete_file("f1") is False
+
+    assert "403" in caplog.text
+    assert "insufficientFilePermissions" in caplog.text
+
+
+async def test_find_folder_path_never_creates_anything(
+    client: GDriveClient,
+) -> None:
+    """The lookup-only counterpart to get_or_create_folder_path — creating a
+    folder on the way to deleting it would be absurd."""
+    _connect(client)
+    client._folder_id = "root-folder"
+    listing = _mock_response(200, {"files": []})
+    session = _mock_session(get=listing, post=_mock_response(200, {}))
+    client._session = session
+
+    assert await client.find_folder_path(["2026-06-05", "Driveway"]) is None
+    session.post.assert_not_called()
+
+
+async def test_find_folder_path_resolves_an_existing_path(
+    client: GDriveClient,
+) -> None:
+    _connect(client)
+    client._folder_id = "root-folder"
+    client._session = _mock_session(
+        get=_mock_response(
+            200, {"files": [{"id": "child", "name": "2026-06-05", "modifiedTime": ""}]}
+        )
+    )
+
+    assert await client.find_folder_path(["2026-06-05"]) == "child"
+
+
+async def test_find_folder_path_uses_the_memo_instead_of_asking_again(
+    client: GDriveClient,
+) -> None:
+    """The memo is why a batch of uploads sharing one date/camera folder
+    resolves it once rather than per clip."""
+    _connect(client)
+    client._folder_id = "root-folder"
+    client._subfolder_cache = {"root-folder/2026-06-05": "cached-date-folder"}
+    session = _mock_session(get=_mock_response(200, {"files": []}))
+    client._session = session
+
+    assert await client.find_folder_path(["2026-06-05"]) == "cached-date-folder"
+    session.get.assert_not_called()
+
+
+async def test_folder_is_empty_rate_limited_sets_flag(client: GDriveClient) -> None:
+    _connect(client)
+    client._session = _mock_session(get=_mock_response(429, {}))
+
+    assert await client.folder_is_empty("f1") is False
+    assert client.rate_limited is True
+
+
+async def test_find_folder_path_without_a_root_returns_none(
+    client: GDriveClient,
+) -> None:
+    _connect(client)
+    client._folder_id = ""
+    assert await client.find_folder_path(["2026-06-05"]) is None
+
+
+async def test_folder_is_empty_counts_files_not_just_folders(
+    client: GDriveClient,
+) -> None:
+    """This gates deleting the folder, so "no subfolders" is the wrong
+    question — a file the user dropped in there has to keep it alive."""
+    _connect(client)
+    session = _mock_session(get=_mock_response(200, {"files": [{"id": "a-file"}]}))
+    client._session = session
+
+    assert await client.folder_is_empty("f1") is False
+    query = session.get.call_args.kwargs["params"]["q"]
+    assert "mimeType" not in query
+
+
+async def test_folder_is_empty_true_when_nothing_is_left(
+    client: GDriveClient,
+) -> None:
+    _connect(client)
+    client._session = _mock_session(get=_mock_response(200, {"files": []}))
+    assert await client.folder_is_empty("f1") is True
+
+
+async def test_folder_is_empty_is_false_when_it_cannot_tell(
+    client: GDriveClient,
+) -> None:
+    """A failed lookup must never read as "empty" — that would delete a
+    folder on the strength of a network error."""
+    _connect(client)
+    client._session = _mock_session(get=_mock_response(500, {}))
+    assert await client.folder_is_empty("f1") is False
+
+
+async def test_folder_is_empty_not_connected_returns_false(
+    client: GDriveClient,
+) -> None:
+    assert await client.folder_is_empty("f1") is False
+
+
+async def test_folder_is_empty_network_error_returns_false(
+    client: GDriveClient,
+) -> None:
+    _connect(client)
+    client._session = _mock_session(get=_RaiseOnCall(aiohttp.ClientError("boom")))
+    assert await client.folder_is_empty("f1") is False
+
+
+def test_forget_folder_drops_every_path_pointing_at_it(
+    client: GDriveClient,
+) -> None:
+    """The memo exists so a batch of uploads sharing a folder resolves it
+    once; a stale entry would send the next upload into the trash."""
+    client._subfolder_cache = {
+        "root/2026-06-05": "date-folder",
+        "root/2026-06-05/Driveway": "camera-folder",
+        "root/2026-06-06": "other-date",
+    }
+
+    client.forget_folder("camera-folder")
+
+    assert client._subfolder_cache == {
+        "root/2026-06-05": "date-folder",
+        "root/2026-06-06": "other-date",
+    }
 
 
 async def test_delete_file_rate_limited_sets_flag(client: GDriveClient) -> None:

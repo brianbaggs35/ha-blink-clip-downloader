@@ -730,6 +730,38 @@ test('pages through a long failed-upload list, and clears it', async ({ page }) 
   await expect(failed).toHaveCount(0)
 })
 
+test('deleting an archive says how many Google Drive backups went with it', async ({ page }) => {
+  // Whether the backups actually went is the one part of this a user cannot
+  // see from the Storage tab, and "Archive deleted" alone implied something
+  // it might not have done. The DELETE is intercepted rather than let
+  // through: every spec here shares one seeded database, so a real delete
+  // would pull an archive out from under storage.spec.ts's own counts.
+  await page.route('**/api/storage/archive?**', (route) =>
+    route.request().method() === 'DELETE'
+      ? route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ deleted_clips: 2, gdrive_deleted: 2, gdrive_folders_removed: 1 }),
+        })
+      : route.continue(),
+  )
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="storage"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="storage"]')
+
+  const panel = page.locator('.archive-panel').first()
+  await panel.getByRole('button', { name: 'Delete archive' }).click()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+
+  await expect(page.getByText("Archive deleted — 2 Google Drive backup(s) moved to Drive's trash")).toBeVisible()
+
+  // Nothing was really deleted, so a reload puts the panel back — which is
+  // also what keeps this test from disturbing the specs that follow it.
+  await page.unroute('**/api/storage/archive?**')
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="storage"]').click()
+  await expect(page.locator('.archive-panel').first()).toBeVisible()
+})
+
 test('covers connected Google Drive, folder management, retries, and library upload with stubs', async ({ page }) => {
   await mockGDriveApi(page)
   await page.goto('/')

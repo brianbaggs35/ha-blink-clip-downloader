@@ -2546,7 +2546,8 @@ class MediaServer:
 
     async def _handle_delete_archive(self, request: web.Request) -> web.Response:
         """Delete an entire archive ZIP: every clip record stored in it,
-        their Google Drive backups (best-effort), and the ZIP file itself.
+        their Google Drive backups (best-effort), the now-empty Drive
+        folders those backups lived in, and the ZIP file itself.
 
         Shares _handle_delete_clip's per-item Drive-delete resilience via
         _delete_gdrive_backup (a Drive failure logs a warning and continues
@@ -2565,11 +2566,21 @@ class MediaServer:
             raise web.HTTPNotFound(text=_ARCHIVE_NOT_FOUND)
 
         gdrive_deleted = 0
+        gdrive_folders_removed = 0
         if self._gdrive_client:
             results = await asyncio.gather(
                 *(self._delete_gdrive_backup(clip) for clip in clips)
             )
             gdrive_deleted = sum(1 for result in results if result)
+            # Trashing the clips leaves their whole date/camera scaffolding
+            # standing in Drive, which looks a great deal like nothing was
+            # deleted. The queue owns where backups land, so it owns
+            # clearing up after them; it only removes folders Drive itself
+            # confirms are empty.
+            if self._gdrive_queue is not None:
+                gdrive_folders_removed = (
+                    await self._gdrive_queue.prune_empty_backup_folders(clips)
+                )
 
         zip_path = Path(archive_path)
         if zip_path.exists():
@@ -2580,7 +2591,11 @@ class MediaServer:
 
         deleted_clips = await self._db.delete_clips_by_archive_path(archive_path)
         return web.json_response(
-            {"deleted_clips": deleted_clips, "gdrive_deleted": gdrive_deleted}
+            {
+                "deleted_clips": deleted_clips,
+                "gdrive_deleted": gdrive_deleted,
+                "gdrive_folders_removed": gdrive_folders_removed,
+            }
         )
 
     # ------------------------------------------------------------------

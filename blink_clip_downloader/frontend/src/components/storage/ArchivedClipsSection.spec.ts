@@ -62,6 +62,7 @@ interface Routes {
   clipsFail?: Record<string, boolean>
   deleteFail?: boolean
   deleteArchiveFail?: boolean
+  gdriveDeleted?: number
   runNowArchived?: number
   runNowFail?: boolean
 }
@@ -70,7 +71,13 @@ function routedFetch(routes: Routes) {
   return vi.fn((url: string, opts?: RequestInit) => {
     if (opts?.method === 'DELETE' && url.startsWith('/api/storage/archive?')) {
       if (routes.deleteArchiveFail) return Promise.reject(new Error('down'))
-      return Promise.resolve(jsonResponse({ deleted_clips: 1, gdrive_deleted: 0 }))
+      return Promise.resolve(
+        jsonResponse({
+          deleted_clips: 1,
+          gdrive_deleted: routes.gdriveDeleted ?? 0,
+          gdrive_folders_removed: 0,
+        }),
+      )
     }
     if (opts?.method === 'DELETE') {
       if (routes.deleteFail) return Promise.reject(new Error('down'))
@@ -618,10 +625,29 @@ describe('ArchivedClipsSection', () => {
       `/api/storage/archive?archive_path=${encodeURIComponent(groups[0].archive_path)}`,
       { method: 'DELETE' },
     )
+    // Nothing was backed up, so nothing to say about Drive.
     expect(useToastStore().message).toBe('Archive deleted')
     expect(wrapper.findAll('.archive-panel')).toHaveLength(1)
     expect(wrapper.text()).not.toContain('2026-06.zip')
     expect(wrapper.text()).toContain('2026-07.zip')
+  })
+
+  it('says how many Google Drive backups went with the archive', async () => {
+    // Whether the backups actually went is the one part of this a user
+    // cannot see from here — "Archive deleted" alone implied something it
+    // might not have done.
+    vi.stubGlobal('fetch', routedFetch({ groups: [makeGroup()], gdriveDeleted: 3 }))
+    const wrapper = mountSection()
+    await flushPromises()
+
+    const confirm = useConfirmStore()
+    const clickPromise = wrapper.findAll('[aria-label="Delete archive"]')[0].trigger('click')
+    await flushPromises()
+    confirm.settle(true)
+    await clickPromise
+    await flushPromises()
+
+    expect(useToastStore().message).toBe("Archive deleted — 3 Google Drive backup(s) moved to Drive's trash")
   })
 
   it('does not delete the archive when the confirmation is declined', async () => {

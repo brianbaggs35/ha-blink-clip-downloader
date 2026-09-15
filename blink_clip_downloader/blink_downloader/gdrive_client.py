@@ -768,10 +768,20 @@ class GDriveClient:
             self.rate_limited = True
 
     async def delete_file(self, file_id: str) -> bool:
-        """Move a file to Drive's trash (recoverable for ~30 days).
+        """Move a file (or folder — in Drive both are files) to the trash.
 
         Trash, not permanent delete — deleting a clip from our UI shouldn't
         make its Drive backup unrecoverable too.
+
+        A 404 counts as success: the file is already gone, which is the
+        state the caller asked for, and reporting failure there made
+        "deleted N Drive backups" under-report every re-run.
+
+        Every other non-200 is logged with Drive's own reason. It used to
+        return False silently, which meant a Drive-side refusal looked
+        exactly like having nothing to delete — there was no way to tell,
+        from the add-on's log, why a backup was still sitting in Drive
+        after its clip had been deleted here.
         """
         if not await self._ensure_valid_token():
             return False
@@ -785,10 +795,112 @@ class GDriveClient:
             ) as resp:
                 if resp.status == 429:
                     self.rate_limited = True
-                return resp.status == 200
+                if resp.status == 200:
+                    return True
+                if resp.status == 404:
+                    _LOGGER.info(
+                        "Google Drive file %s was already gone — nothing to trash",
+                        file_id,
+                    )
+                    return True
+                _LOGGER.warning(
+                    "Google Drive refused to trash file %s: HTTP %d %s",
+                    file_id,
+                    resp.status,
+                    (await resp.text())[:200],
+                )
+                return False
         except _HTTP_ERRORS as exc:
             _LOGGER.warning("Could not trash Google Drive file %s: %s", file_id, exc)
             return False
+
+    async def find_folder_path(
+        self, path_parts: list[str], root_id: str | None = None
+    ) -> str | None:
+        """Resolve a nested folder path, **without creating anything**.
+
+        The lookup-only counterpart to get_or_create_folder_path, for
+        callers that want to tidy up a folder that may or may not still be
+        there — creating it on the way to deleting it would be absurd.
+        Returns None as soon as any step is missing.
+        """
+        parent = root_id or self._folder_id
+        if not parent:
+            return None
+        cache_prefix = parent
+        for part in path_parts:
+            cache_key = f"{cache_prefix}/{part}"
+            cached = self._subfolder_cache.get(cache_key)
+            if cached:
+                parent = cached
+                cache_prefix = cache_key
+                continue
+            existing = next(
+                (f for f in await self.list_folders(parent) if f.name == part), None
+            )
+            if existing is None:
+                return None
+            parent = existing.id
+            self._subfolder_cache[cache_key] = parent
+            cache_prefix = cache_key
+        return parent
+
+    async def folder_is_empty(self, folder_id: str) -> bool:
+        """Whether *folder_id* holds nothing at all (files or subfolders).
+
+        Deliberately counts files as well as folders, unlike list_folders:
+        this gates deleting the folder, and "no subfolders" is not the same
+        question as "safe to remove". Anything the caller cannot see — a
+        file the user put there themselves — keeps the folder alive.
+
+        False on any error, so a failed lookup never reads as "empty".
+        """
+        if not await self._ensure_valid_token():
+            return False
+        try:
+            session = self._get_session()
+            async with session.get(
+                f"{_DRIVE_API}/files",
+                params={
+                    "q": f"'{folder_id}' in parents and trashed=false",
+                    "fields": "files(id)",
+                    "pageSize": "1",
+                },
+                headers=self._auth_headers(),
+                timeout=_HTTP_TIMEOUT,
+            ) as resp:
+                if resp.status == 429:
+                    self.rate_limited = True
+                if resp.status != 200:
+                    _LOGGER.warning(
+                        "Could not check whether Google Drive folder %s is empty: "
+                        "HTTP %d",
+                        folder_id,
+                        resp.status,
+                    )
+                    return False
+                data = await resp.json()
+        except _JSON_ERRORS as exc:
+            _LOGGER.warning(
+                "Could not check whether Google Drive folder %s is empty: %s",
+                folder_id,
+                exc,
+            )
+            return False
+        return not data.get("files")
+
+    def forget_folder(self, folder_id: str) -> None:
+        """Drop *folder_id* from the subfolder-path memo.
+
+        Needed after trashing it: the memo exists so a batch of uploads
+        sharing one date/camera folder resolves it once, and a stale entry
+        would send the next upload into a folder that is in the trash.
+        """
+        self._subfolder_cache = {
+            key: value
+            for key, value in self._subfolder_cache.items()
+            if value != folder_id
+        }
 
     async def get_quota(self) -> DriveQuota | None:
         now = time.time()

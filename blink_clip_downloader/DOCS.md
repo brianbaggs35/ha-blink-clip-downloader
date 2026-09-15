@@ -1276,6 +1276,15 @@ includes the full inclusive range. Expanded archives load 50 clips per page and
 keep a fixed-height scroll area so moving between pages does not shift the
 surrounding Storage page.
 
+Deleting an archive also removes its clips' Google Drive backups, moving
+each to Drive's own trash (recoverable there for ~30 days) rather than
+erasing it outright, and then trashing the `<date>/<camera>` folders they
+came from — but only the ones Drive confirms are empty, so a folder holding
+anything else is left alone. The confirmation toast says how many backups
+went. If a backup could not be removed, the add-on log now carries Drive's
+own reason; this is not a permissions limit, since the `drive.file` scope
+the add-on uses covers deleting files it uploaded itself.
+
 Each archive's header has a **Delete archive** button (next to the
 collapse/expand toggle) for removing every clip in that ZIP at once,
 instead of deleting them one at a time — useful for clearing out an old

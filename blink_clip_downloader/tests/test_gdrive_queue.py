@@ -66,6 +66,12 @@ def _make_client_mock(**kwargs: Any) -> MagicMock:
     # get_or_create_folder_path's auto-mocked (truthy, non-None) return.
     m.folder_id = kwargs.get("folder_id", "")
     m.upload_file = AsyncMock(return_value=kwargs.get("file_id", "drive-file-123"))
+    # Folder cleanup after an archive delete. Defaults resolve every folder
+    # and find it empty, so a test only overrides the case it is about.
+    m.find_folder_path = AsyncMock(return_value=kwargs.get("found_folder", "folder-id"))
+    m.folder_is_empty = AsyncMock(return_value=kwargs.get("folder_empty", True))
+    m.delete_file = AsyncMock(return_value=kwargs.get("deleted", True))
+    m.forget_folder = MagicMock()
     m.get_or_create_folder_path = AsyncMock(
         return_value=kwargs.get("dest_folder_id", "dest-folder-id")
     )
@@ -933,7 +939,7 @@ async def test_start_skips_processing_while_holding_off(
     src.write_bytes(b"data")
     client = _make_client_mock()
     queue = _make_queue(client, db, check_interval=1)
-    await queue._hold_off("Google Drive rate limit", 900)
+    queue._hold_off("Google Drive rate limit", 900)
 
     clip = _add_clip("c1")
     clip["path"] = str(src)
@@ -986,7 +992,7 @@ async def test_resume_clears_the_hold_off(db: ClipDatabase) -> None:
     just fixed the problem should not wait out the rest of a window that is
     no longer true."""
     queue = _make_queue(_make_client_mock(), db)
-    await queue._hold_off("Google Drive rate limit", 900)
+    queue._hold_off("Google Drive rate limit", 900)
     assert queue.holding_off
 
     queue.resume()
@@ -1001,7 +1007,7 @@ async def test_queue_status_reports_pause_and_hold_off(db: ClipDatabase) -> None
     queue = _make_queue(
         _make_client_mock(uploads_paused=True, pause_reason="Drive is full"), db
     )
-    await queue._hold_off("Google Drive rate limit", 900)
+    queue._hold_off("Google Drive rate limit", 900)
 
     status = await queue.get_queue_status()
 
@@ -1074,6 +1080,150 @@ async def test_a_full_drive_stops_the_queue_instead_of_burning_a_clip_a_cycle(
     counts = await db.get_gdrive_queue_counts()
     assert counts["failed"] == 0
     assert counts["pending"] == 3
+
+
+# ----------------------------------------------------------------------
+# Cleaning up the folders a deleted archive's backups lived in
+# ----------------------------------------------------------------------
+
+
+def _backed_up_clip(clip_id: str, camera: str, timestamp: str) -> dict[str, Any]:
+    return {"id": clip_id, "camera": camera, "timestamp": timestamp}
+
+
+async def test_prune_trashes_the_now_empty_date_and_camera_folders(
+    db: ClipDatabase,
+) -> None:
+    """Deleting a month's archive trashed every clip inside it and left the
+    whole empty date-folder scaffolding standing in Drive — which looks a
+    great deal like nothing was deleted at all."""
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+
+    trashed = await queue.prune_empty_backup_folders(
+        [_backed_up_clip("c1", "Driveway", "2026-06-05T12:00:00+00:00")]
+    )
+
+    # The camera folder and the date folder above it.
+    assert trashed == 2
+    assert client.delete_file.await_count == 2
+    client.forget_folder.assert_called_with("folder-id")
+
+
+async def test_prune_checks_each_folder_once_not_each_clip(
+    db: ClipDatabase,
+) -> None:
+    """An archive holds hundreds of clips but only a handful of folders, and
+    every check is its own Drive round trip."""
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+
+    clips = [
+        _backed_up_clip(f"c{i}", "Driveway", "2026-06-05T12:00:00+00:00")
+        for i in range(50)
+    ]
+
+    await queue.prune_empty_backup_folders(clips)
+
+    # One camera folder, one date folder — not 50 of each.
+    assert client.find_folder_path.await_count == 2
+
+
+async def test_prune_leaves_a_folder_that_still_holds_something(
+    db: ClipDatabase,
+) -> None:
+    """A folder holding anything the user put there — or a clip whose own
+    delete failed — has to survive."""
+    client = _make_client_mock(folder_empty=False)
+    queue = _make_queue(client, db)
+
+    trashed = await queue.prune_empty_backup_folders(
+        [_backed_up_clip("c1", "Driveway", "2026-06-05T12:00:00+00:00")]
+    )
+
+    assert trashed == 0
+    client.delete_file.assert_not_awaited()
+
+
+async def test_prune_skips_a_folder_that_is_no_longer_there(
+    db: ClipDatabase,
+) -> None:
+    client = _make_client_mock(found_folder=None)
+    queue = _make_queue(client, db)
+
+    assert (
+        await queue.prune_empty_backup_folders(
+            [_backed_up_clip("c1", "Driveway", "2026-06-05T12:00:00+00:00")]
+        )
+        == 0
+    )
+    client.folder_is_empty.assert_not_awaited()
+
+
+async def test_prune_does_not_forget_a_folder_drive_refused_to_trash(
+    db: ClipDatabase,
+) -> None:
+    """Dropping it from the path memo on a failed delete would make the next
+    upload re-resolve a folder that is still perfectly fine."""
+    client = _make_client_mock(deleted=False)
+    queue = _make_queue(client, db)
+
+    assert (
+        await queue.prune_empty_backup_folders(
+            [_backed_up_clip("c1", "Driveway", "2026-06-05T12:00:00+00:00")]
+        )
+        == 0
+    )
+    client.forget_folder.assert_not_called()
+
+
+async def test_prune_does_nothing_while_disconnected(db: ClipDatabase) -> None:
+    client = _make_client_mock(connected=False)
+    queue = _make_queue(client, db)
+
+    assert await queue.prune_empty_backup_folders([]) == 0
+    client.find_folder_path.assert_not_awaited()
+
+
+async def test_prune_handles_several_cameras_on_one_day(db: ClipDatabase) -> None:
+    """Both camera folders are checked before the date folder above them, or
+    the date folder still looks occupied by a sibling about to go."""
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+
+    trashed = await queue.prune_empty_backup_folders(
+        [
+            _backed_up_clip("c1", "Driveway", "2026-06-05T12:00:00+00:00"),
+            _backed_up_clip("c2", "Front Door", "2026-06-05T13:00:00+00:00"),
+        ]
+    )
+
+    # Two camera folders plus the one date folder they share.
+    assert trashed == 3
+    paths = [c.args[0] for c in client.find_folder_path.await_args_list]
+    assert paths == [
+        ["2026-06-05", "Driveway"],
+        ["2026-06-05", "Front Door"],
+        ["2026-06-05"],
+    ]
+
+
+async def test_prune_names_a_camera_less_clip_the_same_way_the_upload_did(
+    db: ClipDatabase,
+) -> None:
+    """_process_one falls back to "unknown" for a clip with no camera, so
+    the cleanup has to look in the same place."""
+    client = _make_client_mock()
+    queue = _make_queue(client, db)
+
+    await queue.prune_empty_backup_folders(
+        [{"id": "c1", "camera": "", "timestamp": "2026-06-05T12:00:00+00:00"}]
+    )
+
+    assert client.find_folder_path.await_args_list[0].args[0] == [
+        "2026-06-05",
+        "unknown",
+    ]
 
 
 async def test_start_exits_on_cancelled_error(db: ClipDatabase, tmp_path: Path) -> None:

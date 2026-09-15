@@ -93,6 +93,22 @@ way to stop uploading short of disconnecting the account.
   Retry being the only way to make one go away. Clearing only removes the
   queue row: the clips themselves are untouched, and are still eligible
   for backup later.
+- **Deleting an archive now clears up after itself in Drive.** It already
+  trashed each clip's backup, but left the whole `<date>/<camera>` folder
+  scaffolding those clips lived in standing there — which, browsing Drive
+  afterwards, looks a great deal like nothing was deleted at all. Folders
+  the deleted clips came from are now trashed too, but only the ones Drive
+  itself confirms are empty, so anything you put in one of them keeps it.
+  The toast also says how many backups went, since whether they did is the
+  one part of this you cannot see from the Storage tab.
+- **A Drive refusal to delete a backup is no longer silent.** It returned
+  a bare failure, which looked exactly like having nothing to delete; the
+  log now carries Drive's own status and reason. A file that is already
+  gone counts as deleted rather than as a failure, so the count stops
+  under-reporting on a re-run.
+
+  For the record, this was never a permissions problem: the `drive.file`
+  scope this add-on uses covers deleting the files it uploaded.
 
 ### Bug fixes
 

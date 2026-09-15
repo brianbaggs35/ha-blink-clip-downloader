@@ -47,6 +47,10 @@ export function runArchiveNow(): Promise<{ archived: number }> {
 
 /** Deletes an entire archive ZIP: every clip stored in it, their Google
  * Drive backups, and the ZIP file itself. */
-export function deleteArchive(archivePath: string): Promise<{ deleted_clips: number; gdrive_deleted: number }> {
+export function deleteArchive(archivePath: string): Promise<{
+  deleted_clips: number
+  gdrive_deleted: number
+  gdrive_folders_removed: number
+}> {
   return apiDelete(`/api/storage/archive?archive_path=${encodeURIComponent(archivePath)}`)
 }
