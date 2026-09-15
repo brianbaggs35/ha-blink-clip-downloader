@@ -8965,3 +8965,66 @@ async def test_camera_configs_still_rejects_a_non_list_body(
     for body in ({"camera": "x"}, "a string", 5):
         resp = await client.put("/api/ai/camera-configs", json=body)
         assert resp.status == 400, f"{body!r} returned {resp.status}"
+
+
+# ----------------------------------------------------------------------
+# Hostile-input sweep over the routes 6.0.0 adds
+# ----------------------------------------------------------------------
+
+#: Value classes that previously broke handlers on this server: a NUL byte
+#: (which PostgreSQL's text type cannot hold), an offset past a bigint,
+#: negatives and non-numerics where a number is expected, traversal, and
+#: absurd lengths. Every new route must answer with a status rather than a
+#: 500 — see the middleware and _paging() for where each is actually caught.
+_HOSTILE = [
+    "%00",
+    "a%00b",
+    "99999999999999999999999999",
+    "-1",
+    "not-a-number",
+    "NaN",
+    "../../etc/passwd",
+    "'%20OR%201=1--",
+    "x" * 4000,
+    "\u00e9\u4e2d\u6587",
+    "",
+]
+
+_V6_PATH_ROUTES = [
+    "/api/security/events/{v}",
+    "/api/ai/detections/{v}",
+    "/api/vehicle/signature/{v}",
+]
+
+_V6_QUERY_ROUTES = {
+    "/api/security/timeline": ("limit", "offset", "camera", "severity", "period"),
+    "/api/security/stats": ("days",),
+    "/api/ai/queue/failed": ("limit",),
+}
+
+
+@pytest.mark.parametrize("value", _HOSTILE)
+async def test_v6_routes_survive_hostile_path_segments(
+    client: TestClient, value: str
+) -> None:
+    for route in _V6_PATH_ROUTES:
+        resp = await client.get(route.replace("{v}", value))
+        assert resp.status < 500, f"GET {route} with {value!r} -> {resp.status}"
+
+
+@pytest.mark.parametrize("value", _HOSTILE)
+async def test_v6_routes_survive_hostile_query_values(
+    client: TestClient, value: str
+) -> None:
+    for route, params in _V6_QUERY_ROUTES.items():
+        for param in params:
+            resp = await client.get(f"{route}?{param}={value}")
+            assert resp.status < 500, f"GET {route}?{param}={value!r} -> {resp.status}"
+
+
+@pytest.mark.parametrize("value", _HOSTILE)
+async def test_v6_vehicle_signature_delete_survives_hostile_names(
+    client: TestClient, value: str
+) -> None:
+    resp = await client.delete(f"/api/vehicle/signature/{value}")
+    assert resp.status < 500, f"DELETE signature {value!r} -> {resp.status}"
