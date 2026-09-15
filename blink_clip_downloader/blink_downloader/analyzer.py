@@ -2653,7 +2653,10 @@ class ClipAnalyzer(BaseAnalyzer):
                 for m in vision:
                     m["score"] = _vision_model_score(m.get("name", ""))
                 return sorted(vision, key=lambda m: m.get("score", 0), reverse=True)
-        except (TimeoutError, aiohttp.ClientError, OSError, json.JSONDecodeError):
+        # TimeoutError is deliberately not listed: since 3.3 it derives from
+        # OSError, so naming both catches nothing extra and reads as though
+        # it did. A timed-out model listing still lands here.
+        except (aiohttp.ClientError, OSError, json.JSONDecodeError):
             return []
 
     async def _call_model(self, frames: list[bytes], prompt: str) -> str:
