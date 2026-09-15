@@ -58,6 +58,28 @@ jobs:
             blink_clip_downloader/config.yaml | \
             awk '{print $2}' | tr -d '"')"
 
+          # What actually gets published is VERSION, not the release tag:
+          # config.yaml's `image:` key makes Supervisor pull
+          # "<image>:<that version>", so the tag has to come from the same
+          # field Supervisor reads or the two could drift.
+          #
+          # Which makes a release cut from the wrong commit dangerous rather
+          # than merely wrong. Publishing a "v6.0.0" release off a branch
+          # whose config.yaml still says v5.5.2 would rebuild and overwrite
+          # :v5.5.2 and :latest, never create :v6.0.0, and report success.
+          # Every release so far has had the two in step; if they are not,
+          # stop instead of guessing which one was meant.
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          if [ -n "${RELEASE_TAG}" ] && [ "${RELEASE_TAG}" != "${VERSION}" ]; then
+            echo "::error::Release tag ${RELEASE_TAG} does not match" \
+              "blink_clip_downloader/config.yaml version ${VERSION}."
+            echo "::error::The image is tagged from config.yaml, so this" \
+              "run would publish ${VERSION} (and :latest), not" \
+              "${RELEASE_TAG}. Re-cut the release from a commit whose" \
+              "config.yaml says ${RELEASE_TAG}."
+            exit 1
+          fi
+
           OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
 
           TAG_VER="${{ env.REGISTRY }}/${OWNER}/${{ env.IMAGE_NAME }}"
