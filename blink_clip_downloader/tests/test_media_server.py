@@ -6709,7 +6709,11 @@ async def test_delete_archive_removes_all_clips_and_zip_file(
 
     assert resp.status == 200
     data = await resp.json()
-    assert data == {"deleted_clips": 2, "gdrive_deleted": 0}
+    assert data == {
+        "deleted_clips": 2,
+        "gdrive_deleted": 0,
+        "gdrive_folders_removed": 0,
+    }
     assert await db.get_clip("a1") is None
     assert await db.get_clip("a2") is None
     assert await db.get_clip("other") is not None
@@ -6731,7 +6735,11 @@ async def test_delete_archive_missing_zip_file_still_deletes_clips(
 
     assert resp.status == 200
     data = await resp.json()
-    assert data == {"deleted_clips": 1, "gdrive_deleted": 0}
+    assert data == {
+        "deleted_clips": 1,
+        "gdrive_deleted": 0,
+        "gdrive_folders_removed": 0,
+    }
     assert await db.get_clip("a1") is None
 
 
@@ -6776,8 +6784,70 @@ async def test_delete_archive_trashes_gdrive_backups(
         )
         assert resp.status == 200
         data = await resp.json()
-        assert data == {"deleted_clips": 2, "gdrive_deleted": 1}
+        assert data == {
+            "deleted_clips": 2,
+            "gdrive_deleted": 1,
+            "gdrive_folders_removed": 0,
+        }
         gdrive_client.delete_file.assert_awaited_once_with("drive-file-1")
+    finally:
+        await tc.close()
+
+
+async def test_delete_archive_prunes_the_emptied_gdrive_folders(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Trashing the clips leaves their whole date/camera scaffolding
+    standing in Drive, which looks a great deal like nothing was deleted."""
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    await db.add_clip(_make_clip("a1"))
+    await db.mark_archived("a1", str(zip_path))
+    await db.mark_gdrive_uploaded("a1", "drive-file-1")
+    gdrive_client = MagicMock()
+    gdrive_client.delete_file = AsyncMock(return_value=True)
+    gdrive_queue = MagicMock(spec=GDriveUploadQueue)
+    gdrive_queue.prune_empty_backup_folders = AsyncMock(return_value=2)
+    server = MediaServer(
+        db=db, port=0, gdrive_client=gdrive_client, gdrive_queue=gdrive_queue
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.delete(
+            "/api/storage/archive", params={"archive_path": str(zip_path)}
+        )
+        data = await resp.json()
+        assert data["gdrive_folders_removed"] == 2
+        # Handed the clips themselves — the queue is what knows where their
+        # backups went, and the DB rows are gone by the time it could look.
+        pruned = gdrive_queue.prune_empty_backup_folders.await_args.args[0]
+        assert [clip["id"] for clip in pruned] == ["a1"]
+    finally:
+        await tc.close()
+
+
+async def test_delete_archive_without_a_queue_still_deletes(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Folder cleanup is the queue's job, so a server running without one
+    (web-only mode) must skip it rather than fail the whole delete."""
+    zip_path = tmp_path / "blink_archive_2024-06.zip"
+    await db.add_clip(_make_clip("a1"))
+    await db.mark_archived("a1", str(zip_path))
+    await db.mark_gdrive_uploaded("a1", "drive-file-1")
+    gdrive_client = MagicMock()
+    gdrive_client.delete_file = AsyncMock(return_value=True)
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        resp = await tc.delete(
+            "/api/storage/archive", params={"archive_path": str(zip_path)}
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["gdrive_deleted"] == 1
+        assert data["gdrive_folders_removed"] == 0
     finally:
         await tc.close()
 
@@ -6802,7 +6872,11 @@ async def test_delete_archive_gdrive_trash_failure_still_deletes_locally(
         )
         assert resp.status == 200
         data = await resp.json()
-        assert data == {"deleted_clips": 1, "gdrive_deleted": 0}
+        assert data == {
+            "deleted_clips": 1,
+            "gdrive_deleted": 0,
+            "gdrive_folders_removed": 0,
+        }
         assert await db.get_clip("a1") is None
     finally:
         await tc.close()

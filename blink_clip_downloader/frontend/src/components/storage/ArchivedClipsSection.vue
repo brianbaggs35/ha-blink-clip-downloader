@@ -274,6 +274,14 @@ async function removeClip(clip: ClipListItem, archivePath: string) {
   }
 }
 
+/** The Drive half of a delete, phrased for a toast. Empty when nothing was
+ *  backed up — plenty of libraries never connect Drive at all, and a
+ *  parenthetical about it would be noise for them. */
+function driveOutcome(deleted: number): string {
+  if (!deleted) return ''
+  return ` — ${deleted} Google Drive backup(s) moved to Drive's trash`
+}
+
 async function removeArchive(group: ArchiveGroup) {
   const clipWord = group.clip_count === 1 ? 'clip' : 'clips'
   const question =
@@ -282,8 +290,11 @@ async function removeArchive(group: ArchiveGroup) {
   if (!(await confirm(question, 'Delete archive?'))) return
   deletingArchivePath.value = group.archive_path
   try {
-    await deleteArchive(group.archive_path)
-    toast.show('Archive deleted')
+    const result = await deleteArchive(group.archive_path)
+    // Says what happened in Drive rather than leaving "Archive deleted" to
+    // imply something it might not have done: whether the backups actually
+    // went is the one part of this a user cannot see from here.
+    toast.show(`Archive deleted${driveOutcome(result.gdrive_deleted)}`)
     allGroups.value = allGroups.value.filter((g) => g.archive_path !== group.archive_path)
   } catch {
     toast.show('Could not delete archive', true)

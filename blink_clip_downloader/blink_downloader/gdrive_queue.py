@@ -414,9 +414,7 @@ class GDriveUploadQueue:
             await self._pause_for_quota()
             return True
         if self._client.rate_limited:
-            await self._hold_off(
-                "Google Drive rate limit", _RATE_LIMIT_HOLD_OFF_SECONDS
-            )
+            self._hold_off("Google Drive rate limit", _RATE_LIMIT_HOLD_OFF_SECONDS)
         return self.holding_off
 
     async def _pause_for_quota(self) -> None:
@@ -440,8 +438,12 @@ class GDriveUploadQueue:
         _LOGGER.warning("%s — pausing Drive uploads until resumed", _QUOTA_PAUSE_REASON)
         await self._notify_quota_exceeded()
 
-    async def _hold_off(self, reason: str, seconds: int) -> None:
+    def _hold_off(self, reason: str, seconds: int) -> None:
         """Stop attempting uploads for *seconds*, and log why once.
+
+        Plain ``def``: nothing here awaits (a hold-off is bookkeeping and a
+        log line), and an ``async`` that never awaits is just a coroutine
+        its callers have to remember to await.
 
         Extending an already-running hold-off deliberately does not log
         again — a rate limit that is still in force a cycle later is not
@@ -476,6 +478,62 @@ class GDriveUploadQueue:
             "on the add-on's Storage tab.",
             title="Blink Downloader: Google Drive Full",
         )
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    async def prune_empty_backup_folders(self, clips: list[dict[str, Any]]) -> int:
+        """Trash the ``<date>/<camera>`` folders *clips* were backed up into,
+        for any that nothing is left in. Returns how many were trashed.
+
+        This queue decides where a backup lands (see ``_process_one``), so
+        it is also the thing that knows where to tidy up afterwards. Without
+        it, deleting a month's archive trashed every clip inside it and left
+        the whole empty date-folder scaffolding standing in Drive — which
+        looks a great deal like nothing was deleted at all.
+
+        Folders are resolved by *looking up* the same path the upload used,
+        never creating, and only trashed once Drive itself confirms they are
+        empty — so a folder holding anything the user put there survives,
+        and so does one still holding a clip whose own delete failed.
+        """
+        if not self._client.connected:
+            return 0
+        # One entry per folder, not per clip: an archive holds hundreds of
+        # clips but only ever a handful of date/camera folders, and each
+        # check is its own Drive round trip.
+        camera_folders = {
+            (
+                _local_date_str(str(clip.get("timestamp", ""))),
+                str(clip.get("camera") or "unknown"),
+            )
+            for clip in clips
+        }
+        trashed = 0
+        for date_str, camera in sorted(camera_folders):
+            trashed += await self._trash_if_empty([date_str, camera])
+        # Only after every camera folder under it has had its turn, or the
+        # date folder would still look occupied by a sibling about to go.
+        for date_str in sorted({date for date, _camera in camera_folders}):
+            trashed += await self._trash_if_empty([date_str])
+        if trashed:
+            _LOGGER.info("Trashed %d now-empty Google Drive backup folder(s)", trashed)
+        return trashed
+
+    async def _trash_if_empty(self, path_parts: list[str]) -> int:
+        """Trash one backup folder if it resolves and is empty. 1 if it went."""
+        folder_id = await self._client.find_folder_path(path_parts)
+        if not folder_id:
+            return 0
+        if not await self._client.folder_is_empty(folder_id):
+            return 0
+        if not await self._client.delete_file(folder_id):
+            return 0
+        # The path memo would otherwise send the next upload for this date
+        # and camera straight into a folder sitting in the trash.
+        self._client.forget_folder(folder_id)
+        return 1
 
     # ------------------------------------------------------------------
     # Status
