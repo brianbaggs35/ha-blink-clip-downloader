@@ -92,6 +92,7 @@ in its own count and needed no adjustment.
 - Updated anthropic to 1.6.0
 - Updated openai to 3.14.1
 - Update ultralytics to 8.4.154
+- Updated @vitejs/plugin-vue to 6.0.9
 
 ## 6.0.2
 
