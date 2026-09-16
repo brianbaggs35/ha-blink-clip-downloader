@@ -417,6 +417,73 @@ async def test_get_clips_notified_flag_and_filter(db: ClipDatabase) -> None:
     assert [c["id"] for c in notified_only] == ["c1"]
 
 
+async def test_get_clips_notified_filter_counts_rows_tied_at_latest_analysis(
+    db: ClipDatabase,
+) -> None:
+    """Two analysis rows can share a clip's newest analyzed_at — an
+    re-analysis recorded within the same second, say. "Latest" then means
+    all of them, so the badge and the filter must fire if *any* tied row is
+    suspicious, not whichever one the database happens to return first.
+
+    This pins the semantics the notified/recognized filters were rewritten
+    around: the select-list expression and the WHERE filter ask the same
+    question in different SQL, and a tie is where a careless rewrite of
+    either one (a LIMIT 1, a DISTINCT ON) would quietly disagree with the
+    other.
+    """
+    await db.add_clip(_make_clip("tie1"))
+    await db.add_clip(_make_clip("tie2"))
+    same_moment = "2024-06-01T09:00:00+00:00"
+    for clip_id, first, second in (
+        # Suspicious row is the second one written...
+        ("tie1", False, True),
+        # ...and the first one for the other clip, so neither ordering can
+        # pass this by accident.
+        ("tie2", True, False),
+    ):
+        for suspicious in (first, second):
+            await db.add_analysis_result(
+                {
+                    "clip_id": clip_id,
+                    "camera": "Front Door",
+                    "model": "test",
+                    "is_suspicious": suspicious,
+                    "confidence": 0.9 if suspicious else 0.1,
+                    "analyzed_at": same_moment,
+                }
+            )
+
+    flagged = {c["id"]: c["notified"] for c in await db.get_clips(min_confidence=0.5)}
+    assert flagged["tie1"] is True
+    assert flagged["tie2"] is True
+
+    filtered = await db.get_clips(notified_only=True, min_confidence=0.5)
+    assert {c["id"] for c in filtered} == {"tie1", "tie2"}
+
+
+async def test_get_clips_recognized_filter_counts_rows_tied_at_latest_analysis(
+    db: ClipDatabase,
+) -> None:
+    """Same tie rule for approved_faces_seen, which drives the recognized
+    filter and was rewritten alongside the notified one."""
+    await db.add_clip(_make_clip("face1"))
+    same_moment = "2024-06-01T09:00:00+00:00"
+    for seen in (False, True):
+        await db.add_analysis_result(
+            {
+                "clip_id": "face1",
+                "camera": "Front Door",
+                "model": "test",
+                "approved_faces_seen": seen,
+                "analyzed_at": same_moment,
+            }
+        )
+
+    rows = {c["id"]: c for c in await db.get_clips()}
+    assert rows["face1"]["face_recognized"] is True
+    assert [c["id"] for c in await db.get_clips(recognized_only=True)] == ["face1"]
+
+
 async def test_get_clips_notified_flag_reflects_latest_reanalysis_only(
     db: ClipDatabase,
 ) -> None:
