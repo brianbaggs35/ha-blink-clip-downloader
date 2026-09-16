@@ -89,6 +89,7 @@ in its own count and needed no adjustment.
 ### Dependency Updates
 
 - Updated python-dateutil to 2.9.0.post0
+- Updated anthropic to 1.6.0
 
 ## 6.0.2
 
