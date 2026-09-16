@@ -50,6 +50,17 @@ architecture.
     pricing, plus the small pure functions that read it. Split out of
     `analyzer.py` because it changes on the providers' schedule, not this
     add-on's; it imports nothing from `analyzer.py`.
+  - `prompt_segments.py` — the individual blocks a clip-analysis prompt is
+    assembled from (time of day, anomaly alert, scene baseline, motion
+    trajectory, recent corrections, zone motion, vision hints, output
+    rules). Each renders one block from plain arguments and returns `""`
+    when it has nothing to say, which is how `_build_prompt` decides
+    whether to include it. Same reasoning as `model_catalog.py`: this is
+    text reworded on its own schedule, easier to review against the whole
+    set of segments than buried in the request/response plumbing.
+    `_camera_context_segment` and `_car_protection_segment` deliberately
+    stay on `BaseAnalyzer` — both read configured analyzer state, and the
+    latter is part of the safety-critical protected-vehicle path.
   - `frame_motion.py` — pure frame arithmetic: grayscale thumbnails,
     inter-frame diff magnitudes/centroids, the scene-baseline thumbnail,
     the motion-trajectory phrase, and the share of a clip's motion falling

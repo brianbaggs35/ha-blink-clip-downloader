@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from blink_downloader import frame_motion
+from blink_downloader import frame_motion, prompt_segments
 from blink_downloader.analyzer import (
     _ANTHROPIC_FALLBACK_MODELS,
     _OPENAI_FALLBACK_MODELS,
@@ -10734,7 +10734,7 @@ def test_output_rules_forbid_quoting_the_security_evidence(
     """Both new prompt sections state numbers the model must reason over and
     must not repeat — a homeowner-facing summary that says "risk score 88"
     has leaked internals."""
-    rules = analyzer._output_rules_segment("Driveway", car_applies=False)
+    rules = prompt_segments.output_rules_segment("Driveway", car_applies=False)
     for banned in ("risk score", "evidence quality", "protection zone", "track"):
         assert f"'{banned}'" in rules
     assert "do not quote them" in rules
@@ -10775,8 +10775,8 @@ def test_a_vehicle_the_detector_merely_missed_keeps_the_rules(
 
 
 def test_vehicle_absent_without_any_vision_hints() -> None:
-    assert BaseAnalyzer._vehicle_absent(None) is False
-    assert BaseAnalyzer._vehicle_absent(VisionHints()) is False
+    assert prompt_segments.vehicle_absent(None) is False
+    assert prompt_segments.vehicle_absent(VisionHints()) is False
 
 
 def test_output_rules_example_drops_car_language_when_the_car_is_absent(
