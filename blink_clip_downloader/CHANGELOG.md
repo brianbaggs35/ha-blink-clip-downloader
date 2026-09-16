@@ -86,6 +86,10 @@ numbers look far better than the work actually done. The three are now
 summed into the true prompt total. OpenAI already includes cached tokens
 in its own count and needed no adjustment.
 
+### Dependency Updates
+
+- Updated python-dateutil to 2.9.0.post0
+
 ## 6.0.2
 
 ### The AI described a person who was never there
