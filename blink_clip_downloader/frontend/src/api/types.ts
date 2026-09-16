@@ -312,6 +312,25 @@ export interface DailyUsageWire {
   cost: number | null
 }
 
+/** One weekly (``2026-W07``) or monthly (``2026-02``) usage bucket. Same
+ *  shape as DailyUsageWire but keyed by a generic `period`, since the label
+ *  differs per granularity. */
+export interface PeriodUsageWire {
+  period: string
+  analyses: number
+  tokens_prompt: number
+  tokens_completion: number
+  tokens_total: number
+  cost: number | null
+}
+
+/** Weekly and monthly rollups, served from their own endpoint so the
+ *  10s-polled /api/ai/usage payload never pays for a year-wide aggregate. */
+export interface AiUsagePeriods {
+  weekly: PeriodUsageWire[]
+  monthly: PeriodUsageWire[]
+}
+
 export interface AiUsage {
   enabled: boolean
   provider?: AiProvider

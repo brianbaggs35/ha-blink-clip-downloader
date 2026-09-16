@@ -64,6 +64,77 @@ async function showUsage(page: import('@playwright/test').Page, payload: Record<
   await page.waitForSelector('.app-nav-tab.active[data-tab="usage"]')
 }
 
+function periods(over: Record<string, unknown> = {}) {
+  return {
+    weekly: [
+      {
+        period: '2026-W03',
+        analyses: 25,
+        tokens_prompt: 75000,
+        tokens_completion: 5000,
+        tokens_total: 80000,
+        cost: 0.0143,
+      },
+      {
+        period: '2026-W02',
+        analyses: 15,
+        tokens_prompt: 45000,
+        tokens_completion: 3000,
+        tokens_total: 48000,
+        cost: 0.0085,
+      },
+    ],
+    monthly: [
+      {
+        period: '2026-01',
+        analyses: 40,
+        tokens_prompt: 120000,
+        tokens_completion: 8000,
+        tokens_total: 128000,
+        cost: 0.0228,
+      },
+      {
+        period: '2025-12',
+        analyses: 12,
+        tokens_prompt: 36000,
+        tokens_completion: 2400,
+        tokens_total: 38400,
+        cost: 0.0068,
+      },
+    ],
+    ...over,
+  }
+}
+
+/** Serve both usage endpoints and report how many times the rollup one was
+ *  actually hit — the lazy-fetch behaviour is the point, so the count is part
+ *  of what these tests assert. */
+async function showUsageWithPeriods(
+  page: import('@playwright/test').Page,
+  payload: Record<string, unknown> = usage(),
+  periodsPayload: Record<string, unknown> | null = periods(),
+) {
+  const hits = { periods: 0 }
+  await page.route('**/api/ai/usage/periods', async (route) => {
+    hits.periods += 1
+    if (periodsPayload === null) {
+      return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"nope"}' })
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(periodsPayload) })
+  })
+  await showUsage(page, payload)
+  return hits
+}
+
+/** The Day/Week/Month segmented control. */
+function granularity(page: import('@playwright/test').Page) {
+  return page.locator('#page-usage .usage-history-head').getByRole('button')
+}
+
+function historyRows(page: import('@playwright/test').Page) {
+  return page.locator('#page-usage .usage-history-table tbody tr')
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   await page.waitForSelector('.app-nav-tab.active[data-tab="library"]')
@@ -167,4 +238,91 @@ test('a malformed usage payload renders the empty state rather than throwing', a
   })
   await expect(page.locator('#page-usage')).toBeVisible()
   await expect(page.locator('.app-nav-tab.active[data-tab="usage"]')).toBeVisible()
+})
+
+// ── Weekly / monthly spend ────────────────────────────────────────────
+
+test('opens on the daily view without fetching the weekly/monthly rollups', async ({ page }) => {
+  const hits = await showUsageWithPeriods(page)
+
+  await expect(page.locator('#page-usage')).toContainText('Usage History')
+  await expect(page.locator('#page-usage')).toContainText('Last 14 Days')
+  await expect(historyRows(page).first()).toContainText('2026-01-04')
+  // A tab nobody switches must not pay for a year-wide aggregate.
+  expect(hits.periods).toBe(0)
+})
+
+test('switching to Week shows weekly spend, and to Month shows monthly, from one fetch', async ({ page }) => {
+  const hits = await showUsageWithPeriods(page)
+
+  await granularity(page).filter({ hasText: 'Week' }).click()
+  await expect(page.locator('#page-usage')).toContainText('Last 12 Weeks')
+  await expect(historyRows(page).first()).toContainText('Week 03, 2026')
+  await expect(historyRows(page).first()).toContainText('$0.0143')
+  expect(hits.periods).toBe(1)
+
+  await granularity(page).filter({ hasText: 'Month' }).click()
+  await expect(page.locator('#page-usage')).toContainText('Last 12 Months')
+  await expect(historyRows(page).first()).toContainText('January 2026')
+  await expect(historyRows(page).nth(1)).toContainText('December 2025')
+  // Both granularities arrive together, so switching costs no extra request.
+  expect(hits.periods).toBe(1)
+
+  await granularity(page).filter({ hasText: 'Day' }).click()
+  await expect(page.locator('#page-usage')).toContainText('Last 14 Days')
+  await expect(historyRows(page).first()).toContainText('2026-01-04')
+})
+
+test('totals the selected period so the spend does not have to be added up by eye', async ({ page }) => {
+  await showUsageWithPeriods(page)
+  await granularity(page).filter({ hasText: 'Month' }).click()
+
+  const total = page.locator('#page-usage .usage-total-row')
+  await expect(total).toContainText('Total')
+  await expect(total).toContainText('52') // 40 + 12 analyses
+  await expect(total).toContainText('$0.0296') // 0.0228 + 0.0068
+})
+
+test('a failed rollup says so instead of showing an empty table', async ({ page }) => {
+  await showUsageWithPeriods(page, usage(), null)
+
+  await granularity(page).filter({ hasText: 'Week' }).click()
+  await expect(page.locator('#page-usage')).toContainText('Could not load weekly usage.')
+  await expect(historyRows(page)).toHaveCount(0)
+})
+
+test('the granularity control stays usable at phone width', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await showUsageWithPeriods(page)
+
+  const week = granularity(page).filter({ hasText: 'Week' })
+  await expect(week).toBeVisible()
+  await week.click()
+  await expect(historyRows(page).first()).toContainText('Week 03, 2026')
+
+  // The page itself must not scroll sideways at phone width.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  )
+  expect(overflow).toBeLessThanOrEqual(0)
+})
+
+test('weekly spend renders in dark mode as well as light', async ({ page }) => {
+  await showUsageWithPeriods(page)
+  await granularity(page).filter({ hasText: 'Week' }).click()
+  await expect(historyRows(page).first()).toContainText('Week 03, 2026')
+
+  // Whichever theme the app starts in, the weekly table must read correctly
+  // in the other one too — the rows and the total row are the parts that
+  // carry custom colour (the total row's own border/weight).
+  const total = page.locator('#page-usage .usage-total-row')
+  await expect(total).toBeVisible()
+
+  await page.getByRole('button', { name: /Switch to (light|dark) theme/ }).click()
+  await expect(historyRows(page).first()).toContainText('Week 03, 2026')
+  await expect(total).toBeVisible()
+
+  await page.getByRole('button', { name: /Switch to (light|dark) theme/ }).click()
+  await expect(historyRows(page).first()).toContainText('Week 03, 2026')
+  await expect(total).toBeVisible()
 })
