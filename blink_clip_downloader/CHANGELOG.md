@@ -1,5 +1,67 @@
 # Changelog
 
+## 6.0.3
+
+### Prompt caching never actually cached anything
+
+Both cloud providers that support prompt caching bill a repeated prompt
+prefix at a large discount, and this add-on sends a very repetitive
+prompt: the analysis rules and the camera's own description are identical
+for every clip on a camera, and account for roughly 30% of each request.
+Neither provider was reusing a single token of it.
+
+- **Anthropic wrote a cache entry per clip and never read one back.** The
+  cache is a *prefix* match — the entry is keyed on everything rendered
+  before the marked block, not on the block itself. The frames were
+  emitted first, so each entry was keyed on that clip's own image bytes
+  and could never match the next clip. The static text now goes ahead of
+  the frames, which is what makes the cached bytes repeat from clip to
+  clip. Until now this was worse than not caching: cache writes bill at
+  1.25×, so every request on a model whose minimum the prompt cleared
+  paid a premium for an entry nothing ever read.
+- **OpenAI was never given a prefix it could match.** Its caching is
+  automatic — there is no marker to place; it reuses a prompt prefix over
+  1024 tokens that it has seen recently. With the frames first, nothing
+  beyond the short system message ever repeated, so the hit rate sat at a
+  flat 0% across millions of input tokens. The same reordering applies.
+
+The model reads exactly the same prompt text either way — only its
+position relative to the frames changed, so rules and camera context come
+first, then the frames, then that clip's own evidence.
+
+Three caveats worth stating plainly.
+
+Cache entries expire: about five minutes on Anthropic, about thirty on
+current OpenAI models. The saving therefore depends on a camera being
+analysed again within that window — the norm while clips are arriving,
+nothing while the property is quiet. Reads refresh the timer, so a busy
+period keeps itself warm.
+
+Anthropic sets a minimum cacheable prefix per model that this prompt does
+not clear on all of them: `claude-haiku-4-5`, the default, requires 4096
+tokens against a prefix of roughly 1600, as does `claude-opus-4-6`, and
+`claude-opus-4-7` requires 2048. On those, caching stays inert and
+nothing is lost; the saving arrives on a Sonnet-class model, `opus-4-8`
+or `opus-5`, whose minimums the prefix clears. OpenAI's 1024 is cleared
+comfortably on models that support caching at all (older `gpt-4` and
+`gpt-4-turbo` do not, and are simply unaffected).
+
+Cache writes are not free on either provider any more: Anthropic bills
+them at 1.25×, and so do OpenAI's GPT-5.6-and-later models, where cached
+reads in turn drop to 0.1×. Older OpenAI models add no write charge and
+discount reads at a model-dependent rate. In every case a prefix reused
+even once pays for the write, which is the normal case here.
+
+### Cached tokens went missing from the AI Usage tab
+
+Anthropic reports tokens served from, or written to, the cache in their
+own fields, and counts only the remainder in `input_tokens` — which is
+what the usage table was recording. On a cached request that omits the
+majority of the prompt, so enabling caching would have quietly made the
+numbers look far better than the work actually done. The three are now
+summed into the true prompt total. OpenAI already includes cached tokens
+in its own count and needed no adjustment.
+
 ## 6.0.2
 
 ### The AI described a person who was never there

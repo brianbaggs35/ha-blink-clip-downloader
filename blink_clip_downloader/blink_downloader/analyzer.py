@@ -1950,6 +1950,58 @@ class BaseAnalyzer(abc.ABC):
         return self._build_prompt(camera)
 
     # ------------------------------------------------------------------
+    # Prompt caching (Anthropic + OpenAI)
+    # ------------------------------------------------------------------
+
+    def _prompt_cache_prefix(self) -> str:
+        """The camera-scoped static portion of the analysis prompt (base
+        prompt + camera context) — mirrors the first two segments
+        ``_build_prompt`` unconditionally appends before any per-clip
+        content, so this reconstructs (not re-derives from a shared call)
+        exactly the same text.
+
+        ``_call_model`` only ever sees the already-flattened prompt string
+        ``_build_prompt`` returns, not the per-clip parameters that built
+        it — restructuring that shared signature so every provider's
+        ``_call_model`` could receive the pieces separately would touch
+        all 6 providers' request-building for a benefit only the two
+        caching ones can use. Reconstructing the known-static prefix here
+        instead keeps prompt caching contained to those providers' own
+        request construction, at the cost of only being able to cache this
+        leading portion (not the car-protection/output-rules segments
+        further down the prompt, which aren't contiguous with it) — still
+        typically the largest single static block, since it's the full
+        configured/per-camera ``ai_prompt`` text.
+
+        Deliberately *not* extended to cover those trailing segments by
+        reordering ``_build_prompt``: even with all of them hoisted the
+        prefix reaches only ~3.9K tokens, still under the 4096-token
+        minimum of the default ``claude-haiku-4-5``, so it would buy no
+        extra cacheability on the default model while breaking the
+        deliberate "security evidence immediately before the
+        protected-vehicle rules" ordering that block documents.
+        """
+        camera = getattr(self, "_current_camera", "")
+        return self._camera_prompts.get(
+            camera, self._base_prompt
+        ) + self._camera_context_segment(camera)
+
+    def _split_cache_prefix(self, prompt: str) -> tuple[str, str]:
+        """Split *prompt* into its cacheable static prefix and per-clip tail.
+
+        Returns ``("", prompt)`` when the prompt does not actually start
+        with the reconstructed prefix (it always will in real use — see
+        :meth:`_prompt_cache_prefix` for why this cannot be verified more
+        directly — but a test double or an unexpected future prompt shape
+        safely falls back to one flat, uncached block), so callers can
+        treat that as "no split available" rather than special-casing it.
+        """
+        prefix = self._prompt_cache_prefix()
+        if prefix and prompt.startswith(prefix) and len(prefix) < len(prompt):
+            return prefix, prompt[len(prefix) :]
+        return "", prompt
+
+    # ------------------------------------------------------------------
     # Response parsing (shared by all providers)
     # ------------------------------------------------------------------
 
@@ -4428,37 +4480,11 @@ class AnthropicAnalyzer(BaseAnalyzer):
         except Exception as exc:  # noqa: BLE001
             return self._handle_anthropic_error(_anthropic, exc)
 
-    def _prompt_cache_prefix(self) -> str:
-        """The camera-scoped static portion of the analysis prompt (base
-        prompt + camera context) — mirrors the first two segments
-        ``BaseAnalyzer._build_prompt`` unconditionally appends before any
-        per-clip content, so this reconstructs (not re-derives from a
-        shared call) exactly the same text.
-
-        ``_call_model``/``_build_anthropic_create_kwargs`` only ever see
-        the already-flattened prompt string ``_build_prompt`` returns, not
-        the per-clip parameters that built it — restructuring that shared
-        signature so every provider's ``_call_model`` could receive the
-        pieces separately would touch all 6 providers' request-building
-        for a benefit only this one can use. Reconstructing the known-
-        static prefix here instead keeps prompt caching entirely
-        contained to Anthropic's own request construction, at the cost of
-        only being able to cache this leading portion (not the
-        car-protection/output-rules segments further down the prompt,
-        which aren't contiguous with it) — still typically the largest
-        single static block, since it's the full configured/per-camera
-        ``ai_prompt`` text.
-        """
-        camera = getattr(self, "_current_camera", "")
-        return self._camera_prompts.get(
-            camera, self._base_prompt
-        ) + self._camera_context_segment(camera)
-
     def _build_anthropic_create_kwargs(
         self, frames: list[bytes], prompt: str
     ) -> dict[str, Any]:
         resized = [self._resize_frame(f) for f in frames]
-        content: list[dict[str, Any]] = [
+        images: list[dict[str, Any]] = [
             {
                 "type": "image",
                 "source": {
@@ -4470,24 +4496,24 @@ class AnthropicAnalyzer(BaseAnalyzer):
             for frame in resized
         ]
 
-        # Prompt caching: when the given prompt actually starts with the
-        # reconstructed static prefix (it always will in real use — see
-        # _prompt_cache_prefix's docstring for why this can't be verified
-        # more directly — but a test double or an unexpected future prompt
-        # shape safely falls through to today's single uncached block),
-        # split it into a cached prefix block and an uncached per-clip
-        # remainder instead of one flat block. Anthropic's server-side
-        # ephemeral cache is keyed on the exact byte sequence up to a
-        # cache_control breakpoint, so repeat analyses on the same camera
-        # reuse it at a fraction of the input-token cost — multiple text
-        # blocks in one content array read as simple concatenation, so
-        # this changes nothing about what the model actually sees.
-        cache_prefix = self._prompt_cache_prefix()
-        if (
-            cache_prefix
-            and prompt.startswith(cache_prefix)
-            and len(cache_prefix) < len(prompt)
-        ):
+        # Prompt caching. Anthropic's cache is a *prefix* match: the entry is
+        # keyed on the exact bytes of everything rendered before the
+        # cache_control breakpoint, not on the marked block alone. The frames
+        # are different bytes for every clip, so a breakpoint placed after
+        # them (which is where this used to sit) can never be read back — it
+        # only ever wrote a fresh entry at the 1.25x write premium and then
+        # missed it on the next clip. Emitting the static prefix *before* the
+        # images is what makes the cached bytes actually repeat from clip to
+        # clip on the same camera.
+        #
+        # Multiple text blocks in one content array read as simple
+        # concatenation, so the model still sees the same prompt text as
+        # before; only its position relative to the frames changes — rules
+        # and camera context first, then the frames, then this clip's own
+        # evidence.
+        cache_prefix, remainder = self._split_cache_prefix(prompt)
+        content: list[dict[str, Any]] = []
+        if cache_prefix:
             content.append(
                 {
                     "type": "text",
@@ -4495,8 +4521,10 @@ class AnthropicAnalyzer(BaseAnalyzer):
                     "cache_control": {"type": "ephemeral"},
                 }
             )
-            content.append({"type": "text", "text": prompt[len(cache_prefix) :]})
+            content.extend(images)
+            content.append({"type": "text", "text": remainder})
         else:
+            content.extend(images)
             content.append({"type": "text", "text": prompt})
 
         # System prompt keeps the role and output format instructions
@@ -4527,8 +4555,25 @@ class AnthropicAnalyzer(BaseAnalyzer):
 
     def _extract_anthropic_response_text(self, response: Any) -> str:
         if response.usage:
-            self._last_prompt_tokens = int(response.usage.input_tokens or 0)
+            # ``input_tokens`` is the *uncached remainder* only — tokens served
+            # from, or written to, the prompt cache are reported separately and
+            # would otherwise vanish from the AI Usage tab entirely (on a cache
+            # hit that is the majority of the prompt). Total prompt size is the
+            # sum of all three.
+            cache_read = int(getattr(response.usage, "cache_read_input_tokens", 0) or 0)
+            cache_write = int(
+                getattr(response.usage, "cache_creation_input_tokens", 0) or 0
+            )
+            self._last_prompt_tokens = (
+                int(response.usage.input_tokens or 0) + cache_read + cache_write
+            )
             self._last_completion_tokens = int(response.usage.output_tokens or 0)
+            if cache_read or cache_write:
+                _LOGGER.debug(
+                    "Anthropic prompt cache: %d token(s) read, %d written",
+                    cache_read,
+                    cache_write,
+                )
 
         return "\n".join(
             block.text for block in response.content if hasattr(block, "text")
@@ -4795,7 +4840,7 @@ class OpenAIAnalyzer(BaseAnalyzer):
         self, frames: list[bytes], prompt: str, model: str
     ) -> dict[str, Any]:
         resized = [self._resize_frame(f) for f in frames]
-        content: list[dict[str, Any]] = [
+        images: list[dict[str, Any]] = [
             {
                 "type": "image_url",
                 "image_url": {
@@ -4805,7 +4850,34 @@ class OpenAIAnalyzer(BaseAnalyzer):
             }
             for frame in resized
         ]
-        content.append({"type": "text", "text": prompt})
+
+        # Prompt caching. Unlike Anthropic's, OpenAI's cache is automatic —
+        # there is no cache_control marker to place; the API reuses any prompt
+        # prefix it has seen recently (1024 tokens minimum on current models,
+        # varying with request settings on older ones) at a discount on the
+        # reused part. What it needs from us is a prefix that actually
+        # repeats: with the frames emitted first, every request's prefix
+        # diverged at the first image and nothing beyond the short system
+        # message could ever be reused — a measured 0% hit rate over millions
+        # of input tokens. Moving the static, camera-scoped portion of the
+        # prompt ahead of the frames gives consecutive clips on the same
+        # camera a substantial identical prefix to hit. Same text, same order
+        # relative to itself — only its position relative to the frames
+        # changes.
+        #
+        # No model-specific branching is needed here: caching is on by default
+        # wherever it is supported, the static-content-first requirement is
+        # the same across model families, and a model that does not support it
+        # at all (gpt-4, gpt-4-turbo) is simply unaffected by the reordering.
+        cache_prefix, remainder = self._split_cache_prefix(prompt)
+        content: list[dict[str, Any]] = []
+        if cache_prefix:
+            content.append({"type": "text", "text": cache_prefix})
+            content.extend(images)
+            content.append({"type": "text", "text": remainder})
+        else:
+            content.extend(images)
+            content.append({"type": "text", "text": prompt})
 
         # System message keeps role and format rules separate from user
         # content, improving JSON compliance and stopping the model from
@@ -4868,8 +4940,16 @@ class OpenAIAnalyzer(BaseAnalyzer):
 
     def _extract_openai_response_text(self, response: Any) -> str:
         if response.usage:
+            # Unlike Anthropic's, OpenAI's ``prompt_tokens`` already includes
+            # any tokens served from the prompt cache, so the total needs no
+            # adjustment — the cached count is only broken out for logging, so
+            # a real install can confirm caching is actually hitting.
             self._last_prompt_tokens = int(response.usage.prompt_tokens or 0)
             self._last_completion_tokens = int(response.usage.completion_tokens or 0)
+            details = getattr(response.usage, "prompt_tokens_details", None)
+            cached = int(getattr(details, "cached_tokens", 0) or 0)
+            if cached:
+                _LOGGER.debug("OpenAI prompt cache: %d token(s) reused", cached)
 
         choice = response.choices[0] if response.choices else None
         if choice and choice.message and choice.message.content:

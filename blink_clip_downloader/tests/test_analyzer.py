@@ -8,6 +8,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1794,14 +1795,24 @@ def _make_anthropic_response(
     text: str = '{"suspicious": false, "confidence": 0.1, "description": "Empty scene"}',
     input_tokens: int = 150,
     output_tokens: int = 45,
+    cache_read_input_tokens: int = 0,
+    cache_creation_input_tokens: int = 0,
 ) -> MagicMock:
-    """Return a mock Anthropic messages.create() response."""
+    """Return a mock Anthropic messages.create() response.
+
+    The two cache counters default to 0 rather than being left off the mock:
+    a real Messages response always carries them, and a bare MagicMock would
+    hand back a truthy mock that ``int()`` silently turns into 1 - quietly
+    inflating every token assertion in this file by two.
+    """
     block = MagicMock()
     block.text = text
 
     usage = MagicMock()
     usage.input_tokens = input_tokens
     usage.output_tokens = output_tokens
+    usage.cache_read_input_tokens = cache_read_input_tokens
+    usage.cache_creation_input_tokens = cache_creation_input_tokens
 
     resp = MagicMock()
     resp.content = [block]
@@ -2806,6 +2817,119 @@ def test_anthropic_create_kwargs_no_split_when_prompt_equals_prefix_exactly() ->
     assert text_blocks == [{"type": "text", "text": cache_prefix}]
 
 
+def _content_types(content: list[dict]) -> list[str]:
+    """The content array's block types in order, for ordering assertions."""
+    return [b["type"] for b in content]
+
+
+def test_anthropic_cache_prefix_block_precedes_every_image() -> None:
+    """The cached block must come BEFORE the frames, not after them.
+
+    Anthropic's cache is a prefix match over everything rendered ahead of the
+    breakpoint, so a breakpoint sitting after the frames keys each entry on
+    that clip's own image bytes - it can never be read back by the next clip,
+    and only ever pays the write premium. This ordering is the entire point of
+    the feature working at all; assert it directly rather than via the text
+    blocks alone.
+    """
+    a = AnthropicAnalyzer(
+        api_key="key", model="claude-sonnet-5", prompt="Base rules text."
+    )
+    a._current_camera = "Front Door"
+    full_prompt = a._prompt_cache_prefix() + "\n\nPer-clip content."
+
+    content = a._build_anthropic_create_kwargs([_FAKE_JPEG, _FAKE_JPEG], full_prompt)[
+        "messages"
+    ][0]["content"]
+
+    assert _content_types(content) == ["text", "image", "image", "text"]
+    assert content[0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_anthropic_cached_block_is_identical_across_different_clips() -> None:
+    """Two different clips on one camera must produce byte-identical cached
+    blocks - otherwise every request writes a fresh entry and none is reused."""
+    a = AnthropicAnalyzer(
+        api_key="key", model="claude-sonnet-5", prompt="Base rules text."
+    )
+    a._current_camera = "Front Door"
+    prefix = a._prompt_cache_prefix()
+
+    first = a._build_anthropic_create_kwargs([b"clip-one-frame"], prefix + "Clip A")
+    second = a._build_anthropic_create_kwargs([b"clip-two-frame"], prefix + "Clip B")
+
+    assert first["messages"][0]["content"][0] == second["messages"][0]["content"][0]
+    assert first["messages"][0]["content"][-1] != second["messages"][0]["content"][-1]
+
+
+def test_anthropic_split_preserves_exact_prompt_text() -> None:
+    """Splitting the prompt across blocks must not change a single byte of what
+    the model actually reads - the blocks concatenate back to the original."""
+    a = AnthropicAnalyzer(
+        api_key="key", model="claude-sonnet-5", prompt="Base rules text."
+    )
+    a._current_camera = "Front Door"
+    full_prompt = a._prompt_cache_prefix() + "\n\nPer-clip content."
+
+    content = a._build_anthropic_create_kwargs([_FAKE_JPEG], full_prompt)["messages"][
+        0
+    ]["content"]
+
+    assert "".join(b["text"] for b in content if b["type"] == "text") == full_prompt
+
+
+def test_anthropic_usage_counts_cached_tokens_toward_prompt_total() -> None:
+    """input_tokens is the uncached remainder only; cache reads/writes have to
+    be added back or the AI Usage tab loses most of a cached request's prompt."""
+    a = AnthropicAnalyzer(api_key="key", model="claude-sonnet-5", prompt="p")
+    resp = _make_anthropic_response(
+        input_tokens=200, cache_read_input_tokens=1500, cache_creation_input_tokens=40
+    )
+
+    a._extract_anthropic_response_text(resp)
+
+    assert a._last_prompt_tokens == 1740
+
+
+def test_openai_cache_prefix_block_precedes_every_image() -> None:
+    """OpenAI caching is automatic, but only matches a prefix it has seen
+    before - which requires the static text ahead of the per-clip frames."""
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o", prompt="Base rules text.")
+    a._current_camera = "Front Door"
+    full_prompt = a._prompt_cache_prefix() + "\n\nPer-clip content."
+
+    content = a._build_openai_create_kwargs(
+        [_FAKE_JPEG, _FAKE_JPEG], full_prompt, "gpt-4o"
+    )["messages"][1]["content"]
+
+    assert _content_types(content) == ["text", "image_url", "image_url", "text"]
+    assert "".join(b["text"] for b in content if b["type"] == "text") == full_prompt
+
+
+def test_openai_create_kwargs_no_split_when_prompt_does_not_match_prefix() -> None:
+    """Same safety fallback as the Anthropic path: an unexpected prompt shape
+    degrades to one plain text block after the frames, exactly as before."""
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o", prompt="test")
+
+    content = a._build_openai_create_kwargs([_FAKE_JPEG], "Analyze", "gpt-4o")[
+        "messages"
+    ][1]["content"]
+
+    assert _content_types(content) == ["image_url", "text"]
+    assert content[-1] == {"type": "text", "text": "Analyze"}
+
+
+def test_openai_usage_prompt_tokens_already_include_cached() -> None:
+    """OpenAI reports cached tokens inside prompt_tokens, so unlike the
+    Anthropic path the total must NOT have them added on top."""
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o", prompt="p")
+    resp = _make_openai_response(prompt_tokens=2000, cached_tokens=1536)
+
+    a._extract_openai_response_text(resp)
+
+    assert a._last_prompt_tokens == 2000
+
+
 async def test_anthropic_call_model_import_error() -> None:
     """_call_model returns '' when the anthropic package is not importable."""
     import sys
@@ -2898,8 +3022,15 @@ def _make_openai_response(
     text: str = '{"suspicious": false, "confidence": 0.1, "description": "Empty scene"}',
     prompt_tokens: int = 150,
     completion_tokens: int = 45,
+    cached_tokens: int = 0,
 ) -> MagicMock:
-    """Return a mock openai chat.completions.create() response."""
+    """Return a mock openai chat.completions.create() response.
+
+    ``cached_tokens`` defaults to 0 for the same reason the Anthropic helper
+    pins its cache counters - a bare MagicMock attribute is truthy and
+    ``int()``-able, so leaving it off would fake a cache hit on every
+    response.
+    """
     message = MagicMock()
     message.content = text
 
@@ -2909,6 +3040,7 @@ def _make_openai_response(
     usage = MagicMock()
     usage.prompt_tokens = prompt_tokens
     usage.completion_tokens = completion_tokens
+    usage.prompt_tokens_details = SimpleNamespace(cached_tokens=cached_tokens)
 
     resp = MagicMock()
     resp.choices = [choice]
