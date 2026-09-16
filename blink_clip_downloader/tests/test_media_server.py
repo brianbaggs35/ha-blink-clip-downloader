@@ -192,6 +192,25 @@ async def test_assets_are_statically_served(client: TestClient) -> None:
     assert resp.status == 200
 
 
+async def test_app_builds_without_a_frontend_build_present(
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A container whose static/ was never produced must still start and
+    serve the API — only /assets goes missing. Worth asserting explicitly
+    rather than leaning on CI's environment: CI's test job happens never to
+    run `npm run build`, so it takes this branch by accident, while a
+    developer checkout that has built the frontend never takes it at all."""
+    monkeypatch.setattr(media_server, "_STATIC_DIR", tmp_path / "never-built")
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        assert (await tc.get("/health")).status == 200
+        assert (await tc.get("/assets/index.js")).status == 404
+    finally:
+        await tc.close()
+
+
 async def test_index_has_security_headers(client: TestClient) -> None:
     resp = await client.get("/")
     assert resp.headers.get("X-Content-Type-Options") == "nosniff"
