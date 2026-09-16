@@ -18,7 +18,7 @@ aioresponses>=0.7.9
 PyYAML>=6.0.3
 
 [vision]
-ultralytics<9,>=8.4.146
+ultralytics<9,>=8.4.154
 opencv-python-headless<6,>=5.0.0.93
 transformers<6,>=5.17.0
 facenet-pytorch<3,>=2.6.0
