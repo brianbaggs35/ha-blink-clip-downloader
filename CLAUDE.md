@@ -58,6 +58,15 @@ architecture.
     what a clip means, and it imports nothing from `analyzer.py`. Uses
     `security/geometry.py`'s `point_in_polygon` rather than keeping the
     second, identical copy `analyzer.py` used to carry.
+  - `ffmpeg_output.py` — reading what ffmpeg wrote: splitting its
+    concatenated-JPEG stdout into frames, and condensing its stderr into
+    one loggable line. A leaf module (stdlib only) because both
+    `analyzer.py` and `media_server.py` shell out to ffmpeg and need it,
+    and `media_server.py` importing `analyzer.py` for two small pure
+    functions would drag `aiohttp` and the whole `security` package in
+    behind them. Both modules used to carry their own identical copy for
+    exactly that reason; same fix as `frame_motion.py` taking
+    `point_in_polygon` from `security/geometry.py`.
   - `moondream_finetune.py` — `MoondreamFineTuneManager`, an async wrapper
     over Moondream Cloud's fine-tuning REST API. **Not an analyzer** — no
     clip, prompt or verdict is involved; it backs the AI tab's Fine-Tuning

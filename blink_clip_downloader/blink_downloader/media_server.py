@@ -26,6 +26,7 @@ from aiohttp import web
 
 from .database import SUSPICIOUS_PERIODS, ClipDatabase
 from .downloader import AUTH_FATAL_EXCEPTIONS
+from .ffmpeg_output import format_ffmpeg_error, split_jpeg_frames
 from .live_view import CameraNotFoundError, LiveViewError
 from .vision import FaceEmbedder, is_face_recognition_available, torch_cpu_compatible
 
@@ -76,23 +77,6 @@ _MAX_CLIP_FRAMES = 60
 _MAX_FINETUNE_TRAIN_BATCH = 100
 _ARCHIVE_CLIPS_PAGE_SIZE = 50
 _MAX_ARCHIVE_CLIPS_PAGE_SIZE = 200
-
-# How much of a failing ffmpeg run's stderr to keep in the log line.
-_FFMPEG_ERROR_CHARS = 200
-
-
-def _format_ffmpeg_error(stderr: bytes | None) -> str:
-    """Condense ffmpeg's stderr into one loggable line.
-
-    Mirrors ``analyzer._format_ffmpeg_error`` exactly — duplicated locally
-    for the same reason ``_split_jpeg_frames`` below is, so this module
-    doesn't need a runtime dependency on analyzer.py's heavier imports for
-    one small pure function. See that copy for why the *tail* is kept.
-    """
-    return " ".join((stderr or b"").decode(errors="replace").split())[
-        -_FFMPEG_ERROR_CHARS:
-    ]
-
 
 # Built by `npm run build` in frontend/ (vite.config.ts writes straight into
 # this directory) — the Dockerfile's frontend-builder stage runs that build
@@ -898,40 +882,16 @@ class MediaServer:
                 "ffmpeg exited %d extracting frames for %s: %s",
                 proc.returncode,
                 clip_id,
-                _format_ffmpeg_error(stderr),
+                format_ffmpeg_error(stderr),
             )
             return web.json_response({"frames": []})
 
-        frames = self._split_jpeg_frames(stdout or b"")
+        frames = split_jpeg_frames(stdout or b"")
         encoded = [
             "data:image/jpeg;base64," + base64.b64encode(f).decode("ascii")
             for f in frames
         ]
         return web.json_response({"frames": encoded})
-
-    @staticmethod
-    def _split_jpeg_frames(data: bytes) -> list[bytes]:
-        """Split concatenated JPEG data into individual frames.
-
-        Mirrors ``BaseAnalyzer._split_jpeg_frames`` (analyzer.py) exactly —
-        duplicated locally rather than imported so this module doesn't need
-        a runtime dependency on analyzer.py's heavier imports for one small
-        pure function.
-        """
-        frames: list[bytes] = []
-        soi = b"\xff\xd8"
-        eoi = b"\xff\xd9"
-        pos = 0
-        while pos < len(data):
-            start = data.find(soi, pos)
-            if start == -1:
-                break
-            end = data.find(eoi, start + 2)
-            if end == -1:
-                break
-            frames.append(data[start : end + 2])
-            pos = end + 2
-        return frames
 
     async def _handle_cameras(self, _request: web.Request) -> web.Response:
         """Per-camera clip stats, backing the Library nav/filter sidebar.

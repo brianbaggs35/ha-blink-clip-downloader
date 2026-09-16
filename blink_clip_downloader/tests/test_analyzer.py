@@ -28,7 +28,6 @@ from blink_downloader.analyzer import (
     OllamaCloudAnalyzer,
     OpenAIAnalyzer,
     _anthropic_supports_structured_output,
-    _format_ffmpeg_error,
     _openai_model_rank,
     _vision_model_score,
     create_analyzer,
@@ -150,13 +149,6 @@ async def test_extract_frames_failure_logs_the_end_of_ffmpeg_stderr(
     assert "\n" not in caplog.records[-1].getMessage()
 
 
-def test_format_ffmpeg_error_handles_no_stderr() -> None:
-    """A failing ffmpeg that wrote nothing to stderr must not blow up the
-    log call it feeds."""
-    assert _format_ffmpeg_error(None) == ""
-    assert _format_ffmpeg_error(b"") == ""
-
-
 async def test_extract_frames_ffmpeg_timeout(analyzer: ClipAnalyzer) -> None:
     with patch(
         "asyncio.create_subprocess_exec",
@@ -193,29 +185,6 @@ async def test_extract_frames_ffmpeg_not_found(analyzer: ClipAnalyzer) -> None:
         frames = await analyzer.extract_frames("/clips/test.mp4")
 
     assert frames == []
-
-
-# ------------------------------------------------------------------
-# split_jpeg_frames
-# ------------------------------------------------------------------
-
-
-def test_split_jpeg_frames_single() -> None:
-    frames = ClipAnalyzer._split_jpeg_frames(_FAKE_JPEG)
-    assert len(frames) == 1
-
-
-def test_split_jpeg_frames_multiple() -> None:
-    frames = ClipAnalyzer._split_jpeg_frames(_TWO_JPEGS)
-    assert len(frames) == 2
-
-
-def test_split_jpeg_frames_empty() -> None:
-    assert ClipAnalyzer._split_jpeg_frames(b"") == []
-
-
-def test_split_jpeg_frames_garbage() -> None:
-    assert ClipAnalyzer._split_jpeg_frames(b"\x00\x01\x02") == []
 
 
 # ------------------------------------------------------------------
@@ -2366,17 +2335,6 @@ async def test_moondream_cloud_tokens_are_zero(monkeypatch: pytest.MonkeyPatch) 
 
     assert result.tokens_prompt == 0
     assert result.tokens_completion == 0
-
-
-# ------------------------------------------------------------------
-# Additional coverage: _split_jpeg_frames edge cases
-# ------------------------------------------------------------------
-
-
-def test_split_jpeg_frames_no_eoi() -> None:
-    """SOI found but no EOI — should return no frames."""
-    data = b"\xff\xd8\xff\xe0"  # SOI + bytes but no EOI
-    assert ClipAnalyzer._split_jpeg_frames(data) == []
 
 
 # ------------------------------------------------------------------
