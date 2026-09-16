@@ -531,6 +531,47 @@ async def test_poll_once_for_token_email_fetch_failure_does_not_break_success(
     assert client.account_email == ""
 
 
+async def test_poll_once_for_token_success_without_refresh_token_keeps_existing(
+    client: GDriveClient,
+) -> None:
+    """Google omits refresh_token when re-granting an account that already
+    authorized this client. The one we already hold is what keeps the
+    connection alive across restarts, so the response not carrying a new one
+    must leave it in place rather than blank it out."""
+    _configure(client)
+    client._refresh_token = "rt-from-first-grant"
+    token_resp = _mock_response(200, {"access_token": "at2", "expires_in": 3600})
+    email_resp = _mock_response(200, {"user": {"emailAddress": "me@example.com"}})
+    client._session = _mock_session(post=token_resp, get=email_resp)
+
+    result = await client.poll_once_for_token("dc123")
+
+    assert result.status == "success"
+    assert client._refresh_token == "rt-from-first-grant"
+    assert client.connected is True
+
+
+async def test_poll_once_for_token_non_200_email_response_leaves_email_blank(
+    client: GDriveClient,
+) -> None:
+    """An /about call that answers with an HTTP error (a token without the
+    userinfo scope, say) must be treated exactly like a transport failure:
+    no email, but still a successful token exchange."""
+    _configure(client)
+    token_resp = _mock_response(
+        200, {"access_token": "at1", "refresh_token": "rt1", "expires_in": 3600}
+    )
+    email_resp = _mock_response(403, {"error": {"message": "insufficientPermissions"}})
+    client._session = _mock_session(post=token_resp, get=email_resp)
+
+    result = await client.poll_once_for_token("dc123")
+
+    assert result.status == "success"
+    assert client.connected is True
+    assert client.account_email == ""
+    email_resp.json.assert_not_awaited()
+
+
 # ------------------------------------------------------------------
 # Token refresh (_ensure_valid_token)
 # ------------------------------------------------------------------

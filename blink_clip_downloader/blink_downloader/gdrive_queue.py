@@ -343,16 +343,19 @@ class GDriveUploadQueue:
                 try:
                     zf.getinfo(member_name)
                 except KeyError:
+                    # No need to re-check member_name against the full list
+                    # first: getinfo() raises only for a name missing from
+                    # the very index namelist() reports, so reaching here
+                    # already means it isn't there.
                     member_names = set(zf.namelist())
-                    if member_name not in member_names:
-                        member_name = next(
-                            (
-                                candidate
-                                for candidate in fallback_arcnames
-                                if candidate in member_names
-                            ),
-                            member_name,
-                        )
+                    member_name = next(
+                        (
+                            candidate
+                            for candidate in fallback_arcnames
+                            if candidate in member_names
+                        ),
+                        member_name,
+                    )
                     if member_name not in member_names:
                         basename_matches = [
                             candidate
