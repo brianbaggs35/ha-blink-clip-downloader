@@ -30,6 +30,7 @@ import aiohttp
 # Imported eagerly, unlike vision below: the security package is pure
 # stdlib — no torch, no opencv — so it costs nothing at import time and is
 # available whether or not the optional CV extra is installed.
+from .ffmpeg_output import format_ffmpeg_error, split_jpeg_frames
 from .security import (
     BYPASS_BLOCKING_EVENTS,
     ClipMeasurements,
@@ -56,9 +57,6 @@ _CONTENT_TYPE_JSON = "application/json"
 # ever samples the leading portion of the clip (e.g. 5 frames * 2s = the first
 # 10s of a 60s clip) and anything that happens later is never seen.
 _MAX_CLIP_COVERAGE_SECONDS: float = 60.0
-
-# How much of a failing ffmpeg run's stderr to keep in its log line.
-_FFMPEG_ERROR_CHARS = 200
 
 # Floor applied to a clip's confidence when the deterministic risk score
 # overrides the model's "nothing unusual" verdict (see
@@ -142,19 +140,6 @@ from .model_catalog import (
     is_vision_model,
     lookup_model_pricing,
 )
-
-
-def _format_ffmpeg_error(stderr: bytes | None) -> str:
-    """Condense a failing ffmpeg run's stderr into one loggable line.
-
-    Keeps the *tail* rather than the head: ffmpeg's conclusive
-    "Error ...: <reason>" line comes last, after any per-frame decode
-    complaints, so truncating from the front is what drops the answer.
-    Newlines are collapsed so one failure stays one log record.
-    """
-    return " ".join((stderr or b"").decode(errors="replace").split())[
-        -_FFMPEG_ERROR_CHARS:
-    ]
 
 
 @dataclass
@@ -1727,11 +1712,11 @@ class BaseAnalyzer(abc.ABC):
                 "ffmpeg exited %d for %s: %s",
                 proc.returncode,
                 clip_path,
-                _format_ffmpeg_error(stderr),
+                format_ffmpeg_error(stderr),
             )
             return []
 
-        return self._split_jpeg_frames(stdout or b"")
+        return split_jpeg_frames(stdout or b"")
 
     def _target_frame_count(
         self, raw_frame_count: int, clip_duration: float = 0.0
@@ -1918,24 +1903,6 @@ class BaseAnalyzer(abc.ABC):
                 best_frame = frame
 
         return best_response, best_frame
-
-    @staticmethod
-    def _split_jpeg_frames(data: bytes) -> list[bytes]:
-        """Split concatenated JPEG data into individual frames."""
-        frames: list[bytes] = []
-        soi = b"\xff\xd8"
-        eoi = b"\xff\xd9"
-        pos = 0
-        while pos < len(data):
-            start = data.find(soi, pos)
-            if start == -1:
-                break
-            end = data.find(eoi, start + 2)
-            if end == -1:
-                break
-            frames.append(data[start : end + 2])
-            pos = end + 2
-        return frames
 
     def base_prompt_for_camera(self, camera: str) -> str:
         """Return the camera-scoped analysis prompt with no per-clip context.

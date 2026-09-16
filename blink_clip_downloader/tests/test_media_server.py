@@ -1136,13 +1136,6 @@ async def test_clip_frames_failure_logs_the_end_of_ffmpeg_stderr(
     assert "\n" not in caplog.records[-1].getMessage()
 
 
-def test_format_ffmpeg_error_handles_no_stderr() -> None:
-    """A failing ffmpeg that wrote nothing to stderr must not blow up the
-    log call it feeds."""
-    assert media_server._format_ffmpeg_error(None) == ""
-    assert media_server._format_ffmpeg_error(b"") == ""
-
-
 async def test_clip_frames_ignores_truncated_trailing_data(
     client: TestClient, db: ClipDatabase
 ) -> None:
