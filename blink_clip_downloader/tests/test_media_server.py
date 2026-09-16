@@ -4154,6 +4154,49 @@ async def test_moondream_run_install_success(
         ms._moondream_install_state = {"status": "idle", "log": ""}
 
 
+async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Installing over an install that this process already imported from
+    (a re-install, or a second click) must not stack another copy of the
+    same directory onto sys.path."""
+    import blink_downloader.media_server as ms
+
+    ms._moondream_install_state = {"status": "idle", "log": ""}
+    fake_pkg_dir = tmp_path / "moondream_packages"
+    monkeypatch.setattr(sys, "path", [str(fake_pkg_dir), *sys.path])
+    captured: list = []
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate = AsyncMock(return_value=(b"Requirement satisfied\n", None))
+
+    with (
+        patch(
+            "blink_downloader.media_server._is_moondream_installed", return_value=False
+        ),
+        patch(
+            "asyncio.create_task",
+            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
+        ),
+    ):
+        resp = await client.post("/api/ai/moondream/install")
+    assert resp.status == 200
+
+    try:
+        with (
+            patch(
+                "blink_downloader.media_server._MOONDREAM_PACKAGES_DIR", fake_pkg_dir
+            ),
+            patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
+        ):
+            await captured[0]
+        assert ms._moondream_install_state["status"] == "installed"
+        assert sys.path.count(str(fake_pkg_dir)) == 1
+    finally:
+        ms._moondream_install_state = {"status": "idle", "log": ""}
+
+
 async def test_moondream_run_install_failure_nonzero_returncode(
     client: TestClient,
 ) -> None:
@@ -5043,6 +5086,33 @@ async def test_vehicle_settings_put_applies_live_but_returns_500_on_write_failur
             )
         assert resp.status == 500
         analyzer.update_car_description.assert_called_once_with("Silver Kia")
+    finally:
+        await tc.close()
+
+
+async def test_vehicle_settings_put_persists_without_an_analyzer(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The Vehicles tab is reachable with no AI provider configured, so the
+    description still has to reach disk — there is simply no live analyzer
+    to hand it to as well."""
+    server = MediaServer(db=db, port=0)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    settings_file = tmp_path / "vehicle_settings.json"
+    try:
+        with patch(
+            "blink_downloader.media_server.MediaServer._VEHICLE_SETTINGS_FILE",
+            new=settings_file,
+        ):
+            resp = await tc.put(
+                "/api/vehicle/settings", json={"car_description": "Silver Kia Forte"}
+            )
+            assert resp.status == 200
+            assert (await resp.json())["saved"] is True
+        assert json.loads(settings_file.read_text()) == {
+            "car_description": "Silver Kia Forte"
+        }
     finally:
         await tc.close()
 
@@ -7537,6 +7607,47 @@ async def test_gdrive_connect_poll_slow_down_then_success(
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
         assert gdrive_client.poll_once_for_token.await_count == 2
+        assert media_server._gdrive_connect_state["phase"] == "connected"
+    finally:
+        await tc.close()
+
+
+async def test_gdrive_connect_poll_pending_then_success(
+    db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pending result is the ordinary answer for every tick before the
+    user finishes signing in — the one status that falls through every
+    terminal check and goes round the loop again."""
+    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
+    info = DeviceFlowInfo(
+        device_code="dc1",
+        user_code="ABCD-1234",
+        verification_url="https://google.com/device",
+        expires_in=1800,
+        interval=5,
+    )
+    gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=info)
+    gdrive_client.poll_once_for_token = AsyncMock(
+        side_effect=[
+            TokenPollResult(status="pending"),
+            TokenPollResult(status="pending"),
+            TokenPollResult(status="success"),
+        ]
+    )
+    server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
+    tc = await _start_server(server)
+    captured: list = []
+    try:
+        with patch(
+            "asyncio.create_task",
+            side_effect=lambda coro, **_k: captured.append(coro) or MagicMock(),
+        ):
+            await tc.post("/api/storage/gdrive/connect")
+        with patch("asyncio.sleep", AsyncMock()) as sleep_mock:
+            await captured[0]
+        assert gdrive_client.poll_once_for_token.await_count == 3
+        # The interval is only backed off by slow_down — pending keeps it flat.
+        assert {c.args[0] for c in sleep_mock.await_args_list} == {5}
         assert media_server._gdrive_connect_state["phase"] == "connected"
     finally:
         await tc.close()

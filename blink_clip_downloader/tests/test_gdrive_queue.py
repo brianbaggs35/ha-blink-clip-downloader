@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 import time
 import zipfile
@@ -1001,6 +1002,36 @@ async def test_resume_clears_the_hold_off(db: ClipDatabase) -> None:
     assert queue.hold_off_seconds == 0
     status = await queue.get_queue_status()
     assert status["hold_off_reason"] == ""
+
+
+async def test_extending_a_hold_off_for_the_same_reason_logs_once(
+    db: ClipDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A rate limit still in force a cycle later is not news. The window is
+    still pushed out, but a line per cycle for as long as it lasts is its
+    own kind of noise."""
+    queue = _make_queue(_make_client_mock(), db)
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.gdrive_queue"):
+        queue._hold_off("Google Drive rate limit", 60)
+        first_until = queue._hold_off_until
+        queue._hold_off("Google Drive rate limit", 900)
+
+    assert queue._hold_off_until > first_until
+    assert sum("holding off Drive uploads" in r.message for r in caplog.records) == 1
+
+
+async def test_a_different_hold_off_reason_logs_again(
+    db: ClipDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Only a repeat of the *same* reason is suppressed — a new condition
+    taking over an existing hold-off is something to say."""
+    queue = _make_queue(_make_client_mock(), db)
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.gdrive_queue"):
+        queue._hold_off("Google Drive rate limit", 900)
+        queue._hold_off("Drive is full", 900)
+
+    assert queue._hold_off_reason == "Drive is full"
+    assert sum("holding off Drive uploads" in r.message for r in caplog.records) == 2
 
 
 async def test_queue_status_reports_pause_and_hold_off(db: ClipDatabase) -> None:
