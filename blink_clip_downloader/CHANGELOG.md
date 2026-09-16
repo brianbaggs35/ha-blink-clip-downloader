@@ -2,6 +2,30 @@
 
 ## 6.0.3
 
+### Weekly and monthly AI spend
+
+The AI Usage tab could answer "what did today cost" and "what has this cost
+since I last cleared the stats", but nothing in between — and the question
+people actually ask about a metered API is what it costs per week and per
+month.
+
+The daily table is now a **Usage History** section with a Day / Week / Month
+control. Week buckets by ISO week, Month by calendar month, both in local
+time and both respecting Clear Stats exactly as the daily view does. Each
+view ends in a **Total** row, since the point of looking is the total rather
+than a column to add up by eye. Costs are still priced per model before
+being summed, so a week spanning a cheap tier-1 model and an expensive
+escalation model is priced correctly rather than at one blended rate, and a
+period with no priced model shows N/A instead of an invented $0.00.
+
+It loads nothing extra until you ask for it. The usage payload is polled
+every ten seconds, and a year-wide aggregate has no business running on
+every one of those ticks for someone who never opens the view — so the
+rollups live behind their own endpoint, fetched the first time you switch
+away from Day and then refreshed on the poll only while they are actually on
+screen. Opening the tab costs exactly what it did before. Both granularities
+arrive in one response, so switching between Week and Month is instant.
+
 ### Prompt caching never actually cached anything
 
 Both cloud providers that support prompt caching bill a repeated prompt

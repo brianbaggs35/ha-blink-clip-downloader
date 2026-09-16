@@ -1681,6 +1681,232 @@ async def test_ai_usage_daily_sums_multiple_models_same_day(
     assert row["cost"] == pytest.approx((100 * 0.15 + 20 * 0.60) / 1_000_000)
 
 
+# ---------------------------------------------------------------------------
+# Weekly / monthly usage rollups (/api/ai/usage/periods)
+# ---------------------------------------------------------------------------
+
+
+def _price(model: str):
+    return {"gpt-4o": (2.50, 10.00), "gpt-4o-mini": (0.15, 0.60)}.get(model)
+
+
+def test_week_of_uses_the_iso_year_not_the_calendar_year() -> None:
+    """A late-December day can belong to week 01 of the *next* ISO year.
+
+    Labelling it with the calendar year would split one week across two
+    buckets that then sort apart from each other.
+    """
+    assert MediaServer._week_of("2025-12-29") == "2026-W01"  # Monday of ISO W01
+    assert MediaServer._week_of("2025-12-28") == "2025-W52"  # the Sunday before
+    assert MediaServer._week_of("2026-02-16") == "2026-W08"
+
+
+def test_bucket_usage_rows_prices_each_model_then_sums_into_its_bucket() -> None:
+    """A bucket can span models on very different rates, so summed tokens must
+    never be priced at any single rate."""
+    rows = [
+        {
+            "day": "2026-01-05",
+            "model": "gpt-4o",
+            "analyses": 10,
+            "tokens_prompt": 1_000_000,
+            "tokens_completion": 0,
+            "escalated": False,
+        },
+        {
+            "day": "2026-01-06",
+            "model": "gpt-4o-mini",
+            "analyses": 5,
+            "tokens_prompt": 1_000_000,
+            "tokens_completion": 0,
+            "escalated": False,
+        },
+    ]
+
+    out = MediaServer._bucket_usage_rows(rows, _price, MediaServer._week_of)
+
+    assert len(out) == 1
+    assert out[0]["period"] == "2026-W02"
+    assert out[0]["analyses"] == 15
+    assert out[0]["tokens_total"] == 2_000_000
+    assert out[0]["cost"] == pytest.approx(2.50 + 0.15)
+
+
+def test_bucket_usage_rows_counts_escalation_tokens_but_not_its_analyses() -> None:
+    """An escalation row is a second call about a clip already counted by its
+    tier-1 row — its tokens are real spend, its clip is not a new clip."""
+    rows = [
+        {
+            "day": "2026-01-05",
+            "model": "gpt-4o-mini",
+            "analyses": 4,
+            "tokens_prompt": 1000,
+            "tokens_completion": 0,
+            "escalated": False,
+        },
+        {
+            "day": "2026-01-05",
+            "model": "gpt-4o",
+            "analyses": 4,
+            "tokens_prompt": 500,
+            "tokens_completion": 0,
+            "escalated": True,
+        },
+    ]
+
+    out = MediaServer._bucket_usage_rows(rows, _price, lambda d: d[:7])
+
+    assert out[0]["analyses"] == 4
+    assert out[0]["tokens_total"] == 1500
+
+
+def test_bucket_usage_rows_leaves_an_entirely_unpriced_bucket_as_none() -> None:
+    """A free/local provider must not be shown a fabricated $0.00."""
+    rows = [
+        {
+            "day": "2026-01-05",
+            "model": "llava:7b",
+            "analyses": 2,
+            "tokens_prompt": 900,
+            "tokens_completion": 100,
+            "escalated": False,
+        }
+    ]
+
+    out = MediaServer._bucket_usage_rows(rows, _price, lambda d: d[:7])
+
+    assert out[0]["cost"] is None
+    assert out[0]["tokens_total"] == 1000
+
+
+def test_bucket_usage_rows_returns_newest_bucket_first() -> None:
+    rows = [
+        {
+            "day": d,
+            "model": "gpt-4o-mini",
+            "analyses": 1,
+            "tokens_prompt": 10,
+            "tokens_completion": 0,
+            "escalated": False,
+        }
+        for d in ("2026-01-05", "2026-03-05", "2026-02-05")
+    ]
+
+    out = MediaServer._bucket_usage_rows(rows, _price, lambda d: d[:7])
+
+    assert [r["period"] for r in out] == ["2026-03", "2026-02", "2026-01"]
+
+
+async def test_ai_usage_periods_endpoint_buckets_by_week_and_month(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Both granularities come back from one request, so the page can switch
+    between Week and Month without another round trip."""
+    await db.add_clip(_make_clip("p1"))
+    now = datetime.now(UTC)
+    await db.add_analysis_result(
+        {
+            "clip_id": "p1",
+            "camera": "Front Door",
+            "model": "gpt-4o-mini",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": now.isoformat(),
+            "tokens_prompt": 1_000_000,
+            "tokens_completion": 1_000_000,
+        }
+    )
+
+    resp = await client.get("/api/ai/usage/periods")
+    assert resp.status == 200
+    data = await resp.json()
+
+    today = now.astimezone().date()
+    assert [r["period"] for r in data["monthly"]] == [today.strftime("%Y-%m")]
+    iso = today.isocalendar()
+    assert [r["period"] for r in data["weekly"]] == [f"{iso.year}-W{iso.week:02d}"]
+    for row in (data["weekly"][0], data["monthly"][0]):
+        assert row["analyses"] == 1
+        assert row["tokens_total"] == 2_000_000
+        assert row["cost"] == pytest.approx(0.15 + 0.60)
+
+
+async def test_ai_usage_periods_endpoint_is_empty_without_analyses(
+    client: TestClient,
+) -> None:
+    resp = await client.get("/api/ai/usage/periods")
+
+    assert resp.status == 200
+    assert await resp.json() == {"weekly": [], "monthly": []}
+
+
+async def test_ai_usage_periods_trims_to_the_most_recent_buckets(
+    db: ClipDatabase,
+) -> None:
+    """The lookback reaches into a 13th, partial month; showing it would put a
+    half-counted month next to whole ones."""
+    days = [f"2026-{m:02d}-15" for m in range(1, 13)] + ["2025-12-15", "2025-11-15"]
+    rows = [
+        {
+            "day": d,
+            "model": "gpt-4o-mini",
+            "analyses": 1,
+            "tokens_prompt": 10,
+            "tokens_completion": 0,
+            "escalated": False,
+        }
+        for d in days
+    ]
+
+    async def _fake_daily(days: int = 14):
+        assert days == MediaServer._PERIOD_LOOKBACK_DAYS
+        return rows
+
+    server = MediaServer(db=db, port=0)
+    server._db.get_daily_usage_stats = _fake_daily  # type: ignore[method-assign]
+
+    out = await server._build_period_usage(_price)
+
+    assert len(out["monthly"]) == MediaServer._PERIOD_BUCKETS
+    assert out["monthly"][0]["period"] == "2026-12"
+    assert out["monthly"][-1]["period"] == "2026-01"  # 2025 trimmed off
+    assert len(out["weekly"]) == MediaServer._PERIOD_BUCKETS
+
+
+async def test_ai_usage_daily_still_uses_the_day_key(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """The daily table predates the weekly/monthly views and is part of the
+    already-published /api/ai/usage shape — it must keep emitting `day`, not
+    the generic `period` key the rollups use."""
+    await db.add_clip(_make_clip("d1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "d1",
+            "camera": "Front Door",
+            "model": "gpt-4o-mini",
+            "response_text": "",
+            "is_suspicious": False,
+            "confidence": 0.1,
+            "summary": "ok",
+            "frame_count": 1,
+            "analysis_duration": 1.0,
+            "analyzed_at": datetime.now(UTC).isoformat(),
+            "tokens_prompt": 100,
+            "tokens_completion": 20,
+        }
+    )
+
+    data = await (await client.get("/api/ai/usage")).json()
+
+    assert "day" in data["daily"][0]
+    assert "period" not in data["daily"][0]
+
+
 async def test_ai_usage_clear_endpoint(client: TestClient, db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("u1"))
     await db.add_analysis_result(
