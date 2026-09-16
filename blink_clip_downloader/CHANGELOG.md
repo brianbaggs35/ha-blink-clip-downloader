@@ -94,6 +94,7 @@ in its own count and needed no adjustment.
 - Updated ultralytics to 8.4.154
 - Updated @vitejs/plugin-vue to 6.0.9
 - Updated vitest and @vitest/coverage-v8 to 5.0.1
+- Updated @vue/test-utils to 2.5.1
 
 ## 6.0.2
 
