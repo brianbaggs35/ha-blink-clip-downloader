@@ -313,13 +313,22 @@ jobs:
           node ha_integration_smoke.mjs
           "http://127.0.0.1:${HA_PORT}" "$ADDON_SLUG" "$ADDON_PANEL_TITLE" "$ADDON_NAME"
 
-      # The step above wrote a setting through the real ingress UI. Restarting
-      # recreates the add-on's container while /data survives — the same
-      # transition an *update* puts an existing install through — so reading
-      # that setting back afterwards is this job's proof that an upgrade does
-      # not lose an existing user's data or leave the bundled PostgreSQL
-      # cluster unusable. Every other suite in this repo only ever exercises a
-      # first-ever start against an empty volume.
+      # Changed *before* the restart below, so one restart rehearses two
+      # things at once. This is the Supervisor->add-on configuration
+      # contract — the Configuration tab writes /data/options.json and
+      # AppConfig has to parse it — which nothing else in CI covers:
+      # pytest reads an options.json it wrote itself, and every other job
+      # here runs the add-on on defaults.
+      - name: Change an add-on option through Supervisor
+        run: scripts/ci/ha_integration_setup.sh set-option retention_days 17
+
+      # The smoke step above wrote a setting through the real ingress UI.
+      # Restarting recreates the add-on's container while /data survives —
+      # the same transition an *update* puts an existing install through —
+      # so reading that setting back afterwards is this job's proof that an
+      # upgrade does not lose an existing user's data. Every other suite in
+      # this repo only ever exercises a first-ever start against an empty
+      # volume.
       - name: Restart the add-on (container recreated, /data kept)
         run: scripts/ci/ha_integration_setup.sh restart
 
@@ -327,6 +336,16 @@ jobs:
         run: >-
           scripts/ci/ha_integration_setup.sh assert-persisted
           "ha-integration-marker.apps.googleusercontent.com"
+
+      # The other half of the restart: the add-on logs its resolved
+      # configuration at startup, so the new value appearing there is
+      # end-to-end evidence that Supervisor's stored option reached
+      # AppConfig — not merely that Supervisor persisted it.
+      - name: Verify the changed option reached the running app
+        run: >-
+          scripts/ci/ha_integration_setup.sh assert-log-contains
+          "Retention[[:space:]]+: 17 days"
+          "the retention option set through Supervisor"
 
       # A traceback in the poll loop, the media server or any background task
       # does not stop the container, so without this the job passes green with
