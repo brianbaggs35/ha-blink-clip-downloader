@@ -432,7 +432,16 @@ cmd_restart() {
 # Deliberately a short, specific list: the whole point of this check is to
 # notice a traceback or an error nobody has seen before, and a permissive
 # allowlist would hide precisely that.
-_EXPECTED_LOG_NOISE='Configuration error . starting in web-only mode|Running in web-only mode|username is required and cannot be empty|Blink authentication failed|Invalid credentials|Could not connect to Blink|two_fa|2FA|AI analysis (is )?not configured|No AI provider|ollama'
+# The add-on now starts with placeholder credentials (see
+# prepare-addon-copy), so it reaches Blink's real API and is rejected -- by
+# design, since authenticating is the one thing this environment cannot do.
+# These are the exact lines that produces, kept specific rather than a
+# blanket "auth" pattern so a genuine failure elsewhere still surfaces.
+# Their presence is itself the proof the add-on is past config loading and
+# running its real startup path rather than sitting in web-only mode.
+_EXPECTED_BLINK_LOGIN_NOISE='blinkpy\.api: OAuth signin failed|blinkpy\.auth: Login failed|blinkpy\.blinkpy: Cannot setup Blink platform|Blink rejected the configured username/password'
+
+_EXPECTED_LOG_NOISE="Configuration error . starting in web-only mode|Running in web-only mode|username is required and cannot be empty|Blink authentication failed|Invalid credentials|Could not connect to Blink|two_fa|2FA|AI analysis (is )?not configured|No AI provider|ollama|${_EXPECTED_BLINK_LOGIN_NOISE}"
 
 # The tracebacks a healthy run in this environment prints, dropped as
 # *blocks* -- from the "Traceback" line through the specific line that ends
