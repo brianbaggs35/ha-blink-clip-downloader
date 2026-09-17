@@ -122,12 +122,44 @@ ha_cli() {
 # a bare `docker exec <outer> curl` can reach it).
 supervisor_api() {
   local method="$1" path="$2" body="${3:-}"
-  docker exec "$CONTAINER_NAME" docker exec hassio_cli sh -c "
-    curl -sf --max-time 30 -X '$method' 'http://supervisor$path' \
-      -H \"Authorization: Bearer \$SUPERVISOR_TOKEN\" \
-      -H 'Content-Type: application/json' \
-      ${body:+-d '$body'}
-  "
+  if [[ -z "$body" ]]; then
+    docker exec "$CONTAINER_NAME" docker exec hassio_cli sh -c "
+      curl -sf --max-time 30 -X '$method' 'http://supervisor$path' \
+        -H \"Authorization: Bearer \$SUPERVISOR_TOKEN\" \
+        -H 'Content-Type: application/json'
+    "
+    return
+  fi
+  # The body goes in on stdin and is never interpolated into the command
+  # string. It used to be spliced in as -d '$body', which works for a short
+  # literal like {"ingress_panel": true} but breaks the moment the JSON
+  # contains an apostrophe -- and this add-on's own default options do:
+  # ai_prompt ships example phrases like 'A person is walking past the car'.
+  # Those quotes closed the -d '...' early and the inner shell died with
+  # "sh: syntax error: unterminated quoted string", which then looked like
+  # Supervisor refusing the value rather than a quoting bug here.
+  printf '%s' "$body" \
+    | docker exec -i "$CONTAINER_NAME" docker exec -i hassio_cli sh -c "
+      curl -sf --max-time 30 -X '$method' 'http://supervisor$path' \
+        -H \"Authorization: Bearer \$SUPERVISOR_TOKEN\" \
+        -H 'Content-Type: application/json' \
+        --data-binary @-
+    "
+}
+
+# Same call, but yields the HTTP status instead of the body and does not
+# fail the shell on a 4xx -- so a caller can tell "Supervisor rejected
+# this" apart from "the request never got there", which -sf alone cannot.
+supervisor_api_status() {
+  local method="$1" path="$2" body="${3:-}"
+  printf '%s' "$body" \
+    | docker exec -i "$CONTAINER_NAME" docker exec -i hassio_cli sh -c "
+      curl -s -o /dev/null -w '%{http_code}' --max-time 30 \
+        -X '$method' 'http://supervisor$path' \
+        -H \"Authorization: Bearer \$SUPERVISOR_TOKEN\" \
+        -H 'Content-Type: application/json' \
+        --data-binary @-
+    "
 }
 
 # poll DESCRIPTION TIMEOUT_S INTERVAL_S COMMAND...
@@ -575,16 +607,32 @@ body["options"][key] = value
 print(json.dumps(body))
 ' "$key" "$value")"
 
-  if supervisor_api POST "/addons/${ADDON_SLUG}/options" "$bad" >/dev/null 2>&1; then
-    # Accepted when it should not have been -- put the good options back
-    # before failing, so the rest of the job fails for its own reasons
-    # rather than on a deliberately-corrupted config.
-    supervisor_api POST "/addons/${ADDON_SLUG}/options" "$original" >/dev/null 2>&1 || true
-    echo "Supervisor ACCEPTED ${key}=${value}, which config.yaml's schema should reject." >&2
-    echo "The add-on's option schema is not being enforced." >&2
-    return 1
-  fi
-  echo "OK: Supervisor rejected the out-of-schema ${key}=${value}"
+  # Status, not exit code. `curl -sf` fails identically whether Supervisor
+  # refused the value or the request never arrived, so an exit-code check
+  # here would report success for a broken request -- which is exactly how
+  # a quoting bug in supervisor_api once made this look like it passed.
+  local status
+  status="$(supervisor_api_status POST "/addons/${ADDON_SLUG}/options" "$bad")"
+  case "$status" in
+    400 | 422)
+      echo "OK: Supervisor rejected the out-of-schema ${key}=${value} (HTTP $status)"
+      ;;
+    200)
+      # Accepted when it should not have been -- put the good options back
+      # before failing, so the rest of the job fails for its own reasons
+      # rather than on a deliberately-corrupted config.
+      supervisor_api POST "/addons/${ADDON_SLUG}/options" "$original" >/dev/null 2>&1 || true
+      echo "Supervisor ACCEPTED ${key}=${value}, which config.yaml's schema should reject." >&2
+      echo "The add-on's option schema is not being enforced." >&2
+      return 1
+      ;;
+    *)
+      echo "Could not tell whether Supervisor enforces the schema." >&2
+      echo "  POST /addons/${ADDON_SLUG}/options returned HTTP '${status:-<none>}'," >&2
+      echo "  which is neither a validation refusal nor an acceptance." >&2
+      return 1
+      ;;
+  esac
 }
 
 cmd_assert_capabilities() {
