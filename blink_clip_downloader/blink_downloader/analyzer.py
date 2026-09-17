@@ -4368,6 +4368,57 @@ class AnthropicAnalyzer(BaseAnalyzer):
             block.text for block in response.content if hasattr(block, "text")
         )
 
+    def _handle_anthropic_not_found(self, exc: Exception) -> None:
+        """Tell a wrong model id apart from a 404 the API never sent.
+
+        Same two-failures-one-status-code split as OpenAI's 404, for the
+        same reasons — see :meth:`OpenAIAnalyzer._handle_openai_not_found`.
+        """
+        message = self._api_error_message(exc)
+        if "model" in message.lower():
+            self._last_transient_error = False
+            _LOGGER.error(
+                "Anthropic: model %r does not exist or this API key has no "
+                "access to it (HTTP 404) — check anthropic_model in the add-on "
+                "settings against the Models tab's list. %s",
+                self._model,
+                message,
+            )
+        else:
+            _LOGGER.warning(
+                "Anthropic: HTTP 404 with no error detail, which points at a "
+                "transient failure reaching the API rather than a rejected "
+                "request — this clip will be retried on the next cycle"
+            )
+
+    def _handle_anthropic_bad_request(self, exc: Exception) -> None:
+        """Tell an empty account balance apart from a malformed request.
+
+        Anthropic reports an empty balance as a 400 rather than a 429, so
+        without this it counts as a permanently malformed request and fails
+        every queued clip over it — a status nothing reselects, which would
+        leave a silent gap in the library once credit is added. It is the
+        same situation as OpenAI's ``insufficient_quota``: an account-level
+        state that clears on its own once paid, so it pauses the batch and
+        keeps the clip retryable instead.
+        """
+        message = self._api_error_message(exc)
+        if "credit balance" in message.lower():
+            self._last_rate_limited = True
+            _LOGGER.error(
+                "Anthropic: the account's credit balance is too low to use the "
+                "API — this is a billing limit rather than a bad request, so it "
+                "will not clear on its own; add credit under Plans & Billing "
+                "and queued clips resume from where they stopped"
+            )
+        else:
+            self._last_transient_error = False
+            _LOGGER.error(
+                "Anthropic: bad request (HTTP 400) — %s; "
+                "check that the selected model supports vision",
+                message,
+            )
+
     def _handle_anthropic_error(self, _anthropic: Any, exc: Exception) -> str:
         if isinstance(exc, _anthropic.AuthenticationError):
             self._last_transient_error = False
@@ -4389,50 +4440,9 @@ class AnthropicAnalyzer(BaseAnalyzer):
                 "analysis will resume on the next cycle"
             )
         elif isinstance(exc, _anthropic.NotFoundError):
-            # Same two-failures-one-status-code split as OpenAI's 404 above,
-            # for the same reasons — see that branch.
-            message = self._api_error_message(exc)
-            if "model" in message.lower():
-                self._last_transient_error = False
-                _LOGGER.error(
-                    "Anthropic: model %r does not exist or this API key has no "
-                    "access to it (HTTP 404) — check anthropic_model in the "
-                    "add-on settings against the Models tab's list. %s",
-                    self._model,
-                    message,
-                )
-            else:
-                _LOGGER.warning(
-                    "Anthropic: HTTP 404 with no error detail, which points at "
-                    "a transient failure reaching the API rather than a "
-                    "rejected request — this clip will be retried on the next "
-                    "cycle"
-                )
+            self._handle_anthropic_not_found(exc)
         elif isinstance(exc, _anthropic.BadRequestError):
-            message = self._api_error_message(exc)
-            if "credit balance" in message.lower():
-                # Anthropic reports an empty balance as a 400 rather than a
-                # 429, which the branch below would otherwise treat as a
-                # permanently malformed request and fail every queued clip
-                # over. It is the same situation as OpenAI's
-                # insufficient_quota: an account-level state that clears
-                # when credit is added, so it pauses the batch and keeps the
-                # clip retryable instead.
-                self._last_rate_limited = True
-                _LOGGER.error(
-                    "Anthropic: the account's credit balance is too low to use "
-                    "the API — this is a billing limit rather than a bad "
-                    "request, so it will not clear on its own; add credit under "
-                    "Plans & Billing and queued clips resume from where they "
-                    "stopped",
-                )
-            else:
-                self._last_transient_error = False
-                _LOGGER.error(
-                    "Anthropic: bad request (HTTP 400) — %s; "
-                    "check that the selected model supports vision",
-                    message,
-                )
+            self._handle_anthropic_bad_request(exc)
         elif isinstance(exc, _anthropic.APIStatusError):
             # No stack trace, for the same reason as the OpenAI branch.
             _LOGGER.warning(
@@ -4827,6 +4837,61 @@ class OpenAIAnalyzer(BaseAnalyzer):
             return str(choice.message.content)
         return ""
 
+    def _log_openai_rate_limit(self, exc: Exception) -> None:
+        """Tell an empty account balance apart from a real rate limit.
+
+        Both arrive as HTTP 429, and the rate-limit wording tells a user to
+        wait — which never resolves an unpaid balance. The caller has
+        already set ``_last_rate_limited`` either way, and this stays
+        *transient*: an empty balance is a permanent state of the account,
+        not of the clip, and topping it up must not require hunting down
+        every clip that was marked failed while it was empty.
+        """
+        code = self._api_error_code(exc)
+        if code in _OPENAI_NO_CREDIT_CODES:
+            _LOGGER.error(
+                "OpenAI: the account has no API credit left (%s) — this is a "
+                "billing limit rather than a temporary rate limit, so it will "
+                "not clear on its own; add credit at "
+                "platform.openai.com/settings/organization/billing and queued "
+                "clips resume from where they stopped",
+                code,
+            )
+        else:
+            _LOGGER.warning(
+                "OpenAI: rate limit hit — API quota exceeded; "
+                "analysis will resume on the next cycle"
+            )
+
+    def _handle_openai_not_found(self, exc: Exception, model: str) -> None:
+        """Tell a wrong model id apart from a 404 the API never sent.
+
+        A 404 from Chat Completions is two completely different failures
+        wearing one status code. With an error body naming the model it is a
+        permanent misconfiguration — retrying it three times only delays
+        telling the user which setting is wrong. With no body at all it came
+        from in front of the API rather than from it, which real installs do
+        see as an occasional one-off that the very next attempt succeeds
+        through, so it keeps the default retry treatment and gets a single
+        line instead of a stack trace through the SDK.
+        """
+        message = self._api_error_message(exc)
+        if self._api_error_code(exc) == "model_not_found" or "model" in message.lower():
+            self._last_transient_error = False
+            _LOGGER.error(
+                "OpenAI: model %r does not exist or this API key has no access "
+                "to it (HTTP 404) — check openai_model in the add-on settings "
+                "against the Models tab's list. %s",
+                model,
+                message,
+            )
+        else:
+            _LOGGER.warning(
+                "OpenAI: HTTP 404 with no error detail, which points at a "
+                "transient failure reaching the API rather than a rejected "
+                "request — this clip will be retried on the next cycle"
+            )
+
     def _handle_openai_error(self, _openai: Any, exc: Exception, model: str) -> str:
         if isinstance(exc, _openai.AuthenticationError):
             self._last_transient_error = False
@@ -4843,53 +4908,9 @@ class OpenAIAnalyzer(BaseAnalyzer):
             )
         elif isinstance(exc, _openai.RateLimitError):
             self._last_rate_limited = True
-            code = self._api_error_code(exc)
-            if code in _OPENAI_NO_CREDIT_CODES:
-                # Deliberately still counted as transient: an empty balance
-                # is a permanent state of the *account*, not of the clip, and
-                # topping it up must not require hunting down every clip that
-                # was marked failed while it was empty.
-                _LOGGER.error(
-                    "OpenAI: the account has no API credit left (%s) — this is "
-                    "a billing limit rather than a temporary rate limit, so it "
-                    "will not clear on its own; add credit at "
-                    "platform.openai.com/settings/organization/billing and "
-                    "queued clips resume from where they stopped",
-                    code,
-                )
-            else:
-                _LOGGER.warning(
-                    "OpenAI: rate limit hit — API quota exceeded; "
-                    "analysis will resume on the next cycle"
-                )
+            self._log_openai_rate_limit(exc)
         elif isinstance(exc, _openai.NotFoundError):
-            # A 404 from Chat Completions is two completely different
-            # failures wearing one status code. With an error body naming
-            # the model it is a permanent misconfiguration — retrying it
-            # three times only delays telling the user which setting is
-            # wrong. With no body at all it came from in front of the API
-            # rather than from it, which real installs do see as an
-            # occasional one-off that the very next attempt succeeds
-            # through, so it keeps the default retry treatment and gets a
-            # single line instead of a stack trace through the SDK.
-            message = self._api_error_message(exc)
-            if self._api_error_code(exc) == "model_not_found" or "model" in (
-                message.lower()
-            ):
-                self._last_transient_error = False
-                _LOGGER.error(
-                    "OpenAI: model %r does not exist or this API key has no "
-                    "access to it (HTTP 404) — check openai_model in the "
-                    "add-on settings against the Models tab's list. %s",
-                    model,
-                    message,
-                )
-            else:
-                _LOGGER.warning(
-                    "OpenAI: HTTP 404 with no error detail, which points at a "
-                    "transient failure reaching the API rather than a rejected "
-                    "request — this clip will be retried on the next cycle"
-                )
+            self._handle_openai_not_found(exc, model)
         elif isinstance(exc, _openai.BadRequestError):
             self._last_transient_error = False
             # No stack trace, same reason as the branch below it.
