@@ -4174,7 +4174,10 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
     same directory onto sys.path."""
     import blink_downloader.media_server as ms
 
-    ms._moondream_install_state = {"status": "idle", "log": ""}
+    # monkeypatch rather than assigning the module global and restoring it
+    # in a finally: it restores on teardown whatever the test does, and it
+    # is already in hand for sys.path below.
+    monkeypatch.setattr(ms, "_moondream_install_state", {"status": "idle", "log": ""})
     fake_pkg_dir = tmp_path / "moondream_packages"
     monkeypatch.setattr(sys, "path", [str(fake_pkg_dir), *sys.path])
     captured: list = []
@@ -4195,18 +4198,13 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
         resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 200
 
-    try:
-        with (
-            patch(
-                "blink_downloader.media_server._MOONDREAM_PACKAGES_DIR", fake_pkg_dir
-            ),
-            patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
-        ):
-            await captured[0]
-        assert ms._moondream_install_state["status"] == "installed"
-        assert sys.path.count(str(fake_pkg_dir)) == 1
-    finally:
-        ms._moondream_install_state = {"status": "idle", "log": ""}
+    with (
+        patch("blink_downloader.media_server._MOONDREAM_PACKAGES_DIR", fake_pkg_dir),
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
+    ):
+        await captured[0]
+    assert ms._moondream_install_state["status"] == "installed"
+    assert sys.path.count(str(fake_pkg_dir)) == 1
 
 
 async def test_moondream_run_install_failure_nonzero_returncode(
