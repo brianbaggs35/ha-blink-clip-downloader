@@ -330,6 +330,22 @@ jobs:
           node ha_integration_smoke.mjs
           "http://127.0.0.1:${HA_PORT}" "$ADDON_SLUG" "$ADDON_PANEL_TITLE" "$ADDON_NAME"
 
+      # Deliberately *after* the sweep above, which verifies every tab in
+      # its empty state — that is a real condition worth holding onto, and
+      # a fresh install is exactly it. What it cannot tell you is whether
+      # the same tabs render a real list, which is every other install.
+      # Rows go straight into the add-on's bundled PostgreSQL because no
+      # API creates clips — they only arrive from Blink — the same approach
+      # frontend/e2e/ takes for security_events.
+      - name: Seed clips and analysis results into the add-on's database
+        run: scripts/ci/ha_integration_setup.sh seed-data
+
+      - name: Verify the seeded library renders through ingress
+        working-directory: e2e
+        run: >-
+          node ha_integration_seeded.mjs
+          "http://127.0.0.1:${HA_PORT}" "$ADDON_SLUG" "$ADDON_PANEL_TITLE"
+
       # Changed *before* the restart below, so one restart rehearses two
       # things at once. This is the Supervisor->add-on configuration
       # contract — the Configuration tab writes /data/options.json and
@@ -353,6 +369,16 @@ jobs:
         run: >-
           scripts/ci/ha_integration_setup.sh assert-persisted
           "ha-integration-marker.apps.googleusercontent.com"
+
+      # The database half of the same restart, and the part that actually
+      # loses people their library. assert-persisted above re-reads a JSON
+      # file, which shows the /data volume came back; this reads rows back
+      # out of the bundled PostgreSQL cluster through the app, which shows
+      # the cluster re-attached it. A cluster quietly re-initialized from
+      # scratch comes up healthy on an empty database and passes every
+      # other check here.
+      - name: Verify the seeded clips survived the restart
+        run: scripts/ci/ha_integration_setup.sh assert-seed-survived
 
       # The other half of the restart: the add-on logs its resolved
       # configuration at startup, so the new value appearing there is

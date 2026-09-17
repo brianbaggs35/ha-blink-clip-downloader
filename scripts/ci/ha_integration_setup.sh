@@ -75,6 +75,23 @@ cmd_prepare_addon_copy() {
     printf '\napparmor: false\n' >>"$dest/config.yaml"
   fi
 
+  # Placeholder credentials so load_config() succeeds. Without them the
+  # add-on starts in *web-only mode*: __main__.py catches the ValueError
+  # from _parse_credentials and rebuilds AppConfig with empty strings,
+  # discarding every configured option, and app.py takes
+  # _run_config_error_mode() instead of its real startup path. That meant
+  # this job only ever exercised a deliberately-crippled app -- no
+  # _log_startup_config(), no downloader, no analysis queue, no poll loop.
+  #
+  # These do not authenticate, and are not meant to: connecting is the one
+  # thing this environment genuinely cannot do. _connect_with_retry()
+  # never raises and the process stays alive through a failed login (the
+  # web server keeps running so ingress stays green), so everything up to
+  # the Blink API itself now runs for real. cmd_assert_clean_log's
+  # allowlist already expects the resulting auth failure.
+  sed -i 's|^  username: .*|  username: "ci-integration@example.invalid"|' "$dest/config.yaml"
+  sed -i 's|^  password: .*|  password: "ci-integration-not-a-real-password"|' "$dest/config.yaml"
+
   # Supervisor cannot forward the PrimeVue BuildKit secret into its nested
   # Docker build. The integration workflow publishes a licensed image first
   # and supplies its untagged repository here; Supervisor appends the app
@@ -379,19 +396,33 @@ cmd_restart() {
 # allowlist would hide precisely that.
 _EXPECTED_LOG_NOISE='Configuration error . starting in web-only mode|Running in web-only mode|username is required and cannot be empty|Blink authentication failed|Invalid credentials|Could not connect to Blink|two_fa|2FA|AI analysis (is )?not configured|No AI provider|ollama'
 
-# The one traceback a healthy run in this environment prints: config
-# validation rejecting the absent username. Dropped as a *block* — from the
-# "Traceback" line through the ValueError that ends it — so that any other
-# traceback still shows up, rather than being waved through by a pattern
-# loose enough to match all of them.
+# The tracebacks a healthy run in this environment prints, dropped as
+# *blocks* -- from the "Traceback" line through the specific line that ends
+# each one -- so that any other traceback still shows up rather than being
+# waved through by a pattern loose enough to match all of them.
+#
+# Only one remains expected now: the add-on cannot reach the Blink API from
+# CI, and _connect_with_retry() logs that with _LOGGER.exception. The
+# config-validation traceback that used to be expected here is gone --
+# prepare-addon-copy now supplies placeholder credentials, so a run that
+# still prints it means the add-on fell back to web-only mode and this job
+# should fail rather than quietly test a crippled app.
 _strip_expected_traceback() {
   awk '
-    /Traceback \(most recent call last\)/ { skipping = 1 }
-    skipping && /ValueError: username is required and cannot be empty/ {
-      skipping = 0
+    /Traceback \(most recent call last\)/ { skipping = 1; buffered = 0 }
+    skipping {
+      buffer = buffer $0 "\n"
+      buffered = 1
+      # Terminators for the one expected traceback. Anything else keeps
+      # buffering until the block ends and is printed intact below.
+      if ($0 ~ /(BlinkAuthenticationError|AuthenticationError|LoginError|UnauthorizedError|aiohttp\.|ClientConnectorError|ClientResponseError|TimeoutError|socket\.gaierror)/) {
+        skipping = 0; buffer = ""; buffered = 0
+      }
       next
     }
+    buffered { printf "%s", buffer; buffer = ""; buffered = 0 }
     !skipping
+    END { if (buffered) printf "%s", buffer }
   '
 }
 
@@ -676,6 +707,101 @@ for line in problems:
   echo "OK: Supervisor granted ingress + homeassistant_api and reports the add-on started"
 }
 
+# The add-on's own container, as Supervisor named it. Derived rather than
+# hardcoded, and checked, so a Supervisor naming change fails here with a
+# clear message instead of somewhere downstream.
+addon_container() {
+  local name="addon_${ADDON_SLUG}"
+  if ! docker exec "$CONTAINER_NAME" docker inspect "$name" >/dev/null 2>&1; then
+    echo "No add-on container named '${name}' inside the devcontainer." >&2
+    echo "Containers present:" >&2
+    docker exec "$CONTAINER_NAME" docker ps --format '  {{.Names}}' >&2
+    return 1
+  fi
+  printf '%s' "$name"
+}
+
+# Pipes SQL into the add-on's bundled PostgreSQL. On stdin, never spliced
+# into the command string -- the same mistake that broke supervisor_api,
+# and SQL carries far more quoting than a JSON body does.
+addon_psql() {
+  local container
+  container="$(addon_container)" || return 1
+  docker exec -i "$CONTAINER_NAME" docker exec -i "$container" \
+    su -s /bin/bash postgres -c \
+    '/usr/lib/postgresql/17/bin/psql -v ON_ERROR_STOP=1 -q -d blink_clips'
+}
+
+cmd_seed_data() {
+  # Everything this job asserts through ingress has, until now, been an
+  # *empty state*: no Blink account means no clips, so the Library, AI and
+  # Security tabs were only ever verified in the one condition where they
+  # render almost nothing. A tab that renders "No clips found" correctly
+  # tells you very little about the tab that renders a real list.
+  #
+  # Rows go straight into the add-on's own PostgreSQL rather than through
+  # any API, because no endpoint creates clips -- they only ever arrive
+  # from Blink. This is the same approach frontend/e2e/ takes for
+  # security_events, for the same reason.
+  #
+  # Deliberately small and marked: every id is prefixed ci-seed- so it is
+  # obvious in a screenshot or a failure dump where these came from.
+  local now yesterday
+  now="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+  yesterday="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S+00:00)"
+
+  addon_psql <<SQL
+INSERT INTO clips
+  (id, camera, file_path, timestamp, size_bytes, duration, source,
+   starred, tags, downloaded_at, archived, archive_path, gdrive_backed_up)
+VALUES
+  ('ci-seed-1', 'Front Door', '/share/blink-clips/ci-seed-1.mp4',
+   '${now}', 1048576, 12, 'motion', TRUE, '["ci"]', '${now}', FALSE, '', FALSE),
+  ('ci-seed-2', 'Driveway', '/share/blink-clips/ci-seed-2.mp4',
+   '${yesterday}', 2097152, 30, 'motion', FALSE, '[]', '${yesterday}', FALSE, '', FALSE),
+  ('ci-seed-3', 'Backyard', '/share/blink-clips/ci-seed-3.mp4',
+   '${yesterday}', 524288, 6, 'manual', FALSE, '[]', '${yesterday}', FALSE, '', FALSE)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO analysis_results
+  (clip_id, camera, model, is_suspicious, confidence, summary, analyzed_at,
+   tokens_prompt, tokens_completion)
+VALUES
+  ('ci-seed-1', 'Front Door', 'ci-seed-model', TRUE, 0.92,
+   'A person is standing at the front door.', '${now}', 1200, 80),
+  ('ci-seed-2', 'Driveway', 'ci-seed-model', FALSE, 0.11,
+   'The driveway is empty and nothing is moving.', '${yesterday}', 900, 60)
+ON CONFLICT DO NOTHING;
+SQL
+
+  echo "OK: seeded clips and analysis results into the add-on's database"
+}
+
+cmd_assert_seed_survived() {
+  # The real database-durability check, and only possible now that
+  # seed-data puts actual rows in PostgreSQL. assert-persisted re-reads a
+  # JSON settings file, which proves the /data volume came back; this reads
+  # rows back out of the bundled PostgreSQL cluster *through the app*,
+  # which proves the cluster re-attached that volume and the data in it is
+  # still queryable. A cluster silently re-initialized from scratch comes
+  # up perfectly healthy on an empty database and would pass every other
+  # check in this job.
+  #
+  # Over the add-on's own port rather than ingress: this runs after the
+  # browser is gone, exactly as assert-persisted does.
+  local body
+  body="$(curl -sf --max-time 30 \
+    "http://127.0.0.1:${ADDON_PORT}/api/clips?limit=50" || true)"
+  if [[ "$body" != *"ci-seed-1"* ]]; then
+    echo "The clips seeded before the restart are gone." >&2
+    echo "  The PostgreSQL cluster under /data was not carried across the" >&2
+    echo "  container being recreated — an update would wipe the library." >&2
+    echo "  got: ${body:0:200}" >&2
+    return 1
+  fi
+  echo "OK: clips seeded before the restart are still queryable after it"
+}
+
 cmd_assert_log_contains() {
   # Proves the add-on actually *consumed* what Supervisor stored. app.py
   # logs its resolved configuration at startup, so a value appearing there
@@ -724,6 +850,8 @@ case "${1:-}" in
     cmd_assert_option_rejected "$@"
     ;;
   assert-capabilities) cmd_assert_capabilities ;;
+  seed-data) cmd_seed_data ;;
+  assert-seed-survived) cmd_assert_seed_survived ;;
   assert-log-contains)
     shift
     cmd_assert_log_contains "$@"
@@ -733,7 +861,7 @@ case "${1:-}" in
     cmd_diagnostics "$@"
     ;;
   *)
-    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-option-rejected <key> <value>|assert-capabilities|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
+    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-option-rejected <key> <value>|assert-capabilities|seed-data|assert-seed-survived|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
     exit 64
     ;;
 esac
