@@ -111,6 +111,32 @@ page.on("console", (msg) => {
 });
 page.on("pageerror", (err) => issues.push(`page error: ${err.message}`));
 
+// Every request the app makes goes back through ingress's rewritten path,
+// and a page whose assets or API calls are 404ing through that proxy still
+// renders its empty states perfectly. Console errors alone don't catch it:
+// a failed fetch() that the app handles gracefully logs nothing. Scoped to
+// ingress URLs so Home Assistant's own frontend traffic (which legitimately
+// probes some endpoints expecting 404s) can't fail this job.
+//
+// Recorded rather than asserted inline: the requests fire continuously as
+// tabs mount, so they are reported once at the end alongside every other
+// issue instead of racing whichever check happens to be running.
+const badResponses = [];
+page.on("response", (res) => {
+  const url = res.url();
+  if (!url.includes("hassio_ingress")) return;
+  if (res.status() >= 400) badResponses.push(`${res.status()} ${url}`);
+});
+page.on("requestfailed", (req) => {
+  const url = req.url();
+  if (!url.includes("hassio_ingress")) return;
+  // Navigations away and the deliberate teardown at the end abort in-flight
+  // requests; those are noise, not breakage.
+  const failure = req.failure()?.errorText ?? "";
+  if (failure.includes("ERR_ABORTED")) return;
+  badResponses.push(`${failure} ${url}`);
+});
+
 async function saveFailureArtifacts(label) {
   try {
     await page.screenshot({
@@ -210,9 +236,19 @@ try {
     .waitFor({ state: "visible", timeout: 5000 });
   await checkHaNotification(frame, issues);
 
+  await checkIngressSurvivesReload(page, addonSlug, issues);
+
   // Escapes the ingress iframe entirely - everything from here on is
   // Home Assistant's own top-level UI, not the app's.
   await checkAddonSupervisorTabs(page, baseUrl, addonSlug, addonName, issues);
+
+  if (badResponses.length > 0) {
+    // De-duplicated: one broken asset referenced by every tab would
+    // otherwise bury the rest of the report under near-identical lines.
+    for (const line of [...new Set(badResponses)]) {
+      issues.push(`failed request through ingress: ${line}`);
+    }
+  }
 
   if (issues.length > 0) {
     await saveFailureArtifacts("issues");
@@ -438,25 +474,115 @@ async function checkIngressApi(page, issuesList) {
       return;
     }
     const root = new URL(frameUrl).pathname.replace(/\/$/, "");
-    const result = await page.evaluate(async (base) => {
-      const res = await fetch(`${base}/api/stats`, { credentials: "include" });
-      return { status: res.status, body: await res.text() };
-    }, root);
-    if (result.status !== 200) {
-      issuesList.push(`GET /api/stats through ingress returned ${result.status}`);
-      return;
-    }
-    const stats = JSON.parse(result.body);
-    if (typeof stats.total_count !== "number") {
-      issuesList.push(
-        `GET /api/stats through ingress returned no total_count: ${result.body.slice(0, 120)}`,
-      );
-      return;
+
+    // One endpoint per backing concern, so a failure says *which* half of
+    // the add-on is broken behind a UI that still renders: the clip
+    // database, the settings files under /data, the camera-config file the
+    // Vehicles and AI tabs share, and the structured security layer. All
+    // are GETs -- this must not mutate anything the persistence marker and
+    // the restart assertions downstream depend on.
+    const endpoints = [
+      ["/api/stats", (b) => typeof b.total_count === "number", "total_count"],
+      ["/api/clips?limit=1", (b) => Array.isArray(b), "an array of clips"],
+      ["/api/cameras", (b) => typeof b === "object" && b !== null, "an object"],
+      ["/api/vehicle/settings", (b) => "car_description" in b, "car_description"],
+      ["/api/ai/camera-configs", (b) => typeof b === "object" && b !== null, "an object"],
+      ["/api/security/stats", (b) => "by_severity" in b, "by_severity"],
+      ["/api/storage/archives", (b) => typeof b === "object" && b !== null, "an object"],
+    ];
+
+    const results = await page.evaluate(async ({ base, paths }) => {
+      const out = [];
+      for (const path of paths) {
+        try {
+          const res = await fetch(`${base}${path}`, { credentials: "include" });
+          out.push({ path, status: res.status, body: await res.text() });
+        } catch (err) {
+          out.push({ path, status: 0, body: String(err) });
+        }
+      }
+      return out;
+    }, { base: root, paths: endpoints.map(([path]) => path) });
+
+    for (const [path, validate, expected] of endpoints) {
+      const result = results.find((r) => r.path === path);
+      if (result.status !== 200) {
+        issuesList.push(`GET ${path} through ingress returned ${result.status}`);
+        continue;
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(result.body);
+      } catch {
+        issuesList.push(
+          `GET ${path} through ingress returned non-JSON: ${result.body.slice(0, 120)}`,
+        );
+        continue;
+      }
+      if (!validate(parsed)) {
+        issuesList.push(
+          `GET ${path} through ingress returned no ${expected}: ${result.body.slice(0, 120)}`,
+        );
+      }
     }
     console.log(
-      `API reachable through ingress (/api/stats -> total_count=${stats.total_count}).`,
+      `API reachable through ingress (${endpoints.length} endpoints, ` +
+        `each backed by a different subsystem).`,
     );
   } catch (err) {
     issuesList.push(`could not call the app's API through ingress: ${err.message}`);
   }
+}
+
+/**
+ * A reload *while sitting on the ingress panel* is the case that breaks
+ * differently from a first visit. The first visit is a normal navigation
+ * from HA's own sidebar; the reload re-requests the app's HTML at the
+ * rewritten /api/hassio_ingress/<token>/ path and every relative asset and
+ * API call has to resolve against that prefix rather than the server root.
+ * Getting the base path wrong is silent on the first load (the sidebar
+ * click supplies the prefix) and only shows up here, as a blank frame or
+ * an app that renders but whose data never arrives.
+ *
+ * This is also the closest thing to what a user does after the add-on
+ * restarts underneath them, which happens on every update.
+ */
+async function checkIngressSurvivesReload(page, slug, issuesList) {
+  try {
+    await page.reload({ waitUntil: "load", timeout: 30000 });
+    await page.waitForURL(new RegExp(slug), { timeout: 15000 });
+
+    const frame = await waitForIngressFrame(page);
+    if (!frame) {
+      issuesList.push("no ingress iframe came back after reloading the panel");
+      return;
+    }
+    // The sidebar shell alone proves the HTML resolved; a tab's own content
+    // proves the JS bundle and its API calls resolved through the prefix too.
+    await frame
+      .locator(".app-nav-tab[data-tab='library']")
+      .waitFor({ state: "visible", timeout: 20000 });
+    await frame.locator('.app-nav-tab[data-tab="library"]').click();
+    await frame
+      .locator("#page-library")
+      .getByText(TAB_CHECKS.library.loadedText, { exact: false })
+      .first()
+      .waitFor({ state: "visible", timeout: 20000 });
+    console.log("Ingress panel survives a reload at its rewritten URL.");
+  } catch (err) {
+    issuesList.push(
+      `the ingress panel did not come back after a reload: ${err.message}`,
+    );
+  }
+}
+
+/** The iframe is created by HA's frontend after the panel route resolves,
+ *  so it is not present the instant the navigation settles. */
+async function waitForIngressFrame(page) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const frame = page.frames().find((f) => f.url().includes("hassio_ingress"));
+    if (frame) return frame;
+    await page.waitForTimeout(500);
+  }
+  return null;
 }
