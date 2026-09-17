@@ -307,6 +307,23 @@ jobs:
           scripts/ci/ha_integration_setup.sh assert-version
           "${{ steps.integration-image.outputs.version }}"
 
+      # config.yaml's declarations are promises only a real Supervisor
+      # reads. Dropping `ingress: true` or `homeassistant_api: true` still
+      # builds, still starts, and still passes the bare docker-run smoke
+      # test — it fails only here.
+      - name: Verify Supervisor granted the capabilities config.yaml asks for
+        run: scripts/ci/ha_integration_setup.sh assert-capabilities
+
+      # The option schema is what stands between a user's typo and an
+      # add-on that crashes on boot. Supervisor is the only thing that ever
+      # enforces it — pytest builds AppConfig from a dict it wrote itself
+      # and never sees the schema at all, so an over-permissive or
+      # malformed schema would ship silently.
+      - name: Verify Supervisor enforces the add-on's option schema
+        run: >-
+          scripts/ci/ha_integration_setup.sh assert-option-rejected
+          retention_days 999
+
       - name: Verify through Home Assistant (onboarding, login, ingress, HA API, logs)
         working-directory: e2e
         run: >-

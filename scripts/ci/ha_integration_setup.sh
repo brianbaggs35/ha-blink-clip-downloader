@@ -546,6 +546,88 @@ print(json.dumps({"options": options}))
   echo "OK: Supervisor stored ${key}=${value}; the next start should pick it up"
 }
 
+cmd_assert_option_rejected() {
+  # config.yaml's option schema is only worth anything if Supervisor
+  # actually enforces it -- that schema is what stops a user typing a
+  # value the add-on then crashes on at 3am. Supervisor validates the
+  # posted options against it (supervisor/api/apps.py calls
+  # `app.schema(...)`), so an out-of-range value must come back as an HTTP
+  # error. supervisor_api uses `curl -sf`, which exits non-zero on one.
+  #
+  # Nothing else checks this: pytest builds AppConfig from a dict it wrote
+  # itself and never sees the schema, and a malformed or over-permissive
+  # schema would ship completely silently.
+  local key="${1:?option key required}" value="${2:?option value required}"
+  local original
+  original="$(supervisor_api GET "/addons/${ADDON_SLUG}/info" \
+    | python3 -c 'import json,sys; print(json.dumps({"options": json.load(sys.stdin)["data"]["options"]}))')"
+
+  local bad
+  bad="$(printf '%s' "$original" | python3 -c '
+import json, sys
+key, raw = sys.argv[1], sys.argv[2]
+try:
+    value = json.loads(raw)
+except json.JSONDecodeError:
+    value = raw
+body = json.load(sys.stdin)
+body["options"][key] = value
+print(json.dumps(body))
+' "$key" "$value")"
+
+  if supervisor_api POST "/addons/${ADDON_SLUG}/options" "$bad" >/dev/null 2>&1; then
+    # Accepted when it should not have been -- put the good options back
+    # before failing, so the rest of the job fails for its own reasons
+    # rather than on a deliberately-corrupted config.
+    supervisor_api POST "/addons/${ADDON_SLUG}/options" "$original" >/dev/null 2>&1 || true
+    echo "Supervisor ACCEPTED ${key}=${value}, which config.yaml's schema should reject." >&2
+    echo "The add-on's option schema is not being enforced." >&2
+    return 1
+  fi
+  echo "OK: Supervisor rejected the out-of-schema ${key}=${value}"
+}
+
+cmd_assert_capabilities() {
+  # config.yaml's declarations are promises Supervisor has to honour, and
+  # every one of them is invisible to every other job here: a dropped
+  # `ingress: true` or `homeassistant_api: true` still builds, still
+  # starts, and still passes a bare `docker run` smoke test -- it only
+  # fails once a real Supervisor is the one reading the manifest.
+  #
+  # Checked against Supervisor's own view of the installed add-on rather
+  # than against config.yaml, so this compares what Supervisor actually
+  # granted with what the add-on needs at runtime.
+  local info
+  info="$(supervisor_api GET "/addons/${ADDON_SLUG}/info")"
+  local problems
+  problems="$(printf '%s' "$info" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)["data"]
+problems = []
+# ingress: the sidebar panel and every URL the web UI is served on.
+if not data.get("ingress"):
+    problems.append("ingress is not enabled")
+# homeassistant_api: the Automations tab notification round trip.
+if not data.get("homeassistant_api"):
+    problems.append("homeassistant_api was not granted")
+# A started add-on Supervisor considers broken still answers its port.
+state = data.get("state")
+if state != "started":
+    problems.append("state is %r, not started" % (state,))
+boot = data.get("boot")
+if boot not in ("auto", "manual"):
+    problems.append("unexpected boot mode %r" % (boot,))
+for line in problems:
+    print(line)
+')"
+  if [[ -n "$problems" ]]; then
+    echo "Supervisor's view of the add-on does not match what it needs:" >&2
+    printf '  - %s\n' "$problems" >&2
+    return 1
+  fi
+  echo "OK: Supervisor granted ingress + homeassistant_api and reports the add-on started"
+}
+
 cmd_assert_log_contains() {
   # Proves the add-on actually *consumed* what Supervisor stored. app.py
   # logs its resolved configuration at startup, so a value appearing there
@@ -589,6 +671,11 @@ case "${1:-}" in
     shift
     cmd_set_option "$@"
     ;;
+  assert-option-rejected)
+    shift
+    cmd_assert_option_rejected "$@"
+    ;;
+  assert-capabilities) cmd_assert_capabilities ;;
   assert-log-contains)
     shift
     cmd_assert_log_contains "$@"
@@ -598,7 +685,7 @@ case "${1:-}" in
     cmd_diagnostics "$@"
     ;;
   *)
-    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
+    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-option-rejected <key> <value>|assert-capabilities|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
     exit 64
     ;;
 esac
