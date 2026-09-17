@@ -80,9 +80,10 @@ try {
   }
   console.log(
     "Seeded check passed through real ingress: the Library lists and filters real " +
-      "clips, a clip opens with its stored AI verdict and detection chips, the " +
-      "Security Events timeline renders, the Storage tab lists an archive, Status " +
-      "shows per-camera batteries, and AI Usage reflects the stored tokens.",
+      "clips, a clip opens with its stored detail, the Security Events timeline " +
+      "renders, the Storage tab lists an archive, Status shows per-camera " +
+      "batteries, AI Usage reflects the stored tokens, and the stored analysis, " +
+      "detections and security events round-trip through the ingress proxy.",
   );
 } catch (err) {
   console.error(`Seeded-library check failed: ${err.message}`);
