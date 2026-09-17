@@ -107,8 +107,28 @@ cmd_prepare_addon_copy() {
   # web server keeps running so ingress stays green), so everything up to
   # the Blink API itself now runs for real. cmd_assert_clean_log's
   # allowlist already expects the resulting auth failure.
-  sed -i 's|^  username: .*|  username: "ci-integration@example.invalid"|' "$dest/config.yaml"
-  sed -i 's|^  password: .*|  password: "ci-integration-not-a-real-password"|' "$dest/config.yaml"
+  #
+  # Scoped to the options: block. config.yaml repeats every key under
+  # schema: at the same indentation, so an unscoped substitution rewrites
+  # the *type* there too -- turning `username: "str"` into the literal
+  # credential. Supervisor then rejects the add-on's config as invalid and
+  # simply omits it from the store, so the only symptom is `discover`
+  # timing out with nothing to say. Found exactly that way.
+  sed -i '/^options:/,/^schema:/ s|^  username: .*|  username: "ci-integration@example.invalid"|' \
+    "$dest/config.yaml"
+  sed -i '/^options:/,/^schema:/ s|^  password: .*|  password: "ci-integration-not-a-real-password"|' \
+    "$dest/config.yaml"
+
+  # The credentials must not have leaked into the schema: types there are
+  # what Supervisor validates every user's options against, and a corrupted
+  # one is invisible until discovery quietly never happens.
+  if ! grep -q '^  username: "str"$' "$dest/config.yaml" ||
+    ! grep -q '^  password: "password"$' "$dest/config.yaml"; then
+    echo "The CI credential substitution damaged config.yaml's schema block." >&2
+    echo "  schema: must still declare username/password as types, not values." >&2
+    grep -n '^  \(username\|password\):' "$dest/config.yaml" >&2
+    return 1
+  fi
 
   # Supervisor cannot forward the PrimeVue BuildKit secret into its nested
   # Docker build. The integration workflow publishes a licensed image first
