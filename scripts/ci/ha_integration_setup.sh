@@ -932,6 +932,31 @@ SQL
   echo "OK: seeded 8 clips, 4 analyses, 3 security events, 4 detections, 4 battery rows"
 }
 
+cmd_assert_seed_survived() {
+  # The real database-durability check, and only possible because
+  # seed-data puts actual rows in PostgreSQL. assert-persisted re-reads a
+  # JSON settings file, which proves the /data volume came back; this
+  # reads rows back out of the bundled PostgreSQL cluster *through the
+  # app*, proving the cluster re-attached that volume and the data in it
+  # is still queryable. A cluster silently re-initialized from scratch
+  # comes up perfectly healthy on an empty database and would pass every
+  # other check in this job.
+  #
+  # Over the add-on's own port rather than ingress: this runs after the
+  # browser is gone, exactly as assert-persisted does.
+  local body
+  body="$(curl -sf --max-time 30 \
+    "http://127.0.0.1:${ADDON_PORT}/api/clips?limit=50" || true)"
+  if [[ "$body" != *"ci-seed-1"* ]]; then
+    echo "The clips seeded before the restart are gone." >&2
+    echo "  The PostgreSQL cluster under /data was not carried across the" >&2
+    echo "  container being recreated - an update would wipe the library." >&2
+    echo "  got: ${body:0:200}" >&2
+    return 1
+  fi
+  echo "OK: clips seeded before the restart are still queryable after it"
+}
+
 cmd_assert_log_contains() {
   # Proves the add-on actually *consumed* what Supervisor stored. app.py
   # logs its resolved configuration at startup, so a value appearing there
