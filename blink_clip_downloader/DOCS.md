@@ -477,6 +477,44 @@ copy-to-clipboard flow the tier-1 model picker already uses.
 > it's still read and automatically promoted to `ai_escalation_enabled=true`
 > + `ai_escalation_provider="openai"` + `ai_escalation_model` on startup.
 
+#### Prompt caching (Anthropic and OpenAI)
+
+Both paid providers bill a repeated prompt *prefix* at a large discount, and
+this add-on sends a very repetitive prompt: the analysis rules and the
+camera's own description are identical for every clip on that camera. That
+reusable part is sent ahead of the frames so it can be matched, and no
+configuration is needed to turn any of this on.
+
+Whether it actually saves anything depends on one thing: **the reusable
+prefix has to be long enough for the model to cache it.** It is the
+configured `ai_prompt` plus that camera's description — roughly 1,400 tokens
+with the shipped default prompt — and each provider sets its own minimum:
+
+- **Anthropic** publishes a per-model figure: 512 tokens on
+  `claude-opus-5`, 1,024 on Sonnet-class models and `claude-opus-4-8`,
+  2,048 on `claude-opus-4-7`, and 4,096 on `claude-haiku-4-5` (the default)
+  and `claude-opus-4-6`. The shipped prefix clears the first two groups and
+  not the last two.
+- **OpenAI** does not publish one for the models its Chat Completions API
+  reaches, and places the boundary itself at fixed intervals. Measured on
+  `gpt-5.4-nano` with this add-on's request shape, the first boundary falls
+  just under 1,900 tokens — so the shipped default prompt lands a little
+  short of it and nothing is cached. `gpt-5.6`-tier and `gpt-6` models
+  cache nothing here at all: their prompt caching is a feature of OpenAI's
+  newer Responses API, which this add-on does not use.
+
+A longer `ai_prompt` — your own house rules, extra examples, a fuller camera
+description — crosses those thresholds on its own and caching starts
+working with no other change. There is no need to guess whether it has: each
+analysis logs `cache=<read>r/<written>w` on its summary line, and if three
+requests in a row cache nothing the add-on says so once, in plain terms,
+naming the model and the size of the prefix.
+
+The prompt is **not** padded automatically to reach a threshold. The only
+blocks big enough to move are the protected-vehicle rules and the output
+rules, and re-ordering those changes how clips are judged — not a trade
+worth making for a few cents a month.
+
 ### Analysis Prompt & Behaviour
 
 | Option | Default | Description |

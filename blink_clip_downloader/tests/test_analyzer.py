@@ -17,6 +17,7 @@ import pytest
 from blink_downloader import frame_motion, prompt_segments
 from blink_downloader.analyzer import (
     _ANTHROPIC_FALLBACK_MODELS,
+    _CACHE_INERT_CALLS,
     _OPENAI_FALLBACK_MODELS,
     _OPENAI_STRUCTURED_OUTPUT_SCHEMA,
     AnalysisResult,
@@ -1793,11 +1794,27 @@ class _MockAPIStatusError(Exception):
     """Minimal stand-in for anthropic.APIStatusError with typed instance attrs."""
 
     def __init__(
-        self, msg: str = "", status_code: int = 500, message: str = "err"
+        self,
+        msg: str = "",
+        status_code: int = 500,
+        message: str = "err",
+        body: object | None = None,
     ) -> None:
         super().__init__(msg)
         self.status_code = status_code
         self.message = message
+        self.body = body
+
+
+class _MockAnthropicNotFoundError(_MockAPIStatusError):
+    """Stand-in for anthropic.NotFoundError, a real APIStatusError subclass.
+
+    Subclassing matters: _handle_anthropic_error relies on the 404 branch
+    being reached before the generic APIStatusError one.
+    """
+
+    def __init__(self, msg: str = "", message: str = "", body: object = None) -> None:
+        super().__init__(msg, status_code=404, message=message, body=body)
 
 
 def _make_anthropic_module(
@@ -1814,6 +1831,7 @@ def _make_anthropic_module(
     mod.AuthenticationError = type("AuthenticationError", (Exception,), {})
     mod.PermissionDeniedError = type("PermissionDeniedError", (Exception,), {})
     mod.APIStatusError = _MockAPIStatusError
+    mod.NotFoundError = _MockAnthropicNotFoundError
     mod.RateLimitError = type("RateLimitError", (Exception,), {})
     mod.BadRequestError = type(
         "BadRequestError", (Exception,), {"message": "bad request"}
@@ -2969,11 +2987,36 @@ class _MockOpenAIAPIStatusError(Exception):
     """Minimal stand-in for openai.APIStatusError."""
 
     def __init__(
-        self, msg: str = "", status_code: int = 500, message: str = "err"
+        self,
+        msg: str = "",
+        status_code: int = 500,
+        message: str = "err",
+        body: object | None = None,
     ) -> None:
         super().__init__(msg)
         self.status_code = status_code
         self.message = message
+        self.body = body
+
+
+class _MockOpenAINotFoundError(_MockOpenAIAPIStatusError):
+    """Stand-in for openai.NotFoundError, a real APIStatusError subclass.
+
+    Subclassing matters: _handle_openai_error relies on the 404 branch being
+    reached before the generic APIStatusError one.
+    """
+
+    def __init__(self, msg: str = "", message: str = "", body: object = None) -> None:
+        super().__init__(msg, status_code=404, message=message, body=body)
+
+
+class _MockOpenAIRateLimitError(Exception):
+    """Stand-in for openai.RateLimitError, which carries a decoded body."""
+
+    def __init__(self, msg: str = "", body: object = None) -> None:
+        super().__init__(msg)
+        self.message = msg
+        self.body = body
 
 
 def _make_openai_response(
@@ -3022,11 +3065,12 @@ def _make_openai_module(
     # Error classes
     mod.AuthenticationError = type("AuthenticationError", (Exception,), {})
     mod.PermissionDeniedError = type("PermissionDeniedError", (Exception,), {})
-    mod.RateLimitError = type("RateLimitError", (Exception,), {})
+    mod.RateLimitError = _MockOpenAIRateLimitError
     mod.BadRequestError = type(
         "BadRequestError", (Exception,), {"message": "bad request"}
     )
     mod.APIStatusError = _MockOpenAIAPIStatusError
+    mod.NotFoundError = _MockOpenAINotFoundError
     mod.APIConnectionError = type("APIConnectionError", (Exception,), {})
 
     # AsyncOpenAI client
@@ -3437,7 +3481,7 @@ async def test_openai_fetch_models_entries_are_bare_ids() -> None:
 def test_openai_fallback_models_newest_first() -> None:
     """gpt-4-turbo (oldest) must be last, not first — see
     test_openai_fetch_models_sorted_newest_first for the live-API version."""
-    assert _OPENAI_FALLBACK_MODELS[0] == "gpt-5.6-sol"
+    assert _OPENAI_FALLBACK_MODELS[0] == "gpt-6-astra"
     assert _OPENAI_FALLBACK_MODELS[-1] == "gpt-4-turbo"
 
 
@@ -3875,6 +3919,320 @@ async def test_openai_call_model_uses_structured_outputs_for_gpt5_and_o4_mini(
         create_call = mock_mod.AsyncOpenAI.return_value.chat.completions.create
         kwargs = create_call.call_args.kwargs
         assert kwargs["response_format"]["type"] == "json_schema", model
+
+
+# ------------------------------------------------------------------
+# Prompt-cache breakpoints, routing keys and cache accounting (6.0.4).
+# 6.0.3 put the static prefix ahead of the frames, which is necessary but
+# was not sufficient on OpenAI — see _build_openai_create_kwargs.
+# ------------------------------------------------------------------
+
+
+def _openai_cache_kwargs(model: str, prompt_suffix: str = "Per-clip content.") -> dict:
+    """create_kwargs for a prompt that really does start with the static prefix."""
+    a = OpenAIAnalyzer(api_key="key", model=model, prompt="Base rules text.")
+    a._current_camera = "Front Door"
+    full_prompt = a._prompt_cache_prefix() + prompt_suffix
+    return a._build_openai_create_kwargs([_FAKE_JPEG, _FAKE_JPEG], full_prompt, model)
+
+
+def test_openai_never_sends_explicit_cache_breakpoint_fields() -> None:
+    """Measured against a real account, ``prompt_cache_breakpoint`` and
+    ``prompt_cache_options`` do nothing on Chat Completions — every layout and
+    both modes reported zero tokens read and zero written, on gpt-5.6-luna and
+    gpt-6-astra, at prefixes up to 8K. They are a Responses API feature, and
+    ``{"mode": "explicit"}`` suppresses the implicit breakpoint, so sending
+    them would be inert now and a way to turn caching off later."""
+    for model in ("gpt-5.6-luna", "gpt-6-astra", "gpt-5.4-nano", "gpt-4o-mini"):
+        kwargs = _openai_cache_kwargs(model)
+        assert "prompt_cache_options" not in kwargs, model
+        content = kwargs["messages"][1]["content"]
+        assert all("prompt_cache_breakpoint" not in b for b in content), model
+
+
+def test_openai_sends_a_stable_prompt_cache_key_for_the_same_camera() -> None:
+    """Routing key, not a cache key in the hashing sense: on models before
+    GPT-5.6 an entry is only read by a request that reaches the machine
+    holding it."""
+    first = _openai_cache_kwargs("gpt-5.4-nano", "Clip A")
+    second = _openai_cache_kwargs("gpt-5.4-nano", "Clip B")
+    assert first["prompt_cache_key"] == second["prompt_cache_key"]
+    assert first["prompt_cache_key"].startswith("blink-clip-downloader-")
+
+
+def test_openai_prompt_cache_key_differs_for_a_different_prompt() -> None:
+    """A re-worded prompt must move to a new key rather than report misses
+    against the old one — and two cameras with different prompts must not
+    share a key, since their prefixes can never match each other."""
+    a = OpenAIAnalyzer(
+        api_key="key",
+        model="gpt-5.4-nano",
+        prompt="Base rules text.",
+        camera_prompts={"Back Yard": "A completely different prompt."},
+    )
+    a._current_camera = "Front Door"
+    front = a._prompt_cache_key()
+    a._current_camera = "Back Yard"
+    assert a._prompt_cache_key() != front
+
+
+def test_openai_prompt_cache_key_leaks_nothing_about_the_install() -> None:
+    """The key is a digest of the prefix, so a camera name never rides along
+    in it."""
+    a = OpenAIAnalyzer(
+        api_key="key",
+        model="gpt-5.4-nano",
+        prompt="Base rules text.",
+        camera_descriptions={"Front Door": "Watches the front entrance."},
+    )
+    a._current_camera = "Front Door"
+    assert "Front Door" not in a._prompt_cache_key()
+    assert "front" not in a._prompt_cache_key().removeprefix("blink-clip-downloader-")
+
+
+def test_openai_no_cache_key_when_the_prompt_has_no_static_prefix() -> None:
+    """The fallback single-block path sends no reusable prefix, so it must not
+    claim a routing key for one."""
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5.4-nano", prompt="test")
+    kwargs = a._build_openai_create_kwargs([_FAKE_JPEG], "Analyze", "gpt-5.4-nano")
+    assert "prompt_cache_key" not in kwargs
+
+
+async def test_openai_records_cache_tokens_from_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    resp = _make_openai_response(cached_tokens=1280)
+    resp.usage.prompt_tokens_details.cache_write_tokens = 0
+    mock_mod = _make_openai_module(response=resp)
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+
+    a = OpenAIAnalyzer(api_key="key", model="gpt-5.4-nano", prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        await a._call_model([_FAKE_JPEG], "prompt")
+
+    assert a._last_cache_read_tokens == 1280
+    assert a._cache_summary_token() == " cache=1280r/0w"
+
+
+def test_cache_summary_token_is_empty_for_providers_without_a_cache() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="test")
+    assert a._cache_summary_token() == ""
+
+
+def test_note_cache_usage_reports_an_inert_cache_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Both providers decline to cache the same silent way — zero read, zero
+    written, no error — so it gets said, once, after enough calls that a cold
+    start can't trigger it."""
+    a = AnthropicAnalyzer(api_key="key", model="claude-haiku-4-5", prompt="test")
+    with caplog.at_level(logging.INFO, logger="blink_downloader.analyzer"):
+        for _ in range(_CACHE_INERT_CALLS * 2):
+            a._note_cache_usage(0, 0)
+    inert = [r for r in caplog.records if "no effect" in r.message]
+    assert len(inert) == 1
+    assert "claude-haiku-4-5" in inert[0].getMessage()
+
+
+def test_note_cache_usage_stays_quiet_below_the_threshold(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    a = AnthropicAnalyzer(api_key="key", model="claude-sonnet-5", prompt="test")
+    with caplog.at_level(logging.INFO, logger="blink_downloader.analyzer"):
+        for _ in range(_CACHE_INERT_CALLS - 1):
+            a._note_cache_usage(0, 0)
+    assert not [r for r in caplog.records if "no effect" in r.message]
+
+
+def test_note_cache_usage_resets_the_streak_on_any_activity(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A run of misses broken by a single hit is a working cache being
+    missed, not an inert one."""
+    a = AnthropicAnalyzer(api_key="key", model="claude-sonnet-5", prompt="test")
+    with caplog.at_level(logging.INFO, logger="blink_downloader.analyzer"):
+        for _ in range(_CACHE_INERT_CALLS - 1):
+            a._note_cache_usage(0, 0)
+        a._note_cache_usage(0, 900)
+        for _ in range(_CACHE_INERT_CALLS - 1):
+            a._note_cache_usage(0, 0)
+    assert not [r for r in caplog.records if "no effect" in r.message]
+
+
+# ------------------------------------------------------------------
+# HTTP 404 and out-of-credit classification (6.0.4).
+# ------------------------------------------------------------------
+
+
+async def _openai_error_call(
+    monkeypatch: pytest.MonkeyPatch, exc: Exception, model: str = "gpt-5.4-nano"
+) -> OpenAIAnalyzer:
+    import sys
+
+    mock_mod = _make_openai_module()
+    mock_mod.AsyncOpenAI.return_value.chat.completions.create = AsyncMock(
+        side_effect=exc
+    )
+    monkeypatch.setitem(sys.modules, "openai", mock_mod)
+    a = OpenAIAnalyzer(api_key="key", model=model, prompt="test")
+    a._client = mock_mod.AsyncOpenAI.return_value
+    with patch.dict(sys.modules, {"openai": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+    return a
+
+
+async def test_openai_bodyless_404_is_transient(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The observed failure: HTTP 404 with no error body at all, which came
+    from in front of the API rather than from it — the very next attempt
+    succeeded."""
+    exc = _MockOpenAINotFoundError("Error code: 404", message="", body=None)
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.analyzer"):
+        a = await _openai_error_call(monkeypatch, exc)
+    assert a.transient_error is True
+    assert any("no error detail" in r.getMessage() for r in caplog.records)
+    assert not any(r.exc_info for r in caplog.records)
+
+
+async def test_openai_model_not_found_404_is_permanent(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A 404 naming the model is a settings error — retrying it three times
+    only delays saying which setting is wrong."""
+    exc = _MockOpenAINotFoundError(
+        "404",
+        message="The model `gpt-5.4-nanoo` does not exist",
+        body={"error": {"code": "model_not_found", "message": "nope"}},
+    )
+    with caplog.at_level(logging.ERROR, logger="blink_downloader.analyzer"):
+        a = await _openai_error_call(monkeypatch, exc, model="gpt-5.4-nanoo")
+    assert a.transient_error is False
+    assert any("openai_model" in r.getMessage() for r in caplog.records)
+
+
+async def test_openai_404_naming_a_model_in_prose_is_permanent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Some 404s carry the prose but no machine-readable code."""
+    exc = _MockOpenAINotFoundError(
+        "404", message="The model `x` does not exist", body={"error": {}}
+    )
+    a = await _openai_error_call(monkeypatch, exc)
+    assert a.transient_error is False
+
+
+async def test_openai_out_of_credit_is_named_as_a_billing_limit(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """OpenAI reports an empty balance as an HTTP 429, which the rate-limit
+    wording would tell the user to wait out. Waiting never fixes it."""
+    exc = _MockOpenAIRateLimitError(
+        "no credits",
+        body={
+            "error": {"code": "credit_balance_exhausted", "type": "insufficient_quota"}
+        },
+    )
+    with caplog.at_level(logging.ERROR, logger="blink_downloader.analyzer"):
+        a = await _openai_error_call(monkeypatch, exc)
+    assert a.rate_limited is True
+    # Still retryable: topping the account up must not require hunting down
+    # every clip that failed while it was empty.
+    assert a.transient_error is True
+    assert any("billing limit" in r.getMessage() for r in caplog.records)
+
+
+async def test_openai_ordinary_rate_limit_keeps_its_own_wording(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    exc = _MockOpenAIRateLimitError(
+        "slow down", body={"error": {"code": "rate_limit_exceeded"}}
+    )
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.analyzer"):
+        a = await _openai_error_call(monkeypatch, exc)
+    assert a.rate_limited is True
+    assert any("rate limit hit" in r.getMessage() for r in caplog.records)
+
+
+async def _anthropic_error_call(
+    monkeypatch: pytest.MonkeyPatch, exc: Exception
+) -> AnthropicAnalyzer:
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    mock_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(side_effect=exc)
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+    a = AnthropicAnalyzer(api_key="key", model="claude-sonnet-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with patch.dict(sys.modules, {"anthropic": mock_mod}):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+    return a
+
+
+async def test_anthropic_bodyless_404_is_transient(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    exc = _MockAnthropicNotFoundError("Error code: 404", message="")
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.analyzer"):
+        a = await _anthropic_error_call(monkeypatch, exc)
+    assert a.transient_error is True
+    assert any("no error detail" in r.getMessage() for r in caplog.records)
+
+
+async def test_anthropic_model_not_found_404_is_permanent(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    exc = _MockAnthropicNotFoundError("404", message="model: claude-nope")
+    with caplog.at_level(logging.ERROR, logger="blink_downloader.analyzer"):
+        a = await _anthropic_error_call(monkeypatch, exc)
+    assert a.transient_error is False
+    assert any("anthropic_model" in r.getMessage() for r in caplog.records)
+
+
+async def test_anthropic_low_credit_400_is_not_a_permanent_bad_request(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Anthropic reports an empty balance as an HTTP 400. Treated as a
+    malformed request it marked every queued clip permanently failed — a
+    status nothing reselects — so topping the account up would have left a
+    silent gap in the library."""
+    import sys
+
+    mock_mod = _make_anthropic_module()
+    exc = mock_mod.BadRequestError("credit balance")
+    exc.message = (
+        "Your credit balance is too low to access the Anthropic API. "
+        "Please go to Plans & Billing to upgrade or purchase credits."
+    )
+    mock_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(side_effect=exc)
+    monkeypatch.setitem(sys.modules, "anthropic", mock_mod)
+    a = AnthropicAnalyzer(api_key="key", model="claude-sonnet-5", prompt="test")
+    a._client = mock_mod.AsyncAnthropic.return_value
+    with (
+        caplog.at_level(logging.ERROR, logger="blink_downloader.analyzer"),
+        patch.dict(sys.modules, {"anthropic": mock_mod}),
+    ):
+        assert await a._call_model([_FAKE_JPEG], "prompt") == ""
+    assert a.transient_error is True
+    assert a.rate_limited is True
+    assert any("billing limit" in r.getMessage() for r in caplog.records)
+
+
+def test_api_error_code_survives_a_body_that_is_not_an_error_envelope() -> None:
+    """An HTTP error with no body, or a body of some other shape, must read as
+    "no code" rather than raise inside the error handler."""
+    a = OpenAIAnalyzer(api_key="key", model="gpt-4o-mini", prompt="test")
+    assert a._api_error_code(Exception("plain")) == ""
+    assert a._api_error_code(_MockOpenAINotFoundError(body=None)) == ""
+    assert a._api_error_code(_MockOpenAINotFoundError(body={"error": "a string"})) == ""
+    assert a._api_error_code(_MockOpenAINotFoundError(body={"other": 1})) == ""
+    assert (
+        a._api_error_code(_MockOpenAINotFoundError(body={"error": {"type": "t"}}))
+        == "t"
+    )
 
 
 # ------------------------------------------------------------------

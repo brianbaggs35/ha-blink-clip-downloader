@@ -93,6 +93,11 @@ def _vision_model_score(name: str) -> int:
 _GPT_56_SOL = "gpt-5.6-sol"
 _GPT_56_TERRA = "gpt-5.6-terra"
 _GPT_56_LUNA = "gpt-5.6-luna"
+#: GPT-6's first release, named on the same footing for the same reason.
+#: Its family prefix is "gpt-6", which shares no substring with "gpt-5" —
+#: so every place that recognizes a model family by prefix needs it spelled
+#: out separately rather than inheriting from the GPT-5 entry.
+_GPT_6_ASTRA = "gpt-6-astra"
 
 # OpenAI model pricing: (input_$/1M_tokens, output_$/1M_tokens)
 # Source: https://developers.openai.com/api/docs/pricing (standard tier)
@@ -130,6 +135,8 @@ _OPENAI_MODEL_PRICING: dict[str, tuple[float, float]] = {
     _GPT_56_SOL: (4.00, 20.00),
     _GPT_56_TERRA: (2.00, 12.00),
     _GPT_56_LUNA: (0.20, 1.20),
+    # GPT-6 (Astra). Verified live against the pricing page 2026-09-17.
+    _GPT_6_ASTRA: (10.00, 50.00),
     "gpt-5.4-nano": (0.20, 1.25),  # NOSONAR
     "gpt-5.4-mini": (0.75, 4.50),  # NOSONAR
     "gpt-5-nano": (0.05, 0.40),
@@ -151,6 +158,7 @@ _OPENAI_VISION_PREFIXES: frozenset[str] = frozenset(
         "gpt-4-vision",
         "gpt-4.1",
         "gpt-5",
+        "gpt-6",
         "o1",
         "o3",
         "o4-mini",
@@ -194,6 +202,7 @@ _OPENAI_STRUCTURED_OUTPUT_SCHEMA: dict[str, Any] = {
 # purely because '-' sorts before '.' in ASCII, which looked like a
 # recommendation for the oldest, most expensive model in the lineup.
 _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
+    _GPT_6_ASTRA,
     _GPT_56_SOL,
     _GPT_56_TERRA,
     _GPT_56_LUNA,
@@ -223,6 +232,7 @@ _OPENAI_MODEL_DISPLAY_ORDER: list[str] = [
 # model ids a user needs to paste into the add-on's Configuration tab, in
 # the same newest-to-oldest order as _OPENAI_MODEL_DISPLAY_ORDER above.
 _OPENAI_FALLBACK_MODELS: list[str] = [
+    _GPT_6_ASTRA,
     _GPT_56_SOL,
     _GPT_56_TERRA,
     _GPT_56_LUNA,

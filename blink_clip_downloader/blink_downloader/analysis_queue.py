@@ -175,6 +175,27 @@ class AnalysisQueue:
 
         except Exception as exc:  # noqa: BLE001
             retry_count = int(item.get("retry_count") or 0)
+            if self._analyzer.rate_limited:
+                # A rate limit or an empty account balance is a fact about
+                # the provider, not about this clip — it would have failed
+                # identically whichever clip was at the front of the queue.
+                # Counting it against the clip's own retry budget means an
+                # outage lasting more than a few cycles permanently marks
+                # every queued clip "failed", a status nothing reselects, so
+                # topping the account back up would silently leave a gap in
+                # the library. Requeued at the same count instead: the clip
+                # keeps its place and its remaining real attempts.
+                _LOGGER.info(
+                    "Provider unavailable while analyzing clip %s (%s) — "
+                    "requeuing without using a retry, since this is not a "
+                    "failure of the clip",
+                    clip_id,
+                    exc,
+                )
+                await self._db.requeue_for_retry(
+                    clip_id, retry_count, error=str(exc)[:500]
+                )
+                return
             if self._analyzer.transient_error and retry_count < _MAX_ANALYSIS_RETRIES:
                 retry_count += 1
                 _LOGGER.info(
