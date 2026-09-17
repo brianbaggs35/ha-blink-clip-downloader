@@ -72,7 +72,7 @@ try {
 
   if (issues.length > 0) {
     await page
-      .screenshot({ path: "ha-integration-seeded-failure.png", fullPage: true })
+      .screenshot({ path: "ha-integration-failure-seeded.png", fullPage: true })
       .catch(() => {});
     console.error(`Found ${issues.length} issue(s):`);
     for (const issue of issues) console.error(` - ${issue}`);
@@ -87,7 +87,7 @@ try {
 } catch (err) {
   console.error(`Seeded-library check failed: ${err.message}`);
   await page
-    .screenshot({ path: "ha-integration-seeded-error.png", fullPage: true })
+    .screenshot({ path: "ha-integration-failure-seeded-error.png", fullPage: true })
     .catch(() => {});
   process.exitCode = 1;
 } finally {
@@ -116,6 +116,7 @@ async function checkLibraryListsSeededClips(frame, issuesList) {
       .locator('.app-nav-tab.active[data-tab="library"]')
       .waitFor({ state: "visible", timeout: 5000 });
 
+    let missing = 0;
     for (const camera of SEEDED_CAMERAS) {
       await frame
         .locator("#page-library")
@@ -123,10 +124,17 @@ async function checkLibraryListsSeededClips(frame, issuesList) {
         .first()
         .waitFor({ state: "visible", timeout: 15000 })
         .catch(() => {
+          missing += 1;
           issuesList.push(`Library never listed the seeded "${camera}" clip`);
         });
     }
-    console.log(`Library lists the seeded clips (${SEEDED_CAMERAS.join(", ")}).`);
+    // Only claim success if nothing was missing: the caught rejections above
+    // record an issue but do not stop the loop, so an unconditional log here
+    // reported "Library lists the seeded clips" in the same run that failed
+    // to find any of them.
+    if (missing === 0) {
+      console.log(`Library lists the seeded clips (${SEEDED_CAMERAS.join(", ")}).`);
+    }
   } catch (err) {
     issuesList.push(`could not verify the seeded Library: ${err.message}`);
   }
@@ -156,6 +164,7 @@ async function checkClipModalOpens(frame, issuesList) {
           "the clip modal did not show the seeded AI summary stored for that clip",
         );
       });
+
     // The seeded detected_objects rows are per box per sampled frame, so
     // three person boxes across three frames must collapse to one chip by
     // track_id rather than reading as three people.

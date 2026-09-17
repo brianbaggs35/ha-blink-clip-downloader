@@ -749,25 +749,38 @@ for line in problems:
 # hardcoded, and checked, so a Supervisor naming change fails here with a
 # clear message instead of somewhere downstream.
 addon_container() {
-  local name="addon_${ADDON_SLUG}"
-  if ! docker exec "$CONTAINER_NAME" docker inspect "$name" >/dev/null 2>&1; then
-    echo "No add-on container named '${name}' inside the devcontainer." >&2
-    echo "Containers present:" >&2
-    docker exec "$CONTAINER_NAME" docker ps --format '  {{.Names}}' >&2
-    return 1
-  fi
-  printf '%s' "$name"
+  # Both prefixes are tried because Supervisor renamed them: the container
+  # for this add-on is app_<slug> on the version this job pins, not the
+  # addon_<slug> every piece of documentation still says. Same rename as
+  # `ha addons` -> `ha apps` and "Add-ons" -> "Apps" in the UI. Checked
+  # rather than assumed so a rename back, or forward, fails here with the
+  # actual container list instead of somewhere downstream.
+  local name
+  for name in "app_${ADDON_SLUG}" "addon_${ADDON_SLUG}"; do
+    if docker exec "$CONTAINER_NAME" docker inspect "$name" >/dev/null 2>&1; then
+      printf '%s' "$name"
+      return 0
+    fi
+  done
+  echo "No add-on container found inside the devcontainer." >&2
+  echo "  Tried: app_${ADDON_SLUG}, addon_${ADDON_SLUG}" >&2
+  echo "  Containers present:" >&2
+  docker exec "$CONTAINER_NAME" docker ps --format '    {{.Names}}' >&2
+  return 1
 }
 
 # Pipes SQL into the add-on's bundled PostgreSQL. On stdin, never spliced
 # into the command string -- the same mistake that broke supervisor_api,
 # and SQL carries far more quoting than a JSON body does.
 addon_psql() {
+  # </dev/null on the lookup: this function's stdin is the caller's SQL
+  # heredoc, and a docker command in a command substitution must not be
+  # able to consume any of it before psql runs.
   local container
-  container="$(addon_container)" || return 1
+  container="$(addon_container </dev/null)" || return 1
   docker exec -i "$CONTAINER_NAME" docker exec -i "$container" \
     su -s /bin/bash postgres -c \
-    '/usr/lib/postgresql/17/bin/psql -v ON_ERROR_STOP=1 -q -d blink_clips'
+    "/usr/lib/postgresql/17/bin/psql -v ON_ERROR_STOP=1 -q -d blink_clips $*"
 }
 
 cmd_seed_data() {
@@ -894,7 +907,29 @@ VALUES
 ON CONFLICT (camera) DO NOTHING;
 SQL
 
-  echo "OK: seeded clips, analysis, security events, detections, battery and a vehicle signature"
+  local insert_status=$?
+
+  # Read back rather than announce success. This script runs without
+  # `set -e`, so a failed lookup or a psql that never received the SQL
+  # would otherwise print OK and hand a completely empty database to the
+  # assertions four steps later -- which is exactly what happened when the
+  # container was still being looked up under its old addon_ prefix.
+  local counts
+  counts="$(printf '%s\n' \
+    "SELECT (SELECT COUNT(*) FROM clips WHERE id LIKE 'ci-seed-%')
+         || '/' || (SELECT COUNT(*) FROM analysis_results WHERE clip_id LIKE 'ci-seed-%')
+         || '/' || (SELECT COUNT(*) FROM security_events WHERE clip_id LIKE 'ci-seed-%')
+         || '/' || (SELECT COUNT(*) FROM detected_objects WHERE clip_id LIKE 'ci-seed-%')
+         || '/' || (SELECT COUNT(*) FROM battery_history);" \
+    | addon_psql -t 2>/dev/null | tr -d '[:space:]')"
+
+  if [[ "$insert_status" -ne 0 || "$counts" != "8/4/3/4/4" ]]; then
+    echo "Seeding did not put the expected rows in the add-on's database." >&2
+    echo "  expected clips/analysis/events/detections/battery = 8/4/3/4/4" >&2
+    echo "  got: ${counts:-<no response>} (psql exit ${insert_status})" >&2
+    return 1
+  fi
+  echo "OK: seeded 8 clips, 4 analyses, 3 security events, 4 detections, 4 battery rows"
 }
 
 cmd_assert_log_contains() {
