@@ -66,9 +66,27 @@ cmd_prepare_addon_copy() {
   # couldn't be cleaned up locally without sudo.
   rm -rf "$dest"
   mkdir -p "$dest"
+  # tar, not rsync: rsync is present on GitHub's hosted runners but not in
+  # act's default runner image, and this copy failing is not survivable --
+  # everything downstream discovers, builds and installs whatever landed
+  # here. tar ships everywhere both run.
   git ls-files -z -- "$src" |
-    sed -z "s|^${src}/||" |
-    rsync -a --files-from=- --from0 "$src/" "$dest/"
+    tar --null --files-from=- -cf - |
+    tar -xf - -C "$dest" --strip-components=1
+
+  # This script runs without `set -e`, so a failure above would otherwise
+  # sail straight past: the copy step would report success, the stub left
+  # behind would be edited happily by the seds below, and the first sign of
+  # trouble would be `discover` timing out three minutes later with nothing
+  # to say about why. Found exactly that way -- rsync was missing under act
+  # and this step still went green.
+  if [[ ! -s "$dest/config.yaml" ]] || ! grep -q '^slug: blink_clip_downloader$' "$dest/config.yaml"; then
+    echo "Copying the add-on to ${dest} did not produce a usable config.yaml." >&2
+    echo "  Expected a full copy of ${src}/ including 'slug: blink_clip_downloader'." >&2
+    echo "  Got $(wc -l <"$dest/config.yaml" 2>/dev/null || echo 0) line(s)." >&2
+    echo "  Files copied: $(find "$dest" -type f 2>/dev/null | wc -l)" >&2
+    return 1
+  fi
   if grep -q '^apparmor:' "$dest/config.yaml"; then
     sed -i 's/^apparmor:.*/apparmor: false/' "$dest/config.yaml"
   else
