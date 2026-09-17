@@ -35,7 +35,6 @@ const OWNER = {
   password: "ci-integration-test-password-1",
 };
 const SEEDED_CAMERAS = ["Front Door", "Driveway", "Backyard"];
-const SEEDED_SUSPICIOUS_SUMMARY = "A person is standing at the front door.";
 
 const issues = [];
 const browser = await chromium.launch();
@@ -69,6 +68,7 @@ try {
   await checkStorageListsArchive(frame, issues);
   await checkStatusShowsBatteries(frame, issues);
   await checkAiUsageReflectsSeededTokens(frame, issues);
+  await checkSeededDataRoundTripsThroughIngress(page, issues);
 
   if (issues.length > 0) {
     await page
@@ -155,31 +155,24 @@ async function checkClipModalOpens(frame, issuesList) {
     await card.click();
     const modal = frame.locator(".modal-bg.open");
     await modal.waitFor({ state: "visible", timeout: 10000 });
-    await modal
-      .getByText(SEEDED_SUSPICIOUS_SUMMARY, { exact: false })
-      .first()
-      .waitFor({ state: "visible", timeout: 10000 })
-      .catch(() => {
-        issuesList.push(
-          "the clip modal did not show the seeded AI summary stored for that clip",
-        );
-      });
 
-    // The seeded detected_objects rows are per box per sampled frame, so
-    // three person boxes across three frames must collapse to one chip by
-    // track_id rather than reading as three people.
+    // The clip's own stored fields, not its AI verdict: ClipAiPanel is
+    // rendered `v-if="aiEnabled && clipId"`, and aiEnabled follows
+    // ai_analysis_enabled, which this environment deliberately leaves off
+    // (the AI tab correctly reads "AI Analysis Not Configured"). The
+    // stored analysis and detections are still proven to round-trip --
+    // through the API, below, rather than through a panel that is
+    // correctly absent here.
     await modal
-      .locator(".detection-chip")
+      .getByText("Front Door", { exact: false })
       .first()
       .waitFor({ state: "visible", timeout: 10000 })
       .catch(() => {
-        issuesList.push(
-          "the clip modal showed no detection chips for the seeded detected_objects",
-        );
+        issuesList.push("the clip modal did not show the seeded clip's camera");
       });
 
     await frame.locator(".modal-bg.open .modal-close").first().click();
-    console.log("A seeded clip opens with its stored AI verdict and detection chips.");
+    console.log("A seeded clip opens and shows its stored detail.");
   } catch (err) {
     issuesList.push(`could not open a seeded clip: ${err.message}`);
   }
@@ -229,19 +222,24 @@ async function checkLibraryFilterActuallyFilters(frame, issuesList) {
       return;
     }
     await frame.locator("#lib-filter-starred").check();
-    // Two of the seeded clips are starred; the filter must narrow to them.
-    await frame
-      .locator("#page-library .clip-card")
-      .first()
-      .waitFor({ state: "visible", timeout: 10000 });
-    const after = await cards.count();
+
+    // Polled, not read once: checking the box triggers a refetch, and the
+    // list re-renders a tick later. Reading the count immediately returns
+    // the pre-filter list and reports "6 -> 6" for a filter that works.
+    let after = before;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      after = await cards.count();
+      if (after < before) break;
+      await frame.page().waitForTimeout(250);
+    }
     if (after >= before) {
       issuesList.push(
         `the starred filter did not narrow the Library (${before} -> ${after})`,
       );
+    } else {
+      console.log(`Library's starred filter narrows the list (${before} -> ${after}).`);
     }
     await frame.locator("#lib-filter-starred").uncheck();
-    console.log(`Library's starred filter narrows the list (${before} -> ${after}).`);
   } catch (err) {
     issuesList.push(`could not exercise a Library filter: ${err.message}`);
   }
@@ -310,5 +308,72 @@ async function checkStatusShowsBatteries(frame, issuesList) {
     console.log("Status tab shows per-camera battery readings.");
   } catch (err) {
     issuesList.push(`Status never rendered the seeded batteries: ${err.message}`);
+  }
+}
+
+/**
+ * The stored analysis verdict and the per-frame detections are real rows
+ * the app serves, but the UI that renders them (ClipAiPanel) is gated on
+ * ai_analysis_enabled, which this environment deliberately leaves off.
+ * Fetching them from inside the ingress iframe's own origin proves the
+ * same data round-trips — database, through the app, through Supervisor's
+ * ingress proxy — without depending on a panel that is correctly absent.
+ */
+async function checkSeededDataRoundTripsThroughIngress(page, issuesList) {
+  try {
+    const frameUrl = page.frames().find((f) => f.url().includes("hassio_ingress"))?.url();
+    if (!frameUrl) {
+      issuesList.push("no ingress iframe URL to fetch seeded data from");
+      return;
+    }
+    const root = new URL(frameUrl).pathname.replace(/\/$/, "");
+    const results = await page.evaluate(async ({ base, paths }) => {
+      const out = [];
+      for (const path of paths) {
+        try {
+          const res = await fetch(`${base}${path}`, { credentials: "include" });
+          out.push({ path, status: res.status, body: await res.text() });
+        } catch (err) {
+          out.push({ path, status: 0, body: String(err) });
+        }
+      }
+      return out;
+    }, {
+      base: root,
+      paths: ["/api/clips/ci-seed-1", "/api/ai/detections/ci-seed-1", "/api/security/events/ci-seed-1"],
+    });
+
+    for (const { path, status, body } of results) {
+      if (status !== 200) {
+        issuesList.push(`GET ${path} through ingress returned ${status}`);
+        continue;
+      }
+      if (!body || body === "[]" || body === "{}") {
+        issuesList.push(`GET ${path} through ingress returned nothing for a seeded clip`);
+      }
+    }
+
+    // The three person boxes were seeded across three frames under one
+    // track_id, so the summary has to collapse them to a single subject
+    // rather than reporting three people.
+    const detections = results.find((r) => r.path === "/api/ai/detections/ci-seed-1");
+    if (detections?.status === 200) {
+      try {
+        const parsed = JSON.parse(detections.body);
+        const people = (Array.isArray(parsed) ? parsed : parsed.detected_objects || []).find(
+          (d) => d.label === "person",
+        );
+        if (people && people.count !== 1) {
+          issuesList.push(
+            `detections collapsed 3 person boxes on one track into count=${people.count}, expected 1`,
+          );
+        }
+      } catch {
+        issuesList.push("detections through ingress were not valid JSON");
+      }
+    }
+    console.log("Seeded analysis, detections and security events round-trip through ingress.");
+  } catch (err) {
+    issuesList.push(`could not fetch seeded data through ingress: ${err.message}`);
   }
 }
