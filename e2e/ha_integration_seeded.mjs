@@ -63,7 +63,11 @@ try {
   if (!frame) throw new Error("no ingress iframe appeared");
 
   await checkLibraryListsSeededClips(frame, issues);
+  await checkLibraryFilterActuallyFilters(frame, issues);
   await checkClipModalOpens(frame, issues);
+  await checkSecurityTimelineHasEvents(frame, issues);
+  await checkStorageListsArchive(frame, issues);
+  await checkStatusShowsBatteries(frame, issues);
   await checkAiUsageReflectsSeededTokens(frame, issues);
 
   if (issues.length > 0) {
@@ -75,8 +79,10 @@ try {
     process.exit(1);
   }
   console.log(
-    "Seeded-library check passed: the Library lists real clips through ingress, " +
-      "a clip opens with its stored AI verdict, and AI Usage reflects the stored tokens.",
+    "Seeded check passed through real ingress: the Library lists and filters real " +
+      "clips, a clip opens with its stored AI verdict and detection chips, the " +
+      "Security Events timeline renders, the Storage tab lists an archive, Status " +
+      "shows per-camera batteries, and AI Usage reflects the stored tokens.",
   );
 } catch (err) {
   console.error(`Seeded-library check failed: ${err.message}`);
@@ -150,8 +156,21 @@ async function checkClipModalOpens(frame, issuesList) {
           "the clip modal did not show the seeded AI summary stored for that clip",
         );
       });
+    // The seeded detected_objects rows are per box per sampled frame, so
+    // three person boxes across three frames must collapse to one chip by
+    // track_id rather than reading as three people.
+    await modal
+      .locator(".detection-chip")
+      .first()
+      .waitFor({ state: "visible", timeout: 10000 })
+      .catch(() => {
+        issuesList.push(
+          "the clip modal showed no detection chips for the seeded detected_objects",
+        );
+      });
+
     await frame.locator(".modal-bg.open .modal-close").first().click();
-    console.log("A seeded clip opens and shows its stored AI verdict.");
+    console.log("A seeded clip opens with its stored AI verdict and detection chips.");
   } catch (err) {
     issuesList.push(`could not open a seeded clip: ${err.message}`);
   }
@@ -184,5 +203,103 @@ async function checkAiUsageReflectsSeededTokens(frame, issuesList) {
     console.log("AI Usage reflects the seeded analysis rows.");
   } catch (err) {
     issuesList.push(`could not verify AI Usage against seeded rows: ${err.message}`);
+  }
+}
+
+/**
+ * A filter is the one part of the Library that an empty library cannot
+ * exercise at all: with nothing listed, filtering nothing still shows
+ * nothing and every filter looks like it works.
+ */
+async function checkLibraryFilterActuallyFilters(frame, issuesList) {
+  try {
+    const cards = frame.locator("#page-library .clip-card");
+    const before = await cards.count();
+    if (before < 2) {
+      issuesList.push(`expected several seeded clips to filter, saw ${before}`);
+      return;
+    }
+    await frame.locator("#lib-filter-starred").check();
+    // Two of the seeded clips are starred; the filter must narrow to them.
+    await frame
+      .locator("#page-library .clip-card")
+      .first()
+      .waitFor({ state: "visible", timeout: 10000 });
+    const after = await cards.count();
+    if (after >= before) {
+      issuesList.push(
+        `the starred filter did not narrow the Library (${before} -> ${after})`,
+      );
+    }
+    await frame.locator("#lib-filter-starred").uncheck();
+    console.log(`Library's starred filter narrows the list (${before} -> ${after}).`);
+  } catch (err) {
+    issuesList.push(`could not exercise a Library filter: ${err.message}`);
+  }
+}
+
+/**
+ * The Security Events tab is entirely empty without seeded rows, so this
+ * is the first time its timeline renders under real Home Assistant.
+ */
+async function checkSecurityTimelineHasEvents(frame, issuesList) {
+  try {
+    await frame.locator('.app-nav-tab[data-tab="security"]').click();
+    await frame
+      .locator('.app-nav-tab.active[data-tab="security"]')
+      .waitFor({ state: "visible", timeout: 5000 });
+    const rows = frame.locator("#page-security .security-row");
+    await rows.first().waitFor({ state: "visible", timeout: 15000 });
+    const count = await rows.count();
+    if (count < 3) {
+      issuesList.push(`Security Events showed ${count} rows, expected the 3 seeded`);
+      return;
+    }
+    console.log(`Security Events timeline renders ${count} seeded events.`);
+  } catch (err) {
+    issuesList.push(`Security Events never rendered the seeded rows: ${err.message}`);
+  }
+}
+
+/**
+ * Archived clips are a separate query and a separate rendering path from
+ * the Library's, grouped by ZIP rather than listed flat.
+ */
+async function checkStorageListsArchive(frame, issuesList) {
+  try {
+    await frame.locator('.app-nav-tab[data-tab="storage"]').click();
+    await frame
+      .locator('.app-nav-tab.active[data-tab="storage"]')
+      .waitFor({ state: "visible", timeout: 5000 });
+    const panel = frame.locator("#page-storage .archive-panel");
+    await panel.first().waitFor({ state: "visible", timeout: 15000 });
+    console.log("Storage tab lists the seeded archive.");
+  } catch (err) {
+    issuesList.push(`Storage never listed the seeded archive: ${err.message}`);
+  }
+}
+
+/**
+ * Battery readings come from Blink in normal operation, so this strip has
+ * never rendered anything in CI before.
+ */
+async function checkStatusShowsBatteries(frame, issuesList) {
+  try {
+    await frame.locator('.app-nav-tab[data-tab="status"]').click();
+    await frame
+      .locator('.app-nav-tab.active[data-tab="status"]')
+      .waitFor({ state: "visible", timeout: 5000 });
+    const strip = frame.locator("#battery-strip");
+    await strip.waitFor({ state: "visible", timeout: 15000 });
+    await strip
+      .getByText("Backyard", { exact: false })
+      .first()
+      .waitFor({ state: "visible", timeout: 10000 })
+      .catch(() => {
+        issuesList.push("the battery strip did not show the seeded cameras");
+      });
+    console.log("Status tab shows per-camera battery readings.");
+  } catch (err) {
+    issuesList.push(`Status never rendered the seeded batteries: ${err.message}`);
   }
 }

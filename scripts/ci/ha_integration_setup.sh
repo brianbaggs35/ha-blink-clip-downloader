@@ -733,22 +733,36 @@ addon_psql() {
 }
 
 cmd_seed_data() {
-  # Everything this job asserts through ingress has, until now, been an
-  # *empty state*: no Blink account means no clips, so the Library, AI and
-  # Security tabs were only ever verified in the one condition where they
-  # render almost nothing. A tab that renders "No clips found" correctly
-  # tells you very little about the tab that renders a real list.
+  # Everything this job asserts through ingress had, until now, been an
+  # *empty state*: no Blink account means no clips, so most tabs were only
+  # ever verified in the one condition where they render almost nothing.
   #
   # Rows go straight into the add-on's own PostgreSQL rather than through
-  # any API, because no endpoint creates clips -- they only ever arrive
-  # from Blink. This is the same approach frontend/e2e/ takes for
-  # security_events, for the same reason.
+  # any API: nothing in the app creates a clip, they only ever arrive from
+  # Blink. frontend/e2e/ seeds security_events the same way and for the
+  # same reason. The difference here is that this is the *real* add-on
+  # container, under a real Supervisor, behind real ingress -- the one
+  # place the whole stack is assembled the way a user actually runs it.
   #
-  # Deliberately small and marked: every id is prefixed ci-seed- so it is
-  # obvious in a screenshot or a failure dump where these came from.
-  local now yesterday
+  # Every id is prefixed ci-seed- so its origin is obvious in a screenshot
+  # or a failure dump. Deliberately shaped to unlock as many surfaces as
+  # possible at once:
+  #   - four cameras, three sources, tags, starred    -> Library's filters
+  #   - two archived clips with an archive_path       -> Storage tab
+  #   - analysis rows on two models, with token counts-> AI + AI Usage
+  #   - security_events across three severities       -> Security Events
+  #   - detected_objects on one clip                  -> modal's chips
+  #   - battery_history per camera                    -> Status tab
+  #   - a learned vehicle signature                   -> Vehicles tab
+  #
+  # All timestamps are recent on purpose. retention_days is set to 17 later
+  # in this job, and a clip older than that would be a deletion candidate
+  # whose file does not exist on disk.
+  local now h6 d1 d2
   now="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
-  yesterday="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S+00:00)"
+  h6="$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%S+00:00)"
+  d1="$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%S+00:00)"
+  d2="$(date -u -d '2 days ago' +%Y-%m-%dT%H:%M:%S+00:00)"
 
   addon_psql <<SQL
 INSERT INTO clips
@@ -756,50 +770,93 @@ INSERT INTO clips
    starred, tags, downloaded_at, archived, archive_path, gdrive_backed_up)
 VALUES
   ('ci-seed-1', 'Front Door', '/share/blink-clips/ci-seed-1.mp4',
-   '${now}', 1048576, 12, 'motion', TRUE, '["ci"]', '${now}', FALSE, '', FALSE),
-  ('ci-seed-2', 'Driveway', '/share/blink-clips/ci-seed-2.mp4',
-   '${yesterday}', 2097152, 30, 'motion', FALSE, '[]', '${yesterday}', FALSE, '', FALSE),
-  ('ci-seed-3', 'Backyard', '/share/blink-clips/ci-seed-3.mp4',
-   '${yesterday}', 524288, 6, 'manual', FALSE, '[]', '${yesterday}', FALSE, '', FALSE)
+   '${now}', 1048576, 12, 'motion', TRUE,  '["person"]', '${now}', FALSE, '', FALSE),
+  ('ci-seed-2', 'Driveway',   '/share/blink-clips/ci-seed-2.mp4',
+   '${h6}',  2097152, 30, 'motion', FALSE, '[]',         '${h6}',  FALSE, '', FALSE),
+  ('ci-seed-3', 'Backyard',   '/share/blink-clips/ci-seed-3.mp4',
+   '${h6}',   524288,  6, 'manual', FALSE, '["animal"]', '${h6}',  FALSE, '', FALSE),
+  ('ci-seed-4', 'Side Gate',  '/share/blink-clips/ci-seed-4.mp4',
+   '${d1}',  3145728, 45, 'live',   TRUE,  '[]',         '${d1}',  FALSE, '', FALSE),
+  ('ci-seed-5', 'Front Door', '/share/blink-clips/ci-seed-5.mp4',
+   '${d1}',   786432, 18, 'motion', FALSE, '["person","delivery"]', '${d1}', FALSE, '', FALSE),
+  ('ci-seed-6', 'Driveway',   '/share/blink-clips/ci-seed-6.mp4',
+   '${d2}',  1572864, 22, 'motion', FALSE, '[]',         '${d2}',  FALSE, '', TRUE),
+  ('ci-seed-archived-1', 'Front Door', '/share/blink-clips/ci-seed-archived-1.mp4',
+   '${d2}',  4194304, 25, 'motion', FALSE, '[]', '${d2}', TRUE,
+   '/share/blink-clips/archive/ci-seed-archive.zip', FALSE),
+  ('ci-seed-archived-2', 'Driveway', '/share/blink-clips/ci-seed-archived-2.mp4',
+   '${d2}',  2621440, 15, 'motion', FALSE, '[]', '${d2}', TRUE,
+   '/share/blink-clips/archive/ci-seed-archive.zip', FALSE)
 ON CONFLICT (id) DO NOTHING;
 
+-- Two models so AI Usage's per-model breakdown has more than one row to
+-- price and group, which is where its aggregation SQL actually does work.
 INSERT INTO analysis_results
   (clip_id, camera, model, is_suspicious, confidence, summary, analyzed_at,
-   tokens_prompt, tokens_completion)
+   tokens_prompt, tokens_completion, risk_score, severity, event_type)
 VALUES
-  ('ci-seed-1', 'Front Door', 'ci-seed-model', TRUE, 0.92,
-   'A person is standing at the front door.', '${now}', 1200, 80),
-  ('ci-seed-2', 'Driveway', 'ci-seed-model', FALSE, 0.11,
-   'The driveway is empty and nothing is moving.', '${yesterday}', 900, 60)
+  ('ci-seed-1', 'Front Door', 'ci-seed-model-a', TRUE, 0.92,
+   'A person is standing at the front door.', '${now}', 1200, 80, 72.0,
+   'suspicious', 'subject_present'),
+  ('ci-seed-2', 'Driveway', 'ci-seed-model-a', FALSE, 0.11,
+   'The driveway is empty and nothing is moving.', '${h6}', 900, 60, 4.0,
+   'routine', ''),
+  ('ci-seed-4', 'Side Gate', 'ci-seed-model-b', TRUE, 0.78,
+   'A person is lingering by the side gate.', '${d1}', 1500, 120, 61.0,
+   'suspicious', 'loitering'),
+  ('ci-seed-5', 'Front Door', 'ci-seed-model-b', FALSE, 0.22,
+   'A delivery was left by the door.', '${d1}', 1100, 70, 12.0,
+   'routine', 'object_added')
 ON CONFLICT DO NOTHING;
+
+-- The Security Events tab is entirely empty without these: producing them
+-- for real needs a running YOLO, which this container has no GPU for.
+INSERT INTO security_events
+  (clip_id, camera, event_type, severity, confidence, risk_score,
+   evidence_quality, detail, subject_label, track_id, asset_name,
+   asset_type, start_offset, end_offset, evidence, created_at)
+VALUES
+  ('ci-seed-1', 'Front Door', 'subject_present', 'suspicious', 0.91, 72.0, 0.80,
+   'A person was present for most of the clip.', 'person', 1, '', '',
+   0.0, 11.0, '{}', '${now}'),
+  ('ci-seed-4', 'Side Gate', 'loitering', 'critical', 0.84, 88.0, 0.72,
+   'A person remained near the gate for 40 seconds.', 'person', 2, '', '',
+   2.0, 42.0, '{}', '${d1}'),
+  ('ci-seed-5', 'Front Door', 'object_added', 'noteworthy', 0.66, 20.0, 0.55,
+   'A parcel appeared near the door and stayed.', 'package', 3, '', '',
+   5.0, 17.0, '{}', '${d1}')
+ON CONFLICT DO NOTHING;
+
+-- Per box per sampled frame, so one subject across several frames is
+-- several rows -- which is exactly what the modal's chip summary has to
+-- collapse by track_id.
+INSERT INTO detected_objects
+  (clip_id, label, confidence, box_x1, box_y1, box_x2, box_y2, track_id,
+   frame_index, offset_seconds, frame_width, frame_height)
+VALUES
+  ('ci-seed-1', 'person', 0.94, 120, 80, 260, 400, 1, 0, 0.0, 640, 480),
+  ('ci-seed-1', 'person', 0.92, 140, 82, 280, 402, 1, 1, 2.0, 640, 480),
+  ('ci-seed-1', 'person', 0.90, 160, 84, 300, 404, 1, 2, 4.0, 640, 480),
+  ('ci-seed-1', 'car',    0.88, 400, 240, 620, 420, 2, 0, 0.0, 640, 480)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO battery_history
+  (camera, battery_state, battery_level, battery_voltage, recorded_at)
+VALUES
+  ('Front Door', 'ok',   82, 1680, '${now}'),
+  ('Driveway',   'ok',   64, 1610, '${now}'),
+  ('Backyard',   'low',  18, 1450, '${now}'),
+  ('Side Gate',  'ok',   91, 1705, '${now}')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO camera_vehicle_signatures
+  (camera, box, histogram, sample_count, updated_at)
+VALUES
+  ('Driveway', '[0.30,0.45,0.72,0.88]', '[0.1,0.2,0.3,0.4]', 12, '${now}')
+ON CONFLICT (camera) DO NOTHING;
 SQL
 
-  echo "OK: seeded clips and analysis results into the add-on's database"
-}
-
-cmd_assert_seed_survived() {
-  # The real database-durability check, and only possible now that
-  # seed-data puts actual rows in PostgreSQL. assert-persisted re-reads a
-  # JSON settings file, which proves the /data volume came back; this reads
-  # rows back out of the bundled PostgreSQL cluster *through the app*,
-  # which proves the cluster re-attached that volume and the data in it is
-  # still queryable. A cluster silently re-initialized from scratch comes
-  # up perfectly healthy on an empty database and would pass every other
-  # check in this job.
-  #
-  # Over the add-on's own port rather than ingress: this runs after the
-  # browser is gone, exactly as assert-persisted does.
-  local body
-  body="$(curl -sf --max-time 30 \
-    "http://127.0.0.1:${ADDON_PORT}/api/clips?limit=50" || true)"
-  if [[ "$body" != *"ci-seed-1"* ]]; then
-    echo "The clips seeded before the restart are gone." >&2
-    echo "  The PostgreSQL cluster under /data was not carried across the" >&2
-    echo "  container being recreated — an update would wipe the library." >&2
-    echo "  got: ${body:0:200}" >&2
-    return 1
-  fi
-  echo "OK: clips seeded before the restart are still queryable after it"
+  echo "OK: seeded clips, analysis, security events, detections, battery and a vehicle signature"
 }
 
 cmd_assert_log_contains() {
