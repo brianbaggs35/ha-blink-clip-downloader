@@ -60,6 +60,54 @@ test('a Save that the backend refuses says so instead of looking like it worked'
 // assertion above that depends on all three cameras being displayed at the
 // default (unfiltered) settings. Declaration order is execution order here
 // (workers: 1, no intra-file parallelism), matching storage.spec.ts's own
+test('a feed that cannot load says so instead of showing an empty grid', async ({ page }) => {
+  // Only the *save* failure was covered before; a failed initial load took
+  // a different path (loadError) that nothing exercised, and getting it
+  // wrong shows an empty page rather than an explanation.
+  await page.route('**/api/security-feed/cameras', (route) => route.fulfill({ status: 500, body: 'boom' }))
+  await page.reload()
+  await page.locator('.app-nav-tab[data-tab="securityfeed"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="securityfeed"]')
+
+  await expect(page.getByText('Failed to load the Security Feed')).toBeVisible()
+  await expect(page.locator('.secfeed-tile')).toHaveCount(0)
+  await page.unroute('**/api/security-feed/cameras')
+})
+
+test('a cross-tab Refresh re-reads the feed', async ({ page }) => {
+  let fetches = 0
+  await page.route('**/api/security-feed/cameras', (route) => {
+    fetches += 1
+    return route.continue()
+  })
+  // Settles the mount-time load before counting the refresh's own fetch.
+  await expect(page.locator('.secfeed-tile').first()).toBeVisible()
+  const afterMount = fetches
+
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect.poll(() => fetches).toBeGreaterThan(afterMount)
+})
+
+test('a cross-tab Refresh leaves unsaved Customize edits alone', async ({ page }) => {
+  // The other half of the same watcher, and the half worth having: a
+  // refresh signal from another tab must not silently reload settings out
+  // from under someone part-way through editing them.
+  await page.getByRole('button', { name: 'Customize' }).click()
+  const interval = page.getByRole('spinbutton')
+  await interval.fill('45')
+
+  let fetches = 0
+  await page.route('**/api/security-feed/cameras', (route) => {
+    fetches += 1
+    return route.continue()
+  })
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+
+  // Nothing refetched, and the in-progress edit is still on screen.
+  await expect(interval).toHaveValue('45')
+  expect(fetches).toBe(0)
+})
+
 // "mutating test goes last" convention.
 test('saving Customize settings narrows the displayed cameras and persists across a reload', async ({ page }) => {
   await page.getByRole('button', { name: 'Customize' }).click()
