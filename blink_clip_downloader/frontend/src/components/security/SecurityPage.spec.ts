@@ -542,13 +542,22 @@ describe('SecurityPage', () => {
   it('files rows under the day they were recorded', async () => {
     // The date used to be repeated on every single row, in a fixed column
     // that took half the width of the tab with it.
-    const now = new Date()
-    const yesterday = new Date(now.getTime() - 86_400_000)
+    // Anchored to local noon, NOT to `new Date()` minus an offset: the
+    // component groups by local calendar day, so a test built from
+    // "now - 1 hour" files that row under *yesterday* whenever the suite
+    // runs in the midnight hour, and this test then reports Today = 1.
+    // CI caught exactly that at 00:28. Noon is comfortably clear of both
+    // ends of the day at every hour the suite might run, and of a DST
+    // shift either way.
+    const noonToday = new Date()
+    noonToday.setHours(12, 0, 0, 0)
+    const noonYesterday = new Date(noonToday)
+    noonYesterday.setDate(noonYesterday.getDate() - 1)
     const wrapper = await mountPage({
       rows: [
-        row({ clip_id: 'a', clip_timestamp: now.toISOString() }),
-        row({ clip_id: 'b', clip_timestamp: new Date(now.getTime() - 3_600_000).toISOString() }),
-        row({ clip_id: 'c', clip_timestamp: yesterday.toISOString() }),
+        row({ clip_id: 'a', clip_timestamp: noonToday.toISOString() }),
+        row({ clip_id: 'b', clip_timestamp: new Date(noonToday.getTime() - 3_600_000).toISOString() }),
+        row({ clip_id: 'c', clip_timestamp: noonYesterday.toISOString() }),
       ],
     })
     const headings = wrapper.findAll('.security-day-head')
