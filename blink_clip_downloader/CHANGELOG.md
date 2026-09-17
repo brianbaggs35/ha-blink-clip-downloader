@@ -1,5 +1,139 @@
 # Changelog
 
+## 6.0.4
+
+### Why prompt caching is still reporting 0% on OpenAI
+
+6.0.3 moved the static part of the prompt ahead of the frames. That is a
+requirement for prompt caching and was genuinely broken before, but it was
+not sufficient, and the hit rate stayed at a flat 0%. Measured against a
+real account rather than reasoned about, with this add-on's exact request
+shape — eight frames, a strict output schema, reasoning effort "medium" —
+the reason is now precise.
+
+OpenAI does not let an application decide where a reusable prefix ends. On
+every model reachable through Chat Completions it places the cache
+boundaries itself, at fixed intervals counted from the start of its own
+hidden system content, and a prefix is only cacheable if it is long enough
+to reach the first one. On `gpt-5.4-nano`:
+
+| Static prefix (incl. system message) | Tokens cached |
+| --- | --- |
+| 1,407 — what this add-on sends today | 0 |
+| 1,832 | 0 |
+| 1,882 | 1,792 |
+| 4,132 | 1,792, then 3,840 |
+
+So the first boundary sits between 1,832 and 1,882 tokens, the next 2,048
+beyond it, and this add-on's prefix — the configured `ai_prompt` plus the
+camera's own description, about 1,400 tokens with the system message —
+lands roughly 450 tokens short of it. Nothing about the ordering was wrong;
+the prefix is simply too short to reach a boundary, and every request paid
+full price for a prompt that was 30% identical to the one before it.
+
+It is not made longer here. The only two sizeable blocks that could be
+moved up are the protected-vehicle rules and the output rules, and both are
+rendered differently depending on whether the vehicle is in frame, so
+hoisting them would split the cache in two — while breaking the deliberate
+"which car is yours, then what counts as too close to it" ordering and
+moving the output rules, whose examples are the strongest prior a small
+model has, away from the end of the prompt. A caching saving worth a few
+cents a month does not justify re-tuning a prompt that decides whether a
+break-in gets reported. A longer configured `ai_prompt` crosses the
+threshold on its own, and the logging below now says when it has.
+
+`prompt_cache_key` is sent on every request from now on: it is OpenAI's
+documented lever for cache *routing* on these models, since an entry lives
+on one machine and is only read by a request that reaches it. It is derived
+from the reusable prefix itself, so cameras sharing a prompt share a key, a
+re-worded prompt moves to a new one, and nothing about the install is
+encoded in it. It is not what was keeping the hit rate at zero, and it is
+not claimed to be.
+
+### GPT-5.6 and GPT-6 cannot cache through this API at all
+
+Worth recording, because the documentation reads as though they can, and
+the fields for it exist and are validated on Chat Completions — an invalid
+breakpoint mode is rejected with HTTP 400.
+
+On `gpt-5.6-luna` and `gpt-6-astra`, an explicit cache breakpoint marking
+the end of the static prefix produced zero tokens read and zero written,
+in every layout tried: the breakpoint inside the user message, merged into
+the system message, in a message of its own, under implicit mode and under
+explicit-only mode, at static prefixes up to 8,132 tokens. The same padding
+that makes `gpt-5.4-nano` cache 1,792 tokens makes these models cache
+nothing, because they have no interval boundaries to reach either. Their
+prompt caching is a Responses API feature, and this analyzer speaks Chat
+Completions.
+
+The fields are therefore deliberately not sent. They would be inert, and
+`{"mode": "explicit"}` suppresses the implicit breakpoint, so sending it
+would be a way to turn caching off the moment the rest of it started
+working.
+
+Anthropic is unaffected by all of this — it takes an explicit
+`cache_control` breakpoint that does work, already in the right place as of
+6.0.3. Its per-model minimum applies instead, and is published: 4,096
+tokens on `claude-haiku-4-5` (the default) and `claude-opus-4-6`, 2,048 on
+`claude-opus-4-7`, 1,024 on Sonnet-class models and `claude-opus-4-8`, and
+512 on `claude-opus-5`.
+
+### Saying so when caching does nothing
+
+Both providers decline to cache the same silent way — zero tokens read,
+zero written, no error — so the only way to find out used to be a billing
+dashboard. Three consecutive requests with no cache activity now log it
+once, naming the provider, the model and the size of the prefix. Every
+analysis also reports `cache=<read>r/<written>w` on its existing one-line
+summary, so a run can be checked from the add-on's own log.
+
+### An OpenAI 404 dumped a stack trace and looked permanent
+
+A clip failed with `openai.NotFoundError: Error code: 404` and a
+twenty-line traceback through the OpenAI SDK, then analysed correctly a
+minute later on the automatic retry.
+
+A 404 from Chat Completions is two unrelated failures sharing one status
+code. With an error body naming the model it is a permanent
+misconfiguration — the model does not exist, or the key has no access to
+it — and retrying three times only delays saying which setting is wrong.
+With no body at all, as here, it did not come from the API but from in
+front of it, and the next attempt usually succeeds. These are now told
+apart: the first names the model and the setting to check and is not
+retried, the second gets a single line and keeps its retries. Neither
+prints a stack trace any more, and nor does any other API status error —
+every frame of it was inside the provider's SDK, and it buried the status
+code and message that actually said what happened.
+
+### Running out of API credit failed clips permanently
+
+An empty account balance is not a rate limit, and both providers were being
+treated as though it were.
+
+- OpenAI reports it as an HTTP 429 with code `insufficient_quota`, which
+  was logged as "rate limit hit — analysis will resume on the next cycle".
+  It does not resume on the next cycle, or any cycle, until credit is
+  added.
+- Anthropic reports it as an HTTP 400, which counted as a malformed request
+  and marked the clip permanently `failed` — a status nothing ever
+  reselects. Topping the account back up would have left a silent gap in
+  the library.
+
+Both now say what actually happened and where to fix it. More importantly,
+a clip is no longer charged a retry for an outage that had nothing to do
+with it: when the provider itself is unavailable, the clip is requeued
+keeping its place and its remaining attempts, so an outage lasting longer
+than a few cycles no longer marks every queued clip failed.
+
+### GPT-6
+
+`gpt-6-astra` was invisible: not priced, and filtered out of the model
+picker entirely, because every prefix this add-on matches on says `gpt-5`
+and nothing in `gpt-6-astra` contains it. Typing the id in by hand would
+also have sent it the legacy `max_tokens` parameter that the reasoning
+models reject. It is now priced ($10.00 / $50.00 per million), offered, and
+sent the same parameters as the rest of its generation.
+
 ## 6.0.3
 
 ### Weekly and monthly AI spend

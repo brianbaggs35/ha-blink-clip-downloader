@@ -303,6 +303,52 @@ async def test_process_pending_marks_failed_after_retry_cap_exceeded(
     assert counts["pending"] == 0
 
 
+async def test_process_pending_does_not_spend_a_retry_on_a_provider_outage(
+    db: ClipDatabase,
+) -> None:
+    """A rate limit or an empty account balance is a fact about the provider,
+    not about this clip — it would have failed identically whichever clip was
+    at the front of the queue. Counting it would let an outage lasting more
+    than a few cycles mark every queued clip "failed", a status nothing
+    reselects, leaving a silent gap in the library once the account works
+    again."""
+    analyzer = _make_analyzer_mock(rate_limited=True)
+    analyzer.analyze_clip = AsyncMock(side_effect=RuntimeError("no credits"))
+    queue = _make_queue(analyzer, db)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    for _ in range(5):
+        await queue._process_pending()
+
+    counts = await db.get_queue_counts()
+    assert counts["failed"] == 0
+    assert counts["pending"] == 1
+    assert (await db.get_pending_analysis())[0]["retry_count"] == 0
+
+
+async def test_process_pending_still_caps_retries_once_the_provider_is_back(
+    db: ClipDatabase,
+) -> None:
+    """The exemption is scoped to the outage itself: an ordinary transient
+    failure still counts, so a clip that genuinely cannot be analyzed does not
+    requeue forever."""
+    analyzer = _make_analyzer_mock(rate_limited=False, transient_error=True)
+    analyzer.analyze_clip = AsyncMock(side_effect=RuntimeError("still broken"))
+    queue = _make_queue(analyzer, db)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    for _ in range(5):
+        await queue._process_pending()
+
+    assert (await db.get_queue_counts())["failed"] == 1
+
+
 async def test_process_pending_dispatches_suspicious(db: ClipDatabase) -> None:
     suspicious_result = AnalysisResult(
         clip_id="c1",

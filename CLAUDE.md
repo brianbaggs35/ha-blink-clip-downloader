@@ -425,7 +425,7 @@ npm run format:check    # prettier --check .
 npm run type-check      # vue-tsc -b
 npm test                 # vitest run
 npm run test:coverage   # vitest run --coverage
-npm run test:e2e        # playwright test (needs Postgres; builds first, no coverage instrumentation)
+npm run test:e2e        # playwright test (needs Postgres; does NOT build - run `npm run build` first)
 npm run test:e2e:coverage # same, instrumented -> coverage-e2e/ (slower: full rebuild + per-test collection)
 ```
 

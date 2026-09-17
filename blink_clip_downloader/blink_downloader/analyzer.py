@@ -16,6 +16,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -95,6 +96,14 @@ _SCENE_BASELINE_SUSPICION_CONFIDENCE_THRESHOLD: float = 0.5
 # split on at all.
 _MAX_SUMMARY_SENTENCES: int = 2
 _MAX_SUMMARY_CHARS: int = 200
+
+# How many consecutive model calls may report no prompt-cache activity at
+# all before saying so once (see BaseAnalyzer._note_cache_usage). A single
+# call proves nothing — the first request on a cold cache is a write with
+# nothing to read, and on OpenAI a request that lands on a machine without
+# the entry legitimately misses — but several in a row means the prompt is
+# not being cached rather than merely missing.
+_CACHE_INERT_CALLS: int = 3
 
 # Shared system-prompt text for the three providers (Ollama, Anthropic,
 # OpenAI) that support a separate system role — keeps the role and output
@@ -395,6 +404,17 @@ class BaseAnalyzer(abc.ABC):
         # (see _cached_health_check_result/_store_health_check_result below).
         self._last_health_check_time: float = 0.0
         self._last_health_check_result: bool = False
+        # Prompt-cache accounting for the two providers that support it
+        # (see _note_cache_usage). Recorded per model call so the per-clip
+        # summary line can say whether caching actually did anything, and
+        # so a provider that silently declines to cache — the normal
+        # outcome when the reusable prefix is below the model's minimum —
+        # is reported once rather than left to be discovered on a billing
+        # dashboard.
+        self._last_cache_read_tokens: int = 0
+        self._last_cache_write_tokens: int = 0
+        self._cache_inert_calls: int = 0
+        self._cache_inert_reported: bool = False
 
     def _get_analyze_lock(self) -> asyncio.Lock:
         if self._analyze_lock is None:
@@ -1173,7 +1193,7 @@ class BaseAnalyzer(abc.ABC):
         """
         _LOGGER.info(
             "Analyzed clip=%r camera=%r provider=%s frames=%d suspicious=%s "
-            "detections=%d tracks=%d scan_frames=%d vehicle=%s missing=%s %s",
+            "detections=%d tracks=%d scan_frames=%d vehicle=%s missing=%s %s%s",
             clip_id,
             camera,
             self.provider_name,
@@ -1185,6 +1205,7 @@ class BaseAnalyzer(abc.ABC):
             self._describe_vehicle_identification(vision_hints),
             ",".join(getattr(vision_hints, "unavailable_sources", []) or []) or "none",
             summarize_assessment(security.assessment) if security else "risk=n/a",
+            self._cache_summary_token(),
         )
 
     @staticmethod
@@ -1206,6 +1227,11 @@ class BaseAnalyzer(abc.ABC):
         self._last_escalation_provider = ""
         self._last_escalation_prompt_tokens = 0
         self._last_escalation_completion_tokens = 0
+        # Zeroed alongside the token counters so the summary line reports
+        # this clip's cache activity rather than the previous clip's after a
+        # call that never reached the provider.
+        self._last_cache_read_tokens = 0
+        self._last_cache_write_tokens = 0
         # Store camera name so provider subclasses can access it in _call_model.
         # Safe because analyze_clip() holds _analyze_lock for its whole body.
         self._current_camera: str = camera
@@ -1931,17 +1957,125 @@ class BaseAnalyzer(abc.ABC):
         configured/per-camera ``ai_prompt`` text.
 
         Deliberately *not* extended to cover those trailing segments by
-        reordering ``_build_prompt``: even with all of them hoisted the
-        prefix reaches only ~3.9K tokens, still under the 4096-token
-        minimum of the default ``claude-haiku-4-5``, so it would buy no
-        extra cacheability on the default model while breaking the
-        deliberate "security evidence immediately before the
-        protected-vehicle rules" ordering that block documents.
+        reordering ``_build_prompt``. The two candidates are the
+        protected-vehicle rules and the output rules, and neither is
+        actually static: both are rendered differently depending on
+        ``vehicle_absent``, a per-clip signal, so hoisting them would split
+        the cache into two variants that alternate with whether the car
+        happened to be in frame — while breaking the deliberate "security
+        evidence immediately before the protected-vehicle rules" ordering
+        that block documents, and moving OUTPUT RULES away from the end of
+        the prompt.
+
+        The practical consequence is that this prefix is around 1.4K tokens
+        including the system message, and whether that is enough is the
+        provider's decision, not ours. Anthropic publishes a per-model
+        minimum: 1024 on Sonnet-class models and ``claude-opus-4-8``, 512 on
+        ``claude-opus-5``, but 4096 on the default ``claude-haiku-4-5``.
+        OpenAI publishes nothing usable for the models Chat Completions
+        reaches; measured, ``gpt-5.4-nano`` needs just under 1,900 tokens
+        before its first cache boundary, so the shipped prefix falls about
+        450 short. ``_note_cache_usage`` reports it when a model turns out
+        not to cache this prefix, rather than leaving it to be noticed on a
+        billing dashboard.
         """
         camera = getattr(self, "_current_camera", "")
         return self._camera_prompts.get(
             camera, self._base_prompt
         ) + self._camera_context_segment(camera)
+
+    #: Whether this provider has a prompt cache at all. Only the two that
+    #: do put a ``cache=`` field on the per-clip summary line — on every
+    #: other provider it would be a permanent ``0/0`` that says nothing.
+    _supports_prompt_caching: bool = False
+
+    @staticmethod
+    def _api_error_code(exc: Exception) -> str:
+        """The provider's own machine-readable error code, or "" if absent.
+
+        Both SDKs hang the decoded JSON error body off the exception, but
+        only OpenAI fills in a ``code``; Anthropic names the failure class
+        in ``type`` instead, so that is the fallback. An HTTP error with no
+        body at all — which is what an infrastructure failure in front of
+        the API looks like, as opposed to a considered refusal from it —
+        returns "".
+        """
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            error = body.get("error")
+            if isinstance(error, dict):
+                return str(error.get("code") or error.get("type") or "")
+        return ""
+
+    @staticmethod
+    def _api_error_message(exc: Exception) -> str:
+        """The provider's human-readable error text, however it arrived."""
+        return str(getattr(exc, "message", "") or exc)
+
+    def _prompt_cache_key(self) -> str:
+        """A stable cache-routing key for the current camera's prompt prefix.
+
+        OpenAI keeps prompt-cache entries on individual machines, and on
+        models before GPT-5.6 a request only reads an entry if it happens
+        to land on the machine holding one; ``prompt_cache_key`` is the
+        documented way to steer related requests to the same place. It is
+        derived from the reusable prefix itself rather than from the camera
+        name, which gets several things at once: it is stable for exactly
+        as long as the prefix is (a re-worded prompt moves to a new key
+        rather than reporting misses against the old one), cameras with
+        different prompts route separately while cameras sharing one prompt
+        share a key, and no camera name or other detail of the install is
+        recoverable from it.
+
+        Not the fix for an uncached prefix, and not claimed as one — see
+        ``_build_openai_create_kwargs`` for what actually decides that.
+        """
+        digest = hashlib.sha256(self._prompt_cache_prefix().encode("utf-8")).hexdigest()
+        return f"blink-clip-downloader-{digest[:16]}"
+
+    def _note_cache_usage(self, read_tokens: int, write_tokens: int) -> None:
+        """Record what the provider reported about its prompt cache.
+
+        Both providers answer "this prompt was not cached" the same silent
+        way — zero read *and* zero written, no error — and the reason is
+        always the same: the reusable prefix is too short to be cacheable on
+        this model. Anthropic publishes the figure per model (4096 tokens on
+        the default ``claude-haiku-4-5``); OpenAI does not, and places the
+        boundary itself at fixed intervals, measured at just under 1,900
+        tokens for the first one on ``gpt-5.4-nano``. Left alone this is
+        invisible short of reading a billing dashboard, so it gets said
+        once, after enough calls that a single cold start can't trigger it.
+        """
+        self._last_cache_read_tokens = max(0, read_tokens)
+        self._last_cache_write_tokens = max(0, write_tokens)
+        if read_tokens or write_tokens:
+            self._cache_inert_calls = 0
+            return
+        self._cache_inert_calls += 1
+        if self._cache_inert_reported or self._cache_inert_calls < _CACHE_INERT_CALLS:
+            return
+        self._cache_inert_reported = True
+        _LOGGER.info(
+            "Prompt caching is having no effect on %s/%s: %d consecutive "
+            "request(s) reported neither a cached nor a cache-written token. "
+            "The reusable part of the prompt — the ai_prompt text plus this "
+            "camera's description, about %d characters — is below the length "
+            "this model can cache, so every request is paying full price for "
+            "it. A longer ai_prompt, or a model with a lower minimum, is what "
+            "changes that; nothing is otherwise wrong.",
+            self.provider_name,
+            self.model_name(),
+            self._cache_inert_calls,
+            len(self._prompt_cache_prefix()),
+        )
+
+    def _cache_summary_token(self) -> str:
+        """``cache=`` field for the per-clip summary line, or "" if N/A."""
+        if not self._supports_prompt_caching:
+            return ""
+        return (
+            f" cache={self._last_cache_read_tokens}r/{self._last_cache_write_tokens}w"
+        )
 
     def _split_cache_prefix(self, prompt: str) -> tuple[str, str]:
         """Split *prompt* into its cacheable static prefix and per-clip tail.
@@ -3974,6 +4108,8 @@ class AnthropicAnalyzer(BaseAnalyzer):
         self._model = model or "claude-haiku-4-5"
         self._client: Any = None
 
+    _supports_prompt_caching = True
+
     @property
     def provider_name(self) -> str:
         return "anthropic"
@@ -4220,6 +4356,7 @@ class AnthropicAnalyzer(BaseAnalyzer):
                 int(response.usage.input_tokens or 0) + cache_read + cache_write
             )
             self._last_completion_tokens = int(response.usage.output_tokens or 0)
+            self._note_cache_usage(cache_read, cache_write)
             if cache_read or cache_write:
                 _LOGGER.debug(
                     "Anthropic prompt cache: %d token(s) read, %d written",
@@ -4251,18 +4388,58 @@ class AnthropicAnalyzer(BaseAnalyzer):
                 "Anthropic: rate limit hit — API quota exceeded; "
                 "analysis will resume on the next cycle"
             )
+        elif isinstance(exc, _anthropic.NotFoundError):
+            # Same two-failures-one-status-code split as OpenAI's 404 above,
+            # for the same reasons — see that branch.
+            message = self._api_error_message(exc)
+            if "model" in message.lower():
+                self._last_transient_error = False
+                _LOGGER.error(
+                    "Anthropic: model %r does not exist or this API key has no "
+                    "access to it (HTTP 404) — check anthropic_model in the "
+                    "add-on settings against the Models tab's list. %s",
+                    self._model,
+                    message,
+                )
+            else:
+                _LOGGER.warning(
+                    "Anthropic: HTTP 404 with no error detail, which points at "
+                    "a transient failure reaching the API rather than a "
+                    "rejected request — this clip will be retried on the next "
+                    "cycle"
+                )
         elif isinstance(exc, _anthropic.BadRequestError):
-            self._last_transient_error = False
-            _LOGGER.exception(
-                "Anthropic: bad request (HTTP 400) — %s; "
-                "check that the selected model supports vision",
-                exc.message,  # type: ignore[attr-defined]
-            )
+            message = self._api_error_message(exc)
+            if "credit balance" in message.lower():
+                # Anthropic reports an empty balance as a 400 rather than a
+                # 429, which the branch below would otherwise treat as a
+                # permanently malformed request and fail every queued clip
+                # over. It is the same situation as OpenAI's
+                # insufficient_quota: an account-level state that clears
+                # when credit is added, so it pauses the batch and keeps the
+                # clip retryable instead.
+                self._last_rate_limited = True
+                _LOGGER.error(
+                    "Anthropic: the account's credit balance is too low to use "
+                    "the API — this is a billing limit rather than a bad "
+                    "request, so it will not clear on its own; add credit under "
+                    "Plans & Billing and queued clips resume from where they "
+                    "stopped",
+                )
+            else:
+                self._last_transient_error = False
+                _LOGGER.error(
+                    "Anthropic: bad request (HTTP 400) — %s; "
+                    "check that the selected model supports vision",
+                    message,
+                )
         elif isinstance(exc, _anthropic.APIStatusError):
-            _LOGGER.exception(
-                "Anthropic API error HTTP %d: %s",
+            # No stack trace, for the same reason as the OpenAI branch.
+            _LOGGER.warning(
+                "Anthropic API error HTTP %d: %s — this clip will be retried "
+                "on the next cycle",
                 exc.status_code,  # type: ignore[attr-defined]
-                exc.message,  # type: ignore[attr-defined]
+                self._api_error_message(exc),
             )
         elif isinstance(exc, _anthropic.APIConnectionError):
             _LOGGER.warning("Anthropic: connection error — %s", exc)
@@ -4276,6 +4453,13 @@ class AnthropicAnalyzer(BaseAnalyzer):
 # ---------------------------------------------------------------------------
 # OpenAI provider
 # ---------------------------------------------------------------------------
+
+# OpenAI error codes that arrive as an HTTP 429 but mean "this account is out
+# of money", not "you are going too fast". The distinction matters in the log:
+# the rate-limit wording tells a user to wait, and waiting never fixes this.
+_OPENAI_NO_CREDIT_CODES: frozenset[str] = frozenset(
+    {"insufficient_quota", "credit_balance_exhausted", "billing_hard_limit_reached"}
+)
 
 
 class OpenAIAnalyzer(BaseAnalyzer):
@@ -4325,6 +4509,8 @@ class OpenAIAnalyzer(BaseAnalyzer):
         self._api_key = api_key
         self._model = model or "gpt-4o-mini"
         self._client: Any = None
+
+    _supports_prompt_caching = True
 
     @property
     def provider_name(self) -> str:
@@ -4503,24 +4689,42 @@ class OpenAIAnalyzer(BaseAnalyzer):
             for frame in resized
         ]
 
-        # Prompt caching. Unlike Anthropic's, OpenAI's cache is automatic —
-        # there is no cache_control marker to place; the API reuses any prompt
-        # prefix it has seen recently (1024 tokens minimum on current models,
-        # varying with request settings on older ones) at a discount on the
-        # reused part. What it needs from us is a prefix that actually
-        # repeats: with the frames emitted first, every request's prefix
-        # diverged at the first image and nothing beyond the short system
-        # message could ever be reused — a measured 0% hit rate over millions
-        # of input tokens. Moving the static, camera-scoped portion of the
-        # prompt ahead of the frames gives consecutive clips on the same
-        # camera a substantial identical prefix to hit. Same text, same order
-        # relative to itself — only its position relative to the frames
-        # changes.
+        # Prompt caching. OpenAI reuses a prompt *prefix* it has seen
+        # recently at a large discount on the reused part, so the static,
+        # camera-scoped portion of the prompt is emitted ahead of the frames:
+        # with the frames first, every request diverged at the first image
+        # and nothing beyond the short system message could ever repeat.
+        # Same text, same order relative to itself — only its position
+        # relative to the frames changes.
         #
-        # No model-specific branching is needed here: caching is on by default
-        # wherever it is supported, the static-content-first requirement is
-        # the same across model families, and a model that does not support it
-        # at all (gpt-4, gpt-4-turbo) is simply unaffected by the reordering.
+        # Where that prefix has to *end* is not up to us. On every model
+        # reachable through Chat Completions, OpenAI places the cache
+        # breakpoints itself, at fixed intervals measured from the start of
+        # its own hidden system content — so a prefix only caches if it is
+        # long enough to reach the first one. Measured against a real
+        # account on gpt-5.4-nano with this exact request shape (8 frames, a
+        # strict output schema, reasoning effort "medium"): a static prefix
+        # of 1,832 tokens cached nothing, 1,882 cached 1,792, and the next
+        # boundary sat 2,048 tokens further on. This add-on's own prefix is
+        # roughly 1,400 tokens including the system message, so it falls
+        # short of the first boundary unless the configured ai_prompt is
+        # longer than the shipped default — which is why cache activity is
+        # reported per analysis rather than assumed (see _note_cache_usage).
+        #
+        # The explicit ``prompt_cache_breakpoint``/``prompt_cache_options``
+        # fields that would let us mark the boundary ourselves are
+        # deliberately not sent. They exist on the Chat Completions schema
+        # and are validated (a bad mode is rejected with HTTP 400), but they
+        # have no effect here: measured on gpt-5.6-luna and gpt-6-astra,
+        # every layout — breakpoint inside the user message, in the system
+        # message, in a message of its own, with implicit mode and with
+        # explicit-only mode, at prefixes up to 8,132 tokens — reported zero
+        # tokens read and zero written. Prompt caching for those models is a
+        # Responses API feature, and this analyzer speaks Chat Completions.
+        # Sending the fields anyway would be inert at best, and
+        # ``{"mode": "explicit"}`` actively suppresses the implicit
+        # breakpoint, so it would risk turning caching off the moment the
+        # rest of it did start working.
         cache_prefix, remainder = self._split_cache_prefix(prompt)
         content: list[dict[str, Any]] = []
         if cache_prefix:
@@ -4540,18 +4744,23 @@ class OpenAIAnalyzer(BaseAnalyzer):
         ]
 
         model_lower = model.lower()
-        is_reasoning_model = model_lower.startswith(("o1", "o3", "o4", "gpt-5"))
+        is_reasoning_model = model_lower.startswith(
+            ("o1", "o3", "o4", "gpt-5", "gpt-6")
+        )
         supports_structured_outputs = any(
             prefix in model_lower
-            for prefix in ("gpt-4o", "gpt-4.1", "gpt-5", "o4-mini")
+            for prefix in ("gpt-4o", "gpt-4.1", "gpt-5", "gpt-6", "o4-mini")
         )
         create_kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages_to_send,
         }
-        # The o1/o3/o4-mini reasoning models and the gpt-5 family reject the
-        # legacy `max_tokens` param (HTTP 400 "unsupported_parameter") and
-        # require `max_completion_tokens` instead. Their invisible reasoning
+        if cache_prefix:
+            create_kwargs["prompt_cache_key"] = self._prompt_cache_key()
+        # The o1/o3/o4-mini reasoning models and the gpt-5/gpt-6 families
+        # reject the legacy `max_tokens` param (HTTP 400
+        # "unsupported_parameter") and require `max_completion_tokens`
+        # instead. Their invisible reasoning
         # tokens are billed from the same budget as the visible completion,
         # so give them extra headroom over the 512 used for non-reasoning
         # models to avoid a truncated/empty response on a harder clip.
@@ -4600,8 +4809,18 @@ class OpenAIAnalyzer(BaseAnalyzer):
             self._last_completion_tokens = int(response.usage.completion_tokens or 0)
             details = getattr(response.usage, "prompt_tokens_details", None)
             cached = int(getattr(details, "cached_tokens", 0) or 0)
-            if cached:
-                _LOGGER.debug("OpenAI prompt cache: %d token(s) reused", cached)
+            # cache_write_tokens only exists on the models that charge for a
+            # write (GPT-5.6 and later); on every earlier model a write is
+            # free and simply not reported, so its absence is not a sign
+            # that nothing was written.
+            written = int(getattr(details, "cache_write_tokens", 0) or 0)
+            self._note_cache_usage(cached, written)
+            if cached or written:
+                _LOGGER.debug(
+                    "OpenAI prompt cache: %d token(s) reused, %d written",
+                    cached,
+                    written,
+                )
 
         choice = response.choices[0] if response.choices else None
         if choice and choice.message and choice.message.content:
@@ -4624,22 +4843,70 @@ class OpenAIAnalyzer(BaseAnalyzer):
             )
         elif isinstance(exc, _openai.RateLimitError):
             self._last_rate_limited = True
-            _LOGGER.warning(
-                "OpenAI: rate limit hit — API quota exceeded; "
-                "analysis will resume on the next cycle"
-            )
+            code = self._api_error_code(exc)
+            if code in _OPENAI_NO_CREDIT_CODES:
+                # Deliberately still counted as transient: an empty balance
+                # is a permanent state of the *account*, not of the clip, and
+                # topping it up must not require hunting down every clip that
+                # was marked failed while it was empty.
+                _LOGGER.error(
+                    "OpenAI: the account has no API credit left (%s) — this is "
+                    "a billing limit rather than a temporary rate limit, so it "
+                    "will not clear on its own; add credit at "
+                    "platform.openai.com/settings/organization/billing and "
+                    "queued clips resume from where they stopped",
+                    code,
+                )
+            else:
+                _LOGGER.warning(
+                    "OpenAI: rate limit hit — API quota exceeded; "
+                    "analysis will resume on the next cycle"
+                )
+        elif isinstance(exc, _openai.NotFoundError):
+            # A 404 from Chat Completions is two completely different
+            # failures wearing one status code. With an error body naming
+            # the model it is a permanent misconfiguration — retrying it
+            # three times only delays telling the user which setting is
+            # wrong. With no body at all it came from in front of the API
+            # rather than from it, which real installs do see as an
+            # occasional one-off that the very next attempt succeeds
+            # through, so it keeps the default retry treatment and gets a
+            # single line instead of a stack trace through the SDK.
+            message = self._api_error_message(exc)
+            if self._api_error_code(exc) == "model_not_found" or "model" in (
+                message.lower()
+            ):
+                self._last_transient_error = False
+                _LOGGER.error(
+                    "OpenAI: model %r does not exist or this API key has no "
+                    "access to it (HTTP 404) — check openai_model in the "
+                    "add-on settings against the Models tab's list. %s",
+                    model,
+                    message,
+                )
+            else:
+                _LOGGER.warning(
+                    "OpenAI: HTTP 404 with no error detail, which points at a "
+                    "transient failure reaching the API rather than a rejected "
+                    "request — this clip will be retried on the next cycle"
+                )
         elif isinstance(exc, _openai.BadRequestError):
             self._last_transient_error = False
-            _LOGGER.exception(
+            # No stack trace, same reason as the branch below it.
+            _LOGGER.error(
                 "OpenAI: bad request (HTTP 400) — %s; "
                 "check that the selected model supports vision",
-                exc.message,  # type: ignore[attr-defined]
+                self._api_error_message(exc),
             )
         elif isinstance(exc, _openai.APIStatusError):
-            _LOGGER.exception(
-                "OpenAI API error HTTP %d: %s",
+            # No stack trace: every frame of it is inside the OpenAI SDK and
+            # says nothing about this add-on, while burying the status and
+            # message that do.
+            _LOGGER.warning(
+                "OpenAI API error HTTP %d: %s — this clip will be retried on "
+                "the next cycle",
                 exc.status_code,  # type: ignore[attr-defined]
-                exc.message,  # type: ignore[attr-defined]
+                self._api_error_message(exc),
             )
         elif isinstance(exc, _openai.APIConnectionError):
             _LOGGER.warning("OpenAI: connection error — %s", exc)
