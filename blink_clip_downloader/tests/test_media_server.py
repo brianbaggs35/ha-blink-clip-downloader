@@ -4179,7 +4179,13 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
     # is already in hand for sys.path below.
     monkeypatch.setattr(ms, "_moondream_install_state", {"status": "idle", "log": ""})
     fake_pkg_dir = tmp_path / "moondream_packages"
-    monkeypatch.setattr(sys, "path", [str(fake_pkg_dir), *sys.path])
+    # Bound to a name and asserted on below instead of reading sys.path
+    # back: the list monkeypatch installs *is* the object the code under
+    # test mutates (media_server's `sys.path.insert(0, pkg)`), so the two
+    # are equivalent, and this keeps the assertion pointed at the state
+    # this test set up rather than at the ambient interpreter's.
+    fake_sys_path = [str(fake_pkg_dir), *sys.path]
+    monkeypatch.setattr(sys, "path", fake_sys_path)
     captured: list = []
 
     mock_proc = MagicMock()
@@ -4204,7 +4210,7 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
     ):
         await captured[0]
     assert ms._moondream_install_state["status"] == "installed"
-    assert sys.path.count(str(fake_pkg_dir)) == 1
+    assert fake_sys_path.count(str(fake_pkg_dir)) == 1
 
 
 async def test_moondream_run_install_failure_nonzero_returncode(
