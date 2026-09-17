@@ -321,11 +321,15 @@ cmd_restart() {
   # The closest thing this job can do to rehearsing an upgrade without
   # installing two images: stopping and starting recreates the add-on's
   # container while /data survives, which is exactly the transition an
-  # update puts an existing install through. What it proves is the part
-  # that actually breaks people -- that the bundled PostgreSQL cluster
-  # written under /data by the previous run is re-attached and re-read by a
-  # fresh container, rather than the add-on only ever working on the
-  # first-ever start against an empty volume.
+  # update puts an existing install through, rather than the add-on only
+  # ever being exercised on a first-ever start against an empty volume.
+  #
+  # Three separate checks hang off this one restart, and each proves a
+  # different thing: assert-persisted (the /data volume came back),
+  # assert-clean-log (the bundled PostgreSQL cluster was re-opened -- see
+  # that function for why its marker is what establishes this), and
+  # assert-log-contains (an option set through Supervisor beforehand
+  # reached AppConfig on the way back up).
   ha_cli apps stop "$ADDON_SLUG" --raw-json
   poll "Supervisor reports '${ADDON_SLUG}' stopped" 120 3 \
     bash -c "docker exec '$CONTAINER_NAME' ha apps info '$ADDON_SLUG' --raw-json | grep -q '\"state\": *\"stopped\"'"
@@ -395,9 +399,17 @@ cmd_assert_persisted() {
   # The other half of e2e/ha_integration_smoke.mjs's PERSISTENCE_MARKER:
   # that marker was written through the real ingress UI *before*
   # `restart` recreated the add-on's container. Reading it back now proves
-  # /data -- the bundled PostgreSQL cluster included -- genuinely survived
-  # that, which is the transition an upgrade puts every existing install
-  # through and which nothing else in this repo's CI covers.
+  # /data survived that, which is the transition an upgrade puts every
+  # existing install through and which nothing else in this repo's CI
+  # covers.
+  #
+  # Scope, precisely: this reads a settings file, so what it establishes is
+  # that the /data volume came back -- the same volume the bundled
+  # PostgreSQL cluster lives on, but not that PostgreSQL re-opened it. That
+  # half is covered by assert-clean-log's "Media server listening" marker:
+  # app.py awaits ClipDatabase.init() inline *before* creating the media
+  # server task, so a cluster that failed to re-attach means that line
+  # never appears.
   #
   # Read over the add-on's own direct port rather than through ingress:
   # this runs after the browser is gone, and the direct port is already
@@ -483,6 +495,74 @@ cmd_diagnostics() {
   echo "Diagnostics written to $out_dir"
 }
 
+cmd_set_option() {
+  # Changes one add-on option the way the Configuration tab does, so the
+  # restart that follows rehearses the whole Supervisor->app contract:
+  # Supervisor writes /data/options.json, AppConfig parses it, and the
+  # running app acts on it. Nothing else in CI covers that path -- pytest
+  # reads options.json straight off disk, and every other job here runs
+  # the add-on on defaults only.
+  #
+  # Read-modify-write rather than posting the one key: POST
+  # /addons/{slug}/options *replaces* the whole options dict and then
+  # validates it against the add-on's schema (confirmed by reading
+  # Supervisor's own source, supervisor/api/apps.py's options handler --
+  # `app.options = body[ATTR_OPTIONS]` followed by `app.schema(...)`).
+  # config.yaml has required options with no "?" (username, password,
+  # download_path, ...), so posting a lone key would fail validation and
+  # leave the add-on unconfigured.
+  local key="${1:?option key required}" value="${2:?option value required}"
+  local info merged
+  info="$(supervisor_api GET "/addons/${ADDON_SLUG}/info")"
+
+  # python3 rather than jq: the runner has it, and this script has never
+  # needed jq for anything else.
+  merged="$(printf '%s' "$info" | python3 -c '
+import json, sys
+key, raw = sys.argv[1], sys.argv[2]
+try:
+    value = json.loads(raw)          # 17 -> int, "x" stays a string below
+except json.JSONDecodeError:
+    value = raw
+options = json.load(sys.stdin)["data"]["options"]
+options[key] = value
+print(json.dumps({"options": options}))
+' "$key" "$value")"
+
+  supervisor_api POST "/addons/${ADDON_SLUG}/options" "$merged" >/dev/null
+
+  # Read back rather than trusting the POST: a silently-ignored option
+  # would otherwise surface as a confusing failure in the log assertion
+  # after the restart instead of here, where the cause is obvious.
+  local after
+  after="$(supervisor_api GET "/addons/${ADDON_SLUG}/info" \
+    | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['options'].get('$key'))")"
+  if [[ "$after" != "$value" ]]; then
+    echo "Supervisor did not store the '$key' option." >&2
+    echo "  sent: $value" >&2
+    echo "  read back: $after" >&2
+    return 1
+  fi
+  echo "OK: Supervisor stored ${key}=${value}; the next start should pick it up"
+}
+
+cmd_assert_log_contains() {
+  # Proves the add-on actually *consumed* what Supervisor stored. app.py
+  # logs its resolved configuration at startup, so a value appearing there
+  # after a restart is end-to-end evidence that options.json reached
+  # AppConfig -- not merely that Supervisor persisted it.
+  local pattern="${1:?grep pattern required}" description="${2:-$1}"
+  local log
+  log="$(ha_cli apps logs "$ADDON_SLUG" 2>&1 || true)"
+  if ! printf '%s\n' "$log" | grep -qE "$pattern"; then
+    echo "The add-on's log never showed: $description" >&2
+    echo "Last 40 lines:" >&2
+    printf '%s\n' "$log" | tail -40 >&2
+    return 1
+  fi
+  echo "OK: add-on log shows $description"
+}
+
 case "${1:-}" in
   prepare-addon-copy) cmd_prepare_addon_copy ;;
   wait-docker) cmd_wait_docker ;;
@@ -505,12 +585,20 @@ case "${1:-}" in
     cmd_assert_version "$@"
     ;;
   enable-ingress-panel) cmd_enable_ingress_panel ;;
+  set-option)
+    shift
+    cmd_set_option "$@"
+    ;;
+  assert-log-contains)
+    shift
+    cmd_assert_log_contains "$@"
+    ;;
   diagnostics)
     shift
     cmd_diagnostics "$@"
     ;;
   *)
-    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|diagnostics <dir>}" >&2
+    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
     exit 64
     ;;
 esac
