@@ -142,9 +142,14 @@ _YOLO_MODEL_CACHE_DIR = "/data/model_cache/yolo"
 #: Confidence a detection must clear to be kept at all, unless the tracker
 #: itself vouched for it with a track id.
 #:
-#: Ultralytics' ``model.track()`` hard-sets ``conf=0.1`` — deliberately, and
-#: not as a detection threshold: ByteTrack's second association stage wants
-#: weak boxes so it can re-attach them to tracks it already trusts. ByteTrack
+#: Ultralytics' ``model.track()`` defaults ``conf`` to 0.1 — deliberately,
+#: and not as a detection threshold: ByteTrack's second association stage
+#: wants weak boxes so it can re-attach them to tracks it already trusts.
+#: It is overridable (``kwargs["conf"] = 0.1 if kwargs.get("conf") is None``
+#: in Model.track, ultralytics 8.4.155), and is deliberately left alone:
+#: raising it would deny the tracker exactly the weak boxes the escape
+#: hatch below exists to convert back into recall. Filtering after the
+#: fact, on whether the tracker vouched for a box, keeps both. ByteTrack
 #: never *starts* a track from one (``new_track_thresh: 0.25`` in
 #: bytetrack.yaml), so a sub-0.25 box with no id is a box ultralytics itself
 #: would not have believed.
@@ -2026,6 +2031,15 @@ class VisionHints:
     #: final result can say which evidence was missing instead of quietly
     #: concluding without it.
     unavailable_sources: list[str] = field(default_factory=list)
+    #: Stages that had nothing in *this clip* to measure — as opposed to
+    #: being switched off, missing a dependency, or failing. Kept apart from
+    #: unavailable_sources because the two mean opposite things to anything
+    #: reading them: a stage that could not run is missing evidence, while a
+    #: stage with no question to answer is not. Conflating them told the AI
+    #: that depth, contact and pose evidence was "unavailable" on every clip
+    #: with no person-and-vehicle pair in it — most clips — and docked the
+    #: evidence-quality score for it.
+    not_applicable_sources: list[str] = field(default_factory=list)
     #: An updated learned vehicle signature to persist, set only when this
     #: clip identified the protected vehicle confidently enough to learn
     #: from (see :mod:`blink_downloader.security.vehicles`).
@@ -2165,6 +2179,8 @@ class VisionPipeline:
         vehicle_signature: VehicleSignature | None,
     ) -> None:
         """Frame preprocessing, detection, tracking and vehicle identification."""
+        # Enhancement exists for the *prompt* images: CLAHE lifts a dark
+        # night frame into something a vision-language model can read.
         hints.enhanced_frames = FrameEnhancer.enhance(frames)
 
         # `0` means "no wider scan" (see DOCS.md's ai_temporal_scan_frames):
@@ -2175,16 +2191,24 @@ class VisionPipeline:
         selected, scan_interval = _select_scan_frames(
             raw_pool if cap > 0 else frames, cap, frame_interval
         )
-        # Enhancement includes denoising, which is the most expensive thing
-        # this module does without a model behind it. When the scan set is
-        # the very same list that was just enhanced for the prompt — the
-        # case whenever no wider raw pool was supplied — reuse that result
-        # rather than paying for it twice on hardware where it matters.
-        scan_frames = (
-            hints.enhanced_frames
-            if selected is frames
-            else FrameEnhancer.enhance(selected)
-        )
+        # Every stage below is a *model*, and every one of them gets the raw
+        # frames — the same rule process_clip already applies to face
+        # recognition, and for the same underlying reason: these models were
+        # trained on ordinary photographs, and CLAHE plus non-local-means
+        # denoising is not one. Scan frames used to be enhanced, and it cost
+        # real accuracy rather than buying any: measured over COCO128 at the
+        # thresholds this pipeline actually uses, enhancement lost real
+        # detections on every model tried and came out behind on F1 every
+        # time, whichever way its false-positive count moved. On a dark
+        # driveway it is worse than the averages suggest, because local
+        # contrast normalisation invents structure exactly where there is
+        # least real signal — a house reported as a "truck", a second
+        # "person" beside the only one present, a "cat" in a clip with no
+        # animal in it, all of which disappear on the unenhanced frame.
+        # Dropping it here also stops the denoiser, by far the most
+        # expensive thing this module does without a model behind it, from
+        # running over the whole scan set at all.
+        scan_frames = selected
         hints.scan_frame_count = len(scan_frames)
         hints.scan_interval = scan_interval
 
@@ -2193,15 +2217,23 @@ class VisionPipeline:
         if not detections:
             if detections is None:
                 hints.unavailable_sources.append(SOURCE_OBJECT_DETECTION)
+                # The detector itself could not run, so the stages that
+                # work from its boxes could not either.
+                hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
+                hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
+                hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
             else:
                 # Ran and found nothing, which is not the same as not having
                 # run — only the former is evidence, and conflating the two
                 # would tell the model "nobody was here" on a clip the
                 # detector never actually looked at.
                 hints.detection_hint = _build_detection_hint([], car_description)
-            hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
-            hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
-            hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
+                # Same distinction one level down: with no boxes at all
+                # there is nothing for depth, contact or pose to measure.
+                # That is an empty clip, not missing evidence.
+                hints.not_applicable_sources.append(SOURCE_DEPTH_ESTIMATION)
+                hints.not_applicable_sources.append(SOURCE_CONTACT_SEGMENTATION)
+                hints.not_applicable_sources.append(SOURCE_POSE_ESTIMATION)
             return
 
         # A frame that won't decode costs the security layer its geometry,
@@ -2351,9 +2383,16 @@ class VisionPipeline:
         """
         pair = self._select_pair(hints, detections, zone_ref)
         if pair is None:
-            hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
-            hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
-            hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
+            # All three of these answer "how close did this subject get to
+            # that vehicle". With no subject, or no vehicle, the question
+            # does not arise — so they are not applicable rather than
+            # unavailable. This is the common case (a person and no car in
+            # frame, or cars and nobody around), and reporting it as missing
+            # evidence both misinformed the prompt and cost the clip
+            # evidence-quality points it had done nothing to lose.
+            hints.not_applicable_sources.append(SOURCE_DEPTH_ESTIMATION)
+            hints.not_applicable_sources.append(SOURCE_CONTACT_SEGMENTATION)
+            hints.not_applicable_sources.append(SOURCE_POSE_ESTIMATION)
             return
         subject, asset_box, frame_idx, track_id = pair
         hints.contact_track_id = track_id

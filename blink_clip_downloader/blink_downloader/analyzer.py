@@ -1193,7 +1193,8 @@ class BaseAnalyzer(abc.ABC):
         """
         _LOGGER.info(
             "Analyzed clip=%r camera=%r provider=%s frames=%d suspicious=%s "
-            "detections=%d tracks=%d scan_frames=%d vehicle=%s missing=%s %s%s",
+            "detections=%d tracks=%d scan_frames=%d vehicle=%s missing=%s "
+            "n/a=%s %s%s",
             clip_id,
             camera,
             self.provider_name,
@@ -1204,6 +1205,11 @@ class BaseAnalyzer(abc.ABC):
             getattr(vision_hints, "scan_frame_count", 0),
             self._describe_vehicle_identification(vision_hints),
             ",".join(getattr(vision_hints, "unavailable_sources", []) or []) or "none",
+            # Separate from missing= on purpose: these are stages that had
+            # nothing in this clip to measure, which reads very differently
+            # from a stage that could not run. See VisionHints.
+            ",".join(getattr(vision_hints, "not_applicable_sources", []) or [])
+            or "none",
             summarize_assessment(security.assessment) if security else "risk=n/a",
             self._cache_summary_token(),
         )
@@ -1428,6 +1434,7 @@ class BaseAnalyzer(abc.ABC):
                 posture_arm_raised=posture.arm_raised if posture else None,
                 posture_crouching=posture.crouching if posture else None,
                 unavailable_sources=vision_hints.unavailable_sources,
+                not_applicable_sources=vision_hints.not_applicable_sources,
                 is_night=self._is_night(clip_timestamp),
                 approved_person_recognized=self._face_match_is_unambiguous(
                     vision_hints

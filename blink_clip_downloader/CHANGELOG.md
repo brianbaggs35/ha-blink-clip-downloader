@@ -70,6 +70,166 @@ the player became ready a moment too late to use a source, the session was
 still recorded as "already sourced", so every later poll mistook it for
 playing and it was never loaded at all.
 
+### Object detection was being handed frames no model was trained on
+
+A house reported as a "truck", a second "person" standing beside the only
+one there, a "cat" in a clip with no animal in it. These are not simply the
+model being wrong: the detector was being fed the wrong pictures.
+
+Frames are CLAHE contrast-boosted and non-local-means denoised before
+analysis, which is the right thing to do for the *prompt* images — it lifts
+a dark night frame into something a vision-language model can read. Those
+same enhanced frames were also what YOLO scanned. YOLO was trained on
+ordinary photographs, and aggressive local contrast normalisation is not
+one: it invents structure exactly where there is least real signal, which
+on a night driveway is most of the picture.
+
+Measured, not assumed. Over the 128-image COCO128 set, pushed through this
+add-on's own pipeline (ffmpeg's 640-wide rescale, then the enhancement
+byte-for-byte) and scored against the published ground truth at IoU 0.5,
+enhancement lost real detections on every model tried, and came out behind
+on F1 every time — whichever way its false-positive count happened to move:
+
+| model | F1, raw frames | F1, enhanced | real detections lost |
+| --- | --- | --- | --- |
+| `yolo26n` | 0.710 | 0.688 | 10 of 253 |
+| `yolo26s` | 0.742 | 0.731 | 12 of 283 |
+| `yolo26m` | 0.793 | 0.773 | 13 of 308 |
+| `yolo11n` | 0.689 | 0.679 | 8 of 251 |
+
+On a real night scene it is worse than those averages suggest, because
+that is where local contrast normalisation has the least to work with.
+Running the frame from the report above through both paths on `yolo26m`,
+at the 640-wide size the pipeline actually uses:
+
+| | raw frame | enhanced frame |
+| --- | --- | --- |
+| the car in the driveway | 0.85 | 0.74 |
+| the person by the car | **0.45** | **0.11** — below the keep threshold |
+| a car that is not there | — | 0.32 |
+
+So the enhancement was inventing a vehicle and all but erasing the real
+person in the same frame. On `yolo26n` the same comparison turns the one
+correct detection into three, the two extras being a phantom `car` and a
+phantom `truck` — the exact failure in the report.
+
+Every model stage now scans the raw frames. This is not a new idea and not
+a tuning tweak: it is the rule the pipeline already applied to face
+recognition, for the same reason (enrolled faces are embedded from raw
+reference photos, so matching enhanced frames against them compares two
+different measurements). Object detection, tracking, depth, contact
+segmentation, pose and the vehicle colour fingerprint were the stages still
+on the other side of it. The prompt images are unaffected and are still
+enhanced.
+
+It is a change to the frames, not to any model, so it applies to every
+selectable model — `yolo26n` through `yolo26x`, `yolo11n` through
+`yolo11x` — and to the stages that have no model choice at all. It does
+not make detection perfect: a nano model looking at a dark street will
+still make mistakes, and a larger model is still the bigger lever there.
+What it removes is a class of mistake the add-on was manufacturing.
+
+Two neighbouring knobs were measured and deliberately left alone, so the
+question does not have to be reopened from scratch next time.
+
+*Inference size* stays at 640. Raising it looked promising on the reported
+frame alone — on `yolo26m` the person went from 0.45 to 0.73 at 960, and
+two real cars the detector had missed entirely appeared. Across the whole
+COCO128 set it does not hold up: `yolo26m` does gain (F1 0.793 to 0.810)
+but at 2.2x the inference time, while `yolo26n` — the default — gets
+steadily *worse* (0.710, then 0.696 at 960, then 0.668 at 1280, its false
+positives climbing from 39 to 73). 1280 collapses both. These models are
+trained at 640, and pushing past that trades precision for a little reach,
+more harmfully the smaller the model. There is no single value that is an
+improvement for every selectable model, which is what this would have to be.
+
+*The tracker's confidence floor* stays at 0.1 with the existing
+after-the-fact filter. `model.track()` only defaults to 0.1 (it has been
+overridable since some ultralytics version at or before 8.4.155, so the
+comment calling it hard-set has been corrected), but raising it would deny
+ByteTrack the weak boxes it re-attaches to tracks it already trusts. That
+is not theoretical: replayed over a realistic twelve-frame static-camera
+clip, the *enhanced* frames pushed the one real person down to 0.13-0.46,
+and seven of that person's twelve sightings survived only because the
+tracker had vouched for them. On raw frames the same person scores 0.32-0.62 on every
+frame and not one box needs that rescue — the safety net is still there,
+it simply stopped being load-bearing.
+
+It is also cheaper. The denoiser is by far the most expensive thing the
+vision pipeline does without a model behind it — about 200 ms per frame on
+the development machine, and it was running over the whole temporal scan
+set, up to 12 frames per clip, on top of the prompt frames. It now runs
+only on the handful of frames the prompt actually uses.
+
+One stage was worth checking rather than assuming, since it feeds the
+impact rule that can withhold the face-recognition bypass: the before/after
+comparison that notices a vehicle changing during a clip. Denoising might
+plausibly have been steadying it. Measured on the same night frame with
+synthetic sensor noise added, its noise floor is *lower* without the
+enhancement at every noise level tested (0.010 vs 0.017 at the mildest,
+0.054 vs 0.077 at the harshest, against about 0.36 for a genuinely
+different region) — CLAHE was amplifying noise faster than the denoiser
+removed it. That path gets quieter here, not louder.
+
+**One-time effect on protected-vehicle identification.** A camera's
+learned vehicle colour fingerprint is measured from these same frames, so
+one learned before this release is no longer measured the same way as what
+it is now compared against. That is not a rounding difference: on real
+night footage the same car's raw and enhanced fingerprints score about
+0.72-0.88 cosine against each other, while two genuinely *different* cars
+score about 0.69 — close enough to blur the distinction the fingerprint
+exists to make, and the slow blend that keeps a signature stable would
+take dozens of clips to walk it back. Upgrading therefore clears the
+stored fingerprint once, and only the fingerprint: the learned parking
+position and sample count are measured the same way as before and are kept,
+so identification keeps working on zone and position while the next
+confident sighting relearns the colour in a single step. Nothing needs to
+be reset by hand, and the Vehicles tab's own "Reset" button is unchanged.
+
+### "missing=depth estimation,contact segmentation,pose estimation" on almost every clip
+
+Not a broken install, and not those stages failing — but not right either.
+
+Depth estimation, contact segmentation and pose estimation all answer one
+question: *how close did this subject get to that vehicle*. They are pointed
+at a subject/vehicle pair, so on a clip with a person and no car in frame,
+or cars and nobody around, there is no pair and nothing for them to measure.
+That is most clips. The pipeline reported it as `missing=`, in the same list
+it uses for a stage that was switched off or whose dependency was absent.
+
+Those are opposite things, and everything downstream was reading the
+conflated list:
+
+- **The AI prompt** was told "Evidence sources unavailable for this clip:
+  depth estimation, contact segmentation, pose estimation" on clips where
+  no such evidence was ever called for — priming the model to treat its own
+  reading as thinner than it was.
+- **The evidence-quality score** docked the clip for it. `stage_coverage`
+  was `1 - unavailable / 4`, so three not-applicable stages scored it at
+  0.25 instead of 1.0, taking about 0.075 off the overall quality of
+  virtually every ordinary clip.
+- **The risk score** is damped by evidence quality, so those same clips came
+  out roughly 3% lower in risk than the evidence warranted — small, but
+  systematic, and in the under-reporting direction.
+
+The two are now tracked separately. `stage_coverage` is scored over the
+stages that actually had something to contribute ("of those that could have
+spoken, how many did"), and when none were applicable the factor is dropped
+entirely and the remaining weights renormalize — the same treatment
+`subject_size` already gets on a clip with no subject in it. The prompt's
+"unavailable" line now only names stages that genuinely could not run, and
+the log line gained a separate `n/a=` field so the distinction is visible
+where it was first noticed.
+
+Expect evidence-quality percentages to read slightly higher than before on
+ordinary clips, and risk scores to rise a little with them. That is the
+correction, not a new inflation: the old numbers were carrying a penalty
+for questions that were never asked.
+
+Worth knowing while reading that log line: `ai_pose_estimation_enabled`
+defaults to **off**, so pose estimation will keep appearing — correctly,
+under `missing=` this time — until it is switched on.
+
 ### Stopping a session now tells Blink it has stopped
 
 blinkpy tells Blink's cloud that a live-view command is finished from a

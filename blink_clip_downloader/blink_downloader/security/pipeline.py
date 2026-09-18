@@ -56,6 +56,7 @@ class ClipMeasurements:
     posture_arm_raised: bool | None = None
     posture_crouching: bool | None = None
     unavailable_sources: list[str] | None = None
+    not_applicable_sources: list[str] | None = None
     is_night: bool = False
     approved_person_recognized: bool = False
 
@@ -101,6 +102,7 @@ def assess_clip(
         measurements.tracks,
         measurements.frame_interval,
         measurements.unavailable_sources,
+        measurements.not_applicable_sources,
     )
     events = SecurityEventDetector(thresholds).detect(
         DetectionContext(

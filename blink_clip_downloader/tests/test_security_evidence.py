@@ -115,6 +115,57 @@ def test_more_unavailable_sources_than_expected_floors_at_zero() -> None:
     assert quality.factors["stage_coverage"] == 0.0
 
 
+def test_not_applicable_stages_do_not_count_against_coverage() -> None:
+    """The common clip: a person, no vehicle, so depth/contact/pose have
+    nothing to measure. Counting that as missing evidence docked nearly
+    every ordinary clip for the shape of its own contents."""
+    quality = assess_evidence(
+        6,
+        6,
+        [_track(BIG)],
+        2.0,
+        [],
+        ["depth estimation", "contact segmentation", "pose estimation"],
+    )
+    assert quality.factors["stage_coverage"] == 1.0
+    assert quality.unavailable == []
+
+
+def test_coverage_is_scored_over_the_stages_that_could_have_contributed() -> None:
+    """Face recognition genuinely could not run, and it was the only stage
+    that had anything to contribute — so coverage is zero, not three
+    quarters."""
+    quality = assess_evidence(
+        6,
+        6,
+        [_track(BIG)],
+        2.0,
+        ["face recognition"],
+        ["depth estimation", "contact segmentation", "pose estimation"],
+    )
+    assert quality.factors["stage_coverage"] == 0.0
+    assert quality.unavailable == ["face recognition"]
+
+
+def test_no_applicable_stages_drops_the_factor_rather_than_scoring_zero() -> None:
+    """With nothing applicable there is no coverage to judge. Leaving the
+    factor out lets the other weights renormalize, the same treatment
+    subject_size gets on a clip with no subject."""
+    quality = assess_evidence(6, 6, [_track(BIG)], 2.0, [], ["a", "b", "c", "d"])
+    assert "stage_coverage" not in quality.factors
+    # ...and the remaining factors still produce a real score.
+    assert quality.score > 0.0
+
+
+def test_a_not_applicable_stage_still_leaves_a_real_one_counted() -> None:
+    quality = assess_evidence(
+        6, 6, [_track(BIG)], 2.0, ["depth estimation"], ["pose estimation"]
+    )
+    assert quality.factors["stage_coverage"] == pytest.approx(
+        1 - 1 / (TOTAL_OPTIONAL_SOURCES - 1)
+    )
+
+
 def test_untracked_subjects_halve_continuity_and_say_why() -> None:
     quality = assess_evidence(6, 6, [_track(BIG, tracked=False)], 2.0)
     assert quality.factors["tracking_continuity"] == pytest.approx(0.5)
