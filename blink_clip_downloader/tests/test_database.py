@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import time
 from datetime import UTC, datetime, timedelta
@@ -4817,3 +4818,57 @@ async def test_upgrading_an_existing_database_gains_the_v6_columns(
         assert len(await upgraded.get_security_events("upgraded")) == 1
     finally:
         await upgraded.close()
+
+
+async def test_upgrading_clears_a_vehicle_fingerprint_measured_the_old_way(
+    db: ClipDatabase,
+) -> None:
+    """6.0.5 moved the model stages onto raw frames, so a colour fingerprint
+    learned from CLAHE-enhanced ones is no longer measured the same way and
+    has to go. Simulates a pre-6.0.5 install: drop the marker column and
+    seed a row the way that version would have, then re-run init()."""
+    assert db._pool is not None
+    await db._pool.execute(
+        "ALTER TABLE camera_vehicle_signatures DROP COLUMN histogram_pipeline"
+    )
+    await db._pool.execute(
+        "INSERT INTO camera_vehicle_signatures "
+        "(camera, box, histogram, sample_count, updated_at) VALUES "
+        "($1, $2, $3, $4, $5)",
+        "Front Door",
+        json.dumps([0.1, 0.2, 0.3, 0.4]),
+        json.dumps([0.5] * 64),
+        22,
+        datetime.now(UTC).isoformat(),
+    )
+
+    upgraded = ClipDatabase(TEST_DB_DSN)
+    await upgraded.init()
+    try:
+        migrated = await upgraded.get_vehicle_signature("Front Door")
+        assert migrated is not None
+        # The stale vector is gone, so appearance simply abstains until the
+        # next confident sighting relearns it.
+        assert migrated.histogram == ()
+        # Everything measured the same way as before survives untouched —
+        # the learned parking position is the expensive half of this.
+        assert migrated.box == (0.1, 0.2, 0.3, 0.4)
+        assert migrated.sample_count == 22
+
+        # A fingerprint relearned after the upgrade must survive every later
+        # start: a migration that re-ran would wipe it on the next restart.
+        relearned = VehicleSignature(
+            box=migrated.box, histogram=tuple([0.9] * 64), sample_count=23
+        )
+        await upgraded.save_vehicle_signature("Front Door", relearned)
+    finally:
+        await upgraded.close()
+
+    restarted = ClipDatabase(TEST_DB_DSN)
+    await restarted.init()
+    try:
+        kept = await restarted.get_vehicle_signature("Front Door")
+        assert kept is not None
+        assert kept.histogram == tuple([0.9] * 64)
+    finally:
+        await restarted.close()

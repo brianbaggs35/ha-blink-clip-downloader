@@ -32,8 +32,11 @@ from blink_downloader.security.vehicles import (
     identify_protected_vehicle,
 )
 from blink_downloader.vision import (
+    SOURCE_CONTACT_SEGMENTATION,
     SOURCE_DEPTH_ESTIMATION,
+    SOURCE_FACE_RECOGNITION,
     SOURCE_OBJECT_DETECTION,
+    SOURCE_POSE_ESTIMATION,
     ContactResult,
     ContactSegmenter,
     CPUIncompatibleError,
@@ -2969,14 +2972,17 @@ async def test_pipeline_reports_only_the_dependent_stages_when_nothing_is_detect
 ) -> None:
     """An empty detection list means the detector ran and saw nothing —
     unlike None, which means it could not run at all, so only that case
-    reports object detection itself as unavailable."""
+    reports object detection itself as unavailable. The stages that work
+    from its boxes then have nothing to measure, which is reported as not
+    applicable rather than as missing evidence."""
     _yolo_env(monkeypatch, _FakeBoxes(cls=[], conf=[], xyxy=[], ids=[]), {})
     pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
     hints = await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
 
     assert hints.detections == []
     assert SOURCE_OBJECT_DETECTION not in hints.unavailable_sources
-    assert SOURCE_DEPTH_ESTIMATION in hints.unavailable_sources
+    assert SOURCE_DEPTH_ESTIMATION not in hints.unavailable_sources
+    assert SOURCE_DEPTH_ESTIMATION in hints.not_applicable_sources
 
 
 async def test_pipeline_skips_the_security_layer_when_disabled(
@@ -3321,6 +3327,10 @@ async def test_pipeline_skips_colour_matching_for_non_vehicle_tracks(
 async def test_pipeline_pair_stages_need_a_subject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A car with nobody near it leaves depth/contact/pose nothing to
+    measure. That is not missing evidence, and must not be reported — or
+    scored — as though the stages had failed: it is the ordinary shape of
+    most clips, and counting it docked nearly all of them."""
     _yolo_env(
         monkeypatch,
         _FakeBoxes(cls=[2], conf=[0.95], xyxy=[(20.0, 20.0, 180.0, 140.0)], ids=[2]),
@@ -3334,7 +3344,12 @@ async def test_pipeline_pair_stages_need_a_subject(
         camera="Driveway",
     )
     assert hints.contact_track_id is None
-    assert "depth estimation" in hints.unavailable_sources
+    assert hints.unavailable_sources == [SOURCE_FACE_RECOGNITION]
+    assert hints.not_applicable_sources == [
+        SOURCE_DEPTH_ESTIMATION,
+        SOURCE_CONTACT_SEGMENTATION,
+        SOURCE_POSE_ESTIMATION,
+    ]
 
 
 # ----------------------------------------------------------------------
@@ -3815,12 +3830,12 @@ async def test_pose_estimator_returns_nothing_when_no_skeleton_matches(
     assert await estimator.analyze(b"frame", _SUBJECT_BOX, _ASSET_BOX) is None
 
 
-async def test_pipeline_enhances_the_scan_frames_once_when_they_are_the_prompt_frames(
+async def test_pipeline_enhances_only_the_prompt_frames(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Denoising is the most expensive thing this module does without a
-    model behind it; paying for it twice on the same list matters on the
-    hardware this add-on targets."""
+    """Enhancement is for the prompt images alone, so it runs exactly once —
+    denoising is the most expensive thing this module does without a model
+    behind it, and that matters on the hardware this add-on targets."""
     _yolo_env(
         monkeypatch,
         _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(10.0, 10.0, 30.0, 90.0)], ids=[1]),
@@ -3840,26 +3855,42 @@ async def test_pipeline_enhances_the_scan_frames_once_when_they_are_the_prompt_f
     assert calls == 1
 
 
-async def test_pipeline_enhances_a_wider_scan_pool_separately(
+async def test_pipeline_never_enhances_the_frames_the_detector_scans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Detection models see raw frames — the rule process_clip already
+    applies to face recognition, for the same reason.
+
+    CLAHE plus non-local-means denoising is not what YOLO was trained on,
+    and feeding it enhanced frames lost true positives while gaining false
+    ones (a house read as a "truck", a second "person" beside the only one
+    there). Asserted on what the detector actually decoded, not on a call
+    count, so tagging the enhanced copies proves which list each consumer
+    was handed."""
     _yolo_env(
         monkeypatch,
         _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(10.0, 10.0, 30.0, 90.0)], ids=[1]),
         {0: "person"},
     )
-    calls = 0
-    original = FrameEnhancer.enhance
-
-    def _counted(frames: list[bytes]) -> list[bytes]:
-        nonlocal calls
-        calls += 1
-        return original(frames)
-
-    monkeypatch.setattr(FrameEnhancer, "enhance", staticmethod(_counted))
-    pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
-    await pipeline.process_clip(
-        [_real_jpeg_bytes(size=(200, 200))],
+    monkeypatch.setattr(
+        FrameEnhancer,
+        "enhance",
+        staticmethod(lambda frames: [b"ENHANCED" + frame for frame in frames]),
+    )
+    pipeline = VisionPipeline(
+        VisionConfig(enhanced_detection_enabled=True, temporal_scan_frames=4)
+    )
+    prompt_frames = [_real_jpeg_bytes(size=(200, 200))]
+    hints = await pipeline.process_clip(
+        prompt_frames,
         raw_frames=[_real_jpeg_bytes(size=(200, 200))] * 4,
     )
-    assert calls == 2
+
+    # The prompt images still get the enhanced copies.
+    assert hints.enhanced_frames == [b"ENHANCED" + prompt_frames[0]]
+    # Nothing the detector decoded carries the marker.
+    decoded = [
+        call.args[0].tobytes() for call in sys.modules["cv2"].imdecode.call_args_list
+    ]
+    assert decoded
+    assert not any(frame.startswith(b"ENHANCED") for frame in decoded)

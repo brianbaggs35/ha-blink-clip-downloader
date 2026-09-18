@@ -106,6 +106,7 @@ def assess_evidence(
     tracks: list[ObjectTrack],
     frame_interval: float,
     unavailable_sources: list[str] | None = None,
+    not_applicable_sources: list[str] | None = None,
 ) -> EvidenceQuality:
     """Score how trustworthy this clip's visual evidence is.
 
@@ -114,12 +115,23 @@ def assess_evidence(
     lower on coverage without needing an absolute frame-count rule that
     would misjudge every non-default configuration.
 
-    *unavailable_sources* names the optional stages that produced nothing
-    for this clip — whether disabled, missing their dependency, or simply
-    not applicable. They are reported verbatim so the final result can state
-    which evidence was missing rather than silently concluding without it.
+    *unavailable_sources* names the optional stages that could not run for
+    this clip — disabled, missing their dependency, or failed. They are
+    reported verbatim so the final result can state which evidence was
+    missing rather than silently concluding without it.
+
+    *not_applicable_sources* names stages that had nothing in this clip to
+    measure, which is not the same thing and must not be scored as though
+    it were: depth, contact and pose all answer "how close did this subject
+    get to that vehicle", so on a clip with no person-and-vehicle pair —
+    most clips — there is no missing evidence, only a question that never
+    arose. Counting those against coverage docked almost every ordinary
+    clip for a structural reason. They are excluded from the numerator and
+    the denominator alike, so coverage means "of the stages that had
+    something to contribute, how many did".
     """
     unavailable = list(unavailable_sources or [])
+    not_applicable = list(not_applicable_sources or [])
     notes: list[str] = []
     factors: dict[str, float] = {}
 
@@ -131,9 +143,14 @@ def assess_evidence(
             f"only {frames_analyzed} of {target_frames} intended frames were analyzed"
         )
 
-    factors["stage_coverage"] = max(
-        0.0, 1.0 - len(unavailable) / TOTAL_OPTIONAL_SOURCES
-    )
+    applicable = TOTAL_OPTIONAL_SOURCES - len(not_applicable)
+    # When nothing could have contributed there is no coverage to judge, so
+    # the factor is left out entirely and the remaining weights renormalize
+    # — the same treatment subject_size already gets on a clip with no
+    # subject in it. Scoring it as zero would punish a clip for the shape of
+    # its own contents.
+    if applicable > 0:
+        factors["stage_coverage"] = max(0.0, 1.0 - len(unavailable) / applicable)
 
     subjects = subject_tracks(tracks)
     if subjects:

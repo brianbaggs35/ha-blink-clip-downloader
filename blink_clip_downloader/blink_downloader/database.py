@@ -175,12 +175,18 @@ CREATE INDEX IF NOT EXISTS idx_security_events_severity
 -- survives a change of frame resolution; histogram is a JSON list of floats.
 -- Per camera, not per clip: a camera that never sees a protected vehicle
 -- simply never gets a row.
+-- histogram_pipeline records which frame pipeline produced `histogram`, so a
+-- future change to that pipeline can invalidate the stored vector instead of
+-- silently comparing vectors measured two different ways. Nothing reads it at
+-- runtime; it exists purely so _MIGRATIONS can tell already-stored rows apart
+-- from freshly-written ones exactly once. See the 6.0.5 entry there.
 CREATE TABLE IF NOT EXISTS camera_vehicle_signatures (
-    camera       TEXT PRIMARY KEY,
-    box          TEXT NOT NULL,
-    histogram    TEXT NOT NULL DEFAULT '[]',
-    sample_count INTEGER DEFAULT 0,
-    updated_at   TEXT NOT NULL
+    camera             TEXT PRIMARY KEY,
+    box                TEXT NOT NULL,
+    histogram          TEXT NOT NULL DEFAULT '[]',
+    histogram_pipeline TEXT NOT NULL DEFAULT 'raw',
+    sample_count       INTEGER DEFAULT 0,
+    updated_at         TEXT NOT NULL
 );
 
 -- Single-row marker for the AI Usage tab's "Clear Stats" button: usage
@@ -371,6 +377,27 @@ ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS risk_override_applied BOOL
 ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS offset_seconds DOUBLE PRECISION DEFAULT 0.0;
 ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_width DOUBLE PRECISION DEFAULT 0.0;
 ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_height DOUBLE PRECISION DEFAULT 0.0;
+-- 6.0.5: object detection and every model stage beside it now scan raw frames
+-- rather than CLAHE-enhanced ones (see vision.py's _run_detection_stages), and
+-- a learned vehicle colour fingerprint is measured from those same frames. The
+-- two are not interchangeable: measured on real night footage, the same car's
+-- raw and enhanced fingerprints score ~0.72-0.88 cosine against each other,
+-- while two genuinely different cars score ~0.69 — so an already-learned
+-- signature would go on judging its own vehicle by a yardstick that no longer
+-- matches, and blend() only walks it back a few percent per clip. Clearing the
+-- vector (and nothing else — the learned parking position and sample count are
+-- measured the same way as before and stay) lets the next confident sighting
+-- relearn it in one step, via blend()'s own length-mismatch path.
+--
+-- Idempotent in three steps, and the ordering is load-bearing: the column is
+-- added defaulting to 'enhanced', which is what every row predating this
+-- migration is; the update then clears exactly those rows and marks them; and
+-- the default finally flips to 'raw' so everything written afterwards is
+-- already correct. A fresh database gets 'raw' from _SCHEMA above and is
+-- matched by none of it.
+ALTER TABLE camera_vehicle_signatures ADD COLUMN IF NOT EXISTS histogram_pipeline TEXT NOT NULL DEFAULT 'enhanced';
+UPDATE camera_vehicle_signatures SET histogram = '[]', histogram_pipeline = 'raw' WHERE histogram_pipeline <> 'raw';
+ALTER TABLE camera_vehicle_signatures ALTER COLUMN histogram_pipeline SET DEFAULT 'raw';
 """
 
 # Minimum recorded clips before a camera's visual scene baseline is trusted
