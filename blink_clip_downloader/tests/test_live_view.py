@@ -166,6 +166,7 @@ def manager(camera_registry: dict[str, Any]) -> LiveViewManager:
         init_timeout=0.2,
         startup_timeout=0.3,
         terminate_timeout=0.05,
+        feed_shutdown_timeout=0.2,
     )
 
 
@@ -1331,3 +1332,71 @@ async def test_drain_stderr_handles_readline_exception(
         assert internal_session.stderr_tail == ""
     finally:
         await manager.stop_session(status.session_id)
+
+
+async def test_teardown_lets_the_relay_finish_telling_blink_it_is_done(
+    camera_registry: dict[str, Any],
+) -> None:
+    """Stopping must not cancel blinkpy's relay mid-cleanup.
+
+    BlinkLiveStream.poll()'s finally clause is what tells Blink the
+    live-view command is finished, and it only runs once the relay has been
+    stopped. Cancelling the task the instant the sockets close killed that
+    request, leaving Blink believing the live view was still running.
+    """
+    finished_cleanly = asyncio.Event()
+
+    class _CleanupStream(_FakeStream):
+        async def feed(self) -> None:
+            try:
+                await self._feed_event.wait()
+            finally:
+                # Stands in for blinkpy's request_command_done() round trip.
+                await asyncio.sleep(0)
+                finished_cleanly.set()
+
+    stream = _CleanupStream()
+    camera_registry["Front Door"] = _make_camera(stream)
+    proc = _FakeProcess()
+    mgr = LiveViewManager(
+        get_camera=_get_camera_from(camera_registry),
+        list_camera_names=lambda: list(camera_registry),
+        terminate_timeout=0.05,
+        feed_shutdown_timeout=0.5,
+    )
+    with _mock_exec(proc):
+        status = await mgr.start_session("Front Door")
+
+    assert await mgr.stop_session(status.session_id) is True
+    assert finished_cleanly.is_set()
+
+
+async def test_teardown_cancels_a_relay_that_overstays_its_grace_period(
+    camera_registry: dict[str, Any],
+) -> None:
+    """A relay that will not finish must not block the manager's lock.
+
+    The grace period above is bounded on purpose: _teardown_locked holds
+    _lock, and switching cameras must never wait on Blink's cloud.
+    """
+
+    class _HangingStream(_FakeStream):
+        async def feed(self) -> None:
+            await asyncio.Event().wait()  # never set, even by stop()
+
+    stream = _HangingStream()
+    camera_registry["Front Door"] = _make_camera(stream)
+    proc = _FakeProcess()
+    mgr = LiveViewManager(
+        get_camera=_get_camera_from(camera_registry),
+        list_camera_names=lambda: list(camera_registry),
+        terminate_timeout=0.05,
+        feed_shutdown_timeout=0.05,
+    )
+    with _mock_exec(proc):
+        status = await mgr.start_session("Front Door")
+    feed_task = mgr._session.feed_task if mgr._session else None
+
+    assert await mgr.stop_session(status.session_id) is True
+    assert feed_task is not None
+    assert feed_task.cancelled()

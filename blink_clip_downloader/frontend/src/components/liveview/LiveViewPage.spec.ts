@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import SelectButton from 'primevue/selectbutton'
 
 let errorHandler: (() => void) | undefined
+let playingHandler: (() => void) | undefined
 let fakePlayerErrorValue: { message: string } | null = null
 const mountedWrappers: Array<ReturnType<typeof mount>> = []
 
@@ -21,10 +22,19 @@ const fakePlayer = {
   ready: vi.fn((cb: () => void) => cb()),
   on: vi.fn((event: string, cb: () => void) => {
     if (event === 'error') errorHandler = cb
+    if (event === 'playing') playingHandler = cb
   }),
 }
 
-vi.mock('video.js', () => ({ default: vi.fn(() => fakePlayer) }))
+// `browser` is real Video.js API the component reads to decide whether VHS
+// should override the browser's own HLS player (see ensurePlayer) — the mock
+// has to carry it or the component throws on mount.
+vi.mock('video.js', () => ({
+  default: Object.assign(
+    vi.fn(() => fakePlayer),
+    { browser: { IS_ANY_SAFARI: false } },
+  ),
+}))
 vi.mock('video.js/dist/video-js.css', () => ({}))
 
 import LiveViewPage from './LiveViewPage.vue'
@@ -94,6 +104,7 @@ describe('LiveViewPage', () => {
     vi.useRealTimers()
     vi.clearAllMocks()
     errorHandler = undefined
+    playingHandler = undefined
     fakePlayerErrorValue = null
   })
 
@@ -193,6 +204,30 @@ describe('LiveViewPage', () => {
     expect(fetchMock.mock.calls.find(([url]) => url === '/api/liveview/heartbeat')).toBeFalsy()
   })
 
+  it("makes VHS override the browser's own HLS player everywhere but Safari", async () => {
+    // Chromium ships a built-in HLS player now, so canPlayType() answers
+    // "maybe" there. Hard-coding overrideNative to false handed this live
+    // MPEG-TS playlist to that native player, which fails the whole source
+    // with MEDIA_ERR_SRC_NOT_SUPPORTED ("The media could not be loaded...")
+    // over a stream that was working fine.
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    mountPage()
+    await flushPromises()
+
+    const videojs = vi.mocked((await import('video.js')).default)
+    const options = videojs.mock.calls[0][1] as {
+      html5: { vhs: { overrideNative: boolean }; nativeAudioTracks: boolean; nativeVideoTracks: boolean }
+    }
+    expect(options.html5.vhs.overrideNative).toBe(true)
+    // VHS manages its own tracks; the native ones must be off alongside it.
+    expect(options.html5.nativeAudioTracks).toBe(false)
+    expect(options.html5.nativeVideoTracks).toBe(false)
+  })
+
   it('shows a toast when the Video.js player itself reports an error', async () => {
     const routes: Routes = {
       cameras: ['Front Door'],
@@ -227,7 +262,30 @@ describe('LiveViewPage', () => {
     expect(wrapper.text()).toContain('Live view playback failed. The stream could not be decoded by this browser.')
   })
 
-  it('sources each live session once and shows the player error without retrying the HLS URL', async () => {
+  it('sources a live session once while it plays, without re-loading the HLS URL', async () => {
+    vi.useFakeTimers()
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    mountPage()
+    await flushPromises()
+
+    expect(fakePlayer.src).toHaveBeenCalledTimes(1)
+
+    // The HLS tech owns manifest refreshes once a source is playing —
+    // reassigning the same URL on every status poll would start a second
+    // load loop and can make a healthy Blink session look throttled.
+    await vi.advanceTimersByTimeAsync(12000)
+    await flushPromises()
+    expect(fakePlayer.src).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries a failed playback against the same live session, then gives up', async () => {
+    // Video.js never retries a source it has errored on, so without this the
+    // first failure would leave a dead player for the rest of the session
+    // even though the stream itself recovers a segment or two later.
     vi.useFakeTimers()
     const routes: Routes = {
       cameras: ['Front Door'],
@@ -239,17 +297,75 @@ describe('LiveViewPage', () => {
 
     expect(fakePlayer.src).toHaveBeenCalledTimes(1)
     fakePlayerErrorValue = { message: 'The media could not be loaded' }
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      errorHandler?.()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Live view playback failed: The media could not be loaded')
+      await vi.advanceTimersByTimeAsync(4000)
+      await flushPromises()
+      expect(fakePlayer.src).toHaveBeenCalledTimes(attempt + 2)
+    }
+
+    // Four failures in a row is the stream's final answer — stop re-loading
+    // it and leave the error on screen.
     errorHandler?.()
-    await wrapper.vm.$nextTick()
-
-    expect(wrapper.text()).toContain('Live view playback failed: The media could not be loaded')
-
-    // A playback error must not clear sourcedSessionId. The HLS tech owns
-    // manifest refreshes; reassigning the same URL here starts another load
-    // loop and can make a healthy Blink session look throttled.
     await vi.advanceTimersByTimeAsync(12000)
     await flushPromises()
-    expect(fakePlayer.src).toHaveBeenCalledTimes(1)
+    expect(fakePlayer.src).toHaveBeenCalledTimes(4)
+    expect(wrapper.text()).toContain('Live view playback failed: The media could not be loaded')
+  })
+
+  it('clears a playback error once the stream actually plays', async () => {
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    const wrapper = mountPage()
+    await flushPromises()
+
+    fakePlayerErrorValue = { message: 'The media could not be loaded' }
+    errorHandler?.()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Live view playback failed')
+
+    playingHandler?.()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).not.toContain('Live view playback failed')
+  })
+
+  it('does not strand a session that was not live when player.ready() fired', async () => {
+    // ready() can fire after the status this source was queued for has moved
+    // on. Bailing out is right, but the session must not be recorded as
+    // sourced on the way out: every later poll reports that same id, so it
+    // would be mistaken for already-playing and never loaded at all.
+    vi.useFakeTimers()
+    let readyCallback: (() => void) | undefined
+    fakePlayer.ready.mockImplementationOnce((cb: () => void) => {
+      readyCallback = cb
+    })
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    vi.stubGlobal('fetch', routedFetch(routes))
+    mountPage()
+    await flushPromises()
+
+    // Momentarily not live, so the queued callback declines to source.
+    routes.status = { active: true, session_id: 's1', camera: 'Front Door', state: 'starting' }
+    await vi.advanceTimersByTimeAsync(4000)
+    await flushPromises()
+    readyCallback?.()
+    expect(fakePlayer.src).not.toHaveBeenCalled()
+
+    routes.status = { active: true, session_id: 's1', camera: 'Front Door', state: 'live' }
+    await vi.advanceTimersByTimeAsync(4000)
+    await flushPromises()
+    expect(fakePlayer.src).toHaveBeenCalledWith([
+      { src: '/api/liveview/hls/s1/stream.m3u8', type: 'application/x-mpegURL' },
+    ])
   })
 
   it('sourcing the player waits for player.ready() instead of calling src() immediately', async () => {

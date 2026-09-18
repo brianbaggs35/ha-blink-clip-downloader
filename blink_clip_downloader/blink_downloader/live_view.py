@@ -202,6 +202,7 @@ class LiveViewManager:
         init_timeout: float = 25.0,
         startup_timeout: float = 20.0,
         terminate_timeout: float = 5.0,
+        feed_shutdown_timeout: float = 3.0,
     ) -> None:
         self._get_camera = get_camera
         self._list_camera_names = list_camera_names
@@ -211,6 +212,7 @@ class LiveViewManager:
         self._init_timeout = init_timeout
         self._startup_timeout = startup_timeout
         self._terminate_timeout = terminate_timeout
+        self._feed_shutdown_timeout = feed_shutdown_timeout
         self._session: _LiveViewSession | None = None
         self._lock = asyncio.Lock()
         self._running = False
@@ -583,7 +585,7 @@ class LiveViewManager:
         # No reason to keep the upstream Blink connection open once ffmpeg
         # can no longer consume it.
         session.stream.stop()
-        await self._cancel_task(session.feed_task)
+        await self._await_feed_shutdown(session.feed_task)
 
     @staticmethod
     async def _finalize_playlist(hls_dir: Path) -> None:
@@ -754,7 +756,7 @@ class LiveViewManager:
         # would strand this session's three background tasks and its temp
         # directory with nothing left holding a reference to clean them up.
         _stop_stream_quietly(session.stream)
-        await self._cancel_task(session.feed_task)
+        await self._await_feed_shutdown(session.feed_task)
         await self._cancel_task(session.watcher_task)
         await self._cancel_task(session.stderr_task)
         await asyncio.to_thread(shutil.rmtree, session.hls_dir, ignore_errors=True)
@@ -772,6 +774,35 @@ class LiveViewManager:
             # downloader.py's _generate_thumbnail kill-then-reap handling.
             proc.kill()
             await proc.wait()
+
+    async def _await_feed_shutdown(self, task: asyncio.Task | None) -> None:
+        """Let blinkpy's relay task run its own cleanup before cancelling it.
+
+        ``BlinkLiveStream.poll()`` ends with a ``finally`` that tells Blink
+        the live-view command is finished — an HTTP round trip that only
+        begins once the relay has already been stopped. Cancelling the task
+        the instant the sockets close kills that request mid-flight, and
+        Blink is left believing the live view is still running: the camera
+        keeps streaming (and recording) for a session nobody is watching,
+        and the next attempt can come back throttled. So the task gets a
+        brief grace period to finish on its own, and is only cancelled if
+        it overstays it — bounded, because the caller holds ``_lock`` and a
+        camera switch must not wait on Blink's cloud.
+
+        ``asyncio.wait`` rather than ``wait_for``: it neither cancels the
+        task on timeout nor re-raises whatever the task itself raised,
+        leaving both decisions here where the surrounding teardown can keep
+        going regardless.
+        """
+        if task is None or task.done():
+            return
+        await asyncio.wait({task}, timeout=self._feed_shutdown_timeout)
+        if not task.done():
+            _LOGGER.debug(
+                "Live view: relay task did not finish within %.0fs; cancelling",
+                self._feed_shutdown_timeout,
+            )
+        await self._cancel_task(task)
 
     @staticmethod
     async def _cancel_task(task: asyncio.Task | None) -> None:

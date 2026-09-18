@@ -36,6 +36,10 @@ import LoadingIndicator from '../layout/LoadingIndicator.vue'
 // LiveViewManager's idle_timeout in live_view.py).
 const STATUS_POLL_INTERVAL_MS = 4000
 const HEARTBEAT_INTERVAL_MS = 15000
+// How many times a playback failure may re-source the same session before
+// the error is treated as the stream's final answer — see the player's
+// 'error' handler in ensurePlayer().
+const MAX_PLAYBACK_RETRIES = 3
 
 const toast = useToastStore()
 const refresh = useRefreshStore()
@@ -88,20 +92,58 @@ function ensurePlayer(): Player {
     // Video.js's live-edge UI — appropriate since the HLS manifest never
     // gets an ENDLIST tag (see live_view.py's ffmpeg -hls_flags).
     liveui: true,
-    html5: { vhs: { overrideNative: false } },
+    html5: {
+      // Must NOT be hard-coded to false. Chromium ships its own built-in
+      // HLS player now, so `canPlayType('application/vnd.apple.mpegurl')`
+      // answers "maybe" there — and `overrideNative: false` means "let the
+      // browser's native player have anything it claims it can play", which
+      // handed this stream straight past Video.js's own VHS engine to that
+      // native player. It cannot play live_view.py's live MPEG-TS playlist
+      // and fails the whole source with MEDIA_ERR_SRC_NOT_SUPPORTED —
+      // surfacing as "The media could not be loaded, either because the
+      // server or network failed or because the format is not supported"
+      // over a stream that was working perfectly (confirmed by the real,
+      // playable `liveview` clip the same session leaves in the library).
+      // Video.js's own default policy is the correct one: use VHS
+      // everywhere except Safari, whose native HLS support is genuinely
+      // the better path (and is the only one that works at all on iOS,
+      // where MSE — and therefore VHS — is unavailable).
+      vhs: { overrideNative: !videojs.browser.IS_ANY_SAFARI },
+      // Required alongside overrideNative: VHS manages its own audio/video
+      // tracks, and leaving the native ones on conflicts with it.
+      nativeAudioTracks: false,
+      nativeVideoTracks: false,
+    },
     controlBar: { pictureInPictureToggle: true },
   })
   player.on('error', () => {
     if (unmounted || starting.value || !status.value.active) return
     if (sessionFailureCount.value < 1) {
       toast.show('Live view playback error', true)
-      sessionFailureCount.value++
     }
+    sessionFailureCount.value++
     const mediaError = player?.error()
     const detail = mediaError?.message?.trim()
     playbackError.value = detail
       ? `Live view playback failed: ${detail}`
       : 'Live view playback failed. The stream could not be decoded by this browser.'
+    // A live HLS source can fail for reasons that clear themselves a
+    // segment or two later — a segment rotated out from under a slow
+    // request, a playlist read in the instant ffmpeg was rewriting it.
+    // Video.js never retries a source it has errored on, and nothing else
+    // re-sources this player while the session id stays the same, so a
+    // two-second blip would otherwise leave a dead player for the rest of
+    // the session. Forgetting what was sourced lets the next status poll
+    // load the same session again; bounded, so a genuinely unplayable
+    // stream still settles on showing the error instead of looping.
+    if (sessionFailureCount.value <= MAX_PLAYBACK_RETRIES && status.value.state === 'live') {
+      sourcedSessionId = null
+    }
+  })
+  // Whatever went wrong has resolved itself — don't leave a stale error
+  // banner sitting above a picture that is now playing.
+  player.on('playing', () => {
+    playbackError.value = null
   })
   return player
 }
@@ -173,8 +215,18 @@ function applyStatus(s: LiveViewStatus) {
         !status.value.active ||
         status.value.state !== 'live'
       ) {
+        // Nothing was sourced, so nothing may be recorded as sourced —
+        // leaving the claim standing would lock this session out of ever
+        // being loaded, since every later poll reports the same id and
+        // would take it for already-playing. Only release the claim if it
+        // is still ours; a newer session has every right to hold it.
+        if (sourcedSessionId === sessionId) sourcedSessionId = null
         return
       }
+      // src() alone does not dismiss a previous error (Video.js only clears
+      // one when reset() or its own multi-source fallback runs), so a retry
+      // after a playback failure would load behind the error modal.
+      p.error(null)
       p.src([{ src: liveViewPlaylistUrl(sessionId), type: 'application/x-mpegURL' }])
       p.play()?.catch(() => {})
     })

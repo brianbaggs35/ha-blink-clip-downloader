@@ -1,5 +1,89 @@
 # Changelog
 
+## 6.0.5
+
+### Live View: fixed for real this time, and here is the actual reason
+
+Live View failed with "The media could not be loaded, either because the
+server or network failed or because the format is not supported" while the
+stream behind it was working perfectly — the giveaway being the real,
+playable `liveview` clip the very same session left in the library. Earlier
+releases treated that message as a symptom of the stream ending
+(5.5.2 added the end-of-stream marker) or of sourcing the player too early
+(5.4.2 waited for `ready()`). Both were genuine bugs, and neither was this
+one.
+
+The cause was one line of player configuration, and it is not in the
+streaming code at all. Video.js was created with
+`html5: { vhs: { overrideNative: false } }` — "if the browser says it can
+play this itself, let it". When that was written, no non-Safari browser
+claimed HLS. Chromium now ships its own built-in HLS player, so
+`canPlayType('application/vnd.apple.mpegurl')` answers "maybe" there, and
+the playlist was handed straight past Video.js's own VHS engine to that
+native player.
+
+What that player cannot do is *start* on a live playlist that has only
+just come into existence and lists a single segment — which is precisely
+the moment this add-on declares a session live and points the player at
+it, every single time. It gives up with `MEDIA_ERR_SRC_NOT_SUPPORTED`, the
+generic message above. Nothing in the add-on's own logs could show this,
+because nothing in the add-on was failing: ffmpeg kept publishing
+segments, the session stayed healthy and "live", and the camera streamed
+(and recorded) throughout.
+
+None of this was reasoned about from the code. It was reproduced end to
+end first — the real `LiveViewManager`, the real ffmpeg arguments, the
+real HLS route, a relay feeding genuine MPEG-TS over a local socket, and a
+real browser — where the error reproduced character for character, with
+`vhsActive: false` and `Range:` request headers proving the native player
+had taken the source (VHS never sends those). Attaching a second player to
+the same session a few seconds later, once the playlist had grown past one
+segment, then succeeded; swapping the order of the two swapped which one
+failed, which is what pins the failure to the live edge rather than to the
+stream. VHS played the same one-segment playlist without complaint.
+
+Video.js's own default policy is used from now on instead of a hard-coded
+`false`: VHS everywhere, except Safari, whose native HLS support is
+genuinely the better path there and the only one that works at all on
+iOS.
+
+### A single playback hiccup no longer kills the rest of the session
+
+Video.js never retries a source it has errored on, and nothing re-sourced
+the player while the session id stayed the same — so any one-off failure
+(a segment rotated out from under a slow request, a playlist read in the
+instant ffmpeg was rewriting it) left a dead player for the remainder of an
+otherwise healthy session. A playback failure now reloads the same session
+on the next status poll, up to three times, before the error is taken as
+the stream's final answer.
+
+This is doing real work, not just hedging. Safari and iOS keep the native
+player after the fix above — deliberately, because VHS needs Media Source
+Extensions, which iOS Safari does not have — so they can still meet the
+same live-edge failure. Exercised directly against a native player
+attaching at the live edge: it failed twice with the same
+`MEDIA_ERR_SRC_NOT_SUPPORTED`, then the third attempt played through.
+Before this change, the first of those was the end of it.
+
+A related dead end is fixed alongside it: when
+the player became ready a moment too late to use a source, the session was
+still recorded as "already sourced", so every later poll mistook it for
+playing and it was never loaded at all.
+
+### Stopping a session now tells Blink it has stopped
+
+blinkpy tells Blink's cloud that a live-view command is finished from a
+cleanup step that only begins once the relay has been shut down. This
+add-on cancelled that task the instant the sockets closed, killing the
+request mid-flight — so Blink could be left believing the live view was
+still running, with the camera streaming and recording for a session
+nobody was watching, and the next attempt coming back throttled. This is
+the likely source of the `blinkpy.auth: Connection error. Endpoint
+.../command/<id>/done/ possibly down or throttled` errors seen in the log.
+The relay now gets a short grace period to finish its own cleanup, and is
+only cancelled if it overstays it — bounded, because switching cameras must
+never wait on Blink's cloud.
+
 ## 6.0.4
 
 ### Why prompt caching is still reporting 0% on OpenAI
