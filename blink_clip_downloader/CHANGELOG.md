@@ -248,6 +248,7 @@ never wait on Blink's cloud.
 
 - Updated @primeuix/themes to 3.0.1
 - Updated video.js to 8.24.1
+- Updated vue to 3.5.43
 
 ## 6.0.4
 
