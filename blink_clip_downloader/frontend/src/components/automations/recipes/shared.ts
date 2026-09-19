@@ -1,0 +1,114 @@
+/** Building blocks shared by more than one recipe.
+ *
+ * These render *fragments* — a condition, one action — rather than whole
+ * documents, so a recipe stays a readable list of the pieces it wants. Every
+ * one returns '' when the option it renders is switched off, which is how
+ * joinLines() drops it without leaving a gap in the YAML.
+ */
+
+import { duration, jinjaList, yamlString, yamlTemplate } from './types'
+
+/** The add-on's own entities, in one place — these strings are a contract
+ * with ha_entities.py, not free text (see that module's docstring). */
+export const STATUS_SENSOR = 'sensor.blink_downloader_status'
+export const LOCAL_STORAGE_SENSOR = 'sensor.blink_local_storage'
+export const CLOUD_STORAGE_SENSOR = 'sensor.blink_cloud_storage'
+export const CLIP_DOWNLOADED_EVENT = 'blink_clip_downloaded'
+export const CLIP_ANALYZED_EVENT = 'blink_clip_analyzed'
+export const BATTERY_LOW_EVENT = 'blink_camera_battery_low'
+
+/** A `notify.*` action, optionally asking the Companion app to treat it as
+ * urgent. The critical block deliberately carries both platforms' keys:
+ * iOS reads `push.sound.critical`, Android reads `ttl`/`priority`/`channel`,
+ * and each ignores the other's, so one snippet works on both. */
+export function notifyAction(
+  service: string,
+  title: string,
+  messageTemplate: string,
+  options: { critical?: boolean } = {},
+): string {
+  const lines = [
+    `  - action: ${service}`,
+    '    data:',
+    `      title: ${yamlString(title)}`,
+    `      message: ${yamlTemplate(messageTemplate, 6)}`,
+  ]
+  if (options.critical) {
+    lines.push(
+      '      data:',
+      '        push:',
+      '          sound:',
+      '            name: default',
+      '            critical: 1',
+      '            volume: 1.0',
+      '        ttl: 0',
+      '        priority: high',
+      '        channel: alarm',
+    )
+  }
+  return lines.join('\n')
+}
+
+/** Restrict an event-triggered automation to specific cameras. Empty means
+ * every camera — the same "empty is all" convention the add-on's own camera
+ * options use. */
+export function cameraCondition(cameras: string[]): string {
+  if (!cameras.length) return ''
+  return [
+    '  - condition: template',
+    `    value_template: ${yamlTemplate(`{{ trigger.event.data.camera in ${jinjaList(cameras)} }}`, 4)}`,
+  ].join('\n')
+}
+
+/** Restrict to clips that came from a given source (motion, live view, the
+ * Sync Module's USB drive). */
+export function sourceCondition(sources: string[]): string {
+  if (!sources.length) return ''
+  return [
+    '  - condition: template',
+    `    value_template: ${yamlTemplate(`{{ trigger.event.data.source in ${jinjaList(sources)} }}`, 4)}`,
+  ].join('\n')
+}
+
+/** A numeric floor on one of the event payload's numbers. */
+export function eventNumberCondition(field: string, minimum: number): string {
+  if (!minimum) return ''
+  return [
+    '  - condition: template',
+    `    value_template: ${yamlTemplate(`{{ (trigger.event.data.${field} | float(0)) >= ${minimum} }}`, 4)}`,
+  ].join('\n')
+}
+
+/** Only act between two times of day. */
+export function timeWindowCondition(after: string, before: string): string {
+  if (!after && !before) return ''
+  return [
+    '  - condition: time',
+    after && `    after: ${yamlString(after)}`,
+    before && `    before: ${yamlString(before)}`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+/** Skip everything while a "pause Blink alerts" helper is on (see the
+ * Scripts & Helpers tab, which generates the input_boolean itself). */
+export function pauseSwitchCondition(entity: string): string {
+  if (!entity) return ''
+  return ['  - condition: state', `    entity_id: ${entity}`, '    state: "off"'].join('\n')
+}
+
+/** `conditions:` with its entries, or the empty list when nothing applies —
+ * HA accepts a missing `conditions:` key too, but an explicit empty list
+ * makes the generated YAML paste cleanly into the UI editor. */
+export function conditionsBlock(parts: string[]): string {
+  const used = parts.filter(Boolean)
+  if (!used.length) return 'conditions: []'
+  return ['conditions:', ...used].join('\n')
+}
+
+/** `for: "HH:MM:SS"` under a trigger, or nothing when it is zero. */
+export function forDuration(minutes: number, indent = 4): string {
+  if (minutes <= 0) return ''
+  return `${' '.repeat(indent)}for: ${yamlString(duration(minutes))}`
+}

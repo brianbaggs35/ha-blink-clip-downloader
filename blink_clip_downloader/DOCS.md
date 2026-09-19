@@ -1143,9 +1143,11 @@ from any browser without leaving Home Assistant.
   account to back clips up, including retrying any upload that failed — see
   [Storage Tab — Google Drive Backup](#storage-tab--google-drive-backup)
   below.
-- **Automations tab** — ready-to-paste HA automation YAML snippets, plus a
-  **Notification Channels** panel to test-send an email/Discord message/mobile
-  push before enabling that channel for real.
+- **Automations tab** — builders that generate Home Assistant automations,
+  scripts, scenes, helpers, dashboards and blueprints from your own
+  thresholds and cameras, plus a **Notification Channels** panel to test-send
+  an email/Discord message/mobile push before enabling that channel for real
+  — see [Home Assistant Integration](#home-assistant-integration) below.
 - **Video.js player** — in-browser streaming with play/pause, seek, fullscreen, PiP,
   loop, autoplay-next, theater mode, and playback-rate selection.
 - **Per-clip AI Analysis panel** — each clip modal includes a collapsible 🤖 **AI
@@ -1451,18 +1453,52 @@ and remains eligible for backup later.
 
 ## Home Assistant Integration
 
-### Sensor
+### Sensors
 
-After every poll the add-on updates a virtual sensor:
+The add-on writes three sensors, once at startup and once per poll cycle:
 
-- **entity_id**: `sensor.blink_downloader_status`
-- **state**: total clips downloaded (lifetime)
-- **attributes**: `total_downloaded`, `session_downloads`, `used_mb`, `free_gb`,
-  `last_download`
+| Entity | State | Key attributes |
+|---|---|---|
+| `sensor.blink_downloader_status` | Total clips downloaded (lifetime) | `total_downloaded`, `session_downloads`, `used_mb`, `free_gb`, `last_download` |
+| `sensor.blink_local_storage` | Percent of the local clip library in use | `basis`, `percent_used`, `clips_used_gb`, `quota_gb`, `disk_free_gb`, `disk_total_gb` |
+| `sensor.blink_cloud_storage` | Percent of the cloud backup account in use | `provider`, `connected`, `unlimited`, `used_gb`, `total_gb`, `free_gb`, `pending_uploads`, `failed_uploads`, `uploaded_clips`, `uploads_paused`, `pause_reason` |
+
+Notes on the two storage sensors:
+
+- They carry a plain 0-100 number in the *state*, so a `numeric_state`
+  trigger can watch them directly instead of reaching through an attribute.
+- `sensor.blink_local_storage` measures against the storage quota when one is
+  set, and against the whole filesystem when it is not — the `basis` attribute
+  says which, since "82% full" means something rather different in each case.
+- `sensor.blink_cloud_storage` is named for the *role*, not the provider.
+  Google Drive is the only backend today; the `provider` attribute names
+  whichever is in use, so an automation written now keeps working if you
+  switch later.
+- Either can report `unknown` rather than a misleading `0` — cloud storage
+  does that when no account is connected, or when the account has unlimited
+  storage (`unlimited: true`). A `numeric_state` trigger ignores `unknown`,
+  which is the wanted behaviour; `0` would read as "empty" and could clear a
+  threshold alert.
 
 ### Events
 
-For every downloaded clip the add-on fires the event `blink_clip_downloaded`:
+| Event | Fired | Data |
+|---|---|---|
+| `blink_clip_downloaded` | Each clip, as it lands on disk | `clip_id`, `camera`, `path`, `timestamp`, `size_bytes`, `duration`, `source` |
+| `blink_clip_analyzed` | Each finished AI analysis, suspicious or not | `clip_id`, `camera`, `is_suspicious`, `confidence`, `summary`, `risk_score`, `severity`, `event_type`, `evidence_quality`, `face_recognized`, `model`, `path` |
+| `blink_camera_battery_low` | A camera transitions to low battery | `camera`, `battery_state`, `battery_level`, `battery_voltage` |
+
+`blink_clip_analyzed` fires for every completed analysis, not only the
+suspicious ones — filter on `is_suspicious` (and, if you use the structured
+security layer, `risk_score`) in the automation. The raw model response and
+the full prompt are deliberately left out: every fired event is stored in
+Home Assistant's recorder, and neither belongs there.
+
+`blink_camera_battery_low` fires on a genuine ok-to-low transition only, not
+once per poll while a battery stays low. It is independent of the add-on's own
+**Battery Alerts** option — that option controls this add-on's notifications,
+while the event is a fact published for your automations to act on however you
+like.
 
 ```json
 {
@@ -1476,20 +1512,69 @@ For every downloaded clip the add-on fires the event `blink_clip_downloaded`:
 }
 ```
 
-Example automation — TTS alert when a doorbell clip arrives:
+### The Automations tab
 
-```yaml
-alias: Announce doorbell clip
-trigger:
-  - platform: event
-    event_type: blink_clip_downloaded
-    event_data:
-      camera: Doorbell
-action:
-  - service: tts.speak
-    data:
-      message: "Doorbell clip just downloaded"
+Rather than a page of fixed examples with someone else's thresholds baked in,
+the tab generates YAML from your own settings:
+
+- **Automations** — pick one of a dozen recipes (suspicious clip alerts,
+  storage thresholds, backup backlog, lights on suspicious activity, casting a
+  camera view, speaker announcements, new-clip and long-clip notifications,
+  low battery, "nothing has downloaded in a while", daily summary), set the
+  threshold/cameras/notify service you want, and copy or download the result.
+  The camera pickers list your real cameras.
+- **Scripts & Helpers** — a `rest_command` + script that triggers a download
+  cycle from Home Assistant, a cast-to-a-display script, a spoken storage
+  report, a security-alert lighting scene, a "pause Blink alerts"
+  `input_boolean` (with an automation that un-pauses it so a forgotten toggle
+  cannot silently disable your alerts), and template sensors that turn the two
+  storage percentages into an ok/warning/critical state.
+- **Dashboards** — builds a Lovelace view of camera tiles, storage gauges and a
+  status card, either from Generic Camera entities (it generates the exact
+  snapshot URL per camera) or by embedding this tab's own Security Feed in an
+  iframe card. It also generates the `cast.show_lovelace_view` script that puts
+  that view on a Nest Hub or Chromecast.
+- **Blueprints** — three importable blueprints (suspicious clip alert, storage
+  watchdog, camera battery low) for the automations you set up more than once,
+  one per phone or threshold.
+- **Entities & Events** — the reference tables above, in the UI.
+- **Notification Channels** — unchanged: a one-off test send through each
+  channel (email, Discord, mobile push, HA persistent notification).
+
+### Camera tiles on a dashboard (and on a Nest Hub)
+
+Home Assistant's Generic Camera integration can poll this add-on's own
+snapshot endpoint, which turns each Blink camera into a real `camera.*` entity:
+
 ```
+http://homeassistant.local:8099/api/security-feed/snapshot/Front%20Door
+```
+
+Add one Generic Camera per Blink camera (Settings → Devices & services → Add
+integration → Generic Camera; leave the stream source empty and turn *off*
+"limit refetch to url change"), and the Dashboards builder writes the matching
+Lovelace view for you. Home Assistant fetches those images itself, which is why
+the tiles also work on a cast display that cannot reach the add-on directly.
+
+Casting a dashboard is Home Assistant's own feature and carries its own
+requirement: your Home Assistant has to be reachable over HTTPS (Nabu Casa
+Cloud counts).
+
+### Embedding a tab in a dashboard (kiosk mode)
+
+Any tab of this web UI renders without its navigation when loaded with
+`?kiosk=1`, which is what makes it usable inside an iframe card:
+
+```
+http://homeassistant.local:8099/?kiosk=1&tab=securityfeed
+```
+
+`tab` accepts any tab id (`library`, `liveview`, `securityfeed`,
+`automations`, `syncmodule`, `status`, `ai`, `usage`, `models`, `security`,
+`vehicles`, `biometrics`, `storage`). This route needs no Home Assistant setup
+at all, but the *viewing browser* loads the add-on directly — so it needs to
+reach that port, and an `http://` add-on embedded in an `https://` dashboard is
+blocked by the browser as mixed content.
 
 ---
 

@@ -35,7 +35,7 @@ describe('App', () => {
     await wrapper.find('[data-tab="automations"]').trigger('click')
     expect(wrapper.find('#page-automations').classes()).toContain('active')
     expect(wrapper.find('#page-library').classes()).not.toContain('active')
-    expect(wrapper.text()).toContain('HA Automation Examples')
+    expect(wrapper.text()).toContain('Home Assistant')
 
     wrapper.unmount()
   })
@@ -221,6 +221,57 @@ describe('App', () => {
     const helpOverlay = wrapper.findAll('.modal-bg').find((el) => el.text().includes('Keyboard Shortcuts'))!
     await helpOverlay.find('.modal-close').trigger('click')
     expect(helpOverlay.classes()).not.toContain('open')
+    wrapper.unmount()
+  })
+
+  // ── Kiosk mode (?kiosk=1&tab=…) ──────────────────────────
+  //
+  // How a Home Assistant dashboard embeds one tab in an iframe card. Read
+  // once at setup, so each test mounts with its own location stubbed.
+
+  // jsdom will not let `location` be replaced, but it does follow
+  // history.replaceState — which is also closer to how the real URL arrives.
+  function stubSearch(search: string) {
+    window.history.replaceState({}, '', `/${search}`)
+  }
+
+  afterEach(() => window.history.replaceState({}, '', '/'))
+
+  it('opens the tab named in the query string', async () => {
+    mockArrayAwareFetch()
+    stubSearch('?tab=securityfeed')
+    const wrapper = mountApp()
+    await flushPromises()
+    expect(wrapper.find('#page-securityfeed').classes()).toContain('active')
+    wrapper.unmount()
+  })
+
+  it('ignores a tab name that is not one of ours', async () => {
+    mockArrayAwareFetch()
+    stubSearch('?tab=../../etc/passwd')
+    const wrapper = mountApp()
+    await flushPromises()
+    expect(wrapper.find('#page-library').classes()).toContain('active')
+    wrapper.unmount()
+  })
+
+  it('hides the navigation in kiosk mode and marks <body> for the page styles', async () => {
+    mockArrayAwareFetch()
+    stubSearch('?tab=securityfeed&kiosk=1')
+    const wrapper = mountApp()
+    await flushPromises()
+    expect(wrapper.find('.app-nav').exists()).toBe(false)
+    expect(document.body.classList.contains('kiosk')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('keeps the navigation for a normal visit', async () => {
+    mockArrayAwareFetch()
+    stubSearch('')
+    const wrapper = mountApp()
+    await flushPromises()
+    expect(wrapper.find('.app-nav').exists()).toBe(true)
+    expect(document.body.classList.contains('kiosk')).toBe(false)
     wrapper.unmount()
   })
 })

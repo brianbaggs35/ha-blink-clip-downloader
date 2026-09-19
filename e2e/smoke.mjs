@@ -57,10 +57,11 @@ export const TAB_CHECKS = {
     loadingSelector: ".loading-indicator",
   },
   automations: {
-    // Purely static reference content - no fetch, nothing to wait on, but
-    // still confirms the component actually rendered its real template
-    // rather than nothing at all.
-    loadedText: "HA Automation Examples",
+    // The builders generate their YAML client-side, so there is nothing to
+    // wait on - but the recipe this lands on is rendered from the real
+    // catalogue, so seeing it proves the component rendered its actual
+    // template rather than nothing at all.
+    loadedText: "Suspicious clip alert",
     loadingSelector: null,
   },
   syncmodule: {

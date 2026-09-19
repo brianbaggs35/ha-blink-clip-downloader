@@ -29,6 +29,7 @@ from .downloader import (
 from .event_watcher import HAEventWatcher
 from .gdrive_client import GDriveClient
 from .gdrive_queue import GDriveUploadQueue
+from .ha_entities import HAEntityPublisher
 from .library_scanner import import_existing_clips
 from .live_view import LiveViewManager
 from .manifest import ClipManifest
@@ -100,6 +101,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             title=config.ha_notification_title,
             webhook_url=config.webhook_url,
         )
+        # The storage sensors/events the Automations tab's builder writes
+        # its YAML against (see ha_entities.py). Deliberately not gated on
+        # notify_ha: that option controls *persistent notifications*, while
+        # these are entities an automation reads — writing them costs one
+        # Supervisor call per poll cycle and silently does nothing when
+        # there is no Supervisor token at all.
+        self._ha_entities = HAEntityPublisher(self._notifier)
         self._downloader = BlinkDownloader(
             config,
             self._storage,
@@ -171,6 +179,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             dispatcher=self._alert_dispatcher,
             get_battery_snapshot=self._downloader.get_battery_snapshot,
             alerts_enabled=config.battery_alerts_enabled,
+            on_low_battery=self._ha_entities.fire_battery_low,
         )
 
         if config.ai_analysis_enabled:
@@ -583,6 +592,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             batch_size=config.ai_batch_size,
             check_interval=config.ai_check_interval,
             min_confidence=config.ai_min_confidence,
+            on_analyzed=self._ha_entities.fire_clip_analyzed,
         )
 
     # ------------------------------------------------------------------
@@ -776,11 +786,16 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
         # Expose connection status (and initial disk stats) to the media server
         # status endpoint so the Storage card is populated right away.
+        disk = await asyncio.to_thread(self._storage.disk_stats)
         self._media_server.extra_status = {
             "connected": True,
             "account_id": self._downloader.account_id,
-            "disk": await asyncio.to_thread(self._storage.disk_stats),
+            "disk": disk,
         }
+        # Same reasoning: a threshold automation written against these
+        # sensors should not have to wait out a whole poll interval after a
+        # restart before they exist again.
+        await self._publish_storage_sensors(disk)
 
         if self._config.watch_ha_events and self._config.supervisor_token:
             self._bg_tasks.append(
@@ -974,6 +989,12 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             )
             _LOGGER.warning(msg)
             await self._notifier.notify(msg, title="Blink Downloader: Storage Full")
+            disk = await asyncio.to_thread(self._storage.disk_stats)
+            self._media_server.extra_status["disk"] = disk
+            # Publish here too, not just on the normal path below: a full
+            # library is exactly when someone's storage-threshold automation
+            # needs the sensor to be current.
+            await self._publish_storage_sensors(disk)
             await self._write_stats()
             return
 
@@ -1024,7 +1045,29 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         )
 
         await self._write_stats()
+        await self._publish_storage_sensors(self._media_server.extra_status["disk"])
         _LOGGER.debug("Poll cycle finished (%d new clip(s))", len(downloaded))
+
+    async def _publish_storage_sensors(self, disk: dict[str, Any]) -> None:
+        """Write the local/cloud storage percentage sensors to HA.
+
+        Runs last in a poll cycle so a Supervisor or Drive hiccup here can
+        only ever cost the sensors themselves, never the download work that
+        came before it. Both writes are best-effort inside
+        :class:`HAEntityPublisher`; only the queue-count lookup below can
+        actually raise, and it is a plain local database query.
+        """
+        await self._ha_entities.publish_local_storage(disk)
+        connected = self._gdrive_client.connected
+        await self._ha_entities.publish_cloud_storage(
+            provider="google_drive" if self._gdrive_client.is_configured else "none",
+            configured=self._gdrive_client.is_configured,
+            connected=connected,
+            # Skipped entirely when not connected: there is nothing to ask,
+            # and get_quota() would spend a token refresh finding that out.
+            quota=await self._gdrive_client.get_quota() if connected else None,
+            queue=await self._gdrive_queue.get_queue_status(),
+        )
 
     async def _on_clips_downloaded(self, clips: list[dict[str, Any]]) -> None:
         """Post-download: notifications, events, manifest, webhook, sensor."""

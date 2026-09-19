@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .database import ClipDatabase
@@ -21,6 +21,12 @@ class BatteryMonitor:
     transition, and only when *alerts_enabled*, triggers a notification;
     recording and alerting are deliberately independent so turning alerts
     off never also blanks the Status tab.
+
+    *on_low_battery* (the HA ``blink_camera_battery_low`` event, see
+    ha_entities.py) follows *recording*, not alerting: firing an event
+    publishes a fact for the user's own automations to act on the way they
+    choose, which is exactly what someone who turned this add-on's own
+    notifications off is likely to want.
     """
 
     def __init__(
@@ -29,11 +35,13 @@ class BatteryMonitor:
         dispatcher: NotificationDispatcher,
         get_battery_snapshot: Callable[[], list[dict[str, Any]]],
         alerts_enabled: bool,
+        on_low_battery: Callable[[dict[str, Any]], Awaitable[Any]] | None = None,
     ) -> None:
         self._db = db
         self._dispatcher = dispatcher
         self._get_battery_snapshot = get_battery_snapshot
         self._alerts_enabled = alerts_enabled
+        self._on_low_battery = on_low_battery
 
     async def check_and_alert(self) -> None:
         """Record each camera's current battery reading; alert on a new low.
@@ -56,6 +64,8 @@ class BatteryMonitor:
             )
             if transitioned and battery_state == "low":
                 _LOGGER.info("%s battery is now low", camera)
+                if self._on_low_battery is not None:
+                    await self._on_low_battery(reading)
                 if self._alerts_enabled:
                     await self._dispatcher.dispatch_battery_alert(
                         camera, battery_state, reading.get("battery_voltage")
