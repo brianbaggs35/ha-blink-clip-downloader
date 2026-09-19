@@ -257,6 +257,7 @@ never wait on Blink's cloud.
 - Updated python-slugify to 9.1.0
 - Updated anthropic to 1.7.0
 - Updated openai to 3.16.2
+- Updated ultralytics to 8.4.155
 
 ## 6.0.4
 
