@@ -244,6 +244,10 @@ The relay now gets a short grace period to finish its own cleanup, and is
 only cancelled if it overstays it — bounded, because switching cameras must
 never wait on Blink's cloud.
 
+### Dependency Updates
+
+- Updated @primeuix/themes to 3.0.1
+
 ## 6.0.4
 
 ### Why prompt caching is still reporting 0% on OpenAI
