@@ -256,6 +256,7 @@ never wait on Blink's cloud.
 - Updated eslint for e2e to 10.11.0
 - Updated python-slugify to 9.1.0
 - Updated anthropic to 1.7.0
+- Updated openai to 3.16.2
 
 ## 6.0.4
 
