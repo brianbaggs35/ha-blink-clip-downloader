@@ -255,6 +255,7 @@ never wait on Blink's cloud.
 - Updated prettier to 3.9.8
 - Updated eslint for e2e to 10.11.0
 - Updated python-slugify to 9.1.0
+- Updated anthropic to 1.7.0
 
 ## 6.0.4
 
