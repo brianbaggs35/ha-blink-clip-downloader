@@ -367,7 +367,7 @@ RUN chmod a+x /etc/services.d/blink-downloader/run \
 # here lets code-only releases reuse the large Python/CV layers and lets
 # Supervisor pull only the changed application layer.
 ARG BUILD_ARCH
-ARG BUILD_VERSION=6.0.4
+ARG BUILD_VERSION=6.0.5
 
 LABEL \
     org.opencontainers.image.title="Blink Clip Downloader" \
