@@ -247,6 +247,7 @@ never wait on Blink's cloud.
 ### Dependency Updates
 
 - Updated @primeuix/themes to 3.0.1
+- Updated video.js to 8.24.1
 
 ## 6.0.4
 
