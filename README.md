@@ -4,11 +4,11 @@ Frontend Coverage - [![codecov](https://codecov.io/github/brianbaggs35/ha-blink-
 
 Combined Coverage - [![codecov](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader/graph/badge.svg?token=66T4D63JFM)](https://codecov.io/github/brianbaggs35/ha-blink-clip-downloader)
 
-[![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=brianbaggs35_ha-blink-clip-downloader&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=brianbaggs35_ha-blink-clip-downloader)
+Sonarqube Scan - [![Quality gate status](https://sonarcloud.io/api/project_badges/measure?project=brianbaggs35_ha-blink-clip-downloader&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=brianbaggs35_ha-blink-clip-downloader)
 
-[![CI/CD Pipeline](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/ci.yaml/badge.svg)](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/ci.yaml)
+CI - [![CI/CD Pipeline](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/ci.yaml/badge.svg)](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/ci.yaml)
 
-[![CI/CD Pipeline](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/build.yaml/badge.svg?event=release)](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/build.yaml)
+CD - [![CI/CD Pipeline](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/build.yaml/badge.svg?event=release)](https://github.com/brianbaggs35/ha-blink-clip-downloader/actions/workflows/build.yaml)
 
 Current Version - ![GitHub release](https://img.shields.io/github/v/release/brianbaggs35/ha-blink-clip-downloader.svg)
 
@@ -35,10 +35,12 @@ If this project helps you, consider supporting its development.
 # For Users Without Home Assistant OS
 
 I have created a standalone platform for any users who don't use home assistant but still want the same capabilities for their
-blink cameras. The repo can be found here - https://github.com/brianbaggs35/blink_downloader
+blink cameras. The repo can be found here - https://github.com/brianbaggs35/blink_downloader but please note that the app that
+can be found with that link is not nearly as actively developed as this home assistant one and the home assistant one has more
+features.
 
 It uses the same blinkpy package and python/vue/typescript and also uses sonarqube and all other linters and tools to keep
-code quality high. If you have any issues, create an issue for it and anyone is welcome to contribute as well just open a 
+code quality high. If you have any issues, create an issue for it and anyone is welcome to contribute as well just open a
 pull request for review.
 
 # Home Assistant Blink Clip Downloader
@@ -48,9 +50,10 @@ local hard drive using [blinkpy](https://github.com/fronzbot/blinkpy).
 
 # Note About Installation On aarch64
 
-This image takes anywhere from 5 to 20 minutes to be built depending on your device speed. Please be patient when installing updates and rest assured it will give you an error if it fails.
+This image takes anywhere from 5 to 20 minutes to be built depending on your device speed. Please be patient when installing updates and rest assured it will give you an error if it fails. Before the progress just went from 0% to 100% but now it looks like that might be
+fixed.
 
-## Add-ons
+## Information and Documentation
 
 ### [Blink Clip Downloader](blink_clip_downloader/DOCS.md)
 
@@ -78,7 +81,11 @@ analysis) is comfortable on the minimums above, on **any** aarch64 board
 including a Raspberry Pi 4. The optional **Enhanced Detection & Tracking**
 pipeline (YOLO object detection, Depth Anything V2, SAM2 contact
 segmentation) is what actually needs the recommended tier — it's off by
-default and analysis works identically without it.
+default and analysis works identically without it. In order to use all of
+the advanced features, I would recommend a raspberry pi 5 8gb or similar
+device, or a mini-PC with at least an intel N100 and 8gb of ram, if you
+want to run all of the advanced features. It might run on a less powerful
+device, but it hasn't been tested as far as I know.
 
 > ℹ️ **Raspberry Pi 4 or older:** the Enhanced Detection & Tracking pipeline
 > depends on PyTorch, which has long-standing, still-unresolved crashes on
@@ -104,7 +111,7 @@ a detailed disk-space breakdown.
 
 ### Updating from 4.0.2 or earlier
 
-Expect this specific update to take roughly **10-15 minutes**, well beyond
+Expect this specific update to take roughly **10-20 minutes**, well beyond
 the usual under-a-minute add-on restart — the Supervisor is pulling a
 genuinely new ~4.2 GB image from scratch, not an incremental diff, since
 4.0.2 and earlier ran on Alpine and this release switched to Debian (no
@@ -140,6 +147,9 @@ Uses the hosted [Ollama Cloud API](https://ollama.com/cloud) — no local GPU re
    - `ai_provider: ollama_cloud`
    - `ollama_cloud_api_key: <your-api-key>`
    - `ollama_model: llama3.2-vision` (or another vision model available on the cloud)
+
+You can get some free usage but you will hit your limit fairly quickly if you have an
+active camera.
 
 ### Moondream Cloud
 
@@ -201,6 +211,19 @@ and performs well for security-camera analysis. `gpt-4o` ($2.50/$10 per 1M token
 offers higher accuracy, while `gpt-4.1-nano` ($0.10/$0.40 per 1M tokens) is the
 lowest-cost option available.
 
+## Cached prompts/tokens
+
+Only OpenAI and Anthropic support this. This is enabled by default and helps with the
+cost.
+
+## OpenAI free daily tokens
+
+If you want to get access to 2.5 million free tokens per day for certain models and
+you don't mind sharing your data to allow OpenAI to train their models with your data,
+check out this wiki page:
+
+https://github.com/brianbaggs35/ha-blink-clip-downloader/wiki/Free-AI-Analysis-using-OpenAI-Shared
+
 ## Model Testing Status
 
 The following providers/models have been tested and are working or were fixed:
@@ -240,6 +263,33 @@ Backup](blink_clip_downloader/DOCS.md#storage-tab--google-drive-backup) for
 the full walkthrough — including moving the OAuth consent screen to
 production (recommended; otherwise Google expires the connection weekly),
 choosing a backup policy, and exactly what does and doesn't get uploaded.
+
+## Testing and Code Quality
+
+I have setup an extremely thorough CI pipeline that should catch most problems before
+they get merged. The CI pipeline includes:
+
+- ESlint
+- Pyright
+- Home Assistant Addon Linter
+- YAMLlint
+- Ruff
+- Bandit security scans
+- Prettier
+- Vue/Typescript type checks
+- Pytest (100% backend coverage)
+- Vitest (100% frontend coverage)
+- Playwright e2e (92% of all lines covered as of Sep. 18th, 2026 but always adding more)
+- Sonarqube scans
+- Codecov coverage reports
+- Built addon images and trivy scans
+- Smoke tests on the addon containers built and scanned with trivy
+- Full home assistant supervisor container that installs and runs the app and then
+verifies it
+
+If any one of those checks fail, the entire PR fails. I use claude code to help with the
+development so I also built a very thorough CI pipeline to detect any issues or mistakes
+made by the AI.
 
 ## Support
 
