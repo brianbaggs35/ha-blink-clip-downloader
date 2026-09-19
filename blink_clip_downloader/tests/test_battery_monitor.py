@@ -12,6 +12,7 @@ def _make_monitor(
     snapshot: list[dict[str, Any]],
     alerts_enabled: bool = True,
     add_battery_reading_result: bool | list[bool] = False,
+    on_low_battery: AsyncMock | None = None,
 ) -> tuple[BatteryMonitor, MagicMock, MagicMock]:
     db = MagicMock()
     if isinstance(add_battery_reading_result, list):
@@ -27,6 +28,7 @@ def _make_monitor(
         dispatcher=dispatcher,
         get_battery_snapshot=lambda: snapshot,
         alerts_enabled=alerts_enabled,
+        on_low_battery=on_low_battery,
     )
     return monitor, db, dispatcher
 
@@ -193,3 +195,69 @@ async def test_check_and_alert_handles_multiple_cameras_independently() -> None:
     await monitor.check_and_alert()
 
     dispatcher.dispatch_battery_alert.assert_awaited_once_with("Front Door", "low", 105)
+
+
+# ---------------------------------------------------------------------------
+# on_low_battery (the blink_camera_battery_low HA event)
+# ---------------------------------------------------------------------------
+
+
+async def test_low_transition_fires_the_ha_event_with_the_whole_reading() -> None:
+    reading = {
+        "camera": "Front Door",
+        "battery_state": "low",
+        "battery_level": 0,
+        "battery_voltage": 105,
+    }
+    on_low = AsyncMock()
+    monitor, _, _ = _make_monitor(
+        [reading], add_battery_reading_result=True, on_low_battery=on_low
+    )
+
+    await monitor.check_and_alert()
+
+    on_low.assert_awaited_once_with(reading)
+
+
+async def test_ha_event_fires_even_with_this_addons_own_alerts_turned_off() -> None:
+    """Firing an event publishes a fact for the user's own automations —
+    someone who turned this add-on's notifications off is exactly the person
+    likely to be handling it in HA instead."""
+    on_low = AsyncMock()
+    monitor, _, dispatcher = _make_monitor(
+        [{"camera": "Backyard", "battery_state": "low"}],
+        alerts_enabled=False,
+        add_battery_reading_result=True,
+        on_low_battery=on_low,
+    )
+
+    await monitor.check_and_alert()
+
+    on_low.assert_awaited_once()
+    dispatcher.dispatch_battery_alert.assert_not_awaited()
+
+
+async def test_no_ha_event_without_a_genuine_transition() -> None:
+    on_low = AsyncMock()
+    monitor, _, _ = _make_monitor(
+        [{"camera": "Backyard", "battery_state": "low"}],
+        add_battery_reading_result=False,
+        on_low_battery=on_low,
+    )
+
+    await monitor.check_and_alert()
+
+    on_low.assert_not_awaited()
+
+
+async def test_no_ha_event_for_a_transition_back_to_ok() -> None:
+    on_low = AsyncMock()
+    monitor, _, _ = _make_monitor(
+        [{"camera": "Backyard", "battery_state": "ok"}],
+        add_battery_reading_result=True,
+        on_low_battery=on_low,
+    )
+
+    await monitor.check_and_alert()
+
+    on_low.assert_not_awaited()

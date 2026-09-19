@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
-import AppSidebar, { type TabName } from './components/layout/AppSidebar.vue'
+import AppSidebar, { TAB_NAMES, type TabName } from './components/layout/AppSidebar.vue'
 import ToastHost from './components/layout/ToastHost.vue'
 import ConfirmDialog from './components/layout/ConfirmDialog.vue'
 import HelpOverlay from './components/layout/HelpOverlay.vue'
@@ -26,8 +26,20 @@ import { useDateFilterStore } from './stores/dateFilter'
 import { useNavCollapsedStore } from './stores/navCollapsed'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
 
-const activeTab = ref<TabName>('library')
+const activeTab = ref<TabName>(initialTab())
 const helpOpen = ref(false)
+
+/** `?tab=<name>&kiosk=1` — how a Home Assistant dashboard embeds one tab of
+ * this UI in an iframe card (see the Automations tab's Dashboards builder).
+ * Kiosk mode hides the navigation and the embedded page's own headings, so a
+ * card shows the content and nothing else; it is a per-URL display mode, not
+ * a saved preference, so nothing here is persisted. */
+function initialTab(): TabName {
+  const requested = new URLSearchParams(window.location.search).get('tab')
+  return TAB_NAMES.includes(requested as TabName) ? (requested as TabName) : 'library'
+}
+
+const kiosk = new URLSearchParams(window.location.search).get('kiosk') === '1'
 
 const theme = useThemeStore()
 const auth = useAuthStore()
@@ -58,6 +70,12 @@ watchEffect(() => {
   document.body.classList.toggle('nav-collapsed', nav.collapsed)
 })
 
+// Same reasoning as the theme classes: the rules that hide an embedded
+// page's own chrome have to reach elements outside #app's flex layout. Not a
+// watchEffect like its neighbours — `kiosk` comes from the URL and cannot
+// change without a reload.
+document.body.classList.toggle('kiosk', kiosk)
+
 useKeyboardShortcuts(helpOpen)
 
 onMounted(() => auth.startPolling())
@@ -65,7 +83,7 @@ onUnmounted(() => auth.stopPolling())
 </script>
 
 <template>
-  <AppSidebar v-model="activeTab" @help="helpOpen = !helpOpen" />
+  <AppSidebar v-if="!kiosk" v-model="activeTab" @help="helpOpen = !helpOpen" />
 
   <div id="page-library" class="page" :class="{ active: activeTab === 'library' }">
     <LibraryPage />

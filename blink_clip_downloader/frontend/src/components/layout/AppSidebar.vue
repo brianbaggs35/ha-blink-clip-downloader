@@ -1,21 +1,5 @@
-<script setup lang="ts">
-import { readLocal, removeLocal, writeLocal } from '../../localStorage'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
-import Tag from 'primevue/tag'
-import AppIcon from '../icons/AppIcon.vue'
+<script lang="ts">
 import type { IconName } from '../icons/paths'
-import { useThemeStore } from '../../stores/theme'
-import { useToastStore } from '../../stores/toast'
-import { useConnectionStore } from '../../stores/connection'
-import { useLibraryStore } from '../../stores/library'
-import { useRefreshStore } from '../../stores/refresh'
-import { useCapabilitiesStore } from '../../stores/capabilities'
-import { useNavCollapsedStore } from '../../stores/navCollapsed'
-import { apiPost } from '../../api/client'
-import { getCameras, getStats } from '../../api/clips'
-import { listFaces } from '../../api/ai'
 
 export type TabName =
   | 'library'
@@ -32,7 +16,7 @@ export type TabName =
   | 'biometrics'
   | 'storage'
 
-const TABS: { name: TabName; label: string; icon: IconName }[] = [
+export const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'library', label: 'Library', icon: 'tab-library' },
   { name: 'liveview', label: 'Live View', icon: 'tab-liveview' },
   { name: 'securityfeed', label: 'Security Feed', icon: 'tab-securityfeed' },
@@ -47,6 +31,29 @@ const TABS: { name: TabName; label: string; icon: IconName }[] = [
   { name: 'biometrics', label: 'Biometrics', icon: 'tab-biometrics' },
   { name: 'storage', label: 'Storage', icon: 'tab-storage' },
 ]
+
+/** Every tab id, for validating a `?tab=` parameter without a second
+ * copy of the list (see App.vue's kiosk mode). */
+export const TAB_NAMES: TabName[] = TABS.map((tab) => tab.name)
+</script>
+
+<script setup lang="ts">
+import { readLocal, removeLocal, writeLocal } from '../../localStorage'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
+import Tag from 'primevue/tag'
+import AppIcon from '../icons/AppIcon.vue'
+import { useThemeStore } from '../../stores/theme'
+import { useToastStore } from '../../stores/toast'
+import { useConnectionStore } from '../../stores/connection'
+import { useLibraryStore } from '../../stores/library'
+import { useRefreshStore } from '../../stores/refresh'
+import { useCapabilitiesStore } from '../../stores/capabilities'
+import { useNavCollapsedStore } from '../../stores/navCollapsed'
+import { apiPost } from '../../api/client'
+import { getCameras, getStats } from '../../api/clips'
+import { listFaces } from '../../api/ai'
 
 const activeTab = defineModel<TabName>({ required: true })
 const emit = defineEmits<{ help: []; refresh: [] }>()

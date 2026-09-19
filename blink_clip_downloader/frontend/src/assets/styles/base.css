@@ -2119,3 +2119,21 @@ body.nav-collapsed {
     gap: 0.6rem;
   }
 }
+
+/* ── Kiosk mode (?kiosk=1) ────────────────────────────────
+   How a Home Assistant dashboard embeds one tab of this UI in an iframe
+   card (see the Automations tab's Dashboards builder). The nav is hidden
+   by App.vue itself; what is left here is the embedded page's own chrome —
+   a heading, an intro paragraph and a settings panel are all noise in a
+   card that is 300px tall, and the Security Feed is the tab this exists
+   for. Deliberately display:none rather than a separate layout: the page
+   components stay exactly as they are, at any width. */
+body.kiosk .secfeed-page > h2,
+body.kiosk .secfeed-page > .page-intro,
+body.kiosk .secfeed-info-banner,
+body.kiosk .secfeed-customize {
+  display: none;
+}
+body.kiosk .secfeed-page {
+  padding-top: 0.6rem;
+}
