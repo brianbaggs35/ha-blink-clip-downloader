@@ -15,6 +15,7 @@ blink_downloader/ffmpeg_output.py
 blink_downloader/frame_motion.py
 blink_downloader/gdrive_client.py
 blink_downloader/gdrive_queue.py
+blink_downloader/ha_entities.py
 blink_downloader/library_scanner.py
 blink_downloader/live_view.py
 blink_downloader/manifest.py
@@ -140,6 +141,7 @@ tests/test_ffmpeg_output.py
 tests/test_frame_motion.py
 tests/test_gdrive_client.py
 tests/test_gdrive_queue.py
+tests/test_ha_entities.py
 tests/test_library_scanner.py
 tests/test_live_view.py
 tests/test_main_logging.py

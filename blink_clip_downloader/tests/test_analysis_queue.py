@@ -60,6 +60,7 @@ def _make_queue(
         schedule_end=str(kwargs.get("schedule_end", "")),
         batch_size=int(kwargs.get("batch_size", 10)),
         check_interval=int(kwargs.get("check_interval", 1)),
+        on_analyzed=kwargs.get("on_analyzed"),
     )
 
 
@@ -943,3 +944,93 @@ async def test_a_low_confidence_model_verdict_is_still_gated(
     await queue._process_pending()
 
     dispatcher.dispatch.assert_not_awaited()
+
+
+# ------------------------------------------------------------------
+# on_analyzed (the blink_clip_analyzed HA event)
+# ------------------------------------------------------------------
+
+
+async def test_on_analyzed_fires_for_every_completed_analysis(
+    db: ClipDatabase,
+) -> None:
+    """Including an unremarkable one — an automation that only wants the
+    suspicious ones filters the payload, but one counting analyses has no
+    other way to hear about them."""
+    analyzer = _make_analyzer_mock()
+    on_analyzed = AsyncMock()
+    queue = _make_queue(analyzer, db, on_analyzed=on_analyzed)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    on_analyzed.assert_awaited_once()
+    call = on_analyzed.await_args
+    assert call is not None
+    result, clip = call.args
+    assert result.is_suspicious is False
+    assert clip["id"] == "c1"
+
+
+async def test_on_analyzed_is_not_called_for_a_failed_analysis(
+    db: ClipDatabase,
+) -> None:
+    analyzer = _make_analyzer_mock()
+    analyzer.analyze_clip = AsyncMock(side_effect=RuntimeError("boom"))
+    analyzer.transient_error = False
+    on_analyzed = AsyncMock()
+    queue = _make_queue(analyzer, db, on_analyzed=on_analyzed)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    await queue._process_pending()
+
+    on_analyzed.assert_not_awaited()
+
+
+async def test_a_failing_on_analyzed_does_not_lose_the_completed_status(
+    db: ClipDatabase, caplog
+) -> None:
+    """Same reasoning as the dispatch path above: the analysis is already
+    persisted, so a failure firing a convenience event must not mark the
+    clip failed and trigger a re-analysis."""
+    analyzer = _make_analyzer_mock()
+    on_analyzed = AsyncMock(side_effect=RuntimeError("supervisor is down"))
+    queue = _make_queue(analyzer, db, on_analyzed=on_analyzed)
+    queue._running = True
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    with caplog.at_level("WARNING"):
+        await queue._process_pending()
+
+    counts = await db.get_queue_counts()
+    assert counts["completed"] == 1
+    assert counts["failed"] == 0
+    assert "analyzed event" in caplog.text
+
+
+async def test_a_failing_dispatch_still_lets_the_analyzed_event_fire(
+    db: ClipDatabase, caplog
+) -> None:
+    analyzer = _make_analyzer_mock()
+    on_analyzed = AsyncMock()
+    queue = _make_queue(analyzer, db, on_analyzed=on_analyzed)
+    queue._running = True
+    queue._maybe_dispatch_alert = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("threshold lookup failed")
+    )
+
+    await db.add_clip(_add_clip("c1"))
+    await db.enqueue_for_analysis("c1", "Front Door", "/clips/c1.mp4")
+
+    with caplog.at_level("WARNING"):
+        await queue._process_pending()
+
+    on_analyzed.assert_awaited_once()

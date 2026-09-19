@@ -133,6 +133,20 @@ architecture.
     (`cameras`/`columns`/`refresh_seconds`) persist to
     `/data/security_feed_settings.json`, same convention as
     `vehicle_settings.json`.
+  - `ha_entities.py` — the extra Home Assistant entities the add-on
+    publishes beyond `sensor.blink_downloader_status`: the two storage
+    percentage sensors (`sensor.blink_local_storage`,
+    `sensor.blink_cloud_storage`) and the `blink_clip_analyzed` /
+    `blink_camera_battery_low` events. **Those names are a user-facing
+    contract** — the Automations tab's builders generate YAML against them
+    and users' own automations reference them, so renaming one is a
+    breaking change. The cloud sensor is deliberately named for the role,
+    not for Google Drive (OneDrive is planned); which backend is in use is
+    the `provider` attribute. Pure payload builders plus a thin publisher
+    class, so the number-shaping is testable without a notifier; `app.py`
+    calls it once per poll cycle and once at startup, and hands its two
+    event methods to `analysis_queue.py`/`battery_monitor.py` as callbacks
+    rather than letting either import a notifier.
   - `event_watcher.py`, `notifier.py`, `notification_channels.py`,
     `digest.py`, `battery_monitor.py`, `archiver.py`, `storage.py`,
     `library_scanner.py`, `tracker.py`, `manifest.py` — supporting modules
@@ -233,11 +247,27 @@ removed in 5.0.0.
   plus one or more self-contained "section" components that each own their
   own `load()`/`save()` — see `components/ai/AiPage.vue` for the reference
   pattern (a page component + several independent `*Card.vue`/`*Section.vue`
-  children). Static/reference-only tabs (`ModelsPage.vue`,
-  `AutomationsPage.vue`'s doc content) don't fetch anything and are simpler,
-  but aren't the pattern to copy for a data-driven tab.
+  children). `ModelsPage.vue` is reference-only — it fetches nothing and is
+  simpler, but isn't the pattern to copy for a data-driven tab.
+- **Automations tab** (`components/automations/`): five builders inside one
+  PrimeVue `Tabs` (`lazy`, so only the open panel exists — a Playwright
+  selector never collides with a hidden panel, and a form's edits are lost
+  on tab switch by design). The catalogues live in `recipes/` as data:
+  `automations.ts`/`scripts.ts` are lists of `Recipe`s (fields + a pure
+  `build(values)` returning YAML), `dashboard.ts`/`blueprints.ts` are the
+  Dashboards and Blueprints content, `shared.ts` holds the fragments more
+  than one recipe emits, and `types.ts` the field model and YAML helpers.
+  Adding an automation is a few lines in a catalogue, not another
+  hand-written snippet in a template. Everything the generated YAML
+  references must be something the add-on really publishes — see
+  `ha_entities.py` above. `App.vue`'s `?kiosk=1&tab=<id>` mode exists for
+  the Dashboards builder's iframe-card route.
 - **Nav wiring**: adding/removing a tab touches four places —
-  `components/layout/AppSidebar.vue`'s `TabName` type + `TABS` array,
+  `components/layout/AppSidebar.vue`'s `TabName` type + `TABS` array (in
+  that file's plain `<script>` block, not its `<script setup>` one: `TABS`
+  and the `TAB_NAMES` derived from it are runtime *exports*, which
+  `<script setup>` cannot do, and `App.vue`'s kiosk mode validates
+  `?tab=` against them),
   `App.vue`'s imports + `<div id="page-X">` blocks,
   `components/icons/paths.ts`'s `ICONS` map (add a `tab-X` entry; icons are
   plain path/rect/circle data, not separate `.vue` files — see `AppIcon.vue`),
@@ -295,6 +325,17 @@ removed in 5.0.0.
   inherit them from a different prototype (a VTU/jsdom quirk) — dispatch a
   real `new PointerEvent(...)` directly on the element instead when a test
   needs a specific pointer position (see `VehicleZonePicker.spec.ts`).
+  A PrimeVue component that owns its own id prop (`InputNumber`, `Select`,
+  `MultiSelect`, `ToggleSwitch`) takes `input-id`, while `InputText` and
+  `InputMask` are plain inputs that take `id` — mixing the two leaves the
+  `<label for>` pointing at nothing, which no test that clicks the element
+  directly can see (`RecipeFieldInput.spec.ts` asserts the association
+  itself for exactly that reason). `MultiSelect`'s id lands on its hidden
+  input, so a Playwright test clicks the widget (`.p-multiselect`) instead.
+  The generated-YAML specs parse their output with `js-yaml` (a
+  devDependency, test-only) rather than string-matching it — string
+  assertions cannot tell valid YAML from a plausible-looking indentation
+  bug.
   Coverage threshold is 80% (`vitest.config.ts`), mirroring the Python side's
   `fail_under = 80` — actual coverage on this codebase runs ~98-99%.
 - **E2E testing** (`frontend/e2e/`, Playwright's own test runner —
