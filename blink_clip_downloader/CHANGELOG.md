@@ -251,6 +251,7 @@ never wait on Blink's cloud.
 - Updated vue to 3.5.43
 - Updated @types/node to 26.6.2
 - Updated eslint to 10.11.0
+- Updated jsdom to 30.1.0
 
 ## 6.0.4
 
