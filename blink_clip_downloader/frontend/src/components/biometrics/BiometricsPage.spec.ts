@@ -74,8 +74,13 @@ describe('BiometricsPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     stubFileReader()
+
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:vitest-mock')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
   })
+
   afterEach(() => {
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
