@@ -250,6 +250,7 @@ never wait on Blink's cloud.
 - Updated video.js to 8.24.1
 - Updated vue to 3.5.43
 - Updated @types/node to 26.6.2
+- Updated eslint to 10.11.0
 
 ## 6.0.4
 
