@@ -2,6 +2,102 @@
 
 ## 6.0.5
 
+### The Automations tab now builds automations, not just shows them
+
+The tab used to be four fixed YAML snippets with someone else's thresholds
+baked into them — an 8000 MB storage warning, a 10-second motion clip — and
+a table of the two things the add-on published to Home Assistant. It is now
+five builders, and everything they produce is generated from your own
+settings and your own camera names.
+
+**Automations** has twelve recipes, each with its own fields: suspicious
+clip alerts (with confidence and risk floors, camera filter, and the
+Companion-app keys that let one through silent mode), lights on when
+something looks off, casting a camera view to a display, a spoken
+announcement, new-clip and unusually-long-clip notifications, cloud and
+local storage thresholds, a cloud-backup backlog watchdog, camera battery
+low, "nothing has downloaded in *n* hours", and a daily summary. Pick one,
+set it up, copy or download the YAML.
+
+The two notification recipes can also attach the camera's own snapshot and
+open somewhere useful when tapped. Both are emitted with each mobile
+platform's keys side by side (iOS reads `url` and `push.sound.critical`,
+Android reads `clickAction` and `ttl`/`priority`/`channel`, each ignoring
+the other's), so one generated snippet works on whichever phone reads it.
+The snapshot goes through Home Assistant's own camera proxy rather than the
+add-on's port, because the phone reading the notification is usually not on
+your network — but Home Assistant is already somewhere it can reach.
+
+**Scripts & Helpers** covers the pieces automations call rather than
+trigger: a `rest_command` + script that runs a download cycle from Home
+Assistant, a cast-to-a-display script, a spoken storage report, a
+security-alert lighting scene, template sensors that reduce both storage
+percentages to ok/warning/critical, and a "pause Blink alerts"
+`input_boolean` — which comes with an automation that un-pauses it after a
+while, because a forgotten toggle silently disabling every alert is the
+failure mode that helper has.
+
+**Dashboards** builds a Lovelace view of camera tiles, storage gauges and a
+status card, plus the `cast.show_lovelace_view` script that throws it onto
+a Nest Hub or Chromecast. **Blueprints** offers three importable blueprints
+for the automations people set up more than once — one per phone, one per
+threshold. **Entities & Events** is the old reference table, expanded.
+
+The **Notification Channels** test panel is unchanged and still on the
+page.
+
+### Camera tiles on a Home Assistant dashboard
+
+Two routes, and the Dashboards builder writes both.
+
+Home Assistant's Generic Camera integration can poll this add-on's own
+snapshot endpoint, turning each Blink camera into a real `camera.*` entity
+that any card — or a cast display — can show. That integration is UI-only
+(it has had no YAML form since 2022), so the builder generates the fiddly
+part instead: the exact, correctly-encoded snapshot URL per camera, the
+entity id each one will end up with, and the Lovelace view referencing
+them. Home Assistant fetches those images itself, which is what makes them
+work on a display that cannot reach the add-on directly.
+
+The other route needs no Home Assistant setup at all. Every tab of this web
+UI now renders without its navigation when loaded with `?kiosk=1`, so
+`?kiosk=1&tab=securityfeed` drops straight into an iframe card and shows
+the Security Feed grid and nothing else. The viewing browser loads the
+add-on directly there, so it has to reach that port — and an `http://`
+add-on inside an `https://` dashboard is blocked as mixed content, which
+the builder says on the spot rather than leaving you to find out.
+
+### Three new things to automate on
+
+None of the automations above could have been written before, because the
+add-on published nothing to write them against. It now publishes:
+
+- `sensor.blink_local_storage` — how full the clip library is, as a plain
+  0-100 percentage in the state, measured against the storage quota when
+  one is set and against the disk when it is not (the `basis` attribute
+  says which).
+- `sensor.blink_cloud_storage` — the same for the cloud backup account,
+  with the upload queue's depth, failures and paused state as attributes.
+  Deliberately named for the role rather than for Google Drive: OneDrive
+  support is planned, and an automation written today should survive it.
+  The `provider` attribute names whichever backend is in use.
+- `blink_clip_analyzed` — fired for every finished AI analysis, suspicious
+  or not, carrying the verdict, confidence, summary and the security
+  layer's risk score and severity. The raw model response and the full
+  prompt are left out on purpose: every event fired is stored in the
+  recorder, and neither belongs there.
+- `blink_camera_battery_low` — fired on a genuine ok-to-low transition,
+  independent of whether this add-on's own battery notifications are
+  switched on. Firing an event publishes a fact; what to do about it is
+  the automation's business.
+
+Both sensors are written at startup as well as once per poll cycle, so a
+threshold automation is current within a poll interval of a restart rather
+than after the first download. Either can report `unknown` — no cloud
+account connected, or an account with unlimited storage — rather than a
+misleading `0`, which a `numeric_state` trigger would read as "empty" and
+could use to *clear* an alert.
+
 ### Live View: fixed for real this time, and here is the actual reason
 
 Live View failed with "The media could not be loaded, either because the

@@ -7,6 +7,7 @@ import json
 import os
 import time as _time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2835,3 +2836,67 @@ def test_init_constructs_gdrive_client_and_queue_unconditionally(base_config):
     assert app._gdrive_client is not None
     assert app._gdrive_queue is not None
     assert app._gdrive_client.connected is False
+
+
+# ---------------------------------------------------------------------------
+# _publish_storage_sensors (see ha_entities.py)
+# ---------------------------------------------------------------------------
+
+
+async def test_poll_cycle_publishes_both_storage_sensors(app):
+    app._gdrive_queue.get_queue_status = AsyncMock(
+        return_value={"pending": 2, "failed": 0, "completed": 7}
+    )
+
+    await app._poll_cycle()
+
+    written = {
+        call.args[0]: call.args for call in app._notifier.update_sensor.await_args_list
+    }
+    assert "sensor.blink_local_storage" in written
+    assert "sensor.blink_cloud_storage" in written
+    assert written["sensor.blink_cloud_storage"][2]["pending_uploads"] == 2
+
+
+async def test_storage_sensors_skip_the_drive_quota_call_when_not_connected(app):
+    app._gdrive_client.connected = False
+    app._gdrive_client.get_quota = AsyncMock(return_value=None)
+
+    await app._poll_cycle()
+
+    app._gdrive_client.get_quota.assert_not_awaited()
+
+
+async def test_storage_sensors_report_the_drive_quota_when_connected(app):
+    app._gdrive_client.connected = True
+    # is_configured is a read-only property over the OAuth client pair.
+    app._gdrive_client._client_id = "id"
+    app._gdrive_client._client_secret = "secret"
+    app._gdrive_client.get_quota = AsyncMock(
+        return_value=SimpleNamespace(
+            limit=100 * 1024**3, usage=90 * 1024**3, usage_in_drive=1024**3
+        )
+    )
+
+    await app._poll_cycle()
+
+    cloud = next(
+        call.args
+        for call in app._notifier.update_sensor.await_args_list
+        if call.args[0] == "sensor.blink_cloud_storage"
+    )
+    assert cloud[1] == "90.0"
+    assert cloud[2]["provider"] == "google_drive"
+
+
+async def test_storage_sensors_are_published_when_the_quota_stops_downloads(app):
+    """A full library is exactly when a storage-threshold automation needs
+    the sensor to be current, and that path returns early."""
+    app._storage.is_over_quota = MagicMock(return_value=True)
+
+    await app._poll_cycle()
+
+    names = [call.args[0] for call in app._notifier.update_sensor.await_args_list]
+    assert "sensor.blink_local_storage" in names
+    assert "sensor.blink_cloud_storage" in names
+    app._downloader.download_new_clips.assert_not_awaited()

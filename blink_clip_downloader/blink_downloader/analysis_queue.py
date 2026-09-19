@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, time
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +40,8 @@ class AnalysisQueue:
         batch_size: int = 10,
         check_interval: int = 60,
         min_confidence: float = 0.0,
+        on_analyzed: Callable[[Any, dict[str, Any] | None], Awaitable[Any]]
+        | None = None,
     ) -> None:
         self._analyzer = analyzer
         self._db = db
@@ -48,6 +51,12 @@ class AnalysisQueue:
         self._batch_size = batch_size
         self._check_interval = check_interval
         self._min_confidence = min_confidence
+        # Fires blink_clip_analyzed in HA (see ha_entities.py). Called for
+        # every completed analysis, suspicious or not — an automation that
+        # wants only the suspicious ones filters on the payload, while one
+        # that wants "a clip finished analyzing" (a dashboard counter, a
+        # log) has no other way to hear about it.
+        self._on_analyzed = on_analyzed
         self._running = False
 
     # ------------------------------------------------------------------
@@ -230,6 +239,16 @@ class AnalysisQueue:
                 clip_id,
                 exc,
             )
+
+        # Same reasoning as the dispatch above, and separately caught so one
+        # of the two failing still leaves the other to run.
+        if self._on_analyzed is not None:
+            try:
+                await self._on_analyzed(result, clip)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Could not fire the analyzed event for clip %s: %s", clip_id, exc
+                )
 
     async def _compute_anomaly_score(
         self, camera: str, clip_timestamp: str, clip_duration: float
