@@ -6,7 +6,7 @@ python-slugify>=9.1.0
 python-dateutil>=2.9.0.post0
 aiosmtplib>=5.1.3
 Pillow>=12.3.0
-anthropic>=1.6.0
+anthropic>=1.7.0
 openai>=3.14.1
 numpy>=2.5.3
 
