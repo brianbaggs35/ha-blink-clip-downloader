@@ -252,6 +252,7 @@ never wait on Blink's cloud.
 - Updated @types/node to 26.6.2
 - Updated eslint to 10.11.0
 - Updated jsdom to 30.1.0
+- Updated prettier to 3.9.8
 
 ## 6.0.4
 
