@@ -70,6 +70,44 @@ if (!baseUrl || !addonSlug || !panelTitle || !addonName) {
 // active tab.
 const TABS_TO_VERIFY = Object.keys(TAB_CHECKS).filter((tab) => tab !== "automations").concat("automations");
 
+/** One thing the Automations tab can create in Home Assistant, and where to
+ * go looking for it afterwards.
+ *
+ * Deliberately one of each kind Core's config API supports, because each
+ * takes a different path through ha_config.py's normalize_config(): an
+ * automation passes straight through, a script has to be unwrapped from
+ * the id it nests its body under, and a scene from a one-item list whose
+ * `id` Core injects itself. A mistake in any one of those three would show
+ * up only here.
+ *
+ * `createdName` is both what the tab reports on success and what Home
+ * Assistant lists the object under — the same string, which is the point
+ * of ha_config.created_name returning a name rather than an entity id.
+ */
+const CREATABLE = [
+  {
+    builderTab: "Automations",
+    recipe: "Daily summary",
+    createdName: "Blink – daily summary",
+    haPath: "/config/automation/dashboard",
+    haWhere: "Settings > Automations & scenes > Automations",
+  },
+  {
+    builderTab: "Scripts & Helpers",
+    recipe: "Send a snapshot of every camera",
+    createdName: "Blink – send every camera snapshot",
+    haPath: "/config/script/dashboard",
+    haWhere: "Settings > Automations & scenes > Scripts",
+  },
+  {
+    builderTab: "Scripts & Helpers",
+    recipe: "Security alert lighting scene",
+    createdName: "Blink security alert",
+    haPath: "/config/scene/dashboard",
+    haWhere: "Settings > Automations & scenes > Scenes",
+  },
+];
+
 const OWNER = {
   name: "CI Integration Test",
   username: "ci-integration-test",
@@ -235,9 +273,13 @@ try {
     .locator('.app-nav-tab.active[data-tab="automations"]')
     .waitFor({ state: "visible", timeout: 5000 });
   await checkHaNotification(frame, issues);
-  await checkHaConfigCreate(frame, issues);
+  const createdInHa = await checkHaConfigCreate(frame, issues);
 
   await checkIngressSurvivesReload(page, addonSlug, issues);
+
+  // Leaves the iframe for good - everything below is Home Assistant's own
+  // top-level UI, so this has to come after the ingress checks.
+  await checkCreatedObjectsAppearInHomeAssistant(page, baseUrl, createdInHa, issues);
 
   // Escapes the ingress iframe entirely - everything from here on is
   // Home Assistant's own top-level UI, not the app's.
@@ -304,30 +346,87 @@ async function assertRealIngress(page, issuesList) {
  * @require_admin — to accept it. A mocked response proves none of that.
  */
 async function checkHaConfigCreate(frame, issuesList) {
-  console.log(
-    "Creating a real automation in Home Assistant from the Automations tab...",
-  );
-  try {
-    await frame.getByRole("tab", { name: "Automations" }).click();
-    await frame
-      .locator(".recipe-listbox")
-      .getByText("Daily summary", { exact: true })
-      .click();
-    await frame
-      .getByRole("button", { name: "Create in Home Assistant" })
-      .click();
-    await frame
-      .getByText("automation.blink_daily_summary", { exact: false })
-      .waitFor({ state: "visible", timeout: 15000 });
+  const created = [];
+  for (const item of CREATABLE) {
+    console.log(`Creating "${item.createdName}" from the Automations tab...`);
+    try {
+      // The builders live in a lazy PrimeVue Tabs, so only the open panel
+      // exists in the DOM - the listbox locator below can never collide
+      // with a hidden one.
+      await frame.getByRole("tab", { name: item.builderTab }).click();
+      const picker = frame.locator(".recipe-listbox");
+      await picker.waitFor({ state: "visible", timeout: 10000 });
+      // Filter rather than scroll: the automations catalogue is long
+      // enough that the wanted row starts out below the fold.
+      await picker.getByPlaceholder("Search").fill(item.recipe);
+      await picker.getByText(item.recipe, { exact: true }).click();
+
+      await frame
+        .getByRole("button", { name: "Create in Home Assistant" })
+        .click();
+      // Scoped to the success banner's own <strong>, not the whole frame:
+      // the generated YAML shows the same alias on its own `alias:` line,
+      // so an unscoped match finds two elements and Playwright's strict
+      // mode throws.
+      await frame
+        .locator(".recipe-note strong")
+        .filter({ hasText: item.createdName })
+        .waitFor({ state: "visible", timeout: 20000 });
+      console.log(`  created "${item.createdName}".`);
+      created.push(item);
+    } catch (err) {
+      issuesList.push(
+        `"Create in Home Assistant" never reported "${item.createdName}" (${err.message}) - ` +
+          `the add-on's write to Home Assistant's config API failed. If the message mentions an ` +
+          `administrator, Supervisor's proxy is no longer reaching Core as an admin user.`,
+      );
+    }
+  }
+  if (created.length) {
     console.log(
-      "  confirmed: Home Assistant's config API accepted the add-on's write (admin scope through the Supervisor proxy).",
+      "  confirmed: Home Assistant's config API accepted the add-on's writes (admin scope through the Supervisor proxy).",
     );
-  } catch (err) {
-    issuesList.push(
-      `"Create in Home Assistant" never reported the created entity (${err.message}) - ` +
-        `the add-on's write to Home Assistant's config API failed. If the message mentions an ` +
-        `administrator, Supervisor's proxy is no longer reaching Core as an admin user.`,
-    );
+  }
+  return created;
+}
+
+/**
+ * The other half of the create: that the objects really exist in Home
+ * Assistant, seen from Home Assistant's own UI rather than from the
+ * add-on's report of its own success.
+ *
+ * This leaves the ingress iframe behind entirely. A write that Core's
+ * config API accepted but that never reached automations.yaml/scripts.yaml/
+ * scenes.yaml, or that landed there in a shape Core then refused to load,
+ * would still have produced a cheerful "created" in the tab - only the
+ * lists below can tell the difference, because they are rendered from what
+ * Core actually loaded.
+ */
+async function checkCreatedObjectsAppearInHomeAssistant(page, baseUrl, created, issuesList) {
+  if (!created.length) {
+    console.log("Nothing was created, so there is nothing to look for in Home Assistant.");
+    return;
+  }
+  for (const item of created) {
+    console.log(`Looking for "${item.createdName}" in ${item.haWhere}...`);
+    try {
+      // new URL() rather than string concatenation, so a baseUrl with or
+      // without a trailing slash both resolve to the same absolute path.
+      const target = new URL(item.haPath, baseUrl).toString();
+      await page.goto(target, { waitUntil: "load", timeout: 20000 });
+      await page
+        .getByText(item.createdName, { exact: false })
+        .first()
+        .waitFor({ state: "visible", timeout: 20000 });
+      console.log(`  confirmed: Home Assistant lists it under ${item.haWhere}.`);
+    } catch (err) {
+      issuesList.push(
+        `"${item.createdName}" was reported as created, but it never appeared in Home ` +
+          `Assistant's own ${item.haWhere} list (${err.message}) - the write was accepted but Core ` +
+          `did not end up loading it, so the add-on told the user something that is not true.`,
+      );
+      await saveFailureArtifacts(`ha-create-${item.haPath.split("/")[2]}`);
+    }
   }
 }
 

@@ -134,8 +134,10 @@ describe('a YAML dashboard of its own', () => {
   })
 
   it('falls back to the default sidebar title when it is cleared', () => {
-    const yaml = dashboardRegistrationYaml(options({ viewTitle: '' }))
-    expect(yaml).toContain('title: Blink Security')
+    const parsed = load(dashboardRegistrationYaml(options({ viewTitle: '' }))) as {
+      lovelace: { dashboards: Record<string, { title: string }> }
+    }
+    expect(Object.values(parsed.lovelace.dashboards)[0].title).toBe('Blink Security')
   })
 
   it('forces a hyphen into the path, which Home Assistant requires', () => {
@@ -153,5 +155,31 @@ describe('a YAML dashboard of its own', () => {
       dashboard_path: 'blink-cams',
       view_path: 'feed',
     })
+  })
+})
+
+describe('names that are not YAML-safe', () => {
+  // A camera called "Cam #2" used to lose everything from the # onward,
+  // because the interpolation was unquoted and YAML read it as a comment —
+  // valid YAML, silently the wrong card title. "Garage: Side" did not parse
+  // at all, and "Off"/"123" came back as a boolean/integer.
+  const awkward = ['Cam #2', 'Garage: Side', "Brian's Office", 'Off', 'Yes', '123', '- dash', '@Gate']
+
+  it.each(awkward)('keeps a camera named %o intact in the view', (name) => {
+    const parsed = load(dashboardYaml(options({ cameras: [name] }))) as {
+      views: { cards: { cards?: { name?: string }[] }[] }[]
+    }
+    const card = parsed.views[0].cards.flatMap((c) => c.cards ?? []).find((c) => 'name' in c)
+    expect(card?.name).toBe(name)
+  })
+
+  it.each(awkward)('keeps a view title of %o intact', (title) => {
+    const parsed = load(dashboardYaml(options({ viewTitle: title }))) as { views: { title: string }[] }
+    expect(parsed.views[0].title).toBe(title)
+
+    const registered = load(dashboardRegistrationYaml(options({ viewTitle: title }))) as {
+      lovelace: { dashboards: Record<string, { title: string }> }
+    }
+    expect(Object.values(registered.lovelace.dashboards)[0].title).toBe(title)
   })
 })

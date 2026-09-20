@@ -9809,17 +9809,14 @@ async def test_ha_config_create_passes_the_request_through(
     db: ClipDatabase,
 ) -> None:
     writer = MagicMock()
-    writer.create = AsyncMock(return_value="automation.blink_x")
+    writer.create = AsyncMock(return_value="Blink – x")
     async for tc in _client_with_writer(db, writer):
         resp = await tc.post(
             "/api/ha/config/create",
             json={"kind": "automation", "object_id": "blink_x", "yaml": "alias: x"},
         )
         assert resp.status == 200
-        assert await resp.json() == {
-            "created": True,
-            "entity_id": "automation.blink_x",
-        }
+        assert await resp.json() == {"created": True, "name": "Blink – x"}
         writer.create.assert_awaited_once_with("automation", "blink_x", "alias: x")
 
 

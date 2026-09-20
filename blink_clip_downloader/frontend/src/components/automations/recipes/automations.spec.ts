@@ -267,3 +267,22 @@ describe('creating automations in Home Assistant', () => {
     expect(AUTOMATION_RECIPES.every((r) => r.create?.kind === 'automation')).toBe(true)
   })
 })
+
+describe('entity fields a user can mistype', () => {
+  // These used to be interpolated unquoted, right beside a yamlString()'d
+  // title. A colon instead of a dot ("notify: mobile_app_x") or a Jinja
+  // template — both things people really type — made the whole recipe
+  // unparseable YAML rather than something Home Assistant could reject
+  // with a useful message.
+  const awkward = ['notify: mobile_app_x', '{{ my_target }}', 'notify.a#b', '*alias', '@thing']
+
+  it.each(awkward)('still generates parseable YAML for a service of %o', (value) => {
+    for (const r of AUTOMATION_RECIPES) {
+      const keys = r.fields.filter((f) => f.type === 'text').map((f) => f.key)
+      for (const key of keys) {
+        const yaml = r.build({ ...defaultValues(r), [key]: value })
+        expect(() => load(yaml), `${r.id}.${key}`).not.toThrow()
+      }
+    }
+  })
+})

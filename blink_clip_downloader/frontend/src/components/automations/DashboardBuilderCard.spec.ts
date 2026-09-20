@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { load } from 'js-yaml'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import DashboardBuilderCard from './DashboardBuilderCard.vue'
@@ -88,9 +89,12 @@ describe('DashboardBuilderCard', () => {
     await wrapper.find('#dash-title').setValue('Cameras')
     await wrapper.find('#dash-path').setValue('cams')
     const blocks = wrapper.findAllComponents({ name: 'CodeBlock' })
-    expect(blocks[1].props('code')).toContain('title: Cameras')
-    expect(blocks[1].props('code')).toContain('path: cams')
-    expect(blocks[2].props('code')).toContain('view_path: cams')
+    const view = load(blocks[1].props('code')) as { views: { title: string; path: string }[] }
+    expect(view.views[0]).toMatchObject({ title: 'Cameras', path: 'cams' })
+    const cast = load(blocks[2].props('code')) as {
+      blink_cast_cameras: { sequence: { data: { view_path: string } }[] }
+    }
+    expect(cast.blink_cast_cameras.sequence[0].data.view_path).toBe('cams')
   })
 
   it('switches to a YAML dashboard of its own, registration file and all', async () => {
@@ -109,10 +113,31 @@ describe('DashboardBuilderCard', () => {
   it('follows the dashboard path into the registration, file name and cast script', async () => {
     const wrapper = mountCard()
     await wrapper.findAllComponents({ name: 'SelectButton' })[1].vm.$emit('update:modelValue', 'yaml-file')
-    await wrapper.find('#dash-path').setValue('my-cams')
+    await wrapper.find('#dash-dashboard-path').setValue('my-cams')
     const blocks = wrapper.findAllComponents({ name: 'CodeBlock' })
-    expect(blocks[1].props('code')).toContain('    my-cams:')
+    const registration = load(blocks[1].props('code')) as {
+      lovelace: { dashboards: Record<string, unknown> }
+    }
+    expect(Object.keys(registration.lovelace.dashboards)).toEqual(['my-cams'])
     expect(blocks[2].props('filename')).toBe('my-cams.yaml')
-    expect(blocks[3].props('code')).toContain('dashboard_path: my-cams')
+    const cast = load(blocks[3].props('code')) as {
+      blink_cast_cameras: { sequence: { data: { dashboard_path: string } }[] }
+    }
+    expect(cast.blink_cast_cameras.sequence[0].data.dashboard_path).toBe('my-cams')
+  })
+
+  it('gives every labelled input its own id, in both delivery modes', async () => {
+    // "Dashboard path" and "View path" both used to be id="dash-path", so
+    // in yaml-file mode the View path label focused the wrong box.
+    const wrapper = mountCard()
+    await wrapper.findAllComponents({ name: 'SelectButton' })[1].vm.$emit('update:modelValue', 'yaml-file')
+    await wrapper.vm.$nextTick()
+    const ids = wrapper.findAll('input[id]').map((el) => el.attributes('id'))
+    expect(ids.length).toBeGreaterThan(2)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const label of wrapper.findAll('label[for]')) {
+      const target = label.attributes('for')
+      expect(wrapper.findAll(`#${target}`), `label for="${target}"`).toHaveLength(1)
+    }
   })
 })

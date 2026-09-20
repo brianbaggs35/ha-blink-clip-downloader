@@ -74,11 +74,19 @@ describe('storage report', () => {
     expect(spoken).toContain('media_player_entity_id')
 
     const notified = build('script-storage-report', { mode: 'notify', notify_service: 'notify.x' })
-    expect(notified).toContain('action: notify.x')
+    const parsed = load(notified) as { blink_storage_report: { sequence: { action: string }[] } }
+    expect(parsed.blink_storage_report.sequence[0].action).toBe('notify.x')
     expect(notified).not.toContain('tts.speak')
     expect(notified).not.toContain('media_player_entity_id')
   })
 })
+
+/** The notify actions a snapshot script emits, read from the parsed YAML
+ * rather than matched in its text. */
+function snapshotActions(yaml: string): { action: string }[] {
+  const parsed = load(yaml) as { blink_camera_snapshots: { sequence: { action: string }[] } }
+  return parsed.blink_camera_snapshots.sequence.filter((step) => step.action === 'notify.notify')
+}
 
 describe('security scene', () => {
   it('is a scenes.yaml list entry with each light set', () => {
@@ -126,13 +134,13 @@ describe('snapshot script', () => {
     const yaml = build('script-snapshot-all', { cameras: ['Front Door', 'Back Yard'] })
     expect(yaml).toContain('camera.blink_front_door')
     expect(yaml).toContain('camera.blink_back_yard')
-    expect(yaml.match(/- action: notify\.notify/g)).toHaveLength(2)
+    expect(snapshotActions(yaml)).toHaveLength(2)
   })
 
   it('falls back to a single placeholder camera when none are picked', () => {
     // It cannot mean "all" — build() never sees the live camera list.
     const yaml = build('script-snapshot-all', { cameras: [] })
-    expect(yaml.match(/- action: notify\.notify/g)).toHaveLength(1)
+    expect(snapshotActions(yaml)).toHaveLength(1)
   })
 })
 
@@ -168,6 +176,20 @@ describe('what can be created directly in Home Assistant', () => {
     expect(scenes.length).toBeGreaterThan(1)
     for (const scene of scenes) {
       expect(scene.build(defaultValues(scene))).toContain(`- id: ${scene.create!.objectId}`)
+    }
+  })
+})
+
+describe('entity fields a user can mistype', () => {
+  const awkward = ['notify: mobile_app_x', '{{ my_target }}', 'light.a#b', '*alias', '@thing']
+
+  it.each(awkward)('still generates parseable YAML for a value of %o', (value) => {
+    for (const r of SCRIPT_RECIPES) {
+      const keys = r.fields.filter((f) => f.type === 'text').map((f) => f.key)
+      for (const key of keys) {
+        const yaml = r.build({ ...defaultValues(r), [key]: value })
+        expect(() => load(yaml), `${r.id}.${key}`).not.toThrow()
+      }
     }
   })
 })

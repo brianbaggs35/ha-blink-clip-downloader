@@ -139,8 +139,8 @@ const embedUrl = computed(() => kioskUrl(addonUrl.value))
       </div>
 
       <div v-if="delivery === 'yaml-file'" class="dash-field">
-        <label for="dash-path" class="field-label">Dashboard path</label>
-        <InputText id="dash-path" v-model="dashPath" class="dash-wide" />
+        <label for="dash-dashboard-path" class="field-label">Dashboard path</label>
+        <InputText id="dash-dashboard-path" v-model="dashPath" class="dash-wide" />
         <span class="dash-help">Its URL segment. Home Assistant requires a hyphen in it.</span>
       </div>
 

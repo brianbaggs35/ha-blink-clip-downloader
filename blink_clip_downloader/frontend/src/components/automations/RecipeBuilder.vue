@@ -72,22 +72,30 @@ const hint = computed(() => TARGET_HINTS[selected.value.target] ?? '')
 
 const toast = useToastStore()
 const creating = ref(false)
-/** Set after a successful create, so the row can say what now exists. */
-const createdEntity = ref('')
+/** Set after a successful create, so the row can say what now exists.
+ * The name Home Assistant lists it under, not an entity id — see
+ * api/haConfig.ts for why those differ. */
+const createdName = ref('')
 
 // A fresh recipe has not been created yet, and its YAML is different.
 watch(selectedId, () => {
-  createdEntity.value = ''
+  createdName.value = ''
 })
 
 async function createInHa(create: RecipeCreate) {
+  // Which recipe this create belongs to. A create can take a moment (the
+  // add-on asks Supervisor, which asks Core), and picking a different
+  // recipe meanwhile must not leave the new one claiming it was created.
+  const startedFor = selectedId.value
   creating.value = true
-  createdEntity.value = ''
+  createdName.value = ''
   try {
     const result = await createInHomeAssistant(create.kind, create.objectId, yaml.value)
-    if (result.created && result.entity_id) {
-      createdEntity.value = result.entity_id
-      toast.show(`Created ${result.entity_id} in Home Assistant`)
+    if (result.created && result.name) {
+      // The toast always reports what really happened; only the row under
+      // the recipe is conditional on still being the one on screen.
+      if (selectedId.value === startedFor) createdName.value = result.name
+      toast.show(`Created “${result.name}” in Home Assistant`)
     } else {
       toast.show(result.message || 'Home Assistant would not create it', true)
     }
@@ -168,9 +176,9 @@ async function createInHa(create: RecipeCreate) {
         </Button>
       </div>
 
-      <Message v-if="createdEntity" severity="success" size="small" :closable="false" class="recipe-note">
-        <strong>{{ createdEntity }}</strong> now exists in Home Assistant. Pressing Create again updates that same one
-        rather than adding another.
+      <Message v-if="createdName" severity="success" size="small" :closable="false" class="recipe-note">
+        <strong>{{ createdName }}</strong> now exists in Home Assistant, under Settings → Automations &amp; scenes.
+        Pressing Create again updates that same one rather than adding another.
       </Message>
 
       <CodeBlock :code="yaml" :filename="selected.filename" />

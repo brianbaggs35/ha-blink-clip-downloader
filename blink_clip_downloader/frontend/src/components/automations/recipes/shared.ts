@@ -53,7 +53,7 @@ export function notifyAction(
   options: NotifyOptions = {},
 ): string {
   const lines = [
-    `  - action: ${service}`,
+    `  - action: ${yamlString(service)}`,
     '    data:',
     `      title: ${yamlString(title)}`,
     `      message: ${yamlTemplate(messageTemplate, 6)}`,
@@ -129,7 +129,7 @@ export function timeWindowCondition(after: string, before: string): string {
  * Scripts & Helpers tab, which generates the input_boolean itself). */
 export function pauseSwitchCondition(entity: string): string {
   if (!entity) return ''
-  return ['  - condition: state', `    entity_id: ${entity}`, '    state: "off"'].join('\n')
+  return ['  - condition: state', `    entity_id: ${yamlString(entity)}`, '    state: "off"'].join('\n')
 }
 
 /** `conditions:` with its entries, or the empty list when nothing applies —

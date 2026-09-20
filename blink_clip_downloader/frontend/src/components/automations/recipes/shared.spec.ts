@@ -13,7 +13,7 @@ import {
 describe('notifyAction', () => {
   it('renders a plain notify action', () => {
     expect(notifyAction('notify.notify', 'Title', '{{ x }}')).toBe(
-      ['  - action: notify.notify', '    data:', '      title: "Title"', '      message: >-', '        {{ x }}'].join(
+      ['  - action: "notify.notify"', '    data:', '      title: "Title"', '      message: >-', '        {{ x }}'].join(
         '\n',
       ),
     )

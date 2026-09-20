@@ -1527,6 +1527,8 @@ writes through Home Assistant's own configuration API (the same one its UI
 editors use), so the result is an ordinary automation/script/scene you can
 open and edit in Home Assistant afterwards. Each recipe has a fixed id, so
 pressing the button again updates what it made rather than piling up copies.
+The tab then tells you the name Home Assistant lists it under, which is what
+to look for in Settings → Automations & scenes.
 
 Everything else keeps its Copy and Download buttons, because no API can
 create it: blueprints and helpers are WebSocket-only, and `rest_command`,

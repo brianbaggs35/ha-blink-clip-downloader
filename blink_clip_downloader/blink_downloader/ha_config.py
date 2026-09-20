@@ -23,6 +23,7 @@ automation instead of piling up duplicates.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import aiohttp
@@ -41,6 +42,15 @@ _KINDS: dict[str, str] = {
     "script": "script",
     "scene": "scene",
 }
+
+#: A Home Assistant object id: the slug Core uses as the key in
+#: automations.yaml and as the second half of the entity id. Enforced rather
+#: than assumed, because the id is the last segment of the URL this posts to
+#: — an id of ``../../../addons/self/options`` would otherwise resolve to a
+#: different Supervisor endpoint entirely, called with this add-on's own
+#: Supervisor token, and the add-on's port 8099 is reachable without Home
+#: Assistant's authentication in front of it.
+_OBJECT_ID = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
 class HAConfigError(Exception):
@@ -100,6 +110,27 @@ def normalize_config(kind: str, text: str) -> dict[str, Any]:
     return parsed
 
 
+def created_name(body: dict[str, Any], object_id: str) -> str:
+    """What Home Assistant will list this configuration under.
+
+    Deliberately not an entity id. Only a script's entity id is its object
+    id; Home Assistant derives an automation's and a scene's from the
+    ``alias``/``name`` instead, so ``automation.<object_id>`` is usually
+    wrong — "Blink – lights on for suspicious activity" becomes
+    ``automation.blink_lights_on_for_suspicious_activity``, not
+    ``automation.blink_security_lights``. Several aliases also carry the
+    threshold the user picked, so the entity id is not even predictable
+    from the recipe. The name is: it is the text Home Assistant shows in
+    its own Automations/Scripts/Scenes lists, which is where someone goes
+    looking.
+    """
+    for key in ("alias", "name"):
+        value = body.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return object_id
+
+
 class HAConfigWriter:
     """Writes configuration into Home Assistant over its REST config API."""
 
@@ -117,14 +148,22 @@ class HAConfigWriter:
         return self._session
 
     async def create(self, kind: str, object_id: str, text: str) -> str:
-        """Create (or replace) one automation/script/scene. Returns its id.
+        """Create (or replace) one automation/script/scene.
 
-        The id is the caller's, not the YAML's, so pressing Create twice
-        updates the same object rather than accumulating copies of it.
+        Returns the name Home Assistant will list it under, which is what
+        the user has to go looking for — see :func:`created_name` for why
+        that is not the entity id.
+
+        The object id is the caller's, not the YAML's, so pressing Create
+        twice updates the same object rather than accumulating copies.
         """
         body = normalize_config(kind, text)
         if not object_id:
             raise HAConfigError("An id is required to create this.")
+        if not _OBJECT_ID.match(object_id):
+            raise HAConfigError(
+                "An id may only contain lowercase letters, digits and underscores."
+            )
         if not self._token:
             raise HAConfigError(
                 "This add-on has no Home Assistant API token — it only gets "
@@ -137,8 +176,9 @@ class HAConfigWriter:
         # (see homeassistant/components/config/{automation,script,scene}.py),
         # so asking for a second one would just reload twice.
         await self._post(f"{_HA_API}/config/{domain}/config/{object_id}", body)
-        _LOGGER.info("Created %s.%s in Home Assistant", domain, object_id)
-        return f"{domain}.{object_id}"
+        name = created_name(body, object_id)
+        _LOGGER.info("Created %s %r (id %s) in Home Assistant", domain, name, object_id)
+        return name
 
     async def _post(self, url: str, payload: dict[str, Any]) -> None:
         try:
