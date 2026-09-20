@@ -43,7 +43,12 @@ function download() {
       <button type="button" class="copy-btn" @click="copy">Copy</button>
       <button v-if="filename" type="button" class="copy-btn" @click="download">Download</button>
     </div>
-    {{ code }}
+    <!-- The code must be its own element, not a bare interpolation: this
+         block renders with `white-space: pre`, and a text node next to a
+         sibling element keeps the template's own indentation, which shows
+         up as a leading space on the first line — significant, if someone
+         selects the YAML rather than pressing Copy. -->
+    <span class="code-block-text">{{ code }}</span>
   </div>
 </template>
 

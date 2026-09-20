@@ -14,13 +14,13 @@ const SENSORS = [
   {
     entity: 'sensor.blink_local_storage',
     state: 'Percent of the clip library quota in use (of the disk, when no quota is set)',
-    attributes: 'basis, percent_used, clips_used_gb, quota_gb, disk_free_gb, disk_total_gb',
+    attributes: 'basis, percent_used, clips_used_gb, clips_used_mb, quota_gb, disk_free_gb, disk_total_gb',
   },
   {
     entity: 'sensor.blink_cloud_storage',
     state: 'Percent of the cloud backup account in use — unknown when it is not connected or is unlimited',
     attributes:
-      'provider, connected, unlimited, percent_used, used_gb, total_gb, free_gb, pending_uploads, failed_uploads, uploaded_clips, uploads_paused, pause_reason',
+      'provider, configured, connected, unlimited, percent_used, used_gb, drive_files_gb, total_gb, free_gb, pending_uploads, failed_uploads, uploaded_clips, uploads_paused, pause_reason',
   },
 ]
 

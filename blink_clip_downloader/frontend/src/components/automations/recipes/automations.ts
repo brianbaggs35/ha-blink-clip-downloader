@@ -743,16 +743,14 @@ const longClip: Recipe = {
   ],
   build: (v: RecipeValues) => {
     const seconds = numberValue(v, 'seconds', 20)
+    const longerThan = `{{ (trigger.event.data.duration | float(0)) > ${seconds} }}`
     return joinLines([
       header(`Blink – clip longer than ${seconds}s`, 'Notifies when a downloaded clip runs longer than expected.'),
       'triggers:',
       '  - trigger: event',
       `    event_type: ${CLIP_DOWNLOADED_EVENT}`,
       conditionsBlock([
-        joinLines([
-          '  - condition: template',
-          `    value_template: ${yamlTemplate(`{{ (trigger.event.data.duration | float(0)) > ${seconds} }}`, 4)}`,
-        ]),
+        joinLines(['  - condition: template', `    value_template: ${yamlTemplate(longerThan, 4)}`]),
         cameraCondition(listValue(v, 'cameras')),
       ]),
       'actions:',

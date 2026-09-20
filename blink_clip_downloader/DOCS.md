@@ -1460,8 +1460,8 @@ The add-on writes three sensors, once at startup and once per poll cycle:
 | Entity | State | Key attributes |
 |---|---|---|
 | `sensor.blink_downloader_status` | Total clips downloaded (lifetime) | `total_downloaded`, `session_downloads`, `used_mb`, `free_gb`, `last_download` |
-| `sensor.blink_local_storage` | Percent of the local clip library in use | `basis`, `percent_used`, `clips_used_gb`, `quota_gb`, `disk_free_gb`, `disk_total_gb` |
-| `sensor.blink_cloud_storage` | Percent of the cloud backup account in use | `provider`, `connected`, `unlimited`, `used_gb`, `total_gb`, `free_gb`, `pending_uploads`, `failed_uploads`, `uploaded_clips`, `uploads_paused`, `pause_reason` |
+| `sensor.blink_local_storage` | Percent of the local clip library in use | `basis`, `percent_used`, `clips_used_gb`, `clips_used_mb`, `quota_gb`, `disk_free_gb`, `disk_total_gb` |
+| `sensor.blink_cloud_storage` | Percent of the cloud backup account in use | `provider`, `configured`, `connected`, `unlimited`, `used_gb`, `drive_files_gb`, `total_gb`, `free_gb`, `pending_uploads`, `failed_uploads`, `uploaded_clips`, `uploads_paused`, `pause_reason` |
 
 Notes on the two storage sensors:
 
@@ -1474,6 +1474,10 @@ Notes on the two storage sensors:
   Google Drive is the only backend today; the `provider` attribute names
   whichever is in use, so an automation written now keeps working if you
   switch later.
+- `used_gb` on the cloud sensor is the whole account (Gmail and Photos
+  included, on a personal Google account); `drive_files_gb` is the part of it
+  held by files in Drive. Neither is specifically this add-on's backups —
+  Google's API does not break usage down per folder.
 - Either can report `unknown` rather than a misleading `0` — cloud storage
   does that when no account is connected, or when the account has unlimited
   storage (`unlimited: true`). A `numeric_state` trigger ignores `unknown`,

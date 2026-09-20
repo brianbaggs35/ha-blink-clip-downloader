@@ -154,12 +154,48 @@ def _is_moondream_installed() -> bool:
 _CSP = (
     "default-src 'self'; "
     "script-src 'self' 'unsafe-inline'; "
+    # Live View's HLS playback depends on this. Video.js's VHS engine
+    # transmuxes each MPEG-TS segment in a Web Worker it creates from a
+    # blob: URL; with no worker-src, the browser falls back to script-src,
+    # which has no blob:, and blocks the worker outright. The symptom is
+    # not an error — the player attaches its MSE source (allowed by
+    # media-src below), fetches one segment, transmuxes nothing, and sits
+    # on a black frame forever while the playlist keeps polling. Library
+    # clips are unaffected: a plain MP4 plays natively with no worker.
+    "worker-src 'self' blob:; "
     "style-src 'self' 'unsafe-inline' data:; "
     "img-src 'self' data: blob:; "
     "media-src 'self' blob:; "
     "font-src 'self' data:; "
     "connect-src 'self'"
 )
+
+
+def _is_direct_port_kiosk(request: web.Request) -> bool:
+    """True for a `?kiosk=1` page fetched over the direct port, not ingress.
+
+    Kiosk mode exists to be embedded in a Home Assistant dashboard's iframe
+    card (see the Automations tab's Dashboards builder). Home Assistant runs
+    on its own port, so that frame is cross-origin and
+    ``X-Frame-Options: SAMEORIGIN`` refuses it outright — the card renders
+    blank, with the refusal only visible in the browser console.
+
+    The exemption is deliberately as narrow as it can be:
+
+    * **Ingress requests never qualify.** They carry ``X-Ingress-Path`` and
+      keep SAMEORIGIN, so the authenticated panel — the one reachable from
+      outside the LAN through Home Assistant's own auth — cannot be framed
+      by anyone.
+    * **Only the kiosk display mode qualifies**, not the ordinary UI.
+
+    What remains is a narrow clickjacking surface on a port that already
+    serves this UI to anyone who can reach it, with no authentication of its
+    own. Deleting the two lines above restores SAMEORIGIN everywhere, at the
+    cost of the iframe card no longer loading.
+    """
+    if request.headers.get("X-Ingress-Path"):
+        return False
+    return request.query.get("kiosk") == "1"
 
 
 async def _json_object(
@@ -256,7 +292,8 @@ async def _security_middleware(
     response = await handler(request)
     if not response.prepared:
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        if not _is_direct_port_kiosk(request):
+            response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
         response.headers.setdefault(
             "Referrer-Policy", "strict-origin-when-cross-origin"
         )

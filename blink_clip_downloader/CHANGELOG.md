@@ -2,6 +2,48 @@
 
 ## 6.0.5
 
+### Live View: the last thing standing between it and playing
+
+6.0.5 already fixed the player handing HLS to Chromium's own built-in
+player instead of Video.js. That was real, and it was not the last one.
+With Video.js's VHS engine finally in charge, VHS does what a native
+player does not: it transmuxes every MPEG-TS segment in a Web Worker it
+creates from a `blob:` URL. This add-on's own Content-Security-Policy set
+`script-src` but no `worker-src`, so the browser fell back to `script-src`
+— which does not allow `blob:` — and blocked that worker outright.
+
+The result looked exactly like a broken stream and produced no error
+anywhere: the player attached its source, fetched a single segment,
+transmuxed nothing, buffered nothing, and sat on a black frame while the
+playlist kept polling in the background. Nothing in the add-on's logs
+could show it, because nothing in the add-on was failing. Library clips
+were never affected — a plain MP4 plays natively and needs no worker,
+which is why "clips work, live view doesn't" held for so long.
+
+`worker-src 'self' blob:` is now part of the policy. Verified end to end
+rather than by reading code: the real `LiveViewManager`, the real ffmpeg
+arguments, the real HLS route and the real built frontend, fed by a
+genuine MPEG-TS stream over a real socket, driven by a real browser.
+Before the change, `buffered` was 0 and `currentTime` never moved; after
+it, 16 seconds buffered and playback advancing 4.00s per 4s of wall clock,
+with the picture visibly rendering.
+
+### The dashboard embed card could never have loaded
+
+The new Dashboards builder offers an iframe card as the no-setup way to
+put the Security Feed on a dashboard. Every response carried
+`X-Frame-Options: SAMEORIGIN`, and Home Assistant serves :8123 while this
+add-on serves :8099 — a different origin — so the browser refused the
+frame and the card rendered blank, with the reason visible only in the
+console.
+
+Kiosk pages requested over the direct port no longer send that header.
+The exemption is deliberately narrow: it applies only to `?kiosk=1`, and
+never to ingress requests, which carry `X-Ingress-Path` and keep
+`SAMEORIGIN` — so the panel reachable through Home Assistant's own
+authentication cannot be framed by anyone. What is left is a page that the
+unauthenticated direct port already serves to anyone who can reach it.
+
 ### The Automations tab now builds automations, not just shows them
 
 The tab used to be four fixed YAML snippets with someone else's thresholds

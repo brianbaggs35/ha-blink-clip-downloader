@@ -14,17 +14,41 @@ import RecipeBuilder from './RecipeBuilder.vue'
 import { AUTOMATION_RECIPES } from './recipes/automations'
 import { SCRIPT_RECIPES } from './recipes/scripts'
 import { getCameras } from '../../api/clips'
+import { getSecurityFeedCameras } from '../../api/securityFeed'
 
 const cameras = ref<string[]>([])
 
-onMounted(async () => {
+/** The live camera list first, the clip library's only as a fallback.
+ *
+ * A generated automation filters on the camera name carried by *future*
+ * events, so offering a name that exists only in clip history — a camera
+ * since renamed, or removed from the account — would produce an automation
+ * that silently never fires. The same cross-check media_server.py's
+ * /api/ai/camera-configs already does for the AI and Vehicles tabs.
+ *
+ * When Blink is not connected the live list is unavailable; the historical
+ * names are then better than nothing, since every builder treats an empty
+ * list as "all cameras" and drops the filter entirely.
+ */
+async function loadCameras() {
+  try {
+    const live = (await getSecurityFeedCameras()).cameras
+    if (live.length) {
+      cameras.value = live
+      return
+    }
+  } catch {
+    // Not connected, or the camera list is not wired up at all.
+  }
   try {
     cameras.value = (await getCameras()).map((stat) => stat.camera)
   } catch {
-    // Not worth a toast: every builder treats an empty camera list as "all
-    // cameras", which is both the safe default and the common choice.
+    // Not worth a toast: an empty list means "all cameras", which is both
+    // the safe default and the common choice.
   }
-})
+}
+
+onMounted(loadCameras)
 </script>
 
 <template>

@@ -17,6 +17,15 @@ export const CLIP_DOWNLOADED_EVENT = 'blink_clip_downloaded'
 export const CLIP_ANALYZED_EVENT = 'blink_clip_analyzed'
 export const BATTERY_LOW_EVENT = 'blink_camera_battery_low'
 
+/** Where the add-on answers on the LAN, as a starting point for the fields
+ * that ask for it.
+ *
+ * Plain HTTP on purpose: the direct-access port serves HTTP, and Home
+ * Assistant calls it server-side — the same situation as notifier.py's
+ * Supervisor API URL, which carries this same marker.
+ */
+export const ADDON_URL_DEFAULT = 'http://homeassistant.local:8099' // NOSONAR
+
 interface NotifyOptions {
   /** Break through silent mode on the Companion app. */
   critical?: boolean
@@ -85,29 +94,23 @@ export function notifyAction(
  * options use. */
 export function cameraCondition(cameras: string[]): string {
   if (!cameras.length) return ''
-  return [
-    '  - condition: template',
-    `    value_template: ${yamlTemplate(`{{ trigger.event.data.camera in ${jinjaList(cameras)} }}`, 4)}`,
-  ].join('\n')
+  const template = `{{ trigger.event.data.camera in ${jinjaList(cameras)} }}`
+  return ['  - condition: template', `    value_template: ${yamlTemplate(template, 4)}`].join('\n')
 }
 
 /** Restrict to clips that came from a given source (motion, live view, the
  * Sync Module's USB drive). */
 export function sourceCondition(sources: string[]): string {
   if (!sources.length) return ''
-  return [
-    '  - condition: template',
-    `    value_template: ${yamlTemplate(`{{ trigger.event.data.source in ${jinjaList(sources)} }}`, 4)}`,
-  ].join('\n')
+  const template = `{{ trigger.event.data.source in ${jinjaList(sources)} }}`
+  return ['  - condition: template', `    value_template: ${yamlTemplate(template, 4)}`].join('\n')
 }
 
 /** A numeric floor on one of the event payload's numbers. */
 export function eventNumberCondition(field: string, minimum: number): string {
   if (!minimum) return ''
-  return [
-    '  - condition: template',
-    `    value_template: ${yamlTemplate(`{{ (trigger.event.data.${field} | float(0)) >= ${minimum} }}`, 4)}`,
-  ].join('\n')
+  const template = `{{ (trigger.event.data.${field} | float(0)) >= ${minimum} }}`
+  return ['  - condition: template', `    value_template: ${yamlTemplate(template, 4)}`].join('\n')
 }
 
 /** Only act between two times of day. */

@@ -17,7 +17,8 @@
  *   https:// dashboard is blocked as mixed content.
  */
 
-import { slugify } from './types'
+import { ADDON_URL_DEFAULT } from './shared'
+import { slugify, trimTrailingChar } from './types'
 
 export interface DashboardOptions {
   cameras: string[]
@@ -32,7 +33,7 @@ export interface DashboardOptions {
 
 export const DEFAULT_DASHBOARD_OPTIONS: DashboardOptions = {
   cameras: [],
-  addonUrl: 'http://homeassistant.local:8099',
+  addonUrl: ADDON_URL_DEFAULT,
   columns: 2,
   viewTitle: 'Blink Security',
   viewPath: 'security-feed',
@@ -42,7 +43,7 @@ export const DEFAULT_DASHBOARD_OPTIONS: DashboardOptions = {
 }
 
 function trimUrl(addonUrl: string): string {
-  return (addonUrl || DEFAULT_DASHBOARD_OPTIONS.addonUrl).trim().replace(/\/+$/, '')
+  return trimTrailingChar((addonUrl || DEFAULT_DASHBOARD_OPTIONS.addonUrl).trim(), '/')
 }
 
 /** The still-image URL for one camera, encoded for a camera name with

@@ -70,4 +70,13 @@ describe('CodeBlock', () => {
     await wrapper.findAll('.copy-btn')[1].trigger('click')
     expect(useToastStore().isError).toBe(true)
   })
+
+  it('renders the code with no whitespace of its own around it', () => {
+    // The block renders with `white-space: pre`, so template indentation
+    // next to the interpolation would show as a leading space on the first
+    // line — and YAML copied by selection rather than by the Copy button
+    // would then be indented, which changes what it means.
+    const wrapper = mount(CodeBlock, { props: { code: 'alias: x', filename: 'a.yaml' } })
+    expect(wrapper.find('.code-block-text').element.textContent).toBe('alias: x')
+  })
 })

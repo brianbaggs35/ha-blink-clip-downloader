@@ -148,7 +148,12 @@ def cloud_storage_state(
     limit = getattr(quota, "limit", None)
     usage = int(getattr(quota, "usage", 0) or 0)
     attributes["used_gb"] = _gb(usage)
-    attributes["clips_used_gb"] = _gb(int(getattr(quota, "usage_in_drive", 0) or 0))
+    # Drive's usageInDrive is every file in the account, not this add-on's
+    # backups — naming it after clips would read as "my Blink backups take
+    # this much", which is not what it measures. `used_gb` above is the
+    # whole account including Gmail and Photos; this is the Drive-only
+    # part of it.
+    attributes["drive_files_gb"] = _gb(int(getattr(quota, "usage_in_drive", 0) or 0))
     # None is a Workspace account with unlimited storage; zero or negative is
     # a malformed answer. None of the three is a percentage, and all three are
     # better reported as unknown than as an invented (or negative) number.
