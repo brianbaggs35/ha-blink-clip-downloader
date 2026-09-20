@@ -21,7 +21,12 @@ env:
   # pushed to a registry) — a fixed lowercase name avoids "repository name
   # must be lowercase" failures when github.repository_owner has uppercase
   # characters (Docker/OCI image names must be all-lowercase).
-  ADDON_IMAGE: test-blink-clip-downloader
+  # Not named "test-*": Trivy's SARIF gives an image-scan result a location
+  # path built from the image name, and GitHub's code-scanning path
+  # heuristic read "library/test-blink-clip-downloader" as test code —
+  # every image CVE, criticals included, arrived in the Code scanning tab
+  # classified "test". Keep the name free of test/spec-looking segments.
+  ADDON_IMAGE: ci-blink-clip-downloader
   TAG: ${{ github.sha }}
 
 jobs:
@@ -492,12 +497,18 @@ jobs:
 
       # Two Trivy passes on purpose, and they answer different questions.
       #
-      # This one is for *visibility*: it reports what is actually in the
-      # image, including findings nobody can act on yet (no fix released
-      # upstream), and never fails the build. Its SARIF goes to the Code
-      # scanning tab, which is then a standing inventory of the image rather
-      # than a duplicate of the gate below — which, by design, only ever
-      # sees things that are already fixable.
+      # This one is for *visibility*: MEDIUM and up, never fails the build,
+      # SARIF to the Code scanning tab. It is deliberately wider than the
+      # gate below (which is HIGH/CRITICAL only) but no longer wider in the
+      # unfixed direction: it used to carry ignore-unfixed: false as a
+      # standing inventory of everything in the image, which on a Debian +
+      # PyTorch base meant ~1,600 permanently-open alerts with no upstream
+      # fix — enough to bury any finding anyone could act on. Only fixable
+      # CVEs are uploaded now, so an open alert always means there is
+      # something to do, and the Dockerfile's daily APT_CACHE_BUST is
+      # usually what does it. Nothing in CI records the unfixed ones any
+      # more (this step writes SARIF to a file, not a table to the log), so
+      # to see them again, scan the image by hand with ignore-unfixed off.
       #
       # The DB is cached by the action, so the gating scan that follows does
       # not download it a second time.
@@ -515,7 +526,7 @@ jobs:
           # filter above, which for a Debian + PyTorch image is thousands of
           # LOW/UNKNOWN entries.
           limit-severities-for-sarif: "true"
-          ignore-unfixed: false
+          ignore-unfixed: true
           format: sarif
           output: trivy-results-${{ matrix.arch }}.sarif
           # Reporting only — the next step is what fails the build.
