@@ -1804,11 +1804,13 @@ class MediaServer:
         object_id = str(body.get("object_id", "") or "")
         text = str(body.get("yaml", "") or "")
         try:
-            entity_id = await self._ha_config_writer.create(kind, object_id, text)
+            name = await self._ha_config_writer.create(kind, object_id, text)
         except HAConfigError as exc:
             # A considered refusal, not a crash: the UI shows the message.
             return web.json_response({"created": False, "message": str(exc)})
-        return web.json_response({"created": True, "entity_id": entity_id})
+        # The name Home Assistant lists it under, not an entity id — see
+        # ha_config.created_name for why those are not the same thing.
+        return web.json_response({"created": True, "name": name})
 
     async def _handle_test_email(self, _request: web.Request) -> web.Response:
         """Send a one-off test email using the configured SMTP settings."""

@@ -160,7 +160,12 @@ architecture.
     have nothing, which is why those recipes stay copy-only.
     `normalize_config()` carries the per-kind unwrapping (a script's YAML
     nests its body under its own id; a scene's is a one-item list whose
-    `id` Core injects itself).
+    `id` Core injects itself). It reports back the **name** Core lists the
+    object under, never an entity id: only a script's entity id is its
+    object id — Core derives an automation's and a scene's from the
+    `alias`/`name`, and several recipe aliases embed the threshold the
+    user chose, so the entity id is not predictable from the recipe at
+    all (see `created_name`).
   - `event_watcher.py`, `notifier.py`, `notification_channels.py`,
     `digest.py`, `battery_monitor.py`, `archiver.py`, `storage.py`,
     `library_scanner.py`, `tracker.py`, `manifest.py` — supporting modules
@@ -741,8 +746,9 @@ hands-on discovery and aren't documented anywhere upstream.
 
 ## Versioning
 
-The add-on version appears in **seven places** that must all be updated
-together for any user-facing change (bug fix, feature, dependency bump):
+The add-on version appears in **seven places** (the last of which is several
+npm files) that must all be updated together for any user-facing change
+(bug fix, feature, dependency bump):
 
 1. `blink_clip_downloader/config.yaml` — `version: "vX.Y.Z"`
 2. `blink_clip_downloader/pyproject.toml` — `version = "X.Y.Z"`
@@ -758,9 +764,13 @@ together for any user-facing change (bug fix, feature, dependency bump):
    read from any of the above, and it is the version a user actually sees in
    the UI — 6.0.1 found it still advertising 6.0.0. `e2e/app-sidebar.spec.ts`
    asserts the dialog by that exact name, so it has to move with it.
-7. `blink_clip_downloader/frontend/package.json` — `"version"`, kept in step
-   with the rest purely so the two never disagree; nothing reads it at
-   runtime.
+7. `blink_clip_downloader/frontend/package.json` and the repo root's
+   `e2e/package.json` — `"version"`, plus the self-version each one's
+   `package-lock.json` carries twice (its own lines 3 and 9, never a
+   dependency's). Kept in step with the rest purely so they never
+   disagree; nothing reads any of them at runtime. The root `e2e` one
+   only joined the list in 6.0.5, which is why older tags still show it
+   at `1.0.0`.
 
 Missing any of these breaks Docker image tagging or version sync between the
 add-on manifest and the Python package.

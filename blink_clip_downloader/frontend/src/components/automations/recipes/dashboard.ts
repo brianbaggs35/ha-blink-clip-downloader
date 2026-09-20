@@ -18,7 +18,7 @@
  */
 
 import { ADDON_URL_DEFAULT } from './shared'
-import { slugify, trimTrailingChar } from './types'
+import { slugify, trimTrailingChar, yamlString } from './types'
 
 export interface DashboardOptions {
   cameras: string[]
@@ -94,7 +94,11 @@ export function cameraSetupSheet(options: DashboardOptions): string {
 
 function cameraCards(options: DashboardOptions): string[] {
   if (options.mode === 'iframe') {
-    return ['      - type: iframe', `        url: ${kioskUrl(options.addonUrl)}`, '        aspect_ratio: 75%']
+    return [
+      '      - type: iframe',
+      `        url: ${yamlString(kioskUrl(options.addonUrl))}`,
+      '        aspect_ratio: 75%',
+    ]
   }
   const cameras = options.cameras.length ? options.cameras : ['Front Door']
   return [
@@ -105,7 +109,7 @@ function cameraCards(options: DashboardOptions): string[] {
     ...cameras.flatMap((camera) => [
       '          - type: picture-entity',
       `            entity: ${cameraEntityId(camera)}`,
-      `            name: ${camera}`,
+      `            name: ${yamlString(camera)}`,
       '            camera_view: auto',
       '            show_state: false',
     ]),
@@ -183,10 +187,10 @@ export function dashboardRegistrationYaml(options: DashboardOptions): string {
     '# configuration.yaml',
     'lovelace:',
     '  dashboards:',
-    `    ${path}:`,
+    `    ${yamlString(path)}:`,
     '      mode: yaml',
-    `      filename: ${dashboardFilename(options)}`,
-    `      title: ${options.viewTitle || DEFAULT_DASHBOARD_OPTIONS.viewTitle}`,
+    `      filename: ${yamlString(dashboardFilename(options))}`,
+    `      title: ${yamlString(options.viewTitle || DEFAULT_DASHBOARD_OPTIONS.viewTitle)}`,
     '      icon: mdi:cctv',
     '      show_in_sidebar: true',
   ].join('\n')
@@ -198,8 +202,8 @@ export function dashboardRegistrationYaml(options: DashboardOptions): string {
 export function dashboardYaml(options: DashboardOptions): string {
   return [
     'views:',
-    `  - title: ${options.viewTitle || DEFAULT_DASHBOARD_OPTIONS.viewTitle}`,
-    `    path: ${options.viewPath || DEFAULT_DASHBOARD_OPTIONS.viewPath}`,
+    `  - title: ${yamlString(options.viewTitle || DEFAULT_DASHBOARD_OPTIONS.viewTitle)}`,
+    `    path: ${yamlString(options.viewPath || DEFAULT_DASHBOARD_OPTIONS.viewPath)}`,
     '    icon: mdi:cctv',
     '    cards:',
     ...cameraCards(options),
@@ -221,10 +225,10 @@ export function castScriptYaml(options: DashboardOptions, mediaPlayer: string): 
     '  sequence:',
     '    - action: cast.show_lovelace_view',
     '      data:',
-    `        entity_id: ${mediaPlayer || 'media_player.nest_hub'}`,
+    `        entity_id: ${yamlString(mediaPlayer || 'media_player.nest_hub')}`,
     // The dashboard this builder just generated, not a guess: casting a
     // path that does not exist shows an error on the display.
-    `        dashboard_path: ${dashboardPath(options)}`,
-    `        view_path: ${options.viewPath || DEFAULT_DASHBOARD_OPTIONS.viewPath}`,
+    `        dashboard_path: ${yamlString(dashboardPath(options))}`,
+    `        view_path: ${yamlString(options.viewPath || DEFAULT_DASHBOARD_OPTIONS.viewPath)}`,
   ].join('\n')
 }

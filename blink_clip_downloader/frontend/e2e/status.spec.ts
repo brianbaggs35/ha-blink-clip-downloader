@@ -22,6 +22,29 @@ import { test, expect } from './coverage-fixtures'
 //   clip) — storage.spec.ts's own "Run Archiving Now" test archives the
 //   former away later in the run, which is exactly what that test is
 //   verifying; the latter stays archived=FALSE for the whole run.
+/** The real response's JSON, or null if the page navigated away first.
+ *
+ * This file's beforeEach has already navigated by the time the routes
+ * below are registered, so the app is polling when their `page.reload()`
+ * fires, and a response still in flight gets disposed underneath the
+ * handler — `response.json()` then throws "Response has been disposed"
+ * and fails the test for a reason unrelated to what it asserts (seen once
+ * in a full local run). Those requests belong to the page being navigated
+ * away from, so letting them through unpatched is right: the assertions
+ * run against the reloaded page, whose own requests are patched normally.
+ */
+async function realJson(route: import('@playwright/test').Route) {
+  const response = await route.fetch().catch(() => null)
+  const body = response ? await response.json().catch(() => null) : null
+  if (!response || body === null) return null
+  return { response, body: body as Record<string, unknown> }
+}
+
+/** Hand a request the test could not patch back to the browser. */
+async function passThrough(route: import('@playwright/test').Route) {
+  await route.continue().catch(() => {})
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   await page.locator('.app-nav-tab[data-tab="status"]').click()
@@ -121,8 +144,9 @@ test('shows the Storage card with quota usage and a Frames Analyzed card when bo
   // vision pipeline. beforeEach already navigated before this test's routes
   // exist, so a reload is needed to apply them.
   await page.route('**/api/stats', async (route) => {
-    const response = await route.fetch()
-    const stats = (await response.json()) as Record<string, unknown>
+    const real = await realJson(route)
+    if (!real) return passThrough(route)
+    const { response, body: stats } = real
     await route.fulfill({
       response,
       json: {
@@ -141,8 +165,10 @@ test('shows the Storage card with quota usage and a Frames Analyzed card when bo
     })
   })
   await page.route('**/api/ai/status', async (route) => {
-    const response = await route.fetch()
-    const status = (await response.json()) as { analysis_stats?: Record<string, unknown> }
+    const real = await realJson(route)
+    if (!real) return passThrough(route)
+    const { response, body } = real
+    const status = body as { analysis_stats?: Record<string, unknown> }
     await route.fulfill({
       response,
       json: {
@@ -169,8 +195,9 @@ test('shows the Storage card with quota usage and a Frames Analyzed card when bo
 
 test('shows the warn disk threshold, and the AI queue pending / suspicious counts, when reported', async ({ page }) => {
   await page.route('**/api/stats', async (route) => {
-    const response = await route.fetch()
-    const stats = (await response.json()) as Record<string, unknown>
+    const real = await realJson(route)
+    if (!real) return passThrough(route)
+    const { response, body: stats } = real
     await route.fulfill({
       response,
       json: {
@@ -189,8 +216,10 @@ test('shows the warn disk threshold, and the AI queue pending / suspicious count
     })
   })
   await page.route('**/api/ai/status', async (route) => {
-    const response = await route.fetch()
-    const status = (await response.json()) as {
+    const real = await realJson(route)
+    if (!real) return passThrough(route)
+    const { response, body } = real
+    const status = body as {
       analysis_stats?: Record<string, unknown>
       queue?: Record<string, unknown>
     }
@@ -220,8 +249,9 @@ test('shows the warn disk threshold, and the AI queue pending / suspicious count
 
 test('shows the ok disk threshold when usage is comfortably under both warn and danger', async ({ page }) => {
   await page.route('**/api/stats', async (route) => {
-    const response = await route.fetch()
-    const stats = (await response.json()) as Record<string, unknown>
+    const real = await realJson(route)
+    if (!real) return passThrough(route)
+    const { response, body: stats } = real
     await route.fulfill({
       response,
       json: {

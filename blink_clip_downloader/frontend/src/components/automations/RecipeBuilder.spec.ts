@@ -6,6 +6,10 @@ import RecipeBuilder from './RecipeBuilder.vue'
 import type { Recipe } from './recipes/types'
 import * as haConfig from '../../api/haConfig'
 
+/** The name Home Assistant would list the first recipe under — what the
+ * backend reports on a successful create, not an entity id. */
+const CREATED_NAME = 'Blink – first'
+
 const RECIPES: Recipe[] = [
   {
     id: 'first',
@@ -139,9 +143,7 @@ describe('RecipeBuilder', () => {
 
   describe('creating it in Home Assistant', () => {
     it('sends the recipe kind, its stable id and the YAML on screen', async () => {
-      const spy = vi
-        .spyOn(haConfig, 'createInHomeAssistant')
-        .mockResolvedValue({ created: true, entity_id: 'automation.blink_first' })
+      const spy = vi.spyOn(haConfig, 'createInHomeAssistant').mockResolvedValue({ created: true, name: CREATED_NAME })
       const wrapper = mountBuilder()
       await wrapper.findComponent({ name: 'InputNumber' }).vm.$emit('update:modelValue', 95)
 
@@ -152,7 +154,7 @@ describe('RecipeBuilder', () => {
       await flushPromises()
 
       expect(spy).toHaveBeenCalledWith('automation', 'blink_first', 'alias: first\nthreshold: 95')
-      expect(useToastStore().message).toContain('automation.blink_first')
+      expect(useToastStore().message).toContain(CREATED_NAME)
       expect(wrapper.text()).toContain('updates that same one rather than adding another')
     })
 
@@ -195,6 +197,31 @@ describe('RecipeBuilder', () => {
       expect(wrapper.text()).not.toContain('now exists in Home Assistant')
     })
 
+    it('does not credit a different recipe with what the last one created', async () => {
+      // The create is still in flight when the user picks another recipe.
+      // The toast still reports the truth; the banner under the new recipe
+      // must not claim that recipe now exists.
+      let settle: (v: { created: boolean; name: string }) => void = () => {}
+      vi.spyOn(haConfig, 'createInHomeAssistant').mockReturnValue(
+        new Promise((resolve) => {
+          settle = resolve
+        }),
+      )
+      const wrapper = mountBuilder()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Create'))!
+        .trigger('click')
+
+      wrapper.findComponent({ name: 'Listbox' }).vm.$emit('update:modelValue', 'second')
+      await wrapper.vm.$nextTick()
+      settle({ created: true, name: CREATED_NAME })
+      await flushPromises()
+
+      expect(useToastStore().message).toContain(CREATED_NAME)
+      expect(wrapper.text()).not.toContain('now exists in Home Assistant')
+    })
+
     it('offers no Create button for a recipe with no API behind it', () => {
       const copyOnly: Recipe[] = [{ ...RECIPES[0], create: undefined }]
       const wrapper = mountBuilder(copyOnly)
@@ -205,7 +232,7 @@ describe('RecipeBuilder', () => {
     it('clears the created banner when a different recipe is picked', async () => {
       vi.spyOn(haConfig, 'createInHomeAssistant').mockResolvedValue({
         created: true,
-        entity_id: 'automation.blink_first',
+        name: CREATED_NAME,
       })
       const wrapper = mountBuilder()
       await wrapper

@@ -1,6 +1,6 @@
 # Changelog
 
-## 6.0.5
+## 6.0.6
 
 ### Create automations, scripts and scenes without leaving the tab
 
@@ -58,6 +58,50 @@ hardcoded path that was only ever right by accident.
 
 The Notification Channels panel sits where it used to, above everything the
 builders added.
+
+### A camera called "Cam #2" quietly lost its name
+
+Camera names and the dashboard's own titles were written into the generated
+YAML unquoted, so YAML read them as YAML rather than as text. A camera
+called `Cam #2` produced a card labelled just `Cam` — valid YAML, silently
+the wrong name, nothing to notice. `Garage: Side` stopped the dashboard
+loading at all, and a camera called `Off`, `Yes` or `123` came back as a
+boolean or a number. The same omission ran through the recipe builders:
+a service or entity field with a colon in it (`notify: mobile_app_x`, an
+easy typo) or a Jinja template in it made the whole recipe unparseable
+rather than something Home Assistant could reject with a useful message.
+Everything a user types is now quoted on its way into YAML.
+
+### "automation.blink_security_lights now exists" — it did not
+
+After creating something, the tab reported an entity id built from the id
+it had just sent. That is only right for a script. Home Assistant builds
+an automation's and a scene's entity id from its *alias*, so 13 of the 16
+automations named something that does not exist — "Blink – lights on for
+suspicious activity" becomes `automation.blink_lights_on_for_suspicious_activity`,
+not `automation.blink_security_lights`. Several aliases carry the
+threshold you picked, so the entity id was not predictable from the recipe
+at all. The tab now reports the name Home Assistant lists it under, which
+is both true and the thing you actually go looking for.
+
+### Creating something could aim at the wrong part of Home Assistant
+
+The id of the thing being created is the last segment of the URL the
+add-on posts to, and it was taken at face value. An id containing `../`
+resolved to an entirely different Supervisor endpoint, which the add-on
+would then call with its own Supervisor token — and the add-on's port 8099
+has no Home Assistant login in front of it. Ids are now checked against
+what Home Assistant actually allows before any request is built.
+
+### Smaller fixes
+
+- The Dashboards builder gave "Dashboard path" and "View path" the same
+  id, so whenever both were on screen, clicking the *View path* label put
+  the cursor in the *Dashboard path* box.
+- Switching to another recipe while a Create was still in flight left the
+  new recipe claiming it had just been created.
+
+## 6.0.5
 
 ### Live View: the last thing standing between it and playing
 

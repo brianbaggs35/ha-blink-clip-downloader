@@ -10,6 +10,7 @@ import pytest
 from blink_downloader.ha_config import (
     HAConfigError,
     HAConfigWriter,
+    created_name,
     normalize_config,
 )
 
@@ -131,9 +132,11 @@ async def test_create_posts_the_config_and_leaves_reloading_to_core() -> None:
     session, _ = _mock_session()
     writer._session = session
 
-    entity_id = await writer.create("automation", "blink_test", AUTOMATION_YAML)
+    name = await writer.create("automation", "blink_test", AUTOMATION_YAML)
 
-    assert entity_id == "automation.blink_test"
+    # The alias, not "automation.blink_test": Home Assistant builds an
+    # automation's entity id from its alias, so the object id is not it.
+    assert name == "Blink – test"
     urls = [call.args[0] for call in session.post.call_args_list]
     assert urls == [
         "http://supervisor/core/api/config/automation/config/blink_test",
@@ -224,3 +227,89 @@ async def test_a_closed_session_is_replaced_rather_than_reused() -> None:
         assert writer._get_session() is not closed
     finally:
         await writer.close()
+
+
+# ---------------------------------------------------------------------------
+# The object id is the last segment of the URL this posts to
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "object_id",
+    [
+        # Collapses to /core/api/addons/self/options — a different Supervisor
+        # endpoint, called with this add-on's own token.
+        "../../../addons/self/options",
+        "..%2f..%2fx",
+        "a/b",
+        "a?b=c",
+        "a#fragment",
+        "a b",
+        "UPPER",
+        "has-hyphen",
+        "x" * 65,
+        "..",
+    ],
+)
+async def test_an_id_that_could_redirect_the_request_is_refused(object_id: str) -> None:
+    writer = HAConfigWriter("token")
+    posted: list[str] = []
+
+    async def capture(url: str, payload: dict[str, object]) -> None:
+        posted.append(url)
+
+    writer._post = capture  # type: ignore[method-assign]
+    try:
+        with pytest.raises(HAConfigError, match="lowercase letters"):
+            await writer.create("automation", object_id, AUTOMATION_YAML)
+        # Refused before anything is sent, not after.
+        assert posted == []
+    finally:
+        await writer.close()
+
+
+@pytest.mark.parametrize(
+    "object_id", ["blink_daily_summary", "blink_all_clear", "1710000000000", "a"]
+)
+async def test_a_real_object_id_is_accepted(object_id: str) -> None:
+    writer = HAConfigWriter("token")
+    posted: list[str] = []
+
+    async def capture(url: str, payload: dict[str, object]) -> None:
+        posted.append(url)
+
+    writer._post = capture  # type: ignore[method-assign]
+    try:
+        entity = await writer.create("automation", object_id, AUTOMATION_YAML)
+    finally:
+        await writer.close()
+    assert entity == "Blink – test"
+    assert posted == [
+        f"http://supervisor/core/api/config/automation/config/{object_id}"
+    ]
+
+
+# ---------------------------------------------------------------------------
+# created_name
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        # An automation and a script both carry an alias; a scene a name.
+        ({"alias": "Blink – daily summary"}, "Blink – daily summary"),
+        ({"name": "Blink security alert"}, "Blink security alert"),
+        ({"alias": "  padded  "}, "padded"),
+        # Neither, or an unusable one: fall back to the id rather than
+        # reporting something the user cannot find.
+        ({}, "blink_thing"),
+        ({"alias": "   "}, "blink_thing"),
+        ({"alias": 42}, "blink_thing"),
+        ({"name": None}, "blink_thing"),
+    ],
+)
+def test_created_name_reports_what_home_assistant_will_list(
+    body: dict[str, object], expected: str
+) -> None:
+    assert created_name(body, "blink_thing") == expected
