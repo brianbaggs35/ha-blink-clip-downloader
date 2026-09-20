@@ -235,6 +235,7 @@ try {
     .locator('.app-nav-tab.active[data-tab="automations"]')
     .waitFor({ state: "visible", timeout: 5000 });
   await checkHaNotification(frame, issues);
+  await checkHaConfigCreate(frame, issues);
 
   await checkIngressSurvivesReload(page, addonSlug, issues);
 
@@ -291,6 +292,42 @@ async function assertRealIngress(page, issuesList) {
     );
   } else {
     console.log(`Confirmed genuine ingress iframe: ${src}`);
+  }
+}
+
+/**
+ * The add-on creating real configuration in real Home Assistant.
+ *
+ * Nothing else in CI can prove this: it needs Supervisor to validate the
+ * add-on's token, re-issue the call to Core as the Supervisor user (which
+ * Core creates in the admin group), and Core's own config API — which is
+ * @require_admin — to accept it. A mocked response proves none of that.
+ */
+async function checkHaConfigCreate(frame, issuesList) {
+  console.log(
+    "Creating a real automation in Home Assistant from the Automations tab...",
+  );
+  try {
+    await frame.getByRole("tab", { name: "Automations" }).click();
+    await frame
+      .locator(".recipe-listbox")
+      .getByText("Daily summary", { exact: true })
+      .click();
+    await frame
+      .getByRole("button", { name: "Create in Home Assistant" })
+      .click();
+    await frame
+      .getByText("automation.blink_daily_summary", { exact: false })
+      .waitFor({ state: "visible", timeout: 15000 });
+    console.log(
+      "  confirmed: Home Assistant's config API accepted the add-on's write (admin scope through the Supervisor proxy).",
+    );
+  } catch (err) {
+    issuesList.push(
+      `"Create in Home Assistant" never reported the created entity (${err.message}) - ` +
+        `the add-on's write to Home Assistant's config API failed. If the message mentions an ` +
+        `administrator, Supervisor's proxy is no longer reaching Core as an admin user.`,
+    );
   }
 }
 

@@ -26,9 +26,16 @@ export interface DashboardOptions {
   columns: number
   viewTitle: string
   viewPath: string
+  /** The dashboard's own URL segment. Home Assistant requires a hyphen in
+   * it (see the YAML-dashboards docs), which {@link dashboardPath} enforces. */
+  dashboardPath: string
   includeStorage: boolean
   includeStatus: boolean
   mode: 'cameras' | 'iframe'
+  /** How the dashboard reaches Home Assistant: pasted into the raw
+   * configuration editor of an existing dashboard, or registered as a
+   * YAML-mode dashboard of its own with a sidebar entry. */
+  delivery: 'raw' | 'yaml-file'
 }
 
 export const DEFAULT_DASHBOARD_OPTIONS: DashboardOptions = {
@@ -37,9 +44,11 @@ export const DEFAULT_DASHBOARD_OPTIONS: DashboardOptions = {
   columns: 2,
   viewTitle: 'Blink Security',
   viewPath: 'security-feed',
+  dashboardPath: 'blink-cameras',
   includeStorage: true,
   includeStatus: true,
   mode: 'cameras',
+  delivery: 'raw',
 }
 
 function trimUrl(addonUrl: string): string {
@@ -152,8 +161,40 @@ function statusCards(): string[] {
   ]
 }
 
+/** The dashboard's URL segment, guaranteed to satisfy Home Assistant's rule
+ * that a YAML dashboard's key contains a hyphen — without one it refuses to
+ * register the dashboard at all. */
+export function dashboardPath(options: DashboardOptions): string {
+  const raw = (options.dashboardPath || DEFAULT_DASHBOARD_OPTIONS.dashboardPath).trim()
+  return raw.includes('-') ? raw : `${raw}-dashboard`
+}
+
+/** The file a YAML-mode dashboard is loaded from. */
+export function dashboardFilename(options: DashboardOptions): string {
+  return `${dashboardPath(options)}.yaml`
+}
+
+/** The `lovelace:` block that registers the dashboard and puts it in the
+ * sidebar, for configuration.yaml. Only needed for the YAML-file route;
+ * pasting into an existing dashboard's raw editor needs nothing here. */
+export function dashboardRegistrationYaml(options: DashboardOptions): string {
+  const path = dashboardPath(options)
+  return [
+    '# configuration.yaml',
+    'lovelace:',
+    '  dashboards:',
+    `    ${path}:`,
+    '      mode: yaml',
+    `      filename: ${dashboardFilename(options)}`,
+    `      title: ${options.viewTitle || DEFAULT_DASHBOARD_OPTIONS.viewTitle}`,
+    '      icon: mdi:cctv',
+    '      show_in_sidebar: true',
+  ].join('\n')
+}
+
 /** The Lovelace view, ready to paste into the dashboard's raw configuration
- * editor (three-dot menu → Edit dashboard → Raw configuration editor). */
+ * editor (three-dot menu → Edit dashboard → Raw configuration editor), or to
+ * save as the YAML dashboard's own file. */
 export function dashboardYaml(options: DashboardOptions): string {
   return [
     'views:',
@@ -181,7 +222,9 @@ export function castScriptYaml(options: DashboardOptions, mediaPlayer: string): 
     '    - action: cast.show_lovelace_view',
     '      data:',
     `        entity_id: ${mediaPlayer || 'media_player.nest_hub'}`,
-    '        dashboard_path: blink',
+    // The dashboard this builder just generated, not a guess: casting a
+    // path that does not exist shows an error on the display.
+    `        dashboard_path: ${dashboardPath(options)}`,
     `        view_path: ${options.viewPath || DEFAULT_DASHBOARD_OPTIONS.viewPath}`,
   ].join('\n')
 }

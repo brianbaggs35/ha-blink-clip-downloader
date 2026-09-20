@@ -59,6 +59,8 @@ onMounted(loadCameras)
       want it, and copy the YAML straight into Home Assistant — no hand-editing of someone else's thresholds.
     </p>
 
+    <NotificationChannelsCard />
+
     <Card class="auto-card">
       <template #content>
         <!-- lazy: only the open panel is rendered, so a builder is never
@@ -92,8 +94,6 @@ onMounted(loadCameras)
         </Tabs>
       </template>
     </Card>
-
-    <NotificationChannelsCard />
 
     <Card class="auto-card">
       <template #title>💡 Tips</template>

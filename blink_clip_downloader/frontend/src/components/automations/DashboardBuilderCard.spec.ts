@@ -92,4 +92,27 @@ describe('DashboardBuilderCard', () => {
     expect(blocks[1].props('code')).toContain('path: cams')
     expect(blocks[2].props('code')).toContain('view_path: cams')
   })
+
+  it('switches to a YAML dashboard of its own, registration file and all', async () => {
+    const wrapper = mountCard()
+    // Delivery is the second SelectButton (the first picks the tile source).
+    await wrapper.findAllComponents({ name: 'SelectButton' })[1].vm.$emit('update:modelValue', 'yaml-file')
+    const blocks = wrapper.findAllComponents({ name: 'CodeBlock' })
+    // Setup sheet, registration, dashboard file, cast script.
+    expect(blocks).toHaveLength(4)
+    expect(blocks[1].props('code')).toContain('lovelace:')
+    expect(blocks[1].props('code')).toContain('show_in_sidebar: true')
+    expect(blocks[2].props('filename')).toBe('blink-cameras.yaml')
+    expect(wrapper.text()).toContain('blink-cameras.yaml')
+  })
+
+  it('follows the dashboard path into the registration, file name and cast script', async () => {
+    const wrapper = mountCard()
+    await wrapper.findAllComponents({ name: 'SelectButton' })[1].vm.$emit('update:modelValue', 'yaml-file')
+    await wrapper.find('#dash-path').setValue('my-cams')
+    const blocks = wrapper.findAllComponents({ name: 'CodeBlock' })
+    expect(blocks[1].props('code')).toContain('    my-cams:')
+    expect(blocks[2].props('filename')).toBe('my-cams.yaml')
+    expect(blocks[3].props('code')).toContain('dashboard_path: my-cams')
+  })
 })

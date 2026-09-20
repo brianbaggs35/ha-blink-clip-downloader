@@ -2,6 +2,63 @@
 
 ## 6.0.5
 
+### Create automations, scripts and scenes without leaving the tab
+
+The builders no longer just hand you YAML. Automations, scripts and scenes
+now have a **Create in Home Assistant** button that writes them through
+Home Assistant's own configuration API — the same one its UI editors use —
+so what appears is an ordinary automation you can open and edit there
+afterwards. Each recipe carries a fixed id, so pressing the button again
+updates what it made rather than leaving a second copy behind.
+
+This works because the add-on already has `homeassistant_api: true`:
+Supervisor validates the add-on's token and then re-issues the call to Core
+as the Supervisor user, which Core creates in the admin group — which is
+what Core's `@require_admin` config API wants. Core reloads the domain
+itself afterwards, so nothing here asks it to.
+
+Everything else keeps Copy and Download, because nothing can create it over
+an API: blueprints and helpers are WebSocket-only, and `rest_command`,
+template sensors and the Generic Camera platform live in
+`configuration.yaml`. Those recipes now say so plainly and tell you where
+the YAML goes.
+
+### Nine more recipes, including ones only this add-on can offer
+
+Several of them drive the add-on's own API, which is something no generic
+blueprint can do:
+
+- **Arm Blink when everyone leaves** — arms the Sync Module on the last
+  person leaving and disarms it when someone returns.
+- **Arm or disarm the Sync Module** — the `rest_command` and scripts behind
+  that, usable from a dashboard button or a voice assistant.
+- **Archive old clips when storage fills**, and **Archive old clips now** —
+  runs the add-on's archiver instead of waiting for its next sweep.
+- **Sound the siren when the alarm is armed** — ties a suspicious clip to
+  your alarm panel, optionally tripping the alarm itself.
+- **Add a to-do when a battery goes low** — puts it on a real to-do list,
+  where it survives being dismissed at 2am.
+- **Send a snapshot of every camera** — one tap, every camera on your phone.
+- **All-clear lighting scene** — the other half of the alert scene, so an
+  automation can end an alert as cleanly as it starts one.
+
+The two notification recipes can also attach the camera's snapshot and open
+a path you choose when tapped.
+
+### Dashboards can now be a dashboard, not a paste
+
+The Dashboards builder can deliver its output as a **YAML dashboard of its
+own**: it generates the `lovelace:` block that registers it and puts it in
+the sidebar, plus the file to save beside `configuration.yaml`. Pasting into
+an existing dashboard still works and is still the default. The cast script
+now points at the dashboard the builder just generated, rather than a
+hardcoded path that was only ever right by accident.
+
+### The notification tests are back at the top
+
+The Notification Channels panel sits where it used to, above everything the
+builders added.
+
 ### Live View: the last thing standing between it and playing
 
 6.0.5 already fixed the player handing HLS to Chromium's own built-in

@@ -27,6 +27,7 @@ from aiohttp import web
 from .database import SUSPICIOUS_PERIODS, ClipDatabase
 from .downloader import AUTH_FATAL_EXCEPTIONS
 from .ffmpeg_output import format_ffmpeg_error, split_jpeg_frames
+from .ha_config import HAConfigError, HAConfigWriter
 from .live_view import CameraNotFoundError, LiveViewError
 from .vision import FaceEmbedder, is_face_recognition_available, torch_cpu_compatible
 
@@ -320,6 +321,7 @@ class MediaServer:
         analyzer: BaseAnalyzer | None = None,
         analysis_queue: AnalysisQueue | None = None,
         notification_dispatcher: NotificationDispatcher | None = None,
+        ha_config_writer: HAConfigWriter | None = None,
         gdrive_client: GDriveClient | None = None,
         gdrive_queue: GDriveUploadQueue | None = None,
         archiver: ClipArchiver | None = None,
@@ -341,6 +343,7 @@ class MediaServer:
         self._analyzer = analyzer
         self._analysis_queue = analysis_queue
         self._notification_dispatcher = notification_dispatcher
+        self._ha_config_writer = ha_config_writer
         self._gdrive_client = gdrive_client
         self._gdrive_queue = gdrive_queue
         self._archiver = archiver
@@ -616,6 +619,7 @@ class MediaServer:
         )
         app.router.add_post("/api/storage/gdrive/upload", self._handle_gdrive_upload)
 
+        app.router.add_post("/api/ha/config/create", self._handle_ha_config_create)
         app.router.add_post("/api/notifications/test-email", self._handle_test_email)
         app.router.add_post(
             "/api/notifications/test-discord", self._handle_test_discord
@@ -1779,6 +1783,32 @@ class MediaServer:
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("AI test analysis failed: %s", exc)
             return web.json_response({"error": str(exc)}, status=500)
+
+    async def _handle_ha_config_create(self, request: web.Request) -> web.Response:
+        """Create one automation/script/scene in Home Assistant.
+
+        The builder sends the YAML it is already showing, plus the kind and
+        a stable object id, so pressing Create twice updates the same object
+        rather than making a second one. Everything the config API cannot
+        create keeps its copy/download buttons instead — see ha_config.py.
+        """
+        if self._ha_config_writer is None:
+            raise web.HTTPServiceUnavailable(
+                text=(
+                    "Creating configuration needs Home Assistant's API, "
+                    "which this add-on only has when Home Assistant runs it."
+                )
+            )
+        body = await _json_object(request)
+        kind = str(body.get("kind", "") or "")
+        object_id = str(body.get("object_id", "") or "")
+        text = str(body.get("yaml", "") or "")
+        try:
+            entity_id = await self._ha_config_writer.create(kind, object_id, text)
+        except HAConfigError as exc:
+            # A considered refusal, not a crash: the UI shows the message.
+            return web.json_response({"created": False, "message": str(exc)})
+        return web.json_response({"created": True, "entity_id": entity_id})
 
     async def _handle_test_email(self, _request: web.Request) -> web.Response:
         """Send a one-off test email using the configured SMTP settings."""

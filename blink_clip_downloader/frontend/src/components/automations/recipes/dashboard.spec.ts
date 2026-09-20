@@ -6,6 +6,9 @@ import {
   cameraEntityId,
   cameraSetupSheet,
   castScriptYaml,
+  dashboardFilename,
+  dashboardPath,
+  dashboardRegistrationYaml,
   dashboardYaml,
   kioskUrl,
   snapshotUrl,
@@ -111,6 +114,44 @@ describe('cast script', () => {
     expect(parsed.blink_cast_cameras.sequence[0].data).toMatchObject({
       entity_id: 'media_player.nest_hub',
       view_path: 'security-feed',
+    })
+  })
+})
+
+describe('a YAML dashboard of its own', () => {
+  it('registers the dashboard and names the file it loads', () => {
+    const yaml = dashboardRegistrationYaml(options({ dashboardPath: 'blink-cams' }))
+    const parsed = load(yaml) as {
+      lovelace: { dashboards: Record<string, Record<string, unknown>> }
+    }
+    expect(parsed.lovelace.dashboards['blink-cams']).toEqual({
+      mode: 'yaml',
+      filename: 'blink-cams.yaml',
+      title: 'Blink Security',
+      icon: 'mdi:cctv',
+      show_in_sidebar: true,
+    })
+  })
+
+  it('falls back to the default sidebar title when it is cleared', () => {
+    const yaml = dashboardRegistrationYaml(options({ viewTitle: '' }))
+    expect(yaml).toContain('title: Blink Security')
+  })
+
+  it('forces a hyphen into the path, which Home Assistant requires', () => {
+    // Without one, Home Assistant refuses to register the dashboard at all.
+    expect(dashboardPath(options({ dashboardPath: 'blink' }))).toBe('blink-dashboard')
+    expect(dashboardFilename(options({ dashboardPath: 'blink' }))).toBe('blink-dashboard.yaml')
+    expect(dashboardPath(options({ dashboardPath: '' }))).toBe('blink-cameras')
+  })
+
+  it('casts the dashboard it just generated, not a hardcoded guess', () => {
+    const parsed = load(
+      castScriptYaml(options({ dashboardPath: 'blink-cams', viewPath: 'feed' }), 'media_player.x'),
+    ) as { blink_cast_cameras: { sequence: { data: Record<string, string> }[] } }
+    expect(parsed.blink_cast_cameras.sequence[0].data).toMatchObject({
+      dashboard_path: 'blink-cams',
+      view_path: 'feed',
     })
   })
 })
