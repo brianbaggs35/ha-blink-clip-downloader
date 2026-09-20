@@ -35,6 +35,13 @@ import LoadingIndicator from '../layout/LoadingIndicator.vue'
 // switching cameras) and a heartbeat ping (keeps it alive; see
 // LiveViewManager's idle_timeout in live_view.py).
 const STATUS_POLL_INTERVAL_MS = 4000
+// A session that is still starting is a user watching a spinner, and the
+// answer arrives within a few seconds — so poll far more often until it
+// does, then settle back. On a 4s interval the tab could sit on "starting"
+// for almost four seconds after the stream was already playable, which on
+// a Blink live view (they run about 30 seconds) is a tenth of the whole
+// session spent looking at a loading indicator for no reason.
+const STARTING_POLL_INTERVAL_MS = 500
 const HEARTBEAT_INTERVAL_MS = 15000
 // How many times a playback failure may re-source the same session before
 // the error is treated as the stream's final answer — see the player's
@@ -75,7 +82,7 @@ let unmounted = false
 // only just now finished starting.
 let selectGeneration = 0
 
-let statusTimer: ReturnType<typeof setInterval> | undefined
+let statusTimer: ReturnType<typeof setTimeout> | undefined
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined
 let cameraLoadSeq = 0
 
@@ -149,7 +156,7 @@ function ensurePlayer(): Player {
 }
 
 function stopTimers() {
-  clearInterval(statusTimer)
+  clearTimeout(statusTimer)
   clearInterval(heartbeatTimer)
   statusTimer = undefined
   heartbeatTimer = undefined
@@ -183,9 +190,27 @@ async function pollStatus() {
   }
 }
 
+/** Chain the next status poll, at a rate that depends on what we are
+ * waiting for. A self-scheduling timeout rather than an interval, because
+ * the gap has to change the moment the session goes live. */
+function scheduleStatusPoll(generation: number) {
+  const interval =
+    status.value.active && status.value.state === 'live' ? STATUS_POLL_INTERVAL_MS : STARTING_POLL_INTERVAL_MS
+  statusTimer = setTimeout(async () => {
+    await pollStatus()
+    // Stop the chain if this poll's session has been stopped, switched
+    // away from, or unmounted while the request was in flight. No guard
+    // is needed *before* the poll: every selectGeneration bump is
+    // followed synchronously by stopTimers(), so a pending timeout is
+    // always cleared before it could fire with a stale generation.
+    if (unmounted || generation !== selectGeneration) return
+    scheduleStatusPoll(generation)
+  }, interval)
+}
+
 function startTimers() {
   stopTimers()
-  statusTimer = setInterval(pollStatus, STATUS_POLL_INTERVAL_MS)
+  scheduleStatusPoll(selectGeneration)
   heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS)
 }
 

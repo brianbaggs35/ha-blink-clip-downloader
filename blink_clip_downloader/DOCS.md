@@ -1535,11 +1535,14 @@ create it: blueprints and helpers are WebSocket-only, and `rest_command`,
 template sensors and the Generic Camera platform live in
 `configuration.yaml`. Those recipes say where the YAML goes instead.
 
-- **Automations** — pick one of a dozen recipes (suspicious clip alerts,
-  storage thresholds, backup backlog, lights on suspicious activity, casting a
-  camera view, speaker announcements, new-clip and long-clip notifications,
-  low battery, "nothing has downloaded in a while", daily summary), set the
-  threshold/cameras/notify service you want, and copy or download the result.
+- **Automations** — pick one of sixteen recipes (suspicious clip alerts,
+  storage thresholds, backup backlog, lights on suspicious activity, a siren
+  while the alarm is armed, casting a camera view, speaker announcements,
+  arming Blink when everyone leaves, new-clip and long-clip notifications,
+  low battery, a to-do item for a low battery, archiving when storage fills,
+  "nothing has downloaded in a while", daily summary), set the
+  threshold/cameras/notify service you want, and copy, download, or create
+  it in Home Assistant directly.
   The camera pickers list your real cameras.
   The two notification recipes can also attach the camera's snapshot (via
   Home Assistant's own camera proxy, so it reaches your phone wherever it

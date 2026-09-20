@@ -236,6 +236,60 @@ test('renders and stops a mocked live session without a real Blink account', asy
   await expect(page.getByRole('button', { name: '■ Stop' })).toHaveCount(0)
 })
 
+test('a session that starts out "starting" is picked up as soon as it goes live', async ({ page }) => {
+  // Every other mocked test has /start answer "live" immediately, so the
+  // starting -> live transition -- the one the status poll exists for, and
+  // the reason it polls several times a second until it happens -- was
+  // never exercised end to end. A Blink live view only runs about 30
+  // seconds, so time spent not noticing is time the user does not get.
+  let polls = 0
+  const STILL_STARTING_POLLS = 3
+  await page.route('**/api/liveview/**', async (route) => {
+    const url = new URL(route.request().url())
+    const method = route.request().method()
+    const json = (body: unknown) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+
+    if (url.pathname === '/api/liveview/cameras') return json({ cameras: ['Front Door'] })
+    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+      return json({ active: true, session_id: 'slow-session', camera: 'Front Door', state: 'starting' })
+    }
+    if (url.pathname === '/api/liveview/status') {
+      polls++
+      return json({
+        active: true,
+        session_id: 'slow-session',
+        camera: 'Front Door',
+        state: polls > STILL_STARTING_POLLS ? 'live' : 'starting',
+      })
+    }
+    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') return json({ ok: true })
+    if (url.pathname === '/api/liveview/stop' && method === 'POST') return json({ stopped: true })
+    if (url.pathname.startsWith('/api/liveview/hls/')) {
+      return route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
+    }
+    await route.fallback()
+  })
+
+  await page.goto('/')
+  await page.locator('.app-nav-tab[data-tab="liveview"]').click()
+  await page.waitForSelector('.app-nav-tab.active[data-tab="liveview"]')
+  await page.getByRole('button', { name: 'Front Door', exact: true }).click()
+
+  // Still starting: the placeholder is up and the player is not shown yet.
+  await expect(page.getByText('Starting live view…')).toBeVisible()
+  await expect(page.locator('#page-liveview .video-js-wrap')).toHaveClass(/video-hidden/)
+
+  // It has to reach the player from polling alone, and quickly: four polls
+  // at the slow 4s cadence would be 16s, well past this timeout.
+  await expect(page.locator('#page-liveview .video-js-wrap')).not.toHaveClass(/video-hidden/, { timeout: 6000 })
+  await expect(page.getByText('Starting live view…')).toHaveCount(0)
+  expect(polls).toBeGreaterThan(STILL_STARTING_POLLS)
+
+  await page.getByRole('button', { name: '■ Stop' }).click()
+  await expect(page.getByText('Select a camera above to start watching.')).toBeVisible()
+})
+
 // Same "real backend for the reachable part, page.route() for the rest"
 // approach as the mocked session above -- neither of these two scenarios
 // (switching cameras mid-session; the server ending a session with an

@@ -121,9 +121,25 @@ const BACKSLASH = ESCAPED_BACKSLASH[0]
 const ESCAPED_QUOTE = String.raw`\"`
 
 /** A double-quoted YAML scalar — safe for text starting with an emoji, a
- * brace, or anything else a plain scalar would choke on. */
+ * brace, or anything else a plain scalar would choke on.
+ *
+ * Control characters are escaped too, not just the quote and backslash: a
+ * raw newline inside a double-quoted scalar is legal YAML but *folds* to a
+ * space, so the value silently stops being what the user typed — and when
+ * the scalar is a mapping key, the text after the newline is read as a
+ * sibling key instead and the document usually stops parsing at all.
+ * Reaching this needs a newline in a value, which a single-line <input>
+ * will not produce; camera names arrive from Blink's API rather than from
+ * an input, so this helper does not get to assume where its argument
+ * came from.
+ */
 export function yamlString(value: string): string {
-  const escaped = value.replaceAll(BACKSLASH, ESCAPED_BACKSLASH).replaceAll('"', ESCAPED_QUOTE)
+  const escaped = value
+    .replaceAll(BACKSLASH, ESCAPED_BACKSLASH)
+    .replaceAll('"', ESCAPED_QUOTE)
+    .replaceAll('\n', String.raw`\n`)
+    .replaceAll('\r', String.raw`\r`)
+    .replaceAll('\t', String.raw`\t`)
   return `"${escaped}"`
 }
 
