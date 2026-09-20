@@ -211,6 +211,29 @@ test('a camera that refuses to arm says so and does not pretend it worked', asyn
   await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
 })
 
+test('arming the entire system names the modules that refused, rather than claiming success', async ({ page }) => {
+  // The hero button arms every module at once and collects the results,
+  // so a module that refuses has to be named -- a blanket "Entire system
+  // armed" over a module that is still disarmed is the one thing this tab
+  // must never say. The camera-level failure above is a different path:
+  // this is the whole-system button's own per-module result handling.
+  await page.getByRole('button', { name: 'Disarm Entire System' }).click()
+  await page.getByRole('button', { name: 'Confirm' }).click()
+  await expect(page.locator('.system-hero-title')).toHaveText('Disarmed')
+
+  await page.route('**/api/sync-modules/*/arm', (route) => route.fulfill({ status: 500, body: 'boom' }))
+  await page.getByRole('button', { name: 'Arm Entire System' }).click()
+
+  await expect(page.getByText(/^Could not arm: /)).toBeVisible()
+  await expect(page.getByText('Entire system armed')).toHaveCount(0)
+  await expect(page.locator('.system-hero-title')).toHaveText('Disarmed')
+
+  // Put the shared backend back the way every other spec expects it.
+  await page.unroute('**/api/sync-modules/*/arm')
+  await page.getByRole('button', { name: 'Arm Entire System' }).click()
+  await expect(page.locator('.system-hero-title')).toHaveText('System Armed')
+})
+
 test('the real seeded module has no local-storage clips panel at all', async ({ page }) => {
   // Sanity check against the *real*, unmocked backend data — confirms the
   // panel is genuinely conditional on local_storage, not just hidden by

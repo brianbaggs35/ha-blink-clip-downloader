@@ -59,6 +59,27 @@ hardcoded path that was only ever right by accident.
 The Notification Channels panel sits where it used to, above everything the
 builders added.
 
+### Live view starts several seconds sooner
+
+A Blink live view only runs about 30 seconds, and too much of that was
+being spent on a loading spinner. Two causes, both measured end to end
+against a real MPEG-TS stream fed over a socket at realtime pace:
+
+- ffmpeg inspects an unfamiliar stream before writing anything, and its
+  default window is 5 seconds — a sixth of the whole session, gone before
+  the first segment started. Capped, and the target segment length
+  shortened so the first one can close sooner (the live window stays the
+  same length). Time to a playable stream went from 9.1s to 5.3s, and to
+  3.2s on a camera that sends keyframes more often.
+- The tab then polled every 4 seconds to notice, so it could sit on
+  "starting" for nearly 4 seconds after the stream was already playing.
+  It now polls several times a second until the stream is up, then backs
+  off.
+
+Between them, the picture arrives several seconds earlier — which on a
+30-second session is the difference between watching most of it and
+watching the end of it.
+
 ### A camera called "Cam #2" quietly lost its name
 
 Camera names and the dashboard's own titles were written into the generated

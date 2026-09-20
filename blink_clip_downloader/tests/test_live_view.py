@@ -280,6 +280,43 @@ async def test_start_session_happy_path(
         await manager.stop_session(status.session_id)
 
 
+async def test_ffmpeg_is_told_not_to_spend_the_session_probing(
+    manager: LiveViewManager, camera_registry: dict[str, Any]
+) -> None:
+    """The startup-latency settings, pinned because nothing else notices.
+
+    A Blink live view runs about 30 seconds, and ffmpeg's default probe
+    window is 5 of them — measured 8.62s to a playable playlist at the
+    default versus 4.55s capped. Dropping these back to ffmpeg's defaults
+    would not fail any other test; it would just quietly hand the user a
+    loading spinner for a third of the session. The lower bound matters
+    too: at ``-analyzeduration 0`` ffmpeg is no quicker and silently
+    produces video-only segments, so this asserts a real value rather
+    than merely "an override is present".
+    """
+    camera_registry["Front Door"] = _make_camera()
+    proc = _FakeProcess()
+
+    with _mock_exec(proc) as mock_exec:
+        status = await manager.start_session("Front Door")
+
+    try:
+        args, _kwargs = mock_exec.call_args
+        analyze = int(args[args.index("-analyzeduration") + 1])
+        assert 0 < analyze <= 1_000_000
+        assert int(args[args.index("-probesize") + 1]) > 0
+        # Both must precede -i: ffmpeg applies them to the input, and
+        # after -i they would silently apply to nothing.
+        assert args.index("-analyzeduration") < args.index("-i")
+        assert args.index("-probesize") < args.index("-i")
+        # A shorter target segment lets the first one close sooner; the
+        # list grows to keep the live window the same length.
+        assert int(args[args.index("-hls_time") + 1]) <= 2
+        assert int(args[args.index("-hls_list_size") + 1]) >= 12
+    finally:
+        await manager.stop_session(status.session_id)
+
+
 async def test_start_session_idempotent_same_camera_case_insensitive(
     manager: LiveViewManager, camera_registry: dict[str, Any]
 ) -> None:

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { load } from 'js-yaml'
 import {
   type Recipe,
   boolValue,
@@ -102,5 +103,25 @@ describe('yaml helpers', () => {
     expect(slugify('Front Door')).toBe('front_door')
     expect(slugify("Mom's Car!")).toBe('mom_s_car')
     expect(slugify('***')).toBe('camera')
+  })
+})
+
+describe('yamlString and control characters', () => {
+  // A raw newline in a double-quoted YAML scalar folds to a space, and in
+  // a mapping key it makes the rest of the line a sibling key — so the
+  // document either changes meaning or stops parsing.
+  it.each([
+    ['line1\nline2', 'line1\nline2'],
+    ['tab\there', 'tab\there'],
+    ['cr\r\nlf', 'cr\r\nlf'],
+    ['Cam #2', 'Cam #2'],
+    ['say "hi"', 'say "hi"'],
+    ['back\\slash', 'back\\slash'],
+  ])('round-trips %o through a YAML parser unchanged', (input, expected) => {
+    expect(load(`value: ${yamlString(input)}`)).toEqual({ value: expected })
+  })
+
+  it('stays a single key when used as one', () => {
+    expect(load(`${yamlString('x\nalias: pwned')}: 1`)).toEqual({ 'x\nalias: pwned': 1 })
   })
 })
