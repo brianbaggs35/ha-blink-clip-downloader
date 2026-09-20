@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { useToastStore } from '../../stores/toast'
 import RecipeBuilder from './RecipeBuilder.vue'
 import type { Recipe } from './recipes/types'
+import * as haConfig from '../../api/haConfig'
 
 const RECIPES: Recipe[] = [
   {
@@ -18,6 +20,7 @@ const RECIPES: Recipe[] = [
       { key: 'cameras', label: 'Cameras', type: 'multiselect', default: [], source: 'cameras' },
     ],
     build: (v) => `alias: first\nthreshold: ${v.threshold}`,
+    create: { kind: 'automation', objectId: 'blink_first' },
   },
   {
     id: 'second',
@@ -132,5 +135,89 @@ describe('RecipeBuilder', () => {
     const wrapper = mountBuilder()
     expect(() => wrapper.findComponent({ name: 'Listbox' }).vm.$emit('update:modelValue', 'second')).not.toThrow()
     spy.mockRestore()
+  })
+
+  describe('creating it in Home Assistant', () => {
+    it('sends the recipe kind, its stable id and the YAML on screen', async () => {
+      const spy = vi
+        .spyOn(haConfig, 'createInHomeAssistant')
+        .mockResolvedValue({ created: true, entity_id: 'automation.blink_first' })
+      const wrapper = mountBuilder()
+      await wrapper.findComponent({ name: 'InputNumber' }).vm.$emit('update:modelValue', 95)
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Create'))!
+        .trigger('click')
+      await flushPromises()
+
+      expect(spy).toHaveBeenCalledWith('automation', 'blink_first', 'alias: first\nthreshold: 95')
+      expect(useToastStore().message).toContain('automation.blink_first')
+      expect(wrapper.text()).toContain('updates that same one rather than adding another')
+    })
+
+    it('shows the refusal verbatim when Home Assistant will not take it', async () => {
+      vi.spyOn(haConfig, 'createInHomeAssistant').mockResolvedValue({
+        created: false,
+        message: 'Home Assistant refused the request.',
+      })
+      const wrapper = mountBuilder()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Create'))!
+        .trigger('click')
+      await flushPromises()
+
+      expect(useToastStore().message).toBe('Home Assistant refused the request.')
+      expect(useToastStore().isError).toBe(true)
+    })
+
+    it('reports a refusal with no message of its own', async () => {
+      vi.spyOn(haConfig, 'createInHomeAssistant').mockResolvedValue({ created: false })
+      const wrapper = mountBuilder()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Create'))!
+        .trigger('click')
+      await flushPromises()
+      expect(useToastStore().message).toBe('Home Assistant would not create it')
+    })
+
+    it('says so when the add-on cannot reach Home Assistant at all', async () => {
+      vi.spyOn(haConfig, 'createInHomeAssistant').mockRejectedValue(new Error('503'))
+      const wrapper = mountBuilder()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Create'))!
+        .trigger('click')
+      await flushPromises()
+      expect(useToastStore().isError).toBe(true)
+      expect(wrapper.text()).not.toContain('now exists in Home Assistant')
+    })
+
+    it('offers no Create button for a recipe with no API behind it', () => {
+      const copyOnly: Recipe[] = [{ ...RECIPES[0], create: undefined }]
+      const wrapper = mountBuilder(copyOnly)
+      expect(wrapper.findAll('button').some((b) => b.text().includes('Create'))).toBe(false)
+      expect(wrapper.text()).toContain('no API to create it from here')
+    })
+
+    it('clears the created banner when a different recipe is picked', async () => {
+      vi.spyOn(haConfig, 'createInHomeAssistant').mockResolvedValue({
+        created: true,
+        entity_id: 'automation.blink_first',
+      })
+      const wrapper = mountBuilder()
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Create'))!
+        .trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('now exists in Home Assistant')
+
+      await wrapper.findComponent({ name: 'Listbox' }).vm.$emit('update:modelValue', 'second')
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('now exists in Home Assistant')
+    })
   })
 })

@@ -14,7 +14,9 @@ import {
   duration,
   entityList,
   joinLines,
+  listValue,
   numberValue,
+  slugify,
   stringValue,
   trimTrailingChar,
   yamlString,
@@ -72,6 +74,7 @@ const syncNow: Recipe = {
 
 const castFeedScript: Recipe = {
   id: 'script-cast-feed',
+  create: { kind: 'script', objectId: 'blink_show_cameras' },
   name: 'Show the camera feed on a display',
   group: 'Scripts',
   icon: '📺',
@@ -134,6 +137,7 @@ const castFeedScript: Recipe = {
 
 const storageReport: Recipe = {
   id: 'script-storage-report',
+  create: { kind: 'script', objectId: 'blink_storage_report' },
   name: 'Read out a storage report',
   group: 'Scripts',
   icon: '🗣️',
@@ -196,6 +200,7 @@ const storageReport: Recipe = {
 
 const securityScene: Recipe = {
   id: 'scene-security-alert',
+  create: { kind: 'scene', objectId: 'blink_security_alert' },
   name: 'Security alert lighting scene',
   group: 'Scenes',
   icon: '🚨',
@@ -376,11 +381,221 @@ const templateSensors: Recipe = {
   },
 }
 
+const armSyncModule: Recipe = {
+  id: 'script-arm-sync',
+  name: 'Arm or disarm the Sync Module',
+  group: 'Scripts',
+  icon: '🛡️',
+  description:
+    "Gives Home Assistant control of Blink's own arming, so presence, a dashboard button or a voice command can do it — and so the arm-on-away automation has something to call.",
+  target: 'configuration.yaml',
+  filename: 'blink-arm-sync.yaml',
+  fields: [
+    {
+      key: 'addon_url',
+      label: 'Add-on URL',
+      type: 'text',
+      default: ADDON_URL_DEFAULT,
+      help: 'The direct-access port (default 8099). Home Assistant calls this itself, so a LAN address is fine.',
+    },
+    {
+      key: 'sync_module',
+      label: 'Sync Module name',
+      type: 'text',
+      default: 'My Sync Module',
+      help: 'Exactly as it appears on the Sync Module tab.',
+    },
+  ],
+  build: (v: RecipeValues) => {
+    const url = trimTrailingChar(stringValue(v, 'addon_url', ADDON_URL_DEFAULT), '/')
+    const name = stringValue(v, 'sync_module', 'My Sync Module')
+    const armUrl = `${url}/api/sync-modules/${encodeURIComponent(name)}/arm`
+    return joinLines([
+      '# configuration.yaml',
+      'rest_command:',
+      '  blink_sync_arm:',
+      `    url: ${yamlString(armUrl)}`,
+      '    method: post',
+      '    content_type: "application/json"',
+      `    payload: ${yamlString('{"armed": true}')}`,
+      '    timeout: 30',
+      '  blink_sync_disarm:',
+      `    url: ${yamlString(armUrl)}`,
+      '    method: post',
+      '    content_type: "application/json"',
+      `    payload: ${yamlString('{"armed": false}')}`,
+      '    timeout: 30',
+      '\n# scripts.yaml — a button-friendly wrapper around each one.',
+      'blink_arm_sync_module:',
+      '  alias: Blink – arm the Sync Module',
+      '  icon: mdi:shield-check',
+      '  mode: single',
+      '  sequence:',
+      '    - action: rest_command.blink_sync_arm',
+      'blink_disarm_sync_module:',
+      '  alias: Blink – disarm the Sync Module',
+      '  icon: mdi:shield-off',
+      '  mode: single',
+      '  sequence:',
+      '    - action: rest_command.blink_sync_disarm',
+    ])
+  },
+}
+
+const archiveNow: Recipe = {
+  id: 'script-archive-now',
+  name: 'Archive old clips now',
+  group: 'Scripts',
+  icon: '🗜️',
+  description:
+    "Runs the add-on's archiver on demand instead of waiting for its next sweep — and gives the storage-threshold automation something to call.",
+  target: 'configuration.yaml',
+  filename: 'blink-archive-now.yaml',
+  fields: [
+    {
+      key: 'addon_url',
+      label: 'Add-on URL',
+      type: 'text',
+      default: ADDON_URL_DEFAULT,
+    },
+  ],
+  build: (v: RecipeValues) => {
+    const url = trimTrailingChar(stringValue(v, 'addon_url', ADDON_URL_DEFAULT), '/')
+    return joinLines([
+      '# configuration.yaml',
+      'rest_command:',
+      '  blink_archive_now:',
+      `    url: ${yamlString(`${url}/api/storage/archive/run-now`)}`,
+      '    method: post',
+      '    timeout: 120',
+      '\n# scripts.yaml',
+      'blink_archive_now:',
+      '  alias: Blink – archive old clips now',
+      '  icon: mdi:archive-arrow-down',
+      '  mode: single',
+      '  sequence:',
+      '    - action: rest_command.blink_archive_now',
+    ])
+  },
+}
+
+const snapshotAll: Recipe = {
+  id: 'script-snapshot-all',
+  create: { kind: 'script', objectId: 'blink_camera_snapshots' },
+  name: 'Send a snapshot of every camera',
+  group: 'Scripts',
+  icon: '📸',
+  description:
+    'One tap and every camera lands on your phone — for "did I leave the garage open?", or as the first thing an alarm automation does.',
+  target: 'scripts.yaml',
+  filename: 'blink-camera-snapshots.yaml',
+  fields: [
+    {
+      key: 'cameras',
+      label: 'Cameras',
+      type: 'multiselect',
+      default: [] as string[],
+      source: 'cameras' as const,
+      help: 'Pick the ones to include — this builds one message per camera, so it cannot mean "all" on its own. Needs the Generic Camera entities from the Dashboards tab.',
+    },
+    {
+      key: 'notify_service',
+      label: 'Notify service',
+      type: 'text',
+      default: 'notify.notify',
+      help: 'A mobile_app service is what renders the images inline.',
+    },
+  ],
+  build: (v: RecipeValues) => {
+    const cameras = listValue(v, 'cameras')
+    const names = cameras.length ? cameras : ['Front Door']
+    const service = stringValue(v, 'notify_service', 'notify.notify')
+    return joinLines([
+      '# scripts.yaml',
+      'blink_camera_snapshots:',
+      '  alias: Blink – send every camera snapshot',
+      '  icon: mdi:camera-burst',
+      '  mode: single',
+      '  sequence:',
+      ...names.flatMap((camera) => [
+        `    - action: ${service}`,
+        '      data:',
+        `        title: ${yamlString(`📸 ${camera}`)}`,
+        `        message: ${yamlString(`Latest snapshot from ${camera}.`)}`,
+        '        data:',
+        `          image: /api/camera_proxy/camera.blink_${slugify(camera)}`,
+      ]),
+    ])
+  },
+}
+
+const allClearScene: Recipe = {
+  id: 'scene-all-clear',
+  create: { kind: 'scene', objectId: 'blink_all_clear' },
+  name: 'All-clear lighting scene',
+  group: 'Scenes',
+  icon: '🌙',
+  description:
+    'The other half of the alert scene: puts the lights back afterwards, so an automation can end an alert as cleanly as it started one.',
+  target: 'scenes.yaml',
+  filename: 'blink-all-clear-scene.yaml',
+  fields: [
+    {
+      key: 'lights',
+      label: 'Lights',
+      type: 'text',
+      default: 'light.porch, light.driveway',
+      help: 'The same ones the alert scene changes.',
+    },
+    {
+      key: 'leave_on',
+      label: 'Leave them on, dimmed',
+      type: 'toggle',
+      default: false,
+      help: 'Off turns them out entirely; on returns them to a low warm level.',
+    },
+    {
+      key: 'brightness',
+      label: 'Dimmed to',
+      type: 'number',
+      default: 30,
+      min: 1,
+      max: 100,
+      suffix: '%',
+    },
+  ],
+  build: (v: RecipeValues) => {
+    const lights = entityList(v, 'lights', 'light.porch')
+    const leaveOn = boolValue(v, 'leave_on')
+    const brightness = Math.round((numberValue(v, 'brightness', 30) / 100) * 255)
+    return joinLines([
+      '# scenes.yaml',
+      '- id: blink_all_clear',
+      '  name: Blink all clear',
+      '  icon: mdi:lightbulb-off-outline',
+      '  entities:',
+      ...lights.flatMap((entity) =>
+        leaveOn
+          ? [`    ${entity}:`, '      state: "on"', `      brightness: ${brightness}`]
+          : [`    ${entity}:`, '      state: "off"'],
+      ),
+      '\n# Call it from the end of an alert automation with:',
+      '#   - action: scene.turn_on',
+      '#     target:',
+      '#       entity_id: scene.blink_all_clear',
+    ])
+  },
+}
+
 export const SCRIPT_RECIPES: Recipe[] = [
   syncNow,
+  armSyncModule,
+  archiveNow,
   castFeedScript,
   storageReport,
+  snapshotAll,
   securityScene,
+  allClearScene,
   pauseHelper,
   templateSensors,
 ]

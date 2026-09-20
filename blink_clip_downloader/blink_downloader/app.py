@@ -29,6 +29,7 @@ from .downloader import (
 from .event_watcher import HAEventWatcher
 from .gdrive_client import GDriveClient
 from .gdrive_queue import GDriveUploadQueue
+from .ha_config import HAConfigWriter
 from .ha_entities import HAEntityPublisher
 from .library_scanner import import_existing_clips
 from .live_view import LiveViewManager
@@ -108,6 +109,11 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # Supervisor call per poll cycle and silently does nothing when
         # there is no Supervisor token at all.
         self._ha_entities = HAEntityPublisher(self._notifier)
+        # Backs the Automations tab's "Create in Home Assistant" buttons.
+        # Same Supervisor token as the notifier; a separate object because
+        # writing configuration and sending notifications fail in different
+        # ways and the UI reports one of them to the user directly.
+        self._ha_config_writer = HAConfigWriter(config.supervisor_token)
         self._downloader = BlinkDownloader(
             config,
             self._storage,
@@ -199,6 +205,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             analyzer=self._analyzer,
             analysis_queue=self._analysis_queue,
             notification_dispatcher=self._alert_dispatcher,
+            ha_config_writer=self._ha_config_writer,
             gdrive_client=self._gdrive_client,
             gdrive_queue=self._gdrive_queue,
             archiver=self._archiver,
@@ -1393,6 +1400,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             "downloader.disconnect", self._downloader.disconnect()
         )
         await self._shutdown_step("notifier.close", self._notifier.close())
+        await self._shutdown_step(
+            "ha_config_writer.close", self._ha_config_writer.close()
+        )
         await self._shutdown_step("db.close", self._db.close())
         try:
             self._tracker.save()

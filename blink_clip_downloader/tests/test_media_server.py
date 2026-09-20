@@ -27,6 +27,7 @@ from blink_downloader.gdrive_client import (
     TokenPollResult,
 )
 from blink_downloader.gdrive_queue import GDriveUploadQueue
+from blink_downloader.ha_config import HAConfigError
 from blink_downloader.live_view import (
     CameraNotFoundError,
     LiveViewError,
@@ -9774,3 +9775,77 @@ async def test_assets_still_serve_without_a_precompressed_sibling(
     assert resp.status == 200
     assert resp.headers.get("Content-Encoding") is None
     assert await resp.read() == payload
+
+
+# ---------------------------------------------------------------------------
+# /api/ha/config/create — "Create in Home Assistant" (see ha_config.py)
+# ---------------------------------------------------------------------------
+
+
+async def test_ha_config_create_without_a_writer_says_it_needs_home_assistant(
+    client: TestClient,
+) -> None:
+    """The standalone/dev server has no Supervisor token, so the button has
+    to fail with something explanatory rather than a bare 500."""
+    resp = await client.post(
+        "/api/ha/config/create",
+        json={"kind": "automation", "object_id": "blink_x", "yaml": "alias: x"},
+    )
+    assert resp.status == 503
+    assert "Home Assistant" in await resp.text()
+
+
+async def _client_with_writer(
+    db: ClipDatabase, writer: object
+) -> AsyncGenerator[TestClient]:
+    server = MediaServer(db=db, port=0, ha_config_writer=writer)  # type: ignore[arg-type]
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    yield tc
+    await tc.close()
+
+
+async def test_ha_config_create_passes_the_request_through(
+    db: ClipDatabase,
+) -> None:
+    writer = MagicMock()
+    writer.create = AsyncMock(return_value="automation.blink_x")
+    async for tc in _client_with_writer(db, writer):
+        resp = await tc.post(
+            "/api/ha/config/create",
+            json={"kind": "automation", "object_id": "blink_x", "yaml": "alias: x"},
+        )
+        assert resp.status == 200
+        assert await resp.json() == {
+            "created": True,
+            "entity_id": "automation.blink_x",
+        }
+        writer.create.assert_awaited_once_with("automation", "blink_x", "alias: x")
+
+
+async def test_ha_config_create_reports_a_refusal_as_a_message_not_a_crash(
+    db: ClipDatabase,
+) -> None:
+    """A rejected create is a normal outcome the UI shows verbatim — an
+    unparseable recipe, a non-admin token, Home Assistant unreachable."""
+    writer = MagicMock()
+    writer.create = AsyncMock(side_effect=HAConfigError("nope, not an admin"))
+    async for tc in _client_with_writer(db, writer):
+        resp = await tc.post(
+            "/api/ha/config/create",
+            json={"kind": "automation", "object_id": "blink_x", "yaml": "alias: x"},
+        )
+        assert resp.status == 200
+        assert await resp.json() == {"created": False, "message": "nope, not an admin"}
+
+
+async def test_ha_config_create_tolerates_a_body_with_nothing_in_it(
+    db: ClipDatabase,
+) -> None:
+    writer = MagicMock()
+    writer.create = AsyncMock(side_effect=HAConfigError("An id is required"))
+    async for tc in _client_with_writer(db, writer):
+        resp = await tc.post("/api/ha/config/create", json={})
+        assert resp.status == 200
+        assert (await resp.json())["created"] is False
+        writer.create.assert_awaited_once_with("", "", "")

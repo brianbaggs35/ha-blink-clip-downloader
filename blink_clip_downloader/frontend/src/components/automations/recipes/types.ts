@@ -32,6 +32,19 @@ export interface RecipeField {
   source?: 'cameras'
 }
 
+/** What Home Assistant's config API can create directly, and under which
+ * object id. Absent means copy-only: blueprints, helpers, dashboards and
+ * anything that belongs in configuration.yaml have no API to create them
+ * (see blink_downloader/ha_config.py), and the builder says where to put
+ * them by hand instead. */
+export interface RecipeCreate {
+  kind: 'automation' | 'script' | 'scene'
+  /** Stable, so pressing Create twice updates rather than duplicates. For
+   * a script it must match the id the generated YAML nests its body under,
+   * or the created entity would not be the one the YAML describes. */
+  objectId: string
+}
+
 export interface Recipe {
   id: string
   name: string
@@ -45,6 +58,7 @@ export interface Recipe {
   filename: string
   fields: RecipeField[]
   build: (values: RecipeValues) => string
+  create?: RecipeCreate
 }
 
 // ---------------------------------------------------------------------------
