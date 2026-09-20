@@ -120,3 +120,54 @@ describe('template sensors', () => {
     expect(parsed.template).toHaveLength(2)
   })
 })
+
+describe('snapshot script', () => {
+  it('builds one message per selected camera', () => {
+    const yaml = build('script-snapshot-all', { cameras: ['Front Door', 'Back Yard'] })
+    expect(yaml).toContain('camera.blink_front_door')
+    expect(yaml).toContain('camera.blink_back_yard')
+    expect(yaml.match(/- action: notify\.notify/g)).toHaveLength(2)
+  })
+
+  it('falls back to a single placeholder camera when none are picked', () => {
+    // It cannot mean "all" — build() never sees the live camera list.
+    const yaml = build('script-snapshot-all', { cameras: [] })
+    expect(yaml.match(/- action: notify\.notify/g)).toHaveLength(1)
+  })
+})
+
+describe('what can be created directly in Home Assistant', () => {
+  it('only offers it for recipes the config API can actually create', () => {
+    const creatable = SCRIPT_RECIPES.filter((r) => r.create).map((r) => r.id)
+    // The ones left out cannot be: sync-now, arm-sync and archive-now all
+    // generate a rest_command too, the pause helper an input_boolean, and
+    // the template sensors live in configuration.yaml. No API creates any
+    // of those, so they stay copy-only.
+    expect(creatable).toEqual([
+      'script-cast-feed',
+      'script-storage-report',
+      'script-snapshot-all',
+      'scene-security-alert',
+      'scene-all-clear',
+    ])
+  })
+
+  it('names each script with the same id its YAML nests the body under', () => {
+    // The object id goes in the URL and becomes the entity id, while the
+    // YAML key is stripped before sending. If they drifted apart, the
+    // created script would not be the one the preview describes.
+    for (const r of SCRIPT_RECIPES) {
+      if (r.create?.kind !== 'script') continue
+      const yaml = r.build(defaultValues(r))
+      expect(yaml).toContain(`${r.create.objectId}:`)
+    }
+  })
+
+  it('gives every scene the id its YAML declares', () => {
+    const scenes = SCRIPT_RECIPES.filter((r) => r.create?.kind === 'scene')
+    expect(scenes.length).toBeGreaterThan(1)
+    for (const scene of scenes) {
+      expect(scene.build(defaultValues(scene))).toContain(`- id: ${scene.create!.objectId}`)
+    }
+  })
+})

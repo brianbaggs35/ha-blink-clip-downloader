@@ -185,3 +185,61 @@ test('the pause helper can be left off until it is flipped back by hand', async 
   await expect(preview(page)).not.toContainText('input_boolean.turn_off')
   await expect(preview(page)).toContainText('input_boolean:')
 })
+
+test('the notification test panel stays at the top, above the builders', async ({ page }) => {
+  await openTab(page, 'Automations')
+  const panelY = await page.locator('.notification-channels-card').boundingBox()
+  const buildersY = await page.locator('.recipe-builder').boundingBox()
+  expect(panelY!.y).toBeLessThan(buildersY!.y)
+})
+
+test('an automation offers to create itself in Home Assistant', async ({ page }) => {
+  await openTab(page, 'Automations')
+  await pick(page, 'Suspicious clip alert')
+  await expect(page.getByRole('button', { name: 'Create in Home Assistant' })).toBeVisible()
+})
+
+test('creating without Home Assistant behind it fails with an explanation', async ({ page }) => {
+  // The standalone server has no Supervisor token, so the endpoint answers
+  // 503 — a real round trip, and the path a bare container would take.
+  await openTab(page, 'Automations')
+  await pick(page, 'Daily summary')
+  await page.getByRole('button', { name: 'Create in Home Assistant' }).click()
+  await expect(page.getByText('Could not reach Home Assistant')).toBeVisible()
+  await expect(page.getByText('now exists in Home Assistant')).toHaveCount(0)
+})
+
+test('a created automation reports the entity it became', async ({ page }) => {
+  // The real endpoint needs Supervisor; mock only that response so the
+  // success path — which no dev environment can reach — is still covered.
+  await page.route('**/api/ha/config/create', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ created: true, entity_id: 'automation.blink_daily_summary' }),
+    }),
+  )
+  await openTab(page, 'Automations')
+  await pick(page, 'Daily summary')
+  await page.getByRole('button', { name: 'Create in Home Assistant' }).click()
+  await expect(page.getByText('automation.blink_daily_summary').first()).toBeVisible()
+  await expect(page.getByText('updates that same one rather than adding another')).toBeVisible()
+})
+
+test('a copy-only recipe offers no Create button, and says where to put it', async ({ page }) => {
+  await openTab(page, 'Scripts & Helpers')
+  await pick(page, 'Sync clips now')
+  // It generates a rest_command too, which no API can create.
+  await expect(page.getByRole('button', { name: 'Create in Home Assistant' })).toHaveCount(0)
+  await expect(page.getByText('no API to create it from here')).toBeVisible()
+  await expect(page.getByText('configuration.yaml').first()).toBeVisible()
+})
+
+test('the Dashboards tab can generate a YAML dashboard of its own', async ({ page }) => {
+  await openTab(page, 'Dashboards')
+  await page.locator('.p-selectbutton').nth(1).getByText('Its own YAML dashboard').click()
+  const blocks = page.locator('.code-block')
+  await expect(blocks.nth(1)).toContainText('lovelace:')
+  await expect(blocks.nth(1)).toContainText('show_in_sidebar: true')
+  await expect(page.getByText('blink-cameras.yaml').first()).toBeVisible()
+})

@@ -108,6 +108,7 @@ function header(alias: string, description: string, mode = 'single', max?: numbe
 
 const cloudStorageThreshold: Recipe = {
   id: 'cloud-storage-threshold',
+  create: { kind: 'automation', objectId: 'blink_cloud_storage_threshold' },
   name: 'Cloud backup storage is filling up',
   group: 'Storage',
   icon: '☁️',
@@ -190,6 +191,7 @@ const cloudStorageThreshold: Recipe = {
 
 const localStorageThreshold: Recipe = {
   id: 'local-storage-threshold',
+  create: { kind: 'automation', objectId: 'blink_local_storage_threshold' },
   name: 'Local clip storage is filling up',
   group: 'Storage',
   icon: '💾',
@@ -244,6 +246,7 @@ const localStorageThreshold: Recipe = {
 
 const uploadBacklog: Recipe = {
   id: 'cloud-upload-backlog',
+  create: { kind: 'automation', objectId: 'blink_cloud_upload_backlog' },
   name: 'Cloud backups are falling behind',
   group: 'Storage',
   icon: '📤',
@@ -303,6 +306,7 @@ const uploadBacklog: Recipe = {
 
 const suspiciousAlert: Recipe = {
   id: 'suspicious-clip-alert',
+  create: { kind: 'automation', objectId: 'blink_suspicious_clip_alert' },
   name: 'Suspicious clip alert',
   group: 'Security',
   icon: '🚨',
@@ -374,6 +378,7 @@ const suspiciousAlert: Recipe = {
 
 const securityLights: Recipe = {
   id: 'security-lights',
+  create: { kind: 'automation', objectId: 'blink_security_lights' },
   name: 'Turn on lights when something looks off',
   group: 'Security',
   icon: '💡',
@@ -478,6 +483,7 @@ const securityLights: Recipe = {
 
 const castFeed: Recipe = {
   id: 'cast-security-feed',
+  create: { kind: 'automation', objectId: 'blink_cast_security_feed' },
   name: 'Cast the camera feed to a display',
   group: 'Security',
   icon: '📺',
@@ -564,6 +570,7 @@ const castFeed: Recipe = {
 
 const announceClip: Recipe = {
   id: 'announce-clip',
+  create: { kind: 'automation', objectId: 'blink_announce_clip' },
   name: 'Announce a clip on a speaker',
   group: 'Security',
   icon: '🔊',
@@ -647,6 +654,7 @@ const announceClip: Recipe = {
 
 const newClipNotify: Recipe = {
   id: 'new-clip-notify',
+  create: { kind: 'automation', objectId: 'blink_new_clip_notify' },
   name: 'Notify on a new clip',
   group: 'Clips',
   icon: '🎥',
@@ -722,6 +730,7 @@ const newClipNotify: Recipe = {
 
 const longClip: Recipe = {
   id: 'long-motion-clip',
+  create: { kind: 'automation', objectId: 'blink_long_motion_clip' },
   name: 'Alert on an unusually long clip',
   group: 'Clips',
   icon: '⏱️',
@@ -769,6 +778,7 @@ const longClip: Recipe = {
 
 const batteryLow: Recipe = {
   id: 'camera-battery-low',
+  create: { kind: 'automation', objectId: 'blink_camera_battery_low' },
   name: 'Camera battery went low',
   group: 'Maintenance',
   icon: '🔋',
@@ -813,6 +823,7 @@ const batteryLow: Recipe = {
 
 const downloaderStalled: Recipe = {
   id: 'downloader-stalled',
+  create: { kind: 'automation', objectId: 'blink_downloader_stalled' },
   name: 'Nothing has downloaded in a while',
   group: 'Maintenance',
   icon: '🕳️',
@@ -859,6 +870,7 @@ const downloaderStalled: Recipe = {
 
 const dailySummary: Recipe = {
   id: 'daily-summary',
+  create: { kind: 'automation', objectId: 'blink_daily_summary' },
   name: 'Daily summary',
   group: 'Maintenance',
   icon: '📅',
@@ -890,17 +902,284 @@ const dailySummary: Recipe = {
     ]),
 }
 
+const armOnAway: Recipe = {
+  id: 'arm-on-away',
+  create: { kind: 'automation', objectId: 'blink_arm_on_away' },
+  name: 'Arm Blink when everyone leaves',
+  group: 'Security',
+  icon: '🏠',
+  description:
+    'Arms the Sync Module when the last person goes out and disarms it when someone gets back, so you stop arming it by hand — and stop forgetting to.',
+  target: 'automations.yaml',
+  filename: 'blink-arm-on-away.yaml',
+  fields: [
+    {
+      key: 'presence_entity',
+      label: 'Presence entity',
+      type: 'text',
+      default: 'group.family',
+      placeholder: 'person.you, group.family, binary_sensor.anyone_home',
+      help: 'Anything whose state is home / not_home. A group of people covers a household.',
+    },
+    {
+      key: 'disarm_home',
+      label: 'Disarm again when someone returns',
+      type: 'toggle',
+      default: true,
+    },
+    notifyField(),
+    {
+      key: 'notify_on_arm',
+      label: 'Tell me when it arms',
+      type: 'toggle',
+      default: false,
+    },
+  ],
+  build: (v: RecipeValues) => {
+    const presence = stringValue(v, 'presence_entity', 'group.family')
+    const disarm = boolValue(v, 'disarm_home')
+    const notify = boolValue(v, 'notify_on_arm')
+    return joinLines([
+      header(
+        'Blink – arm when everyone leaves',
+        "Arms the Blink Sync Module when the last person leaves, and disarms it when someone returns. Needs the rest_command from the Scripts & Helpers tab's \u201cArm or disarm the Sync Module\u201d recipe.",
+      ),
+      'triggers:',
+      '  - trigger: state',
+      `    entity_id: ${presence}`,
+      '    to: "not_home"',
+      '    id: away',
+      disarm ? '  - trigger: state' : '',
+      disarm ? `    entity_id: ${presence}` : '',
+      disarm ? '    to: "home"' : '',
+      disarm ? '    id: home' : '',
+      conditionsBlock([]),
+      'actions:',
+      '  - choose:',
+      '      - conditions:',
+      '          - condition: trigger',
+      '            id: away',
+      '        sequence:',
+      '          - action: rest_command.blink_sync_arm',
+      notify ? '          - action: ' + stringValue(v, 'notify_service', 'notify.notify') : '',
+      notify ? '            data:' : '',
+      notify ? '              title: "🏠 Blink armed"' : '',
+      notify ? '              message: "Everyone is out — the Sync Module is armed."' : '',
+      disarm ? '      - conditions:' : '',
+      disarm ? '          - condition: trigger' : '',
+      disarm ? '            id: home' : '',
+      disarm ? '        sequence:' : '',
+      disarm ? '          - action: rest_command.blink_sync_disarm' : '',
+    ])
+  },
+}
+
+const sirenOnSuspicious: Recipe = {
+  id: 'siren-on-suspicious',
+  create: { kind: 'automation', objectId: 'blink_siren_on_suspicious' },
+  name: 'Sound the siren when the alarm is armed',
+  group: 'Security',
+  icon: '🚨',
+  description:
+    'Ties a suspicious clip to your alarm: while the panel is armed, a flagged clip sets off a siren, and optionally trips the alarm itself.',
+  target: 'automations.yaml',
+  filename: 'blink-siren-on-suspicious.yaml',
+  fields: [
+    {
+      key: 'alarm_entity',
+      label: 'Alarm panel',
+      type: 'text',
+      default: 'alarm_control_panel.home',
+    },
+    {
+      key: 'armed_state',
+      label: 'Only while',
+      type: 'select',
+      default: 'armed_away',
+      options: [
+        { label: 'Armed away', value: 'armed_away' },
+        { label: 'Armed home', value: 'armed_home' },
+        { label: 'Armed night', value: 'armed_night' },
+        { label: 'Armed in any mode', value: 'any' },
+      ],
+    },
+    {
+      key: 'siren',
+      label: 'Siren or switch',
+      type: 'text',
+      default: 'siren.outdoor',
+      help: 'Comma separated. Anything homeassistant.turn_on understands.',
+    },
+    {
+      key: 'trigger_alarm',
+      label: 'Also trip the alarm itself',
+      type: 'toggle',
+      default: false,
+      help: 'Runs alarm_control_panel.alarm_trigger — whatever your panel does on a real intrusion.',
+    },
+    {
+      key: 'min_confidence',
+      label: 'Minimum confidence',
+      type: 'number',
+      default: 0.7,
+      min: 0,
+      max: 1,
+      step: 0.05,
+    },
+    camerasField,
+  ],
+  build: (v: RecipeValues) => {
+    const alarm = stringValue(v, 'alarm_entity', 'alarm_control_panel.home')
+    const armed = stringValue(v, 'armed_state', 'armed_away')
+    const sirens = entityList(v, 'siren', 'siren.outdoor')
+    const anyArmed = `{{ states('${alarm}').startswith('armed') }}`
+    return joinLines([
+      header(
+        'Blink – siren on suspicious activity while armed',
+        'Sets off a siren when a clip is judged suspicious and the alarm panel is armed.',
+        'single',
+      ),
+      'triggers:',
+      '  - trigger: event',
+      `    event_type: ${CLIP_ANALYZED_EVENT}`,
+      conditionsBlock([
+        joinLines([
+          '  - condition: template',
+          `    value_template: ${yamlTemplate('{{ trigger.event.data.is_suspicious }}', 4)}`,
+        ]),
+        eventNumberCondition('confidence', numberValue(v, 'min_confidence', 0.7)),
+        cameraCondition(listValue(v, 'cameras')),
+        armed === 'any'
+          ? joinLines(['  - condition: template', `    value_template: ${yamlTemplate(anyArmed, 4)}`])
+          : joinLines(['  - condition: state', `    entity_id: ${alarm}`, `    state: ${armed}`]),
+      ]),
+      'actions:',
+      '  - action: homeassistant.turn_on',
+      '    target:',
+      '      entity_id:',
+      ...sirens.map((id) => `        - ${id}`),
+      boolValue(v, 'trigger_alarm') ? '  - action: alarm_control_panel.alarm_trigger' : '',
+      boolValue(v, 'trigger_alarm') ? '    target:' : '',
+      boolValue(v, 'trigger_alarm') ? `      entity_id: ${alarm}` : '',
+    ])
+  },
+}
+
+const batteryTodo: Recipe = {
+  id: 'battery-todo',
+  create: { kind: 'automation', objectId: 'blink_battery_todo' },
+  name: 'Add a to-do when a battery goes low',
+  group: 'Maintenance',
+  icon: '📝',
+  description:
+    'Puts "replace the batteries in X" on a real to-do list, where it survives being read and dismissed at 2am — unlike a notification.',
+  target: 'automations.yaml',
+  filename: 'blink-battery-todo.yaml',
+  fields: [
+    {
+      key: 'todo_entity',
+      label: 'To-do list',
+      type: 'text',
+      default: 'todo.shopping_list',
+      help: 'Any todo entity — the shopping list, a chores list, a Local To-do list.',
+    },
+    camerasField,
+  ],
+  build: (v: RecipeValues) =>
+    joinLines([
+      header('Blink – add a battery to-do', 'Adds a to-do item when a Blink camera reports a low battery.'),
+      'triggers:',
+      '  - trigger: event',
+      `    event_type: ${BATTERY_LOW_EVENT}`,
+      conditionsBlock([cameraCondition(listValue(v, 'cameras'))]),
+      'actions:',
+      '  - action: todo.add_item',
+      '    target:',
+      `      entity_id: ${stringValue(v, 'todo_entity', 'todo.shopping_list')}`,
+      '    data:',
+      `      item: ${yamlTemplate('Replace the batteries in {{ trigger.event.data.camera }}', 6)}`,
+    ]),
+}
+
+const archiveWhenFull: Recipe = {
+  id: 'archive-when-full',
+  create: { kind: 'automation', objectId: 'blink_archive_when_full' },
+  name: 'Archive old clips when storage fills',
+  group: 'Storage',
+  icon: '🗜️',
+  description:
+    'Compresses old clips into archives once storage passes a level you choose, instead of waiting for the next daily sweep or deleting anything.',
+  target: 'automations.yaml',
+  filename: 'blink-archive-when-full.yaml',
+  fields: [
+    {
+      key: 'threshold',
+      label: 'Archive above',
+      type: 'number',
+      default: 85,
+      min: 1,
+      max: 99,
+      suffix: '%',
+    },
+    {
+      key: 'sustained',
+      label: 'Only after it stays there for',
+      type: 'number',
+      default: 10,
+      min: 0,
+      max: 720,
+      suffix: 'min',
+    },
+    notifyField(),
+    {
+      key: 'notify_after',
+      label: 'Tell me when it runs',
+      type: 'toggle',
+      default: true,
+    },
+  ],
+  build: (v: RecipeValues) => {
+    const threshold = numberValue(v, 'threshold', 85)
+    const notify = boolValue(v, 'notify_after')
+    return joinLines([
+      header(
+        `Blink – archive when storage passes ${threshold}%`,
+        "Runs the add-on's archiver when local storage gets tight. Needs the rest_command from the Scripts & Helpers tab's \u201cArchive old clips now\u201d recipe.",
+      ),
+      'triggers:',
+      '  - trigger: numeric_state',
+      `    entity_id: ${LOCAL_STORAGE_SENSOR}`,
+      `    above: ${threshold}`,
+      forDuration(numberValue(v, 'sustained', 10)),
+      conditionsBlock([]),
+      'actions:',
+      '  - action: rest_command.blink_archive_now',
+      notify
+        ? notifyAction(
+            stringValue(v, 'notify_service', 'notify.notify'),
+            '🗜️ Blink is archiving old clips',
+            `Local storage passed ${threshold}% ({{ states('${LOCAL_STORAGE_SENSOR}') }}% now), so the archiver was asked to compress the oldest clips.`,
+          )
+        : '',
+    ])
+  },
+}
+
 export const AUTOMATION_RECIPES: Recipe[] = [
   suspiciousAlert,
   securityLights,
+  sirenOnSuspicious,
   castFeed,
   announceClip,
+  armOnAway,
   newClipNotify,
   longClip,
   cloudStorageThreshold,
   localStorageThreshold,
   uploadBacklog,
+  archiveWhenFull,
   batteryLow,
+  batteryTodo,
   downloaderStalled,
   dailySummary,
 ]

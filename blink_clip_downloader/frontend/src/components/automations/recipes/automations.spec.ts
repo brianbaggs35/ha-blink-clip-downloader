@@ -258,3 +258,12 @@ describe('daily summary', () => {
     expect(yaml).toContain('sensor.blink_cloud_storage')
   })
 })
+
+describe('creating automations in Home Assistant', () => {
+  it('offers direct creation for every automation, with a unique stable id', () => {
+    const ids = AUTOMATION_RECIPES.map((r) => r.create?.objectId)
+    expect(ids.every((id) => typeof id === 'string' && id.startsWith('blink_'))).toBe(true)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(AUTOMATION_RECIPES.every((r) => r.create?.kind === 'automation')).toBe(true)
+  })
+})

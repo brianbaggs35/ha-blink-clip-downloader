@@ -12,6 +12,8 @@ import {
   DEFAULT_DASHBOARD_OPTIONS,
   castScriptYaml,
   cameraSetupSheet,
+  dashboardFilename,
+  dashboardRegistrationYaml,
   dashboardYaml,
   kioskUrl,
 } from './recipes/dashboard'
@@ -23,12 +25,19 @@ const MODES = [
   { label: 'Embed this tab', value: 'iframe' },
 ]
 
+const DELIVERY = [
+  { label: 'Paste into a dashboard', value: 'raw' },
+  { label: 'Its own YAML dashboard', value: 'yaml-file' },
+]
+
 const mode = ref<DashboardOptions['mode']>(DEFAULT_DASHBOARD_OPTIONS.mode)
 const selectedCameras = ref<string[]>([])
 const addonUrl = ref(DEFAULT_DASHBOARD_OPTIONS.addonUrl)
 const columns = ref(DEFAULT_DASHBOARD_OPTIONS.columns)
 const viewTitle = ref(DEFAULT_DASHBOARD_OPTIONS.viewTitle)
 const viewPath = ref(DEFAULT_DASHBOARD_OPTIONS.viewPath)
+const dashPath = ref(DEFAULT_DASHBOARD_OPTIONS.dashboardPath)
+const delivery = ref<DashboardOptions['delivery']>(DEFAULT_DASHBOARD_OPTIONS.delivery)
 const includeStorage = ref(true)
 const includeStatus = ref(true)
 const mediaPlayer = ref('media_player.nest_hub')
@@ -41,12 +50,16 @@ const options = computed<DashboardOptions>(() => ({
   columns: columns.value,
   viewTitle: viewTitle.value,
   viewPath: viewPath.value,
+  dashboardPath: dashPath.value,
+  delivery: delivery.value,
   includeStorage: includeStorage.value,
   includeStatus: includeStatus.value,
   mode: mode.value,
 }))
 
 const setupSheet = computed(() => cameraSetupSheet(options.value))
+const registration = computed(() => dashboardRegistrationYaml(options.value))
+const fileName = computed(() => dashboardFilename(options.value))
 const lovelace = computed(() => dashboardYaml(options.value))
 const castScript = computed(() => castScriptYaml(options.value, mediaPlayer.value))
 const embedUrl = computed(() => kioskUrl(addonUrl.value))
@@ -107,6 +120,31 @@ const embedUrl = computed(() => kioskUrl(addonUrl.value))
       </div>
 
       <div class="dash-field">
+        <span class="field-label">Deliver as</span>
+        <SelectButton
+          v-model="delivery"
+          :options="DELIVERY"
+          option-label="label"
+          option-value="value"
+          :allow-empty="false"
+          aria-label="How to deliver the dashboard"
+        />
+        <span class="dash-help">
+          {{
+            delivery === 'raw'
+              ? 'Paste the view into a dashboard you already have.'
+              : 'A dashboard of its own, in the sidebar, defined by a file you can keep in version control.'
+          }}
+        </span>
+      </div>
+
+      <div v-if="delivery === 'yaml-file'" class="dash-field">
+        <label for="dash-path" class="field-label">Dashboard path</label>
+        <InputText id="dash-path" v-model="dashPath" class="dash-wide" />
+        <span class="dash-help">Its URL segment. Home Assistant requires a hyphen in it.</span>
+      </div>
+
+      <div class="dash-field">
         <label for="dash-title" class="field-label">View title</label>
         <InputText id="dash-title" v-model="viewTitle" class="dash-wide" />
       </div>
@@ -148,11 +186,25 @@ const embedUrl = computed(() => kioskUrl(addonUrl.value))
         so this route suits a local-only Home Assistant.
       </p>
     </template>
-    <p class="dash-note">
-      Three-dot menu on the dashboard → Edit dashboard → three-dot menu → Raw configuration editor. Merge the
-      <code>views:</code> entry into what is already there.
-    </p>
-    <CodeBlock :code="lovelace" filename="blink-dashboard.yaml" />
+    <template v-if="delivery === 'raw'">
+      <p class="dash-note">
+        Three-dot menu on the dashboard → Edit dashboard → three-dot menu → Raw configuration editor. Merge the
+        <code>views:</code> entry into what is already there.
+      </p>
+      <CodeBlock :code="lovelace" filename="blink-dashboard.yaml" />
+    </template>
+    <template v-else>
+      <p class="dash-note">
+        Two files. First register the dashboard in <code>configuration.yaml</code>, which is what puts it in the
+        sidebar:
+      </p>
+      <CodeBlock :code="registration" filename="blink-dashboard-registration.yaml" />
+      <p class="dash-note">
+        Then save this next to it as <code>{{ fileName }}</code> in your config folder, and restart Home Assistant.
+        Editing the file afterwards only needs a browser refresh.
+      </p>
+      <CodeBlock :code="lovelace" :filename="fileName" />
+    </template>
 
     <h4 class="dash-step">Put it on a Nest Hub or Chromecast</h4>
     <div class="dash-field dash-field-inline">

@@ -6,8 +6,10 @@ import Message from 'primevue/message'
 import Tag from 'primevue/tag'
 import CodeBlock from './CodeBlock.vue'
 import RecipeFieldInput from './RecipeFieldInput.vue'
-import { type Recipe, type RecipeValues, defaultValues } from './recipes/types'
+import { type Recipe, type RecipeCreate, type RecipeValues, defaultValues } from './recipes/types'
+import { createInHomeAssistant } from '../../api/haConfig'
 import { readLocal, writeLocal } from '../../localStorage'
+import { useToastStore } from '../../stores/toast'
 
 const props = defineProps<{
   recipes: Recipe[]
@@ -67,6 +69,37 @@ const yaml = computed(() => {
 })
 
 const hint = computed(() => TARGET_HINTS[selected.value.target] ?? '')
+
+const toast = useToastStore()
+const creating = ref(false)
+/** Set after a successful create, so the row can say what now exists. */
+const createdEntity = ref('')
+
+// A fresh recipe has not been created yet, and its YAML is different.
+watch(selectedId, () => {
+  createdEntity.value = ''
+})
+
+async function createInHa(create: RecipeCreate) {
+  creating.value = true
+  createdEntity.value = ''
+  try {
+    const result = await createInHomeAssistant(create.kind, create.objectId, yaml.value)
+    if (result.created && result.entity_id) {
+      createdEntity.value = result.entity_id
+      toast.show(`Created ${result.entity_id} in Home Assistant`)
+    } else {
+      toast.show(result.message || 'Home Assistant would not create it', true)
+    }
+  } catch {
+    // A transport failure, or the add-on running without Home Assistant
+    // (the standalone dev server, a bare container) — the endpoint answers
+    // 503 there rather than pretending.
+    toast.show('Could not reach Home Assistant — check the add-on logs', true)
+  } finally {
+    creating.value = false
+  }
+}
 </script>
 
 <template>
@@ -124,10 +157,27 @@ const hint = computed(() => TARGET_HINTS[selected.value.target] ?? '')
 
       <div class="recipe-actions">
         <Button size="small" outlined severity="secondary" @click="reset">Reset to defaults</Button>
+        <Button
+          v-if="selected.create"
+          size="small"
+          :loading="creating"
+          :disabled="creating"
+          @click="() => createInHa(selected.create!)"
+        >
+          {{ creating ? 'Creating…' : 'Create in Home Assistant' }}
+        </Button>
       </div>
 
+      <Message v-if="createdEntity" severity="success" size="small" :closable="false" class="recipe-note">
+        <strong>{{ createdEntity }}</strong> now exists in Home Assistant. Pressing Create again updates that same one
+        rather than adding another.
+      </Message>
+
       <CodeBlock :code="yaml" :filename="selected.filename" />
-      <p v-if="hint" class="recipe-hint">{{ hint }}</p>
+      <p v-if="hint" class="recipe-hint">
+        <template v-if="selected.create">Prefer to do it yourself? {{ hint }}</template>
+        <template v-else>This one has no API to create it from here, so it is copy and paste: {{ hint }}</template>
+      </p>
     </div>
   </div>
 </template>

@@ -1521,6 +1521,18 @@ like.
 Rather than a page of fixed examples with someone else's thresholds baked in,
 the tab generates YAML from your own settings:
 
+Automations, scripts and scenes can be **created in Home Assistant directly
+from the tab** — a "Create in Home Assistant" button next to the YAML. It
+writes through Home Assistant's own configuration API (the same one its UI
+editors use), so the result is an ordinary automation/script/scene you can
+open and edit in Home Assistant afterwards. Each recipe has a fixed id, so
+pressing the button again updates what it made rather than piling up copies.
+
+Everything else keeps its Copy and Download buttons, because no API can
+create it: blueprints and helpers are WebSocket-only, and `rest_command`,
+template sensors and the Generic Camera platform live in
+`configuration.yaml`. Those recipes say where the YAML goes instead.
+
 - **Automations** — pick one of a dozen recipes (suspicious clip alerts,
   storage thresholds, backup backlog, lights on suspicious activity, casting a
   camera view, speaker announcements, new-clip and long-clip notifications,
@@ -1535,12 +1547,19 @@ the tab generates YAML from your own settings:
   report, a security-alert lighting scene, a "pause Blink alerts"
   `input_boolean` (with an automation that un-pauses it so a forgotten toggle
   cannot silently disable your alerts), and template sensors that turn the two
-  storage percentages into an ok/warning/critical state.
+  storage percentages into an ok/warning/critical state, a script that arms
+  or disarms the Sync Module (so presence or a dashboard button can), one
+  that runs the archiver on demand, and one that sends a snapshot of every
+  camera to your phone.
 - **Dashboards** — builds a Lovelace view of camera tiles, storage gauges and a
   status card, either from Generic Camera entities (it generates the exact
   snapshot URL per camera) or by embedding this tab's own Security Feed in an
-  iframe card. It also generates the `cast.show_lovelace_view` script that puts
-  that view on a Nest Hub or Chromecast.
+  iframe card. Deliver it either by pasting into a dashboard you already have,
+  or as a **YAML dashboard of its own** — it then also generates the
+  `lovelace:` block for `configuration.yaml` that registers the dashboard and
+  puts it in the sidebar, plus the file to save beside it. It also generates
+  the `cast.show_lovelace_view` script that puts that view on a Nest Hub or
+  Chromecast, pointed at the dashboard it just generated.
 - **Blueprints** — three importable blueprints (suspicious clip alert, storage
   watchdog, camera battery low) for the automations you set up more than once,
   one per phone or threshold.

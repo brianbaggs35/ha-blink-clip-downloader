@@ -147,6 +147,20 @@ architecture.
     calls it once per poll cycle and once at startup, and hands its two
     event methods to `analysis_queue.py`/`battery_monitor.py` as callbacks
     rather than letting either import a notifier.
+  - `ha_config.py` — writes automations/scripts/scenes into Home Assistant
+    for the Automations tab's "Create in Home Assistant" buttons, through
+    Core's own config API (`POST /core/api/config/<domain>/config/<id>`).
+    Works because Supervisor validates the add-on's token and then
+    re-issues the call to Core *as the Supervisor user*, which Core creates
+    in the admin group — Core's config views are `@require_admin`, and the
+    add-on's own token is never forwarded. Core reloads the domain itself
+    via its `post_write_hook`, so this deliberately does not call reload.
+    Only those three kinds have a REST config API at all: blueprints,
+    helpers and Lovelace are WebSocket-only and `configuration.yaml` blocks
+    have nothing, which is why those recipes stay copy-only.
+    `normalize_config()` carries the per-kind unwrapping (a script's YAML
+    nests its body under its own id; a scene's is a one-item list whose
+    `id` Core injects itself).
   - `event_watcher.py`, `notifier.py`, `notification_channels.py`,
     `digest.py`, `battery_monitor.py`, `archiver.py`, `storage.py`,
     `library_scanner.py`, `tracker.py`, `manifest.py` — supporting modules
