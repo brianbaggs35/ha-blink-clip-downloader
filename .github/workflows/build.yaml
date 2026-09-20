@@ -160,7 +160,9 @@ jobs:
           # Without this the SARIF ignores the filter above and carries
           # every severity — see ci.yaml's identical note.
           limit-severities-for-sarif: "true"
-          ignore-unfixed: false
+          # Fixable only, matching ci.yaml's reporting pass — see the
+          # reasoning there. An open alert means there is a patch to pick up.
+          ignore-unfixed: true
           format: sarif
           output: trivy-release-${{ matrix.arch }}.sarif
           exit-code: "0"
