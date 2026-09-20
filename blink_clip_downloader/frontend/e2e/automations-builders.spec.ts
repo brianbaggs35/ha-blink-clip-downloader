@@ -155,7 +155,7 @@ test('the storage report can be delivered as a notification instead of speech', 
   await page.getByRole('option', { name: 'A notification' }).click()
 
   await expect(preview(page)).not.toContainText('tts.speak')
-  await expect(preview(page)).toContainText('action: notify.notify')
+  await expect(preview(page)).toContainText('action: "notify.notify"')
 })
 
 test('the alert scene can leave light colour alone, and the sync script can confirm itself', async ({ page }) => {
@@ -209,20 +209,21 @@ test('creating without Home Assistant behind it fails with an explanation', asyn
   await expect(page.getByText('now exists in Home Assistant')).toHaveCount(0)
 })
 
-test('a created automation reports the entity it became', async ({ page }) => {
+test('a created automation reports the name Home Assistant lists it under', async ({ page }) => {
   // The real endpoint needs Supervisor; mock only that response so the
   // success path — which no dev environment can reach — is still covered.
   await page.route('**/api/ha/config/create', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ created: true, entity_id: 'automation.blink_daily_summary' }),
+      body: JSON.stringify({ created: true, name: 'Blink – daily summary' }),
     }),
   )
   await openTab(page, 'Automations')
   await pick(page, 'Daily summary')
   await page.getByRole('button', { name: 'Create in Home Assistant' }).click()
-  await expect(page.getByText('automation.blink_daily_summary').first()).toBeVisible()
+  // Scoped to the success banner: the alias is also in the YAML preview.
+  await expect(page.locator('.recipe-note strong')).toHaveText('Blink – daily summary')
   await expect(page.getByText('updates that same one rather than adding another')).toBeVisible()
 })
 

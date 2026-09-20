@@ -124,13 +124,13 @@ const castFeedScript: Recipe = {
       '  sequence:',
       '    - action: cast.show_lovelace_view',
       '      data:',
-      `        entity_id: ${player}`,
+      `        entity_id: ${yamlString(player)}`,
       `        dashboard_path: ${yamlString(stringValue(v, 'dashboard_path', 'blink'))}`,
       `        view_path: ${yamlString(stringValue(v, 'view_path', 'security-feed'))}`,
       stopAfter > 0 ? `    - delay: ${yamlString(duration(stopAfter))}` : '',
       stopAfter > 0 ? '    - action: media_player.turn_off' : '',
       stopAfter > 0 ? '      target:' : '',
-      stopAfter > 0 ? `        entity_id: ${player}` : '',
+      stopAfter > 0 ? `        entity_id: ${yamlString(player)}` : '',
     ])
   },
 }
@@ -187,11 +187,15 @@ const storageReport: Recipe = {
       '  icon: mdi:database-search',
       '  mode: single',
       '  sequence:',
-      spoken ? '    - action: tts.speak' : `    - action: ${stringValue(v, 'notify_service', 'notify.notify')}`,
+      spoken
+        ? '    - action: tts.speak'
+        : `    - action: ${yamlString(stringValue(v, 'notify_service', 'notify.notify'))}`,
       spoken ? '      target:' : '',
-      spoken ? `        entity_id: ${stringValue(v, 'tts_entity', 'tts.google_en_com')}` : '',
+      spoken ? `        entity_id: ${yamlString(stringValue(v, 'tts_entity', 'tts.google_en_com'))}` : '',
       '      data:',
-      spoken ? `        media_player_entity_id: ${stringValue(v, 'media_player', 'media_player.kitchen')}` : '',
+      spoken
+        ? `        media_player_entity_id: ${yamlString(stringValue(v, 'media_player', 'media_player.kitchen'))}`
+        : '',
       spoken ? '' : '        title: "Blink storage"',
       `        message: ${yamlTemplate(message, 8)}`,
     ])
@@ -255,7 +259,7 @@ const securityScene: Recipe = {
       '  entities:',
       ...lights.flatMap((entity) =>
         [
-          `    ${entity}:`,
+          `    ${yamlString(entity)}:`,
           '      state: "on"',
           `      brightness: ${brightness}`,
           rgb ? `      rgb_color: ${rgb}` : '',
@@ -461,11 +465,12 @@ const archiveNow: Recipe = {
   ],
   build: (v: RecipeValues) => {
     const url = trimTrailingChar(stringValue(v, 'addon_url', ADDON_URL_DEFAULT), '/')
+    const archiveUrl = url + '/api/storage/archive/run-now'
     return joinLines([
       '# configuration.yaml',
       'rest_command:',
       '  blink_archive_now:',
-      `    url: ${yamlString(`${url}/api/storage/archive/run-now`)}`,
+      `    url: ${yamlString(archiveUrl)}`,
       '    method: post',
       '    timeout: 120',
       '\n# scripts.yaml',
@@ -518,10 +523,10 @@ const snapshotAll: Recipe = {
       '  mode: single',
       '  sequence:',
       ...names.flatMap((camera) => [
-        `    - action: ${service}`,
+        `    - action: ${yamlString(service)}`,
         '      data:',
-        `        title: ${yamlString(`📸 ${camera}`)}`,
-        `        message: ${yamlString(`Latest snapshot from ${camera}.`)}`,
+        `        title: ${yamlString('📸 ' + camera)}`,
+        `        message: ${yamlString('Latest snapshot from ' + camera + '.')}`,
         '        data:',
         `          image: /api/camera_proxy/camera.blink_${slugify(camera)}`,
       ]),
@@ -576,8 +581,8 @@ const allClearScene: Recipe = {
       '  entities:',
       ...lights.flatMap((entity) =>
         leaveOn
-          ? [`    ${entity}:`, '      state: "on"', `      brightness: ${brightness}`]
-          : [`    ${entity}:`, '      state: "off"'],
+          ? [`    ${yamlString(entity)}:`, '      state: "on"', `      brightness: ${brightness}`]
+          : [`    ${yamlString(entity)}:`, '      state: "off"'],
       ),
       '\n# Call it from the end of an alert automation with:',
       '#   - action: scene.turn_on',

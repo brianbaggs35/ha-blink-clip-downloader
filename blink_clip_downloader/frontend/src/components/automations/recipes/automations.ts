@@ -443,7 +443,11 @@ const securityLights: Recipe = {
     // brightness; anything else gets the generic service without it.
     const lights = entities.filter((id) => id.startsWith('light.'))
     const others = entities.filter((id) => !id.startsWith('light.'))
-    const target = (ids: string[]) => ['    target:', '      entity_id:', ...ids.map((id) => `        - ${id}`)]
+    const target = (ids: string[]) => [
+      '    target:',
+      '      entity_id:',
+      ...ids.map((id) => `        - ${yamlString(id)}`),
+    ]
     const offBlock = ['  - action: homeassistant.turn_off', ...target(entities)]
     return joinLines([
       header(
@@ -557,13 +561,13 @@ const castFeed: Recipe = {
       'actions:',
       '  - action: cast.show_lovelace_view',
       '    data:',
-      `      entity_id: ${player}`,
+      `      entity_id: ${yamlString(player)}`,
       `      dashboard_path: ${yamlString(stringValue(v, 'dashboard_path', 'blink'))}`,
       `      view_path: ${yamlString(stringValue(v, 'view_path', 'security-feed'))}`,
       stopAfter > 0 ? `  - delay: ${yamlString(duration(stopAfter))}` : '',
       stopAfter > 0 ? '  - action: media_player.turn_off' : '',
       stopAfter > 0 ? '    target:' : '',
-      stopAfter > 0 ? `      entity_id: ${player}` : '',
+      stopAfter > 0 ? `      entity_id: ${yamlString(player)}` : '',
     ])
   },
 }
@@ -635,9 +639,9 @@ const announceClip: Recipe = {
       'actions:',
       '  - action: tts.speak',
       '    target:',
-      `      entity_id: ${stringValue(v, 'tts_entity', 'tts.google_en_com')}`,
+      `      entity_id: ${yamlString(stringValue(v, 'tts_entity', 'tts.google_en_com'))}`,
       '    data:',
-      `      media_player_entity_id: ${stringValue(v, 'media_player', 'media_player.kitchen')}`,
+      `      media_player_entity_id: ${yamlString(stringValue(v, 'media_player', 'media_player.kitchen'))}`,
       `      message: ${yamlTemplate(
         suspiciousOnly
           ? '{{ trigger.event.data.summary }}'
@@ -946,11 +950,11 @@ const armOnAway: Recipe = {
       ),
       'triggers:',
       '  - trigger: state',
-      `    entity_id: ${presence}`,
+      `    entity_id: ${yamlString(presence)}`,
       '    to: "not_home"',
       '    id: away',
       disarm ? '  - trigger: state' : '',
-      disarm ? `    entity_id: ${presence}` : '',
+      disarm ? `    entity_id: ${yamlString(presence)}` : '',
       disarm ? '    to: "home"' : '',
       disarm ? '    id: home' : '',
       conditionsBlock([]),
@@ -1051,16 +1055,16 @@ const sirenOnSuspicious: Recipe = {
         cameraCondition(listValue(v, 'cameras')),
         armed === 'any'
           ? joinLines(['  - condition: template', `    value_template: ${yamlTemplate(anyArmed, 4)}`])
-          : joinLines(['  - condition: state', `    entity_id: ${alarm}`, `    state: ${armed}`]),
+          : joinLines(['  - condition: state', `    entity_id: ${yamlString(alarm)}`, `    state: ${armed}`]),
       ]),
       'actions:',
       '  - action: homeassistant.turn_on',
       '    target:',
       '      entity_id:',
-      ...sirens.map((id) => `        - ${id}`),
+      ...sirens.map((id) => `        - ${yamlString(id)}`),
       boolValue(v, 'trigger_alarm') ? '  - action: alarm_control_panel.alarm_trigger' : '',
       boolValue(v, 'trigger_alarm') ? '    target:' : '',
-      boolValue(v, 'trigger_alarm') ? `      entity_id: ${alarm}` : '',
+      boolValue(v, 'trigger_alarm') ? `      entity_id: ${yamlString(alarm)}` : '',
     ])
   },
 }
@@ -1095,7 +1099,7 @@ const batteryTodo: Recipe = {
       'actions:',
       '  - action: todo.add_item',
       '    target:',
-      `      entity_id: ${stringValue(v, 'todo_entity', 'todo.shopping_list')}`,
+      `      entity_id: ${yamlString(stringValue(v, 'todo_entity', 'todo.shopping_list'))}`,
       '    data:',
       `      item: ${yamlTemplate('Replace the batteries in {{ trigger.event.data.camera }}', 6)}`,
     ]),

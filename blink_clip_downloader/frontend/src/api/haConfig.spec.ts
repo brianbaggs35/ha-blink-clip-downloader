@@ -7,7 +7,7 @@ describe('createInHomeAssistant', () => {
   it('posts the kind, id and YAML', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ created: true, entity_id: 'automation.blink_x' }),
+      json: () => Promise.resolve({ created: true, name: 'Blink – x' }),
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -18,6 +18,6 @@ describe('createInHomeAssistant', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: 'automation', object_id: 'blink_x', yaml: 'alias: x' }),
     })
-    expect(result.entity_id).toBe('automation.blink_x')
+    expect(result.name).toBe('Blink – x')
   })
 })
