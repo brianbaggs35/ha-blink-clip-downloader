@@ -416,6 +416,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
+      # Uploading the Trivy SARIF to the repository's Code scanning tab.
+      security-events: write
     # Fork pull requests cannot receive the PrimeVue license secret required
     # by the Dockerfile's frontend-builder stage.
     if: >-
@@ -488,9 +490,56 @@ jobs:
 
           echo "Built ${{ matrix.arch }} image successfully"
 
-      - name: Scan image for vulnerabilities (Trivy)
+      # Two Trivy passes on purpose, and they answer different questions.
+      #
+      # This one is for *visibility*: it reports what is actually in the
+      # image, including findings nobody can act on yet (no fix released
+      # upstream), and never fails the build. Its SARIF goes to the Code
+      # scanning tab, which is then a standing inventory of the image rather
+      # than a duplicate of the gate below — which, by design, only ever
+      # sees things that are already fixable.
+      #
+      # The DB is cached by the action, so the gating scan that follows does
+      # not download it a second time.
+      - name: Scan image for vulnerabilities (Trivy, SARIF)
         # act cannot authenticate to the public Trivy DB mirrors in this
         # environment; hosted CI still runs the scan on every architecture.
+        if: ${{ !env.ACT }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: v0.74.0
+          image-ref: ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
+          scanners: vuln
+          severity: MEDIUM,HIGH,CRITICAL
+          # Without this the SARIF carries every severity regardless of the
+          # filter above, which for a Debian + PyTorch image is thousands of
+          # LOW/UNKNOWN entries.
+          limit-severities-for-sarif: "true"
+          ignore-unfixed: false
+          format: sarif
+          output: trivy-results-${{ matrix.arch }}.sarif
+          # Reporting only — the next step is what fails the build.
+          exit-code: "0"
+        env:
+          TRIVY_DB_REPOSITORY: >-
+            ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+
+      - name: Upload Trivy results to code scanning
+        # One category per architecture: GitHub keys an upload by category,
+        # so without distinct ones the two matrix legs would each overwrite
+        # the other's results for the same commit. Fork PRs never get here —
+        # the whole job is skipped for them (see the job's `if:` above), so
+        # no token-less upload attempt is possible.
+        if: ${{ !env.ACT }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results-${{ matrix.arch }}.sarif
+          category: trivy-image-${{ matrix.arch }}
+
+      # The gate, unchanged: HIGH/CRITICAL with a fix available, which is the
+      # subset worth failing a build over, printed as a readable table rather
+      # than SARIF so the log says what broke.
+      - name: Scan image for vulnerabilities (Trivy)
         if: ${{ !env.ACT }}
         uses: aquasecurity/trivy-action@v0.36.0
         with:
