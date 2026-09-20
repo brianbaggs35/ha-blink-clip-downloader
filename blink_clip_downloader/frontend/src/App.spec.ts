@@ -22,6 +22,9 @@ describe('App', () => {
   })
   afterEach(() => {
     vi.unstubAllGlobals()
+    // The kiosk tests below drive the URL through history.replaceState;
+    // put it back so nothing inherits a query string.
+    window.history.replaceState({}, '', '/')
   })
 
   it('applies the theme class to <body> and switches tabs via the sidebar', async () => {
@@ -234,8 +237,6 @@ describe('App', () => {
   function stubSearch(search: string) {
     window.history.replaceState({}, '', `/${search}`)
   }
-
-  afterEach(() => window.history.replaceState({}, '', '/'))
 
   it('opens the tab named in the query string', async () => {
     mockArrayAwareFetch()

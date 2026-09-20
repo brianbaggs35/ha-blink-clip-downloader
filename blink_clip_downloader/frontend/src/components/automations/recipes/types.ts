@@ -99,10 +99,18 @@ export function defaultValues(recipe: Recipe): RecipeValues {
 // YAML helpers
 // ---------------------------------------------------------------------------
 
+// One backslash and two, written without escaping an escape. A raw
+// template cannot *end* in a backslash (it would escape the closing
+// backtick), so the single one is taken from the head of the pair.
+const ESCAPED_BACKSLASH = String.raw`\\`
+const BACKSLASH = ESCAPED_BACKSLASH[0]
+const ESCAPED_QUOTE = String.raw`\"`
+
 /** A double-quoted YAML scalar — safe for text starting with an emoji, a
  * brace, or anything else a plain scalar would choke on. */
 export function yamlString(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  const escaped = value.replaceAll(BACKSLASH, ESCAPED_BACKSLASH).replaceAll('"', ESCAPED_QUOTE)
+  return `"${escaped}"`
 }
 
 /** A folded block scalar, which is how Jinja templates get into YAML without
@@ -147,13 +155,30 @@ export function joinLines(parts: (string | false | null | undefined)[]): string 
   return parts.filter((part): part is string => Boolean(part)).join('\n')
 }
 
+/** Strip *char* from both ends of *value*.
+ *
+ * A loop rather than a regex: an anchored `+` over a repeated character
+ * backtracks quadratically on a long run of it, which a camera name typed
+ * by hand is entitled to contain.
+ */
+export function trimChar(value: string, char: string): string {
+  let start = 0
+  while (start < value.length && value[start] === char) start++
+  let end = value.length
+  while (end > start && value[end - 1] === char) end--
+  return value.slice(start, end)
+}
+
+/** As {@link trimChar}, but only at the end — a URL's leading characters are
+ * part of its scheme and must survive. */
+export function trimTrailingChar(value: string, char: string): string {
+  let end = value.length
+  while (end > 0 && value[end - 1] === char) end--
+  return value.slice(0, end)
+}
+
 /** An `entity_id`/`camera` slug of a free-text name, matching how Home
  * Assistant itself slugifies a friendly name. */
 export function slugify(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '') || 'camera'
-  )
+  return trimChar(name.toLowerCase().replaceAll(/[^a-z0-9]+/g, '_'), '_') || 'camera'
 }

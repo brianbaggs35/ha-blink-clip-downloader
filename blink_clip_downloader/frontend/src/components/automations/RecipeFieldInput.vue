@@ -4,7 +4,10 @@ import InputMask from 'primevue/inputmask'
 import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
 import MultiSelect from 'primevue/multiselect'
-import Select from 'primevue/select'
+// Imported under a name that is not an HTML tag: a template parsed as HTML
+// reads `<Select>` as `<select>` and then cannot see that the label's
+// `:for` and the component's `:input-id` are bound to the same id.
+import PvSelect from 'primevue/select'
 import ToggleSwitch from 'primevue/toggleswitch'
 import type { FieldValue, RecipeField } from './recipes/types'
 
@@ -74,8 +77,13 @@ const boolModel = computed({
         button-layout="horizontal"
         class="recipe-number"
       />
-      <ToggleSwitch v-else-if="field.type === 'toggle'" v-model="boolModel" :input-id="inputId" />
-      <Select
+      <ToggleSwitch
+        v-else-if="field.type === 'toggle'"
+        v-model="boolModel"
+        :input-id="inputId"
+        :aria-label="field.label"
+      />
+      <PvSelect
         v-else-if="field.type === 'select'"
         v-model="textModel"
         :input-id="inputId"

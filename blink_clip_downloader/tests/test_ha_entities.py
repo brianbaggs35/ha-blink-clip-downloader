@@ -96,7 +96,9 @@ def test_cloud_storage_reports_the_used_percentage() -> None:
     assert attrs["used_gb"] == 75.0
     assert attrs["total_gb"] == 100.0
     assert attrs["free_gb"] == 25.0
-    assert attrs["clips_used_gb"] == 20.0
+    # Drive's usageInDrive covers every file in the account, so this is
+    # deliberately not named after clips.
+    assert attrs["drive_files_gb"] == 20.0
     assert attrs["pending_uploads"] == 3
     assert attrs["failed_uploads"] == 1
     assert attrs["uploaded_clips"] == 40
@@ -119,6 +121,7 @@ def test_cloud_storage_reports_unlimited_workspace_accounts_as_unknown() -> None
     assert state == "unknown"
     assert attrs["unlimited"] is True
     assert attrs["used_gb"] == 9.0
+    assert attrs["drive_files_gb"] == 0.0
     assert "percent_used" not in attrs
 
 

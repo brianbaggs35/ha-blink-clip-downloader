@@ -6,7 +6,7 @@
  * different, so every recipe says where in its `target`.
  */
 
-import { CLOUD_STORAGE_SENSOR, LOCAL_STORAGE_SENSOR, STATUS_SENSOR } from './shared'
+import { ADDON_URL_DEFAULT, CLOUD_STORAGE_SENSOR, LOCAL_STORAGE_SENSOR, STATUS_SENSOR } from './shared'
 import {
   type Recipe,
   type RecipeValues,
@@ -16,6 +16,7 @@ import {
   joinLines,
   numberValue,
   stringValue,
+  trimTrailingChar,
   yamlString,
   yamlTemplate,
 } from './types'
@@ -34,7 +35,7 @@ const syncNow: Recipe = {
       key: 'addon_url',
       label: 'Add-on URL',
       type: 'text',
-      default: 'http://homeassistant.local:8099',
+      default: ADDON_URL_DEFAULT,
       help: 'The direct-access port from the add-on Configuration tab (default 8099). Home Assistant calls this itself, so a LAN address is fine.',
     },
     {
@@ -45,12 +46,13 @@ const syncNow: Recipe = {
     },
   ],
   build: (v: RecipeValues) => {
-    const url = stringValue(v, 'addon_url', 'http://homeassistant.local:8099').replace(/\/+$/, '')
+    const url = trimTrailingChar(stringValue(v, 'addon_url', ADDON_URL_DEFAULT), '/')
+    const downloadNowUrl = `${url}/api/download-now`
     return joinLines([
       '# configuration.yaml',
       'rest_command:',
       '  blink_sync_now:',
-      `    url: ${yamlString(`${url}/api/download-now`)}`,
+      `    url: ${yamlString(downloadNowUrl)}`,
       '    method: post',
       '    timeout: 30',
       '\n# scripts.yaml (or under script: in configuration.yaml)',
@@ -352,6 +354,9 @@ const templateSensors: Recipe = {
     const warning = numberValue(v, 'warning', 80)
     const critical = numberValue(v, 'critical', 95)
     const worst = `[states('${LOCAL_STORAGE_SENSOR}') | float(0), states('${CLOUD_STORAGE_SENSOR}') | float(0)] | max`
+    const healthState = `{% set worst = ${worst} %}{{ 'critical' if worst >= ${critical} else ('warning' if worst >= ${warning} else 'ok') }}`
+    const worstPercent = `{{ ${worst} }}`
+    const problemState = `{{ (${worst}) >= ${warning} }}`
     return joinLines([
       '# configuration.yaml',
       'template:',
@@ -359,17 +364,14 @@ const templateSensors: Recipe = {
       '      - name: Blink storage health',
       '        unique_id: blink_storage_health',
       '        icon: mdi:database-check',
-      `        state: ${yamlTemplate(
-        `{% set worst = ${worst} %}{{ 'critical' if worst >= ${critical} else ('warning' if worst >= ${warning} else 'ok') }}`,
-        8,
-      )}`,
+      `        state: ${yamlTemplate(healthState, 8)}`,
       '        attributes:',
-      `          worst_percent: ${yamlTemplate(`{{ ${worst} }}`, 10)}`,
+      `          worst_percent: ${yamlTemplate(worstPercent, 10)}`,
       '  - binary_sensor:',
       '      - name: Blink storage problem',
       '        unique_id: blink_storage_problem',
       '        device_class: problem',
-      `        state: ${yamlTemplate(`{{ (${worst}) >= ${warning} }}`, 8)}`,
+      `        state: ${yamlTemplate(problemState, 8)}`,
     ])
   },
 }

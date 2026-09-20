@@ -222,6 +222,48 @@ async def test_index_has_security_headers(client: TestClient) -> None:
     assert "cdn.jsdelivr.net" not in resp.headers["Content-Security-Policy"]
 
 
+async def test_csp_allows_the_hls_transmuxer_worker(client: TestClient) -> None:
+    """Live View plays nothing at all without this.
+
+    Video.js's VHS engine transmuxes each MPEG-TS segment in a Web Worker it
+    creates from a blob: URL. With no worker-src the browser falls back to
+    script-src, which has no blob:, and blocks the worker — the player then
+    attaches its source, fetches one segment, buffers nothing and sits on a
+    black frame with no error to show for it. Verified end to end against a
+    real ffmpeg/HLS pipeline in a real browser: buffered went 0 -> 16s and
+    currentTime started advancing in real time the moment this was added.
+    """
+    csp = (await client.get("/")).headers["Content-Security-Policy"]
+    assert "worker-src 'self' blob:" in csp
+
+
+async def test_kiosk_page_on_the_direct_port_may_be_framed(
+    client: TestClient,
+) -> None:
+    """The Dashboards builder's iframe card is cross-origin by construction —
+    Home Assistant serves :8123, this add-on :8099 — so SAMEORIGIN refuses it
+    and the card renders blank."""
+    resp = await client.get("/?kiosk=1")
+    assert "X-Frame-Options" not in resp.headers
+
+
+async def test_kiosk_through_ingress_still_refuses_framing(
+    client: TestClient,
+) -> None:
+    """The exemption is for the unauthenticated direct port only. Ingress is
+    reachable through Home Assistant's own auth from outside the LAN, and
+    keeps its clickjacking protection."""
+    resp = await client.get(
+        "/?kiosk=1", headers={"X-Ingress-Path": "/api/hassio_ingress/abc"}
+    )
+    assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN"
+
+
+async def test_ordinary_pages_are_never_framable(client: TestClient) -> None:
+    resp = await client.get("/?tab=storage")
+    assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN"
+
+
 async def test_index_ingress_path_header_is_used_when_present(
     client: TestClient,
 ) -> None:
