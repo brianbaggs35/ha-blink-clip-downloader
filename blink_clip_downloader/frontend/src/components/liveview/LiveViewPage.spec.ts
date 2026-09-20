@@ -316,6 +316,42 @@ describe('LiveViewPage', () => {
     expect(wrapper.text()).toContain('Live view playback failed: The media could not be loaded')
   })
 
+  it('polls quickly while a session is still starting, then backs off', async () => {
+    // A Blink live view runs about 30 seconds, so a 4s poll could spend a
+    // tenth of the whole session showing a spinner over a stream that was
+    // already playable. Poll fast until it goes live, then settle down.
+    vi.useFakeTimers()
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'starting' },
+    }
+    const fetchMock = routedFetch(routes)
+    vi.stubGlobal('fetch', fetchMock)
+    mountPage()
+    await flushPromises()
+
+    const statusCalls = () => fetchMock.mock.calls.filter((c) => c[0] === '/api/liveview/status').length
+
+    const whileStarting = statusCalls()
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+    // Four 500ms polls in two seconds, not the single one a 4s interval
+    // would have managed.
+    expect(statusCalls() - whileStarting).toBeGreaterThanOrEqual(3)
+    expect(fakePlayer.src).not.toHaveBeenCalled()
+
+    routes.status = { active: true, session_id: 's1', camera: 'Front Door', state: 'live' }
+    await vi.advanceTimersByTimeAsync(600)
+    await flushPromises()
+    expect(fakePlayer.src).toHaveBeenCalledTimes(1)
+
+    // Now live, it backs off: well under a second's worth of polls in 3s.
+    const whileLive = statusCalls()
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(statusCalls() - whileLive).toBeLessThanOrEqual(1)
+  })
+
   it('clears a playback error once the stream actually plays', async () => {
     const routes: Routes = {
       cameras: ['Front Door'],

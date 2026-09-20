@@ -459,6 +459,30 @@ class LiveViewManager:
             "nobuffer",
             "-flags",
             "low_delay",
+            # ffmpeg's defaults here are 5s/5MB, and it spends the whole
+            # window inspecting the stream before writing anything. On a
+            # realtime feed that is seconds of a ~30s Blink session gone
+            # before the first segment even starts. Measured against a
+            # 720p h264+aac MPEG-TS fed over a socket at realtime pace,
+            # time to a playable playlist: 8.62s at the default, 4.55s at
+            # 0.5s. analyzeduration is what binds (probesize measured
+            # identically anywhere from 256KB to 1MB, and below 1s the
+            # keyframe interval takes over as the limit); the roomier
+            # probesize costs nothing and leaves margin for a stream that
+            # needs more bytes to describe itself.
+            #
+            # 0.5s rather than lower because this has a floor with teeth:
+            # at "-analyzeduration 0 -probesize 32" ffmpeg is no faster
+            # (4.55s) and **silently drops the audio stream** — the first
+            # HLS segment comes out video-only. 0.3s and 0.1s still found
+            # both streams and bought nothing over 0.5s, so 0.5s is the
+            # setting with margin rather than the one on the edge. Any
+            # change here should re-check that the first segment still
+            # carries audio *and* video, not just that it is quick.
+            "-analyzeduration",
+            "500000",
+            "-probesize",
+            "1000000",
             "-f",
             "mpegts",
             "-i",
@@ -467,10 +491,19 @@ class LiveViewManager:
             "copy",
             "-f",
             "hls",
+            # 1s segments, with the list lengthened to keep the live
+            # window the same ~12s it was at 6x2s. Under "-c copy" ffmpeg
+            # can only cut at a keyframe, so this is a ceiling, not a
+            # promise: a camera sending a keyframe every 2s still produces
+            # 2s segments and this changes nothing for it. When the
+            # keyframe interval *is* short it is worth a further 1.1s off
+            # the time to first picture (3.62s -> 2.53s measured on a feed
+            # with 1s keyframes), because the first segment can close
+            # sooner.
             "-hls_time",
-            "2",
+            "1",
             "-hls_list_size",
-            "6",
+            "12",
             "-hls_flags",
             "delete_segments+omit_endlist+independent_segments+temp_file",
             "-hls_delete_threshold",
