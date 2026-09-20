@@ -17,7 +17,7 @@ export const CLIP_DOWNLOADED_EVENT = 'blink_clip_downloaded'
 export const CLIP_ANALYZED_EVENT = 'blink_clip_analyzed'
 export const BATTERY_LOW_EVENT = 'blink_camera_battery_low'
 
-export interface NotifyOptions {
+interface NotifyOptions {
   /** Break through silent mode on the Companion app. */
   critical?: boolean
   /** Attach the camera's own snapshot, via the Generic Camera entities the

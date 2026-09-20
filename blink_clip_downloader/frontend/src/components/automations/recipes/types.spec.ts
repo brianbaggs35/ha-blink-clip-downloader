@@ -4,7 +4,6 @@ import {
   boolValue,
   defaultValues,
   duration,
-  durationFromSeconds,
   entityList,
   jinjaList,
   joinLines,
@@ -84,11 +83,6 @@ describe('yaml helpers', () => {
     expect(duration(15)).toBe('00:15:00')
     expect(duration(90)).toBe('01:30:00')
     expect(duration(-5)).toBe('00:00:00')
-  })
-
-  it('durationFromSeconds renders seconds as HH:MM:SS', () => {
-    expect(durationFromSeconds(0)).toBe('00:00:00')
-    expect(durationFromSeconds(3725)).toBe('01:02:05')
   })
 
   it('timeOfDay normalizes and falls back for half-typed input', () => {
