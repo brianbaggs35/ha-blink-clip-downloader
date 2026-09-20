@@ -131,15 +131,6 @@ export function duration(minutes: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`
 }
 
-/** Seconds as HH:MM:SS. */
-export function durationFromSeconds(seconds: number): string {
-  const safe = Math.max(0, Math.round(seconds))
-  const h = Math.floor(safe / 3600)
-  const m = Math.floor((safe % 3600) / 60)
-  const s = safe % 60
-  return [h, m, s].map((part) => String(part).padStart(2, '0')).join(':')
-}
-
 /** Normalize a free-text time field to HH:MM:SS. */
 export function timeOfDay(value: string, fallback = '08:00:00'): string {
   const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim())

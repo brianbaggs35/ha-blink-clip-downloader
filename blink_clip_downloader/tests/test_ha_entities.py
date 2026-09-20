@@ -142,6 +142,15 @@ def test_cloud_storage_handles_a_zero_limit_without_dividing_by_it() -> None:
     assert attrs["unlimited"] is True
 
 
+def test_cloud_storage_reports_a_negative_limit_as_unknown() -> None:
+    """A malformed answer should not come back as a negative percentage."""
+    state, attrs = cloud_storage_state(
+        "google_drive", configured=True, connected=True, quota=_quota(-1, 5 * _GB)
+    )
+    assert state == "unknown"
+    assert "percent_used" not in attrs
+
+
 # ---------------------------------------------------------------------------
 # clip_analyzed_event_data
 # ---------------------------------------------------------------------------

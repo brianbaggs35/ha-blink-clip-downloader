@@ -49,11 +49,20 @@ _UNKNOWN = "unknown"
 _BYTES_PER_GB = 1024**3
 
 
-def _percent(used: float, total: float) -> float | None:
-    """Return *used* as a percentage of *total*, or None if unanswerable."""
+def _percent(used: float, total: float) -> float:
+    """Return *used* as a percentage of *total*, capped at 100.
+
+    The caller guarantees *total* is positive; :func:`_percent_or_unknown` is
+    for the callers that cannot.
+    """
+    return round(min(used / total * 100, 100.0), 1)
+
+
+def _percent_or_unknown(used: float, total: float) -> float | None:
+    """As :func:`_percent`, or None when there is nothing to divide by."""
     if total <= 0:
         return None
-    return round(min(used / total * 100, 100.0), 1)
+    return _percent(used, total)
 
 
 def _gb(value: float) -> float:
@@ -76,13 +85,13 @@ def local_storage_state(disk: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
     if quota_bytes > 0:
         basis = "quota"
-        percent = _percent(used_bytes, quota_bytes)
+        percent = _percent_or_unknown(used_bytes, quota_bytes)
     else:
         basis = "disk"
         # Disk fill level, not the library's share of it: the number that
         # matters when there is no quota is how close the whole filesystem
         # is to full, which other things are writing to as well.
-        percent = _percent(total_bytes - free_bytes, total_bytes)
+        percent = _percent_or_unknown(total_bytes - free_bytes, total_bytes)
 
     attributes: dict[str, Any] = {
         "friendly_name": "Blink Local Storage",
@@ -140,16 +149,20 @@ def cloud_storage_state(
     usage = int(getattr(quota, "usage", 0) or 0)
     attributes["used_gb"] = _gb(usage)
     attributes["clips_used_gb"] = _gb(int(getattr(quota, "usage_in_drive", 0) or 0))
-    if not limit:
+    # None is a Workspace account with unlimited storage; zero or negative is
+    # a malformed answer. None of the three is a percentage, and all three are
+    # better reported as unknown than as an invented (or negative) number.
+    if not limit or limit < 0:
         attributes["unlimited"] = True
         return _UNKNOWN, attributes
 
+    # Past that guard the limit is positive, so there is always a percentage
+    # here — unlike local storage, whose disk total really can be zero.
     percent = _percent(usage, limit)
     attributes["total_gb"] = _gb(limit)
     attributes["free_gb"] = _gb(max(limit - usage, 0))
-    if percent is not None:
-        attributes["percent_used"] = percent
-    return (_UNKNOWN if percent is None else str(percent)), attributes
+    attributes["percent_used"] = percent
+    return str(percent), attributes
 
 
 def clip_analyzed_event_data(

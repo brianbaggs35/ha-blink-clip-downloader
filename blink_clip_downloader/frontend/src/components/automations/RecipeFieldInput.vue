@@ -57,7 +57,7 @@ const boolModel = computed({
 </script>
 
 <template>
-  <div class="recipe-field" :class="[`recipe-field-${field.key}`, { 'recipe-field-toggle': field.type === 'toggle' }]">
+  <div class="recipe-field" :class="`recipe-field-${field.key}`">
     <label :for="inputId" class="field-label">{{ field.label }}</label>
 
     <div class="recipe-field-input">
