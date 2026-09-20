@@ -25,6 +25,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Uploading the Trivy SARIF for the published image (see the scan
+      # step at the end of this job).
+      security-events: write
     outputs:
       version: ${{ steps.tags.outputs.version }}
 
@@ -129,6 +132,51 @@ jobs:
           no-cache-filters: frontend-builder
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      # Scans the exact image that was just published, by its pushed tag —
+      # not a rebuild of it. ci.yaml scans this same commit, but not this
+      # same artifact: the Dockerfile's APT_CACHE_BUST means a release built
+      # on a later day picks up newer Debian packages, and CVEs get
+      # published in the gap between a merge and the release cut from it.
+      #
+      # Report-only, on purpose. The image is already in the registry by
+      # this point, so failing here would not unpublish it — it would only
+      # skip the manifest job, leaving per-arch tags with no index for
+      # Supervisor to pull. The findings land in the Code scanning tab
+      # instead, where they are actionable in the next release. Flip
+      # exit-code to "1" if a vulnerable release should stop short of
+      # publishing its manifest.
+      #
+      # continue-on-error on both steps: a registry hiccup, a Trivy DB
+      # outage or a full runner disk must never be what breaks a release.
+      - name: Scan published image for vulnerabilities (Trivy, SARIF)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: v0.74.0
+          image-ref: ${{ steps.tags.outputs.tag_version }}
+          scanners: vuln
+          severity: MEDIUM,HIGH,CRITICAL
+          # Without this the SARIF ignores the filter above and carries
+          # every severity — see ci.yaml's identical note.
+          limit-severities-for-sarif: "true"
+          ignore-unfixed: false
+          format: sarif
+          output: trivy-release-${{ matrix.arch }}.sarif
+          exit-code: "0"
+        env:
+          TRIVY_DB_REPOSITORY: >-
+            ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+
+      - name: Upload Trivy results to code scanning
+        continue-on-error: true
+        # A category of its own, per architecture: these are results for a
+        # published release image, and must not overwrite ci.yaml's results
+        # for the same commit (GitHub keys uploads by category).
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-release-${{ matrix.arch }}.sarif
+          category: trivy-release-${{ matrix.arch }}
 
   manifest:
     name: Create multi-arch manifest
