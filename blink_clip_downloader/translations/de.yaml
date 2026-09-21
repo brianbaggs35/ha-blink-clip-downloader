@@ -338,11 +338,17 @@ configuration:
   ai_frame_interval:
     name: Einzelbildintervall (Sekunden)
     description: >-
-      Sekunden zwischen den aus dem Video extrahierten Einzelbildern. Das
-      bestimmt, wie dicht der Pool an Kandidaten ist, nicht wie viele die
-      KI erreichen: es werden ohnehin genug Bilder extrahiert, um einen
-      vollen 60-Sekunden-Clip abzudecken, und „Max. Einzelbilder“
-      entscheidet, wie viele davon gesendet werden.
+      Der größte Abstand zwischen den aus dem Video extrahierten
+      Einzelbildern. Das bestimmt, wie dicht der Pool an Kandidaten ist,
+      nicht wie viele die KI erreichen: es werden ohnehin genug Bilder
+      extrahiert, um einen vollen 60-Sekunden-Clip abzudecken, und „Max.
+      Einzelbilder“ entscheidet, wie viele davon gesendet werden. Ein
+      Clip, der zu kurz ist, um diesen Pool bei diesem Abstand zu füllen,
+      wird stattdessen dichter abgetastet, nie dünner — bei 2 Sekunden
+      liefert ein 10-Sekunden-Clip nur 5 Kandidaten, also genau das
+      Budget, sodass der Bildauswahl nichts zur Auswahl bleibt. Die
+      meisten Blink-Clips sind 10-20 Sekunden lang. Es kostet nichts
+      extra: gesendet werden weiterhin „Max. Einzelbilder“ Bilder.
   ai_suspicious_keywords:
     name: Verdächtige Schlüsselwörter
     description: >-
@@ -407,15 +413,19 @@ configuration:
     name: Strategie zur Einzelbildextraktion
     description: >-
       Wie die gesendeten Einzelbilder aus diesem Pool ausgewählt werden.
-      „adaptive“ (Standard) verwendet das Budget für den einen
+      „adaptive“ (Standard, empfohlen) verwendet das Budget für den einen
       bewegungsreichsten Abschnitt, sodass ein kurzes Ereignis mehrere
       Bilder statt nur eines erhält; hat ein Clip kein einzelnes
       konzentriertes Ereignis, wählt es genau das aus, was „smart“ wählen
-      würde. „smart“ bewertet nach Bewegung und verteilt die Auswahl
-      gleichmäßig über den ganzen Clip. „sequential“ wählt dieselben
-      Bilder wie „smart“, sendet aber jedes als eigene KI-Anfrage — eine
-      Anfrage pro Bild statt einer pro Clip. „uniform“ ignoriert Bewegung
-      völlig und kann ein kurzes Ereignis ganz verpassen (veraltet).
+      würde, ist also nie die schlechtere Wahl. „smart“ bewertet nach
+      Bewegung und verteilt die Auswahl gleichmäßig über den Clip.
+      „uniform“ ignoriert Bewegung völlig und kann ein kurzes Ereignis
+      ganz verpassen (veraltet). Diese drei senden dieselbe Anzahl Bilder
+      in einer Anfrage und kosten daher gleich viel — nur „Max.
+      Einzelbilder“ ändert das. „sequential“ sendet jedes Bild als eigene
+      KI-Anfrage und kostet dadurch rund das 2,6-Fache, weil der Prompt
+      jedes Mal wiederholt wird; nur für Modelle sinnvoll, die ein
+      einzelnes Bild besser lesen als einen Stapel.
   ai_car_cameras:
     name: Fahrzeugschutz-Kameras
     description: >-

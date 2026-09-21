@@ -289,10 +289,16 @@ configuration:
   ai_frame_interval:
     name: Frame Interval (seconds)
     description: >-
-      Seconds between the frames extracted from the video. This sets how
-      dense the pool of candidates is, not how many reach the AI: enough
-      frames are extracted to cover a full 60-second clip either way, and
-      Max Frames decides how many of those are sent.
+      The widest gap between the frames extracted from the video. This
+      sets how dense the pool of candidates is, not how many reach the
+      AI: enough frames are extracted to cover a full 60-second clip
+      either way, and Max Frames decides how many of those are sent. A
+      clip too short to fill that pool at this spacing is sampled more
+      often instead, never less — at 2 seconds a 10-second clip yields
+      only 5 candidates, which is the whole budget, leaving the frame
+      strategy nothing to choose between. Most Blink clips are 10-20
+      seconds long. It costs nothing extra: the number of frames sent is
+      still Max Frames.
   ai_suspicious_keywords:
     name: Suspicious Keywords
     description: >-
@@ -345,14 +351,17 @@ configuration:
     name: Frame Extraction Strategy
     description: >-
       How the frames that get sent are chosen out of that pool.
-      "adaptive" (default) spends the budget on the clip's one busiest
-      stretch, so a brief event gets several frames instead of one; when a
-      clip has no single concentrated event it picks exactly what "smart"
-      would. "smart" ranks by motion and spreads its picks evenly across
-      the whole clip. "sequential" chooses the same frames as "smart" but
-      sends each as its own AI call — one request per frame instead of one
-      per clip. "uniform" ignores motion entirely and can miss a brief
-      event altogether (legacy).
+      "adaptive" (default, recommended) spends the budget on the clip's
+      one busiest stretch, so a brief event gets several frames instead of
+      one; where a clip has no single concentrated event it picks exactly
+      what "smart" would, so it is never the worse choice. "smart" ranks
+      by motion and spreads its picks evenly across the whole clip.
+      "uniform" ignores motion entirely and can miss a brief event
+      altogether (legacy). Those three all send the same frames in one
+      request and therefore cost the same — only Max Frames changes that.
+      "sequential" sends each frame as its own AI call, which costs
+      roughly 2.6x as much because the prompt is repeated every time; use
+      it only for a model that reads one image better than a batch.
   ai_car_cameras:
     name: Car-Protection Cameras
     description: >-

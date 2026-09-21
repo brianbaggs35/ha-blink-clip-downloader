@@ -172,18 +172,66 @@ people twenty seconds apart — the new `adaptive` strategy puts about
 default, manages **39%**, and `uniform` **30%** while missing the event
 *entirely* on 2 of 14 cases.
 
-So `adaptive` is the default from this release. It is never worse than
-`smart`: when a clip has no single concentrated event it picks exactly
-what `smart` would, which is most of the point of it knowing when to
-give up. **Existing installs keep whatever they already have** — Home
-Assistant only writes the new default into a fresh install's options —
-so change it by hand on the Configuration tab if you want it.
+Those numbers were then re-measured on *rendered video* rather than
+simulated motion scores — a subject crossing a real frame, extracted and
+scored by the real code — and the gap held. On the shape that matters
+most, a clip that begins as the subject appears (which is every Blink
+clip, since the camera records **on** motion), adaptive put 3 of 3
+subject frames in front of the AI where smart managed 2 and uniform 1;
+on a fast crossing, adaptive got 2 of 2, smart 1, and uniform **none at
+all**. Across 400 randomised trajectories scored the same way, adaptive
+was better on 347, equal on 53, and worse on none.
+
+So `adaptive` is the default from this release, and the Configuration
+page marks it recommended. It is never worse than `smart`: when a clip
+has no single concentrated event it picks exactly what `smart` would,
+which is most of the point of it knowing when to give up. **Existing
+installs keep whatever they already have** — Home Assistant only writes
+the new default into a fresh install's options — so change it by hand on
+the Configuration tab if you want it.
+
+One thing worth knowing when choosing: `adaptive`, `smart` and `uniform`
+all send the same number of frames in a single request, so **they cost
+exactly the same**. There is no cheaper option to trade accuracy for —
+`ai_max_frames` is the only lever on token cost. `sequential` is the
+expensive one, at roughly 2.6x a single call, because it re-sends the
+whole prompt with every frame.
 
 `uniform` now says plainly what it costs. It ignores motion by design,
 which means it can send the AI no frames of the event at all when that
 event was brief; it stays for configurations that already use it, and
 for anyone who genuinely wants sampling that pays no attention to what
 is happening.
+
+### Short clips now get the frames you asked for
+
+Frame extraction asked ffmpeg for a pool of candidates and then picked
+the best of them — but ffmpeg can only produce `duration ÷ interval`
+frames, so on a short clip the pool arrived smaller than the budget and
+there was nothing to pick between. At the defaults that starts at 20
+seconds and gets worse all the way down: a **10-second clip produced
+exactly 5 candidates for a 5-frame budget**, so every strategy sent all
+five and behaved identically, and a 5-second clip sent 3 frames when
+`ai_max_frames` said 5. Most Blink clips are 10-20 seconds long, which
+made that the ordinary case rather than a corner of it — and it meant
+`adaptive`, new above, did nothing at all on most of a typical library.
+
+`ai_frame_interval` is now the *widest* spacing rather than a fixed one:
+a clip too short to fill the pool at that spacing is sampled more often
+until it does, down to a half-second floor, and never less often than
+configured. Measured on rendered video across 400 randomised
+motion-triggered clips of 4-20 seconds, the frames of the event actually
+reaching the AI went up **47%** under `adaptive` and **17%** under
+`uniform`, with `smart` unchanged. It costs nothing: how many frames are
+*sent* is still `ai_max_frames`. The exception is `sequential`, which
+sends one request per frame — on a very short clip it was previously
+sending fewer requests than configured, and now sends the number you
+asked for.
+
+Everything that turns a frame number into a clip time — every security
+event's offset, every track's dwell and speed, the evidence-quality
+score — is told the real spacing, so a short clip's events are still
+reported at the second they happened.
 
 ### A frame strategy that looks at the event, not the whole clip
 
