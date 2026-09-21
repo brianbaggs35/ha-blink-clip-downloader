@@ -1,7 +1,8 @@
 """Optional computer-vision enhancement pipeline for clip analysis.
 
 Five independently-toggleable stages, layered on top of the existing
-AI-provider prompt pipeline (see ``analyzer.py``) rather than replacing it —
+AI-provider prompt pipeline (see the ``analyzer`` package) rather than
+replacing it —
 each stage produces a bounded, code-computed hint that gets appended to the
 same prompt the configured AI provider (ollama/anthropic/openai/moondream)
 already reasons over, exactly like the existing scene-baseline and
@@ -26,7 +27,7 @@ Every stage lazily imports its own heavy dependency (torch, ultralytics,
 opencv, transformers, facenet-pytorch — none of which are required to run
 the add-on's core features) and reports itself unavailable rather than
 raising if that dependency isn't installed or fails to load. Nothing in
-this module is imported by ``analyzer.py`` at call time unless the
+this module is imported by ``analyzer`` at call time unless the
 corresponding config option is enabled, and even then the heavy import
 itself is deferred to first use — see each class's ``ensure_ready()``.
 """
@@ -376,7 +377,7 @@ class ObjectDetector:
     reloading it per clip would make every analysis pay a multi-second
     cold-start cost. Inference runs in a thread executor so the asyncio
     event loop is never blocked, mirroring ``MoondreamLocalAnalyzer``'s
-    pattern in ``analyzer.py`` for the same reason.
+    pattern in ``analyzer/moondream.py`` for the same reason.
 
     Note on tracking: Ultralytics' ``.track(persist=True)`` is designed for
     continuous video frames. This pipeline only ever hands it the handful
@@ -1998,14 +1999,14 @@ class VisionHints:
     posture_hint: str | None = None
     face_recognition: FaceRecognitionResult | None = None
     # Raw per-object detections from ObjectDetector, kept alongside the
-    # rendered detection_hint text above so callers (analyzer.py) can
+    # rendered detection_hint text above so callers (the analyzer) can
     # persist structured results — see database.py's detected_objects
     # table — rather than only ever having the flattened prompt string.
     detections: list[DetectedObject] | None = None
 
     # --- structured security evidence (see blink_downloader.security) ---
     # Everything below is raw material for the deterministic event
-    # detector, which analyzer.py runs: this module's job ends at producing
+    # detector, which the analyzer runs: this module's job ends at producing
     # measurements, and the rules that interpret them live where they can
     # be tested without torch installed.
     tracks: list[ObjectTrack] | None = None
@@ -2053,7 +2054,7 @@ class VisionPipeline:
     no-ops (leaving the corresponding hint unset) if its dependency isn't
     installed, fails to load, or simply finds nothing relevant — analysis
     always proceeds using whatever hints ended up available, exactly like
-    the existing scene-baseline/zone-motion hints in ``analyzer.py``.
+    the existing scene-baseline/zone-motion hints in ``analyzer/base.py``.
     """
 
     def __init__(self, config: VisionConfig, db: ClipDatabase | None = None) -> None:

@@ -1,6 +1,6 @@
 """One entry point that runs the whole deterministic security assessment.
 
-``analyzer.py`` orchestrates a lot already — frame extraction, provider
+``BaseAnalyzer`` orchestrates a lot already — frame extraction, provider
 calls, escalation, prompt assembly — and the security layer is not another
 thing it should have to sequence by hand. This module takes the
 measurements the computer-vision stages produced and returns everything the

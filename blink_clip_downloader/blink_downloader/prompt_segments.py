@@ -7,7 +7,8 @@ decides whether to include it at all. None of them consult analyzer state,
 reach the network, or decide anything about a clip; they are the wording,
 not the judgment.
 
-Kept apart from ``analyzer.py`` for the same reason as ``model_catalog.py``
+Kept apart from the ``analyzer`` package for the same reason as
+``model_catalog.py``
 and ``frame_motion.py``: this is text that gets reworded on its own
 schedule (a phrase that misleads a small model, a threshold that reads
 better as a sentence) and it is easier to review a change to it against the

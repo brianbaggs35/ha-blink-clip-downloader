@@ -94,7 +94,7 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _MOONDREAM_PACKAGES_DIR = Path("/data/moondream_packages")
 
 # Pinned to the >=1.3,<2 range for the same reason as the Dockerfile's build-time
-# install — see the comment there and analyzer.py's
+# install — see the comment there and analyzer/moondream.py's
 # MoondreamLocalAnalyzer._load_model_sync for the version-drift incident this
 # guards against.
 _MOONDREAM_PIP_SPEC = "moondream>=1.3,<2"
@@ -122,7 +122,8 @@ def _moondream_arch_supported() -> bool:
     constraint here, so this is no longer architecture-gated. Local
     ("Photon") inference still requires an NVIDIA CUDA or Apple Silicon
     GPU regardless of architecture; that check happens separately at
-    model-load time (see analyzer.py's MoondreamLocalAnalyzer._load_model_sync)
+    model-load time (see analyzer/moondream.py's
+    MoondreamLocalAnalyzer._load_model_sync)
     and reports the provider unavailable there rather than here.
     """
     return True
@@ -880,7 +881,7 @@ class MediaServer:
         interval = max(duration / count, 0.5)
         cmd = [
             "ffmpeg",
-            # See BaseAnalyzer.extract_frames (analyzer.py) for why the
+            # See BaseAnalyzer.extract_frames (analyzer/base.py) for why the
             # banner is suppressed: without it the truncated stderr captured
             # on failure below is all banner and no error.
             "-hide_banner",

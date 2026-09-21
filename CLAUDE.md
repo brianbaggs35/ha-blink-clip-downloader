@@ -44,12 +44,26 @@ architecture.
     just adding the column to `_SCHEMA`'s `CREATE TABLE IF NOT EXISTS` —
     that statement is a no-op for a table that already exists, so upgrading
     installs would never get the new column otherwise.
-  - `analyzer.py` — AI vision analysis. See **AI provider architecture** below.
+  - `analyzer/` — AI vision analysis, a package since 6.0.7 (it was a
+    single 5,200-line module). `base.py` holds `BaseAnalyzer` —
+    everything that is the same whichever provider is configured: frame
+    extraction/down-selection, prompt assembly, the vision and security
+    layers, prompt-cache/token accounting, verdict parsing, the risk
+    override and the face bypass. `ollama.py`, `moondream.py`,
+    `anthropic_provider.py` and `openai_provider.py` hold only what
+    differs about talking to one API; `factory.py` holds
+    `create_analyzer()`, the only module that knows all six at once.
+    The two `*_provider` names avoid a file called `openai.py`/
+    `anthropic.py` sitting next to an `import openai`. `__init__.py` is
+    a facade: every name the old module exposed is re-exported, so
+    `from .analyzer import ...` is unchanged for callers — reach into a
+    submodule only for an internal the facade deliberately doesn't
+    export. See **AI provider architecture** below.
   - `model_catalog.py` — per-provider model reference data: which ids can
     see images, which accept a structured-output schema, and per-token
     pricing, plus the small pure functions that read it. Split out of
-    `analyzer.py` because it changes on the providers' schedule, not this
-    add-on's; it imports nothing from `analyzer.py`.
+    `analyzer` because it changes on the providers' schedule, not this
+    add-on's; it imports nothing from `analyzer`.
   - `prompt_segments.py` — the individual blocks a clip-analysis prompt is
     assembled from (time of day, anomaly alert, scene baseline, motion
     trajectory, recent corrections, zone motion, vision hints, output
@@ -66,14 +80,14 @@ architecture.
     the motion-trajectory phrase, and the share of a clip's motion falling
     inside a car zone. Same reasoning as `model_catalog.py` — it is image
     math that happens to be *used* during analysis, not part of deciding
-    what a clip means, and it imports nothing from `analyzer.py`. Uses
+    what a clip means, and it imports nothing from `analyzer`. Uses
     `security/geometry.py`'s `point_in_polygon` rather than keeping the
-    second, identical copy `analyzer.py` used to carry.
+    second, identical copy the analyzer used to carry.
   - `ffmpeg_output.py` — reading what ffmpeg wrote: splitting its
     concatenated-JPEG stdout into frames, and condensing its stderr into
     one loggable line. A leaf module (stdlib only) because both
-    `analyzer.py` and `media_server.py` shell out to ffmpeg and need it,
-    and `media_server.py` importing `analyzer.py` for two small pure
+    `analyzer/` and `media_server.py` shell out to ffmpeg and need it,
+    and `media_server.py` importing `analyzer` for two small pure
     functions would drag `aiohttp` and the whole `security` package in
     behind them. Both modules used to carry their own identical copy for
     exactly that reason; same fix as `frame_motion.py` taking
@@ -102,7 +116,7 @@ architecture.
     pipeline (object detection/tracking, depth estimation, contact
     segmentation, OpenCV frame preprocessing, pose estimation, local-only
     face recognition).
-    Layered on top of `analyzer.py`'s prompt pipeline via
+    Layered on top of `analyzer/base.py`'s prompt pipeline via
     `BaseAnalyzer.attach_vision_pipeline()` — each stage produces a hint
     string appended to the same prompt, never replacing the configured AI
     provider's judgment. Every stage lazily imports its own heavy
@@ -196,21 +210,22 @@ tools can be invoked from the root the same way CI does.
 
 ## AI provider architecture
 
-`analyzer.py` defines `BaseAnalyzer` (ABC) and six concrete analyzers,
-selected via the `create_analyzer()` factory keyed on `ai_provider`:
+`analyzer/base.py` defines `BaseAnalyzer` (ABC); six concrete analyzers
+live one provider-family per module, selected via `analyzer/factory.py`'s
+`create_analyzer()` keyed on `ai_provider`:
 
-| `ai_provider`     | Class                    | Notes                                   |
-|-------------------|--------------------------|------------------------------------------|
-| `ollama`          | `ClipAnalyzer`           | Local/LAN Ollama server                   |
-| `ollama_cloud`    | `OllamaCloudAnalyzer`    | Hosted Ollama Cloud API                   |
-| `moondream_cloud` | `MoondreamCloudAnalyzer` | Moondream Cloud API, no model selection   |
-| `moondream_local` | `MoondreamLocalAnalyzer` | Local moondream package, requires an **NVIDIA/Apple Silicon GPU** (any arch since the 4.1.0 Debian base image switch) |
-| `anthropic`       | `AnthropicAnalyzer`      | Claude vision models                      |
-| `openai`          | `OpenAIAnalyzer`         | GPT vision models                         |
+| `ai_provider`     | Class                    | Module                   | Notes                                   |
+|-------------------|--------------------------|--------------------------|------------------------------------------|
+| `ollama`          | `ClipAnalyzer`           | `ollama.py`              | Local/LAN Ollama server                   |
+| `ollama_cloud`    | `OllamaCloudAnalyzer`    | `ollama.py`              | Hosted Ollama Cloud API (subclasses `ClipAnalyzer` — same wire format) |
+| `moondream_cloud` | `MoondreamCloudAnalyzer` | `moondream.py`           | Moondream Cloud API, no model selection   |
+| `moondream_local` | `MoondreamLocalAnalyzer` | `moondream.py`           | Local moondream package, requires an **NVIDIA/Apple Silicon GPU** (any arch since the 4.1.0 Debian base image switch) |
+| `anthropic`       | `AnthropicAnalyzer`      | `anthropic_provider.py`  | Claude vision models                      |
+| `openai`          | `OpenAIAnalyzer`         | `openai_provider.py`     | GPT vision models                         |
 
 `MoondreamFineTuneManager` is a separate helper class (not an analyzer) that
 wraps the Moondream Cloud fine-tuning API — it lives in
-`moondream_finetune.py`, not `analyzer.py`. The model capability/pricing
+`moondream_finetune.py`, not the `analyzer` package. The model capability/pricing
 tables live in `model_catalog.py` for the same reason: both are edited for
 reasons that have nothing to do with how a clip is analyzed.
 
@@ -498,7 +513,7 @@ matrixed).
 ## Face-recognition suspicious-flag bypass (safety-critical — read before touching)
 
 An approved, recognized household member can auto-clear a clip's
-suspicious flag (`analyzer.py`'s `BaseAnalyzer._face_bypass_applies` /
+suspicious flag (`analyzer/base.py`'s `BaseAnalyzer._face_bypass_applies` /
 `_personalize_summary`, wired into `_analyze_clip_locked` right after
 `parse_response()`). This is deliberately **all-or-nothing per clip**: it
 requires at least one approved match **and zero** unrecognized or
@@ -834,7 +849,7 @@ work).
   need. Using the former for proximity is what made a pedestrian walking in
   front of a parked car read as "inches from the vehicle".
 - Docstrings in this codebase are typically one-line-to-short-paragraph
-  descriptions of behavior (see existing methods in `analyzer.py`,
+  descriptions of behavior (see existing methods in `analyzer/base.py`,
   `config.py`) — match that style rather than terse or absent docstrings on
   public classes/methods, but don't add commentary the code already makes
   obvious.
