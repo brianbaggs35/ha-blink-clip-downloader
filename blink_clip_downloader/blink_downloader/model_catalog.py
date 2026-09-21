@@ -9,8 +9,10 @@ than when this add-on's analysis logic does.
 
 Kept separate for that reason: it is the part of the analyzer most likely to
 need an edit for reasons that have nothing to do with how a clip is
-analyzed. ``analyzer`` re-exports every name here, so existing imports
-(``from .analyzer import lookup_model_pricing``) keep working.
+analyzed. The ``analyzer`` package re-exports the names it uses itself — so
+``from .analyzer import lookup_model_pricing`` and friends keep working —
+but not the whole module: the pricing and pattern tables below have never
+been reachable that way, and should be imported from here directly.
 """
 
 from __future__ import annotations

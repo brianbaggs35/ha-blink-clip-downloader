@@ -40,8 +40,13 @@ is imported by ``analyzer`` at call time unless the corresponding config
 option is enabled, and even then the heavy import itself is deferred to
 first use — see each class's ``ensure_ready()``.
 
-Importers are unaffected by the split: every name the old single module
-exposed is re-exported here.
+What this module re-exports is the pipeline's public surface: the stage
+classes, their result types, :class:`VisionConfig`/:class:`VisionHints`/
+:class:`VisionPipeline`, the ``SOURCE_*`` labels and the availability
+checks. That covers every import anything in this repo makes. The stages'
+own internals — thresholds, keypoint indices, hint builders — stay in the
+stage that owns them, so a test reaching past this facade says which stage
+it is reaching into.
 """
 
 from __future__ import annotations
