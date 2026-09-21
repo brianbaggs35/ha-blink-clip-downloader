@@ -50,14 +50,25 @@ async function conflictFirst(page: Page, n: number) {
   return seen
 }
 
+/** Read the stored configs over HTTP rather than through the UI. */
+async function storedDescription(page: Page, camera: string): Promise<string> {
+  const response = await page.request.get('/api/ai/camera-configs')
+  const configs = (await response.json()) as { camera: string; description?: string }[]
+  return configs.find((config) => config.camera === camera)?.description ?? ''
+}
+
 test.afterEach(async ({ page }) => {
-  // Clear whatever a test managed to store, so the AI and round-trip specs
-  // that follow see Front Door with no description.
+  // Put the stored description back over HTTP, not by driving the UI. A
+  // navigation here would wipe window.__coverage__ before
+  // coverage-fixtures.ts reads it, throwing away everything the test just
+  // exercised -- and this cleanup does not need a browser page at all.
   await page.unrouteAll({ behavior: 'ignoreErrors' })
-  await openAiTabAndExpand(page)
-  await descBox(page).fill('')
-  await page.getByRole('button', { name: '💾 Save Camera Configs' }).click()
-  await expect(page.getByText('Camera configs saved')).toBeVisible()
+  const response = await page.request.get('/api/ai/camera-configs')
+  const configs = (await response.json()) as Record<string, unknown>[]
+  await page.request.put('/api/ai/camera-configs', {
+    data: configs.map((config) => (config.camera === CAMERA ? { ...config, description: '' } : config)),
+  })
+  expect(await storedDescription(page, CAMERA)).toBe('')
 })
 
 test('a save that loses a race is re-read and retried once, not lost', async ({ page }) => {
@@ -76,9 +87,9 @@ test('a save that loses a race is re-read and retried once, not lost', async ({ 
   expect(seen.puts).toBe(2)
   expect(seen.gets).toBeGreaterThan(getsBeforeSave + 1)
 
-  await page.reload()
-  await openAiTabAndExpand(page)
-  await expect(descBox(page)).toHaveValue(typed)
+  // Checked over HTTP rather than with a reload, for the same reason the
+  // cleanup above avoids one.
+  expect(await storedDescription(page, CAMERA)).toBe(typed)
 })
 
 test('a conflict that repeats is reported rather than retried forever', async ({ page }) => {
