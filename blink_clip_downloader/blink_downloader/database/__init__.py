@@ -25,9 +25,11 @@ mixin owns the tables for a single job and can be read on its own:
 plus :mod:`.schema` (the DDL) and :mod:`.sql` (pure text/row helpers).
 
 Mixins rather than sub-objects (``db.clips.get(...)``) deliberately: the
-public surface stays identical for every caller and every test, so this is
-a change to how the source is organised and not to how the database is
-used. Adding a column still means editing :mod:`.schema` — and adding an
+class's public surface stays identical — all 104 methods, same names,
+same signatures — so this is a change to how the source is organised and
+not to how the database is used. (The module-scope helpers are a different
+matter: only the handful re-exported below are reachable from here; the
+rest live in :mod:`.sql` and :mod:`.schema`.) Adding a column still means editing :mod:`.schema` — and adding an
 ``ALTER TABLE ... ADD COLUMN IF NOT EXISTS`` to ``_MIGRATIONS``, since
 ``CREATE TABLE IF NOT EXISTS`` is a no-op on a database that already
 exists.
