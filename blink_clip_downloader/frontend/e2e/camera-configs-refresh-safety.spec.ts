@@ -73,12 +73,11 @@ async function refreshAndWaitForTick(page: Page, counts: { status: number }) {
   await expect.poll(() => counts.status).toBeGreaterThan(before)
 }
 
-test.afterEach(async ({ page }) => {
-  // Nothing here ever saves, so the stored config is untouched -- but a
-  // dirty form left behind would be discarded by the reload anyway. Reload
-  // to a clean page so the next spec starts from the stored state.
-  await page.goto('/')
-})
+// Deliberately no afterEach. Nothing here ever saves, so there is nothing
+// stored to put back, and a dirty form dies with the page anyway -- while
+// a trailing page.goto() would wipe window.__coverage__ before
+// coverage-fixtures.ts reads it at test end, silently discarding
+// everything these tests exercised.
 
 test('a background refresh leaves a half-typed camera description alone', async ({ page }) => {
   const counts = await countGets(page)
