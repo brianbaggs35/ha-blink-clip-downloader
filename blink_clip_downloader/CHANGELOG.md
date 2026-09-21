@@ -141,6 +141,17 @@ what Home Assistant actually allows before any request is built.
   syntax tree of each definition against the original file.
 - Two docstrings still pointed at `_time_of_day_segment`, which stopped
   existing under that name when `prompt_segments.py` was split out.
+- `database.py`, at 3,545 lines the second-largest module, is now a
+  `database/` package. `ClipDatabase` is still one class with the same
+  public API — assembled from one mixin per job rather than sub-objects, so
+  no caller and no test changed — but each job is now its own file: the
+  clip library and its archive lifecycle, AI verdicts and token spend, the
+  detections and security events behind them, face enrollments, the
+  learning loops, the two background queues, per-camera state and the
+  legacy SQLite import, over a `schema.py` holding the DDL and a `sql.py`
+  holding the pure text and row helpers. A pure move, verified the same way
+  as the analyzer: all 136 definitions are byte-identical to where they
+  came from.
 - Every analyzer provider module is named `<provider>_provider.py`, and
   `tests/test_module_names.py` now enforces that no module is named after a
   package the codebase imports. Pyright resolves a bare `import <x>` to a

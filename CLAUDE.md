@@ -36,14 +36,34 @@ architecture.
     add-on options) into typed config. Also defines per-camera config schema
     (`ai_camera_prompts`, `ai_camera_descriptions`, `ai_car_cameras`).
   - `downloader.py` — Blink API polling + clip download/thumbnail generation.
-  - `database.py` — clip library (`ClipDatabase`) against a **PostgreSQL 17
+  - `database/` — clip library (`ClipDatabase`) against a **PostgreSQL 17
     server bundled and supervised inside this same container** (not SQLite —
     that was replaced in 5.0.0; see the Dockerfile and
     `rootfs/etc/services.d/postgresql`). New columns on an existing table
-    need an `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in `_MIGRATIONS`, not
-    just adding the column to `_SCHEMA`'s `CREATE TABLE IF NOT EXISTS` —
-    that statement is a no-op for a table that already exists, so upgrading
-    installs would never get the new column otherwise.
+    need an `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in `schema.py`'s
+    `_MIGRATIONS`, not just adding the column to `_SCHEMA`'s `CREATE TABLE
+    IF NOT EXISTS` — that statement is a no-op for a table that already
+    exists, so upgrading installs would never get the new column otherwise.
+    A package since 6.0.7 (it was one 3,545-line module): `ClipDatabase` is
+    still **one class with an identical public API**, assembled in
+    `__init__.py` from one mixin per job — `clips.py` (the library and its
+    archive lifecycle), `analysis.py` (verdicts and token spend),
+    `detections.py` (boxes, security events, vehicle signatures),
+    `faces.py` (enrollments and the bypass audit trail), `learning.py`
+    (feedback tuning, activity baselines, scene drift), `queues.py` (the
+    analysis and Drive upload queues), `cameras.py` (battery history and
+    carrying a rename across every camera-keyed table), `legacy.py` (the
+    pre-5.0.0 SQLite import) and `core.py` (pool lifecycle), over
+    `schema.py` (the DDL) and `sql.py` (pure text/row helpers).
+    Mixins rather than sub-objects (`db.clips.get(...)`) so that no caller
+    or test had to change. Two rules worth knowing: a method that needs a
+    *different* mixin's method goes on `ClipDatabase` itself (only
+    `save_analysis` does, writing a verdict plus its detections and events
+    together), which is what keeps each mixin independently type-checkable;
+    and anything added to `cameras.py`'s rename path must cover **every**
+    table with a `camera` column — there are 12, and the count is worth
+    re-deriving from `schema.py` rather than trusting, since a missed one
+    is this repo's most-repeated bug.
   - `analyzer/` — AI vision analysis, a package since 6.0.7 (it was a
     single 5,200-line module). `base.py` holds `BaseAnalyzer` —
     everything that is the same whichever provider is configured: frame
