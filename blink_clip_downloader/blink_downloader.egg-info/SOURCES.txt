@@ -6,7 +6,6 @@ blink_downloader/app.py
 blink_downloader/archiver.py
 blink_downloader/battery_monitor.py
 blink_downloader/config.py
-blink_downloader/database.py
 blink_downloader/digest.py
 blink_downloader/downloader.py
 blink_downloader/event_watcher.py
@@ -41,6 +40,18 @@ blink_downloader/analyzer/factory.py
 blink_downloader/analyzer/moondream_provider.py
 blink_downloader/analyzer/ollama_provider.py
 blink_downloader/analyzer/openai_provider.py
+blink_downloader/database/__init__.py
+blink_downloader/database/analysis.py
+blink_downloader/database/cameras.py
+blink_downloader/database/clips.py
+blink_downloader/database/core.py
+blink_downloader/database/detections.py
+blink_downloader/database/faces.py
+blink_downloader/database/learning.py
+blink_downloader/database/legacy.py
+blink_downloader/database/queues.py
+blink_downloader/database/schema.py
+blink_downloader/database/sql.py
 blink_downloader/security/__init__.py
 blink_downloader/security/assets.py
 blink_downloader/security/detector.py
