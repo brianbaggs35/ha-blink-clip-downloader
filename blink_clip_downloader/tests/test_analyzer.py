@@ -50,7 +50,7 @@ from blink_downloader.security import (
     Severity,
     build_tracks,
 )
-from blink_downloader.vision import FaceRecognitionResult, VisionHints
+from blink_downloader.vision import AudioTags, FaceRecognitionResult, VisionHints
 
 
 def _mock_session(**overrides: object) -> MagicMock:
@@ -10651,6 +10651,59 @@ def test_assess_security_without_vision_hints(analyzer: ClipAnalyzer) -> None:
 
 def test_assess_security_without_tracks(analyzer: ClipAnalyzer) -> None:
     assert analyzer._assess_security("Driveway", VisionHints(), "", None, 3, 3) is None
+
+
+def test_assess_security_runs_on_a_heard_sound_with_nothing_in_frame(
+    analyzer: ClipAnalyzer, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The case audio exists for, and the one the old tracks-only guard
+    made unreachable: breaking glass with nobody visible — because it is
+    dark, because it is round the side of the house, or because object
+    detection is off entirely.
+
+    caplog is asserted deliberately. ``_assess_security`` catches every
+    exception on purpose, so a crash in here does not fail a clip — it
+    just silently produces no event, which looks exactly like working
+    correctly. Passing ``tracks=None`` (VisionHints' default until object
+    detection has run) through to a layer that iterates it did precisely
+    that, and only an assertion on the log could tell the difference.
+    """
+    hints = VisionHints(audio_tags=AudioTags(labels=[("Breaking glass", 0.9)]))
+    with caplog.at_level(logging.ERROR):
+        outcome = analyzer._assess_security("Driveway", hints, "", None, 3, 3)
+
+    assert "Security assessment failed" not in caplog.text
+    assert outcome is not None
+    assert [str(e.event_type) for e in outcome.events] == ["glass_break_heard"]
+    # Enough on its own to pass the default risk-alert threshold.
+    assert outcome.risk_score >= 75
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [[], [("Speech", 0.9), ("Dog", 0.8)], [("Power tool", 0.95)], [("Glass", 0.4)]],
+    ids=["nothing", "routine", "diy", "below-the-event-bar"],
+)
+def test_assess_security_is_skipped_when_no_sound_would_raise_an_event(
+    analyzer: ClipAnalyzer, labels: list[tuple[str, float]]
+) -> None:
+    """The guard checks the rule the labels are about to be put through,
+    not merely that the stage heard something.
+
+    Assessing a clip with no tracks and only routine sounds concludes
+    nothing, but it still applies the unusual-hour factor and stores an
+    evidence-quality score where that clip previously stored zero. A dog
+    barking at 3am would go from a risk of 0 to about 7 — invisible at the
+    default alert threshold of 75, and very much not invisible to someone
+    who set it to 5.
+    """
+    hints = VisionHints(audio_tags=AudioTags(labels=labels))
+    assert (
+        analyzer._assess_security(
+            "Driveway", hints, "2026-01-01T03:00:00+00:00", None, 3, 3
+        )
+        is None
+    )
 
 
 def test_assess_security_survives_a_defect_in_its_own_rules(

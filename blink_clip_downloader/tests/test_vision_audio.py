@@ -35,6 +35,7 @@ from blink_downloader.vision import runtime
 from blink_downloader.vision.audio import (
     _MAX_LABELS,
     _SAMPLE_RATE,
+    _SILENCE_RMS,
     AudioTagger,
     AudioTags,
     _loudest_window,
@@ -54,23 +55,31 @@ needs_ffmpeg = pytest.mark.skipif(
 )
 
 
-def _make_clip(path: Path, *, audio: str) -> Path:
-    """Render a tiny real clip. *audio* is "tone", "silent" or "none"."""
+def _make_clip(path: Path, *, audio: str, seconds: int = 2) -> Path:
+    """Render a tiny real clip.
+
+    *audio* is "tone" (plainly audible), "silent" (digital zero),
+    "noisefloor" (a muted microphone's inaudible hiss), "quiet-tail"
+    (silence except for a modest sound in the final two seconds) or
+    "none" (no audio track at all).
+    """
     args = [
-        "ffmpeg",
-        "-nostdin",
-        "-loglevel",
-        "error",
-        "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        "testsrc=duration=2:size=160x120:rate=10",
-    ]
-    if audio == "tone":
-        args += ["-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "aac"]
-    elif audio == "silent":
-        args += ["-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono", "-c:a", "aac"]
+        "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=160x120:rate=5",
+    ]  # fmt: skip
+    sources = {
+        "tone": [f"sine=frequency=440:duration={seconds}"],
+        "silent": ["anullsrc=r=16000:cl=mono"],
+        "noisefloor": [f"anoisesrc=color=white:amplitude=0.001:duration={seconds}"],
+        "quiet-tail": [f"sine=frequency=880:duration={seconds}"],
+    }
+    if audio in sources:
+        args += ["-f", "lavfi", "-i", *sources[audio]]
+        if audio == "quiet-tail":
+            quiet = f"volume=enable='lt(t,{seconds - 2})':volume=0"
+            loud = f"volume=enable='gte(t,{seconds - 2})':volume=0.05"
+            args += ["-filter:a", f"{quiet},{loud}"]
+        args += ["-c:a", "aac"]
     args += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest", str(path)]
     subprocess.run(args, check=True, capture_output=True)
     return path
@@ -152,7 +161,6 @@ def test_loudest_window_still_sees_the_very_end_of_a_clip() -> None:
 def test_no_hint_without_tags() -> None:
     assert build_audio_hint(None) is None
     assert build_audio_hint(AudioTags()) is None
-    assert build_audio_hint(AudioTags(silent=True)) is None
 
 
 def test_hint_names_the_sounds_and_hedges() -> None:
@@ -194,6 +202,46 @@ async def test_a_clip_with_no_audio_track_yields_nothing(tmp_path: Path) -> None
 async def test_missing_ffmpeg_disables_the_stage_rather_than_raising() -> None:
     with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
         assert await AudioTagger().extract_audio("/anything.mp4") is None
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (b"\x01\x02\x03", "three bytes is not a whole 4-byte sample"),
+        (b"\x00" * 4097, "one byte past a whole number of samples"),
+    ],
+)
+async def test_audio_cut_off_mid_sample_does_not_fail_the_clip(
+    payload: bytes, reason: str
+) -> None:
+    """np.frombuffer raises on a buffer that is not a whole number of
+    elements rather than truncating it, and ffmpeg killed mid-write, a
+    disk filling up, or a container it only partly understood all produce
+    exactly that. Escaping here would fail a perfectly analyzable clip
+    over an optional hint — vision/pipeline.py deliberately wraps nothing,
+    so each stage contains its own failures.
+    """
+    proc = MagicMock()
+    proc.returncode = 0
+    proc.communicate = AsyncMock(return_value=(payload, b""))
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        assert await AudioTagger().tag("/truncated.mp4") is None, reason
+
+
+async def test_a_defect_in_the_stage_never_fails_the_clip(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The stage boundary, matching _assess_security's own reasoning: a
+    bug in an additive hint must not turn an analyzable clip into a
+    failed, retried one — but it is our code, so it is logged loudly
+    rather than swallowed."""
+    with (
+        patch.object(AudioTagger, "_tag", side_effect=RuntimeError("defect")),
+        caplog.at_level(logging.ERROR, logger="blink_downloader.vision.audio"),
+    ):
+        assert await AudioTagger().tag("/c.mp4") is None
+    assert "Audio analysis failed" in caplog.text
+    assert "RuntimeError" in caplog.text
 
 
 async def test_a_hung_ffmpeg_is_killed_rather_than_left_behind(
@@ -358,23 +406,73 @@ async def test_tags_real_audio_filtered_sorted_and_capped(
     assert tags is not None
     assert len(tags.labels) == _MAX_LABELS
     assert [label for label, _ in tags.labels] == ["Shout", "Speech", "Glass"]
-    assert tags.silent is False
 
 
 @needs_ffmpeg
-async def test_a_silent_audio_track_is_not_classified(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "audio", ["silent", "noisefloor"], ids=["digital", "muted-mic"]
+)
+async def test_a_track_with_no_audible_sound_is_not_classified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, audio: str, caplog
 ) -> None:
-    """Classifying digital silence returns confident nonsense."""
+    """A camera with audio recording off in the Blink app still writes a
+    track. Whether that track is digital zero or an inaudible noise floor
+    depends on the hardware, and both must short-circuit: classifying
+    room tone burns an inference per clip to be told it heard a room.
+    """
     module = _fake_transformers([{"label": "Speech", "score": 0.99}])
     monkeypatch.setitem(sys.modules, "transformers", module)
-    clip = _make_clip(tmp_path / "silent.mp4", audio="silent")
+    clip = _make_clip(tmp_path / f"{audio}.mp4", audio=audio)
 
-    tags = await AudioTagger().tag(str(clip))
+    with caplog.at_level(logging.INFO, logger="blink_downloader.vision.audio"):
+        assert await AudioTagger().tag(str(clip)) is None
 
-    assert tags == AudioTags(labels=[], silent=True)
-    assert build_audio_hint(tags) is None
     module.pipeline.assert_not_called()
+    # And it says where to look, because the cause is a setting in a
+    # different app entirely.
+    assert "Blink app" in caplog.text
+
+
+@needs_ffmpeg
+async def test_the_no_sound_notice_is_logged_once_not_per_clip(
+    tmp_path: Path, caplog
+) -> None:
+    """Every clip from that camera is silent, so an unguarded notice would
+    be one log line per clip forever."""
+    clip = _make_clip(tmp_path / "silent.mp4", audio="silent")
+    tagger = AudioTagger()
+    with caplog.at_level(logging.INFO, logger="blink_downloader.vision.audio"):
+        for _ in range(3):
+            assert await tagger.tag(str(clip)) is None
+    assert caplog.text.count("Blink app") == 1
+
+
+@needs_ffmpeg
+async def test_a_quiet_event_in_a_long_clip_is_still_heard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gate is on the window actually classified, not the whole track.
+
+    A two-second sound in a sixty-second clip is diluted several-fold by
+    the silence around it; gating on the track average would discard
+    exactly the short quiet events worth hearing.
+    """
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
+    module = _fake_transformers([{"label": "Glass", "score": 0.8}])
+    monkeypatch.setitem(sys.modules, "transformers", module)
+
+    clip = _make_clip(tmp_path / "quiet-event.mp4", audio="quiet-tail", seconds=60)
+    tagger = AudioTagger()
+    assert await tagger.ensure_ready() is True
+    samples = await tagger.extract_audio(str(clip))
+    assert samples is not None
+    # Diluted across the whole track it would look like silence...
+    assert _rms(samples) < _SILENCE_RMS
+    # ...but the window that gets classified does not, so it is heard.
+    tags = await tagger.tag(str(clip))
+    assert tags is not None and tags.labels == [("Glass", 0.8)]
 
 
 @needs_ffmpeg
@@ -654,8 +752,8 @@ def test_recognized_sounds_are_stored_for_the_clip_modal() -> None:
 
 @pytest.mark.parametrize(
     "hints",
-    [None, VisionHints(), VisionHints(audio_tags=AudioTags(silent=True))],
-    ids=["no-pipeline", "stage-off", "silent-track"],
+    [None, VisionHints(), VisionHints(audio_tags=AudioTags())],
+    ids=["no-pipeline", "stage-off", "nothing-relevant-heard"],
 )
 def test_nothing_heard_stores_nothing(hints: VisionHints | None) -> None:
     """All three cases mean the same thing to the modal: no sound chips."""

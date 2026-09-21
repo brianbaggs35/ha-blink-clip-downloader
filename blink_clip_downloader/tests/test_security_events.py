@@ -42,10 +42,33 @@ def test_max_severity_of_nothing_is_routine() -> None:
 
 def test_bypass_blocking_is_deliberately_narrow() -> None:
     """Widening this set makes routine household activity permanently
-    suspicious — see the set's own comment for why each near-miss is out."""
-    assert BYPASS_BLOCKING_EVENTS == {SecurityEventType.IMPACT_CANDIDATE}
+    suspicious — see the set's own comment for why each near-miss is out.
+
+    Everything in it passes one test: an ordinary household does not
+    produce it on a normal day, and a recognized face cannot explain it
+    away. Impact qualifies because the detector never fires it on contact
+    alone. Breaking glass and gunfire qualify because sound carries from
+    places the camera cannot see, so a household member standing in the
+    driveway is no evidence at all about a window going round the back.
+
+    This assertion is exact on purpose. A fourth entry appearing here
+    without this line changing means someone widened a safety-critical
+    set without being made to think about it.
+    """
+    assert BYPASS_BLOCKING_EVENTS == {
+        SecurityEventType.IMPACT_CANDIDATE,
+        SecurityEventType.GLASS_BREAK_HEARD,
+        SecurityEventType.GUNSHOT_HEARD,
+    }
+    # A resident opening their own car door produces this several times a
+    # day; blocking the bypass on it is the false-positive problem the
+    # bypass exists to solve.
     assert SecurityEventType.CONTACT_CANDIDATE not in BYPASS_BLOCKING_EVENTS
+    # Most often a resident picking up their own delivered package.
     assert SecurityEventType.OBJECT_REMOVED not in BYPASS_BLOCKING_EVENTS
+    # A passing emergency siren matches this, which is common and explains
+    # nothing — so unlike the other two heard events, it stays out.
+    assert SecurityEventType.ALARM_HEARD not in BYPASS_BLOCKING_EVENTS
 
 
 def test_event_to_dict_rounds_and_copies_evidence() -> None:

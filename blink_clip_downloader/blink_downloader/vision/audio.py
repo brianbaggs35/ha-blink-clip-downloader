@@ -37,10 +37,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..security.sounds import matches_any
 from . import runtime
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,11 +48,28 @@ _LOGGER = logging.getLogger(__name__)
 # What the Audio Spectrogram Transformer expects: 16 kHz mono.
 _SAMPLE_RATE = 16_000
 
-# Below this RMS the clip is treated as silent and skipped. A camera with
-# its microphone switched off in the Blink app still writes an audio track,
-# it just carries nothing — classifying that produces confident nonsense
-# ("Inside, small room") from pure digital silence.
-_SILENCE_RMS = 1e-4
+# Below this RMS the clip is treated as carrying no sound and is skipped
+# without troubling the model.
+#
+# A camera with audio recording switched off in the Blink app still writes
+# an audio track; it just carries nothing worth classifying. Measured
+# against real files, "nothing" is not reliably digital zero: AAC encodes
+# true silence back to exactly 0.0, but a muted or gain-starved microphone
+# produces an inaudible noise floor instead, and a -69 dBFS floor sailed
+# past the 1e-4 (-80 dBFS) threshold this used to use, so every such clip
+# paid for a model inference to be told it heard room tone.
+#
+# 1e-3 is -60 dBFS, which is below the level at which anything is
+# audible at all; a sound worth classifying is an order of magnitude
+# above it.
+#
+# Applied to the *window* that would actually be classified, not to the
+# whole track. A two-second sound in a sixty-second clip measures 0.18x
+# its own level once averaged over the track but 0.45x over the ten-second
+# window — 2.4x higher, and the difference between landing above this
+# threshold and below it. Gating on the track average would discard
+# exactly the short quiet events worth hearing.
+_SILENCE_RMS = 1e-3
 
 # A label has to clear this to be mentioned at all. These are independent
 # per-class probabilities (see _ACTIVATION), not shares of one budget, so
@@ -172,12 +189,16 @@ _RELEVANT_KEYWORDS: frozenset[str] = frozenset(
 
 @dataclass
 class AudioTags:
-    """What the audio of one clip was classified as."""
+    """What the audio of one clip was classified as.
+
+    Only ever produced for a clip whose audio was actually classified. No
+    track, nothing audible, or a classifier that could not run are all
+    ``None`` from :meth:`AudioTagger.tag` instead — they differ in why,
+    which the log says, but not in what any caller should then do.
+    """
 
     #: (label, confidence) pairs, most confident first, already filtered.
     labels: list[tuple[str, float]] = field(default_factory=list)
-    #: True when the clip has an audio track that carries no signal.
-    silent: bool = False
 
     @property
     def any_tags(self) -> bool:
@@ -185,12 +206,16 @@ class AudioTags:
 
 
 def is_relevant_label(label: str) -> bool:
-    """True when *label* names a sound worth putting in front of the AI."""
-    lowered = label.lower()
-    return any(
-        re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", lowered)
-        for word in _RELEVANT_KEYWORDS
-    )
+    """True when *label* names a sound worth putting in front of the AI.
+
+    The matcher itself lives in ``security.sounds`` rather than here:
+    that module has to do the same word-boundary matching to decide which
+    sounds raise an event, and two copies of the same subtle regex is how
+    a fix lands in one of them only. Same reasoning, and the same
+    direction, as ``frame_motion`` taking ``point_in_polygon`` from
+    ``security.geometry``.
+    """
+    return matches_any(label, _RELEVANT_KEYWORDS)
 
 
 def _rms(samples: Any) -> float:
@@ -256,10 +281,22 @@ class AudioTagger:
     download is the expensive part and a clip's worth of audio is not.
     """
 
-    #: AudioSet-trained Audio Spectrogram Transformer. Overridable so a
-    #: smaller or differently-trained checkpoint can be swapped in without
-    #: touching this module; the keyword matching above is deliberately
-    #: tolerant of a different label vocabulary.
+    #: AudioSet-trained Audio Spectrogram Transformer.
+    #:
+    #: Chosen over the higher-scoring alternatives on purpose, checked
+    #: against the Hugging Face hub on 2026-09-21. ``mispeech/ced-base``
+    #: and ``saurabhati/DASS_medium_AudioSet_50.2`` both beat AST's 45.9
+    #: mAP on AudioSet (about 50), and both ship an ``auto_map``, meaning
+    #: they only load under ``trust_remote_code=True`` — arbitrary code
+    #: fetched from the hub and executed inside a home-security add-on
+    #: that can reach the user's clips and their Home Assistant. A few
+    #: points of mAP does not buy that. AST is implemented in
+    #: transformers itself, needs no remote code, and is the most
+    #: downloaded AudioSet tagger by roughly forty times.
+    #:
+    #: Overridable via ``ai_audio_model`` so a user who wants one of those
+    #: (or a smaller checkpoint) can have it; the keyword matching above
+    #: is deliberately tolerant of a different label vocabulary.
     DEFAULT_MODEL_ID = "MIT/ast-finetuned-audioset-10-10-0.4593"
 
     # Empty default means no token configured; it is not a credential.
@@ -271,8 +308,10 @@ class AudioTagger:
         # The in-flight background load, if any -- see _model_ready.
         self._load_task: asyncio.Task[bool] | None = None
         # A permanently-missing dependency would otherwise log the same
-        # warning once per clip forever.
+        # warning once per clip forever; likewise a camera recording a
+        # silent track, which is every clip it records.
         self._load_failure_logged = False
+        self._no_sound_logged = False
 
     def _get_lock(self) -> asyncio.Lock:
         if self._lock is None:
@@ -348,6 +387,27 @@ class AudioTagger:
         self._load_failure_logged = True
         _LOGGER.warning(message, *args, exc_info=exc_info)
 
+    def _note_no_sound(self, clip_path: str) -> None:
+        """Say once that audio analysis is on but the clips carry no sound.
+
+        The likeliest cause is a setting in a different application
+        entirely, so the log has to name it: a user who enables audio
+        analysis and never sees a sound chip has no other way to find out
+        that their camera is recording a silent track.
+        """
+        if self._no_sound_logged:
+            _LOGGER.debug("Audio track in %s carries no audible sound", clip_path)
+            return
+        self._no_sound_logged = True
+        _LOGGER.info(
+            "Audio analysis is enabled, but %s carries no audible sound. A "
+            "camera with audio recording switched off in the Blink app still "
+            "records a silent track, which is indistinguishable from a quiet "
+            "scene and cannot be classified — check that setting if no clip "
+            "ever reports a sound.",
+            clip_path,
+        )
+
     def _model_ready(self) -> bool:
         """Whether the model can classify *right now* -- never waits for it.
 
@@ -422,12 +482,28 @@ class AudioTagger:
             # or the user switched the microphone off in the Blink app.
             _LOGGER.debug("No audio track in %s", clip_path)
             return None
+        # A clean f32le stream is a whole number of 4-byte samples.
+        # ffmpeg killed mid-write, a disk filling up, or a container it
+        # only partly understood can all leave a trailing partial sample,
+        # and frombuffer raises on that rather than truncating -- which
+        # would take the whole clip's analysis down over an optional hint.
+        usable = len(stdout) - (len(stdout) % 4)
+        if usable != len(stdout):
+            _LOGGER.warning(
+                "Audio from %s ended mid-sample (%d bytes); using the %d "
+                "complete samples before it",
+                clip_path,
+                len(stdout),
+                usable // 4,
+            )
+        if usable == 0:
+            return None
         # frombuffer aliases the bytes object, so the result is read-only.
         # It is only ever read here, but the array is handed to torch
         # further down, which warns on (and can refuse) a non-writable
         # buffer -- so the one window that actually leaves this module is
         # copied in tag(), not the whole track.
-        return np.frombuffer(stdout, dtype=np.float32)
+        return np.frombuffer(stdout[:usable], dtype=np.float32)
 
     def _classify_sync(self, samples: Any) -> list[tuple[str, float]]:
         results = self._pipe(
@@ -462,14 +538,27 @@ class AudioTagger:
                 clip_path,
             )
             return None
+        except Exception:
+            # The stage boundary. vision/pipeline.py deliberately wraps
+            # nothing -- each stage contains its own failures, the way
+            # depth and contact do -- so anything that escapes here would
+            # fail a perfectly analyzable clip over an optional hint.
+            # Logged with a traceback because, unlike a missing optional
+            # dependency, reaching this is a defect in our own code.
+            _LOGGER.exception(
+                "Audio analysis failed for %s; analyzing the clip without it",
+                clip_path,
+            )
+            return None
 
     async def _tag(self, clip_path: str) -> AudioTags | None:
         samples = await self.extract_audio(clip_path)
         if samples is None:
             return None
-        if _rms(samples) < _SILENCE_RMS:
-            _LOGGER.debug("Audio track in %s carries no signal", clip_path)
-            return AudioTags(silent=True)
+        window = _loudest_window(samples)
+        if _rms(window) < _SILENCE_RMS:
+            self._note_no_sound(clip_path)
+            return None
         if not self._model_ready():
             _LOGGER.debug("Audio model not loaded yet, skipping %s", clip_path)
             return None
@@ -477,8 +566,9 @@ class AudioTagger:
         async with runtime._cv_slot():
             try:
                 loop = asyncio.get_running_loop()
-                window = _loudest_window(samples).copy()
-                labels = await loop.run_in_executor(None, self._classify_sync, window)
+                labels = await loop.run_in_executor(
+                    None, self._classify_sync, window.copy()
+                )
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.warning("Audio classification failed: %s", exc)
                 return None

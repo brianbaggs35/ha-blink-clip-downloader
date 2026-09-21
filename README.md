@@ -229,10 +229,19 @@ configured, which receives the labels as text. A raised voice outside at 3am is 
 evidence; a readable transcript of your neighbours' conversation is surveillance, and
 this add-on will not produce one.
 
-It never delays a verdict. The model loads in the background on first use, and clips
-analyzed while it downloads are simply analyzed without an audio hint rather than
-waiting for it; the stage also gives up on any clip it cannot finish quickly. Full
-details in [the docs](blink_clip_downloader/DOCS.md#audio-analysis-and-privacy).
+Breaking glass, gunfire and alarms go further than a hint: they become real
+security events, scored and shown on the Security Events tab, and glass or gunfire
+alone is enough to flag a clip **even when nothing at all was visible** — which is
+the point, since a camera cannot see round a corner or in the dark. Everyday sounds
+(speech, footsteps, a dog, a door, a power tool) stay hints and raise nothing.
+
+Nothing is uploaded, so it costs almost nothing. The frames a clip already sends run
+350-425 tokens each; the audio line is 96 tokens of text, and absent entirely when
+nothing was heard. It never delays a verdict either — the model loads in the
+background on first use, and clips analyzed while it downloads are simply analyzed
+without an audio hint rather than waiting for it. A camera with audio recording
+switched off in the Blink app is detected and skipped without troubling the model.
+Full details in [the docs](blink_clip_downloader/DOCS.md#audio-analysis-and-privacy).
 
 ## Cached prompts/tokens
 

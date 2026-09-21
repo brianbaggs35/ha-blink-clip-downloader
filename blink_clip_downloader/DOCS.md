@@ -772,8 +772,8 @@ wrong — which is why the hint tells the model in as many words to treat it as
 weak evidence that has to agree with the frames before it counts for anything.
 And sound carries past what the camera can see, so a clip may be tagged with
 something happening entirely out of frame; the hint says that too. Only sounds
-plausibly relevant to security are passed on at all, and only the three most
-confident of those.
+plausibly relevant to security are passed on at all, above 15% confidence,
+and only the three most confident of those.
 
 **It never delays a verdict.** An audio hint is supporting evidence, so this stage
 is explicitly not allowed to be the reason an analysis is late:
@@ -802,6 +802,79 @@ What it heard is shown back to you: the Library clip modal's AI panel gets a
 **What was heard** row of chips next to the existing **What was detected** ones,
 with the classifier's confidence in each chip's tooltip. That row is also the
 quickest way to confirm the stage is actually running.
+
+#### No audio is ever sent to the AI provider
+
+Worth being explicit about, because the visual half of the pipeline works the
+other way round. Frames are base64-encoded and uploaded to whichever provider
+you configured, and they are what a clip's analysis actually costs — roughly
+350-425 tokens *per frame*, times the frames each clip samples.
+
+Audio is not uploaded at all. The classifier runs on this machine and produces
+at most three short labels, and only those labels go into the prompt, as one
+line of ordinary text. Measured with a real tokenizer, that line is **96
+tokens**, and it is absent entirely when the stage is off or nothing was heard
+— so on a typical clip audio analysis adds under 3% to what the frames already
+cost, and on a quiet clip it adds nothing. When an alarming sound raises a
+security event, its evidence adds a further ~170 tokens to the SECURITY
+EVIDENCE section, which is rare by design.
+
+It also does not disturb prompt caching. The cacheable part of the prompt is
+the static text at the front (see **Prompt caching**); the audio line is
+per-clip evidence and sits with the other per-clip hints after it, so enabling
+this changes nothing about what is cached.
+
+#### Sounds that raise a security event
+
+Most recognized sounds are only a hint — the AI weighs them against the frames
+and that is the end of it. Three are different, and go through the same
+structured pipeline as a tracked person (see **Structured Security Analysis**
+below): they become real `security_events` rows, they score risk, and they
+appear on the Security Events tab.
+
+| Heard | Event | What it does |
+|---|---|---|
+| Breaking glass, shattering, smashing | `glass_break_heard` | Critical. On its own, enough to pass the default `ai_risk_alert_threshold` and flag the clip — **even if nothing at all was visible**. |
+| A gunshot or explosion | `gunshot_heard` | Critical, same as above. |
+| A car alarm, house alarm, smoke detector, siren | `alarm_heard` | Contributes real risk, but deliberately not enough to raise an alert on its own — a passing emergency siren matches it. |
+
+A sound needs **50% confidence** to become one of these, against the 15% it
+needs merely to be mentioned to the AI. The gap is the point: a hint is
+something the model weighs against the frames, while an event moves a risk
+score and can raise an alert by itself.
+
+Everything else the classifier reports — speech, footsteps, a dog, a vehicle, a
+door, a power tool — stays a hint and raises nothing. The test each of the
+three above passes is that an ordinary household does not produce it on a
+normal day; an event that fires daily is noise wearing a security label, and a
+power tool means a break-in on one property and a Saturday afternoon on
+another.
+
+Two properties of these events matter more than the weights:
+
+- **They fire with nothing in frame.** Requiring a tracked subject would have
+  made audio useless for the cases it exists for: the dark, the far side of the
+  house, and any install that leaves object detection off entirely.
+- **Neither a poor picture nor a familiar face can cancel them.** Evidence
+  quality rates the imagery and the known-person discount rates who was
+  visible; a sound carries from places the camera cannot see, so a window going
+  round the back is not explained by a recognized face in the driveway, and is
+  not less real for the clip being too dark to see. Breaking glass and gunfire
+  are consequently also in the set of events that withholds the
+  face-recognition bypass, for exactly that reason. `alarm_heard` is not.
+
+#### When the camera's microphone is off
+
+The Blink app has a per-camera audio recording setting. With it off, a clip
+either carries no audio track at all or carries a track with nothing audible on
+it, and which of the two depends on the camera. Both are handled, and neither
+costs a model inference: a clip with no track is detected by the same ffmpeg
+pass that would have read the audio, and a track whose loudest ten-second
+window is below −60 dBFS is treated as carrying no sound. (That threshold is
+measured, not guessed — a muted microphone produces an inaudible noise floor
+around −70 dBFS rather than digital silence, which a stricter threshold sailed
+straight past.) The add-on log says so once, naming the Blink setting, so that
+"I turned audio analysis on and never see any sounds" has a findable answer.
 
 ### Structured Security Analysis
 

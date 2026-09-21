@@ -43,6 +43,7 @@ from ..security import (
     SecurityOutcome,
     Severity,
     assess_clip,
+    detect_audio_events,
     summarize_assessment,
 )
 
@@ -605,12 +606,16 @@ class BaseAnalyzer(abc.ABC):
         household member's identity cannot explain.
 
         The identity condition is :meth:`_face_match_is_unambiguous`. The
-        second condition is new and narrow: a recognized person denting the
-        car is still a dented car, so an event in
+        second condition is narrow: an event in
         :data:`~blink_downloader.security.BYPASS_BLOCKING_EVENTS` blocks the
-        bypass outright. That set is deliberately tiny — see its own comment
-        for why ordinary contact with one's own vehicle is *not* in it, and
-        must not be added.
+        bypass outright, because some things a familiar face simply cannot
+        account for. A recognized person denting the car is still a dented
+        car; and a recognized person standing in the driveway is no
+        evidence at all about the window heard breaking at the back of the
+        house, because sound carries from places the camera cannot see.
+        That set is deliberately tiny — see its own comment for why
+        ordinary contact with one's own vehicle, and every everyday sound,
+        are *not* in it and must not be added.
         """
         if not cls._face_match_is_unambiguous(vision_hints):
             return False
@@ -1392,8 +1397,27 @@ class BaseAnalyzer(abc.ABC):
         """
         if not self._security_events_enabled or vision_hints is None:
             return None
-        tracks = getattr(vision_hints, "tracks", None)
-        if not tracks:
+        # Tracks *or* something actually heard. Requiring tracks meant a
+        # clip with breaking glass on it and nobody in frame produced no
+        # security event at all -- and "nobody in frame" describes the
+        # dark, the far side of the house, and every clip on an install
+        # that leaves object detection off. That is the case the
+        # microphone exists for.
+        #
+        # Deliberately "would these sounds raise an event", not merely
+        # "the audio stage heard something". Assessing a clip with no
+        # tracks and only routine sounds on it concludes nothing, but it
+        # still applies the unusual-hour factor and stores an
+        # evidence-quality score where that same clip previously stored
+        # zero -- so a night clip with a dog barking on it would go from a
+        # risk of 0 to about 7, which is invisible at the default alert
+        # threshold of 75 and is not invisible to someone who set it to 5.
+        # Checking the rule the labels are about to be put through is the
+        # only guard that is exactly as wide as the behaviour it enables.
+        audio = getattr(vision_hints, "audio_tags", None)
+        if not getattr(vision_hints, "tracks", None) and not detect_audio_events(
+            audio.labels if audio else None
+        ):
             return None
         try:
             return self._assess_security_locked(
@@ -1431,7 +1455,11 @@ class BaseAnalyzer(abc.ABC):
         return assess_clip(
             ClipMeasurements(
                 camera=camera,
-                tracks=vision_hints.tracks,
+                # `or []` because a clip can now reach here on audio alone,
+                # and VisionHints.tracks is None until object detection has
+                # run. ClipMeasurements wants a list, and everything
+                # downstream iterates it.
+                tracks=vision_hints.tracks or [],
                 frame_interval=vision_hints.scan_interval or self._frame_interval,
                 frame_count=vision_hints.scan_frame_count,
                 frames_analyzed=frames_analyzed,
@@ -1450,6 +1478,9 @@ class BaseAnalyzer(abc.ABC):
                 is_night=self._is_night(clip_timestamp),
                 approved_person_recognized=self._face_match_is_unambiguous(
                     vision_hints
+                ),
+                audio_labels=(
+                    vision_hints.audio_tags.labels if vision_hints.audio_tags else None
                 ),
             )
         )

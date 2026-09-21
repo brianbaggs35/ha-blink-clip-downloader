@@ -100,6 +100,59 @@ detected** ones — the same one heading and one chip row, so the panel keeps
 its shape. Each chip's tooltip carries the classifier's confidence and says
 again that it is a guess, not a transcript.
 
+**Breaking glass, gunfire and alarms are security events, not just
+hints.** Most recognized sounds only reach the AI as something to weigh
+against the frames. Those three go through the same structured pipeline
+a tracked person does: real `security_events` rows, a scored risk, and a
+place on the Security Events tab. Glass and gunfire are weighted so that
+either one is enough on its own to pass the default risk-alert threshold
+and flag the clip — an alarm is not, because a passing ambulance siren
+matches it.
+
+Two things about them are deliberate and matter more than the weights.
+They fire **with nothing in frame**: requiring a tracked subject, as the
+security layer previously did for everything, would have made audio
+useless for the dark, the far side of the house, and any install that
+leaves object detection off. And neither a poor picture nor a familiar
+face can cancel them — evidence quality rates the imagery and the
+known-person discount rates who was visible, but a sound carries from
+places the camera cannot see, so a window going round the back is not
+explained by a recognized face in the driveway and is not less real for
+the clip being too dark to see. Glass and gunfire therefore also join
+the small set of events that withholds the face-recognition bypass, on
+the same test the existing entry passes: not something an ordinary
+household produces on a normal day. Speech, footsteps, a dog, a vehicle,
+a door and a power tool all stay hints for that reason — an event that
+fires daily is noise wearing a security label. A clip carrying only those
+leaves the risk score exactly where it was before this release: the
+assessment is skipped entirely rather than run to conclude nothing, which
+otherwise nudged a quiet night clip from a risk of 0 to about 7 — nothing
+at the default alert threshold of 75, and not nothing to anyone who set it
+lower.
+
+**A camera with audio recording switched off in the Blink app is handled
+properly.** Such a clip either carries no audio track or carries one with
+nothing audible on it, and which depends on the camera. Both now
+short-circuit before the model runs. The threshold for "nothing audible"
+was measured rather than assumed: a muted microphone produces an
+inaudible noise floor around −70 dBFS rather than digital silence, which
+the original −80 dBFS gate went straight past, so every such clip was
+paying for an inference to be told it had heard a room. It is also
+applied to the ten-second window that would actually be classified rather
+than to the whole track — a two-second sound in a sixty-second clip is
+diluted several-fold by the silence around it, and gating on the average
+would have discarded exactly the short quiet events worth hearing. The
+log says so once, naming the Blink setting, so "I turned this on and
+never see any sounds" has a findable answer.
+
+**No audio is ever sent to an AI provider, and the token cost is
+negligible.** Frames are uploaded and are what a clip costs — 350-425
+tokens each, times the frames sampled. The classifier runs here, and only
+its labels travel, as one line of text measured at 96 tokens: under 3% of
+what a typical clip's frames already cost, and zero when nothing was
+heard. It does not disturb prompt caching either, sitting with the other
+per-clip evidence after the static prefix that gets cached.
+
 Crucially, none of this delays a verdict. An audio hint is supporting
 evidence, so the stage is not allowed to be the reason an analysis is late:
 the model's first-use download (a few hundred megabytes) runs as a

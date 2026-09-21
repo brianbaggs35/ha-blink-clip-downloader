@@ -126,11 +126,29 @@ architecture.
   - `analysis_queue.py` — async queue that feeds clips to the analyzer.
   - `security/` — the structured security layer (`events.py`, `tracks.py`,
     `geometry.py`, `zones`/`assets.py`, `vehicles.py`, `detector.py`,
-    `scoring.py`, `evidence.py`, `narrative.py`, `pipeline.py`). Turns
+    `sounds.py`, `scoring.py`, `evidence.py`, `narrative.py`,
+    `pipeline.py`). Turns
     `vision/`'s per-frame boxes into typed `ObjectTrack`s, deterministic
     `SecurityEvent`s, a 0-100 risk score and an evidence-quality score, and
     renders them as prompt text the AI provider verifies rather than
-    re-derives. **Imports nothing from `vision/` and no heavy optional
+    re-derives.
+    `sounds.py` is the one non-geometric source: it turns the optional
+    audio stage's `(label, confidence)` pairs into the three
+    heard-not-seen events (`AUDIO_EVENTS`), and the rules around it are
+    load-bearing rather than incidental. A heard event is **not damped by
+    evidence quality and not offset by the known-person discount** —
+    both of those measure the *picture*, and a sound carries from places
+    the camera cannot see, so damping by them would mute audio exactly
+    when it is the only witness (a dark clip, or nothing in frame). Only
+    sounds with a near-zero routine-household rate raise an event at all;
+    speech, footsteps, a dog, a car, a door and a power tool stay hints,
+    because an event that fires daily is noise wearing a security label.
+    That same test is why `GLASS_BREAK_HEARD`/`GUNSHOT_HEARD` are in
+    `BYPASS_BLOCKING_EVENTS` and `ALARM_HEARD` is not (a passing
+    ambulance matches it). Correspondingly, `_assess_security` runs when
+    there are tracks **or** audio — requiring tracks meant breaking glass
+    with nobody in frame produced no event at all, which is most of the
+    cases audio exists for. **Imports nothing from `vision/` and no heavy optional
     dependency** — every CV stage's output is reduced to plain numbers
     before it arrives, so the whole layer loads and is tested with no
     torch/opencv installed. `vehicles.py` is the one to read first: it
