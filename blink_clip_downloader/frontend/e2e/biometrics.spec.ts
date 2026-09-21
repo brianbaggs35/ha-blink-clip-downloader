@@ -1,7 +1,7 @@
 import { test, expect } from './coverage-fixtures'
 
 // Biometrics self-hides from the nav (AppSidebar.vue) whenever GET
-// /api/ai/faces reports available=false, which vision.py's real
+// /api/ai/faces reports available=false, which vision/runtime.py's real
 // is_face_recognition_available() genuinely does in this lightweight test
 // environment (facenet_pytorch is an optional CV-pipeline extra, not
 // installed here). standalone_server.py patches that one check to True so

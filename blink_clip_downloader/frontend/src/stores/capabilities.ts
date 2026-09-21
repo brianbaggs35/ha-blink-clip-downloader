@@ -8,7 +8,7 @@ import { defineStore } from 'pinia'
  *  the initial fetch is still in flight. */
 export const useCapabilitiesStore = defineStore('capabilities', {
   state: () => ({
-    /** Mirrors GET /api/ai/faces' `available` field (vision.py's
+    /** Mirrors GET /api/ai/faces' `available` field (vision/runtime.py's
      *  is_face_recognition_available()) — false if the facenet_pytorch
      *  package is missing *or* the CPU can't safely run it (e.g. a
      *  Raspberry Pi 4's Cortex-A72). Deliberately read from the faces

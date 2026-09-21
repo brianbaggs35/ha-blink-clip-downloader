@@ -9,7 +9,7 @@ asks for the judgement — including explicit permission to contradict what
 the code computed.
 
 Kept in this package rather than in the analyzer's own pile of prompt
-segments for the same reason ``vision.py`` renders its own hints: the text
+segments for the same reason the ``vision`` package renders its own hints: the text
 and the data it describes should change together.
 """
 

@@ -73,7 +73,7 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 # TORCH_HOME / HF_HOME: without these, torch.hub (facenet-pytorch's
 # InceptionResnetV1) and the transformers/huggingface_hub library (used by
-# both DepthEstimator and ContactSegmenter in vision.py) each cache their
+# both DepthEstimator and ContactSegmenter in the vision package) each cache their
 # one-time pretrained-weight downloads under $HOME/.cache by default —
 # $HOME here is /root, which is ordinary container filesystem, not the
 # /data volume. That cache is lost every time the container is recreated
@@ -84,7 +84,7 @@ ENV PIP_BREAK_SYSTEM_PACKAGES=1
 # every single update. Redirecting both into /data makes the download
 # genuinely one-time, matching the persistence already given to moondream's
 # own downloaded packages (see __main__.py's /data/moondream_packages
-# handling) and to Ultralytics' YOLO weights (see vision.py's
+# handling) and to Ultralytics' YOLO weights (see vision/runtime.py's
 # ObjectDetector, which resolves its model filename against this same
 # directory for the same reason — YOLO doesn't consult either of these
 # env vars, it downloads to whatever path it's given).
@@ -167,13 +167,13 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
 # Optional: computer-vision enhancement pipeline (object detection/tracking,
-# depth estimation, contact segmentation, face recognition — see vision.py
+# depth estimation, contact segmentation, face recognition — see the vision package
 # and the ai_enhanced_detection_enabled/ai_face_recognition_enabled config
 # options, both off by default). These packages are large (order of 1-2 GB combined,
 # mostly torch itself) and are installed unconditionally on both
 # architectures so the config toggles work out of the box, but nothing in
 # this block is imported or loaded into memory unless a feature is actually
-# enabled — see vision.py's lazy-import pattern.
+# enabled — see the vision package's lazy-import pattern.
 #
 # torch is installed from PyTorch's dedicated CPU-only wheel index first, as
 # a separate step, per PyTorch's own install guidance — the default PyPI
@@ -208,7 +208,7 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
 # any reason (network hiccup, a wheel temporarily missing for one
 # architecture, disk pressure on an emulated aarch64 CI runner, etc.) the
 # add-on still builds and runs — the affected config toggles simply report
-# themselves unavailable at runtime (see vision.py's is_*_available() checks).
+# themselves unavailable at runtime (see vision/runtime.py's availability checks).
 RUN ( \
         pip3 install --no-cache-dir "torch>=2.14,<3" "torchvision>=0.29,<1" \
             --index-url https://download.pytorch.org/whl/cpu \
@@ -260,7 +260,7 @@ RUN ( \
             # ultralytics` doesn't list it) — it's an optional extra
             # ultralytics only imports inside YOLO.track() (the Hungarian-
             # algorithm assignment step ByteTrack/BoT-SORT need), which is
-            # exactly the method ObjectDetector in vision.py uses. Without
+            # exactly the method ObjectDetector in vision/detection.py uses. Without
             # it installed ahead of time, the first real .track() call
             # triggers ultralytics' own "AutoUpdate" fallback — a live pip
             # install from inside the running container, verified by hand
@@ -286,7 +286,7 @@ RUN ( \
             # trust_remote_code) that the 4.x line never fixed — found via
             # a trivy image scan. Verified by hand before bumping: the pinned
             # depth-estimation model (VisionPipeline._DepthEstimator in
-            # vision.py, "depth-anything/Depth-Anything-V2-Small-hf") loads
+            # vision/depth.py, "depth-anything/Depth-Anything-V2-Small-hf") loads
             # and runs identically under transformers 5.14 in an isolated
             # venv, producing the same predicted_depth/depth pipeline()
             # output shape this code already expects — the 5.x line's
