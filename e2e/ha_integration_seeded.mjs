@@ -40,12 +40,16 @@ const issues = [];
 const browser = await chromium.launch();
 const page = await browser.newPage();
 
-// Page errors only, deliberately not failed requests: the seeded rows
-// describe clips whose files do not exist on disk (they never came from
-// Blink), so their thumbnail and stream requests legitimately 404 here.
+// Page errors only, deliberately not failed requests. `seed-media` gives
+// three of the seeded clips real files, but the rest deliberately have
+// none: nothing in the app creates a clip, and an *archived* clip's file
+// is genuinely gone once it is in the zip. Their thumbnails therefore 404
+// here and that is the faithful state, not a fault.
 // ha_integration_smoke.mjs does collect failed requests, and runs *before*
 // seeding, when the library is empty and nothing requests media at all --
-// so that check stays strict and this one stays honest.
+// so that check stays strict and this one stays honest. The clips that do
+// have files are asserted on directly by checkMediaThroughIngress below,
+// which is stricter than a blanket "nothing 404'd" ever was.
 page.on("pageerror", (err) => issues.push(`page error: ${err.message}`));
 
 try {
@@ -62,6 +66,7 @@ try {
   if (!frame) throw new Error("no ingress iframe appeared");
 
   await checkLibraryListsSeededClips(frame, issues);
+  await starAClipThroughIngress(frame, issues);
   await checkLibraryFilterActuallyFilters(frame, issues);
   await checkClipModalOpens(frame, issues);
   await checkSecurityTimelineHasEvents(frame, issues);
@@ -69,6 +74,7 @@ try {
   await checkStatusShowsBatteries(frame, issues);
   await checkAiUsageReflectsSeededTokens(frame, issues);
   await checkSeededDataRoundTripsThroughIngress(page, issues);
+  await checkMediaThroughIngress(page, issues);
 
   if (issues.length > 0) {
     await page
@@ -376,5 +382,165 @@ async function checkSeededDataRoundTripsThroughIngress(page, issuesList) {
     console.log("Seeded analysis, detections and security events round-trip through ingress.");
   } catch (err) {
     issuesList.push(`could not fetch seeded data through ingress: ${err.message}`);
+  }
+}
+
+/**
+ * Binary and streamed responses through ingress, including HTTP Range.
+ *
+ * Everything else this script asks ingress to carry is JSON or HTML. The
+ * app's media goes through a different path in Home Assistant's proxy:
+ * `web.FileResponse` answers with sendfile(), advertises `Accept-Ranges`,
+ * and serves 206 Partial Content for a `Range` header — which is exactly
+ * what Video.js issues to seek within a clip. If ingress dropped the
+ * Range header, or answered 200 with the whole file, seeking would break
+ * for every user while the clip still appeared to play, and nothing else
+ * in this repo would see it: frontend/e2e/ talks to the standalone server
+ * with no proxy in front of it, and e2e/smoke.mjs hits the bare port.
+ *
+ * Needs the files ha_integration_setup.sh's `seed-media` writes — the
+ * database rows alone leave every one of these endpoints at 404.
+ */
+async function checkMediaThroughIngress(page, issuesList) {
+  const CLIP = "ci-seed-1";
+  const RANGE_BYTES = 1024;
+  try {
+    const frameUrl = page.frames().find((f) => f.url().includes("hassio_ingress"))?.url();
+    if (!frameUrl) {
+      issuesList.push("no ingress iframe URL found to fetch media against");
+      return;
+    }
+    const base = new URL(frameUrl).pathname.replace(/\/$/, "");
+
+    const probe = await page.evaluate(
+      async ({ base, clip, rangeBytes }) => {
+        const read = async (path, init) => {
+          const res = await fetch(`${base}${path}`, { credentials: "include", ...init });
+          const buf = await res.arrayBuffer();
+          return {
+            status: res.status,
+            type: res.headers.get("content-type") || "",
+            acceptRanges: res.headers.get("accept-ranges") || "",
+            contentRange: res.headers.get("content-range") || "",
+            bytes: buf.byteLength,
+            head: Array.from(new Uint8Array(buf).slice(0, 4)),
+          };
+        };
+        return {
+          thumb: await read(`/api/clips/${clip}/thumb`),
+          full: await read(`/api/clips/${clip}/stream`),
+          ranged: await read(`/api/clips/${clip}/stream`, {
+            headers: { Range: `bytes=0-${rangeBytes - 1}` },
+          }),
+        };
+      },
+      { base, clip: CLIP, rangeBytes: RANGE_BYTES },
+    );
+
+    const { thumb, full, ranged } = probe;
+
+    if (thumb.status !== 200) {
+      issuesList.push(`thumbnail through ingress returned ${thumb.status}, not 200`);
+    } else {
+      if (!thumb.type.startsWith("image/")) {
+        issuesList.push(`thumbnail through ingress had content-type "${thumb.type}"`);
+      }
+      // JPEG magic number, so this is a real decoded image rather than an
+      // error page that happened to arrive with a 200.
+      if (thumb.head[0] !== 0xff || thumb.head[1] !== 0xd8) {
+        issuesList.push(`thumbnail through ingress was not JPEG data (starts ${thumb.head})`);
+      }
+    }
+
+    if (full.status !== 200) {
+      issuesList.push(`clip stream through ingress returned ${full.status}, not 200`);
+      return;
+    }
+    if (full.bytes < 1024) {
+      issuesList.push(`clip stream through ingress returned only ${full.bytes} bytes`);
+    }
+    if (full.acceptRanges !== "bytes") {
+      issuesList.push(
+        `clip stream through ingress advertised accept-ranges "${full.acceptRanges}", ` +
+          `so a browser will not attempt to seek`,
+      );
+    }
+
+    // The assertion this function exists for.
+    if (ranged.status !== 206) {
+      issuesList.push(
+        `a Range request through ingress returned ${ranged.status}, not 206 — ` +
+          `ingress is not passing Range through, so video seeking is broken`,
+      );
+    } else {
+      if (ranged.bytes !== RANGE_BYTES) {
+        issuesList.push(
+          `a Range request for ${RANGE_BYTES} bytes through ingress returned ${ranged.bytes}`,
+        );
+      }
+      const expected = `bytes 0-${RANGE_BYTES - 1}/${full.bytes}`;
+      if (ranged.contentRange !== expected) {
+        issuesList.push(
+          `Range response through ingress had content-range "${ranged.contentRange}", ` +
+            `expected "${expected}"`,
+        );
+      }
+    }
+    console.log(
+      `Media through ingress: thumbnail ${thumb.bytes}B, clip ${full.bytes}B, ` +
+        `range ${ranged.status} ${ranged.bytes}B.`,
+    );
+  } catch (err) {
+    issuesList.push(`could not fetch media through ingress: ${err.message}`);
+  }
+}
+
+/**
+ * A real database write, made the way a user makes it.
+ *
+ * Every other assertion in this pass reads. The only write this job proved
+ * before was a settings file (ha_integration_smoke.mjs's persistence
+ * marker), which lands in /data as JSON — a different mechanism from a row
+ * in the bundled PostgreSQL, going through a different HTTP verb. Ingress
+ * proxies PUT no differently from GET in principle, but "in principle" is
+ * what this whole job exists to stop relying on.
+ *
+ * Paired with ha_integration_setup.sh's `assert-clip-starred`, which reads
+ * the same row back *after* the add-on's container has been recreated. Do
+ * the two together and they prove something neither does alone: a change
+ * someone makes in the UI is still there after an update.
+ *
+ * Runs before the filter check deliberately — that one leaves a filter
+ * applied, and this clip's camera could be filtered out from under it.
+ */
+async function starAClipThroughIngress(frame, issuesList) {
+  const CLIP = "ci-seed-2"; // seeded starred = FALSE, on purpose
+  try {
+    const card = frame.locator(`#page-library .clip-card[data-id="${CLIP}"]`);
+    if ((await card.count()) === 0) {
+      issuesList.push(`${CLIP} is not in the seeded Library to star`);
+      return;
+    }
+    if ((await card.locator(".star-badge").count()) !== 0) {
+      issuesList.push(`${CLIP} was already starred, so starring it proves nothing`);
+      return;
+    }
+
+    await card.click();
+    const modal = frame.locator(".modal-bg.open");
+    await modal.waitFor({ state: "visible", timeout: 10000 });
+    await modal.getByRole("button", { name: /Star/ }).first().click();
+
+    // The grid badge appearing is the app applying the server's answer,
+    // not optimism: the modal emits it after starClip() resolves.
+    await frame
+      .locator(`#page-library .clip-card[data-id="${CLIP}"] .star-badge`)
+      .waitFor({ state: "visible", timeout: 10000 });
+
+    await frame.locator(".modal-bg.open .modal-close").first().click();
+    await modal.waitFor({ state: "hidden", timeout: 10000 });
+    console.log(`Starred ${CLIP} through ingress; the grid picked it up.`);
+  } catch (err) {
+    issuesList.push(`could not star a clip through ingress: ${err.message}`);
   }
 }
