@@ -501,6 +501,29 @@ configuration:
       Welcher Ultralytics-Posen-Checkpoint verwendet wird. "n" (Nano) ist am
       schnellsten und leichtesten und für reine CPU-Hardware empfohlen;
       größere Modelle sind genauer, aber deutlich langsamer.
+  ai_audio_analysis_enabled:
+    name: Audioanalyse aktivieren
+    description: >-
+      Klassifiziert die Geräusche in der Tonspur eines Clips
+      (splitterndes Glas, eine erhobene Stimme, eine Autoalarmanlage,
+      eine Tür, Schritte) und übergibt das Ergebnis der KI als
+      ergänzenden Hinweis. Läuft vollständig lokal auf dem Gerät und
+      klassifiziert ausschließlich Geräusche — Sprache wird niemals
+      transkribiert, und nichts vom Ton verlässt dieses Add-on. Clips von
+      Kameras ohne Mikrofon oder mit abgeschaltetem Mikrofon werden
+      einfach übersprungen. Erfordert die
+      Computer-Vision-Abhängigkeiten und lädt sein Modell bei der
+      ersten Verwendung im Hintergrund herunter -- Clips, die vorher
+      analysiert werden, erhalten einfach keinen Audio-Hinweis,
+      anstatt darauf zu warten. Standardmäßig deaktiviert.
+  ai_audio_model:
+    name: Audioklassifikationsmodell
+    description: >-
+      Optionale Alternative zum Audioklassifikations-Checkpoint der oben
+      genannten Option. Leer lassen, um das erprobte Standardmodell zu
+      verwenden (ein auf AudioSet feinabgestimmter Audio Spectrogram
+      Transformer). Wird bei der ersten Verwendung automatisch
+      heruntergeladen.
   ai_security_events_enabled:
     name: Strukturierte Sicherheitsanalyse aktivieren
     description: >-

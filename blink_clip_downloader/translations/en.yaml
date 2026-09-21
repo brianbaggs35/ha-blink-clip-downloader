@@ -427,6 +427,26 @@ configuration:
       the YOLO11 pose models remain selectable. "n" (nano) is
       fastest and lightest, and the recommended starting point on CPU-only
       hardware; larger sizes are more accurate and much slower.
+  ai_audio_analysis_enabled:
+    name: Enable Audio Analysis
+    description: >-
+      Classify the sounds in a clip's own audio track (breaking glass, a
+      raised voice, a car alarm, a door, footsteps) and pass what it finds
+      to the AI as supporting evidence. Runs entirely on-device and only
+      ever classifies sound — speech is never transcribed and nothing about
+      the audio leaves this add-on. Clips from a camera with no microphone,
+      or with it switched off, are simply skipped. Requires the
+      computer-vision dependencies, and downloads its model in the
+      background on first use -- clips analyzed before that finishes
+      simply get no audio hint rather than waiting for it. Off by
+      default.
+  ai_audio_model:
+    name: Audio Classification Model
+    description: >-
+      Optional override for the audio-classification checkpoint the option
+      above runs. Leave blank to use the tested default (an Audio
+      Spectrogram Transformer fine-tuned on AudioSet). Downloaded
+      automatically on first use.
   ai_security_events_enabled:
     name: Enable Structured Security Analysis
     description: >-

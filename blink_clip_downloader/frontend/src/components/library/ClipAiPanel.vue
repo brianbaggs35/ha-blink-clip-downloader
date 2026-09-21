@@ -14,7 +14,13 @@ import {
   submitFaceRecognitionFeedback,
   submitFeedback,
 } from '../../api/ai'
-import type { AnalysisResultDict, DetectedObjectSummary, FaceFeedbackReportType, Feedback } from '../../api/types'
+import type {
+  AnalysisResultDict,
+  AudioLabel,
+  DetectedObjectSummary,
+  FaceFeedbackReportType,
+  Feedback,
+} from '../../api/types'
 import {
   evidenceLabel,
   formatEventType,
@@ -261,6 +267,70 @@ function detectionTitle(obj: DetectedObjectSummary): string {
   return parts.join(' · ')
 }
 
+// Sound classes the audio stage can report, grouped the way
+// vision/audio.py's _RELEVANT_KEYWORDS groups them. Matched as substrings
+// because AudioSet spells a class several ways ("Gunshot, gunfire",
+// "Walk, footsteps", "Smoke detector, smoke alarm") and the exact strings
+// differ between checkpoints — the same reason the backend filters by
+// keyword rather than an exact allow-list.
+const AUDIO_EMOJI: [string, string][] = [
+  ['gunshot', '⚠️'],
+  ['gunfire', '⚠️'],
+  ['explosion', '⚠️'],
+  ['alarm', '🚨'],
+  ['siren', '🚨'],
+  ['smoke detector', '🚨'],
+  ['fire', '🔥'],
+  ['glass', '💥'],
+  ['shatter', '💥'],
+  ['smash', '💥'],
+  ['break', '💥'],
+  ['doorbell', '🔔'],
+  ['knock', '🔔'],
+  ['door', '🚪'],
+  ['slam', '🚪'],
+  ['shout', '🗣️'],
+  ['yell', '🗣️'],
+  ['scream', '🗣️'],
+  ['crying', '🗣️'],
+  ['whisper', '🗣️'],
+  ['speech', '🗣️'],
+  ['conversation', '🗣️'],
+  ['footstep', '👣'],
+  ['walk', '👣'],
+  ['run', '👣'],
+  ['chainsaw', '🛠️'],
+  ['drill', '🛠️'],
+  ['saw', '🛠️'],
+  ['hammer', '🛠️'],
+  ['tool', '🛠️'],
+  ['crowbar', '🛠️'],
+  ['pry', '🛠️'],
+  ['horn', '📢'],
+  ['skid', '🚗'],
+  ['engine', '🚗'],
+  ['motorcycle', '🏍️'],
+  ['truck', '🚚'],
+  ['vehicle', '🚗'],
+  ['car', '🚗'],
+  ['bark', '🐕'],
+  ['dog', '🐕'],
+  ['cat', '🐈'],
+  ['animal', '🐾'],
+]
+
+function audioEmoji(label: string): string {
+  const lower = label.toLowerCase()
+  return AUDIO_EMOJI.find(([key]) => lower.includes(key))?.[1] ?? '🔊'
+}
+
+/** AudioSet names several classes as a list of synonyms ("Gunshot,
+ *  gunfire"). The chip shows the first; the tooltip keeps all of it. */
+const audioLabel = (sound: AudioLabel) => sound.label.split(',')[0].trim()
+
+const audioTitle = (sound: AudioLabel) =>
+  `${sound.label} · ${Math.round(sound.score * 100)}% confidence · a sound classifier's guess, not a transcript`
+
 const faceReportNameOptions = computed(() => [
   { label: 'Not sure / someone else', value: '' },
   ...enrolledNames.value.map((n) => ({ label: n, value: n })),
@@ -323,6 +393,27 @@ const faceReportNameOptions = computed(() => [
                 :label="`${detectionEmoji(obj.label)} ${detectionLabel(obj)}`"
                 class="detection-chip"
                 :title="detectionTitle(obj)"
+              />
+            </div>
+          </section>
+
+          <!-- Deliberately the same shape as "What was detected" above:
+               one heading, one row of chips, nothing else. The privacy
+               fact rides on the heading line rather than as its own
+               paragraph -- it has to be visible where someone reads
+               "Speech", but it must not cost a line under every clip. -->
+          <section v-if="result.audio_labels?.length" class="ai-section" data-testid="ai-audio">
+            <div class="ai-section-head">
+              <h4 class="ai-section-title">What was heard</h4>
+              <span class="ai-section-note">sounds only · never transcribed</span>
+            </div>
+            <div class="ai-chips">
+              <Chip
+                v-for="sound in result.audio_labels"
+                :key="sound.label"
+                :label="`${audioEmoji(sound.label)} ${audioLabel(sound)}`"
+                class="detection-chip"
+                :title="audioTitle(sound)"
               />
             </div>
           </section>
@@ -611,6 +702,11 @@ const faceReportNameOptions = computed(() => [
   display: flex;
   gap: 0.3rem;
   flex-wrap: wrap;
+}
+.ai-section-note {
+  font-size: 0.68rem;
+  color: var(--muted);
+  letter-spacing: 0.02em;
 }
 
 /* ── Security evidence ──────────────────────────────────── */

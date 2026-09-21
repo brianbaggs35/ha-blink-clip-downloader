@@ -3655,6 +3655,55 @@ async def test_ai_clip_result_found(client: TestClient, db: ClipDatabase) -> Non
     assert data["clip_id"] == "ar1"
 
 
+async def test_ai_clip_result_parses_audio_labels(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Stored as JSON text in one column; the modal wants a real list."""
+    await db.add_clip(_make_clip("aud1"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "aud1",
+            "camera": "Front Door",
+            "model": "llava",
+            "is_suspicious": False,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "audio_labels": '[{"label": "Shout", "score": 0.61}]',
+        }
+    )
+    data = await (await client.get("/api/ai/results/aud1")).json()
+    assert data["audio_labels"] == [{"label": "Shout", "score": 0.61}]
+
+
+@pytest.mark.parametrize(
+    "stored",
+    ["", "not json at all", '{"label": "Shout"}', "[1, 2, 3]", '[{"score": 0.4}]'],
+    ids=["absent", "unparseable", "not-a-list", "not-objects", "no-label"],
+)
+async def test_ai_clip_result_survives_unusable_audio_labels(
+    client: TestClient, db: ClipDatabase, stored: str
+) -> None:
+    """These are decorative chips. A row written by a future version, or
+    corrupted by hand, must not stop the rest of a clip's analysis from
+    loading in the modal."""
+    await db.add_clip(_make_clip("aud2"))
+    await db.add_analysis_result(
+        {
+            "clip_id": "aud2",
+            "camera": "Front Door",
+            "model": "llava",
+            "summary": "still here",
+            "is_suspicious": False,
+            "analyzed_at": "2024-06-01T09:00:00+00:00",
+            "audio_labels": stored,
+        }
+    )
+    resp = await client.get("/api/ai/results/aud2")
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["audio_labels"] == []
+    assert data["summary"] == "still here"
+
+
 async def test_ai_clip_result_includes_detected_objects_summary(
     client: TestClient, db: ClipDatabase
 ) -> None:

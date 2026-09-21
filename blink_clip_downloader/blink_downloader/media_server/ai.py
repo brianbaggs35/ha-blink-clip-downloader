@@ -9,6 +9,7 @@ local Moondream package.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import platform
 import sys
@@ -34,6 +35,26 @@ _MOONDREAM_PACKAGES_DIR = Path("/data/moondream_packages")
 # MoondreamLocalAnalyzer._load_model_sync for the version-drift incident this
 # guards against.
 _MOONDREAM_PIP_SPEC = "moondream>=1.3,<2"
+
+
+def _parse_audio_labels(raw: object) -> list[dict[str, object]]:
+    """The stored audio_labels JSON, as a list the clip modal can render.
+
+    Anything unexpected becomes an empty list rather than an error: these
+    are decorative chips, and a row written by a future version (or
+    truncated by hand) must not stop the rest of a clip's analysis from
+    loading.
+    """
+    if not isinstance(raw, str) or not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        _LOGGER.debug("Ignoring unparseable audio_labels: %r", raw)
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict) and item.get("label")]
 
 
 def _moondream_arch_supported() -> bool:
@@ -181,6 +202,7 @@ class AiRoutesMixin(_MediaServerBase):
             # feature was previously on must not leak its stored prompt_text
             # once the admin has turned this back off.
             result.pop("prompt_text", None)
+        result["audio_labels"] = _parse_audio_labels(result.get("audio_labels"))
         result["detected_objects"] = await self._db.get_detected_objects_summary(
             clip_id
         )

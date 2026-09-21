@@ -64,7 +64,13 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     severity                     TEXT    DEFAULT 'routine',
     event_type                   TEXT    DEFAULT '',
     evidence_quality             DOUBLE PRECISION DEFAULT 0.0,
-    risk_override_applied        BOOLEAN DEFAULT FALSE
+    risk_override_applied        BOOLEAN DEFAULT FALSE,
+    -- JSON array of {label, score} from the optional audio stage (see
+    -- vision/audio.py). A string rather than its own table because
+    -- there are at most three per clip and nothing ever queries them
+    -- individually -- unlike detected_objects, which the security
+    -- layer joins against per box.
+    audio_labels                 TEXT    DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_clip   ON analysis_results (clip_id);
 CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspicious);
@@ -340,6 +346,7 @@ ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS severity TEXT DEFAULT 'rou
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS event_type TEXT DEFAULT '';
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS evidence_quality DOUBLE PRECISION DEFAULT 0.0;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS risk_override_applied BOOLEAN DEFAULT FALSE;
+ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS audio_labels TEXT DEFAULT '';
 ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS offset_seconds DOUBLE PRECISION DEFAULT 0.0;
 ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_width DOUBLE PRECISION DEFAULT 0.0;
 ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_height DOUBLE PRECISION DEFAULT 0.0;

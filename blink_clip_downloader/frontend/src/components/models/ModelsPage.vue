@@ -181,12 +181,13 @@ const PROVIDERS: ProviderInfo[] = [
     <h3 style="margin-bottom: 0.75rem">🧭 Computer-vision pipeline &amp; face recognition (hardware note)</h3>
     <p style="font-size: 0.85rem; color: var(--muted); line-height: 1.55; max-width: 70ch">
       The optional enhanced-detection pipeline (object detection/tracking, depth estimation, contact segmentation — the
-      Enable Enhanced Detection &amp; Tracking option) and local face recognition (the Enable Local Face Recognition
-      option) both require a CPU with ARMv8.1+ LSE atomic instructions on 64-bit ARM hosts — present on Raspberry Pi 5
-      (Cortex-A76) and newer, absent on Raspberry Pi 4 and older (Cortex-A72). Every x86_64/amd64 host is fully
-      supported regardless of CPU age. This is detected automatically at startup; on unsupported hardware the pipeline
-      reports itself unavailable rather than crashing, and the Biometrics tab and Library's "Recognized" filter are
-      hidden automatically rather than shown non-functional.
+      Enable Enhanced Detection &amp; Tracking option), local face recognition (the Enable Local Face Recognition
+      option) and sound classification (the Enable Audio Analysis option) all require a CPU with ARMv8.1+ LSE atomic
+      instructions on 64-bit ARM hosts — present on Raspberry Pi 5 (Cortex-A76) and newer, absent on Raspberry Pi 4 and
+      older (Cortex-A72). Every x86_64/amd64 host is fully supported regardless of CPU age. This is detected
+      automatically at startup; on unsupported hardware the pipeline reports itself unavailable rather than crashing,
+      and the Biometrics tab and Library's "Recognized" filter are hidden automatically rather than shown
+      non-functional.
     </p>
   </div>
 </template>

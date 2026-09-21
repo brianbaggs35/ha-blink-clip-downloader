@@ -51,6 +51,7 @@ it is reaching into.
 
 from __future__ import annotations
 
+from .audio import AudioTagger, AudioTags
 from .contact import ContactResult, ContactSegmenter
 from .depth import DepthComparison, DepthEstimator
 from .detection import DetectedObject, ObjectDetector
@@ -85,6 +86,8 @@ __all__ = [
     "SOURCE_FACE_RECOGNITION",
     "SOURCE_OBJECT_DETECTION",
     "SOURCE_POSE_ESTIMATION",
+    "AudioTagger",
+    "AudioTags",
     "CPUIncompatibleError",
     "ContactResult",
     "ContactSegmenter",

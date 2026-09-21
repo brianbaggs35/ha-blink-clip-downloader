@@ -350,6 +350,20 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # yolo11n/s/m/l/x-pose.pt remain selectable for anyone who has already
     # downloaded them. Same "n is the CPU-friendly starting point" advice.
     ai_pose_model: str = "yolo26n-pose.pt"
+    # Sound-event classification of the clip's own audio track. The only
+    # stage that looks at anything other than pixels, and worth its own
+    # toggle for that reason as much as for the model download: a camera
+    # cannot see breaking glass around a corner, a raised voice out of
+    # frame, or a car door at 3am, and all three are audible. Classifies
+    # sounds only — it never transcribes speech, so what anyone said stays
+    # unread, and nothing about the audio leaves the add-on. Off by
+    # default. Does not require Enhanced Detection: it shares none of that
+    # pipeline's stages.
+    ai_audio_analysis_enabled: bool = False
+    # Audio Spectrogram Transformer checkpoint. Empty means the AudioSet-
+    # trained default in vision/audio.py; overridable so a smaller or
+    # differently-trained model can be swapped in without a code change.
+    ai_audio_model: str = ""
     # Hugging Face Token (HF_TOKEN) for authenticated model downloads and
     # higher rate limits. Optional; get one from https://huggingface.co/settings/tokens.
     hf_token: str = ""
@@ -750,6 +764,8 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
         ),
         "ai_pose_model": str(data.get("ai_pose_model", "") or "").strip()
         or "yolo26n-pose.pt",
+        "ai_audio_analysis_enabled": bool(data.get("ai_audio_analysis_enabled", False)),
+        "ai_audio_model": str(data.get("ai_audio_model", "") or "").strip(),
         "hf_token": str(data.get("hf_token", "") or "").strip(),
         "ai_security_events_enabled": bool(
             data.get("ai_security_events_enabled", True)

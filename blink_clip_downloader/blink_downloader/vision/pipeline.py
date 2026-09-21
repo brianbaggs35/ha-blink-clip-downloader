@@ -30,6 +30,7 @@ from ..security import (
 )
 from ..security.vehicles import VehicleSignature
 from . import imaging
+from .audio import AudioTagger, AudioTags, build_audio_hint
 from .contact import ContactSegmenter, _build_contact_hint
 from .depth import DepthEstimator, _build_depth_hint
 from .detection import (
@@ -79,6 +80,14 @@ class VisionConfig:
     #: will never use.
     pose_estimation_enabled: bool = False
     pose_model: str = "yolo26n-pose.pt"
+    #: Sound-event classification of the clip's audio track. Its own toggle
+    #: for the same reason pose has one — a separate model download — and
+    #: because it is the one stage that looks at something other than
+    #: pixels, so a user may want the picture analysed and the sound left
+    #: alone. It classifies sounds and never transcribes speech; see
+    #: :mod:`.audio`.
+    audio_analysis_enabled: bool = False
+    audio_model: str = ""
     hf_token: str = ""
     #: How many evenly-spaced frames the temporal scan runs detection over
     #: (see :func:`imaging._select_scan_frames`). This is the single knob that trades
@@ -124,6 +133,12 @@ class VisionHints:
     contact_hint: str | None = None
     recognized_resident_hint: str | None = None
     posture_hint: str | None = None
+    audio_hint: str | None = None
+    # The sounds behind audio_hint above, kept structured for the same
+    # reason detections are: the clip modal shows a user what evidence the
+    # analysis actually had, and a rendered prompt string cannot be
+    # un-rendered back into chips.
+    audio_tags: AudioTags | None = None
     face_recognition: FaceRecognitionResult | None = None
     # Raw per-object detections from ObjectDetector, kept alongside the
     # rendered detection_hint text above so callers (the analyzer) can
@@ -192,6 +207,7 @@ class VisionPipeline:
         self._segmenter = ContactSegmenter(config.hf_token)
         self._pose = PoseEstimator(config.pose_model)
         self._face_embedder = FaceEmbedder()
+        self._audio = AudioTagger(config.audio_model, config.hf_token)
 
     async def process_clip(
         self,
@@ -203,6 +219,7 @@ class VisionPipeline:
         camera: str = "",
         frame_interval: float = 2.0,
         vehicle_signature: VehicleSignature | None = None,
+        clip_path: str = "",
     ) -> VisionHints:
         """Run every enabled stage and return this clip's hints and evidence.
 
@@ -257,6 +274,24 @@ class VisionPipeline:
             hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
             hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
             hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
+
+        # The only stage that reads the file rather than the frames, so it
+        # is the only one that needs a path. A clip with no audio track --
+        # the camera's microphone switched off, or a model without one --
+        # simply produces no hint, which is why this cannot be inferred
+        # from the frames the other stages already hold.
+        #
+        # Deliberately *not* recorded in unavailable_sources when it finds
+        # nothing. That list feeds evidence.py's stage-coverage score,
+        # whose denominator (TOTAL_OPTIONAL_SOURCES) counts the four
+        # *visual* stages it was calibrated against. Appending a fifth,
+        # non-visual source would knock 25 points off the coverage of every
+        # clip that simply had nothing audible in it -- which is most of
+        # them -- and would do it only for users who turned audio on.
+        # Silence is not missing evidence about what the camera saw.
+        if self._config.audio_analysis_enabled and clip_path:
+            hints.audio_tags = await self._audio.tag(clip_path)
+            hints.audio_hint = build_audio_hint(hints.audio_tags)
 
         if self._config.face_recognition_enabled and self._db is not None:
             recognizer = FaceRecognizer(self._face_embedder, self._db)

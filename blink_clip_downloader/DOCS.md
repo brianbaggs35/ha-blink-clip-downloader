@@ -706,15 +706,15 @@ activate.
 
 ### Computer-Vision Enhancement Pipeline (optional, heavy)
 
-⚠️ **Resource warning:** both options below require substantially more CPU and RAM
+⚠️ **Resource warning:** the stages below require substantially more CPU and RAM
 than the rest of this add-on, and download large ML models (100MB-800MB+ each,
 cached under `/data` after first use). Comfortable on a Raspberry Pi 5 (8GB) or
-better. Both are off by default, and clip analysis works exactly as it did before
-this section existed with both left disabled — the AI provider
+better. Every one of them is off by default, and clip analysis works exactly as it
+did before this section existed with them all left disabled — the AI provider
 (Ollama/Anthropic/OpenAI/Moondream) still makes every suspicious/not-suspicious
 call; these stages only feed it better evidence.
 
-ℹ️ **Raspberry Pi 4 and older:** PyTorch (which both options below depend on) has
+ℹ️ **Raspberry Pi 4 and older:** PyTorch (which every stage below depends on) has
 long-standing, still-unresolved upstream crash reports (`illegal instruction`, e.g.
 [pytorch/pytorch#176993](https://github.com/pytorch/pytorch/issues/176993)) on the
 Pi 4's Cortex-A72 CPU, which lacks the ARMv8.1 LSE atomic instructions PyTorch's
@@ -737,6 +737,8 @@ you'll see them report unavailable there.
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
 | `ai_pose_estimation_enabled` | `false` | Body-keypoint (pose) estimation for whoever is nearest the protected vehicle, on the one frame the depth and contact stages already examine. Adds three facts a bounding box cannot give: an arm extended toward the vehicle (trying a handle, reaching through a window), an arm raised above shoulder height, and a crouched or bent-over posture. Its own small model, downloaded on first use. |
 | `ai_pose_model` | `yolo26n-pose.pt` | Which Ultralytics pose checkpoint the stage above runs. YOLO26-pose is the current generation, matching the object detector's own default; `yolo11n/s/m/l/x-pose.pt` remain selectable for anyone already using them. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; larger sizes are more accurate and much slower. All output the same 17 COCO keypoints. |
+| `ai_audio_analysis_enabled` | `false` | Sound-event classification of the clip's own audio track (an Audio Spectrogram Transformer fine-tuned on Google's AudioSet, via transformers). Adds an **AUDIO** hint naming what it heard — breaking glass, a raised voice, a car alarm, a door, footsteps, a power tool, a dog — as weak supporting evidence the model has to reconcile with the frames, never as a verdict of its own. It **classifies sound and never transcribes speech**: no words are read, nothing is sent anywhere, and the model runs on the same machine as the add-on (see *Audio analysis and privacy* below). Clips from a camera with no microphone, or with it switched off, produce no hint at all — the stage detects that in the same pass it uses to read the audio, so it costs nothing on installs that have no audio to analyze. Independent of `ai_enhanced_detection_enabled`: this one reads the clip file, not the sampled frames. |
+| `ai_audio_model` | *(blank)* | Optional override for the audio-classification checkpoint the stage above runs. Blank uses the tested default (`MIT/ast-finetuned-audioset-10-10-0.4593`). Any Hugging Face `audio-classification` model works; a checkpoint whose class names don't resemble AudioSet's will mostly be filtered out as irrelevant, so only change this if you know the labels the model emits. |
 | `ai_cv_concurrency` | `1` | How many of these heavy stages may run at once **across every clip being analyzed**. The stages already run one after another within a single clip, so the default only serializes a multi-clip backlog — which would have contended for the same CPU anyway — while stopping four large models from being resident and computing simultaneously. Raise it only on hardware with real spare capacity. |
 
 None of these packages are required to install or run the add-on normally; if a
@@ -748,6 +750,58 @@ runtime and analysis proceeds exactly as if it were disabled.
 place of it — each one produces a bounded, hedged hint appended to the same prompt
 the "SCENE BASELINE" and "ZONE MOTION" hints already use, so the model still judges
 each clip on what it can actually see, with better evidence to work with.
+
+#### Audio analysis and privacy
+
+Audio analysis is deliberately narrower than it could be, and the narrowing is
+the point. The stage answers *what kind of sound was that* — glass, a shout, an
+alarm, a door — and never *what was said*. No speech-to-text model is involved,
+no transcript is produced or stored, and the recognized sound labels are the only
+thing that ever reaches the prompt. A raised voice outside your door at 3am is
+security evidence; a readable transcript of your neighbours' conversation is
+surveillance, and this add-on will not produce one.
+
+The classifier runs locally, on the same machine as the add-on, on CPU. Your
+clips' audio is never uploaded for classification — not to Hugging Face, and not
+to whichever AI provider you configured, which receives the resulting labels as
+text and never the sound itself.
+
+Two further limits are worth knowing before you turn this on. Camera audio is
+low-quality, heavily compressed and usually outdoors, so the classifier is often
+wrong — which is why the hint tells the model in as many words to treat it as
+weak evidence that has to agree with the frames before it counts for anything.
+And sound carries past what the camera can see, so a clip may be tagged with
+something happening entirely out of frame; the hint says that too. Only sounds
+plausibly relevant to security are passed on at all, and only the three most
+confident of those.
+
+**It never delays a verdict.** An audio hint is supporting evidence, so this stage
+is explicitly not allowed to be the reason an analysis is late:
+
+- **The model loads in the background.** The first load downloads a few hundred
+  megabytes. Rather than making the first clip wait for that, the download runs
+  as a background task and the clips analyzed meanwhile are analyzed *without*
+  an audio hint — they are not queued behind it. Once the model is resident,
+  every subsequent clip gets one. Turning the option on therefore looks like
+  "no sound chips for the first clip or two, then sound chips", not "no clips
+  analyzed for ten minutes".
+- **The stage has a hard time budget** (45 seconds, covering the audio decode,
+  waiting for a free compute slot and the classification itself). A healthy
+  decode plus inference is a few seconds and never comes near it; if a stalled
+  or heavily loaded machine does, the clip is analyzed without the hint and the
+  next clip tries again.
+- **It runs after the visual stages**, on the same clip, before the one call to
+  your AI provider — the hint has to be *in* that prompt to affect the verdict,
+  so it is not something that can be batched or deferred and still do its job.
+  (Both OpenAI's and Anthropic's batch APIs are asynchronous with turnarounds
+  measured in hours; they exist to halve the cost of bulk non-urgent work, not
+  to reduce latency, and using one here would make a verdict arrive later, not
+  sooner.)
+
+What it heard is shown back to you: the Library clip modal's AI panel gets a
+**What was heard** row of chips next to the existing **What was detected** ones,
+with the classifier's confidence in each chip's tooltip. That row is also the
+quickest way to confirm the stage is actually running.
 
 ### Structured Security Analysis
 

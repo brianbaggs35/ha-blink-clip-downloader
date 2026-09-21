@@ -490,6 +490,28 @@ configuration:
       Qué punto de control de pose de Ultralytics se ejecuta. "n" (nano) es
       el más rápido y ligero, y el punto de partida recomendado en hardware
       solo-CPU; los tamaños mayores son más precisos y mucho más lentos.
+  ai_audio_analysis_enabled:
+    name: Activar análisis de audio
+    description: >-
+      Clasifica los sonidos de la pista de audio del clip (cristales
+      rotos, una voz alzada, la alarma de un coche, una puerta, pasos) y
+      pasa lo que encuentra a la IA como indicio de apoyo. Se ejecuta por
+      completo en el propio dispositivo y solo clasifica sonidos: el
+      habla nunca se transcribe y nada del audio sale de este add-on. Los
+      clips de cámaras sin micrófono, o con el micrófono desactivado,
+      simplemente se omiten. Requiere las dependencias de visión por
+      computador y descarga su modelo en segundo plano la primera vez
+      -- los clips analizados antes de que termine simplemente no
+      reciben indicio de audio, en lugar de esperarlo. Desactivado
+      por defecto.
+  ai_audio_model:
+    name: Modelo de clasificación de audio
+    description: >-
+      Alternativa opcional al punto de control de clasificación de audio
+      que ejecuta la opción anterior. Déjalo en blanco para usar el
+      modelo predeterminado ya probado (un Audio Spectrogram Transformer
+      ajustado sobre AudioSet). Se descarga automáticamente en el primer
+      uso.
   ai_security_events_enabled:
     name: Activar análisis de seguridad estructurado
     description: >-

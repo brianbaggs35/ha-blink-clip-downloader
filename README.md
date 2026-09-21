@@ -72,7 +72,7 @@ verified via a real build-and-boot check against both architectures.
 |--------------------|--------------------------------------------|-------------|
 | **CPU**            | 2 cores                                     | 4 cores (Raspberry Pi 5 or better) |
 | **RAM**             | 2 GB free                                   | 4 GB+ free — 8 GB total on the host (e.g. Pi 5 8GB) if you'll also enable the optional computer-vision pipeline below |
-| **Disk (add-on)**   | ~4.2 GB for the Docker image alone          | Add 100 MB–800 MB+ if you enable the optional computer-vision pipeline (object detection, depth estimation, face recognition — downloaded once, on first use), plus ~430 MB if you use the local Moondream AI provider |
+| **Disk (add-on)**   | ~4.2 GB for the Docker image alone          | Add 100 MB–800 MB+ if you enable the optional computer-vision pipeline (object detection, depth estimation, face recognition, audio analysis — downloaded once, on first use), plus ~430 MB if you use the local Moondream AI provider |
 | **Disk (clips)**    | Governed entirely by your own `retention_days`/`max_storage_gb` settings | A USB SSD or NVMe HAT rather than a microSD card — this add-on's continuous polling and clip downloads generate meaningful sustained write load |
 | **Architecture**   | amd64 or aarch64                            | — |
 
@@ -210,6 +210,29 @@ usage is billed per token.
 and performs well for security-camera analysis. `gpt-4o` ($2.50/$10 per 1M tokens)
 offers higher accuracy, while `gpt-4.1-nano` ($0.10/$0.40 per 1M tokens) is the
 lowest-cost option available.
+
+## Audio Analysis (optional, off by default)
+
+Blink cameras record sound, and the frames an AI provider sees are silent. Turn on
+**Enable Audio Analysis** in the add-on's Configuration tab and the add-on also
+classifies what a clip *sounds* like — breaking glass, a raised voice, a car alarm, a
+door, footsteps, a power tool, a dog — and passes that to the AI as one more piece of
+evidence to reconcile against the frames. Clips from a camera with no microphone, or
+with it switched off, are skipped. What it heard shows up as chips under
+**What was heard** in the Library clip modal's AI panel.
+
+**It classifies sound and never transcribes speech.** There is no speech-to-text model
+anywhere in this path, no transcript is produced or stored, and the sound labels are the
+only thing that reaches the prompt. Classification runs locally on CPU, so the audio
+itself is never uploaded — not to Hugging Face, and not to whichever AI provider you
+configured, which receives the labels as text. A raised voice outside at 3am is security
+evidence; a readable transcript of your neighbours' conversation is surveillance, and
+this add-on will not produce one.
+
+It never delays a verdict. The model loads in the background on first use, and clips
+analyzed while it downloads are simply analyzed without an audio hint rather than
+waiting for it; the stage also gives up on any clip it cannot finish quickly. Full
+details in [the docs](blink_clip_downloader/DOCS.md#audio-analysis-and-privacy).
 
 ## Cached prompts/tokens
 
