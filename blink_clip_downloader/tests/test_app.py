@@ -2269,7 +2269,7 @@ def test_init_wires_vision_pipeline_from_config(
 ) -> None:
     """The optional CV pipeline config fields must reach the analyzer via
     attach_vision_pipeline(), so enabling a toggle in options.json actually
-    turns the corresponding vision.py stage on."""
+    turns the corresponding vision-pipeline stage on."""
     from blink_downloader.vision import VisionPipeline
 
     monkeypatch.delenv("HF_TOKEN", raising=False)

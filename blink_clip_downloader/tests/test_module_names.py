@@ -47,8 +47,9 @@ def _absolute_imports(path: Path) -> set[str]:
 def test_no_module_shadows_a_package_imported_from_its_own_directory() -> None:
     """A module must not be named after a package its own directory imports.
 
-    The hijack is directory-scoped, so only siblings matter: ``vision.py``
-    would only shadow an ``import vision`` made from a file beside it.
+    The hijack is directory-scoped, so only siblings matter: a
+    ``detection.py`` would only shadow an ``import detection`` made from a
+    file beside it, not from elsewhere in the package.
     """
     by_directory: dict[Path, set[str]] = {}
     for path in _module_files():

@@ -301,7 +301,7 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # hardware with real spare capacity (a modern NUC/mini-PC, Raspberry Pi
     # 5 8GB, or better). Off by default; clip analysis behaves exactly as it
     # did before this pipeline existed with both of these left disabled. See
-    # vision.py and DOCS.md.
+    # the vision package and DOCS.md.
     #
     # Frame preprocessing (CLAHE contrast + light denoising), object
     # detection/tracking (Ultralytics YOLO + ByteTrack), monocular depth

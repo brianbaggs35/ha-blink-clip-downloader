@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_analysis_suspicious ON analysis_results (is_suspi
 CREATE INDEX IF NOT EXISTS idx_analysis_notified ON analysis_results (clip_id, is_suspicious, confidence);
 
 -- Per-object detections from the optional computer-vision pipeline's
--- ObjectDetector (see vision.py, ai_enhanced_detection_enabled) — powers
+-- ObjectDetector (see vision/detection.py, ai_enhanced_detection_enabled) — powers
 -- the clip modal's object-detection chip summary. Replace, not accumulate,
 -- semantics: unlike analysis_results (kept as history), a re-analyze
 -- deletes and re-inserts this clip's rows (see save_detected_objects)
@@ -245,7 +245,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_camera ON analysis_feedback (camera);
 CREATE INDEX IF NOT EXISTS idx_feedback_clip   ON analysis_feedback (clip_id);
 
 -- Local-only face enrollment for the optional face-recognition pipeline
--- (see vision.py, ai_face_recognition_enabled). embedding is a JSON-encoded
+-- (see vision/faces.py, ai_face_recognition_enabled). embedding is a JSON-encoded
 -- list of floats (a 512-dim facenet-pytorch InceptionResnetV1 embedding) —
 -- stored as TEXT rather than a native array/vector type for the same reason
 -- `tags` above is TEXT: simplicity over compactness for a table that will
@@ -344,7 +344,8 @@ ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS offset_seconds DOUBLE PREC
 ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_width DOUBLE PRECISION DEFAULT 0.0;
 ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_height DOUBLE PRECISION DEFAULT 0.0;
 -- 6.0.5: object detection and every model stage beside it now scan raw frames
--- rather than CLAHE-enhanced ones (see vision.py's _run_detection_stages), and
+-- rather than CLAHE-enhanced ones (see vision/pipeline.py's
+-- _run_detection_stages), and
 -- a learned vehicle colour fingerprint is measured from those same frames. The
 -- two are not interchangeable: measured on real night footage, the same car's
 -- raw and enhanced fingerprints score ~0.72-0.88 cosine against each other,

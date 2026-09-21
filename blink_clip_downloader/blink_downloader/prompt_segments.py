@@ -254,7 +254,7 @@ def zone_motion_segment(zone_motion_fraction: float | None) -> str | None:
 
 
 def vision_hint_segments(vision_hints: VisionHints | None) -> list[str]:
-    """Optional computer-vision pipeline hints (see vision.py) — each is
+    """Optional computer-vision pipeline hints (see the ``vision`` package) — each is
     independently toggled in config and already fully formatted with its
     own section header and hedging language; simply collect whichever
     ones a given clip actually produced. None of these exist unless

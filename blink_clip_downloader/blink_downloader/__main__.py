@@ -65,7 +65,7 @@ def _setup_logging(level: str) -> None:
     # httpcore logs raw per-byte connection/TLS/header tracing underneath
     # it. Together these dwarf this add-on's own debug output (the
     # per-clip "Vision pipeline result" / "Car-zone check" / "Motion-
-    # trajectory hint" lines in analyzer/ and vision.py), making a debug-mode
+    # trajectory hint" lines in analyzer/ and vision/), making a debug-mode
     # log effectively unreadable without adding anything a user
     # troubleshooting *this add-on's* behavior can act on. Capped at
     # WARNING (rather than removed) so a genuine SDK-level problem —

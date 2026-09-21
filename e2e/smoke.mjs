@@ -100,7 +100,7 @@ export const TAB_CHECKS = {
     loadedText: "No one enrolled yet",
     loadingSelector: ".loading-indicator",
     // Hidden from the nav entirely on hosts where face recognition can't
-    // run (see vision.py's torch_cpu_compatible()) - absence is correct
+    // run (see vision/runtime.py's torch_cpu_compatible()) - absence is correct
     // behavior there, not a failure, so this tab is allowed to not exist.
     optional: true,
   },

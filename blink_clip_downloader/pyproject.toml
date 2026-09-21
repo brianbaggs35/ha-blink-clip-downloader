@@ -30,7 +30,7 @@ test = [
     "aioresponses>=0.7.9",
     "PyYAML>=6.0.3",
 ]
-# Optional computer-vision enhancement pipeline (see vision.py and the
+# Optional computer-vision enhancement pipeline (see the vision package and the
 # ai_enhanced_detection_enabled/ai_face_recognition_enabled config options —
 # both off by default). Not needed to run or test the add-on's core features;
 # only install this extra if you want to exercise the CV pipeline locally.

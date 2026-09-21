@@ -717,7 +717,7 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     # the overlay is deliberately not rendered once the player reports an
     # error, so a placeholder-bytes clip would prove nothing. Stored in the
     # detector's own pixel space against a recorded frame size, exactly as
-    # vision.py's ObjectDetector produces them, so the test exercises
+    # vision/detection.py's ObjectDetector produces them, so the test exercises
     # get_detected_object_boxes' real normalization back to 0-1 fractions
     # rather than a hand-written fraction. detected_objects is its own
     # table that no other spec counts, so this perturbs nothing.
