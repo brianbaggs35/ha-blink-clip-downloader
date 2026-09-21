@@ -121,6 +121,33 @@ class SecurityEventType(StrEnum):
     #: The scene changed drastically with nothing detected in it — the
     #: signature of a covered, sprayed, or repositioned camera.
     CAMERA_OBSTRUCTION = "camera_obstruction"
+    # --- heard, not seen (see .sounds) -------------------------------
+    # These three come from the optional audio stage rather than from any
+    # box. They exist because the camera cannot see round a corner or in
+    # the dark and the microphone can, and they are deliberately the only
+    # three: every other sound the classifier reports is something an
+    # ordinary household produces daily.
+    #: Breaking glass was heard in the clip's audio.
+    GLASS_BREAK_HEARD = "glass_break_heard"
+    #: A gunshot or explosion was heard in the clip's audio.
+    GUNSHOT_HEARD = "gunshot_heard"
+    #: An alarm or siren was heard in the clip's audio.
+    ALARM_HEARD = "alarm_heard"
+
+
+#: The events that come from sound rather than from pixels. Two things in
+#: this package treat them differently and both need to agree on the list:
+#: :mod:`.scoring` (a heard event is not damped by how well the *camera*
+#: saw, nor offset by who was visible) and :mod:`.narrative` (the prompt
+#: must not describe a heard event as something measured from bounding
+#: boxes).
+AUDIO_EVENTS: frozenset[SecurityEventType] = frozenset(
+    {
+        SecurityEventType.GLASS_BREAK_HEARD,
+        SecurityEventType.GUNSHOT_HEARD,
+        SecurityEventType.ALARM_HEARD,
+    }
+)
 
 
 #: Event types severe enough that recognizing a household member must NOT
@@ -152,8 +179,22 @@ class SecurityEventType(StrEnum):
 #: about the one event type that would actually matter. If that trade ever
 #: needs revisiting, revisit it in ``_impact_event``'s ``raised`` branch
 #: rather than by widening or narrowing this set.
+#: ``GLASS_BREAK_HEARD`` and ``GUNSHOT_HEARD`` were added for the same
+#: reason and pass the same test. A recognized face explains what the
+#: person in frame is doing; it cannot explain a sound, because sound
+#: carries from places the camera cannot see — a household member standing
+#: in the driveway is no evidence at all about a window going at the back
+#: of the house. They are also, like impact, not something ordinary
+#: household activity produces: that is the bar, and it is why the other
+#: sounds the classifier reports are absent here. ``ALARM_HEARD`` is
+#: excluded because a passing emergency siren matches it, which is common
+#: and explains nothing.
 BYPASS_BLOCKING_EVENTS: frozenset[SecurityEventType] = frozenset(
-    {SecurityEventType.IMPACT_CANDIDATE}
+    {
+        SecurityEventType.IMPACT_CANDIDATE,
+        SecurityEventType.GLASS_BREAK_HEARD,
+        SecurityEventType.GUNSHOT_HEARD,
+    }
 )
 
 

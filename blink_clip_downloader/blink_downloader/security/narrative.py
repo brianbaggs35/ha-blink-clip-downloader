@@ -15,6 +15,7 @@ and the data it describes should change together.
 
 from __future__ import annotations
 
+from .events import AUDIO_EVENTS
 from .evidence import EvidenceQuality
 from .scoring import RiskAssessment
 from .vehicles import VehicleIdentification, relative_side
@@ -59,15 +60,27 @@ def build_security_segment(
         for e in ordered
     ]
 
+    # Derived from what the timeline actually renders, not from every
+    # event: the list above is capped at _MAX_TIMELINE_ENTRIES and keeps
+    # the most severe, so a heard event can be dropped from it. Describing
+    # a section by entries it does not contain is worse than saying
+    # nothing.
+    heard = [e for e in ordered if e.event_type in AUDIO_EVENTS]
+    seen = any(e.event_type not in AUDIO_EVENTS for e in ordered)
     parts = [
         (
-            "\n\nSECURITY EVIDENCE: The following was computed by object detection "
-            "and tracking across this clip — measured from bounding boxes, not from "
-            "reading the frames.\n"
+            "\n\nSECURITY EVIDENCE: The following was computed from this clip "
+            f"{_source_phrase(seen, bool(heard))} — not from reading the frames.\n"
         ),
         (
             f"Assessed risk: {assessment.score:.0f}/100 ({assessment.severity}). "
-            f"Evidence quality: {evidence.score * 100:.0f}% ({evidence.label}).\n"
+            f"Evidence quality: {evidence.score * 100:.0f}% ({evidence.label})"
+            # Evidence quality scores the imagery. Saying it plainly beside a
+            # heard event would invite the model to discount a sound because
+            # the picture was poor, which is the opposite of the truth: a
+            # clip too dark to see anything in is exactly when the microphone
+            # is the only witness there is.
+            f"{' (this rates the picture, not the audio)' if heard else ''}.\n"
         ),
         "What was observed:\n",
         "\n".join(lines),
@@ -94,7 +107,36 @@ def build_security_segment(
         "Never quote any of these numbers, times, scores, or the phrase 'risk "
         "score' in your description — write only what a homeowner would see."
     )
+    if heard:
+        which = "One entry above was" if len(heard) == 1 else "Some entries above were"
+        parts.append(
+            f" {which} heard rather than seen, and the two are not "
+            "judged the same way. You cannot check a sound against the frames "
+            "the way you can check a bounding box, and the sound may have come "
+            "from outside what this camera covers — so not seeing anything that "
+            "would explain it is not evidence against it. A sound classifier "
+            "working on compressed camera audio is often wrong, so say what was "
+            "heard as something heard rather than as established fact; but do "
+            "not dismiss it merely because the frames look ordinary."
+        )
     return "".join(parts)
+
+
+def _source_phrase(seen: bool, heard: bool) -> str:
+    """How the evidence below was arrived at, for the section's opening line.
+
+    Three different claims, because claiming the wrong one matters: telling
+    the model a heard event was "measured from bounding boxes" invites it to
+    look for the box and conclude the section is broken when it finds none.
+    """
+    if seen and heard:
+        return (
+            "by object detection and tracking, and by classifying its audio — "
+            "measured from bounding boxes and from sound"
+        )
+    if heard:
+        return "by classifying its audio — measured from sound, with nothing tracked"
+    return "by object detection and tracking — measured from bounding boxes"
 
 
 _SEVERITY_WEIGHTS = {

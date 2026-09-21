@@ -22,6 +22,7 @@ the optional computer-vision dependencies present.
 from .assets import AssetLocation, AssetType, ProtectedAsset, resolve_vehicle_asset
 from .detector import DetectionContext, DetectorThresholds, SecurityEventDetector
 from .events import (
+    AUDIO_EVENTS,
     BYPASS_BLOCKING_EVENTS,
     SecurityEvent,
     SecurityEventType,
@@ -51,6 +52,7 @@ from .scoring import (
     ScoringContext,
     band_for_score,
 )
+from .sounds import detect_audio_events
 from .tracks import (
     ANIMAL_LABELS,
     CARRYABLE_LABELS,
@@ -76,6 +78,7 @@ from .vehicles import (
 
 __all__ = [
     "ANIMAL_LABELS",
+    "AUDIO_EVENTS",
     "BYPASS_BLOCKING_EVENTS",
     "CARRYABLE_LABELS",
     "PERSON_LABEL",
@@ -114,6 +117,7 @@ __all__ = [
     "build_tracks",
     "build_vehicle_identity_segment",
     "describe_region",
+    "detect_audio_events",
     "identify_protected_vehicle",
     "max_severity",
     "nearest_vehicle_for_subjects",

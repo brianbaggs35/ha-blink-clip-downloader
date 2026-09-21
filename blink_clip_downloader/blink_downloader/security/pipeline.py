@@ -22,6 +22,7 @@ from .events import SecurityEvent, Severity
 from .evidence import EvidenceQuality, assess_evidence
 from .narrative import build_security_segment, build_vehicle_identity_segment
 from .scoring import RiskAssessment, RiskScorer, ScoringContext
+from .sounds import detect_audio_events
 from .tracks import ObjectTrack, subject_tracks
 from .vehicles import nearest_vehicle_for_subjects
 
@@ -59,6 +60,11 @@ class ClipMeasurements:
     not_applicable_sources: list[str] | None = None
     is_night: bool = False
     approved_person_recognized: bool = False
+    #: ``(class name, confidence)`` pairs from the optional audio stage.
+    #: Plain tuples rather than that stage's own type, so this package
+    #: still imports nothing from ``vision`` and needs no audio library to
+    #: test — see :mod:`.sounds`.
+    audio_labels: list[tuple[str, float]] | None = None
 
 
 @dataclass
@@ -121,6 +127,11 @@ def assess_clip(
             posture_crouching=measurements.posture_crouching,
         )
     )
+
+    # Appended rather than detected alongside: these come from the clip's
+    # sound, not from any box, so none of DetectionContext's geometry
+    # applies to them.
+    events.extend(detect_audio_events(measurements.audio_labels))
 
     nearest: str | None = None
     if measurements.asset is not None and measurements.asset.identification is not None:
