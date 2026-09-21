@@ -163,6 +163,68 @@ wait for a free compute slot and the classification. Turning the option on
 looks like "no sound chips for the first clip or two, then sound chips",
 never like a stalled queue.
 
+### A frame strategy that looks at the event, not the whole clip
+
+Reviewing what the three frame strategies actually did turned up
+something worth fixing. `smart` enforces a minimum gap between its picks
+so they cover the whole timeline — good for reading a clip as a story,
+and wrong when the thing worth seeing lasted three seconds. Measured on
+a 60-second clip sampled every two seconds with a six-second event in
+it, `smart` sends **exactly one frame of that event**, and stays at one
+whether the budget is 5 frames or 10. The doubled budget a long clip
+already receives buys no extra look at what actually happened.
+
+**Frame Extraction Strategy** has a fourth option, `adaptive`. It takes
+the peak-motion frame, the first and last for context, then works
+outward from the peak through the event before spending anything
+elsewhere — three to four frames of that same six-second event instead
+of one. Leftover budget goes to whichever frames sit furthest from
+everything already chosen, so a generous budget still ends up spread
+rather than piled next to the peak.
+
+It is careful about when *not* to do this. A clip has to concentrate 60%
+of its motion into under a third of its length before there is an
+"event" to aim at; wind in a tree, a slow pan, and two separate bursts
+several seconds apart all fail that test, and on those it falls back to
+`smart` and picks **identically**. So it is never the worse choice, only
+a different one when there is something to aim at. `smart` remains the
+default and nothing changes unless you pick the new option.
+
+### The frame settings did not say what they did
+
+Five user-facing claims about frame handling were wrong, including in
+every language on the add-on's own Configuration page:
+
+- **"uniform — extract exactly ai_max_frames at fixed time intervals"**
+  is not what happens. Extraction pulls enough frames to cover a whole
+  60-second clip — 30 at the defaults — and `uniform` then spaces
+  `ai_max_frames` evenly across that pool.
+- **"smart — extract 2x frames"** is misleading for the same reason: the
+  2× only raises the pool above the 60-second coverage floor when
+  `ai_max_frames` is above 15 at the default interval.
+- **"With 5 frames and 2s interval, analysis covers approximately the
+  first 8 seconds of the clip"** described behaviour from before that
+  coverage floor existed. Coverage is the whole clip. Left standing, it
+  tells you to raise `ai_max_frames` — and your bill — to fix a problem
+  you do not have.
+- **`ai_max_frames`** was described as frames *extracted*. It is the
+  number *sent to the model*, which is the number that costs money.
+- The docs said long clips get `ai_max_frames + 2` frames. The code
+  multiplies by two: 10 at the defaults, not 7.
+
+### A frame budget of 1 or 2 was quietly ignored
+
+`ai_max_frames` accepts values as low as 1, and motion selection added
+the entry, exit and peak frames before checking the budget — so asking
+for one frame got you three, and on a paid provider that is triple the
+image cost you configured, on every clip. Measured over 6,000 simulated
+clips, the old code returned the wrong count 5,766 times at budgets of 1
+and 2. The three are now taken in priority order while the budget lasts,
+peak first: a single frame spent on the scene-entry frame of a security
+clip is usually a photograph of an empty driveway. At budgets of three
+or more the selection is unchanged, verified against 6,000 random clips
+with zero differences.
+
 ### Live view starts several seconds sooner
 
 A Blink live view only runs about 30 seconds, and too much of that was

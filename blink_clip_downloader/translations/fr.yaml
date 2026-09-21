@@ -409,7 +409,11 @@ configuration:
       « sequential » choisit les mêmes mais envoie chacune comme sa propre
       requête et conserve la réponse la plus alarmante — une requête par
       image au lieu d'une par clip. « uniform » ignore l'analyse de
-      mouvement et les espace régulièrement (hérité).
+      mouvement et les espace régulièrement (hérité). « adaptive » consacre le budget à la
+      seule portion la plus animée du clip au lieu de le répartir — un
+      événement bref dans un long clip obtient plusieurs images au lieu
+      d'une — et se comporte exactement comme « smart » lorsqu'un clip n'a
+      pas d'événement concentré unique.
   ai_car_cameras:
     name: Caméras de protection de véhicule
     description: >-

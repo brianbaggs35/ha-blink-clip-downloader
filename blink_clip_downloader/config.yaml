@@ -360,6 +360,14 @@ options:
   #   "uniform"    – no motion analysis: space the frames evenly across the pool.
   #                  Cheap and predictable, but spends budget on empty frames
   #                  when the event was brief (legacy).
+  #   "adaptive"   – spend the budget on the clip's one busiest stretch instead
+  #                  of spreading it. "smart" enforces a minimum gap between
+  #                  picks, so a six-second event in a 60-second clip gets
+  #                  exactly one frame no matter how high ai_max_frames goes;
+  #                  this concentrates on the event and its approach, keeping
+  #                  the first and last frame for context. When a clip has no
+  #                  single concentrated event — steady wind, a slow pan, or
+  #                  two separate bursts — it behaves exactly like "smart".
   ai_frame_strategy: "smart"
   # Restrict car-proximity rules to specific cameras. When set, only cameras in
   # this list will have the PROTECTED VEHICLE / distance rules injected into
@@ -602,7 +610,7 @@ schema:
   ai_camera_descriptions:
     - camera: "str"
       description: "str?"
-  ai_frame_strategy: "list(smart|sequential|uniform)"
+  ai_frame_strategy: "list(smart|sequential|uniform|adaptive)"
   ai_car_cameras:
     - "str?"
   ai_prompt_debug_enabled: "bool"
