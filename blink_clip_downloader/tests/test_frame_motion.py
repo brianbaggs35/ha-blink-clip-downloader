@@ -1,7 +1,7 @@
 """Tests for blink_downloader.frame_motion.
 
 These moved here wholesale when the frame-motion math was lifted out of
-``analyzer.py`` — the assertions are unchanged, only the names they call.
+the analyzer — the assertions are unchanged, only the names they call.
 """
 
 from __future__ import annotations

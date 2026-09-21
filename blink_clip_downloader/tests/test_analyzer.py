@@ -27,7 +27,7 @@ from blink_downloader.analyzer import (
     create_analyzer,
 )
 from blink_downloader.analyzer.base import _CACHE_INERT_CALLS
-from blink_downloader.analyzer.moondream import _MOONDREAM_CLOUD_PRICING
+from blink_downloader.analyzer.moondream_provider import _MOONDREAM_CLOUD_PRICING
 from blink_downloader.model_catalog import (
     _ANTHROPIC_FALLBACK_MODELS,
     _OPENAI_FALLBACK_MODELS,

@@ -44,8 +44,8 @@ from ..model_catalog import (
 from .anthropic_provider import AnthropicAnalyzer
 from .base import AnalysisResult, BaseAnalyzer, SecurityLayerSettings
 from .factory import create_analyzer
-from .moondream import MoondreamCloudAnalyzer, MoondreamLocalAnalyzer
-from .ollama import ClipAnalyzer, OllamaCloudAnalyzer
+from .moondream_provider import MoondreamCloudAnalyzer, MoondreamLocalAnalyzer
+from .ollama_provider import ClipAnalyzer, OllamaCloudAnalyzer
 from .openai_provider import OpenAIAnalyzer
 
 __all__ = [

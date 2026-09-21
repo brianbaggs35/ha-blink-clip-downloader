@@ -7,10 +7,9 @@ prompt, tracking prompt-cache behaviour and token spend, then parsing the
 provider's reply back into an :class:`AnalysisResult` and applying the
 risk-threshold override and face-recognition bypass to its verdict.
 
-Concrete providers live in sibling modules (:mod:`.ollama`,
-:mod:`.moondream`, :mod:`.anthropic_provider`, :mod:`.openai_provider`)
-and supply only :meth:`BaseAnalyzer._call_model` and the handful of
-identity/health hooks around it; :mod:`.factory` picks one from config.
+Concrete providers live in sibling ``*_provider`` modules and supply only
+:meth:`BaseAnalyzer._call_model` and the handful of identity/health hooks
+around it; :mod:`.factory` picks one from config.
 The analyzer-wide constants below are shared by all of them, so they live
 here rather than being duplicated per provider.
 """

@@ -1,9 +1,9 @@
 """The Anthropic Claude vision provider.
 
-Named ``anthropic_provider`` rather than ``anthropic`` so that reading this
-module never raises the question of whether ``import anthropic`` inside it
-reaches the SDK or itself. (It would reach the SDK — imports are absolute —
-but the file name shouldn't make anyone check.)
+Named ``anthropic_provider`` rather than ``anthropic`` so that neither a
+reader nor pyright has to work out whether ``import anthropic`` inside it
+reaches the SDK or the file itself — see :mod:`.moondream_provider` for
+the case where getting that wrong actually broke a build.
 """
 
 from __future__ import annotations

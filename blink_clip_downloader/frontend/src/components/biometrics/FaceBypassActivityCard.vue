@@ -7,7 +7,7 @@ import type { FaceBypassStats, FaceRecognitionFeedback } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 
-// Auditability for the suspicious-flag bypass (see analyzer.py's
+// Auditability for the suspicious-flag bypass (see analyzer/base.py's
 // _face_bypass_applies docstring): the bypass being all-or-nothing and
 // name-free-in-prompts is a safety guarantee, but it's still worth being
 // able to see, locally, whether it's actually firing for the right people

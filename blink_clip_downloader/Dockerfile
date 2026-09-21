@@ -311,7 +311,7 @@ and related toggles will report unavailable"
 # transitive dependency.
 # Local ("Photon") inference itself still requires an NVIDIA GPU (relevant
 # for Jetson-class aarch64 boards, not typical Pi-class ones) or Apple
-# Silicon regardless of architecture — see analyzer.py's
+# Silicon regardless of architecture — see analyzer/moondream_provider.py's
 # MoondreamLocalAnalyzer._load_model_sync — so most hosts on either
 # architecture without a GPU will still see this provider report itself
 # unavailable at runtime, exactly as before this change.

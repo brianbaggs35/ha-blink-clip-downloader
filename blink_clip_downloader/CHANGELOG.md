@@ -130,8 +130,8 @@ what Home Assistant actually allows before any request is built.
   configured: frame extraction and down-selection, prompt assembly, the
   vision and security layers, prompt-cache and token accounting, verdict
   parsing, the risk-threshold override and the face-recognition bypass. Each
-  of `ollama.py`, `moondream.py`, `anthropic_provider.py` and
-  `openai_provider.py` holds only what differs about talking to one API, and
+  of `ollama_provider.py`, `moondream_provider.py`, `anthropic_provider.py`
+  and `openai_provider.py` holds only what differs about talking to one API, and
   `factory.py` holds `create_analyzer()`. Nothing outside the package had to
   change: `__init__.py` re-exports every name the module used to expose, and
   the provider modules depend on `base.py` and on nothing else in the
@@ -141,6 +141,16 @@ what Home Assistant actually allows before any request is built.
   syntax tree of each definition against the original file.
 - Two docstrings still pointed at `_time_of_day_segment`, which stopped
   existing under that name when `prompt_segments.py` was split out.
+- Every analyzer provider module is named `<provider>_provider.py`, and
+  `tests/test_module_names.py` now enforces that no module is named after a
+  package the codebase imports. Pyright resolves a bare `import <x>` to a
+  same-named file in the *importing file's own directory* before it looks in
+  site-packages, so a `moondream.py` containing `import moondream` resolves
+  to itself — but only where the real package is missing, which is CI (the
+  package is GPU-only and optional) and not a development machine that has
+  it installed. That asymmetry is the whole hazard: it passes every local
+  check and then fails somewhere else with an error that looks nothing like
+  a naming problem.
 
 ## 6.0.5
 

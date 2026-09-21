@@ -6,7 +6,7 @@ size discussion around the optional CV pipeline) and the REST surface needed
 here (device auth, resumable upload, list/create folder, trash-delete, quota)
 is small enough to implement directly. Mirrors the lazy-session/``close()``
 shape every other HTTP-calling module in this package uses (see
-``analyzer/ollama.py``'s ``ClipAnalyzer``).
+``analyzer/ollama_provider.py``'s ``ClipAnalyzer``).
 
 Because this add-on runs behind Home Assistant ingress (no fixed,
 pre-registerable redirect URL), the connection flow is Google's OAuth 2.0

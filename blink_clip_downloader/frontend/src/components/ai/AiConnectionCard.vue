@@ -22,7 +22,7 @@ const toast = useToastStore()
 const MODEL_PICKER_PROVIDERS = new Set(['ollama', 'ollama_cloud', 'anthropic', 'openai'])
 const showModelPicker = () => MODEL_PICKER_PROVIDERS.has(props.status.provider || '')
 
-// OpenAI's picker is sorted newest-to-oldest (see analyzer.py's
+// OpenAI's picker is sorted newest-to-oldest (see model_catalog.py's
 // _OPENAI_MODEL_DISPLAY_ORDER), not cheapest/best-first, so "index 0 is
 // best" doesn't hold for it the way it does for Ollama (sorted by vision
 // score) — these are the two models this add-on actually recommends: nano
