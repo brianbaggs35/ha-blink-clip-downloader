@@ -93,19 +93,26 @@ class MediaServer(
 ):
     """aiohttp web server: clip library REST API + Video.js browser UI."""
 
-    # NOSONAR on the def line below suppresses S107. Every parameter is
-    # an independent, optional
-    # collaborator this server may be given — a database, a port, and
-    # sixteen callables and services that each area's mixin uses if it was
-    # handed one. Grouping them into a config object would satisfy the
-    # parameter count and make every one of the ~185 call sites worse:
-    # they are overwhelmingly of the form `MediaServer(db=db, port=0)`,
-    # naming only the two or three collaborators that test needs, and a
-    # bag object forces `MediaServer(deps=ServerDeps(db=db), port=0)` for
-    # no gain. This is constructor injection working as intended, not an
-    # over-long function.
-    def __init__(  # NOSONAR
-        self,
+    # Sonar's S107 (too many parameters) is deliberately suppressed here.
+    # Every parameter is an independent, optional collaborator this
+    # server may be given: a database, a port, and sixteen callables and
+    # services that each area's mixin uses if it was handed one.
+    # Grouping them into a config object would satisfy the parameter
+    # count and make every one of the ~185 call sites worse — they are
+    # overwhelmingly `MediaServer(db=db, port=0)`, naming only the two or
+    # three collaborators that test needs, and a bag object forces
+    # `MediaServer(deps=ServerDeps(db=db), port=0)` for no gain. This is
+    # constructor injection working as intended, not an over-long
+    # function.
+    #
+    # The marker sits on `self` rather than on `def` because SonarPython
+    # reports S107 against the *parameter list*, which on a multi-line
+    # signature begins on the line after `def` — a NOSONAR on the `def`
+    # line silently suppresses nothing, which is how this was first
+    # written and why the finding survived a round. Do not tidy it up
+    # onto the line above.
+    def __init__(
+        self,  # NOSONAR
         db: ClipDatabase,
         port: int,
         trigger_download: Callable[[], None] | None = None,
