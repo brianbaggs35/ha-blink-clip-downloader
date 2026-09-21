@@ -265,6 +265,7 @@ try {
   }
 
   await checkIngressApi(page, issues);
+  await checkAppHeadersThroughIngress(page, issues);
   await writePersistenceMarker(frame, issues);
 
   // TABS_TO_VERIFY ends with "automations", so that tab is already active.
@@ -667,6 +668,76 @@ async function checkIngressApi(page, issuesList) {
     );
   } catch (err) {
     issuesList.push(`could not call the app's API through ingress: ${err.message}`);
+  }
+}
+
+/**
+ * The headers and the base-path rewrite the app relies on, as they arrive
+ * *after* Home Assistant's ingress proxy has handled the response.
+ *
+ * Two things this guards, both of which have gone wrong before and
+ * neither of which shows up as a broken-looking page:
+ *
+ *  - The Content-Security-Policy. A missing `worker-src 'self' blob:`
+ *    once broke Live View completely: Video.js's VHS engine transmuxes
+ *    HLS segments in a Worker created from a blob: URL, the browser fell
+ *    back to script-src, blocked the worker, and the player sat on a
+ *    black frame with no error anywhere but the console. Library clips
+ *    kept working, because a plain MP4 needs no worker — so the app
+ *    looked fine. A proxy that dropped or rewrote this header would
+ *    reintroduce exactly that, silently.
+ *  - The `__HAROOT__` placeholder in index.html, which _handle_index
+ *    substitutes with the real ingress prefix. If that ever stopped
+ *    happening the literal would ship to the browser and every relative
+ *    API call would resolve against the wrong root.
+ */
+async function checkAppHeadersThroughIngress(page, issuesList) {
+  const REQUIRED_CSP = [
+    "default-src 'self'",
+    "worker-src 'self' blob:",
+    "media-src 'self' blob:",
+    "img-src 'self' data: blob:",
+  ];
+  try {
+    const frameUrl = page.frames().find((f) => f.url().includes("hassio_ingress"))?.url();
+    if (!frameUrl) {
+      issuesList.push("no ingress iframe URL found to check headers against");
+      return;
+    }
+    const root = new URL(frameUrl).pathname.replace(/\/$/, "");
+    const probe = await page.evaluate(async (base) => {
+      const res = await fetch(`${base}/`, { credentials: "include" });
+      return {
+        status: res.status,
+        csp: res.headers.get("content-security-policy") || "",
+        body: (await res.text()).slice(0, 4000),
+      };
+    }, root);
+
+    if (probe.status !== 200) {
+      issuesList.push(`the app's index through ingress returned ${probe.status}`);
+      return;
+    }
+    if (!probe.csp) {
+      issuesList.push("no Content-Security-Policy header survived the ingress proxy");
+    } else {
+      for (const directive of REQUIRED_CSP) {
+        if (!probe.csp.includes(directive)) {
+          issuesList.push(
+            `the CSP through ingress is missing "${directive}" — got: ${probe.csp.slice(0, 200)}`,
+          );
+        }
+      }
+    }
+    if (probe.body.includes("__HAROOT__")) {
+      issuesList.push(
+        "index.html still contains the literal __HAROOT__ placeholder, so the " +
+          "ingress base path was never substituted",
+      );
+    }
+    console.log("CSP and the ingress base-path rewrite both survive the proxy.");
+  } catch (err) {
+    issuesList.push(`could not check the app's headers through ingress: ${err.message}`);
   }
 }
 
