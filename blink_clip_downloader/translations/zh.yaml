@@ -366,6 +366,21 @@ configuration:
     description: >-
       运行哪个 Ultralytics 姿态检查点。"n"（nano）最快最轻，是纯 CPU 硬件的
       推荐起点；更大的模型更准确但慢得多。
+  ai_audio_analysis_enabled:
+    name: 启用音频分析
+    description: >-
+      对片段自带音轨中的声音进行分类（玻璃破碎、提高的说话声、汽车警报、
+      门声、脚步声），并将结果作为辅助线索交给 AI。全程在本机运行，且只做
+      声音分类——绝不转写语音，音频内容也绝不会离开本插件。摄像头没有麦克风
+      或麦克风已关闭的片段会直接跳过。需要计算机视觉依赖项，首次使用时会在
+      后台下载模型——在下载完成前分析的片段只是没有音频线索，而不会等待。
+      默认关闭。
+  ai_audio_model:
+    name: 音频分类模型
+    description: >-
+      可选：替换上方选项所用的音频分类检查点。留空则使用已验证的默认模型
+      （在 AudioSet 上微调的 Audio Spectrogram Transformer）。首次使用时
+      自动下载。
   ai_security_events_enabled:
     name: 启用结构化安全分析
     description: >-

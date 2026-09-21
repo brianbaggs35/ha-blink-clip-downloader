@@ -422,7 +422,29 @@ options:
   ai_pose_model: "yolo26n-pose.pt"
   # Hugging Face Token (HF_TOKEN) for authenticated model downloads and higher
   # rate limits. Optional; create one at https://huggingface.co/settings/tokens.
+  # Shared by every stage above and by audio analysis below.
   hf_token: ""
+
+  # --- Audio analysis (optional) ---
+  # Analyse the clip's *sound* as well as its picture. A camera cannot see
+  # glass breaking around a corner, a raised voice out of frame, or a car
+  # door at 3am -- all three are audible, and the frames every other stage
+  # looks at are silent. The sound is classified into event types (speech,
+  # shouting, breaking glass, a vehicle, a dog) and the result is given to
+  # the AI as one more hint to weigh against what it can see.
+  #
+  # It classifies sounds and never transcribes speech: what anyone actually
+  # said is never read, and no audio leaves the add-on -- the model runs
+  # on-device, the same way face recognition does. Clips with no audio
+  # track (microphone switched off in the Blink app, or a camera without
+  # one) are skipped silently. Its own model, downloaded on first use.
+  # Shares the computer-vision dependencies above but not their toggle:
+  # this reads the clip file, not the sampled frames, so it runs with
+  # Enhanced Detection off.
+  ai_audio_analysis_enabled: false
+  # Audio Spectrogram Transformer checkpoint for the stage above. Leave
+  # empty for the AudioSet-trained default.
+  ai_audio_model: ""
 
   # --- Structured Security Analysis ---
   # Turns the object detector's per-frame boxes into tracks, security events
@@ -582,6 +604,8 @@ schema:
   ai_pose_model: "list(yolo26n-pose.pt|yolo26s-pose.pt|yolo26m-pose.pt|yolo26l-pose.pt|yolo26x-pose.pt|yolo11n-pose.pt|yolo11s-pose.pt|yolo11m-pose.pt|yolo11l-pose.pt|yolo11x-pose.pt)"
   # yamllint enable rule:line-length
   hf_token: "password?"
+  ai_audio_analysis_enabled: "bool"
+  ai_audio_model: "str?"
   ai_security_events_enabled: "bool"
   ai_temporal_scan_frames: "int(0,60)"
   ai_cv_concurrency: "int(1,8)"

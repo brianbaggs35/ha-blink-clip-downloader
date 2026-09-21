@@ -271,6 +271,7 @@ def vision_hint_segments(vision_hints: VisionHints | None) -> list[str]:
             vision_hints.contact_hint,
             vision_hints.posture_hint,
             vision_hints.recognized_resident_hint,
+            vision_hints.audio_hint,
         )
         if hint
     ]

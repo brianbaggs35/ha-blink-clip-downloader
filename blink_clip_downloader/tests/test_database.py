@@ -1290,6 +1290,28 @@ async def test_add_analysis_result_prompt_text_defaults_empty(
     assert stored["prompt_text"] == ""
 
 
+async def test_add_analysis_result_stores_audio_labels(db: ClipDatabase) -> None:
+    """6.0.6 ai_audio_analysis_enabled: the recognized sounds round-trip."""
+    await db.add_clip(_make_clip("clip1"))
+    result = _make_analysis("clip1")
+    result["audio_labels"] = '[{"label": "Shout", "score": 0.61}]'
+    await db.add_analysis_result(result)
+    stored = await db.get_analysis_for_clip("clip1")
+    assert stored is not None
+    assert stored["audio_labels"] == '[{"label": "Shout", "score": 0.61}]'
+
+
+async def test_add_analysis_result_audio_labels_default_empty(
+    db: ClipDatabase,
+) -> None:
+    """Every install has the stage off, so this is the usual case."""
+    await db.add_clip(_make_clip("clip1"))
+    await db.add_analysis_result(_make_analysis("clip1"))
+    stored = await db.get_analysis_for_clip("clip1")
+    assert stored is not None
+    assert stored["audio_labels"] == ""
+
+
 async def test_get_analysis_for_clip_missing(db: ClipDatabase) -> None:
     assert await db.get_analysis_for_clip("ghost") is None
 
