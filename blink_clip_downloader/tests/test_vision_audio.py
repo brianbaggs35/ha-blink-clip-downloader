@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 import subprocess
 import sys
 import threading
@@ -43,11 +44,14 @@ from blink_downloader.vision.audio import (
 )
 from blink_downloader.vision.pipeline import VisionConfig, VisionHints, VisionPipeline
 
-_FFMPEG_AVAILABLE = (
-    subprocess.run(["ffmpeg", "-version"], capture_output=True, check=False).returncode
-    == 0
+# shutil.which, not a subprocess probe: running "ffmpeg -version" to find
+# out whether ffmpeg exists raises FileNotFoundError when it does not, at
+# import time, which collapses collection of this whole file instead of
+# skipping it. CI's test job has no ffmpeg unless it is installed, and this
+# machine does, so the broken form passed locally and failed there.
+needs_ffmpeg = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="ffmpeg not installed"
 )
-needs_ffmpeg = pytest.mark.skipif(not _FFMPEG_AVAILABLE, reason="ffmpeg not installed")
 
 
 def _make_clip(path: Path, *, audio: str) -> Path:
