@@ -122,6 +122,21 @@ _VISION_SYSTEM_PROMPT: str = (
 )
 
 
+def _audio_labels_json(vision_hints: VisionHints | None) -> str:
+    """The clip's recognized sounds, as the JSON the analysis row stores.
+
+    Empty when the audio stage is off, found no audio track, or heard
+    nothing worth reporting — all three mean the same thing to the clip
+    modal, which simply shows no sound chips.
+    """
+    tags = vision_hints.audio_tags if vision_hints else None
+    if tags is None or not tags.labels:
+        return ""
+    return json.dumps(
+        [{"label": label, "score": round(score, 4)} for label, score in tags.labels]
+    )
+
+
 @dataclass
 class AnalysisResult:
     """Structured output from a clip analysis run."""
@@ -205,6 +220,12 @@ class AnalysisResult:
     # model having judged it unremarkable — surfaced so a user can see the
     # verdict did not come from the model.
     risk_override_applied: bool = False
+    # Sounds the optional audio stage recognized, as a JSON array of
+    # {label, score} (see vision/audio.py). A JSON string rather than a
+    # list because this one *is* part of the analysis row -- unlike
+    # detected_objects there are at most three of them and nothing joins
+    # against them, so they ride along in a column instead of a table.
+    audio_labels: str = ""
     # Structured events behind the score above. Excluded from to_dict()
     # like detected_objects: they are persisted to their own table (see
     # database.py's security_events) rather than into the analysis row.
@@ -238,6 +259,7 @@ class AnalysisResult:
             "event_type": self.event_type,
             "evidence_quality": self.evidence_quality,
             "risk_override_applied": self.risk_override_applied,
+            "audio_labels": self.audio_labels,
         }
 
 
@@ -877,7 +899,7 @@ class BaseAnalyzer(abc.ABC):
         )
         frames = await self._downselect_frames(frames, clip_duration, camera)
         frames, vision_hints = await self._apply_vision_pipeline(
-            frames, camera, raw_frames=raw_frame_pool
+            frames, camera, raw_frames=raw_frame_pool, clip_path=clip_path
         )
         await self._store_vehicle_signature(camera, vision_hints)
 
@@ -1033,6 +1055,7 @@ class BaseAnalyzer(abc.ABC):
             event_type=self._primary_event_type(security),
             evidence_quality=security.evidence.score if security else 0.0,
             risk_override_applied=risk_override_applied,
+            audio_labels=_audio_labels_json(vision_hints),
             security_events=security.events if security else [],
         )
 
@@ -1287,7 +1310,11 @@ class BaseAnalyzer(abc.ABC):
         )
 
     async def _apply_vision_pipeline(
-        self, frames: list[bytes], camera: str, raw_frames: list[bytes] | None = None
+        self,
+        frames: list[bytes],
+        camera: str,
+        raw_frames: list[bytes] | None = None,
+        clip_path: str = "",
     ) -> tuple[list[bytes], Any]:
         """Run the optional computer-vision enhancement pipeline (see ``vision``).
 
@@ -1303,6 +1330,9 @@ class BaseAnalyzer(abc.ABC):
         Every other stage still runs against *frames*, the same set the AI
         model sees, so their hints stay describing what's actually in the
         prompt.
+
+        *clip_path* is needed by the audio stage alone: sound is in the
+        file, not in the frames every other stage works from.
         """
         if self._vision_pipeline is None:
             return frames, None
@@ -1315,6 +1345,7 @@ class BaseAnalyzer(abc.ABC):
             camera=camera,
             frame_interval=self._frame_interval,
             vehicle_signature=await self._load_vehicle_signature(camera),
+            clip_path=clip_path,
         )
         if vision_hints.enhanced_frames is not None:
             frames = vision_hints.enhanced_frames

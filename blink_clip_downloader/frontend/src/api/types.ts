@@ -166,6 +166,7 @@ export interface AnalysisResultDict {
   face_bypass_applied: boolean
   face_bypass_names: string
   detected_objects?: DetectedObjectSummary[]
+  audio_labels?: AudioLabel[]
   // Deterministic security assessment (see blink_downloader/security).
   // Zero/absent when the security layer produced nothing for this clip —
   // the optional object-detection pipeline is off, or nothing relevant was
@@ -256,6 +257,17 @@ export interface VehicleSignatureInfo {
   established?: boolean
   sample_count: number
   box?: number[]
+}
+
+// One sound the optional audio stage recognized (see vision/audio.py,
+// ai_audio_analysis_enabled) — absent/empty unless that stage was on and
+// heard something security-relevant. Never a transcript: these are sound
+// classes, and speech is never read.
+export interface AudioLabel {
+  label: string
+  /** The classifier's own confidence, 0-1. Independent per sound rather
+   *  than a share of one budget, so several can be high at once. */
+  score: number
 }
 
 // One label's aggregate from the optional computer-vision object-detection

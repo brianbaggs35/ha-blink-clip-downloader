@@ -175,6 +175,61 @@ describe('ClipAiPanel', () => {
     )
   })
 
+  it('shows a chip for each sound the audio stage recognized', async () => {
+    mockFetch({
+      '/api/ai/results/c1': {
+        ...RESULT,
+        audio_labels: [
+          { label: 'Shout', score: 0.61 },
+          { label: 'Breaking glass, shatter', score: 0.44 },
+          { label: 'Ratchet, pawl', score: 0.2 },
+        ],
+      },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    const chips = wrapper.find('[data-testid="ai-audio"]').findAll('.detection-chip')
+    expect(chips).toHaveLength(3)
+    expect(chips[0].text()).toContain('🗣️')
+    expect(chips[0].text()).toContain('Shout')
+    // AudioSet names a class as a list of synonyms; the chip shows the
+    // first and the tooltip keeps the rest.
+    expect(chips[1].text()).toContain('💥')
+    expect(chips[1].text()).toContain('Breaking glass')
+    expect(chips[1].text()).not.toContain('shatter')
+    expect(chips[1].attributes('title')).toContain('Breaking glass, shatter')
+    // A class none of the keywords match still gets a chip rather than
+    // silently disappearing.
+    expect(chips[2].text()).toContain('🔊')
+  })
+
+  it('says on screen that the sounds are not a transcript', async () => {
+    // The privacy promise has to be visible exactly where someone reads
+    // "Speech" — not only in the docs and the option description.
+    mockFetch({
+      '/api/ai/results/c1': { ...RESULT, audio_labels: [{ label: 'Speech', score: 0.9 }] },
+      '/api/ai/feedback/c1': null,
+    })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    const audio = wrapper.find('[data-testid="ai-audio"]')
+    expect(audio.text()).toContain('never transcribed')
+    expect(audio.find('.detection-chip').attributes('title')).toBe(
+      "Speech · 90% confidence · a sound classifier's guess, not a transcript",
+    )
+  })
+
+  it('shows no audio section when the stage is off or heard nothing', async () => {
+    mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
+    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
+    await wrapper.find('.ai-panel-hdr').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="ai-audio"]').exists()).toBe(false)
+  })
+
   it('shows the security assessment when the security layer found something', async () => {
     mockFetch({
       '/api/ai/results/c1': {

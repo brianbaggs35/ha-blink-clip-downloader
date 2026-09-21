@@ -59,6 +59,57 @@ hardcoded path that was only ever right by accident.
 The Notification Channels panel sits where it used to, above everything the
 builders added.
 
+### Optional: let the AI hear the clip, not just watch it
+
+Blink cameras record sound, and until now the add-on threw all of it away
+at analysis time. A new **Enable Audio Analysis** option classifies the
+sounds in a clip's own audio track — breaking glass, a raised voice, a car
+alarm, a door, footsteps, a power tool, a dog — and passes what it heard to
+the AI as one more piece of evidence to reconcile against the frames. Off
+by default, and it needs the computer-vision dependencies already used by
+the other optional stages; no new dependency was added for it.
+
+It classifies sound and never transcribes speech. There is no
+speech-to-text model anywhere in this path, no transcript is produced or
+stored, and the sound labels are the only thing that reaches the prompt.
+Classification runs locally on CPU, so the audio itself is never uploaded —
+not to Hugging Face, and not to whichever AI provider you configured, which
+receives the labels as text. A raised voice outside at 3am is security
+evidence; a readable transcript of your neighbours' conversation is
+surveillance, and this add-on will not produce one.
+
+The hint is deliberately hedged, for two reasons the analysis has to
+account for. Camera audio is compressed, outdoors and low-quality, so the
+classifier is often wrong — the prompt says so in as many words, and tells
+the model the audio has to agree with the frames before it counts for
+anything. And sound carries past what the camera can see, so the prompt
+also warns that a clip may be tagged with something happening entirely out
+of frame. Only sounds plausibly relevant to security are passed on, and
+only the three most confident of those.
+
+A clip whose camera has no microphone, or has it switched off, produces no
+hint at all — the same pass that reads the audio detects its absence, so
+this costs nothing on installs with no audio to analyze. Silence is not
+recorded as missing evidence either: the evidence-quality score counts the
+four *visual* stages it was calibrated against, and a quiet clip says
+nothing about what the camera saw.
+
+What it heard is shown back to you, as a **What was heard** row of chips in
+the Library clip modal's AI panel, next to the existing **What was
+detected** ones — the same one heading and one chip row, so the panel keeps
+its shape. Each chip's tooltip carries the classifier's confidence and says
+again that it is a guess, not a transcript.
+
+Crucially, none of this delays a verdict. An audio hint is supporting
+evidence, so the stage is not allowed to be the reason an analysis is late:
+the model's first-use download (a few hundred megabytes) runs as a
+background task rather than something a clip waits behind — clips analyzed
+meanwhile are analyzed without an audio hint, and later ones pick it up —
+and the whole stage has a hard 45-second budget covering the decode, the
+wait for a free compute slot and the classification. Turning the option on
+looks like "no sound chips for the first clip or two, then sound chips",
+never like a stalled queue.
+
 ### Live view starts several seconds sooner
 
 A Blink live view only runs about 30 seconds, and too much of that was

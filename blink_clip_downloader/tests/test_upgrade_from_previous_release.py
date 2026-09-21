@@ -164,6 +164,8 @@ def test_every_option_the_parser_reads_is_declared_in_config_yaml(
     assert not undeclared, (
         f"read from options.json but not in config.yaml: {undeclared}"
     )
+    unread = sorted(set(current["schema"]) - read)
+    assert not unread, f"declared in config.yaml but never read: {unread}"
 
 
 # ----------------------------------------------------------------------

@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import yaml
 
 from blink_downloader.config import (
     AppConfig,
@@ -808,3 +809,35 @@ def test_bounded_int_falls_back_on_a_non_numeric_value(
 
 def test_bounded_int_uses_the_default_when_the_key_is_absent() -> None:
     assert _bounded_int({}, "n", default=5, low=1, high=8) == 5
+
+
+# ---------------------------------------------------------------------------
+# Translated option labels
+# ---------------------------------------------------------------------------
+
+_TRANSLATIONS = Path(__file__).resolve().parent.parent / "translations"
+
+
+@pytest.mark.parametrize(
+    "translation", sorted(_TRANSLATIONS.glob("*.yaml")), ids=lambda p: p.stem
+)
+def test_every_option_has_a_translated_label(translation: Path) -> None:
+    """Home Assistant renders the Configuration tab from these files. An
+    option missing from one shows up there as its raw key with no
+    description at all, in that language only — nothing else in this suite
+    looks at them, so the drift is otherwise invisible until a user in that
+    locale opens the tab."""
+    config = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text()
+    )
+    declared = set(config["schema"])
+    entries = yaml.safe_load(translation.read_text())["configuration"]
+
+    missing = sorted(declared - set(entries))
+    assert not missing, f"{translation.name} has no label for: {missing}"
+    stale = sorted(set(entries) - declared)
+    assert not stale, f"{translation.name} labels options that no longer exist: {stale}"
+    unlabelled = sorted(
+        key for key, value in entries.items() if not (value or {}).get("name")
+    )
+    assert not unlabelled, f"{translation.name} entries with no name: {unlabelled}"
