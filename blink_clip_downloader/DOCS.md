@@ -530,8 +530,8 @@ worth making for a few cents a month.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `ai_max_frames` | `5` | How many frames are **sent to the AI** per clip (1–100). This is the number that drives API cost. It is not how many are extracted — see below. |
-| `ai_frame_interval` | `2.0` | Seconds between the frames ffmpeg extracts (0.5–30). This sets how dense the pool of *candidates* is, not how many reach the AI. |
-| `ai_frame_strategy` | `"smart"` | How the frames that are sent get chosen out of that pool (see below). |
+| `ai_frame_interval` | `2.0` | The **widest** gap between the frames ffmpeg extracts (0.5–30). This sets how dense the pool of *candidates* is, not how many reach the AI. A clip too short to fill that pool at this spacing is sampled more often instead — never less. |
+| `ai_frame_strategy` | `"adaptive"` | How the frames that are sent get chosen out of that pool (see below). |
 
 The two numbers do different jobs, and it is worth being precise because
 guessing wrong here is how people end up paying for frames they did not need.
@@ -543,6 +543,17 @@ then picks `ai_max_frames` of those to actually send. So raising
 `ai_max_frames` buys you a denser sample of the clip, never a *longer* stretch of
 it: coverage is already the whole clip.
 
+A **short clip is sampled more often than `ai_frame_interval` asks for**, because
+otherwise there would be nothing for selection to do. ffmpeg can only produce
+`duration ÷ interval` frames, so at the defaults a 10-second clip yields exactly
+5 candidates for a 5-frame budget — every strategy then sends all 5 and behaves
+identically — and a 5-second clip sends 3 frames when you asked for 5. Most Blink
+clips are 10–20 seconds long, so the add-on tightens the spacing until the pool is
+full again (down to a 0.5-second floor). Nothing about this costs more: how many
+frames are *sent* is still `ai_max_frames`. The one exception is `"sequential"`,
+which sends one request per frame and on a very short clip was previously sending
+fewer than the budget you configured.
+
 Clips estimated at over 30 seconds get **twice** `ai_max_frames` — 10 rather than
 5 at the defaults — because one budget spread over 60 seconds samples half as
 densely as the same budget over 30, and a Blink clip can be either. Budget for
@@ -550,10 +561,16 @@ that when picking a paid model: a long clip costs double a short one.
 
 #### Frame Strategies
 
+`"adaptive"`, `"smart"` and `"uniform"` all send the same number of frames in a
+single request, so **they cost exactly the same** — there is no cheaper option to
+trade accuracy for. `ai_max_frames` is the only lever on token cost.
+`"sequential"` is the expensive one: it re-sends the whole prompt with every
+frame, roughly 2.6× a single call at the defaults.
+
 | Value | Behaviour |
 |-------|-----------|
-| `"adaptive"` | **(Default since 6.0.6.)** Spends the budget on the clip's one busiest stretch rather than spreading it. `"smart"` enforces a minimum gap between picks so they cover the whole timeline, which means a six-second event inside a 60-second clip gets **exactly one frame** — and stays at one however high `ai_max_frames` goes, so the doubled budget a long clip receives buys no extra look at what actually happened. This one takes the peak-motion frame, the first and last for context, then works outward from the peak through the event before spending anything elsewhere. If a clip has no single concentrated event — steady wind, a slow pan, or two separate bursts several seconds apart — it falls back to `"smart"` and picks identically, so it is never the worse choice, only a different one when there is something to aim at. |
-| `"smart"` | Ranks the extracted pool by inter-frame motion-diff (PIL) and sends the peak-motion frame, the first frame and the last frame, then fills any remaining budget by motion score while enforcing a minimum spacing so the picks spread across the clip instead of clustering on one burst. When the budget is smaller than three the peak wins first — a single frame of the scene *before* anything happened is rarely worth sending. It also asks ffmpeg for 2× `ai_max_frames` candidates, though that only raises the pool above the 60-second coverage floor if `ai_max_frames` is above 15 at the default interval. Best accuracy for a given number of API calls. |
+| `"adaptive"` | **(Default since 6.0.6 — recommended.)** Spends the budget on the clip's one busiest stretch rather than spreading it. `"smart"` enforces a minimum gap between picks so they cover the whole timeline, which means a six-second event inside a 60-second clip gets **exactly one frame** — and stays at one however high `ai_max_frames` goes, so the doubled budget a long clip receives buys no extra look at what actually happened. This one takes the peak-motion frame, the first and last for context, then works outward from the peak through the event before spending anything elsewhere. If a clip has no single concentrated event — steady wind, a slow pan, or two separate bursts several seconds apart — it falls back to `"smart"` and picks identically, so it is never the worse choice, only a different one when there is something to aim at. |
+| `"smart"` | Ranks the extracted pool by inter-frame motion-diff (PIL) and sends the peak-motion frame, the first frame and the last frame, then fills any remaining budget by motion score while enforcing a minimum spacing so the picks spread across the clip instead of clustering on one burst. When the budget is smaller than three the peak wins first — a single frame of the scene *before* anything happened is rarely worth sending. It also asks ffmpeg for 2× `ai_max_frames` candidates — which raises the pool above the 60-second coverage floor only if `ai_max_frames` is above 15 at the default interval, but is also what decides how finely a short clip gets sampled. Best accuracy for a given number of API calls. |
 | `"sequential"` | Chooses frames exactly as `"smart"` does, then sends each one as its own AI call and keeps the most alarming answer (suspicious beats non-suspicious; higher confidence breaks a tie). Useful when a model reads one image better than a batch — but note it costs one request per frame rather than one per clip. Works with all six providers. |
 | `"uniform"` | Skips motion analysis entirely and spaces the frames it sends evenly across the whole extracted pool. Pick this only if you specifically want sampling that ignores what is happening: because it never looks at motion, it can send the AI **no frames of the event at all** when that event was brief. On the same set of simulated clips used to compare the others, that happened on 2 of 14 — a car passing early in the clip, and someone arriving near the end. Kept for existing configurations. |
 

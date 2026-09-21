@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import json
 import logging
+import math
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -99,16 +100,148 @@ async def _requested_frame_count(
     return int(args[args.index("-frames:v") + 1])
 
 
-@pytest.mark.parametrize("duration", [0.0, 5.0, 30.0, 60.0])
-async def test_extract_frames_unchanged_for_clips_blink_itself_records(
+@pytest.mark.parametrize("duration", [0.0, 30.0, 60.0])
+async def test_extract_frames_unchanged_for_clips_that_fill_the_pool(
     analyzer: ClipAnalyzer, duration: float
 ) -> None:
-    """Knowing the real duration must change nothing at or under the
-    60-second ceiling Blink records to — which is every clip this add-on
-    downloads itself, so this is the path that must not move."""
+    """Knowing the real duration must change nothing for a clip long enough
+    to supply the candidate pool at the configured spacing — which at the
+    defaults is anything from 20 seconds up, so this is the path that must
+    not move. Shorter clips deliberately do move; see
+    test_extraction_interval_tightens_on_a_clip_too_short_to_fill_the_pool.
+    """
     assert await _requested_frame_count(analyzer, duration) == (
         await _requested_frame_count(analyzer, 0.0)
     )
+
+
+# ------------------------------------------------------------------
+# Extraction spacing on short clips
+# ------------------------------------------------------------------
+
+
+def _pool_frames(analyzer: ClipAnalyzer, duration: float) -> int:
+    """Frames ffmpeg's ``fps`` filter really emits for a clip this long."""
+    return math.ceil(duration / analyzer._extraction_interval(duration))
+
+
+def test_extraction_interval_is_the_configured_one_without_a_duration(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """A caller with no metadata to offer has to land exactly where it did
+    before short clips were handled at all — media_server's fine-tuning
+    panel pulls frames this way."""
+    assert analyzer._extraction_interval(0.0) == analyzer._frame_interval
+
+
+@pytest.mark.parametrize("duration", [12.0, 20.0, 30.0, 60.0])
+def test_extraction_interval_is_the_configured_one_once_the_pool_fills(
+    analyzer: ClipAnalyzer, duration: float
+) -> None:
+    assert analyzer._extraction_interval(duration) == analyzer._frame_interval
+
+
+@pytest.mark.parametrize("duration", [3.0, 5.0, 8.0, 10.0, 15.0, 18.0])
+def test_extraction_interval_tightens_on_a_clip_too_short_to_fill_the_pool(
+    duration: float,
+) -> None:
+    """The bug this fixes, at the real defaults: ffmpeg's ``fps`` filter can
+    only emit ``ceil(duration / interval)`` frames, so a 10-second clip used
+    to yield exactly 5 candidates for a 5-frame budget — leaving ``smart``
+    and ``adaptive`` nothing to choose between and collapsing all three
+    strategies into the same thing. Blink clips are commonly 10-20 seconds,
+    so that was the ordinary case, not a corner of it.
+    """
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava:7b",
+        prompt="Analyze this frame.",
+        max_frames=5,
+        frame_interval=2.0,
+        frame_strategy="adaptive",
+    )
+    before = math.ceil(duration / analyzer._frame_interval)
+    assert before < analyzer._extraction_pool_size()
+    assert _pool_frames(analyzer, duration) > before
+    assert _pool_frames(analyzer, duration) > analyzer._max_frames
+
+
+def test_extraction_interval_is_never_coarser_than_configured(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """Sampling *less* often than asked would cost coverage, which is the
+    opposite of the point."""
+    for tenths in range(1, 601):
+        duration = tenths / 10
+        assert analyzer._extraction_interval(duration) <= analyzer._frame_interval
+
+
+def test_extraction_interval_stops_at_the_floor_on_a_very_short_clip() -> None:
+    """Below half a second apart the frames are near-identical and cost full
+    price, so a one-second clip gets fewer than the budget rather than five
+    copies of the same moment."""
+    from blink_downloader.analyzer.base import _MIN_FRAME_INTERVAL
+
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava:7b",
+        prompt="p",
+        max_frames=5,
+        frame_interval=2.0,
+        frame_strategy="adaptive",
+    )
+    assert analyzer._extraction_interval(1.0) == _MIN_FRAME_INTERVAL
+
+
+def test_extraction_interval_keeps_a_caller_asking_finer_than_the_floor() -> None:
+    """The floor is a floor on *tightening*, not an override of a caller that
+    deliberately configured something finer."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava:7b",
+        prompt="p",
+        max_frames=5,
+        frame_interval=0.2,
+        frame_strategy="adaptive",
+    )
+    assert analyzer._extraction_interval(0.3) == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected"),
+    [("smart", 10), ("adaptive", 10), ("sequential", 5), ("uniform", 5)],
+)
+def test_extraction_pool_size_oversamples_only_the_ranking_strategies(
+    strategy: str, expected: int
+) -> None:
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava:7b",
+        prompt="p",
+        max_frames=5,
+        frame_strategy=strategy,
+    )
+    assert analyzer._extraction_pool_size() == expected
+
+
+async def test_extract_frames_asks_ffmpeg_for_the_tightened_spacing() -> None:
+    """The tightened interval has to reach the ``fps`` filter — computing it
+    and then sampling at the configured one would change nothing at all."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava:7b",
+        prompt="p",
+        max_frames=5,
+        frame_interval=2.0,
+        frame_strategy="adaptive",
+    )
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(_TWO_JPEGS, b""))
+    proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=proc) as spawn:
+        await analyzer.extract_frames("/clips/test.mp4", 10.0)
+    cmd = list(spawn.call_args[0])
+    assert cmd[cmd.index("-vf") + 1].startswith("fps=1/1.0,")
 
 
 @pytest.mark.parametrize(
@@ -5546,6 +5679,42 @@ async def test_analyze_clip_gives_face_recognition_the_full_raw_frame_pool() -> 
     raw_frames = call.kwargs["raw_frames"]
     assert len(ai_prompt_frames) == 2  # down-selected to max_frames
     assert len(raw_frames) == 12  # full raw extraction pool
+
+
+async def test_vision_pipeline_is_told_the_spacing_frames_were_really_taken_at() -> (
+    None
+):
+    """Everything that turns a frame index into a clip time — every track
+    offset, dwell, speed and the evidence-quality continuity score — is
+    derived from this number. Handing it the configured spacing while
+    extracting at a tightened one would put a 10-second clip's events out
+    at 18 seconds, silently and plausibly.
+    """
+    from blink_downloader.vision import VisionHints
+
+    a = ClipAnalyzer(
+        ollama_url="http://localhost:11434",
+        model="llava",
+        prompt="p",
+        max_frames=5,
+        frame_interval=2.0,
+        frame_strategy="adaptive",
+    )
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(return_value=VisionHints())
+    a.attach_vision_pipeline(fake_pipeline)
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_FAKE_JPEG * 10, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value='{"suspicious": false, "confidence": 0.1, "description": "C"}'
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        await a.analyze_clip("/clips/test.mp4", "c1", "Driveway", clip_duration=10.0)
+
+    # 10 frames across 10 seconds, not 10 frames across 20.
+    assert fake_pipeline.process_clip.call_args.kwargs["frame_interval"] == 1.0
 
 
 # ------------------------------------------------------------------

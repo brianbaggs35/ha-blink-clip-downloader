@@ -72,6 +72,11 @@ _MAX_CLIP_COVERAGE_SECONDS: float = 60.0
 #: still covers eight minutes, well past anything Blink itself records.
 _MAX_EXTRACTED_FRAMES: int = 240
 
+#: Finest spacing frame extraction will fall back to on a short clip, and
+#: the same floor ``ai_frame_interval``'s own schema allows a user to ask
+#: for. Sampling below it buys near-identical frames at full token price.
+_MIN_FRAME_INTERVAL: float = 0.5
+
 # Floor applied to a clip's confidence when the deterministic risk score
 # overrides the model's "nothing unusual" verdict (see
 # ai_risk_alert_threshold). Above the default notification threshold, since
@@ -395,6 +400,14 @@ class BaseAnalyzer(abc.ABC):
         self._car_description = car_description
         self._max_frames = max_frames
         self._frame_interval = frame_interval
+        # The spacing the *current* clip's frames were actually extracted
+        # at, which is finer than the configured one on a clip too short to
+        # fill the candidate pool (see _extraction_interval). Everything
+        # that converts a frame index into a clip time has to use this one
+        # or every offset, speed and duration it derives is wrong. Set per
+        # clip in _analyze_clip_locked, which holds _analyze_lock for its
+        # whole body — the same reasoning as _current_camera below.
+        self._current_frame_interval = frame_interval
         self._suspicious_keywords = [k.lower() for k in (suspicious_keywords or [])]
         self._camera_prompts: dict[str, str] = camera_prompts or {}
         self._camera_descriptions: dict[str, str] = camera_descriptions or {}
@@ -950,6 +963,7 @@ class BaseAnalyzer(abc.ABC):
 
         self._reset_analysis_state(camera)
         start = time.monotonic()
+        self._current_frame_interval = self._extraction_interval(clip_duration)
         frames = await self.extract_frames(clip_path, clip_duration)
 
         if not frames:
@@ -1433,7 +1447,7 @@ class BaseAnalyzer(abc.ABC):
             raw_frames=raw_frames,
             car_zone=self._car_zones.get(camera),
             camera=camera,
-            frame_interval=self._frame_interval,
+            frame_interval=self._current_frame_interval,
             vehicle_signature=await self._load_vehicle_signature(camera),
             clip_path=clip_path,
         )
@@ -1545,7 +1559,9 @@ class BaseAnalyzer(abc.ABC):
                 # run. ClipMeasurements wants a list, and everything
                 # downstream iterates it.
                 tracks=vision_hints.tracks or [],
-                frame_interval=vision_hints.scan_interval or self._frame_interval,
+                frame_interval=(
+                    vision_hints.scan_interval or self._current_frame_interval
+                ),
                 frame_count=vision_hints.scan_frame_count,
                 frames_analyzed=frames_analyzed,
                 target_frames=target_frames,
@@ -1811,23 +1827,18 @@ class BaseAnalyzer(abc.ABC):
         :meth:`_select_uniform_frames`.
 
         *clip_duration* is the clip's real length when the caller knows it.
-        Without it the span assumed is :data:`_MAX_CLIP_COVERAGE_SECONDS`,
-        which is Blink's own recording ceiling and therefore right for every
-        clip this add-on downloads itself — but *not* for a longer file that
-        reached the library another way, e.g. imported from disk by
-        ``library_scanner``.  Measured before this was threaded through: a
-        two-minute clip had its entire second half extracted from, analyzed
-        over and reported on by nobody, silently.  Capped at
+        It does two things.  It sets the span to cover, which without it is
+        :data:`_MAX_CLIP_COVERAGE_SECONDS` — Blink's own recording ceiling,
+        and so right for every clip this add-on downloads itself.  And it
+        lets :meth:`_extraction_interval` tighten the spacing on a clip too
+        short to fill the pool at the configured one.  Capped at
         :data:`_MAX_EXTRACTED_FRAMES` so a pathologically long file cannot
         turn one clip's analysis into a thousand PIL decodes.
         """
-        base_count = (
-            self._max_frames * 2
-            if self._frame_strategy in ("smart", "adaptive")
-            else self._max_frames
-        )
+        base_count = self._extraction_pool_size()
+        interval = self._extraction_interval(clip_duration)
         coverage_seconds = max(_MAX_CLIP_COVERAGE_SECONDS, clip_duration)
-        coverage_count = math.ceil(coverage_seconds / self._frame_interval)
+        coverage_count = math.ceil(coverage_seconds / interval)
         extract_count = min(max(base_count, coverage_count), _MAX_EXTRACTED_FRAMES)
         cmd = [
             "ffmpeg",
@@ -1842,7 +1853,7 @@ class BaseAnalyzer(abc.ABC):
             "-i",
             clip_path,
             "-vf",
-            f"fps=1/{self._frame_interval},scale=640:-1",
+            f"fps=1/{interval},scale=640:-1",
             "-frames:v",
             str(extract_count),
             "-f",
@@ -1884,6 +1895,56 @@ class BaseAnalyzer(abc.ABC):
             return []
 
         return split_jpeg_frames(stdout or b"")
+
+    def _extraction_pool_size(self) -> int:
+        """How many candidate frames the configured strategy wants to rank.
+
+        The motion-ranking strategies oversample so there is something to
+        choose between; the others only ever need the budget itself.
+        """
+        return (
+            self._max_frames * 2
+            if self._frame_strategy in ("smart", "adaptive")
+            else self._max_frames
+        )
+
+    def _extraction_interval(self, clip_duration: float) -> float:
+        """Seconds between extracted frames, tightened for a short clip.
+
+        ``frame_interval`` is a *maximum* spacing, not a fixed one.
+        ffmpeg's ``fps`` filter can only emit ``ceil(duration / interval)``
+        frames, so on a clip shorter than the pool the strategy asked for,
+        the configured spacing quietly caps the candidate pool below the
+        budget.  At the defaults that starts at 20 seconds and gets worse
+        all the way down: a 10-second clip yields exactly 5 candidates for
+        a 5-frame budget, leaving ``smart`` and ``adaptive`` nothing to
+        choose between and making all three strategies behave identically,
+        and a 5-second clip sends 3 frames when ``ai_max_frames`` asked for
+        5.  Blink clips are commonly 10-20 seconds long, so that is the
+        ordinary case rather than a corner of it.
+
+        So when the clip is too short to supply the pool at the configured
+        spacing, sample finer until it can — never coarser, and never finer
+        than :data:`_MIN_FRAME_INTERVAL` (or the configured spacing itself,
+        whichever is smaller, so a caller asking for something finer than
+        the floor still gets it).  How many frames are *sent* to the AI is
+        decided separately by :meth:`_target_frame_count` and is unchanged,
+        so this costs nothing extra under every strategy but ``sequential``
+        — which sends one request per frame, and on a clip this short was
+        sending fewer than the configured budget.
+
+        Returns ``frame_interval`` unchanged when the duration is unknown,
+        which keeps every caller that has no metadata to offer exactly
+        where it was.
+        """
+        pool = self._extraction_pool_size()
+        if (
+            clip_duration <= 0
+            or math.ceil(clip_duration / self._frame_interval) >= pool
+        ):
+            return self._frame_interval
+        floor = min(_MIN_FRAME_INTERVAL, self._frame_interval)
+        return max(floor, clip_duration / pool)
 
     def _target_frame_count(
         self, raw_frame_count: int, clip_duration: float = 0.0

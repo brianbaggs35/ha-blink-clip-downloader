@@ -330,10 +330,16 @@ configuration:
   ai_frame_interval:
     name: Intervalo entre fotogramas (segundos)
     description: >-
-      Segundos entre los fotogramas extraídos del vídeo. Define la
-      densidad del conjunto de candidatos, no cuántos llegan a la IA: en
-      cualquier caso se extraen suficientes para cubrir un clip completo
-      de 60 segundos, y «Fotogramas máximos» decide cuántos se envían.
+      El intervalo máximo entre los fotogramas extraídos del vídeo.
+      Define la densidad del conjunto de candidatos, no cuántos llegan a
+      la IA: en cualquier caso se extraen suficientes para cubrir un clip
+      completo de 60 segundos, y «Fotogramas máximos» decide cuántos se
+      envían. Un clip demasiado corto para llenar ese conjunto con este
+      intervalo se muestrea con más frecuencia, nunca con menos: a 2
+      segundos, un clip de 10 segundos solo da 5 candidatos, que es todo
+      el presupuesto, así que la estrategia de fotogramas no tiene entre
+      qué elegir. La mayoría de los clips de Blink duran 10-20 segundos.
+      No cuesta nada más: se siguen enviando «Fotogramas máximos».
   ai_suspicious_keywords:
     name: Palabras clave sospechosas
     description: >-
@@ -394,15 +400,18 @@ configuration:
     name: Estrategia de extracción de fotogramas
     description: >-
       Cómo se eligen de ese conjunto los fotogramas que se envían.
-      «adaptive» (por defecto) gasta el presupuesto en el tramo más activo
-      del clip, de modo que un evento breve recibe varios fotogramas en vez
-      de uno; si el clip no tiene un único evento concentrado, elige
-      exactamente lo mismo que «smart». «smart» ordena por movimiento y
-      reparte sus elecciones por todo el clip. «sequential» elige los
-      mismos fotogramas que «smart» pero envía cada uno como su propia
-      llamada a la IA: una petición por fotograma en vez de una por clip.
-      «uniform» ignora el movimiento por completo y puede perderse un
-      evento breve del todo (heredado).
+      «adaptive» (por defecto, recomendado) gasta el presupuesto en el
+      tramo más activo del clip, de modo que un evento breve recibe varios
+      fotogramas en vez de uno; si el clip no tiene un único evento
+      concentrado elige exactamente lo mismo que «smart», así que nunca es
+      la peor opción. «smart» ordena por movimiento y reparte sus
+      elecciones por todo el clip. «uniform» ignora el movimiento y puede
+      perderse un evento breve del todo (heredado). Esas tres envían los
+      mismos fotogramas en una sola petición y cuestan lo mismo: solo
+      Fotogramas máximos cambia eso. «sequential» envía cada fotograma
+      como su propia llamada, lo que cuesta unas 2,6 veces más porque el
+      prompt se repite cada vez; úsalo solo con un modelo que lea mejor
+      una imagen suelta que un lote.
   ai_car_cameras:
     name: Cámaras de protección de vehículo
     description: >-

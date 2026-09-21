@@ -302,10 +302,16 @@ options:
   # budget over 30s. For moondream_cloud, each frame = one API request
   # (rate-limited to 2 req/s).
   ai_max_frames: 5
-  # Seconds between the frames ffmpeg extracts. This sets how dense the pool of
-  # *candidates* is, not how many reach the AI — enough frames are extracted to
-  # cover a full 60-second clip either way (30 of them at this default), and
-  # ai_max_frames then decides how many of those get sent.
+  # The *widest* gap between the frames ffmpeg extracts. This sets how dense
+  # the pool of candidates is, not how many reach the AI — enough frames are
+  # extracted to cover a full 60-second clip either way (30 of them at this
+  # default), and ai_max_frames then decides how many of those get sent.
+  # A clip too short to fill that pool at this spacing is sampled more often
+  # instead, never less: a 10-second clip yields only 5 candidates at 2.0s,
+  # which is exactly the budget above and so leaves the frame strategy
+  # nothing to choose between. Since most Blink clips are 10-20 seconds, that
+  # matters more often than not. Costs nothing extra — the number of frames
+  # sent is still ai_max_frames.
   ai_frame_interval: 2.0
   # Words that trigger a "suspicious" flag when found in the AI's plain-text
   # response (used as fallback when the AI does not return JSON).
@@ -349,7 +355,7 @@ options:
   # Example: [{camera: "Driveway", description: "Points at driveway; silver Kia Forte parked left"}]
   ai_camera_descriptions: []
   # How the frames that get sent are chosen out of the extracted pool:
-  #   "adaptive"   – (default) spend the budget on the clip's one busiest
+  #   "adaptive"   – (default, RECOMMENDED) spend the budget on the clip's one busiest
   #                  stretch. Measured across simulated clips it puts about
   #                  69% of an event's frames in front of the AI, against
   #                  39% for "smart", and never does worse: when a clip has
@@ -364,8 +370,10 @@ options:
   #                  the event itself.
   #   "sequential" – choose the same frames as "smart", but send each as its own
   #                  AI call and keep the most alarming answer. Useful when a
-  #                  model reads one image better than a batch; costs one
-  #                  request per frame rather than one per clip.
+  #                  model reads one image better than a batch. Note this is
+  #                  the *expensive* option, roughly 2.6x a single call at the
+  #                  defaults, because the whole prompt is re-sent with every
+  #                  frame.
   #   "uniform"    – no motion analysis at all: space the frames evenly across
   #                  the pool. Only pick this if you specifically want
   #                  sampling that ignores what is happening — it can send
@@ -374,6 +382,9 @@ options:
   #                  happened on 2 of 14 (a car passing early, someone
   #                  arriving late). Kept for existing configurations
   #                  (legacy).
+  # Cost note: "adaptive", "smart" and "uniform" all send the same number of
+  # frames in a single request, so they cost exactly the same — picking a
+  # less capable one saves nothing. ai_max_frames is the only lever on cost.
   ai_frame_strategy: "adaptive"
   # Restrict car-proximity rules to specific cameras. When set, only cameras in
   # this list will have the PROTECTED VEHICLE / distance rules injected into
