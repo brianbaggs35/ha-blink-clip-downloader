@@ -841,3 +841,29 @@ def test_every_option_has_a_translated_label(translation: Path) -> None:
         key for key, value in entries.items() if not (value or {}).get("name")
     )
     assert not unlabelled, f"{translation.name} entries with no name: {unlabelled}"
+
+
+def test_the_shipped_frame_strategy_default_is_the_best_measured_one() -> None:
+    """Both halves have to agree, and neither is obvious from the other:
+    config.yaml's value is what a fresh install gets written into its
+    options.json, while the parser's is what applies when the key is
+    absent entirely. See tests/test_analyzer.py for the measurements
+    behind the choice."""
+    yaml_default = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text()
+    )["options"]["ai_frame_strategy"]
+
+    assert yaml_default == "adaptive"
+    assert _parse_config({"username": "u", "password": "p"}).ai_frame_strategy == (
+        "adaptive"
+    )
+
+
+def test_an_upgrading_install_keeps_the_strategy_it_already_had() -> None:
+    """Changing the default must not change behaviour under anyone who
+    already chose — their options.json still says what it said."""
+    for stored in ("smart", "sequential", "uniform"):
+        config = _parse_config(
+            {"username": "u", "password": "p", "ai_frame_strategy": stored}
+        )
+        assert config.ai_frame_strategy == stored

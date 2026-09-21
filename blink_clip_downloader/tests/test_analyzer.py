@@ -86,6 +86,56 @@ _FAKE_JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
 _TWO_JPEGS = _FAKE_JPEG + _FAKE_JPEG
 
 
+async def _requested_frame_count(
+    analyzer: ClipAnalyzer, clip_duration: float = 0.0
+) -> int:
+    """How many frames the ffmpeg call actually asks for."""
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(_TWO_JPEGS, b""))
+    proc.returncode = 0
+    with patch("asyncio.create_subprocess_exec", return_value=proc) as spawn:
+        await analyzer.extract_frames("/clips/test.mp4", clip_duration)
+    args = list(spawn.call_args[0])
+    return int(args[args.index("-frames:v") + 1])
+
+
+@pytest.mark.parametrize("duration", [0.0, 5.0, 30.0, 60.0])
+async def test_extract_frames_unchanged_for_clips_blink_itself_records(
+    analyzer: ClipAnalyzer, duration: float
+) -> None:
+    """Knowing the real duration must change nothing at or under the
+    60-second ceiling Blink records to — which is every clip this add-on
+    downloads itself, so this is the path that must not move."""
+    assert await _requested_frame_count(analyzer, duration) == (
+        await _requested_frame_count(analyzer, 0.0)
+    )
+
+
+@pytest.mark.parametrize(
+    ("duration", "expected_seconds"), [(90.0, 90.0), (120.0, 120.0), (300.0, 300.0)]
+)
+async def test_extract_frames_covers_a_clip_longer_than_blink_records(
+    analyzer: ClipAnalyzer, duration: float, expected_seconds: float
+) -> None:
+    """A file that reached the library some other way — imported from disk
+    by library_scanner, say — used to have everything past its first 60
+    seconds extracted from, analyzed over and reported on by nobody.
+    """
+    requested = await _requested_frame_count(analyzer, duration)
+    assert requested * analyzer._frame_interval >= expected_seconds
+
+
+async def test_extract_frames_will_not_decode_an_unbounded_number_of_frames(
+    analyzer: ClipAnalyzer,
+) -> None:
+    """Each frame is a JPEG in memory plus, for the motion strategies, a
+    PIL decode and a per-pixel diff. An hour-long file must not turn one
+    clip's analysis into thousands of both."""
+    from blink_downloader.analyzer.base import _MAX_EXTRACTED_FRAMES
+
+    assert await _requested_frame_count(analyzer, 3600.0) == _MAX_EXTRACTED_FRAMES
+
+
 async def test_extract_frames_calls_ffmpeg(analyzer: ClipAnalyzer) -> None:
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock(return_value=(_TWO_JPEGS, b""))
@@ -1746,7 +1796,7 @@ async def test_analyze_clip_serializes_concurrent_calls(analyzer: ClipAnalyzer) 
     max_concurrent = 0
     seen_cameras: list[str] = []
 
-    async def fake_extract_frames(_path: str) -> list[bytes]:
+    async def fake_extract_frames(_path: str, _duration: float = 0.0) -> list[bytes]:
         return [_FAKE_JPEG]
 
     async def fake_call_model(_frames: list[bytes], _prompt: str) -> str:
@@ -11416,3 +11466,69 @@ def test_adaptive_strategy_reaches_selection_from_the_config_option() -> None:
         analyzer._select_best_frames(frames, 5, None, True)
 
     adaptive.assert_called_once()
+
+
+def _benchmark_clip(
+    frame_count: int, event: range | list[int]
+) -> tuple[list[bytes], list[float], set[int]]:
+    """A clip whose motion sits in *event*, plus the frames that show it."""
+    frames = [f"frame{i}".encode() for i in range(frame_count)]
+    diffs = [0.5] * (frame_count - 1)
+    for i in event:
+        if 0 <= i < len(diffs):
+            diffs[i] = 80.0
+    return frames, diffs, set(list(event) + [max(event) + 1])
+
+
+#: Realistic clip shapes. Blink records *on* motion, so an event beginning
+#: at or near the start of the clip is the common case, not an edge one.
+_CLIP_SHAPES = [
+    ("brief, starts at once", 30, range(3)),
+    ("brief, mid-clip", 30, range(12, 15)),
+    ("lingers from the start", 30, range(10)),
+    ("car passes early", 30, range(1, 3)),
+    ("arrives late", 30, range(23, 27)),
+    ("two people, 20s apart", 30, [2, 3, 20, 21]),
+]
+
+
+@pytest.mark.parametrize(("shape", "frame_count", "event"), _CLIP_SHAPES)
+@pytest.mark.parametrize("budget", [5, 10])
+def test_adaptive_is_never_worse_than_smart_at_showing_the_event(
+    shape: str, frame_count: int, event: range | list[int], budget: int
+) -> None:
+    """The claim the docs and the default now rest on.
+
+    `adaptive` must show the AI at least as much of the event as `smart`
+    does on every shape of clip — including the ones where it gives up
+    and defers to `smart`, which is most of the value of it deferring.
+    """
+    frames, diffs, event_frames = _benchmark_clip(frame_count, event)
+
+    smart = ClipAnalyzer._select_frames_by_motion(frames, diffs, budget)
+    adaptive = ClipAnalyzer._select_frames_around_event(frames, diffs, budget)
+    seen = lambda picked: len({frames.index(f) for f in picked} & event_frames)
+
+    assert seen(adaptive) >= seen(smart), shape
+
+
+def test_adaptive_shows_more_of_a_brief_event_than_smart_does() -> None:
+    """...and on the shapes it was built for, strictly more — otherwise
+    there would be no reason for it to be the default."""
+    frames, diffs, event_frames = _benchmark_clip(30, range(12, 15))
+    seen = lambda picked: len({frames.index(f) for f in picked} & event_frames)
+
+    assert seen(ClipAnalyzer._select_frames_around_event(frames, diffs, 5)) > seen(
+        ClipAnalyzer._select_frames_by_motion(frames, diffs, 5)
+    )
+
+
+def test_uniform_can_miss_a_brief_event_entirely() -> None:
+    """Documented rather than fixed, because it is what "ignore motion"
+    means — but it is the reason `uniform` is no longer the neutral
+    choice it reads as, and the docs say so."""
+    frames, _diffs, event_frames = _benchmark_clip(30, range(1, 3))
+
+    picked = {frames.index(f) for f in ClipAnalyzer._select_uniform_frames(frames, 5)}
+
+    assert not (picked & event_frames)

@@ -349,26 +349,32 @@ options:
   # Example: [{camera: "Driveway", description: "Points at driveway; silver Kia Forte parked left"}]
   ai_camera_descriptions: []
   # How the frames that get sent are chosen out of the extracted pool:
-  #   "smart"      – (default) rank by inter-frame motion and send the
-  #                  peak-motion frame, the first and the last, then fill any
-  #                  remaining budget with high-motion frames spaced out across
-  #                  the clip. Best accuracy for a given number of API calls.
+  #   "adaptive"   – (default) spend the budget on the clip's one busiest
+  #                  stretch. Measured across simulated clips it puts about
+  #                  69% of an event's frames in front of the AI, against
+  #                  39% for "smart", and never does worse: when a clip has
+  #                  no single concentrated event — steady wind, a slow pan,
+  #                  two separate bursts — it picks exactly what "smart"
+  #                  would.
+  #   "smart"       – rank by inter-frame motion and send the peak-motion
+  #                  frame, the first and the last, then fill any remaining
+  #                  budget with high-motion frames spaced out across the
+  #                  clip. Prefer this over "adaptive" only if you care more
+  #                  about even coverage of the whole clip than about seeing
+  #                  the event itself.
   #   "sequential" – choose the same frames as "smart", but send each as its own
   #                  AI call and keep the most alarming answer. Useful when a
   #                  model reads one image better than a batch; costs one
   #                  request per frame rather than one per clip.
-  #   "uniform"    – no motion analysis: space the frames evenly across the pool.
-  #                  Cheap and predictable, but spends budget on empty frames
-  #                  when the event was brief (legacy).
-  #   "adaptive"   – spend the budget on the clip's one busiest stretch instead
-  #                  of spreading it. "smart" enforces a minimum gap between
-  #                  picks, so a six-second event in a 60-second clip gets
-  #                  exactly one frame no matter how high ai_max_frames goes;
-  #                  this concentrates on the event and its approach, keeping
-  #                  the first and last frame for context. When a clip has no
-  #                  single concentrated event — steady wind, a slow pan, or
-  #                  two separate bursts — it behaves exactly like "smart".
-  ai_frame_strategy: "smart"
+  #   "uniform"    – no motion analysis at all: space the frames evenly across
+  #                  the pool. Only pick this if you specifically want
+  #                  sampling that ignores what is happening — it can send
+  #                  the AI *no frames of the event whatsoever* when that
+  #                  event was brief, which on the same simulated clips
+  #                  happened on 2 of 14 (a car passing early, someone
+  #                  arriving late). Kept for existing configurations
+  #                  (legacy).
+  ai_frame_strategy: "adaptive"
   # Restrict car-proximity rules to specific cameras. When set, only cameras in
   # this list will have the PROTECTED VEHICLE / distance rules injected into
   # their AI prompt. Cameras not in this list will focus on their own camera

@@ -64,6 +64,14 @@ _CONTENT_TYPE_JSON = "application/json"
 # 10s of a 60s clip) and anything that happens later is never seen.
 _MAX_CLIP_COVERAGE_SECONDS: float = 60.0
 
+#: Hard ceiling on frames pulled from one clip, whatever its length. Each
+#: extracted frame is a JPEG held in memory and, for the motion-ranking
+#: strategies, a PIL decode and a per-pixel diff — so an hour-long file
+#: dropped into the library must not be allowed to turn one clip's
+#: analysis into thousands of both. At the default 2-second spacing this
+#: still covers eight minutes, well past anything Blink itself records.
+_MAX_EXTRACTED_FRAMES: int = 240
+
 # Floor applied to a clip's confidence when the deterministic risk score
 # overrides the model's "nothing unusual" verdict (see
 # ai_risk_alert_threshold). Above the default notification threshold, since
@@ -942,7 +950,7 @@ class BaseAnalyzer(abc.ABC):
 
         self._reset_analysis_state(camera)
         start = time.monotonic()
-        frames = await self.extract_frames(clip_path)
+        frames = await self.extract_frames(clip_path, clip_duration)
 
         if not frames:
             return AnalysisResult(
@@ -1786,26 +1794,41 @@ class BaseAnalyzer(abc.ABC):
     # Frame extraction (shared by all providers)
     # ------------------------------------------------------------------
 
-    async def extract_frames(self, clip_path: str) -> list[bytes]:
+    async def extract_frames(
+        self, clip_path: str, clip_duration: float = 0.0
+    ) -> list[bytes]:
         """Extract JPEG frames from an MP4 using ffmpeg.
 
         The extraction count is the larger of the strategy's own oversampling
-        target (2× max_frames in ``smart`` mode, else max_frames) and however
-        many frames are needed to cover a full :data:`_MAX_CLIP_COVERAGE_SECONDS`
-        clip at ``frame_interval`` spacing.  This second term is what keeps a
-        60-second Blink clip from only being sampled in its first few seconds —
-        ffmpeg naturally emits fewer frames than requested for shorter clips, so
-        this is a safe upper bound rather than a fixed count.  Down-selection to
-        the frames actually sent to the AI happens afterwards in
-        :meth:`_select_best_frames` / :meth:`_select_uniform_frames`.
+        target (2× max_frames for the motion-ranking strategies, else
+        max_frames) and however many frames are needed to cover the whole
+        clip at ``frame_interval`` spacing.  That second term is what keeps a
+        60-second Blink clip from only being sampled in its first few seconds
+        — ffmpeg naturally emits fewer frames than requested for shorter
+        clips, so this is a safe upper bound rather than a fixed count.
+        Down-selection to the frames actually sent to the AI happens
+        afterwards in :meth:`_select_best_frames` /
+        :meth:`_select_uniform_frames`.
+
+        *clip_duration* is the clip's real length when the caller knows it.
+        Without it the span assumed is :data:`_MAX_CLIP_COVERAGE_SECONDS`,
+        which is Blink's own recording ceiling and therefore right for every
+        clip this add-on downloads itself — but *not* for a longer file that
+        reached the library another way, e.g. imported from disk by
+        ``library_scanner``.  Measured before this was threaded through: a
+        two-minute clip had its entire second half extracted from, analyzed
+        over and reported on by nobody, silently.  Capped at
+        :data:`_MAX_EXTRACTED_FRAMES` so a pathologically long file cannot
+        turn one clip's analysis into a thousand PIL decodes.
         """
         base_count = (
             self._max_frames * 2
             if self._frame_strategy in ("smart", "adaptive")
             else self._max_frames
         )
-        coverage_count = math.ceil(_MAX_CLIP_COVERAGE_SECONDS / self._frame_interval)
-        extract_count = max(base_count, coverage_count)
+        coverage_seconds = max(_MAX_CLIP_COVERAGE_SECONDS, clip_duration)
+        coverage_count = math.ceil(coverage_seconds / self._frame_interval)
+        extract_count = min(max(base_count, coverage_count), _MAX_EXTRACTED_FRAMES)
         cmd = [
             "ffmpeg",
             # Without these, ffmpeg's multi-line version/build banner is the

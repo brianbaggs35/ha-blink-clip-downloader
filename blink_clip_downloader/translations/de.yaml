@@ -407,18 +407,15 @@ configuration:
     name: Strategie zur Einzelbildextraktion
     description: >-
       Wie die gesendeten Einzelbilder aus diesem Pool ausgewählt werden.
-      „smart“ (Standard) bewertet sie nach Bewegung und sendet das Bild
-      mit der stärksten Bewegung sowie das erste und letzte; verbleibendes
-      Budget wird mit bewegungsreichen, über den Clip verteilten Bildern
-      gefüllt. „sequential“ wählt dieselben Bilder, sendet aber jedes als
-      eigene KI-Anfrage und behält das alarmierendste Ergebnis — eine
-      Anfrage pro Bild statt einer pro Clip. „uniform“ verzichtet auf die
-      Bewegungsanalyse und verteilt sie gleichmäßig (veraltet). „adaptive“ verwendet das Budget für
-      den einen bewegungsreichsten Abschnitt des Clips, statt es zu
-      verteilen — ein kurzes Ereignis in einem langen Clip erhält so
-      mehrere Einzelbilder statt nur einem — und verhält sich genau wie
-      „smart“, wenn ein Clip kein einzelnes konzentriertes Ereignis
-      enthält.
+      „adaptive“ (Standard) verwendet das Budget für den einen
+      bewegungsreichsten Abschnitt, sodass ein kurzes Ereignis mehrere
+      Bilder statt nur eines erhält; hat ein Clip kein einzelnes
+      konzentriertes Ereignis, wählt es genau das aus, was „smart“ wählen
+      würde. „smart“ bewertet nach Bewegung und verteilt die Auswahl
+      gleichmäßig über den ganzen Clip. „sequential“ wählt dieselben
+      Bilder wie „smart“, sendet aber jedes als eigene KI-Anfrage — eine
+      Anfrage pro Bild statt einer pro Clip. „uniform“ ignoriert Bewegung
+      völlig und kann ein kurzes Ereignis ganz verpassen (veraltet).
   ai_car_cameras:
     name: Fahrzeugschutz-Kameras
     description: >-
