@@ -3956,7 +3956,7 @@ async def test_feedback_cascades_on_clip_delete(db: ClipDatabase) -> None:
 
 
 # ------------------------------------------------------------------
-# Local-only face enrollment (see vision.py, ai_face_recognition_enabled)
+# Local-only face enrollment (see vision/faces.py, ai_face_recognition_enabled)
 # ------------------------------------------------------------------
 
 

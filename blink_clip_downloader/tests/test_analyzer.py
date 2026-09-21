@@ -5226,7 +5226,7 @@ def test_build_prompt_no_zone_motion_hint_when_not_provided() -> None:
 
 
 # ------------------------------------------------------------------
-# vision_hints — optional computer-vision pipeline hints (see vision.py)
+# vision_hints — optional computer-vision pipeline hints (see the vision package)
 # ------------------------------------------------------------------
 
 
@@ -5537,7 +5537,7 @@ def test_personalization_names_merges_and_sorts_approved_and_unapproved() -> Non
 def test_personalization_names_deduplicates_a_name_in_both_lists() -> None:
     """Defensive: the same name should never realistically land in both
     approved_names and other_names (they come from disjoint per-enrollment
-    approved flags in vision.py), but the union must not double it up if it
+    approved flags in vision/faces.py), but the union must not double it up if it
     ever did."""
     from blink_downloader.vision import FaceRecognitionResult, VisionHints
 

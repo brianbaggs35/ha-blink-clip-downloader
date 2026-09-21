@@ -684,7 +684,7 @@ class SecurityEventDetector:
             # stage that can tell those apart, so its negative verdict wins
             # over segmentation's positive one — the same precedence every
             # other rule here gives it. The contact *hint* still reaches the
-            # prompt either way (see vision.py's _run_pair_stages), so the
+            # prompt either way (see vision/pipeline.py's _run_pair_stages), so the
             # model can still see and judge it; what is withheld is this
             # layer asserting a contact its own evidence contradicts.
             return None

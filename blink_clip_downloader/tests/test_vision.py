@@ -52,32 +52,44 @@ from blink_downloader.vision import (
     PostureResult,
     VisionConfig,
     VisionPipeline,
-    _best_pose_keypoints,
-    _best_subject_vehicle_pair,
-    _box_gap,
-    _build_contact_hint,
-    _build_depth_hint,
-    _build_detection_hint,
-    _build_posture_hint,
-    _build_recognition_hint,
-    _build_tracking_hint,
-    _car_zone_reference,
-    _crop_region,
-    _detection_distance_pair,
-    _is_huggingface_auth_error,
-    _is_reaching,
-    _keypoint,
-    _pose_confidence,
-    _posture_from_keypoints,
-    _proximity_label,
-    _region_appearance_change,
-    _select_scan_frames,
-    _vehicle_histogram,
-    _ZoneReference,
     cosine_similarity,
     is_face_recognition_available,
     torch_cpu_compatible,
 )
+
+# Internals come from the stage module that owns them, not the package
+# facade: the facade exports the pipeline's public surface, and a test that
+# reaches past it should say which stage it is reaching into.
+from blink_downloader.vision import imaging as imaging_module
+from blink_downloader.vision import runtime as runtime_module
+from blink_downloader.vision.contact import _build_contact_hint
+from blink_downloader.vision.depth import _build_depth_hint
+from blink_downloader.vision.detection import (
+    _best_subject_vehicle_pair,
+    _box_gap,
+    _build_detection_hint,
+    _build_tracking_hint,
+    _car_zone_reference,
+    _detection_distance_pair,
+    _proximity_label,
+    _ZoneReference,
+)
+from blink_downloader.vision.faces import _build_recognition_hint
+from blink_downloader.vision.imaging import (
+    _crop_region,
+    _region_appearance_change,
+    _select_scan_frames,
+    _vehicle_histogram,
+)
+from blink_downloader.vision.pose import (
+    _best_pose_keypoints,
+    _build_posture_hint,
+    _is_reaching,
+    _keypoint,
+    _pose_confidence,
+    _posture_from_keypoints,
+)
+from blink_downloader.vision.runtime import _is_huggingface_auth_error
 
 
 @pytest.fixture(autouse=True)
@@ -88,7 +100,9 @@ def _yolo_cache_dir_in_tmp_path(monkeypatch: pytest.MonkeyPatch, tmp_path) -> No
     mocked away by the sys.modules substitution above, so without this
     fixture every ObjectDetector test would try to create a real /data
     directory on whatever machine runs the suite."""
-    monkeypatch.setattr("blink_downloader.vision._YOLO_MODEL_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime._YOLO_MODEL_CACHE_DIR", str(tmp_path)
+    )
 
 
 def _real_jpeg_bytes(size: tuple[int, int] = (10, 10)) -> bytes:
@@ -284,7 +298,9 @@ def test_torch_cpu_compatible_real_device_cpuinfo(
     each _CPUINFO_* constant's own comment for why that specific device
     was chosen and what it's meant to guard against.
     """
-    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.platform.machine", lambda: "aarch64"
+    )
     with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
         assert torch_cpu_compatible() is expected, device
 
@@ -297,7 +313,9 @@ def test_torch_cpu_compatible_reads_first_core_not_a_later_one(
     it and accidentally match something in a later block or an unrelated
     line further down the file (e.g. if a later section happened to
     contain the word "atomics" in a different context)."""
-    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.platform.machine", lambda: "aarch64"
+    )
     cpuinfo = (
         "processor\t: 0\nFeatures\t: fp asimd evtstrm crc32\n\n"
         "processor\t: 1\nFeatures\t: fp asimd evtstrm crc32 atomics\n"
@@ -313,7 +331,9 @@ def test_torch_cpu_compatible_atomics_matched_as_whole_token(
     (features.split() + membership test), not a substring - a feature flag
     that merely *contains* "atomics" as part of a longer word must not
     false-positive a device into being reported as compatible."""
-    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.platform.machine", lambda: "aarch64"
+    )
     cpuinfo = "processor\t: 0\nFeatures\t: fp asimd notarealatomicsflag\n"
     with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
         assert torch_cpu_compatible() is False
@@ -337,7 +357,9 @@ def test_torch_cpu_compatible_tolerates_formatting_variance(
     that should affect whether a genuinely capable device gets correctly
     detected. (The kernel always left-aligns field names with no leading
     indentation, so that's not a case worth fabricating here.)"""
-    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.platform.machine", lambda: "aarch64"
+    )
     with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
         assert torch_cpu_compatible() is True
 
@@ -345,14 +367,18 @@ def test_torch_cpu_compatible_tolerates_formatting_variance(
 def test_torch_cpu_compatible_true_on_non_arm(monkeypatch: pytest.MonkeyPatch) -> None:
     """x86_64 (and any non-ARM arch) never needs the /proc/cpuinfo check —
     the LSE/illegal-instruction risk is ARM-specific."""
-    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "x86_64")
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.platform.machine", lambda: "x86_64"
+    )
     assert torch_cpu_compatible() is True
 
 
 def test_torch_cpu_compatible_true_when_atomics_present(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.platform.machine", lambda: "aarch64"
+    )
     cpuinfo = "processor\t: 0\nFeatures\t: fp asimd evtstrm aes atomics fphp\n"
     with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
         assert torch_cpu_compatible() is True
@@ -363,7 +389,9 @@ def test_torch_cpu_compatible_false_when_atomics_absent(
 ) -> None:
     """This is the actual Raspberry Pi 4 (Cortex-A72) case — LSE/atomics
     was only added in ARMv8.1, which A72 predates."""
-    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.platform.machine", lambda: "aarch64"
+    )
     cpuinfo = "processor\t: 0\nFeatures\t: fp asimd evtstrm aes fphp\n"
     with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
         assert torch_cpu_compatible() is False
@@ -372,7 +400,9 @@ def test_torch_cpu_compatible_false_when_atomics_absent(
 def test_torch_cpu_compatible_false_when_no_features_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.platform.machine", lambda: "aarch64"
+    )
     cpuinfo = "processor\t: 0\nmodel name\t: whatever\n"
     with patch("builtins.open", MagicMock(return_value=io.StringIO(cpuinfo))):
         assert torch_cpu_compatible() is False
@@ -383,13 +413,17 @@ def test_torch_cpu_compatible_false_when_cpuinfo_unreadable(
 ) -> None:
     """Conservative default: can't confirm safety, so assume unsupported
     rather than risk the crash this check exists to prevent."""
-    monkeypatch.setattr("blink_downloader.vision.platform.machine", lambda: "aarch64")
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.platform.machine", lambda: "aarch64"
+    )
     with patch("builtins.open", side_effect=OSError("no such file")):
         assert torch_cpu_compatible() is False
 
 
 def test_is_face_recognition_available_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: True)
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
     monkeypatch.setitem(sys.modules, "facenet_pytorch", MagicMock())
     assert is_face_recognition_available() is True
 
@@ -397,7 +431,9 @@ def test_is_face_recognition_available_true(monkeypatch: pytest.MonkeyPatch) -> 
 def test_is_face_recognition_available_false_when_package_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: True)
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
     monkeypatch.delitem(sys.modules, "facenet_pytorch", raising=False)
     with patch("builtins.__import__", side_effect=ImportError):
         assert is_face_recognition_available() is False
@@ -409,7 +445,9 @@ def test_is_face_recognition_available_false_when_cpu_incompatible(
     """Even with the package present, an incompatible CPU must still report
     unavailable — this is what keeps the enrollment endpoint from ever
     trying the import that would crash the process."""
-    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
+    )
     monkeypatch.setitem(sys.modules, "facenet_pytorch", MagicMock())
     assert is_face_recognition_available() is False
 
@@ -986,7 +1024,9 @@ def test_object_detector_load_sync_raises_cpu_incompatible(
     """_load_sync() must refuse before attempting the ultralytics import at
     all when the CPU can't safely run it — that import is what would
     actually crash the process, so the guard has to come first."""
-    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
+    )
     detector = ObjectDetector()
     with pytest.raises(CPUIncompatibleError):
         detector._load_sync()
@@ -1012,7 +1052,9 @@ def test_object_detector_load_sync_leaves_explicit_path_untouched(
 async def test_object_detector_ensure_ready_false_when_cpu_incompatible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
+    )
     detector = ObjectDetector()
     assert await detector.ensure_ready() is False
 
@@ -1304,7 +1346,9 @@ async def test_depth_estimator_ensure_ready_fails_when_missing(
 async def test_depth_estimator_ensure_ready_false_when_cpu_incompatible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
+    )
     estimator = DepthEstimator()
     assert await estimator.ensure_ready() is False
 
@@ -1569,7 +1613,9 @@ async def test_contact_segmenter_ensure_ready_fails_when_missing(
 async def test_contact_segmenter_ensure_ready_false_when_cpu_incompatible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
+    )
     segmenter = ContactSegmenter()
     assert await segmenter.ensure_ready() is False
 
@@ -1908,7 +1954,9 @@ async def test_face_embedder_ensure_ready_fails_when_missing(
 async def test_face_embedder_ensure_ready_false_when_cpu_incompatible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
+    )
     embedder = FaceEmbedder()
     assert await embedder.ensure_ready() is False
 
@@ -2674,26 +2722,26 @@ def cv_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
     with a semaphore built at the wrong one. monkeypatch restores both,
     including when the test fails part-way.
     """
-    monkeypatch.setattr(vision_module, "_cv_limit", vision_module._cv_limit)
-    monkeypatch.setattr(vision_module, "_cv_semaphore", None)
+    monkeypatch.setattr(runtime_module, "_cv_limit", runtime_module._cv_limit)
+    monkeypatch.setattr(runtime_module, "_cv_semaphore", None)
 
 
 def test_configure_cv_concurrency_replaces_the_semaphore(cv_concurrency: None) -> None:
-    vision_module.configure_cv_concurrency(4)
-    first = vision_module._cv_slot()
-    assert vision_module._cv_limit == 4
+    runtime_module.configure_cv_concurrency(4)
+    first = runtime_module._cv_slot()
+    assert runtime_module._cv_limit == 4
     # Same limit again must not throw away a semaphore stages are using.
-    vision_module.configure_cv_concurrency(4)
-    assert vision_module._cv_slot() is first
-    vision_module.configure_cv_concurrency(2)
-    assert vision_module._cv_slot() is not first
+    runtime_module.configure_cv_concurrency(4)
+    assert runtime_module._cv_slot() is first
+    runtime_module.configure_cv_concurrency(2)
+    assert runtime_module._cv_slot() is not first
 
 
 def test_configure_cv_concurrency_floors_at_one(cv_concurrency: None) -> None:
     """Zero would deadlock every stage rather than disabling them, which is
     what the per-stage toggles are for."""
-    vision_module.configure_cv_concurrency(0)
-    assert vision_module._cv_limit == 1
+    runtime_module.configure_cv_concurrency(0)
+    assert runtime_module._cv_limit == 1
 
 
 async def test_heavy_stages_do_not_run_concurrently(
@@ -2703,7 +2751,7 @@ async def test_heavy_stages_do_not_run_concurrently(
     """Two clips analyzed at once must not have two torch models computing
     simultaneously — on a Raspberry Pi that is the difference between slow
     and wedged."""
-    vision_module.configure_cv_concurrency(1)
+    runtime_module.configure_cv_concurrency(1)
     in_flight = 0
     peak = 0
 
@@ -3022,7 +3070,7 @@ async def test_pipeline_stops_cleanly_when_the_frame_cannot_be_measured(
         _FakeBoxes(cls=[0], conf=[0.9], xyxy=[(10.0, 10.0, 30.0, 90.0)], ids=[1]),
         {0: "person"},
     )
-    monkeypatch.setattr(vision_module, "_frame_dimensions", lambda _frame: None)
+    monkeypatch.setattr(imaging_module, "_frame_dimensions", lambda _frame: None)
     pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
     hints = await pipeline.process_clip([_real_jpeg_bytes(size=(200, 200))])
     assert hints.detections
@@ -3041,7 +3089,7 @@ async def test_pipeline_learns_a_vehicle_signature_from_a_confident_sighting(
         _FakeBoxes(cls=[2], conf=[0.95], xyxy=[(20.0, 20.0, 180.0, 140.0)], ids=[2]),
         {2: "car"},
     )
-    monkeypatch.setattr(vision_module, "_vehicle_histogram", lambda _f, _b: (1.0, 0.0))
+    monkeypatch.setattr(imaging_module, "_vehicle_histogram", lambda _f, _b: (1.0, 0.0))
     pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
     hints = await pipeline.process_clip(
         [_real_jpeg_bytes(size=(200, 200))],
@@ -3085,7 +3133,7 @@ def test_resolve_asset_skips_a_fingerprint_it_has_no_frame_for() -> None:
         return (1.0, 0.0)
 
     pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
-    with patch.object(vision_module, "_vehicle_histogram", _record):
+    with patch.object(imaging_module, "_vehicle_histogram", _record):
         asset = pipeline._resolve_asset(
             hints, [b"frame-0", b"frame-1"], "Driveway", "Silver Kia", None, signature
         )
@@ -3134,7 +3182,7 @@ def test_learn_signature_crops_the_frame_the_car_was_actually_seen_in() -> None:
         seen.append((frame, box))
         return (1.0,)
 
-    with patch.object(vision_module, "_vehicle_histogram", _record):
+    with patch.object(imaging_module, "_vehicle_histogram", _record):
         result = VisionPipeline._learn_signature(
             asset, hints, [b"frame-0", b"frame-1", b"frame-2", b"frame-3"], None
         )
@@ -3189,7 +3237,7 @@ def test_learn_signature_falls_back_to_the_median_box_when_it_cannot_do_better(
         seen.append((frame, box))
         return (1.0,)
 
-    with patch.object(vision_module, "_vehicle_histogram", _record):
+    with patch.object(imaging_module, "_vehicle_histogram", _record):
         assert VisionPipeline._learn_signature(asset, hints, scan_frames, None)
 
     assert seen == [(b"frame-0", median_box)]
@@ -3203,7 +3251,7 @@ async def test_pipeline_blends_into_an_existing_vehicle_signature(
         _FakeBoxes(cls=[2], conf=[0.95], xyxy=[(20.0, 20.0, 180.0, 140.0)], ids=[2]),
         {2: "car"},
     )
-    monkeypatch.setattr(vision_module, "_vehicle_histogram", lambda _f, _b: (1.0, 0.0))
+    monkeypatch.setattr(imaging_module, "_vehicle_histogram", lambda _f, _b: (1.0, 0.0))
     existing = VehicleSignature(
         box=(0.1, 0.1, 0.9, 0.7), histogram=(0.0, 1.0), sample_count=9
     )
@@ -3265,7 +3313,7 @@ async def test_pipeline_compares_candidate_colours_against_a_learned_signature(
         (100.0, 100.0, 190.0, 190.0): (0.0, 1.0),
     }
     monkeypatch.setattr(
-        vision_module,
+        imaging_module,
         "_vehicle_histogram",
         lambda _frame, box: fingerprints.get(tuple(box), (0.5, 0.5)),
     )
@@ -3309,7 +3357,7 @@ async def test_pipeline_skips_colour_matching_for_non_vehicle_tracks(
         fingerprinted.append(tuple(box))
         return (1.0, 0.0)
 
-    monkeypatch.setattr(vision_module, "_vehicle_histogram", _histogram)
+    monkeypatch.setattr(imaging_module, "_vehicle_histogram", _histogram)
     signature = VehicleSignature(
         box=(0.1, 0.1, 0.9, 0.7), histogram=(1.0, 0.0), sample_count=8
     )
@@ -3552,7 +3600,7 @@ async def test_pose_estimator_reports_unavailable_without_ultralytics(
 def test_pose_estimator_load_sync_refuses_an_incompatible_cpu(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(vision_module, "torch_cpu_compatible", lambda: False)
+    monkeypatch.setattr(runtime_module, "torch_cpu_compatible", lambda: False)
     estimator = PoseEstimator()
     with pytest.raises(CPUIncompatibleError):
         estimator._load_sync()
@@ -3561,7 +3609,9 @@ def test_pose_estimator_load_sync_refuses_an_incompatible_cpu(
 async def test_pose_estimator_ensure_ready_false_when_cpu_incompatible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("blink_downloader.vision.torch_cpu_compatible", lambda: False)
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
+    )
     assert await PoseEstimator().ensure_ready() is False
 
 
@@ -3592,7 +3642,7 @@ async def test_pose_estimator_load_failure_is_not_fatal(
 async def test_pose_estimator_resolves_a_bare_model_name_to_the_cache_dir(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    monkeypatch.setattr(vision_module, "_YOLO_MODEL_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(runtime_module, "_YOLO_MODEL_CACHE_DIR", str(tmp_path))
     mock_ultra = MagicMock()
     monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
     assert await PoseEstimator("yolo26n-pose.pt").ensure_ready() is True
@@ -3604,7 +3654,7 @@ async def test_pose_estimator_keeps_an_absolute_model_path_as_given(
 ) -> None:
     """A path (rather than a bare weights filename) is somewhere the user
     put the file — it must not be rewritten into the cache directory."""
-    monkeypatch.setattr(vision_module, "_YOLO_MODEL_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(runtime_module, "_YOLO_MODEL_CACHE_DIR", str(tmp_path))
     mock_ultra = MagicMock()
     monkeypatch.setitem(sys.modules, "ultralytics", mock_ultra)
     explicit = str(tmp_path / "custom" / "pose.pt")
@@ -3777,7 +3827,7 @@ async def test_appearance_change_is_computed_with_a_clear_view(
         calls.append(tuple(box))
         return 0.42
 
-    monkeypatch.setattr(vision_module, "_region_appearance_change", _change)
+    monkeypatch.setattr(imaging_module, "_region_appearance_change", _change)
     pipeline = VisionPipeline(VisionConfig(enhanced_detection_enabled=True))
     hints = await pipeline.process_clip(
         [_real_jpeg_bytes(size=(200, 200))],
@@ -3806,7 +3856,7 @@ async def test_pose_estimator_loads_once_under_concurrent_first_use(
 async def test_pose_estimator_reports_an_incompatible_cpu_as_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(vision_module, "torch_cpu_compatible", lambda: False)
+    monkeypatch.setattr(runtime_module, "torch_cpu_compatible", lambda: False)
     assert await PoseEstimator().ensure_ready() is False
 
 

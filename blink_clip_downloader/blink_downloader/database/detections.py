@@ -149,7 +149,7 @@ class DetectionsMixin(_DatabaseBase):
         events read "2 separate people were tracked" can no longer sit
         above a chip saying 1. Accuracy therefore rests on the tracker,
         which is handed frames seconds apart rather than consecutive video
-        (see ObjectDetector's own note in vision.py): a static object like
+        (see ObjectDetector's own note in vision/detection.py): a static object like
         a parked car is matched trivially, while something crossing the
         frame fast across few sampled frames can be counted twice.
 

@@ -27,7 +27,6 @@ blink_downloader/prompt_segments.py
 blink_downloader/sqlite_migration.py
 blink_downloader/storage.py
 blink_downloader/tracker.py
-blink_downloader/vision.py
 blink_downloader.egg-info/PKG-INFO
 blink_downloader.egg-info/SOURCES.txt
 blink_downloader.egg-info/dependency_links.txt
@@ -145,6 +144,16 @@ blink_downloader/static/assets/primeicons-DFbS0HxT.woff
 blink_downloader/static/assets/primeicons-DI7WxhAS.svg
 blink_downloader/static/assets/primeicons-DI7WxhAS.svg.gz
 blink_downloader/static/assets/primeicons-MNyB0pWW.ttf
+blink_downloader/vision/__init__.py
+blink_downloader/vision/contact.py
+blink_downloader/vision/depth.py
+blink_downloader/vision/detection.py
+blink_downloader/vision/enhance.py
+blink_downloader/vision/faces.py
+blink_downloader/vision/imaging.py
+blink_downloader/vision/pipeline.py
+blink_downloader/vision/pose.py
+blink_downloader/vision/runtime.py
 tests/test_analysis_queue.py
 tests/test_analyzer.py
 tests/test_app.py

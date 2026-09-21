@@ -118,7 +118,7 @@ def _moondream_arch_supported() -> bool:
     torch/kestrel dependencies had no musllinux (Alpine) wheels for
     aarch64. The add-on's base image switched to Debian (glibc) in 4.1.0
     specifically to support the computer-vision pipeline's own torch
-    dependency (see vision.py) — that switch also removed the musllinux
+    dependency (see the ``vision`` package) — that switch also removed the musllinux
     constraint here, so this is no longer architecture-gated. Local
     ("Photon") inference still requires an NVIDIA CUDA or Apple Silicon
     GPU regardless of architecture; that check happens separately at
@@ -371,7 +371,7 @@ class MediaServer:
         # feature was previously on.
         self._prompt_debug_enabled = prompt_debug_enabled
         # Independent from any FaceEmbedder the analyzer's VisionPipeline may
-        # hold (see vision.py) — enrollment is a rare, occasional action, so
+        # hold (see vision/runtime.py) — enrollment is a rare, occasional action, so
         # a second lazily-loaded model instance here is simpler than piping
         # a reference to the analyzer's private pipeline through for it.
         self._face_embedder = FaceEmbedder()
@@ -528,7 +528,7 @@ class MediaServer:
         app.router.add_post(_AI_FEEDBACK_ROUTE, self._handle_ai_feedback_submit)
         app.router.add_delete(_AI_FEEDBACK_ROUTE, self._handle_ai_feedback_delete)
 
-        # Local-only face-recognition enrollment (see vision.py)
+        # Local-only face-recognition enrollment (see vision/faces.py)
         app.router.add_get("/api/ai/faces", self._handle_faces_list)
         app.router.add_post("/api/ai/faces", self._handle_faces_enroll)
         app.router.add_delete("/api/ai/faces/{id}", self._handle_faces_delete)
@@ -1381,7 +1381,7 @@ class MediaServer:
             data["model"] = self._analyzer.model_name()
             data["car_protection_active"] = self._analyzer.car_protection_active
             # Independent of which ai_provider is configured — gates the
-            # enhanced-detection/face-recognition pipeline (vision.py), which
+            # enhanced-detection/face-recognition pipeline (the vision package), which
             # any provider can have layered on top. See torch_cpu_compatible().
             data["torch_cpu_compatible"] = torch_cpu_compatible()
             if self._analyzer.provider_name == "moondream_local":
@@ -3183,7 +3183,7 @@ class MediaServer:
         return web.json_response({"deleted": deleted})
 
     # ------------------------------------------------------------------
-    # Local-only face-recognition enrollment (see vision.py,
+    # Local-only face-recognition enrollment (see vision/faces.py,
     # ai_face_recognition_enabled). Enrollment photos and the embeddings
     # computed from them are stored only in this add-on's own database —
     # never uploaded anywhere, regardless of which ai_provider is

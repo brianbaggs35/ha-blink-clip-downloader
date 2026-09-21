@@ -222,7 +222,7 @@ function showPrompt() {
 const confPct = (r: AnalysisResultDict) => Math.round((r.confidence || 0) * 100)
 
 // One emoji per label the backend's object-detection stage can report
-// (vision.py's _RELEVANT_CLASSES) — a fallback covers any future/unknown
+// (vision/detection.py's _RELEVANT_CLASSES) — a fallback covers any future/unknown
 // label so a chip still renders instead of silently disappearing.
 const DETECTION_EMOJI: Record<string, string> = {
   person: '🧍',

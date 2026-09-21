@@ -130,7 +130,7 @@ export interface AiStatus {
   car_protection_active?: boolean
   /** False on a CPU that can't safely run PyTorch (e.g. Raspberry Pi 4's
    *  Cortex-A72) — gates the enhanced-detection pipeline and local face
-   *  recognition. See vision.py's torch_cpu_compatible(). Undefined only
+   *  recognition. See vision/runtime.py's torch_cpu_compatible(). Undefined only
    *  when AI analysis itself is off (enabled: false). */
   torch_cpu_compatible?: boolean
   moondream_installed?: boolean
@@ -259,7 +259,7 @@ export interface VehicleSignatureInfo {
 }
 
 // One label's aggregate from the optional computer-vision object-detection
-// stage (see vision.py's ObjectDetector, ai_enhanced_detection_enabled) —
+// stage (see vision/detection.py's ObjectDetector, ai_enhanced_detection_enabled) —
 // absent/empty unless that pipeline was on and found something.
 export interface DetectedObjectSummary {
   label: string

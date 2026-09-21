@@ -162,7 +162,7 @@ class AnalysisResult:
     face_bypass_applied: bool = False
     # Comma-separated approved name(s) that triggered the bypass above.
     # Local-only — this never leaves the process the way the equivalent
-    # name-free vision.py hint sent to the AI provider does (see
+    # name-free vision/faces.py hint sent to the AI provider does (see
     # BaseAnalyzer._personalize_summary's docstring) — it is written to this
     # add-on's own database and displayed only in this add-on's own web UI.
     face_bypass_names: str = ""
@@ -180,7 +180,7 @@ class AnalysisResult:
     # about the safety bypass itself for the Biometrics audit card.
     approved_faces_seen: bool = False
     # Raw per-object detections from the optional computer-vision pipeline
-    # (see vision.py's ObjectDetector), when enabled and something was
+    # (see vision/detection.py's ObjectDetector), when enabled and something was
     # found. Deliberately excluded from to_dict() below — that dict is the
     # analysis_results row/JSON contract, while detections are persisted
     # separately (see database.py's detected_objects table and
@@ -366,7 +366,7 @@ class BaseAnalyzer(abc.ABC):
         # feature. Unset (None) disables it entirely — set via
         # attach_database() once the app has a database ready.
         self._db: ClipDatabase | None = None
-        # Optional VisionPipeline (see vision.py) providing the heavy,
+        # Optional VisionPipeline (see vision/pipeline.py) providing the heavy,
         # off-by-default computer-vision enhancement stages (object
         # detection/tracking, depth estimation, contact segmentation, face
         # recognition). Unset (None) disables all of them — set via
@@ -752,7 +752,7 @@ class BaseAnalyzer(abc.ABC):
         self._db = db
 
     def attach_vision_pipeline(self, pipeline: VisionPipeline) -> None:
-        """Enable the optional computer-vision enhancement pipeline (see vision.py).
+        """Enable the optional computer-vision enhancement pipeline (see ``vision``).
 
         Unset (None, the default) means every stage — frame preprocessing,
         object detection/tracking, depth estimation, contact segmentation,
@@ -1081,7 +1081,7 @@ class BaseAnalyzer(abc.ABC):
                 is_suspicious = False
                 face_bypass_applied = True
                 face_bypass_names = ", ".join(approved_names)
-                # Unlike vision.py's name-free hint sent to the AI provider,
+                # Unlike vision/faces.py's name-free hint sent to the AI provider,
                 # this log line stays entirely local — naming who was
                 # matched is exactly what lets a household member audit
                 # whether the bypass is firing correctly (see
@@ -1261,7 +1261,7 @@ class BaseAnalyzer(abc.ABC):
         own docstring for why. The actual selection is CPU-bound (PIL
         decode + per-pixel diffing), so it runs in a thread executor
         rather than blocking the event loop, matching every CPU-bound
-        stage in vision.py.
+        stage in the ``vision`` package.
         """
         target_frame_count = self._target_frame_count(
             len(frames), clip_duration=clip_duration
@@ -1289,7 +1289,7 @@ class BaseAnalyzer(abc.ABC):
     async def _apply_vision_pipeline(
         self, frames: list[bytes], camera: str, raw_frames: list[bytes] | None = None
     ) -> tuple[list[bytes], Any]:
-        """Run the optional computer-vision enhancement pipeline (see vision.py).
+        """Run the optional computer-vision enhancement pipeline (see ``vision``).
 
         Off entirely unless attach_vision_pipeline() was called and at least
         one of its stages is enabled in config. Runs before the
@@ -1468,7 +1468,7 @@ class BaseAnalyzer(abc.ABC):
         neither independently repeats the same PIL decode/grayscale/resize
         work for the same frame set — see ``frame_motion.grayscale_thumbnails``.
         Runs in a thread executor since this is CPU-bound, matching every
-        CPU-bound stage in vision.py.
+        CPU-bound stage in the ``vision`` package.
 
         Returns ``None`` without doing any work when neither caller would
         actually use the result (no configured car zone for *camera*, and

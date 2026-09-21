@@ -152,6 +152,21 @@ what Home Assistant actually allows before any request is built.
   holding the pure text and row helpers. A pure move, verified the same way
   as the analyzer: all 136 definitions are byte-identical to where they
   came from.
+- `vision.py` is now a `vision/` package with one module per CV stage. The
+  file was already written as "Stage 1: OpenCV preprocessing", "Stage 2:
+  object detection", and so on down to "Orchestrator", so the seams were
+  its own: `enhance`, `detection`, `depth`, `contact`, `pose`, `faces` and
+  `pipeline`, over a `runtime` module holding what is genuinely
+  process-wide and an `imaging` module holding the pure image arithmetic
+  several stages share.
+  One deliberate change beyond the move: a stage now reaches the shared
+  runtime through its module (`runtime.torch_cpu_compatible()`) rather than
+  importing the name. Importing the name would have copied the reference
+  into six stage modules — which hides that there is only *one* native-
+  import lock and *one* concurrency semaphore, and would have forced a test
+  simulating "no torch" to patch a different target for every stage. Every
+  other definition is byte-identical to where it came from, verified by
+  comparing parsed syntax trees with that qualification normalised away.
 - Every analyzer provider module is named `<provider>_provider.py`, and
   `tests/test_module_names.py` now enforces that no module is named after a
   package the codebase imports. Pyright resolves a bare `import <x>` to a

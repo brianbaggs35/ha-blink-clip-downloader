@@ -127,10 +127,10 @@ architecture.
   - `security/` — the structured security layer (`events.py`, `tracks.py`,
     `geometry.py`, `zones`/`assets.py`, `vehicles.py`, `detector.py`,
     `scoring.py`, `evidence.py`, `narrative.py`, `pipeline.py`). Turns
-    `vision.py`'s per-frame boxes into typed `ObjectTrack`s, deterministic
+    `vision/`'s per-frame boxes into typed `ObjectTrack`s, deterministic
     `SecurityEvent`s, a 0-100 risk score and an evidence-quality score, and
     renders them as prompt text the AI provider verifies rather than
-    re-derives. **Imports nothing from `vision.py` and no heavy optional
+    re-derives. **Imports nothing from `vision/` and no heavy optional
     dependency** — every CV stage's output is reduced to plain numbers
     before it arrives, so the whole layer loads and is tested with no
     torch/opencv installed. `vehicles.py` is the one to read first: it
@@ -138,10 +138,13 @@ architecture.
     a learned per-camera parking position + a learned colour fingerprint),
     and is allowed to answer "none of them", which is what stops a
     neighbour's car being treated as yours.
-  - `vision.py` — optional, off-by-default computer-vision enhancement
-    pipeline (object detection/tracking, depth estimation, contact
-    segmentation, OpenCV frame preprocessing, pose estimation, local-only
-    face recognition).
+  - `vision/` — optional, off-by-default computer-vision enhancement
+    pipeline, one module per stage since 6.0.7 (it was one 2,490-line
+    module, already written as "Stage 1..6 + Orchestrator" banners, which
+    is exactly where it was cut): `enhance.py` (OpenCV frame
+    preprocessing), `detection.py` (YOLO detection + ByteTrack tracking),
+    `depth.py`, `contact.py` (SAM2 segmentation), `pose.py` and `faces.py`
+    (local-only face recognition), sequenced by `pipeline.py`.
     Layered on top of `analyzer/base.py`'s prompt pipeline via
     `BaseAnalyzer.attach_vision_pipeline()` — each stage produces a hint
     string appended to the same prompt, never replacing the configured AI
@@ -149,6 +152,17 @@ architecture.
     dependency (torch/ultralytics/opencv/transformers/facenet-pytorch) and
     reports itself unavailable rather than raising if missing — none of
     them are required for the add-on's core features to work.
+    Two support modules, and the rule that goes with them: `runtime.py`
+    holds what is genuinely **process-wide** (the single native-import
+    lock, the single CV concurrency semaphore, the torch/CPU availability
+    checks, the YOLO weights cache dir) and `imaging.py` the pure image
+    arithmetic several stages share. Stages reach both **through the
+    module** (`runtime.torch_cpu_compatible()`, not a `from .runtime
+    import`) — a name import would copy the reference into six stage
+    modules, which both hides that there is only one of each and forces a
+    test simulating "no torch" to pick a different patch target per stage.
+    `__init__.py` re-exports the public surface; a test wanting an internal
+    imports it from the stage that owns it.
   - `media_server.py` — aiohttp HTTP server: REST API + serves the built Vue
     app as static files (`_STATIC_DIR`/`_handle_index`). See **Web UI** below
     — the frontend itself lives in `frontend/`, a sibling of `blink_downloader/`.
@@ -544,7 +558,7 @@ suspicious flag (`analyzer/base.py`'s `BaseAnalyzer._face_bypass_applies` /
 `parse_response()`). This is deliberately **all-or-nothing per clip**: it
 requires at least one approved match **and zero** unrecognized or
 recognized-but-not-approved faces anywhere in the clip's sampled frames
-(`vision.py`'s `FaceRecognizer.recognize()` → `FaceRecognitionResult`, via
+(`vision/faces.py`'s `FaceRecognizer.recognize()` → `FaceRecognitionResult`, via
 `_face_match_is_unambiguous`). A single stranger standing next to an
 approved family member must still get flagged — **do not loosen this
 condition** without equally strong justification; a false bypass here is a
@@ -569,7 +583,7 @@ force-flagged), and it is strictly one-directional: it can raise a verdict,
 never lower one.
 
 A recognized person's **name never appears in any prompt sent to any AI
-provider**, local or cloud (`vision.py`'s `_build_recognition_hint` is
+provider**, local or cloud (`vision/faces.py`'s `_build_recognition_hint` is
 strictly name-free — only a count/fact). The name is only ever used
 afterward, entirely locally, to personalize the human-facing summary text
 (`_personalize_summary`) — this is what the Biometrics tab's privacy

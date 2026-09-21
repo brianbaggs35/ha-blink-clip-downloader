@@ -587,7 +587,7 @@ jobs:
     # running, so this catches native-only failures (like the
     # illegal-instruction-on-incompatible-CPU class of PyTorch bug the
     # computer-vision pipeline now guards against at runtime — see
-    # vision.py's torch_cpu_compatible()) that an emulated smoke test could
+    # vision/runtime.py's torch_cpu_compatible()) that an emulated smoke test could
     # miss entirely.
     strategy:
       fail-fast: false
