@@ -7,7 +7,7 @@ socket. HA ingress only proxies HTTP/WebSocket through this add-on's single
 port, so that socket is unreachable from a browser no matter what — this
 module bridges it by spawning ffmpeg to remux (not re-encode) the local TCP
 stream into a short rolling HLS playlist, served as ordinary files through
-media_server.py's existing aiohttp app.
+media_server/'s existing aiohttp app.
 
 Exactly one session is active at a time (module-level design: "one camera at
 a time"). Starting the camera that's already active is idempotent; starting
@@ -132,7 +132,7 @@ class LiveViewError(Exception):
 
     Deliberately never raised for AUTH_FATAL_EXCEPTIONS (downloader.py) —
     those propagate through this module untouched so app.py's reconnect
-    logic can see them; only media_server.py's HTTP handlers catch
+    logic can see them; only media_server/'s HTTP handlers catch
     AUTH_FATAL_EXCEPTIONS directly, turning them into a 503.
     """
 
@@ -377,7 +377,7 @@ class LiveViewManager:
         except AUTH_FATAL_EXCEPTIONS:
             # Let TokenRefreshFailed/LoginError/UnauthorizedError through
             # untouched so app.py's reconnect logic can see them — only the
-            # HTTP handler layer (media_server.py) catches these.
+            # HTTP handler layer (media_server/) catches these.
             raise
         except Exception as exc:
             _LOGGER.exception(

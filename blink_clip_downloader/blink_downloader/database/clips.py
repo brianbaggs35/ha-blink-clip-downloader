@@ -143,7 +143,7 @@ class ClipLibraryMixin(_DatabaseBase):
 
         Used by the Storage tab's "delete entire archive" action, once the
         ZIP file itself and any Google Drive backups have already been
-        handled by the caller (media_server.py's _handle_delete_archive) —
+        handled by the caller (media_server/storage.py's _handle_delete_archive) —
         this is just the bulk DB-side cleanup. Returns the number of rows
         removed.
         """

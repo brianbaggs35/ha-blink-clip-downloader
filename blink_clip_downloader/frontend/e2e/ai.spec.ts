@@ -1,7 +1,7 @@
 import { test, expect } from './coverage-fixtures'
 
 // AI and AI Usage are both gated server-side on `analyzer is not None`
-// (media_server.py's _handle_ai_status/_handle_ai_usage) -- standalone_server.py
+// (media_server/ai.py's _handle_ai_status/_handle_ai_usage) -- standalone_server.py
 // wires in a real ClipAnalyzer pointed at an unreachable port specifically
 // so these two tabs have something real to render (Offline, not "not
 // configured"), without needing an actual Ollama/cloud provider.
@@ -53,7 +53,7 @@ test('the Failed queue count opens a modal listing why each clip failed to analy
   // endpoint the modal itself calls -- returns real data from a real
   // query, no mocking needed. But the queue *count* AiStatusCards reads to
   // decide whether the button is even clickable only ever comes from a
-  // real AnalysisQueue object (media_server.py's _handle_ai_status), which
+  // real AnalysisQueue object (media_server/ai.py's _handle_ai_status), which
   // standalone_server.py deliberately never constructs (no queue-
   // processing loop runs against the unreachable analyzer -- see its own
   // module docstring) -- so status.queue.failed is always 0 from the real

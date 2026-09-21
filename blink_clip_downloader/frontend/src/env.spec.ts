@@ -25,7 +25,7 @@ describe('INGRESS_ROOT', () => {
     expect(INGRESS_ROOT).toBe('')
   })
 
-  it('passes through a real ingress path substituted by media_server.py', async () => {
+  it('passes through a real ingress path substituted by media_server/', async () => {
     const { INGRESS_ROOT } = await loadEnv('/api/hassio_ingress/abc123')
     expect(INGRESS_ROOT).toBe('/api/hassio_ingress/abc123')
   })

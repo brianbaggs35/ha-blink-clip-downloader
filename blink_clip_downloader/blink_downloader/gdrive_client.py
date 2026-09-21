@@ -236,7 +236,7 @@ class GDriveClient:
 
     # ------------------------------------------------------------------
     # Settings (OAuth client id/secret + backup policy — edited from the
-    # Storage tab, not config.yaml; see media_server.py's
+    # Storage tab, not config.yaml; see media_server/storage.py's
     # _handle_gdrive_settings_get/_put)
     # ------------------------------------------------------------------
 
@@ -266,7 +266,7 @@ class GDriveClient:
         save of an unrelated field like backup_policy. The in-memory update
         above happens before the write below so the change still takes
         immediate effect this session even if persisting it fails; that
-        failure propagates to the caller (media_server.py's
+        failure propagates to the caller (media_server/storage.py's
         _handle_gdrive_settings_put turns it into a 500) rather than being
         swallowed here, so a user clicking Save gets an honest result
         instead of a false "saved" response.

@@ -132,7 +132,7 @@ function openFeedbackNoteForm() {
 async function submitFeedbackFormClick() {
   // The checkbox always proposes the opposite of the clip's current
   // verdict — "incorrect" only ever has one valid correction (see
-  // media_server.py's _handle_ai_feedback_submit) — so which boolean it
+  // media_server/feedback.py's _handle_ai_feedback_submit) — so which boolean it
   // sends flips with is_suspicious rather than always being true.
   const proposedSuspicious = !(result.value?.is_suspicious ?? false)
   const ok = await trySubmitFeedback({

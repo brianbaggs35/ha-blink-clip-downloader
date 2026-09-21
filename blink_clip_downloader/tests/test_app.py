@@ -616,7 +616,7 @@ async def test_on_clips_downloaded_skips_analysis_for_liveview_source(app):
     AI analysis — the user was already watching live when it was recorded,
     so an automatic analysis would just spend tokens summarizing something
     already seen firsthand. Manual "Analyze Now" from the clip modal
-    (media_server.py's _handle_ai_analyze_now) is a separate, unconditional
+    (media_server/ai.py's _handle_ai_analyze_now) is a separate, unconditional
     code path and still works for these clips on request."""
     app._analysis_queue = MagicMock()
     app._analysis_queue.enqueue = AsyncMock()
@@ -2066,7 +2066,7 @@ def test_live_view_wired_to_downloader_camera_accessors(app):
 def test_media_server_wired_to_downloader_camera_accessors(app):
     """Security Feed's list_camera_names/get_camera_snapshot are injected
     directly from the downloader (not routed through LiveViewManager) so
-    Security Feed works independently of it — see media_server.py's
+    Security Feed works independently of it — see media_server/'s
     MediaServer.__init__ comment."""
     from requests.structures import CaseInsensitiveDict
 
