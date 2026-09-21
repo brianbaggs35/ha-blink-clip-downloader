@@ -19,6 +19,7 @@ import base64
 import json
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
@@ -433,6 +434,44 @@ class _MoondreamDetectionMixin:
         return json.dumps(obj)
 
 
+@dataclass
+class _MostAlarming:
+    """The most alarming per-frame result seen so far, across one clip.
+
+    Moondream is asked about each frame separately, so something has to
+    decide which frame's answer represents the clip. The rule, most
+    significant first: any suspicious verdict beats a clear one, and
+    between two of the same verdict the more confident wins. Lifted out
+    of the frame loop so the rule can be read without the rate limiting
+    and response plumbing around it.
+    """
+
+    response: str = ""
+    is_suspicious: bool = False
+    confidence: float = 0.0
+
+    def offer_unranked(self, response: str) -> None:
+        """Take *response* only if nothing at all has been recorded yet.
+
+        For answers that carry no verdict to rank — a frame with no
+        subject in it, or one whose reply would not parse. They are
+        better than returning nothing and worse than anything ranked.
+        """
+        if not self.response:
+            self.response = response
+
+    def offer(self, suspicious: bool, confidence: float, response: str) -> None:
+        """Take *response* if it outranks what is already held."""
+        if (
+            not self.response
+            or (suspicious and not self.is_suspicious)
+            or (suspicious == self.is_suspicious and confidence > self.confidence)
+        ):
+            self.response = response
+            self.is_suspicious = suspicious
+            self.confidence = confidence
+
+
 class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
     """Analyzes clips via the Moondream Cloud API (api.moondream.ai).
 
@@ -783,39 +822,26 @@ class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):
 
         camera = getattr(self, "_current_camera", "")
         car_applies = self._car_protection_applies(camera)
-
-        best_response = ""
-        best_is_suspicious = False
-        best_confidence = 0.0
+        best = _MostAlarming()
 
         for i, frame in enumerate(frames):
-            is_last = i == len(frames) - 1
             kind, resp = await self._analyze_one_moondream_frame(
                 frame, prompt, camera, car_applies
             )
-
             if kind == "no_subject":
-                if not best_response:
-                    best_response = self._no_subject_response()
+                best.offer_unranked(self._no_subject_response())
             elif kind == "result":
-                susp, conf, desc = self._try_parse_json(resp)
-                if not desc:
-                    if not best_response:
-                        best_response = resp
-                elif (
-                    not best_response
-                    or (susp and not best_is_suspicious)
-                    or (susp == best_is_suspicious and conf > best_confidence)
-                ):
-                    best_response = resp
-                    best_is_suspicious = susp
-                    best_confidence = conf
+                suspicious, confidence, description = self._try_parse_json(resp)
+                if description:
+                    best.offer(suspicious, confidence, resp)
+                else:
+                    best.offer_unranked(resp)
             # kind == "no_response": nothing to do, this frame is skipped.
 
-            if not is_last:
+            if i != len(frames) - 1:
                 await asyncio.sleep(0.55)
 
-        return best_response
+        return best.response
 
     async def _analyze_one_moondream_frame(
         self, frame: bytes, prompt: str, camera: str, car_applies: bool

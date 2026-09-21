@@ -13,7 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from .analysis_queue import AnalysisQueue
-from .analyzer import BaseAnalyzer, SecurityLayerSettings, create_analyzer
+from .analyzer import (
+    AnalyzerSettings,
+    BaseAnalyzer,
+    ProviderCredentials,
+    SecurityLayerSettings,
+    create_analyzer,
+)
 from .archiver import ClipArchiver
 from .battery_monitor import BatteryMonitor
 from .config import AppConfig
@@ -539,28 +545,32 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._analyzer = create_analyzer(
             ai_provider=config.ai_provider,
             prompt=config.ai_prompt,
-            car_description=car_description,
-            max_frames=config.ai_max_frames,
-            frame_interval=config.ai_frame_interval,
-            suspicious_keywords=config.ai_suspicious_keywords,
-            camera_prompts=camera_prompts or None,
-            camera_descriptions=camera_descriptions,
-            frame_strategy=config.ai_frame_strategy,
-            car_cameras=car_cameras,
-            car_zones=car_zones or None,
-            security_settings=SecurityLayerSettings(
-                enabled=config.ai_security_events_enabled,
-                risk_alert_threshold=config.ai_risk_alert_threshold,
+            settings=AnalyzerSettings(
+                car_description=car_description,
+                max_frames=config.ai_max_frames,
+                frame_interval=config.ai_frame_interval,
+                suspicious_keywords=config.ai_suspicious_keywords,
+                camera_prompts=camera_prompts or None,
+                camera_descriptions=camera_descriptions,
+                frame_strategy=config.ai_frame_strategy,
+                car_cameras=car_cameras,
+                car_zones=car_zones or None,
+                security_settings=SecurityLayerSettings(
+                    enabled=config.ai_security_events_enabled,
+                    risk_alert_threshold=config.ai_risk_alert_threshold,
+                ),
             ),
-            ollama_url=config.ollama_url,
-            ollama_model=config.ollama_model,
-            ollama_cloud_api_key=config.ollama_cloud_api_key,
-            moondream_api_key=config.moondream_api_key,
-            moondream_finetune_model=moondream_finetune_model,
-            anthropic_api_key=config.anthropic_api_key,
-            anthropic_model=config.anthropic_model,
-            openai_api_key=config.openai_api_key,
-            openai_model=config.openai_model,
+            credentials=ProviderCredentials(
+                ollama_url=config.ollama_url,
+                ollama_model=config.ollama_model,
+                ollama_cloud_api_key=config.ollama_cloud_api_key,
+                moondream_api_key=config.moondream_api_key,
+                moondream_finetune_model=moondream_finetune_model,
+                anthropic_api_key=config.anthropic_api_key,
+                anthropic_model=config.anthropic_model,
+                openai_api_key=config.openai_api_key,
+                openai_model=config.openai_model,
+            ),
             escalation_provider=config.ai_escalation_provider,
             escalation_model=config.ai_escalation_model,
             store_prompt_debug=config.ai_prompt_debug_enabled,

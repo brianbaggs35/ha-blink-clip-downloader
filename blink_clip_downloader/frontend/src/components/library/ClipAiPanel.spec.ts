@@ -222,12 +222,20 @@ describe('ClipAiPanel', () => {
     )
   })
 
-  it('shows no audio section when the stage is off or heard nothing', async () => {
+  // Every one of these sections belongs to an optional stage that is off
+  // by default, so the panel on an ordinary result must show none of
+  // them. One test, because it was the same test three times with a
+  // different selector.
+  it.each([
+    ['the audio chips', '[data-testid="ai-audio"]'],
+    ['the security assessment', '[data-testid="ai-security"]'],
+    ['the detection chips', '.detection-chip'],
+  ])('renders none of %s when the stage produced nothing', async (_what, selector) => {
     mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
     const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
     await wrapper.find('.ai-panel-hdr').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-testid="ai-audio"]').exists()).toBe(false)
+    expect(wrapper.find(selector).exists()).toBe(false)
   })
 
   it('shows the security assessment when the security layer found something', async () => {
@@ -387,22 +395,6 @@ describe('ClipAiPanel', () => {
     const panel = wrapper.find('[data-testid="ai-security"]')
     expect(panel.text()).toContain('Routine · risk 0')
     expect(panel.text()).toContain('0% weak')
-  })
-
-  it('hides the security section entirely when the layer produced nothing', async () => {
-    mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
-    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
-    await wrapper.find('.ai-panel-hdr').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-testid="ai-security"]').exists()).toBe(false)
-  })
-
-  it('does not render the detection chip row when nothing was detected', async () => {
-    mockFetch({ '/api/ai/results/c1': RESULT, '/api/ai/feedback/c1': null })
-    const wrapper = mount(ClipAiPanel, { props: { clipId: 'c1' } })
-    await wrapper.find('.ai-panel-hdr').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.detection-chip').exists()).toBe(false)
   })
 
   it('shows existing feedback verdict instead of the prompt buttons', async () => {

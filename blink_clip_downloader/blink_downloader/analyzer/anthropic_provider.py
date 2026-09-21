@@ -19,6 +19,7 @@ from ..model_catalog import (
     _OPENAI_STRUCTURED_OUTPUT_SCHEMA,
     _anthropic_supports_structured_output,
     lookup_model_pricing,
+    model_entry,
 )
 from .base import _VISION_SYSTEM_PROMPT, BaseAnalyzer, SecurityLayerSettings
 
@@ -143,43 +144,48 @@ class AnthropicAnalyzer(BaseAnalyzer):
         configuration option, the same as the OpenAI analyzer's
         fetch_models() — see _ANTHROPIC_DATED_SNAPSHOT_RE.
         """
-        if self._api_key:
-            try:
-                import anthropic as _anthropic
-            except ImportError:
-                pass
-            else:
-                try:
-                    client = self._get_client()
-                    page = await client.models.list()
-                    result = []
-                    seen: set[str] = set()
-                    for m in page.data:
-                        name = _ANTHROPIC_DATED_SNAPSHOT_RE.sub("", m.id)
-                        if name in seen:
-                            continue
-                        seen.add(name)
-                        result.append(
-                            {
-                                "name": name,
-                                "id": name,
-                                "display_name": name,
-                                "description": name,
-                            }
-                        )
-                    return result
-                except _anthropic.AuthenticationError:
-                    _LOGGER.error(
-                        "Anthropic: invalid API key — "
-                        "check your anthropic_api_key in the add-on settings"
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    _LOGGER.debug("Failed to fetch Anthropic models from API: %s", exc)
+        live = await self._fetch_models_from_api()
+        if live is not None:
+            return live
+        return [model_entry(name) for name in _ANTHROPIC_FALLBACK_MODELS]
 
-        return [
-            {"name": name, "id": name, "display_name": name, "description": name}
-            for name in _ANTHROPIC_FALLBACK_MODELS
-        ]
+    async def _fetch_models_from_api(self) -> list[dict[str, Any]] | None:
+        """The live model list, or ``None`` when it could not be fetched.
+
+        ``None`` rather than an empty list, so :meth:`fetch_models` can tell
+        "the API said there are none" from "the API could not be reached"
+        and only fall back for the second.
+        """
+        if not self._api_key:
+            return None
+        try:
+            import anthropic as _anthropic
+        except ImportError:
+            return None
+        try:
+            page = await self._get_client().models.list()
+            return self._dedupe_dated_snapshots(page.data)
+        except _anthropic.AuthenticationError:
+            _LOGGER.error(
+                "Anthropic: invalid API key — "
+                "check your anthropic_api_key in the add-on settings"
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Failed to fetch Anthropic models from API: %s", exc)
+        return None
+
+    @staticmethod
+    def _dedupe_dated_snapshots(models: Any) -> list[dict[str, Any]]:
+        """Bare aliases, first occurrence wins — see _ANTHROPIC_DATED_SNAPSHOT_RE."""
+        result: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for m in models:
+            name = _ANTHROPIC_DATED_SNAPSHOT_RE.sub("", m.id)
+            if name in seen:
+                continue
+            seen.add(name)
+            result.append(model_entry(name))
+        return result
 
     @staticmethod
     def _resize_frame(frame_bytes: bytes, max_dimension: int = 1568) -> bytes:

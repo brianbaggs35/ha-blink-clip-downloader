@@ -50,7 +50,7 @@ from ..model_catalog import (
 )
 from .anthropic_provider import AnthropicAnalyzer
 from .base import AnalysisResult, BaseAnalyzer, SecurityLayerSettings
-from .factory import create_analyzer
+from .factory import AnalyzerSettings, ProviderCredentials, create_analyzer
 from .moondream_provider import MoondreamCloudAnalyzer, MoondreamLocalAnalyzer
 from .ollama_provider import ClipAnalyzer, OllamaCloudAnalyzer
 from .openai_provider import OpenAIAnalyzer
@@ -62,6 +62,7 @@ __all__ = [
     "_OPENAI_FALLBACK_MODELS",
     "_OPENAI_STRUCTURED_OUTPUT_SCHEMA",
     "AnalysisResult",
+    "AnalyzerSettings",
     "AnthropicAnalyzer",
     "BaseAnalyzer",
     "ClipAnalyzer",
@@ -69,6 +70,7 @@ __all__ = [
     "MoondreamLocalAnalyzer",
     "OllamaCloudAnalyzer",
     "OpenAIAnalyzer",
+    "ProviderCredentials",
     "SecurityLayerSettings",
     "_anthropic_supports_structured_output",
     "_openai_model_rank",

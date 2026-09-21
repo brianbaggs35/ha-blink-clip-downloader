@@ -259,6 +259,19 @@ _OPENAI_FALLBACK_MODELS: list[str] = [
 _OPENAI_DATED_SNAPSHOT_RE = re.compile(r"-\d{4}-\d{2}-\d{2}$")
 
 
+def model_entry(name: str) -> dict[str, str]:
+    """One row of the shape every provider's ``fetch_models`` returns.
+
+    All four fields are the same id on purpose: the Models tab shows the
+    string a user must paste into their ``*_model`` option, so inventing a
+    prettier ``display_name`` would show them something that does not work.
+    Shared because both the OpenAI and Anthropic analyzers build it, from
+    a live list and from their fallback list — four places that must not
+    drift apart.
+    """
+    return {"name": name, "id": name, "display_name": name, "description": name}
+
+
 def _openai_model_rank(model_id: str) -> int:
     """Sort key for fetch_models(): position in _OPENAI_MODEL_DISPLAY_ORDER,
     or last place for a model this add-on doesn't recognize yet."""

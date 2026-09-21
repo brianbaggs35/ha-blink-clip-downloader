@@ -20,6 +20,7 @@ from pathlib import Path
 import aiofiles
 from aiohttp import web
 
+from ..database import ClipFilters
 from ..ffmpeg_output import format_ffmpeg_error, split_jpeg_frames
 from .storage import StorageRoutesMixin
 from .support import (
@@ -74,21 +75,23 @@ class LibraryRoutesMixin(StorageRoutesMixin):
         )
 
         clips = await self._db.get_clips(
-            camera=q.get("camera") or None,
-            since=q.get("since") or None,
-            until=q.get("until") or None,
-            starred=starred,
-            source=q.get("source") or None,
-            tag=q.get("tag") or None,
-            search=q.get("search") or None,
-            archived=archived,
-            archive_path=q.get("archive_path") or None,
+            ClipFilters(
+                camera=q.get("camera") or None,
+                since=q.get("since") or None,
+                until=q.get("until") or None,
+                starred=starred,
+                source=q.get("source") or None,
+                tag=q.get("tag") or None,
+                search=q.get("search") or None,
+                archived=archived,
+                archive_path=q.get("archive_path") or None,
+                notified_only=notified_only,
+                recognized_only=recognized_only,
+                min_confidence=min_confidence,
+            ),
             sort=q.get("sort") or "newest",
             limit=limit,
             offset=offset,
-            notified_only=notified_only,
-            recognized_only=recognized_only,
-            min_confidence=min_confidence,
         )
         return web.json_response(clips)
 

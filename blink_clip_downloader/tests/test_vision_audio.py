@@ -166,7 +166,8 @@ def test_no_hint_without_tags() -> None:
 def test_hint_names_the_sounds_and_hedges() -> None:
     hint = build_audio_hint(AudioTags(labels=[("Shout", 0.61), ("Glass", 0.2)]))
     assert hint is not None
-    assert "shout (61%)" in hint and "glass (20%)" in hint
+    assert "shout (61%)" in hint
+    assert "glass (20%)" in hint
     # The privacy promise and the uncertainty both have to reach the model.
     assert "not a transcript" in hint
     assert "weak supporting evidence" in hint
@@ -362,8 +363,9 @@ def test_load_sync_refuses_an_incompatible_cpu(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(
         "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: False
     )
+    tagger = AudioTagger()
     with pytest.raises(runtime.CPUIncompatibleError):
-        AudioTagger()._load_sync()
+        tagger._load_sync()
 
 
 def test_a_custom_model_id_overrides_the_default() -> None:
@@ -472,7 +474,8 @@ async def test_a_quiet_event_in_a_long_clip_is_still_heard(
     assert _rms(samples) < _SILENCE_RMS
     # ...but the window that gets classified does not, so it is heard.
     tags = await tagger.tag(str(clip))
-    assert tags is not None and tags.labels == [("Glass", 0.8)]
+    assert tags is not None
+    assert tags.labels == [("Glass", 0.8)]
 
 
 @needs_ffmpeg
@@ -532,7 +535,8 @@ async def test_the_first_clip_does_not_wait_for_the_model_download(
     # load it started, which is why `started` is only checked after
     # giving the loop a turn.
     assert elapsed < 5
-    assert tagger._load_task is not None and not tagger._load_task.done()
+    assert tagger._load_task is not None
+    assert not tagger._load_task.done()
     await asyncio.sleep(0.2)
     assert started.is_set()
 
@@ -545,7 +549,8 @@ async def test_the_first_clip_does_not_wait_for_the_model_download(
     release.set()
     assert await tagger._load_task is True
     tags = await tagger.tag(str(clip))
-    assert tags is not None and tags.labels == [("Shout", 0.8)]
+    assert tags is not None
+    assert tags.labels == [("Shout", 0.8)]
     module.pipeline.assert_called_once()
 
 

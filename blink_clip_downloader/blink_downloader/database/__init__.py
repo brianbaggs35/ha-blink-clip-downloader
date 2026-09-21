@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING
 
 from .analysis import AnalysisResultsMixin
 from .cameras import CameraStateMixin
-from .clips import ClipLibraryMixin
+from .clips import ClipFilters, ClipLibraryMixin
 from .core import DEFAULT_DSN, ConnectionMixin
 from .detections import DetectionsMixin
 from .faces import FaceEnrollmentsMixin
@@ -132,6 +132,7 @@ __all__ = [
     "_MIGRATIONS",
     "_SCHEMA",
     "ClipDatabase",
+    "ClipFilters",
     "_affected",
     "_local_day_bounds",
     "_qm",
