@@ -340,6 +340,14 @@ jobs:
       - name: Seed clips and analysis results into the add-on's database
         run: scripts/ci/ha_integration_setup.sh seed-data
 
+      # Rows alone leave every media endpoint at 404, so the only responses
+      # this job had ever proved ingress can carry were JSON and HTML.
+      # Binary and streamed responses take a different path through the
+      # proxy, and HTTP Range — which Video.js needs to seek — is the part
+      # most likely to be silently dropped. ffmpeg is already in the image.
+      - name: Give some seeded clips real playable media
+        run: scripts/ci/ha_integration_setup.sh seed-media
+
       - name: Verify the seeded library renders through ingress
         working-directory: e2e
         run: >-
@@ -379,6 +387,16 @@ jobs:
       # other check here.
       - name: Verify the seeded clips survived the restart
         run: scripts/ci/ha_integration_setup.sh assert-seed-survived
+
+      # The half of durability the two checks above miss. assert-persisted
+      # re-reads a settings file and assert-seed-survived re-reads rows this
+      # job inserted itself; neither covers a change a *user* made through
+      # the app. The seeded pass starred a clip in the real ingress UI, so
+      # reading that same row back here is the only assertion in this repo
+      # that a user's own edit survives the container being recreated.
+      - name: Verify a change made in the UI survived the restart
+        run: >-
+          scripts/ci/ha_integration_setup.sh assert-clip-starred ci-seed-2
 
       # The other half of the restart: the add-on logs its resolved
       # configuration at startup, so the new value appearing there is

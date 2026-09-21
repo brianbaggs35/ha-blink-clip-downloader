@@ -798,7 +798,23 @@ ingress panel, real ingress routing, a real round trip through Home
 Assistant's own API via the Automations tab's "Send test HA notification"
 button, and Supervisor-captured logs rendering on HA's own Settings > Apps
 > Log page — see `e2e/ha_integration_smoke.mjs`'s `checkHaNotification`/
-`checkAddonLogTab`), which `build`/`smoke-test` above don't touch at all.
+`checkAddonSupervisorTabs`), which `build`/`smoke-test` above don't touch
+at all. Three checks are worth knowing about specifically, because each
+guards something no other suite can see:
+`checkMediaThroughIngress` (in the post-seed pass) asserts a **206 with a
+correct `Content-Range`** for a `Range` request — Video.js needs that to
+seek, and ingress silently dropping it would break scrubbing for everyone
+while the clip still appeared to play; it needs the real files
+`ha_integration_setup.sh seed-media` generates with the image's own ffmpeg,
+since the seeded rows alone leave every media endpoint at 404.
+`checkAppHeadersThroughIngress` asserts the CSP survives the proxy with
+`worker-src 'self' blob:` intact — its absence once broke Live View with a
+black frame and no error outside the console — and that `__HAROOT__` was
+substituted. And `starAClipThroughIngress` + `assert-clip-starred` are one
+pair: the first stars a clip in the real UI, the second reads that row back
+*after* the container is recreated, which is the only assertion anywhere
+that a change **a user made** survives an update (the other two durability
+checks re-read a settings file and rows the job inserted itself).
 Deliberately separate from `ci.yaml` and
 informational-only (not required/blocking), since it depends on
 Supervisor/devcontainer infrastructure this repo doesn't control — see

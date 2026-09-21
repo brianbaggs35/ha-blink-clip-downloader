@@ -792,6 +792,82 @@ addon_psql() {
     "/usr/lib/postgresql/17/bin/psql -v ON_ERROR_STOP=1 -q -d blink_clips $*"
 }
 
+# Real media for a few of the seeded clips, generated inside the add-on's
+# own container with the ffmpeg it already ships.
+#
+# cmd_seed_data puts rows in the database but nothing on disk, which leaves
+# every media endpoint returning 404 -- so the only responses this job has
+# ever proved ingress can carry are JSON and HTML. Binary and *streamed*
+# responses go through a different path in Home Assistant's ingress proxy,
+# and the one the app depends on most is HTTP Range: web.FileResponse
+# answers a range request with 206 Partial Content, and Video.js needs that
+# to seek. If ingress dropped or mangled the Range header, every user's
+# video scrubbing would break and nothing in this repo would notice.
+#
+# Files are written under the real /share/blink-clips the add-on is
+# configured with, so the app finds them exactly as it finds a downloaded
+# clip. Durations match the rows seeded above so nothing reads as
+# inconsistent in the UI. +faststart puts the moov atom at the front, which
+# is what a real download from Blink looks like and what makes the first
+# byte range useful.
+#
+# The id:duration list lives only in the heredoc below; keep it in step
+# with cmd_seed_data's rows so the UI never shows a length that disagrees
+# with the file it plays.
+cmd_seed_media() {
+  local container
+  container="$(addon_container)" || return 1
+
+  # sh -s with a quoted heredoc: nothing is interpolated by the outer
+  # shells, which is the same trap addon_psql documents for SQL.
+  if ! docker exec -i "$CONTAINER_NAME" docker exec -i "$container" sh -s <<'SH'
+set -e
+mkdir -p /share/blink-clips
+for spec in ci-seed-1:12 ci-seed-3:6 ci-seed-5:18; do
+  id="${spec%%:*}"
+  dur="${spec##*:}"
+  mp4="/share/blink-clips/${id}.mp4"
+  jpg="/share/blink-clips/${id}.jpg"
+  if [ ! -s "$mp4" ]; then
+    ffmpeg -nostdin -loglevel error -y       -f lavfi -i "testsrc=duration=${dur}:size=320x240:rate=10"       -pix_fmt yuv420p -movflags +faststart "$mp4"
+  fi
+  # The app serves <clip>.jpg beside the clip and does not generate one on
+  # demand (see _handle_thumbnail), so it has to exist for the Library
+  # grid and the Vehicles zone picker to have anything to show.
+  if [ ! -s "$jpg" ]; then
+    ffmpeg -nostdin -loglevel error -y -i "$mp4" -frames:v 1 "$jpg"
+  fi
+done
+SH
+  then
+    echo "ffmpeg could not write the seeded media inside ${container}" >&2
+    return 1
+  fi
+
+  # Read back rather than announce success, same reasoning as cmd_seed_data:
+  # a silently empty /share would leave the media assertions failing four
+  # steps later with no clue that generation was what went wrong.
+  local report
+  report="$(docker exec -i "$CONTAINER_NAME" docker exec -i "$container" sh -s <<'SH' 2>/dev/null
+ok=0
+for id in ci-seed-1 ci-seed-3 ci-seed-5; do
+  for f in "/share/blink-clips/${id}.mp4" "/share/blink-clips/${id}.jpg"; do
+    [ -s "$f" ] && ok=$((ok + 1))
+  done
+done
+printf '%s' "$ok"
+SH
+  )"
+
+  if [[ "$report" != "6" ]]; then
+    echo "Seeded media is incomplete: expected 6 files, found ${report:-<no response>}" >&2
+    docker exec "$CONTAINER_NAME" docker exec "$container" \
+      ls -l /share/blink-clips 2>&1 | head -20 >&2 || true
+    return 1
+  fi
+  echo "OK: seeded 3 playable clips with thumbnails under /share/blink-clips"
+}
+
 cmd_seed_data() {
   # Everything this job asserts through ingress had, until now, been an
   # *empty state*: no Blink account means no clips, so most tabs were only
@@ -941,6 +1017,29 @@ SQL
   echo "OK: seeded 8 clips, 4 analyses, 3 security events, 4 detections, 4 battery rows"
 }
 
+cmd_assert_clip_starred() {
+  # The other half of ha_integration_seeded.mjs's starAClipThroughIngress:
+  # that clicked the star in the real ingress-proxied UI, this reads the
+  # row back after Supervisor recreated the container. assert-persisted
+  # covers a settings file and assert-seed-survived covers rows this
+  # script inserted itself; neither covers a change a *user* made through
+  # the app surviving an update, which is the one people actually notice.
+  local clip="${1:?clip id required}"
+  local starred
+  starred="$(printf '%s\n' \
+    "SELECT starred FROM clips WHERE id = '${clip}';" \
+    | addon_psql -t 2>/dev/null | tr -d '[:space:]')"
+
+  if [[ "$starred" != "t" ]]; then
+    echo "The star set through the UI before the restart did not survive it." >&2
+    echo "  clips.starred for ${clip} reads: ${starred:-<no row>}" >&2
+    echo "  A user's own changes are being lost when the container is" >&2
+    echo "  recreated, which is what every update does." >&2
+    return 1
+  fi
+  echo "OK: the star set through the ingress UI survived the restart"
+}
+
 cmd_assert_seed_survived() {
   # The real database-durability check, and only possible because
   # seed-data puts actual rows in PostgreSQL. assert-persisted re-reads a
@@ -1015,7 +1114,12 @@ case "${1:-}" in
     ;;
   assert-capabilities) cmd_assert_capabilities ;;
   seed-data) cmd_seed_data ;;
+  seed-media) cmd_seed_media ;;
   assert-seed-survived) cmd_assert_seed_survived ;;
+  assert-clip-starred)
+    shift
+    cmd_assert_clip_starred "$@"
+    ;;
   assert-log-contains)
     shift
     cmd_assert_log_contains "$@"
