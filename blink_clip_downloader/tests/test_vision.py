@@ -2614,7 +2614,7 @@ async def test_vision_pipeline_face_recognition_prefers_face_recognition_frames_
     db: ClipDatabase,
 ) -> None:
     """When the caller supplies face_recognition_frames (the wider,
-    pre-down-selection extraction pool from analyzer.py), face recognition
+    pre-down-selection extraction pool from analyzer/base.py), face recognition
     must scan that instead of the smaller `frames` set used for the AI
     prompt and the other CV stages — see process_clip's docstring for why a
     person can be in the raw pool but missing from the down-selected set."""

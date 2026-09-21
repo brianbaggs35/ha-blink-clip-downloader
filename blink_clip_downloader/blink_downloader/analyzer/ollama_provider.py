@@ -3,6 +3,14 @@
 ``OllamaCloudAnalyzer`` subclasses ``ClipAnalyzer`` rather than
 ``BaseAnalyzer`` — the wire format is the same ``/api/chat`` request, only
 the host, the bearer token and the health check differ.
+
+Every provider module here carries the ``_provider`` suffix, and that is
+load-bearing rather than cosmetic: pyright resolves a bare ``import <x>``
+to a same-named file in the *importing file's own directory* when the real
+package is not installed. A ``moondream.py`` doing ``import moondream``
+therefore resolved to itself and failed CI — where the optional, GPU-only
+``moondream`` package is absent — while passing on a machine that has it.
+``tests/test_module_names.py`` guards against the collision coming back.
 """
 
 from __future__ import annotations

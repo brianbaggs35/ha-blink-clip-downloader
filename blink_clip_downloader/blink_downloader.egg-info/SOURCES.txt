@@ -38,8 +38,8 @@ blink_downloader/analyzer/__init__.py
 blink_downloader/analyzer/anthropic_provider.py
 blink_downloader/analyzer/base.py
 blink_downloader/analyzer/factory.py
-blink_downloader/analyzer/moondream.py
-blink_downloader/analyzer/ollama.py
+blink_downloader/analyzer/moondream_provider.py
+blink_downloader/analyzer/ollama_provider.py
 blink_downloader/analyzer/openai_provider.py
 blink_downloader/security/__init__.py
 blink_downloader/security/assets.py
@@ -155,6 +155,7 @@ tests/test_live_view.py
 tests/test_main_logging.py
 tests/test_manifest.py
 tests/test_media_server.py
+tests/test_module_names.py
 tests/test_notification_channels.py
 tests/test_notifier.py
 tests/test_only_release_workflow_publishes.py

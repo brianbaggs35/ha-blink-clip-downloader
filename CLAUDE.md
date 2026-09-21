@@ -49,12 +49,18 @@ architecture.
     everything that is the same whichever provider is configured: frame
     extraction/down-selection, prompt assembly, the vision and security
     layers, prompt-cache/token accounting, verdict parsing, the risk
-    override and the face bypass. `ollama.py`, `moondream.py`,
-    `anthropic_provider.py` and `openai_provider.py` hold only what
-    differs about talking to one API; `factory.py` holds
-    `create_analyzer()`, the only module that knows all six at once.
-    The two `*_provider` names avoid a file called `openai.py`/
-    `anthropic.py` sitting next to an `import openai`. `__init__.py` is
+    override and the face bypass. `ollama_provider.py`,
+    `moondream_provider.py`, `anthropic_provider.py` and
+    `openai_provider.py` hold only what differs about talking to one API;
+    `factory.py` holds `create_analyzer()`, the only module that knows all
+    six at once. Every provider module carries the `_provider` suffix for
+    a concrete reason: **pyright resolves a bare `import <x>` to a
+    same-named file in the importing file's own directory** when the real
+    package isn't installed, so `moondream.py` doing `import moondream`
+    resolved to itself and failed CI — where the optional GPU-only
+    `moondream` package is absent — while passing locally, where it is
+    installed. `tests/test_module_names.py` guards the whole package
+    against that collision now. `__init__.py` is
     a facade: every name the old module exposed is re-exported, so
     `from .analyzer import ...` is unchanged for callers — reach into a
     submodule only for an internal the facade deliberately doesn't
@@ -216,10 +222,10 @@ live one provider-family per module, selected via `analyzer/factory.py`'s
 
 | `ai_provider`     | Class                    | Module                   | Notes                                   |
 |-------------------|--------------------------|--------------------------|------------------------------------------|
-| `ollama`          | `ClipAnalyzer`           | `ollama.py`              | Local/LAN Ollama server                   |
-| `ollama_cloud`    | `OllamaCloudAnalyzer`    | `ollama.py`              | Hosted Ollama Cloud API (subclasses `ClipAnalyzer` — same wire format) |
-| `moondream_cloud` | `MoondreamCloudAnalyzer` | `moondream.py`           | Moondream Cloud API, no model selection   |
-| `moondream_local` | `MoondreamLocalAnalyzer` | `moondream.py`           | Local moondream package, requires an **NVIDIA/Apple Silicon GPU** (any arch since the 4.1.0 Debian base image switch) |
+| `ollama`          | `ClipAnalyzer`           | `ollama_provider.py`     | Local/LAN Ollama server                   |
+| `ollama_cloud`    | `OllamaCloudAnalyzer`    | `ollama_provider.py`     | Hosted Ollama Cloud API (subclasses `ClipAnalyzer` — same wire format) |
+| `moondream_cloud` | `MoondreamCloudAnalyzer` | `moondream_provider.py`  | Moondream Cloud API, no model selection   |
+| `moondream_local` | `MoondreamLocalAnalyzer` | `moondream_provider.py`  | Local moondream package, requires an **NVIDIA/Apple Silicon GPU** (any arch since the 4.1.0 Debian base image switch) |
 | `anthropic`       | `AnthropicAnalyzer`      | `anthropic_provider.py`  | Claude vision models                      |
 | `openai`          | `OpenAIAnalyzer`         | `openai_provider.py`     | GPT vision models                         |
 

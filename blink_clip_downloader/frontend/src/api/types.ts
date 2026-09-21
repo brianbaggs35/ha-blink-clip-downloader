@@ -453,7 +453,7 @@ export interface FaceEnrollment {
   name: string
   created_at: string
   // Whether this person counts toward the suspicious-flag bypass (see
-  // analyzer.py's _face_bypass_applies) — a recognized-but-not-approved
+  // analyzer/base.py's _face_bypass_applies) — a recognized-but-not-approved
   // enrollment is labeled but never suppresses an alert on its own.
   approved: boolean
 }

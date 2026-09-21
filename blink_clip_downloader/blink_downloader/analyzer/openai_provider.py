@@ -1,8 +1,8 @@
 """The OpenAI Chat Completions vision provider.
 
 Named ``openai_provider`` rather than ``openai`` for the same reason as
-``anthropic_provider`` — so the file name never makes a reader wonder which
-``openai`` an ``import openai`` inside it resolves to.
+``anthropic_provider`` — so neither a reader nor pyright has to wonder
+which ``openai`` an ``import openai`` inside it resolves to.
 """
 
 from __future__ import annotations

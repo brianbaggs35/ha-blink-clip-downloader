@@ -6,6 +6,10 @@ one large assembled prompt these analyzers run Moondream's own
 ``/v1/detect`` and ``/v1/query`` endpoints per frame and fold the
 resulting geometry into a short, augmented per-frame prompt — see the
 mixin's docstring.
+
+This is the module the ``_provider`` naming rule was learned on: as
+``moondream.py`` its own ``import moondream`` resolved back to itself
+under pyright wherever the optional GPU-only package is not installed.
 """
 
 from __future__ import annotations
