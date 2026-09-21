@@ -1286,13 +1286,16 @@ class BaseAnalyzer(abc.ABC):
     ) -> list[bytes]:
         """Down-select the oversampled pool to the frames actually sent to the AI.
 
-        "uniform" keeps frames evenly spread across the whole clip; "smart"
-        and "sequential" both benefit from motion-weighted picks
-        (entry/peak/exit) since sequential analyses each frame individually
-        and gets more value from a few well-chosen frames than an arbitrary
-        early slice of the clip. Clips longer than
-        _LONG_CLIP_THRESHOLD_SECONDS get their frame budget doubled — see
-        _target_frame_count().
+        "uniform" keeps frames evenly spread across the whole clip.
+        "smart" and "sequential" both take motion-weighted picks
+        (peak/entry/exit, then spread out) — sequential analyses each frame
+        individually and gets more value from a few well-chosen frames than
+        an arbitrary early slice of the clip. "adaptive" uses the same
+        motion scores but concentrates the budget on the clip's one busiest
+        stretch instead of spreading it, falling back to "smart" when there
+        is no single such stretch — see :meth:`_select_frames_around_event`.
+        Clips longer than _LONG_CLIP_THRESHOLD_SECONDS get their frame
+        budget doubled — see _target_frame_count().
 
         When a car zone is configured for *camera* and protected-vehicle
         rules actually apply to it (the same gating
