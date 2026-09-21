@@ -163,23 +163,6 @@ wait for a free compute slot and the classification. Turning the option on
 looks like "no sound chips for the first clip or two, then sound chips",
 never like a stalled queue.
 
-### Clips longer than a minute were only half analysed
-
-Frame extraction assumed 60 seconds — Blink's own recording ceiling, and
-correct for every clip the add-on downloads itself. A longer file that
-reached the library another way, such as one imported from disk by the
-library scanner, had everything past its first minute silently skipped:
-a two-minute clip was analysed on its first half and reported on as
-though that were the whole thing. Measured before the fix, a 120-second
-clip got 50% coverage and a five-minute one got 20%.
-
-Extraction now uses the clip's real length when that is known, which it
-is for anything with duration metadata. Clips at or under 60 seconds are
-extracted from exactly as before — verified, since that is every clip
-most installs will ever see — and there is a ceiling of 240 frames so a
-very long file cannot turn one clip's analysis into a thousand image
-decodes.
-
 ### The frame strategy that sees the most is now the default
 
 Measured across simulated clips shaped like real Blink recordings — a
@@ -389,6 +372,15 @@ what Home Assistant actually allows before any request is built.
   other definitions are unchanged in their executable code, verified by
   comparing parsed syntax trees with that qualification normalised away and
   docstrings stripped.
+- Frame extraction assumed a 60-second clip rather than reading the
+  length it was already given. That assumption is correct for every clip
+  this add-on downloads — Blink does not record longer — so this changes
+  nothing in normal use, and clips at or under 60 seconds are extracted
+  from byte-identically. It only matters for a file that reached the
+  library some other way, e.g. an unrelated MP4 dropped into the download
+  directory and picked up by the library scanner, which would previously
+  have been analysed on its first minute alone. Four lines; the caller
+  already knew the duration.
 - Two long parameter lists became objects. `create_analyzer` took
   twenty-four arguments; it now takes an `AnalyzerSettings` (how a clip
   is analyzed) and a `ProviderCredentials` (which API, and with what).
