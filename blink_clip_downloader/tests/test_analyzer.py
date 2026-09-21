@@ -16,10 +16,6 @@ import pytest
 
 from blink_downloader import frame_motion, prompt_segments
 from blink_downloader.analyzer import (
-    _ANTHROPIC_FALLBACK_MODELS,
-    _CACHE_INERT_CALLS,
-    _OPENAI_FALLBACK_MODELS,
-    _OPENAI_STRUCTURED_OUTPUT_SCHEMA,
     AnalysisResult,
     AnthropicAnalyzer,
     BaseAnalyzer,
@@ -28,14 +24,21 @@ from blink_downloader.analyzer import (
     MoondreamLocalAnalyzer,
     OllamaCloudAnalyzer,
     OpenAIAnalyzer,
+    create_analyzer,
+)
+from blink_downloader.analyzer.base import _CACHE_INERT_CALLS
+from blink_downloader.analyzer.moondream import _MOONDREAM_CLOUD_PRICING
+from blink_downloader.model_catalog import (
+    _ANTHROPIC_FALLBACK_MODELS,
+    _OPENAI_FALLBACK_MODELS,
+    _OPENAI_MODEL_DISPLAY_ORDER,
+    _OPENAI_STRUCTURED_OUTPUT_SCHEMA,
     _anthropic_supports_structured_output,
     _openai_model_rank,
     _vision_model_score,
-    create_analyzer,
     is_openai_vision_model,
     is_vision_model,
 )
-from blink_downloader.model_catalog import _OPENAI_MODEL_DISPLAY_ORDER
 from blink_downloader.moondream_finetune import MoondreamFineTuneManager
 from blink_downloader.security import (
     AssetLocation,
@@ -3336,8 +3339,6 @@ async def test_openai_health_check_cache_expires(
     """Once the TTL elapses, health_check must hit the API again."""
     import sys
 
-    import blink_downloader.analyzer as analyzer_module
-
     mock_mod = _make_openai_module()
     monkeypatch.setitem(sys.modules, "openai", mock_mod)
 
@@ -3345,7 +3346,7 @@ async def test_openai_health_check_cache_expires(
     a._client = mock_mod.AsyncOpenAI.return_value
 
     fake_now = 1000.0
-    monkeypatch.setattr(analyzer_module.time, "monotonic", lambda: fake_now)
+    monkeypatch.setattr(time, "monotonic", lambda: fake_now)
     with patch.dict(sys.modules, {"openai": mock_mod}):
         await a.health_check()
         fake_now += a._HEALTH_CHECK_CACHE_SECONDS + 1
@@ -5117,8 +5118,6 @@ def test_parse_response_non_zero_confidence_unchanged(
 
 
 def test_moondream_cloud_model_pricing() -> None:
-    from blink_downloader.analyzer import _MOONDREAM_CLOUD_PRICING
-
     a = MoondreamCloudAnalyzer(api_key="key", prompt="test")
     inp, out = a.model_pricing()
     assert inp == _MOONDREAM_CLOUD_PRICING[0]

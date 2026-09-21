@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS analysis_queue (
     -- Bumped each time a transient provider failure (timeout, connection
     -- drop, rate limit) requeues this clip as 'pending' instead of marking
     -- it 'failed' outright — see AnalysisQueue._process_one and
-    -- BaseAnalyzer.transient_error in analyzer.py. Left at 0 for a clip
+    -- BaseAnalyzer.transient_error in analyzer/base.py. Left at 0 for a clip
     -- that has never been retried.
     retry_count   INTEGER NOT NULL DEFAULT 0
 );
@@ -302,8 +302,8 @@ CREATE TABLE IF NOT EXISTS face_enrollments (
 -- get_effective_confidence_threshold), a wrong automatic adjustment here
 -- risks the opposite mistake: loosening face-match tolerance from a
 -- handful of reports could itself cause the false bypass the safety
--- design in analyzer.py's docs explicitly warns against. So this data is
--- surfaced for a human to review and act on (e.g. re-enrolling someone
+-- design in analyzer/base.py's docs explicitly warns against. So this data
+-- is surfaced for a human to review and act on (e.g. re-enrolling someone
 -- with clearer reference photos), not consumed automatically.
 CREATE TABLE IF NOT EXISTS face_recognition_feedback (
     id          INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -503,7 +503,7 @@ def _local_day_bounds(days_ago: int = 0) -> tuple[str, str]:
     """UTC ISO-8601 ``[start, end)`` instants bounding the local calendar
     day that was *days_ago* days before today, in the system's configured
     timezone — the same TZ HA Supervisor gives the container that
-    analyzer.py's ``_time_of_day_segment`` already relies on via
+    ``prompt_segments.time_of_day_segment`` already relies on via
     ``astimezone()``. Every timestamp in this schema is stored as UTC text
     (see ``init()``'s ``server_settings`` comment), so "today" must be
     resolved via local midnight and converted back to UTC here rather than
@@ -1213,7 +1213,7 @@ class ClipDatabase:
         Also includes a ``face_recognized`` boolean, True when the clip's
         most recent analysis unambiguously matched only approved,
         locally-enrolled household member(s) with no stranger or
-        unrecognized face anywhere in the sampled frames (``analyzer.py``'s
+        unrecognized face anywhere in the sampled frames (``analyzer/base.py``'s
         ``approved_faces_seen``, the same all-or-nothing condition
         ``_face_bypass_applies`` itself checks — see its docstring — just
         recorded regardless of whether the clip also happened to need its
@@ -1221,7 +1221,7 @@ class ClipDatabase:
         ``face_bypass_applied`` (whether the bypass actually fired): most
         real matches are a household member's own routine, already
         non-suspicious visit, which never reaches the bypass check at all
-        (see analyzer.py's `if is_suspicious and ...` gating) and would
+        (see analyzer/base.py's `if is_suspicious and ...` gating) and would
         otherwise never show any recognition signal at all despite a clear
         match. `face_bypass_applied` itself is intentionally left alone
         for `get_face_bypass_stats`'s narrower audit purpose (confirming
@@ -1795,7 +1795,7 @@ class ClipDatabase:
         Backs the Biometrics tab's bypass activity card, which exists so a
         household member can confirm the bypass is firing for the right
         people (and catch it if it's ever wrong) instead of trusting it
-        blindly — see analyzer.py's face-bypass-gating docstrings.
+        blindly — see analyzer/base.py's face-bypass-gating docstrings.
         """
         if self._pool is None:
             return {"total_bypassed": 0, "by_name": [], "recent": []}
@@ -3434,7 +3434,7 @@ class ClipDatabase:
         """Store a new enrolled household member's face embedding. Returns its id.
 
         *approved* controls whether this person counts toward the
-        suspicious-flag bypass (see analyzer.py's ``_face_bypass_applies``)
+        suspicious-flag bypass (see analyzer/base.py's ``_face_bypass_applies``)
         — defaults to True so the common "add a family member" flow works
         immediately, but can be set False (or flipped later via
         :meth:`set_face_enrollment_approved`) to enroll someone for

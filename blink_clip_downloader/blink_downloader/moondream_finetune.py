@@ -25,7 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Long timeout for the two calls that actually do work on Moondream's side
 # (a rollout generation and a training step); short one for the ordinary
-# CRUD calls around them. Both mirror analyzer.py's own values.
+# CRUD calls around them. Both mirror analyzer/base.py's own values.
 _API_TIMEOUT = aiohttp.ClientTimeout(total=120)
 _HEALTH_TIMEOUT = aiohttp.ClientTimeout(total=10)
 _CONTENT_TYPE_JSON = "application/json"

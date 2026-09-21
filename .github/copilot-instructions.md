@@ -37,7 +37,8 @@ Key modules:
 * `config.py` — configuration
 * `downloader.py` — Blink API polling/downloads/camera operations
 * `database.py` — PostgreSQL database
-* `analyzer.py` — AI provider abstraction
+* `analyzer/` — AI provider abstraction (`base.py` + one module per
+  provider family + `factory.py`; `__init__.py` re-exports everything)
 * `analysis_queue.py` — async AI queue
 * `vision.py` — optional computer vision
 * `media_server.py` — HTTP API/frontend serving
@@ -85,7 +86,8 @@ Do not make optional CV dependencies mandatory for unrelated features. Be especi
 
 ## AI
 
-`analyzer.py` defines `BaseAnalyzer`; `create_analyzer()` selects providers.
+`analyzer/base.py` defines `BaseAnalyzer`; `analyzer/factory.py`'s
+`create_analyzer()` selects providers.
 
 Current providers:
 
