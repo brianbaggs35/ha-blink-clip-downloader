@@ -8,7 +8,7 @@ arithmetic on bounding boxes. So the prompt hands it the arithmetic and
 asks for the judgement — including explicit permission to contradict what
 the code computed.
 
-Kept in this package rather than in ``analyzer.py``'s pile of prompt
+Kept in this package rather than in the analyzer's own pile of prompt
 segments for the same reason ``vision.py`` renders its own hints: the text
 and the data it describes should change together.
 """

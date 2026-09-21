@@ -1,9 +1,9 @@
 """Reading what ffmpeg wrote: its concatenated JPEG stdout, and its stderr.
 
 Both functions here are pure and depend on nothing but the standard
-library. That is the point of the module: ``analyzer.py`` and
+library. That is the point of the module: the ``analyzer`` package and
 ``media_server.py`` each shell out to ffmpeg for frames and each need to
-make sense of the result, but ``media_server.py`` importing ``analyzer.py``
+make sense of the result, but ``media_server.py`` importing ``analyzer``
 for two small helpers would drag ``aiohttp`` and the whole ``security``
 package in behind them. Both modules used to carry their own identical
 copy to avoid exactly that; a leaf module gives them one implementation

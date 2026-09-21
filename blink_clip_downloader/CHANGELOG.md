@@ -122,6 +122,26 @@ what Home Assistant actually allows before any request is built.
 - Switching to another recipe while a Create was still in flight left the
   new recipe claiming it had just been created.
 
+### Internal
+
+- `analyzer.py`, at 5,214 lines the largest module in the add-on, is now an
+  `analyzer/` package split along the seams it already had. `base.py` keeps
+  `BaseAnalyzer` — everything that is the same whichever provider is
+  configured: frame extraction and down-selection, prompt assembly, the
+  vision and security layers, prompt-cache and token accounting, verdict
+  parsing, the risk-threshold override and the face-recognition bypass. Each
+  of `ollama.py`, `moondream.py`, `anthropic_provider.py` and
+  `openai_provider.py` holds only what differs about talking to one API, and
+  `factory.py` holds `create_analyzer()`. Nothing outside the package had to
+  change: `__init__.py` re-exports every name the module used to expose, and
+  the provider modules depend on `base.py` and on nothing else in the
+  package, so any one of them can now be read or changed without the other
+  five in the way. A pure move — every class, function and constant is
+  byte-identical to where it came from — verified by comparing the parsed
+  syntax tree of each definition against the original file.
+- Two docstrings still pointed at `_time_of_day_segment`, which stopped
+  existing under that name when `prompt_segments.py` was split out.
+
 ## 6.0.5
 
 ### Live View: the last thing standing between it and playing

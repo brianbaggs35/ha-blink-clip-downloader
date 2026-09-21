@@ -55,7 +55,7 @@ class _ExpectedE2ENoiseFilter(logging.Filter):
             return not (
                 message.startswith("ffmpeg exited ") and " for e2e-clip-" in message
             )
-        if record.name == "blink_downloader.analyzer":
+        if record.name.startswith("blink_downloader.analyzer"):
             return not (
                 message.startswith("ffmpeg exited ")
                 and " for /share/blink-clips/" in message
@@ -72,9 +72,14 @@ def _configure_e2e_logging() -> None:
     if os.environ.get("BLINK_E2E") != "1":
         return
     noise_filter = _ExpectedE2ENoiseFilter()
+    # A logging.Filter on a logger only sees records logged *through that
+    # logger* — it is not consulted for a child logger's records on their way
+    # up to the root handler. So analyzer's filtered message, which comes from
+    # the analyzer package's `base` submodule, needs that submodule named here
+    # rather than just its parent package.
     for logger_name in (
         "blink_downloader.media_server",
-        "blink_downloader.analyzer",
+        "blink_downloader.analyzer.base",
         "blink_downloader.vision",
     ):
         logging.getLogger(logger_name).addFilter(noise_filter)

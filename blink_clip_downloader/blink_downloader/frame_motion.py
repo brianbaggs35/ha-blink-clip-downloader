@@ -7,7 +7,7 @@ frames, where in the frame that change sat, and the short English phrases
 inference, no I/O, no configuration: given the same bytes it returns the
 same numbers.
 
-Split out of ``analyzer.py`` for the same reason ``model_catalog.py`` and
+Split out of the analyzer for the same reason ``model_catalog.py`` and
 ``moondream_finetune.py`` were — it is image arithmetic that happens to be
 *used* during analysis, not part of deciding what a clip means, and it is
 far easier to reason about (and test) as a handful of pure functions than as

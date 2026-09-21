@@ -1,7 +1,8 @@
 """Structured security analysis: tracks, events, risk, and evidence quality.
 
 This package sits between the computer-vision stages (``vision.py``, which
-produce boxes and pixels) and the AI providers (``analyzer.py``, which
+produce boxes and pixels) and the AI providers (the ``analyzer``
+package, which
 produce judgement). Its job is to turn the former into structured, typed
 facts the latter can verify rather than re-derive:
 
