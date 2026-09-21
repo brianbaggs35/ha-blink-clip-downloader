@@ -19,7 +19,6 @@ import base64
 import json
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
@@ -30,6 +29,7 @@ from .base import (
     _HEALTH_TIMEOUT,
     BaseAnalyzer,
     SecurityLayerSettings,
+    _MostAlarming,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -432,44 +432,6 @@ class _MoondreamDetectionMixin:
         except (TypeError, ValueError):
             obj["confidence"] = 0.0
         return json.dumps(obj)
-
-
-@dataclass
-class _MostAlarming:
-    """The most alarming per-frame result seen so far, across one clip.
-
-    Moondream is asked about each frame separately, so something has to
-    decide which frame's answer represents the clip. The rule, most
-    significant first: any suspicious verdict beats a clear one, and
-    between two of the same verdict the more confident wins. Lifted out
-    of the frame loop so the rule can be read without the rate limiting
-    and response plumbing around it.
-    """
-
-    response: str = ""
-    is_suspicious: bool = False
-    confidence: float = 0.0
-
-    def offer_unranked(self, response: str) -> None:
-        """Take *response* only if nothing at all has been recorded yet.
-
-        For answers that carry no verdict to rank — a frame with no
-        subject in it, or one whose reply would not parse. They are
-        better than returning nothing and worse than anything ranked.
-        """
-        if not self.response:
-            self.response = response
-
-    def offer(self, suspicious: bool, confidence: float, response: str) -> None:
-        """Take *response* if it outranks what is already held."""
-        if (
-            not self.response
-            or (suspicious and not self.is_suspicious)
-            or (suspicious == self.is_suspicious and confidence > self.confidence)
-        ):
-            self.response = response
-            self.is_suspicious = suspicious
-            self.confidence = confidence
 
 
 class MoondreamCloudAnalyzer(_MoondreamDetectionMixin, BaseAnalyzer):

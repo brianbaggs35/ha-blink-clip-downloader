@@ -152,6 +152,62 @@ def _audio_labels_json(vision_hints: VisionHints | None) -> str:
 
 
 @dataclass
+class _MostAlarming:
+    """The most alarming per-frame result seen so far, across one clip.
+
+    Two strategies ask an AI provider about each frame separately and
+    then have to decide which frame's answer represents the clip: the
+    ``sequential`` strategy (see
+    :meth:`BaseAnalyzer._analyze_sequentially`) and the Moondream Cloud
+    provider, which works frame-by-frame whatever the strategy. The rule,
+    most significant first: any suspicious verdict beats a clear one, and
+    between two of the same verdict the more confident wins.
+
+    Shared rather than written twice because it is a three-clause
+    comparison that reads the same at a glance whichever way the
+    tie-break goes — the kind of rule that silently stops matching its
+    twin the first time somebody adjusts one of them.
+    """
+
+    response: str = ""
+    is_suspicious: bool = False
+    confidence: float = 0.0
+    #: The frame that produced :attr:`response`, when the caller tracks
+    #: it. ``sequential`` uses it to escalate on that one frame rather
+    #: than re-running the whole clip through tier 2.
+    frame: bytes | None = None
+
+    def offer_unranked(self, response: str, frame: bytes | None = None) -> None:
+        """Take *response* only if nothing at all has been recorded yet.
+
+        For answers that carry no verdict to rank — a frame with no
+        subject in it, or one whose reply would not parse. They are
+        better than returning nothing and worse than anything ranked.
+        """
+        if not self.response:
+            self.response = response
+            self.frame = frame
+
+    def offer(
+        self,
+        suspicious: bool,
+        confidence: float,
+        response: str,
+        frame: bytes | None = None,
+    ) -> None:
+        """Take *response* if it outranks what is already held."""
+        if (
+            not self.response
+            or (suspicious and not self.is_suspicious)
+            or (suspicious == self.is_suspicious and confidence > self.confidence)
+        ):
+            self.response = response
+            self.is_suspicious = suspicious
+            self.confidence = confidence
+            self.frame = frame
+
+
+@dataclass
 class AnalysisResult:
     """Structured output from a clip analysis run."""
 
@@ -1925,19 +1981,40 @@ class BaseAnalyzer(abc.ABC):
             ((diffs[i], i + 1) for i in range(len(diffs)) if (i + 1) not in selected),
             reverse=True,
         )
-        min_gap = max(1, len(frames) // target_count)
-        for _, idx in ranked:
+        selected = BaseAnalyzer._fill_by_motion(
+            selected, ranked, target_count, min_gap=max(1, len(frames) // target_count)
+        )
+        return [frames[i] for i in sorted(selected)]
+
+    @staticmethod
+    def _fill_by_motion(
+        selected: set[int],
+        ranked: list[tuple[float, int]],
+        target_count: int,
+        min_gap: int,
+    ) -> set[int]:
+        """Top *selected* up to *target_count* from the highest-motion frames.
+
+        Two passes over the same ranking. The first requires every new
+        pick to sit at least *min_gap* from everything already chosen, so
+        the result spreads across the clip's timeline rather than
+        clustering on one burst — the top few frames by raw pixel delta
+        are often consecutive, three views of the same door swinging open,
+        which spends the budget on near-duplicates. The second pass drops
+        that requirement, and runs only if the first left slots unfilled,
+        which is what happens on a short clip or a small pool where no
+        candidate can satisfy the gap.
+        """
+        for _, index in ranked:
+            if len(selected) >= target_count:
+                return selected
+            if all(abs(index - chosen) >= min_gap for chosen in selected):
+                selected.add(index)
+        for _, index in ranked:
             if len(selected) >= target_count:
                 break
-            if all(abs(idx - s) >= min_gap for s in selected):
-                selected.add(idx)
-        if len(selected) < target_count:
-            for _, idx in ranked:
-                if len(selected) >= target_count:
-                    break
-                selected.add(idx)
-
-        return [frames[i] for i in sorted(selected)]
+            selected.add(index)
+        return selected
 
     @staticmethod
     def _motion_window(diffs: list[float]) -> tuple[int, int] | None:
@@ -2084,32 +2161,17 @@ class BaseAnalyzer(abc.ABC):
         batches (e.g. Ollama with small models, or when per-frame clarity
         matters more than temporal context).
         """
-        best_response = ""
-        best_suspicious = False
-        best_confidence = 0.0
-        best_frame: bytes | None = None
-
+        best = _MostAlarming()
         for frame in frames:
             response = await self._call_model([frame], prompt)
             if not response:
                 continue
-            suspicious, confidence, desc = self._try_parse_json(response)
-            if not desc:
-                if not best_response:
-                    best_response = response
-                    best_frame = frame
-                continue
-            if (
-                not best_response
-                or (suspicious and not best_suspicious)
-                or (suspicious == best_suspicious and confidence > best_confidence)
-            ):
-                best_response = response
-                best_suspicious = suspicious
-                best_confidence = confidence
-                best_frame = frame
-
-        return best_response, best_frame
+            suspicious, confidence, description = self._try_parse_json(response)
+            if description:
+                best.offer(suspicious, confidence, response, frame)
+            else:
+                best.offer_unranked(response, frame)
+        return best.response, best.frame
 
     def base_prompt_for_camera(self, camera: str) -> str:
         """Return the camera-scoped analysis prompt with no per-clip context.

@@ -107,10 +107,13 @@ class MediaServer(
     #
     # The marker sits on `self` rather than on `def` because SonarPython
     # reports S107 against the *parameter list*, which on a multi-line
-    # signature begins on the line after `def` — a NOSONAR on the `def`
-    # line silently suppresses nothing, which is how this was first
+    # signature begins on the line after `def`. Putting the marker on the
+    # `def` line silently suppresses nothing, which is how this was first
     # written and why the finding survived a round. Do not tidy it up
-    # onto the line above.
+    # onto the line above. (The marker is deliberately not spelled out
+    # anywhere in this comment: Sonar treats the bare word as a directive
+    # wherever it appears, and prose following it reads as malformed
+    # syntax — which is what the *second* round of this cost.)
     def __init__(
         self,  # NOSONAR
         db: ClipDatabase,
