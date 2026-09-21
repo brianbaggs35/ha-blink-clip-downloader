@@ -1864,18 +1864,29 @@ class BaseAnalyzer(abc.ABC):
     ) -> list[bytes]:
         """Select frames by motion score, spreading picks across the timeline.
 
-        Always includes the first frame (scene entry), last frame (exit),
-        and the peak-motion frame. Fills remaining slots with the next
+        Includes the peak-motion frame, the first frame (scene entry) and
+        the last frame (exit), then fills remaining slots with the next
         highest-motion frames, requiring each new pick be at least min_gap
         frames from every frame already selected, then relaxing that
         constraint only if it left slots unfilled (small pools/short clips).
-        """
-        selected: set[int] = {0, len(frames) - 1}
 
-        # Peak-motion frame (index into frames, not diffs)
-        if diffs:
-            peak = max(range(len(diffs)), key=lambda i: diffs[i]) + 1
-            selected.add(peak)
+        Those three are taken in that order, and only while the budget
+        lasts. ``ai_max_frames`` accepts values as low as 1, and adding
+        all three unconditionally returned *three* frames to a caller
+        asking for one — a third more images than requested on a paid
+        provider, on every clip. The peak comes first because it is where
+        the event is: a one-frame budget spent on the scene-entry frame
+        is usually a photograph of an empty driveway. At a budget of
+        three or more all three are included regardless of order, so this
+        changes nothing for any ordinary configuration.
+        """
+        selected: set[int] = set()
+        peak = max(range(len(diffs)), key=lambda i: diffs[i]) + 1 if diffs else None
+        for idx in (peak, 0, len(frames) - 1):
+            if len(selected) >= target_count:
+                break
+            if idx is not None:
+                selected.add(idx)
 
         ranked = sorted(
             ((diffs[i], i + 1) for i in range(len(diffs)) if (i + 1) not in selected),

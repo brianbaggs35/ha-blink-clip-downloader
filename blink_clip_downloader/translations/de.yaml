@@ -328,16 +328,21 @@ configuration:
   ai_max_frames:
     name: Max. Einzelbilder pro Clip
     description: >-
-      Anzahl der pro Clip für die Analyse extrahierten Einzelbilder
-      (1–100). Mehr Einzelbilder liefern eine bessere Abdeckung, erhöhen
-      aber API-Kosten und Analysezeit. Bei moondream_cloud verbraucht
-      jedes Einzelbild zusätzliche API-Anfragen.
+      Wie viele Einzelbilder pro Clip an die KI gesendet werden (1-100) —
+      die Zahl, die die API-Kosten bestimmt. Nicht die Zahl der
+      extrahierten Bilder: die Extraktion deckt immer den ganzen Clip ab,
+      und diese werden daraus ausgewählt. Ein höherer Wert tastet den Clip
+      dichter ab, er reicht nicht weiter in ihn hinein. Clips über 30
+      Sekunden erhalten doppelt so viele. Bei moondream_cloud verbraucht
+      jedes Einzelbild eine zusätzliche API-Anfrage.
   ai_frame_interval:
     name: Einzelbildintervall (Sekunden)
     description: >-
-      Extrahiert alle so viele Sekunden ein Einzelbild aus dem Video.
-      Mit 5 Einzelbildern und 2 s Intervall deckt die Analyse etwa die
-      ersten 8 s des Clips ab.
+      Sekunden zwischen den aus dem Video extrahierten Einzelbildern. Das
+      bestimmt, wie dicht der Pool an Kandidaten ist, nicht wie viele die
+      KI erreichen: es werden ohnehin genug Bilder extrahiert, um einen
+      vollen 60-Sekunden-Clip abzudecken, und „Max. Einzelbilder“
+      entscheidet, wie viele davon gesendet werden.
   ai_suspicious_keywords:
     name: Verdächtige Schlüsselwörter
     description: >-
@@ -401,12 +406,14 @@ configuration:
   ai_frame_strategy:
     name: Strategie zur Einzelbildextraktion
     description: >-
-      „smart“ (Standard) extrahiert die doppelte Anzahl an
-      Einzelbildern und wählt dann per Bewegungsdifferenzanalyse das
-      Eingangs-, Bewegungsspitzen- und Ausgangsbild aus. „sequential“
-      analysiert jedes Einzelbild einzeln und liefert das
-      alarmierendste Ergebnis zurück. „uniform“ ist der alte Modus mit
-      festem Intervall.
+      Wie die gesendeten Einzelbilder aus diesem Pool ausgewählt werden.
+      „smart“ (Standard) bewertet sie nach Bewegung und sendet das Bild
+      mit der stärksten Bewegung sowie das erste und letzte; verbleibendes
+      Budget wird mit bewegungsreichen, über den Clip verteilten Bildern
+      gefüllt. „sequential“ wählt dieselben Bilder, sendet aber jedes als
+      eigene KI-Anfrage und behält das alarmierendste Ergebnis — eine
+      Anfrage pro Bild statt einer pro Clip. „uniform“ verzichtet auf die
+      Bewegungsanalyse und verteilt sie gleichmäßig (veraltet).
   ai_car_cameras:
     name: Fahrzeugschutz-Kameras
     description: >-

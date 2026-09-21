@@ -4743,6 +4743,42 @@ async def test_lookup_scene_baseline_none_when_scene_thumbnail_fails() -> None:
     fake_db.get_scene_deviation.assert_not_awaited()
 
 
+@pytest.mark.parametrize("target", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_select_frames_by_motion_never_exceeds_the_frame_budget(target: int) -> None:
+    """ai_max_frames accepts values as low as 1, and the entry, exit and
+    peak frames used to be added unconditionally — so a caller asking for
+    one frame got three. On a paid provider that is triple the image cost
+    of what was configured, on every clip.
+    """
+    frames = [f"frame{i}".encode() for i in range(12)]
+    diffs = [float(i % 5) for i in range(len(frames) - 1)]
+
+    assert len(ClipAnalyzer._select_frames_by_motion(frames, diffs, target)) == target
+
+
+def test_select_frames_by_motion_spends_a_single_frame_on_the_peak() -> None:
+    """Which of the three to keep when only one fits is not arbitrary: the
+    scene-entry frame of a security clip is usually an empty driveway,
+    and the peak is where whatever triggered the recording happened."""
+    frames = [f"frame{i}".encode() for i in range(10)]
+    diffs = [1.0, 1.0, 1.0, 99.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+    # diffs[3] is the peak, and the peak frame is that index + 1.
+    assert ClipAnalyzer._select_frames_by_motion(frames, diffs, 1) == [frames[4]]
+
+
+def test_select_frames_by_motion_unchanged_once_all_three_anchors_fit() -> None:
+    """The budget-aware ordering must not disturb ordinary configurations:
+    at three or more, entry, peak and exit are all included exactly as
+    before, whatever order they are considered in."""
+    frames = [f"frame{i}".encode() for i in range(10)]
+    diffs = [1.0, 1.0, 1.0, 99.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+    result = ClipAnalyzer._select_frames_by_motion(frames, diffs, 3)
+
+    assert result == [frames[0], frames[4], frames[-1]]
+
+
 def test_select_frames_by_motion_falls_back_when_gap_constraint_underfills() -> None:
     """When the min-gap-constrained first pass can't fill target_count slots
     (motion spikes clustered too close together), the second, unconstrained
