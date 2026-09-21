@@ -221,7 +221,7 @@ def test_set_settings_oserror_propagates_after_updating_in_memory(
     # The in-memory update happens before the write attempt (see
     # set_settings's docstring), so the change still takes effect for the
     # rest of this session even though persisting it failed — the caller
-    # (media_server.py's _handle_gdrive_settings_put) is responsible for
+    # (media_server/storage.py's _handle_gdrive_settings_put) is responsible for
     # turning the propagated OSError into an honest failure response.
     assert client.client_id == "cid"
     assert client.has_client_secret is True

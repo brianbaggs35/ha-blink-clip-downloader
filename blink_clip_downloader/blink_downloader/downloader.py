@@ -349,7 +349,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
     def list_camera_names(self) -> list[str]:
         """Return every camera name on the currently authenticated account.
 
-        Unlike media_server.py's /api/cameras (sourced from
+        Unlike media_server/'s /api/cameras (sourced from
         ClipDatabase.get_camera_stats(), which only lists cameras that have
         produced at least one downloaded clip), this reflects every camera
         Blink currently reports, including one that has never been
@@ -481,7 +481,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         user clicking arm/disarm, same class of race
         list_camera_names()/get_camera already guard against elsewhere.
         Returns False if blinkpy's own arm/disarm API call itself fails
-        (e.g. a transient Blink outage); media_server.py's handler maps
+        (e.g. a transient Blink outage); media_server/'s handler maps
         None to 404 and False to a 502-style "try again" response, since
         those are genuinely different situations for a caller to react to.
         """

@@ -435,7 +435,7 @@ async function checkCreatedObjectsAppearInHomeAssistant(page, baseUrl, created, 
  * (NotificationChannelsCard.vue) and confirms the exact success message
  * the backend returns on a genuine 2xx from Home Assistant's own API
  * (notification_channels.py's send_test_ha_notification, called through
- * media_server.py's POST /api/notifications/test-ha). This can only
+ * media_server/'s POST /api/notifications/test-ha). This can only
  * succeed with a real Supervisor-issued SUPERVISOR_TOKEN and a real Core
  * instance behind it - there is nothing to mock here, which is exactly
  * why it's worth asserting on in this job specifically.

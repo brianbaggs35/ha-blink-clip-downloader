@@ -85,7 +85,7 @@ test('enrolling from a real extracted frame gracefully reports no face detected'
   // rather than failing extraction outright. FaceEmbedder still
   // independently discovers facenet_pytorch is missing during the actual
   // embed step and returns no detected face — a real, already-handled
-  // response (see media_server.py's _handle_faces_enroll), not a mocked one.
+  // response (see media_server/faces.py's _handle_faces_enroll), not a mocked one.
   await page.locator('#biometrics-camera-select').click()
   await page.getByRole('option', { name: 'Test Scratch' }).click()
   await expect(page.locator('.thumb-strip-item')).toHaveCount(1)

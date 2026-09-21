@@ -112,8 +112,8 @@ architecture.
   - `ffmpeg_output.py` — reading what ffmpeg wrote: splitting its
     concatenated-JPEG stdout into frames, and condensing its stderr into
     one loggable line. A leaf module (stdlib only) because both
-    `analyzer/` and `media_server.py` shell out to ffmpeg and need it,
-    and `media_server.py` importing `analyzer` for two small pure
+    `analyzer/` and `media_server/` shell out to ffmpeg and need it,
+    and `media_server/` importing `analyzer` for two small pure
     functions would drag `aiohttp` and the whole `security` package in
     behind them. Both modules used to carry their own identical copy for
     exactly that reason; same fix as `frame_motion.py` taking
@@ -163,13 +163,51 @@ architecture.
     test simulating "no torch" to pick a different patch target per stage.
     `__init__.py` re-exports the public surface; a test wanting an internal
     imports it from the stage that owns it.
-  - `media_server.py` — aiohttp HTTP server: REST API + serves the built Vue
-    app as static files (`_STATIC_DIR`/`_handle_index`). See **Web UI** below
-    — the frontend itself lives in `frontend/`, a sibling of `blink_downloader/`.
+  - `media_server/` — aiohttp HTTP server: REST API + serves the built Vue
+    app as static files (`support.py`'s `_STATIC_DIR`, `app_shell.py`'s
+    `_handle_index`). See **Web UI** below — the frontend itself lives in
+    `frontend/`, a sibling of `blink_downloader/`.
+    A package since 6.0.7 (it was one 3,707-line module, 139 methods on one
+    class). `MediaServer` is still **one class with an identical public
+    API**, composed in `__init__.py` from **one mixin per tab of the web
+    UI** — so the module to open is the one named after the tab you are
+    changing: `app_shell` (the SPA, `/health`, Blink auth), `library`,
+    `status`, `liveview`, `security_feed`, `ai`, `usage`,
+    `camera_configs`, `vehicles`, `security_events`, `sync_module`,
+    `feedback`, `faces`, `finetune`, `storage`, `automations` — over
+    `support.py` (middleware, CSP, JSON parsing, paging, shared error
+    strings) and `core.py` (`_MediaServerBase`, which declares the
+    dependencies and runtime state every mixin reads, so each one
+    type-checks alone).
+    Things worth knowing before editing it:
+    - **Each mixin registers its own routes** via `_register_<area>_routes`,
+      called by `_build_app`. Adding an endpoint is one file, not a handler
+      here and a route line far away. `tests/test_media_server_routes.py`
+      fails if a registrar is never called, if a handler has no route, or
+      if one route shadows another — the first of those is a mistake that
+      otherwise just makes a whole tab 404 with nothing pointing at why.
+    - **Route order is not load-bearing**: aiohttp indexes plain paths ahead
+      of `{placeholder}` ones, so `/api/ai/feedback/stats` wins over
+      `/api/ai/feedback/{clip_id}` regardless of registration order. That is
+      asserted rather than assumed.
+    - **A method needing another mixin's method** is expressed as
+      inheritance, not a comment: `VehicleRoutesMixin` extends
+      `CameraConfigsRoutesMixin` (a car zone *is* a camera-config field) and
+      `LibraryRoutesMixin` extends `StorageRoutesMixin` (deleting a clip has
+      to delete its Drive copy). A subclass must be listed **before** its
+      base in `MediaServer`'s bases or C3 linearization fails. `rename_camera`
+      spans three areas, so it sits on `MediaServer` itself.
+    - **`_STATIC_DIR` is anchored on the parent package**
+      (`Path(__file__).resolve().parent.parent`), not on `support.py` — a
+      plain `.parent` points one directory too deep now and 500s every page.
+    - **A test patching a module-level name must target the route module
+      that resolves it**, e.g. `media_server.ai._is_moondream_installed`,
+      not the package facade. Rebinding a name on `__init__.py` does not
+      change what an already-imported route module looks up.
   - `live_view.py` — `LiveViewManager`, backing the Live View tab. Bridges
     blinkpy's live-view session (a proprietary binary protocol relayed onto
     a local raw-TCP socket — not RTSP) through an ffmpeg subprocess into a
-    short rolling HLS playlist, served through `media_server.py`'s existing
+    short rolling HLS playlist, served through `media_server/`'s existing
     routes/port rather than a new one (HA ingress only proxies HTTP/
     WebSocket, so the raw TCP socket itself is unreachable from a browser
     regardless). Exactly one session is active at a time; starting a
@@ -182,7 +220,7 @@ architecture.
     dedicated module — it's a few methods on `BlinkDownloader`
     (`get_camera_snapshot`, reading blinkpy's `camera.image_from_cache`/
     `camera.thumbnail`, never `camera.snap_picture()` — see that method's
-    docstring for why) plus routes directly on `media_server.py`
+    docstring for why) plus routes directly on `media_server/`
     (`/api/security-feed/*`), independent of `LiveViewManager`. Settings
     (`cameras`/`columns`/`refresh_seconds`) persist to
     `/data/security_feed_settings.json`, same convention as
@@ -303,13 +341,13 @@ only until that file is first written.
 The web UI is a **Vue 3 + PrimeVue 5 + Pinia** single-page app, a separate
 npm project at `frontend/` (its own `package.json`, `node_modules`,
 `vite.config.ts`, `eslint.config.js`). It is **not** an embedded string in
-`media_server.py` — an earlier version of this add-on worked that way, but
+`media_server/` — an earlier version of this add-on worked that way, but
 that was fully replaced; the ~2,900-line dead `_HTML` remnant of it was
 removed in 5.0.0.
 
 - **Build & serving**: `npm run build` (Vite) writes straight into
   `blink_downloader/static/` — the Dockerfile's `frontend-builder` stage
-  runs this before the image is packaged, and `media_server.py`'s
+  runs this before the image is packaged, and `media_server/app_shell.py`'s
   `_handle_index`/`_STATIC_DIR` serve that output. Running the Python test
   suite alone (no `npm run build` first) means `static/` won't exist;
   `_handle_index` reports that clearly (500 + "run `npm run build`") rather
@@ -525,7 +563,7 @@ removed in 5.0.0.
   `minmax(Npx,1fr)`) so columns shrink instead of overflowing narrow
   viewports, and anything `position:fixed` (toasts, modals) needs an
   explicit width/left constraint or `calc(100vw - ...)` cap.
-- `media_server.py` (the Python side of the API) is **not** excluded from
+- `media_server/` (the Python side of the API) is **not** excluded from
   the Python coverage requirement — new server-side logic needs coverage
   via `tests/test_media_server.py`, typically using the aiohttp `TestClient`
   fixtures already in that file.
@@ -731,7 +769,7 @@ CI's `frontend-e2e` job runs `npm run test:e2e:coverage` (Playwright, see
 reachable Postgres, the same prerequisite `pytest` already needs) — worth
 doing whenever a change touches Library, Vehicles, Status, AI, AI Usage,
 Automations, Sync Module, or Models (their page components, their API
-routes, or `media_server.py`'s handlers for them), since that's this
+routes, or `media_server/`'s handlers for them), since that's this
 suite's coverage so far. Plain `npm run test:e2e` (no coverage
 instrumentation, and it reuses an existing `npm run build` instead of
 always rebuilding) is faster for a quick local check; CI always runs the

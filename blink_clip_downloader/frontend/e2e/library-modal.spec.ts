@@ -461,7 +461,7 @@ test('shows a compact object-detection chip summary when the backend reports det
   // layer, not the application" approach live-view.spec.ts and
   // mocked-integrations.spec.ts use for equally hard-to-reach real state,
   // and is enough to prove ClipAiPanel's own rendering of the
-  // detected_objects field media_server.py now returns.
+  // detected_objects field media_server/ now returns.
   await page.route('**/api/ai/results/e2e-clip-004', (route) =>
     route.fulfill({
       status: 200,

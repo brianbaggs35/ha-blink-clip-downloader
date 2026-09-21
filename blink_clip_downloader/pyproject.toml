@@ -72,7 +72,7 @@ include = ["blink_downloader*"]
 # Dockerfile's frontend-builder stage, which populates this directory before
 # `pip3 install /app` runs) — setuptools only includes .py files by default,
 # so without this the wheel silently drops index.html/assets/favicon.svg and
-# _handle_index (media_server.py) 500s at runtime with no build-time signal.
+# _handle_index (media_server/app_shell.py) 500s at runtime with no build-time signal.
 blink_downloader = ["static/**/*"]
 
 [tool.ruff.lint.isort]

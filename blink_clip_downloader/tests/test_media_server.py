@@ -15,7 +15,6 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from blinkpy.auth import TokenRefreshFailed
 
-from blink_downloader import media_server
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.archiver import ClipArchiver
 from blink_downloader.database import ClipDatabase
@@ -34,6 +33,12 @@ from blink_downloader.live_view import (
     LiveViewStatus,
 )
 from blink_downloader.media_server import MediaServer
+
+# Patch targets must name the route module that *resolves* the name at
+# call time, not the package facade — rebinding a name on the facade
+# would not change what an already-imported route module looks up.
+from blink_downloader.media_server import app_shell as media_server_app_shell
+from blink_downloader.media_server import storage as media_server_storage
 from blink_downloader.security import (
     SecurityEvent,
     SecurityEventType,
@@ -118,7 +123,7 @@ async def client(
     assets_dir = static_dir / "assets"
     assets_dir.mkdir()
     (assets_dir / "index.js").write_text("// built JS bundle stand-in")
-    monkeypatch.setattr(media_server, "_STATIC_DIR", static_dir)
+    monkeypatch.setattr(media_server_app_shell, "_STATIC_DIR", static_dir)
 
     server = MediaServer(db=db, port=0)
     app = server._build_app()
@@ -169,7 +174,7 @@ async def test_index_returns_html(client: TestClient) -> None:
 async def test_index_missing_build_returns_clear_error(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(media_server, "_STATIC_DIR", tmp_path / "no-such-dir")
+    monkeypatch.setattr(media_server_app_shell, "_STATIC_DIR", tmp_path / "no-such-dir")
     resp = await client.get("/")
     assert resp.status == 500
     assert "npm run build" in await resp.text()
@@ -183,7 +188,7 @@ async def test_favicon_served(client: TestClient) -> None:
 async def test_favicon_missing_returns_404(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(media_server, "_STATIC_DIR", tmp_path / "no-such-dir")
+    monkeypatch.setattr(media_server_app_shell, "_STATIC_DIR", tmp_path / "no-such-dir")
     resp = await client.get("/favicon.svg")
     assert resp.status == 404
 
@@ -201,7 +206,7 @@ async def test_app_builds_without_a_frontend_build_present(
     rather than leaning on CI's environment: CI's test job happens never to
     run `npm run build`, so it takes this branch by accident, while a
     developer checkout that has built the frontend never takes it at all."""
-    monkeypatch.setattr(media_server, "_STATIC_DIR", tmp_path / "never-built")
+    monkeypatch.setattr(media_server_app_shell, "_STATIC_DIR", tmp_path / "never-built")
     server = MediaServer(db=db, port=0)
     tc = TestClient(TestServer(server._build_app()))
     await tc.start_server()
@@ -2104,17 +2109,19 @@ async def test_moondream_install_returns_installing_or_already_installed(
 ) -> None:
     from unittest.mock import patch
 
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     # Reset state
     ms._moondream_install_state = {"status": "idle", "log": ""}
 
     with (
         patch(
-            "blink_downloader.media_server._moondream_arch_supported", return_value=True
+            "blink_downloader.media_server.ai._moondream_arch_supported",
+            return_value=True,
         ),
         patch(
-            "blink_downloader.media_server._is_moondream_installed", return_value=False
+            "blink_downloader.media_server.ai._is_moondream_installed",
+            return_value=False,
         ),
         patch("asyncio.create_task", side_effect=lambda coro: coro.close()),
     ):
@@ -2129,7 +2136,7 @@ async def test_moondream_install_already_installed(client: TestClient) -> None:
     from unittest.mock import patch
 
     with patch(
-        "blink_downloader.media_server._is_moondream_installed", return_value=True
+        "blink_downloader.media_server.ai._is_moondream_installed", return_value=True
     ):
         resp = await client.post("/api/ai/moondream/install")
 
@@ -2141,12 +2148,12 @@ async def test_moondream_install_already_installed(client: TestClient) -> None:
 async def test_moondream_install_already_in_progress(client: TestClient) -> None:
     from unittest.mock import patch
 
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     ms._moondream_install_state = {"status": "installing", "log": "in progress"}
 
     with patch(
-        "blink_downloader.media_server._is_moondream_installed", return_value=False
+        "blink_downloader.media_server.ai._is_moondream_installed", return_value=False
     ):
         resp = await client.post("/api/ai/moondream/install")
 
@@ -3198,7 +3205,7 @@ def test_is_moondream_installed_inserts_path_when_dir_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The packages dir is prepended to sys.path so the import below can find it."""
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     fake_dir = tmp_path / "moondream_packages"
     fake_dir.mkdir()
@@ -3217,7 +3224,7 @@ def test_is_moondream_installed_inserts_path_when_dir_exists(
 def test_is_moondream_installed_true_when_importable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     monkeypatch.setattr(ms, "_MOONDREAM_PACKAGES_DIR", tmp_path / "does_not_exist")
     monkeypatch.setitem(sys.modules, "moondream", MagicMock())
@@ -3233,7 +3240,7 @@ def test_is_moondream_installed_false_when_not_importable(
     sys.modules is the standard way to force the import system to raise
     ModuleNotFoundError for a name regardless of what's really installed.
     """
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     monkeypatch.setattr(ms, "_MOONDREAM_PACKAGES_DIR", tmp_path / "does_not_exist")
     monkeypatch.setitem(sys.modules, "moondream", None)
@@ -4155,7 +4162,7 @@ async def test_test_email_failure(db: ClipDatabase, tmp_path: Path) -> None:
 
 async def test_moondream_install_unsupported_arch(client: TestClient) -> None:
     with patch(
-        "blink_downloader.media_server._moondream_arch_supported", return_value=False
+        "blink_downloader.media_server.ai._moondream_arch_supported", return_value=False
     ):
         resp = await client.post("/api/ai/moondream/install")
     assert resp.status == 422
@@ -4167,7 +4174,7 @@ async def test_moondream_run_install_success(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Exercises the background _run_install() coroutine's success branch."""
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     ms._moondream_install_state = {"status": "idle", "log": ""}
     # A copy, so the install flow's sys.path.insert() mutates only this
@@ -4189,7 +4196,8 @@ async def test_moondream_run_install_success(
 
     with (
         patch(
-            "blink_downloader.media_server._is_moondream_installed", return_value=False
+            "blink_downloader.media_server.ai._is_moondream_installed",
+            return_value=False,
         ),
         patch("asyncio.create_task", side_effect=_capture),
     ):
@@ -4199,7 +4207,7 @@ async def test_moondream_run_install_success(
     try:
         with (
             patch(
-                "blink_downloader.media_server._MOONDREAM_PACKAGES_DIR", fake_pkg_dir
+                "blink_downloader.media_server.ai._MOONDREAM_PACKAGES_DIR", fake_pkg_dir
             ),
             patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
         ):
@@ -4215,7 +4223,7 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
     """Installing over an install that this process already imported from
     (a re-install, or a second click) must not stack another copy of the
     same directory onto sys.path."""
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     # monkeypatch rather than assigning the module global and restoring it
     # in a finally: it restores on teardown whatever the test does, and it
@@ -4237,7 +4245,8 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
 
     with (
         patch(
-            "blink_downloader.media_server._is_moondream_installed", return_value=False
+            "blink_downloader.media_server.ai._is_moondream_installed",
+            return_value=False,
         ),
         patch(
             "asyncio.create_task",
@@ -4248,7 +4257,7 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
     assert resp.status == 200
 
     with (
-        patch("blink_downloader.media_server._MOONDREAM_PACKAGES_DIR", fake_pkg_dir),
+        patch("blink_downloader.media_server.ai._MOONDREAM_PACKAGES_DIR", fake_pkg_dir),
         patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
     ):
         await captured[0]
@@ -4259,7 +4268,7 @@ async def test_moondream_run_install_success_leaves_existing_sys_path_alone(
 async def test_moondream_run_install_failure_nonzero_returncode(
     client: TestClient,
 ) -> None:
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     ms._moondream_install_state = {"status": "idle", "log": ""}
     captured: list = []
@@ -4274,7 +4283,8 @@ async def test_moondream_run_install_failure_nonzero_returncode(
 
     with (
         patch(
-            "blink_downloader.media_server._is_moondream_installed", return_value=False
+            "blink_downloader.media_server.ai._is_moondream_installed",
+            return_value=False,
         ),
         patch("asyncio.create_task", side_effect=_capture),
     ):
@@ -4289,7 +4299,7 @@ async def test_moondream_run_install_failure_nonzero_returncode(
 
 
 async def test_moondream_run_install_timeout(client: TestClient) -> None:
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     ms._moondream_install_state = {"status": "idle", "log": ""}
     captured: list = []
@@ -4300,7 +4310,8 @@ async def test_moondream_run_install_timeout(client: TestClient) -> None:
 
     with (
         patch(
-            "blink_downloader.media_server._is_moondream_installed", return_value=False
+            "blink_downloader.media_server.ai._is_moondream_installed",
+            return_value=False,
         ),
         patch("asyncio.create_task", side_effect=_capture),
     ):
@@ -4320,7 +4331,7 @@ async def test_moondream_run_install_timeout(client: TestClient) -> None:
 
 
 async def test_moondream_run_install_generic_exception(client: TestClient) -> None:
-    import blink_downloader.media_server as ms
+    from blink_downloader.media_server import ai as ms
 
     ms._moondream_install_state = {"status": "idle", "log": ""}
     captured: list = []
@@ -4331,7 +4342,8 @@ async def test_moondream_run_install_generic_exception(client: TestClient) -> No
 
     with (
         patch(
-            "blink_downloader.media_server._is_moondream_installed", return_value=False
+            "blink_downloader.media_server.ai._is_moondream_installed",
+            return_value=False,
         ),
         patch("asyncio.create_task", side_effect=_capture),
     ):
@@ -4712,7 +4724,7 @@ async def test_faces_enroll_unavailable_when_dependency_missing(
     client: TestClient,
 ) -> None:
     with patch(
-        "blink_downloader.media_server.is_face_recognition_available",
+        "blink_downloader.media_server.faces.is_face_recognition_available",
         return_value=False,
     ):
         resp = await client.post(
@@ -4725,7 +4737,7 @@ async def test_faces_enroll_unavailable_when_dependency_missing(
 async def test_faces_enroll_no_face_detected(client: TestClient) -> None:
     with (
         patch(
-            "blink_downloader.media_server.is_face_recognition_available",
+            "blink_downloader.media_server.faces.is_face_recognition_available",
             return_value=True,
         ),
         patch(
@@ -4749,7 +4761,7 @@ async def test_faces_enroll_no_face_detected(client: TestClient) -> None:
 async def test_faces_enroll_multiple_faces_rejected(client: TestClient) -> None:
     with (
         patch(
-            "blink_downloader.media_server.is_face_recognition_available",
+            "blink_downloader.media_server.faces.is_face_recognition_available",
             return_value=True,
         ),
         patch(
@@ -4769,7 +4781,7 @@ async def test_faces_enroll_multiple_faces_rejected(client: TestClient) -> None:
 async def test_faces_enroll_success_then_list_then_delete(client: TestClient) -> None:
     with (
         patch(
-            "blink_downloader.media_server.is_face_recognition_available",
+            "blink_downloader.media_server.faces.is_face_recognition_available",
             return_value=True,
         ),
         patch(
@@ -4808,7 +4820,7 @@ async def test_faces_enroll_accepts_realistic_photo_size(client: TestClient) -> 
     large_payload = base64.b64encode(b"\xff" * (2 * 1024 * 1024)).decode()
     with (
         patch(
-            "blink_downloader.media_server.is_face_recognition_available",
+            "blink_downloader.media_server.faces.is_face_recognition_available",
             return_value=True,
         ),
         patch(
@@ -4832,7 +4844,7 @@ async def test_faces_delete_invalid_id(client: TestClient) -> None:
 async def test_faces_enroll_defaults_to_approved(client: TestClient) -> None:
     with (
         patch(
-            "blink_downloader.media_server.is_face_recognition_available",
+            "blink_downloader.media_server.faces.is_face_recognition_available",
             return_value=True,
         ),
         patch(
@@ -4855,7 +4867,7 @@ async def test_faces_enroll_defaults_to_approved(client: TestClient) -> None:
 async def test_faces_enroll_explicitly_unapproved(client: TestClient) -> None:
     with (
         patch(
-            "blink_downloader.media_server.is_face_recognition_available",
+            "blink_downloader.media_server.faces.is_face_recognition_available",
             return_value=True,
         ),
         patch(
@@ -4882,7 +4894,7 @@ async def test_faces_enroll_explicitly_unapproved(client: TestClient) -> None:
 async def test_faces_patch_updates_approved(client: TestClient) -> None:
     with (
         patch(
-            "blink_downloader.media_server.is_face_recognition_available",
+            "blink_downloader.media_server.faces.is_face_recognition_available",
             return_value=True,
         ),
         patch(
@@ -4907,7 +4919,7 @@ async def test_faces_patch_updates_approved(client: TestClient) -> None:
 async def test_faces_patch_updates_name(client: TestClient) -> None:
     with (
         patch(
-            "blink_downloader.media_server.is_face_recognition_available",
+            "blink_downloader.media_server.faces.is_face_recognition_available",
             return_value=True,
         ),
         patch(
@@ -4959,7 +4971,7 @@ async def test_faces_patch_bad_json(client: TestClient) -> None:
 async def _enroll_two_photos(client: TestClient, name: str = "Brian") -> None:
     with (
         patch(
-            "blink_downloader.media_server.is_face_recognition_available",
+            "blink_downloader.media_server.faces.is_face_recognition_available",
             return_value=True,
         ),
         patch(
@@ -5803,7 +5815,7 @@ async def test_vehicle_zone_snapshot_get_fallback_serves_even_if_persist_fails(
             new=snapshots_dir,
         ),
         patch(
-            "blink_downloader.media_server.Path.write_bytes",
+            "blink_downloader.media_server.vehicles.Path.write_bytes",
             side_effect=OSError("read-only filesystem"),
         ),
     ):
@@ -7458,7 +7470,9 @@ async def test_gdrive_connect_missing_credentials_returns_400(db: ClipDatabase) 
 async def test_gdrive_connect_device_flow_failure_returns_502(
     db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
+    monkeypatch.setattr(
+        media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
+    )
     gdrive_client = _make_gdrive_client_mock(is_configured=True, device_flow_info=None)
     server = MediaServer(db=db, port=0, gdrive_client=gdrive_client)
     tc = await _start_server(server)
@@ -7472,7 +7486,9 @@ async def test_gdrive_connect_device_flow_failure_returns_502(
 async def test_gdrive_connect_starts_device_flow(
     db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
+    monkeypatch.setattr(
+        media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
+    )
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -7503,7 +7519,7 @@ async def test_gdrive_connect_starts_device_flow(
         )
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
-        assert media_server._gdrive_connect_state["phase"] == "expired"
+        assert media_server_storage._gdrive_connect_state["phase"] == "expired"
     finally:
         await tc.close()
 
@@ -7512,7 +7528,7 @@ async def test_gdrive_connect_returns_existing_state_when_already_pending(
     db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        media_server,
+        media_server_storage,
         "_gdrive_connect_state",
         {
             "phase": "pending",
@@ -7536,7 +7552,9 @@ async def test_gdrive_connect_returns_existing_state_when_already_pending(
 async def test_gdrive_connect_poll_success_sets_connected_state(
     db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
+    monkeypatch.setattr(
+        media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
+    )
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -7561,7 +7579,7 @@ async def test_gdrive_connect_poll_success_sets_connected_state(
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
-        assert media_server._gdrive_connect_state == {
+        assert media_server_storage._gdrive_connect_state == {
             "phase": "connected",
             "account_email": "me@example.com",
         }
@@ -7572,7 +7590,9 @@ async def test_gdrive_connect_poll_success_sets_connected_state(
 async def test_gdrive_connect_poll_denied_sets_error_state(
     db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
+    monkeypatch.setattr(
+        media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
+    )
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -7595,7 +7615,7 @@ async def test_gdrive_connect_poll_denied_sets_error_state(
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
-        assert media_server._gdrive_connect_state["phase"] == "error"
+        assert media_server_storage._gdrive_connect_state["phase"] == "error"
     finally:
         await tc.close()
 
@@ -7603,7 +7623,9 @@ async def test_gdrive_connect_poll_denied_sets_error_state(
 async def test_gdrive_connect_poll_generic_error_sets_error_state(
     db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
+    monkeypatch.setattr(
+        media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
+    )
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -7626,7 +7648,7 @@ async def test_gdrive_connect_poll_generic_error_sets_error_state(
             await tc.post("/api/storage/gdrive/connect")
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
-        assert media_server._gdrive_connect_state == {
+        assert media_server_storage._gdrive_connect_state == {
             "phase": "error",
             "message": "invalid_client",
         }
@@ -7639,7 +7661,9 @@ async def test_gdrive_connect_poll_slow_down_then_success(
 ) -> None:
     """A slow_down response must not end the poll loop — it keeps polling
     (at a backed-off interval) until a terminal outcome."""
-    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
+    monkeypatch.setattr(
+        media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
+    )
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -7666,7 +7690,7 @@ async def test_gdrive_connect_poll_slow_down_then_success(
         with patch("asyncio.sleep", AsyncMock()):
             await captured[0]
         assert gdrive_client.poll_once_for_token.await_count == 2
-        assert media_server._gdrive_connect_state["phase"] == "connected"
+        assert media_server_storage._gdrive_connect_state["phase"] == "connected"
     finally:
         await tc.close()
 
@@ -7677,7 +7701,9 @@ async def test_gdrive_connect_poll_pending_then_success(
     """A pending result is the ordinary answer for every tick before the
     user finishes signing in — the one status that falls through every
     terminal check and goes round the loop again."""
-    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
+    monkeypatch.setattr(
+        media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
+    )
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -7707,7 +7733,7 @@ async def test_gdrive_connect_poll_pending_then_success(
         assert gdrive_client.poll_once_for_token.await_count == 3
         # The interval is only backed off by slow_down — pending keeps it flat.
         assert {c.args[0] for c in sleep_mock.await_args_list} == {5}
-        assert media_server._gdrive_connect_state["phase"] == "connected"
+        assert media_server_storage._gdrive_connect_state["phase"] == "connected"
     finally:
         await tc.close()
 
@@ -7718,7 +7744,9 @@ async def test_gdrive_connect_poll_gives_up_after_deadline_with_no_terminal_resu
     """If the deadline is already passed before the loop's first check (a
     code_code that expired faster than expected, or a slow first tick), the
     poll loop must still terminate into "expired" rather than spin forever."""
-    monkeypatch.setattr(media_server, "_gdrive_connect_state", {"phase": "idle"})
+    monkeypatch.setattr(
+        media_server_storage, "_gdrive_connect_state", {"phase": "idle"}
+    )
     info = DeviceFlowInfo(
         device_code="dc1",
         user_code="ABCD-1234",
@@ -7741,7 +7769,7 @@ async def test_gdrive_connect_poll_gives_up_after_deadline_with_no_terminal_resu
         # (and its asyncio.sleep/poll call) never runs at all.
         with patch("time.monotonic", side_effect=[0, 99999]):
             await captured[0]
-        assert media_server._gdrive_connect_state == {"phase": "expired"}
+        assert media_server_storage._gdrive_connect_state == {"phase": "expired"}
         gdrive_client.poll_once_for_token.assert_not_awaited()
     finally:
         await tc.close()
@@ -7751,7 +7779,7 @@ async def test_gdrive_connect_status_returns_shared_state(
     db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        media_server,
+        media_server_storage,
         "_gdrive_connect_state",
         {"phase": "connected", "account_email": "me@example.com"},
     )
@@ -7774,7 +7802,7 @@ async def test_gdrive_disconnect_clears_state(
     db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        media_server,
+        media_server_storage,
         "_gdrive_connect_state",
         {"phase": "connected", "account_email": "me@example.com"},
     )
@@ -7786,7 +7814,7 @@ async def test_gdrive_disconnect_clears_state(
         assert resp.status == 200
         assert (await resp.json())["disconnected"] is True
         gdrive_client.disconnect.assert_awaited_once()
-        assert media_server._gdrive_connect_state == {"phase": "idle"}
+        assert media_server_storage._gdrive_connect_state == {"phase": "idle"}
     finally:
         await tc.close()
 

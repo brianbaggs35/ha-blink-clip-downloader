@@ -1151,7 +1151,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # they're recordings of a session the user was already watching live,
         # so an automatic analysis would just spend tokens summarizing
         # something already seen firsthand. This only affects the automatic
-        # queue — media_server.py's _handle_ai_analyze_now ("Analyze Now" on
+        # queue — media_server/ai.py's _handle_ai_analyze_now ("Analyze Now" on
         # the clip modal) is a separate, unconditional path and still works
         # for these clips on request.
         camera = str(clip.get("camera") or "")

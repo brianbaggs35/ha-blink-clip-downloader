@@ -1,7 +1,7 @@
 """Tests for the shared ffmpeg-output helpers.
 
 These used to live twice over — once against the analyzer's copy and
-once against ``media_server.py``'s identical one. One implementation now
+once against ``media_server/``'s identical one. One implementation now
 means one set of tests.
 """
 

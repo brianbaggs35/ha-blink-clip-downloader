@@ -1,5 +1,6 @@
 /* Design system ported verbatim from the pre-Vue embedded `_HTML` string's
-   <style> block (blink_downloader/media_server.py) as part of the Vue/Vite/
+   <style> block (the pre-package blink_downloader/media_server.py) as part
+   of the Vue/Vite/
    TypeScript frontend migration — visual output is intentionally unchanged;
    only the delivery mechanism (bundled CSS vs. inline <style>) changed.
    Component-scoped styles for anything genuinely component-local should go

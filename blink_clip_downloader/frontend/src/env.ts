@@ -4,7 +4,7 @@ declare global {
   }
 }
 
-// media_server.py's index handler string-replaces the `__HAROOT__` literal
+// media_server/'s index handler string-replaces the `__HAROOT__` literal
 // (see index.html) with the current Home Assistant ingress path prefix on
 // every request. In `npm run dev` nothing performs that substitution, so the
 // literal placeholder survives unreplaced — treat that case the same as "no

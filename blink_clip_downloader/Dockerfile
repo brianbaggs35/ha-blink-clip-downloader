@@ -340,7 +340,7 @@ RUN pip3 install --no-cache-dir "kestrel>=0.4.2,<0.5" \
 COPY pyproject.toml /app/pyproject.toml
 COPY blink_downloader/ /app/blink_downloader/
 
-# Built Vue app (see frontend-builder stage above) — media_server.py's
+# Built Vue app (see frontend-builder stage above) — media_server/app_shell.py's
 # _handle_index/_STATIC_DIR serve this instead of an embedded HTML string.
 COPY --from=frontend-builder /blink_downloader/static /app/blink_downloader/static
 
