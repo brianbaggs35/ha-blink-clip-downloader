@@ -413,7 +413,12 @@ configuration:
       gefüllt. „sequential“ wählt dieselben Bilder, sendet aber jedes als
       eigene KI-Anfrage und behält das alarmierendste Ergebnis — eine
       Anfrage pro Bild statt einer pro Clip. „uniform“ verzichtet auf die
-      Bewegungsanalyse und verteilt sie gleichmäßig (veraltet).
+      Bewegungsanalyse und verteilt sie gleichmäßig (veraltet). „adaptive“ verwendet das Budget für
+      den einen bewegungsreichsten Abschnitt des Clips, statt es zu
+      verteilen — ein kurzes Ereignis in einem langen Clip erhält so
+      mehrere Einzelbilder statt nur einem — und verhält sich genau wie
+      „smart“, wenn ein Clip kein einzelnes konzentriertes Ereignis
+      enthält.
   ai_car_cameras:
     name: Fahrzeugschutz-Kameras
     description: >-

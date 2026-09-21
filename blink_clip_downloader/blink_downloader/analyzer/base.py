@@ -81,6 +81,19 @@ _RISK_OVERRIDE_CONFIDENCE: float = 0.7
 _LONG_CLIP_THRESHOLD_SECONDS: float = 30.0
 _LONG_CLIP_FRAME_MULTIPLIER: int = 2
 
+#: Share of a clip's total motion that has to fall inside one contiguous run
+#: before the ``adaptive`` strategy treats that run as "the event".
+_EVENT_MOTION_SHARE: float = 0.6
+
+#: ...and the most of the clip that run may span while still counting as
+#: localised. Both together are a concentration test, and the second is the
+#: one that does the work: with motion spread evenly, or split between two
+#: separate bursts, the narrowest run holding 60% of it is most of the clip,
+#: which is precisely when there is nothing to aim at. 0.3 was picked by
+#: measuring the alternatives against simulated clips -- at 0.7 a clip with
+#: two bursts emptied most of its budget into the dead stretch between them.
+_EVENT_MAX_WIDTH_SHARE: float = 0.3
+
 # Minimum confidence for a "suspicious" verdict to block that clip's frame
 # from being folded into the scene baseline (see analyze_clip()). A clip
 # marked suspicious only as a low-confidence hedge — e.g. because the scene
@@ -1311,7 +1324,12 @@ class BaseAnalyzer(abc.ABC):
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, self._select_best_frames, frames, target_frame_count, zone_box
+            None,
+            self._select_best_frames,
+            frames,
+            target_frame_count,
+            zone_box,
+            self._frame_strategy == "adaptive",
         )
 
     async def _apply_vision_pipeline(
@@ -1724,7 +1742,7 @@ class BaseAnalyzer(abc.ABC):
         """
         base_count = (
             self._max_frames * 2
-            if self._frame_strategy == "smart"
+            if self._frame_strategy in ("smart", "adaptive")
             else self._max_frames
         )
         coverage_count = math.ceil(_MAX_CLIP_COVERAGE_SECONDS / self._frame_interval)
@@ -1820,8 +1838,16 @@ class BaseAnalyzer(abc.ABC):
         frames: list[bytes],
         target_count: int,
         zone_box: tuple[float, float, float, float] | None = None,
+        prefer_event: bool = False,
     ) -> list[bytes]:
         """Pick the *target_count* most informative frames using motion scoring.
+
+        *prefer_event* selects the ``adaptive`` strategy's concentration on
+        the clip's busiest stretch instead of the default spread across the
+        whole timeline — see :meth:`_select_frames_around_event`. The motion
+        diffing is identical either way; only what is done with the scores
+        differs, which is why the choice lands here rather than in a second
+        extraction path.
 
         Strategy:
         - Always include the first frame (scene entry) and last frame (exit).
@@ -1852,6 +1878,10 @@ class BaseAnalyzer(abc.ABC):
 
         try:
             diffs = frame_motion.frame_motion_diffs(frames, zone_box)
+            if prefer_event:
+                return BaseAnalyzer._select_frames_around_event(
+                    frames, diffs, target_count
+                )
             return BaseAnalyzer._select_frames_by_motion(frames, diffs, target_count)
         except Exception:  # noqa: BLE001
             # PIL unavailable or processing error — fall back to even spacing
@@ -1905,6 +1935,102 @@ class BaseAnalyzer(abc.ABC):
                 selected.add(idx)
 
         return [frames[i] for i in sorted(selected)]
+
+    @staticmethod
+    def _motion_window(diffs: list[float]) -> tuple[int, int] | None:
+        """The narrowest run of frames holding :data:`_EVENT_MOTION_SHARE` of
+        the clip's motion, as inclusive *frame* indices, or ``None``.
+
+        ``None`` means "no single localised event here", which is the
+        answer for a clip whose motion is spread evenly (wind in a tree,
+        a slow camera pan, rain) and for one containing two separate
+        bursts — the narrowest run covering both of those also covers the
+        dead stretch between them, so it fails the width test below and
+        the caller falls back to ordinary motion selection rather than
+        emptying the frame budget into the gap.
+        """
+        total = sum(diffs)
+        if total <= 0:
+            return None
+        needed = total * _EVENT_MOTION_SHARE
+        # Seeded with the whole span rather than None. Once there is any
+        # motion at all the whole clip trivially holds `needed` of it, so
+        # the loop below can only ever narrow this — a "nothing found"
+        # branch here would be unreachable, and unreachable branches are
+        # worse than no branch.
+        best = (0, len(diffs) - 1)
+        window = 0.0
+        start = 0
+        for end, value in enumerate(diffs):
+            window += value
+            while window - diffs[start] >= needed:
+                window -= diffs[start]
+                start += 1
+            if window >= needed and end - start < best[1] - best[0]:
+                best = (start, end)
+        # A diff at index i describes the change between frames i and i+1,
+        # so the run of *frames* it covers is one wider.
+        return best[0], best[1] + 1
+
+    @staticmethod
+    def _select_frames_around_event(
+        frames: list[bytes], diffs: list[float], target_count: int
+    ) -> list[bytes]:
+        """Spend the frame budget on the clip's one busiest stretch.
+
+        The ``adaptive`` strategy. ``smart`` deliberately spreads its picks
+        across the whole timeline, enforcing a minimum gap so they cannot
+        cluster — which is right for reading a clip as a story, and wrong
+        when the thing worth seeing lasted three seconds. Measured on a
+        60-second clip sampled every 2 seconds with a six-second event in
+        it, ``smart`` sends exactly one frame of that event whether the
+        budget is 5 or 10; doubling the budget on a long clip buys no
+        extra look at what actually happened.
+
+        This picks the peak-motion frame, the first and last for context,
+        then works outward from the peak through the event window before
+        spending anything elsewhere. Leftover budget goes to whichever
+        frames are furthest from everything already chosen, so a generous
+        budget still ends up spread rather than piled up next to the peak.
+
+        Falls back to :meth:`_select_frames_by_motion` — identically, not
+        approximately — whenever there is no single concentrated event to
+        aim at, so the strategy is never worse than ``smart``, only
+        different when it has something to work with.
+        """
+        count = len(frames)
+        if count <= target_count or not diffs or target_count <= 2:
+            return BaseAnalyzer._select_frames_by_motion(frames, diffs, target_count)
+
+        window = BaseAnalyzer._motion_window(diffs)
+        if window is None:
+            return BaseAnalyzer._select_frames_by_motion(frames, diffs, target_count)
+        start, end = window
+        if (end - start + 1) > count * _EVENT_MAX_WIDTH_SHARE:
+            # Concentrated enough to be one event? If the motion needs most
+            # of the clip to accumulate, there is nothing to adapt to.
+            return BaseAnalyzer._select_frames_by_motion(frames, diffs, target_count)
+
+        peak = max(range(len(diffs)), key=lambda i: diffs[i]) + 1
+        preference = [peak, 0, count - 1]
+        preference += sorted(range(start, end + 1), key=lambda i: abs(i - peak))
+
+        chosen: list[int] = []
+        seen: set[int] = set()
+        for index in preference:
+            if index not in seen:
+                seen.add(index)
+                chosen.append(index)
+            if len(chosen) == target_count:
+                break
+        while len(chosen) < target_count:
+            furthest = max(
+                (i for i in range(count) if i not in seen),
+                key=lambda i: min(abs(i - c) for c in chosen),
+            )
+            seen.add(furthest)
+            chosen.append(furthest)
+        return [frames[i] for i in sorted(chosen)]
 
     @staticmethod
     def _select_frames_evenly_spaced(

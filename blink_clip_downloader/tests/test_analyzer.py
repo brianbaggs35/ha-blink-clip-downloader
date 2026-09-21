@@ -11290,3 +11290,129 @@ def test_output_rules_example_drops_car_language_when_the_car_is_absent(
     assert "about 2 feet from the car" in present
     assert "about 2 feet from the car" not in absent
     assert "walking across the yard" in absent
+
+
+# ----------------------------------------------------------------------
+# "adaptive" frame strategy — concentrate the budget on the event
+# ----------------------------------------------------------------------
+
+
+def _clip_with_event(
+    frame_count: int = 30, event: range | None = None, idle: float = 0.4
+) -> tuple[list[bytes], list[float]]:
+    """A 60s-at-2s clip whose motion sits in one short stretch."""
+    frames = [f"frame{i}".encode() for i in range(frame_count)]
+    diffs = [idle] * (frame_count - 1)
+    for i in event or range(10, 13):
+        diffs[i] = 90.0
+    return frames, diffs
+
+
+def test_adaptive_sees_a_short_event_that_smart_sends_one_frame_of() -> None:
+    """The reason this strategy exists. `smart` enforces a minimum gap so
+    its picks cover the whole timeline, which means a six-second event in
+    a sixty-second clip gets exactly one frame — and stays at one however
+    high the budget goes, so the doubled budget a long clip receives buys
+    no extra look at what actually happened."""
+    frames, diffs = _clip_with_event()
+    in_event = range(10, 14)
+
+    for budget in (5, 10):
+        smart = ClipAnalyzer._select_frames_by_motion(frames, diffs, budget)
+        adaptive = ClipAnalyzer._select_frames_around_event(frames, diffs, budget)
+        smart_hits = sum(frames.index(f) in in_event for f in smart)
+        adaptive_hits = sum(frames.index(f) in in_event for f in adaptive)
+
+        assert smart_hits == 1
+        assert adaptive_hits > smart_hits
+
+
+@pytest.mark.parametrize("budget", [1, 2, 3, 4, 5, 8, 10, 15])
+def test_adaptive_always_returns_exactly_the_budget(budget: int) -> None:
+    frames, diffs = _clip_with_event()
+    assert (
+        len(ClipAnalyzer._select_frames_around_event(frames, diffs, budget)) == budget
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "event"),
+    [("at the very start", range(3)), ("at the very end", range(26, 29))],
+)
+def test_adaptive_handles_an_event_against_a_clip_edge(name: str, event: range) -> None:
+    """The window cannot grow past the clip, and the first/last frames it
+    reserves for context are inside the event itself — which is how a
+    naive implementation quietly returns fewer frames than asked for."""
+    frames, diffs = _clip_with_event(event=event)
+    result = ClipAnalyzer._select_frames_around_event(frames, diffs, 5)
+    assert len(result) == 5, name
+
+
+@pytest.mark.parametrize(
+    ("name", "diffs"),
+    [
+        ("motion spread evenly", [1.0] * 29),
+        ("a slow pan", [float(5 + i) for i in range(29)]),
+        ("no motion at all", [0.0] * 29),
+    ],
+)
+def test_adaptive_falls_back_to_smart_when_there_is_no_single_event(
+    name: str, diffs: list[float]
+) -> None:
+    """Identically, not approximately: with nothing concentrated to aim
+    at, concentrating is the wrong thing to do, so the strategy must be
+    no worse than `smart` rather than differently wrong."""
+    frames = [f"frame{i}".encode() for i in range(30)]
+    assert ClipAnalyzer._select_frames_around_event(
+        frames, diffs, 5
+    ) == ClipAnalyzer._select_frames_by_motion(frames, diffs, 5), name
+
+
+def test_adaptive_does_not_empty_the_budget_between_two_separate_bursts() -> None:
+    """Two bursts several seconds apart are not one event. The narrowest
+    run holding most of the motion spans both *and the dead stretch
+    between them*, so a width test that only asked "is this narrow-ish"
+    let the budget drain into the gap — measured at 7 of 10 frames on
+    empty footage before the concentration test was tightened."""
+    frames = [f"frame{i}".encode() for i in range(30)]
+    diffs = [0.4] * 29
+    for i in (5, 6, 20, 21):
+        diffs[i] = 90.0
+
+    assert ClipAnalyzer._select_frames_around_event(
+        frames, diffs, 10
+    ) == ClipAnalyzer._select_frames_by_motion(frames, diffs, 10)
+
+
+def test_adaptive_keeps_the_first_and_last_frame_for_context() -> None:
+    frames, diffs = _clip_with_event()
+    result = ClipAnalyzer._select_frames_around_event(frames, diffs, 5)
+    assert result[0] == frames[0]
+    assert result[-1] == frames[-1]
+
+
+def test_motion_window_reports_no_event_for_a_motionless_clip() -> None:
+    assert ClipAnalyzer._motion_window([0.0, 0.0, 0.0]) is None
+    assert ClipAnalyzer._motion_window([]) is None
+
+
+def test_adaptive_strategy_reaches_selection_from_the_config_option() -> None:
+    """The whole point of it being a setting: `ai_frame_strategy:
+    adaptive` has to actually change which frames get sent."""
+    analyzer = ClipAnalyzer(
+        ollama_url="http://x", model="m", prompt="p", frame_strategy="adaptive"
+    )
+    frames, diffs = _clip_with_event()
+
+    # BaseAnalyzer, not ClipAnalyzer: _select_best_frames calls the static
+    # method through the base class, so patching the subclass patches a
+    # name nothing looks up.
+    with (
+        patch.object(
+            BaseAnalyzer, "_select_frames_around_event", return_value=frames[:5]
+        ) as adaptive,
+        patch("blink_downloader.frame_motion.frame_motion_diffs", return_value=diffs),
+    ):
+        analyzer._select_best_frames(frames, 5, None, True)
+
+    adaptive.assert_called_once()

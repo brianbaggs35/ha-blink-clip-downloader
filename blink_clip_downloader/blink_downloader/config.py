@@ -287,6 +287,8 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     #   "sequential" – the same choice, but one AI call per frame, keeping the
     #                  most alarming answer
     #   "uniform"    – no motion analysis; evenly spaced across the pool (legacy)
+    #   "adaptive"   – concentrate the budget on the clip's busiest stretch;
+    #                  identical to "smart" when there is no single such event
     ai_frame_strategy: str = "smart"
     # List of camera names that have the protected vehicle in view.
     # When non-empty, car-protection distance rules are only injected into prompts
@@ -641,7 +643,8 @@ def _parse_gdrive_kwargs(data: dict) -> dict[str, Any]:
 
 def _parse_ai_frame_strategy(data: dict) -> str:
     strategy = str(data.get("ai_frame_strategy", "smart") or "smart").strip().lower()
-    return strategy if strategy in {"smart", "sequential", "uniform"} else "smart"
+    valid = {"smart", "sequential", "uniform", "adaptive"}
+    return strategy if strategy in valid else "smart"
 
 
 def _parse_ai_provider_kwargs(

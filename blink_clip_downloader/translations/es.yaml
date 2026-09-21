@@ -400,7 +400,11 @@ configuration:
       «sequential» elige los mismos pero envía cada uno como su propia
       llamada a la IA y se queda con la respuesta más alarmante: una
       petición por fotograma en vez de una por clip. «uniform» omite el
-      análisis de movimiento y los espacia de forma uniforme (heredado).
+      análisis de movimiento y los espacia de forma uniforme (heredado). «adaptive» gasta el presupuesto en el
+      tramo más activo del clip en lugar de repartirlo — un evento breve
+      dentro de un clip largo recibe varios fotogramas en vez de uno — y se
+      comporta exactamente como «smart» cuando el clip no tiene un único
+      evento concentrado.
   ai_car_cameras:
     name: Cámaras de protección de vehículo
     description: >-

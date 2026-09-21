@@ -350,7 +350,11 @@ configuration:
       frames spread across the clip. "sequential" chooses the same frames
       but sends each as its own AI call and keeps the most alarming answer
       — one request per frame instead of one per clip. "uniform" skips
-      motion analysis and spaces them evenly (legacy).
+      motion analysis and spaces them evenly (legacy). "adaptive" spends the
+      budget on the clip's one busiest stretch instead of spreading it — a
+      short event in a long clip gets several frames rather than one — and
+      behaves exactly like "smart" when a clip has no single concentrated
+      event.
   ai_car_cameras:
     name: Car-Protection Cameras
     description: >-
