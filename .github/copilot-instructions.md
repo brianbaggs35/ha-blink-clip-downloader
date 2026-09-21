@@ -41,7 +41,7 @@ Key modules:
   provider family + `factory.py`; `__init__.py` re-exports everything)
 * `analysis_queue.py` — async AI queue
 * `vision/` — optional computer vision (one module per stage + `runtime.py`/`pipeline.py`)
-* `media_server.py` — HTTP API/frontend serving
+* `media_server/` — HTTP API/frontend serving
 * `live_view.py` — Live View
 * `storage.py` / `archiver.py` — storage/archive management
 

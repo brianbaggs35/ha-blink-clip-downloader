@@ -322,7 +322,7 @@ jobs:
       # this and stays uninstrumented) before running Playwright, so there's
       # no separate build step here the way the other jobs have one.
       # standalone_server.py serves that build's real static output, same
-      # as media_server.py does in production — without it, _handle_index
+      # as media_server/app_shell.py does in production — without it, _handle_index
       # 500s and every e2e test fails at page.goto().
       - name: Run Playwright e2e tests with coverage
         working-directory: blink_clip_downloader/frontend

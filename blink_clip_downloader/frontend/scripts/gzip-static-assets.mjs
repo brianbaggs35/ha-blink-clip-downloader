@@ -1,6 +1,6 @@
 // Write a .gz alongside every compressible built asset.
 //
-// media_server.py serves blink_downloader/static/assets through aiohttp's
+// media_server/ serves blink_downloader/static/assets through aiohttp's
 // add_static, which checks for a precompressed "<file>.gz" sibling and
 // serves it with Content-Encoding: gzip when the browser accepts it,
 // falling back to the plain file otherwise. So this needs no server-side

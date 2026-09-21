@@ -41,6 +41,7 @@ from blink_downloader.database import ClipDatabase
 from blink_downloader.gdrive_client import GDriveClient
 from blink_downloader.live_view import LiveViewManager
 from blink_downloader.media_server import MediaServer
+from blink_downloader.media_server import faces as media_server_faces
 from blink_downloader.security import SecurityEvent, SecurityEventType, Severity
 from blink_downloader.security.vehicles import VehicleSignature
 from blink_downloader.vision import DetectedObject
@@ -51,7 +52,7 @@ class _ExpectedE2ENoiseFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
-        if record.name == "blink_downloader.media_server":
+        if record.name.startswith("blink_downloader.media_server"):
             return not (
                 message.startswith("ffmpeg exited ") and " for e2e-clip-" in message
             )
@@ -60,7 +61,7 @@ class _ExpectedE2ENoiseFilter(logging.Filter):
                 message.startswith("ffmpeg exited ")
                 and " for /share/blink-clips/" in message
             )
-        if record.name == "blink_downloader.vision":
+        if record.name.startswith("blink_downloader.vision"):
             return not message.startswith(
                 "facenet_pytorch package is not installed, face recognition unavailable:"
             )
@@ -74,13 +75,13 @@ def _configure_e2e_logging() -> None:
     noise_filter = _ExpectedE2ENoiseFilter()
     # A logging.Filter on a logger only sees records logged *through that
     # logger* — it is not consulted for a child logger's records on their way
-    # up to the root handler. So analyzer's filtered message, which comes from
-    # the analyzer package's `base` submodule, needs that submodule named here
-    # rather than just its parent package.
+    # up to the root handler. Each of these three areas is a package now, so
+    # the submodule that actually emits the filtered message has to be named
+    # here rather than just its parent package.
     for logger_name in (
-        "blink_downloader.media_server",
+        "blink_downloader.media_server.library",
         "blink_downloader.analyzer.base",
-        "blink_downloader.vision",
+        "blink_downloader.vision.faces",
     ):
         logging.getLogger(logger_name).addFilter(noise_filter)
 
@@ -123,7 +124,7 @@ def _force_face_recognition_available() -> None:
     which vision.is_face_recognition_available() genuinely does here:
     facenet_pytorch is part of the optional CV-pipeline extra (see
     pyproject.toml), not this lightweight test environment. Patched to
-    always return True (media_server.py imported the name directly, via
+    always return True (media_server/ imported the name directly, via
     `from .vision import ... is_face_recognition_available`, so it must be
     patched on the *media_server* module, not vision — same reasoning as
     _redirect_data_files patching MediaServer's own class attributes
@@ -135,7 +136,7 @@ def _force_face_recognition_available() -> None:
     response, not something this patch papers over — so an enrollment can
     never actually (falsely) succeed here.
     """
-    media_server.is_face_recognition_available = lambda: True
+    media_server_faces.is_face_recognition_available = lambda: True
 
 
 # Port 1 is a reserved/privileged port nothing ever listens on, so
@@ -354,7 +355,7 @@ async def _generate_test_video(path: Path, duration: int) -> None:
 
 
 # Security Feed unlock: MediaServer's list_camera_names/get_camera_snapshot
-# are narrow callables (see media_server.py's __init__), deliberately not
+# are narrow callables (see media_server/'s __init__), deliberately not
 # routed through blinkpy/LiveViewManager — a fake camera list plus a real
 # (tiny, Pillow-generated) JPEG per camera unlocks Security Feed for e2e
 # testing the same cheap way the AI tab is unlocked by a real ClipAnalyzer
@@ -367,7 +368,7 @@ _SECURITY_FEED_NO_SNAPSHOT_CAMERA = "Garage"
 
 def _list_camera_names() -> list[str]:
     # _CAMERAS alone (the 3 "distribution" cameras) would leave out
-    # _SCRATCH_CAMERA ("Test Scratch") -- since media_server.py's
+    # _SCRATCH_CAMERA ("Test Scratch") -- since media_server/'s
     # /api/ai/camera-configs now cross-checks *every* clip-history camera
     # against this live list (not just configured-but-unclipped ones; see
     # its own docstring), a fake list scoped only to Security Feed's
@@ -527,7 +528,7 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
 
     # A clip with a failed Google Drive upload, for the Failed Uploads /
     # retry test — the retry endpoints only need self._db (see
-    # media_server.py's _handle_gdrive_queue_failed/_handle_gdrive_retry),
+    # media_server/storage.py's _handle_gdrive_queue_failed/_handle_gdrive_retry),
     # so no real GDriveClient/GDriveUploadQueue needs to be wired in here.
     await db.add_clip(
         _clip(_FAILED_UPLOAD_CLIP_ID, _SCRATCH_CAMERA, "snapshot", 50, now)
@@ -543,7 +544,7 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
 
     # Same clip also gets a failed AI analysis row, for the AI tab's Queue
     # Status "Failed" modal test — /api/ai/queue/failed only needs self._db
-    # (see media_server.py's _handle_ai_queue_failed), so no real
+    # (see media_server/ai.py's _handle_ai_queue_failed), so no real
     # AnalysisQueue processing needs to run for this to show up. A
     # separate table (analysis_queue, not gdrive_upload_queue) keyed on
     # the same clip_id, so this doesn't add a new clip for any

@@ -152,6 +152,20 @@ what Home Assistant actually allows before any request is built.
   holding the pure text and row helpers. A pure move, verified the same way
   as the analyzer: all 136 definitions are byte-identical to where they
   came from.
+- `media_server.py`, at 3,707 lines and 139 methods on a single class, is
+  now a `media_server/` package with **one module per tab of the web UI** —
+  library, status, live view, security feed, AI, AI usage, camera configs,
+  vehicles, security events, sync module, feedback, faces, fine-tuning,
+  storage and automations, plus the app shell — over a `support.py` holding
+  the middleware and request plumbing and a `core.py` declaring the state
+  every area reads. `MediaServer` is still one class with the same public
+  API. Each area now registers its own routes, so adding an endpoint is one
+  file rather than a handler in one place and a route line 3,000 lines away.
+  Verified by comparing the built route table and the resolved handler for
+  every endpoint against the previous version: 169 routes and 110 sample
+  URLs, all identical. A new `tests/test_media_server_routes.py` keeps it
+  that way — it fails if a route registrar is never called, if a handler
+  ends up with no route, or if one endpoint starts shadowing another.
 - `vision.py` is now a `vision/` package with one module per CV stage. The
   file was already written as "Stage 1: OpenCV preprocessing", "Stage 2:
   object detection", and so on down to "Orchestrator", so the seams were

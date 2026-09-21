@@ -48,7 +48,7 @@ export function clampRect(rect: Rect, containerWidth: number, containerHeight: n
 }
 
 /** Converts a pixel-space rectangle to the 0-1 fraction shape the backend's
- * car_zone already expects (`_normalize_car_zone` in media_server.py) — or
+ * car_zone already expects (`_normalize_car_zone` in media_server/camera_configs.py) — or
  * `null` if it's too small to be an intentional selection. */
 export function rectToFraction(rect: Rect, containerWidth: number, containerHeight: number): CarZoneRect | null {
   if (rect.width < MIN_RECT_SIZE || rect.height < MIN_RECT_SIZE) return null

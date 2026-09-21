@@ -23,7 +23,7 @@ const cameras = ref<string[]>([])
  * A generated automation filters on the camera name carried by *future*
  * events, so offering a name that exists only in clip history — a camera
  * since renamed, or removed from the account — would produce an automation
- * that silently never fires. The same cross-check media_server.py's
+ * that silently never fires. The same cross-check media_server/'s
  * /api/ai/camera-configs already does for the AI and Vehicles tabs.
  *
  * When Blink is not connected the live list is unavailable; the historical

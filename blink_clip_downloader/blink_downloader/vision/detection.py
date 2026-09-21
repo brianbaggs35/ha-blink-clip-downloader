@@ -329,7 +329,7 @@ class _ZoneReference:
 
 def _car_zone_reference(zone: dict[str, Any], frame: bytes) -> _ZoneReference | None:
     """Resolve a normalized (0-1) ``car_zone`` dict — a rectangle or a
-    freeform polygon, see ``media_server.py``'s ``_normalize_car_zone`` —
+    freeform polygon, see ``media_server/camera_configs.py``'s ``_normalize_car_zone`` —
     against *frame*'s actual resolution, for disambiguating which YOLO
     vehicle detection is the protected car (see
     :func:`_best_subject_vehicle_pair`). None if *frame* fails to decode or
