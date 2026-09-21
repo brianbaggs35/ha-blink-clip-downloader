@@ -282,14 +282,16 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # How the frames sent to the AI are chosen out of the extracted pool.
     # Extraction itself always covers the whole clip; these only decide which
     # of those frames are worth spending ai_max_frames on:
-    #   "smart"      – rank by motion; peak, first and last, then spread-out
-    #                  high-motion fills (default)
-    #   "sequential" – the same choice, but one AI call per frame, keeping the
-    #                  most alarming answer
-    #   "uniform"    – no motion analysis; evenly spaced across the pool (legacy)
     #   "adaptive"   – concentrate the budget on the clip's busiest stretch;
-    #                  identical to "smart" when there is no single such event
-    ai_frame_strategy: str = "smart"
+    #                  identical to "smart" when there is no single such
+    #                  event, and measurably better when there is (default)
+    #   "smart"      – rank by motion; peak, first and last, then spread-out
+    #                  high-motion fills
+    #   "sequential" – the same choice as "smart", but one AI call per frame,
+    #                  keeping the most alarming answer
+    #   "uniform"    – no motion analysis; evenly spaced across the pool. Can
+    #                  miss a brief event entirely (legacy)
+    ai_frame_strategy: str = "adaptive"
     # List of camera names that have the protected vehicle in view.
     # When non-empty, car-protection distance rules are only injected into prompts
     # for cameras in this list.  Leave empty to apply to all cameras (default).
@@ -642,9 +644,17 @@ def _parse_gdrive_kwargs(data: dict) -> dict[str, Any]:
 
 
 def _parse_ai_frame_strategy(data: dict) -> str:
-    strategy = str(data.get("ai_frame_strategy", "smart") or "smart").strip().lower()
+    """The configured strategy, defaulting to the best-measured one.
+
+    An unrecognised value falls back to the default rather than
+    failing: a strategy this build does not know about is most likely
+    a typo or a downgrade, and neither is worth refusing to analyze
+    clips over.
+    """
+    default = "adaptive"
+    strategy = str(data.get("ai_frame_strategy", default) or default).strip().lower()
     valid = {"smart", "sequential", "uniform", "adaptive"}
-    return strategy if strategy in valid else "smart"
+    return strategy if strategy in valid else default
 
 
 def _parse_ai_provider_kwargs(

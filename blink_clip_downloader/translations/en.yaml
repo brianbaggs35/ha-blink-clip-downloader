@@ -344,17 +344,15 @@ configuration:
   ai_frame_strategy:
     name: Frame Extraction Strategy
     description: >-
-      How the frames that get sent are chosen out of that pool. "smart"
-      (default) ranks them by motion and sends the peak-motion frame, the
-      first and the last, filling any remaining budget with high-motion
-      frames spread across the clip. "sequential" chooses the same frames
-      but sends each as its own AI call and keeps the most alarming answer
-      — one request per frame instead of one per clip. "uniform" skips
-      motion analysis and spaces them evenly (legacy). "adaptive" spends the
-      budget on the clip's one busiest stretch instead of spreading it — a
-      short event in a long clip gets several frames rather than one — and
-      behaves exactly like "smart" when a clip has no single concentrated
-      event.
+      How the frames that get sent are chosen out of that pool.
+      "adaptive" (default) spends the budget on the clip's one busiest
+      stretch, so a brief event gets several frames instead of one; when a
+      clip has no single concentrated event it picks exactly what "smart"
+      would. "smart" ranks by motion and spreads its picks evenly across
+      the whole clip. "sequential" chooses the same frames as "smart" but
+      sends each as its own AI call — one request per frame instead of one
+      per clip. "uniform" ignores motion entirely and can miss a brief
+      event altogether (legacy).
   ai_car_cameras:
     name: Car-Protection Cameras
     description: >-

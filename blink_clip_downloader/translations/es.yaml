@@ -393,18 +393,16 @@ configuration:
   ai_frame_strategy:
     name: Estrategia de extracción de fotogramas
     description: >-
-      Cómo se eligen de ese conjunto los fotogramas que se envían. «smart»
-      (por defecto) los ordena por movimiento y envía el de mayor
-      movimiento, el primero y el último, rellenando el presupuesto
-      restante con fotogramas de mucho movimiento repartidos por el clip.
-      «sequential» elige los mismos pero envía cada uno como su propia
-      llamada a la IA y se queda con la respuesta más alarmante: una
-      petición por fotograma en vez de una por clip. «uniform» omite el
-      análisis de movimiento y los espacia de forma uniforme (heredado). «adaptive» gasta el presupuesto en el
-      tramo más activo del clip en lugar de repartirlo — un evento breve
-      dentro de un clip largo recibe varios fotogramas en vez de uno — y se
-      comporta exactamente como «smart» cuando el clip no tiene un único
-      evento concentrado.
+      Cómo se eligen de ese conjunto los fotogramas que se envían.
+      «adaptive» (por defecto) gasta el presupuesto en el tramo más activo
+      del clip, de modo que un evento breve recibe varios fotogramas en vez
+      de uno; si el clip no tiene un único evento concentrado, elige
+      exactamente lo mismo que «smart». «smart» ordena por movimiento y
+      reparte sus elecciones por todo el clip. «sequential» elige los
+      mismos fotogramas que «smart» pero envía cada uno como su propia
+      llamada a la IA: una petición por fotograma en vez de una por clip.
+      «uniform» ignora el movimiento por completo y puede perderse un
+      evento breve del todo (heredado).
   ai_car_cameras:
     name: Cámaras de protección de vehículo
     description: >-

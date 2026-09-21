@@ -163,6 +163,45 @@ wait for a free compute slot and the classification. Turning the option on
 looks like "no sound chips for the first clip or two, then sound chips",
 never like a stalled queue.
 
+### Clips longer than a minute were only half analysed
+
+Frame extraction assumed 60 seconds — Blink's own recording ceiling, and
+correct for every clip the add-on downloads itself. A longer file that
+reached the library another way, such as one imported from disk by the
+library scanner, had everything past its first minute silently skipped:
+a two-minute clip was analysed on its first half and reported on as
+though that were the whole thing. Measured before the fix, a 120-second
+clip got 50% coverage and a five-minute one got 20%.
+
+Extraction now uses the clip's real length when that is known, which it
+is for anything with duration metadata. Clips at or under 60 seconds are
+extracted from exactly as before — verified, since that is every clip
+most installs will ever see — and there is a ceiling of 240 frames so a
+very long file cannot turn one clip's analysis into a thousand image
+decodes.
+
+### The frame strategy that sees the most is now the default
+
+Measured across simulated clips shaped like real Blink recordings — a
+person walking past, a car passing early, someone arriving late, two
+people twenty seconds apart — the new `adaptive` strategy puts about
+**69% of an event's frames** in front of the AI. `smart`, the old
+default, manages **39%**, and `uniform` **30%** while missing the event
+*entirely* on 2 of 14 cases.
+
+So `adaptive` is the default from this release. It is never worse than
+`smart`: when a clip has no single concentrated event it picks exactly
+what `smart` would, which is most of the point of it knowing when to
+give up. **Existing installs keep whatever they already have** — Home
+Assistant only writes the new default into a fresh install's options —
+so change it by hand on the Configuration tab if you want it.
+
+`uniform` now says plainly what it costs. It ignores motion by design,
+which means it can send the AI no frames of the event at all when that
+event was brief; it stays for configurations that already use it, and
+for anyone who genuinely wants sampling that pays no attention to what
+is happening.
+
 ### A frame strategy that looks at the event, not the whole clip
 
 Reviewing what the three frame strategies actually did turned up
