@@ -23,7 +23,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .events import SecurityEvent, SecurityEventType, Severity, severity_rank
+from .events import (
+    AUDIO_EVENTS,
+    SecurityEvent,
+    SecurityEventType,
+    Severity,
+    severity_rank,
+)
 
 #: Base points per event type, before severity and confidence scaling. These
 #: are ordinary defaults chosen so that a single ordinary interaction cannot
@@ -50,6 +56,18 @@ DEFAULT_EVENT_POINTS: dict[SecurityEventType, float] = {
     # is precisely what an owner wants told about.
     SecurityEventType.ANIMAL_ASSET_INTERACTION: 18.0,
     SecurityEventType.CAMERA_OBSTRUCTION: 40.0,
+    # Heard, not seen (see .sounds). Glass and gunfire are weighted so
+    # that clearing .sounds' own 50% confidence gate is on its own enough
+    # to pass the default ai_risk_alert_threshold of 75 -- which is the
+    # point of them: a window going at 3am must raise the alert whether or
+    # not anything was visible, and whether or not the AI provider's model
+    # thought the frames looked unremarkable. They are undamped (see
+    # _AUDIO_FACTOR_NAMES), so these numbers are what actually lands.
+    SecurityEventType.GLASS_BREAK_HEARD: 82.0,
+    SecurityEventType.GUNSHOT_HEARD: 82.0,
+    # An alarm is different in kind: a passing emergency siren matches it,
+    # so it contributes real weight without reaching the alert band alone.
+    SecurityEventType.ALARM_HEARD: 30.0,
 }
 
 #: How much an event's own severity scales its base points.
@@ -101,6 +119,11 @@ OTHER_VEHICLE_POINTS = -15.0
 #: untouched; the worst possible evidence keeps 55% of them, so weak
 #: evidence discounts a conclusion without discarding it.
 _EVIDENCE_FLOOR = 0.55
+
+#: Factor names produced by the heard-not-seen events. ``_event_factor``
+#: names each factor after its event type, so this is the same set as
+#: :data:`.events.AUDIO_EVENTS` in the form ``score`` compares against.
+_AUDIO_FACTOR_NAMES: frozenset[str] = frozenset(str(e) for e in AUDIO_EVENTS)
 
 
 def band_for_score(score: float) -> Severity:
@@ -199,14 +222,27 @@ class RiskScorer:
                 )
             )
 
-        positive = sum(f.points for f in factors)
+        # Evidence quality measures how well the *camera* saw, so it damps
+        # what the camera concluded and nothing else. A sound is not
+        # better or worse evidence for having been recorded in the dark,
+        # and damping it that way would mute the one case audio exists to
+        # catch: glass going at night with nothing in frame, which scores
+        # worst on every visual sub-score there is.
+        heard = sum(f.points for f in factors if f.name in _AUDIO_FACTOR_NAMES)
+        seen = sum(f.points for f in factors) - heard
         quality = max(0.0, min(1.0, evidence_quality))
-        damped = positive * (_EVIDENCE_FLOOR + (1.0 - _EVIDENCE_FLOOR) * quality)
+        damped = seen * (_EVIDENCE_FLOOR + (1.0 - _EVIDENCE_FLOOR) * quality) + heard
+        positive = seen + heard
 
         # Applied after damping, not before: a household member being
         # recognized is a fact about who was there, not about how well the
         # clip was seen, so evidence quality must not shrink the credit
         # they get the way it shrinks the suspicion they offset.
+        # ...and for the same reason neither discount below may offset a
+        # heard event. Both answer "who was in frame and where"; a face in
+        # the driveway is no evidence at all about a window breaking at
+        # the back of the house. Without this floor, recognizing a
+        # household member would quietly cancel a glass break.
         penalty = 0.0
         if ctx.subject_nearer_other_vehicle:
             penalty += OTHER_VEHICLE_POINTS
@@ -232,7 +268,10 @@ class RiskScorer:
                 )
             )
 
-        score = max(0.0, min(100.0, damped + penalty))
+        # The penalty may eat into what the camera contributed but never
+        # into what was heard, and the whole thing is still a 0-100 score:
+        # clamping last, not first, is what keeps both true at once.
+        score = max(0.0, min(100.0, max(damped + penalty, heard)))
 
         return RiskAssessment(
             score=score,
@@ -240,7 +279,7 @@ class RiskScorer:
             factors=factors,
             events=list(events),
             evidence_quality=quality,
-            raw_score=max(0.0, min(100.0, positive + penalty)),
+            raw_score=max(0.0, min(100.0, max(positive + penalty, heard))),
         )
 
     def _event_factor(self, event: SecurityEvent) -> RiskFactor | None:
