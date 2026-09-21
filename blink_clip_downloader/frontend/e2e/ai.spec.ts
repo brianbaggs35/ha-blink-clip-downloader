@@ -189,7 +189,8 @@ test('Fetch Models finds none on the unreachable Ollama server, and Copy require
   // AiConnectionCard's model picker is shown for the ollama provider
   // (showModelPicker()) regardless of connectivity — fetchAiModels() below
   // makes a real request to the same unreachable port ai_online:false
-  // already comes from. ClipAnalyzer.fetch_models() (analyzer.py) catches
+  // already comes from. ClipAnalyzer.fetch_models()
+  // (analyzer/ollama_provider.py) catches
   // the connection error itself and returns an empty list rather than
   // raising, so this genuinely lands on the "found none" branch, not a
   // request failure — same graceful-empty-result shape Test Analysis above

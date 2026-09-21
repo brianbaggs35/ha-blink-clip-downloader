@@ -1504,7 +1504,7 @@ async def test_get_face_bypass_stats_counts_and_recent(db: ClipDatabase) -> None
 
 async def test_get_face_bypass_stats_tolerates_blank_names(db: ClipDatabase) -> None:
     """The by_name breakdown must not choke on a row with an empty
-    face_bypass_names — analyzer.py never produces face_bypass_applied=True
+    face_bypass_names — the analyzer never produces face_bypass_applied=True
     with blank names (that combination requires a non-empty approved match,
     see _face_bypass_applies), but this is a DB-layer aggregation that
     shouldn't assume every caller upholds that invariant forever."""

@@ -12,8 +12,8 @@ from typing import Any
 
 from .anthropic_provider import AnthropicAnalyzer
 from .base import BaseAnalyzer, SecurityLayerSettings
-from .moondream import MoondreamCloudAnalyzer, MoondreamLocalAnalyzer
-from .ollama import ClipAnalyzer, OllamaCloudAnalyzer
+from .moondream_provider import MoondreamCloudAnalyzer, MoondreamLocalAnalyzer
+from .ollama_provider import ClipAnalyzer, OllamaCloudAnalyzer
 from .openai_provider import OpenAIAnalyzer
 
 _LOGGER = logging.getLogger(__name__)

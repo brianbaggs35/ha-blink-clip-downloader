@@ -377,7 +377,7 @@ class ObjectDetector:
     reloading it per clip would make every analysis pay a multi-second
     cold-start cost. Inference runs in a thread executor so the asyncio
     event loop is never blocked, mirroring ``MoondreamLocalAnalyzer``'s
-    pattern in ``analyzer/moondream.py`` for the same reason.
+    pattern in ``analyzer/moondream_provider.py`` for the same reason.
 
     Note on tracking: Ultralytics' ``.track(persist=True)`` is designed for
     continuous video frames. This pipeline only ever hands it the handful
