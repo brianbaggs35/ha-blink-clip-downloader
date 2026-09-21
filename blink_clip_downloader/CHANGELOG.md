@@ -288,6 +288,23 @@ what Home Assistant actually allows before any request is built.
   other definitions are unchanged in their executable code, verified by
   comparing parsed syntax trees with that qualification normalised away and
   docstrings stripped.
+- Two long parameter lists became objects. `create_analyzer` took
+  twenty-four arguments; it now takes an `AnalyzerSettings` (how a clip
+  is analyzed) and a `ProviderCredentials` (which API, and with what).
+  Both matter beyond tidiness: the two analyzers built for tier-1 and
+  tier-2 escalation must receive *identical* settings, and passing ten
+  arguments at each of two call sites is one edit away from them quietly
+  disagreeing about frame strategy or which cameras watch the car.
+  `get_clips` similarly took fifteen; its twelve match conditions are now
+  a `ClipFilters`, while sort/limit/offset stay loose because they answer
+  a different question — "which clips" versus "how do I want them back".
+- Five functions were carrying enough branching to be hard to follow:
+  each provider's `fetch_models`, Moondream's per-frame result ranking,
+  the Google Drive device-flow poll, face recognition's innermost match
+  loop, and the vision pipeline's own `process_clip`. Each had one
+  self-contained piece lifted out and named. The face one is
+  safety-critical, so its arbitrary tie-break is preserved deliberately
+  and says so.
 - Every analyzer provider module is named `<provider>_provider.py`, and
   `tests/test_module_names.py` now enforces that no module is named after a
   package the codebase imports. Pyright resolves a bare `import <x>` to a
