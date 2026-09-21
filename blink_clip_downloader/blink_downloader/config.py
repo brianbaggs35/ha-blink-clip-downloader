@@ -279,10 +279,14 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     ai_min_confidence: float = 0.5
     ai_camera_prompts: list[dict] = field(default_factory=list)
     ai_camera_descriptions: list[dict] = field(default_factory=list)
-    # Frame extraction strategy:
-    #   "smart"      – oversample 2x then pick entry/peak-motion/exit frames (default)
-    #   "sequential" – analyse each frame individually, return most alarming result
-    #   "uniform"    – legacy: extract exactly ai_max_frames at fixed intervals
+    # How the frames sent to the AI are chosen out of the extracted pool.
+    # Extraction itself always covers the whole clip; these only decide which
+    # of those frames are worth spending ai_max_frames on:
+    #   "smart"      – rank by motion; peak, first and last, then spread-out
+    #                  high-motion fills (default)
+    #   "sequential" – the same choice, but one AI call per frame, keeping the
+    #                  most alarming answer
+    #   "uniform"    – no motion analysis; evenly spaced across the pool (legacy)
     ai_frame_strategy: str = "smart"
     # List of camera names that have the protected vehicle in view.
     # When non-empty, car-protection distance rules are only injected into prompts

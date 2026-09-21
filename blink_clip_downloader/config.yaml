@@ -293,12 +293,19 @@ options:
   # ignored regardless of what you set it to here; edit the Vehicles tab
   # directly instead.
   ai_car_description: ""
-  # Number of frames extracted per clip for analysis (1–100). More frames = better
-  # coverage of the full clip but higher API cost and analysis time.
-  # For moondream_cloud, each frame = one API request (rate-limited to 2 req/s).
+  # How many frames are *sent to the AI* per clip (1-100) — the number that
+  # drives API cost. Not the number extracted: extraction always covers the
+  # whole clip (see ai_frame_interval), and these are chosen out of that.
+  # Raising this samples the clip more densely, it does not make the analysis
+  # reach further into the clip. Clips longer than 30 seconds get twice this
+  # many, since one budget spread over 60s samples half as densely as the same
+  # budget over 30s. For moondream_cloud, each frame = one API request
+  # (rate-limited to 2 req/s).
   ai_max_frames: 5
-  # Extract one frame every this many seconds of video. With 5 frames and 2s interval,
-  # analysis covers approximately the first 8 seconds of the clip.
+  # Seconds between the frames ffmpeg extracts. This sets how dense the pool of
+  # *candidates* is, not how many reach the AI — enough frames are extracted to
+  # cover a full 60-second clip either way (30 of them at this default), and
+  # ai_max_frames then decides how many of those get sent.
   ai_frame_interval: 2.0
   # Words that trigger a "suspicious" flag when found in the AI's plain-text
   # response (used as fallback when the AI does not return JSON).
@@ -341,12 +348,18 @@ options:
   # typing names here.
   # Example: [{camera: "Driveway", description: "Points at driveway; silver Kia Forte parked left"}]
   ai_camera_descriptions: []
-  # Frame extraction strategy controlling how frames are selected and sent to the AI:
-  #   "smart"      – (default) extract 2x frames then use motion-diff to pick the
-  #                  entry frame, peak-motion frame, and exit frame. Best accuracy.
-  #   "sequential" – analyse each frame individually and return the most alarming
-  #                  result. Works well when the AI performs better on single images.
-  #   "uniform"    – extract exactly ai_max_frames at fixed time intervals (legacy).
+  # How the frames that get sent are chosen out of the extracted pool:
+  #   "smart"      – (default) rank by inter-frame motion and send the
+  #                  peak-motion frame, the first and the last, then fill any
+  #                  remaining budget with high-motion frames spaced out across
+  #                  the clip. Best accuracy for a given number of API calls.
+  #   "sequential" – choose the same frames as "smart", but send each as its own
+  #                  AI call and keep the most alarming answer. Useful when a
+  #                  model reads one image better than a batch; costs one
+  #                  request per frame rather than one per clip.
+  #   "uniform"    – no motion analysis: space the frames evenly across the pool.
+  #                  Cheap and predictable, but spends budget on empty frames
+  #                  when the event was brief (legacy).
   ai_frame_strategy: "smart"
   # Restrict car-proximity rules to specific cameras. When set, only cameras in
   # this list will have the PROTECTED VEHICLE / distance rules injected into

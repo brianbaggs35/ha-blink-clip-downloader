@@ -320,16 +320,20 @@ configuration:
   ai_max_frames:
     name: Fotogramas máx. por clip
     description: >-
-      Número de fotogramas extraídos por clip para el análisis (1–100).
-      Más fotogramas dan mejor cobertura pero aumentan el coste de la
-      API y el tiempo de análisis. Con moondream_cloud, cada fotograma
-      consume solicitudes de API adicionales.
+      Cuántos fotogramas se envían a la IA por clip (1-100): la cifra que
+      determina el coste de API. No es el número de fotogramas extraídos:
+      la extracción siempre cubre el clip entero y estos se eligen de ahí.
+      Subirlo muestrea el clip con más densidad, no hace que el análisis
+      llegue más lejos dentro de él. Los clips de más de 30 segundos
+      reciben el doble. Con moondream_cloud cada fotograma consume una
+      petición de API adicional.
   ai_frame_interval:
     name: Intervalo entre fotogramas (segundos)
     description: >-
-      Extrae un fotograma cada este número de segundos de vídeo. Con 5
-      fotogramas y un intervalo de 2 s, el análisis cubre
-      aproximadamente los primeros 8 s del clip.
+      Segundos entre los fotogramas extraídos del vídeo. Define la
+      densidad del conjunto de candidatos, no cuántos llegan a la IA: en
+      cualquier caso se extraen suficientes para cubrir un clip completo
+      de 60 segundos, y «Fotogramas máximos» decide cuántos se envían.
   ai_suspicious_keywords:
     name: Palabras clave sospechosas
     description: >-
@@ -389,11 +393,14 @@ configuration:
   ai_frame_strategy:
     name: Estrategia de extracción de fotogramas
     description: >-
-      «smart» (por defecto) extrae el doble de fotogramas y luego elige
-      los de entrada, pico de movimiento y salida mediante análisis de
-      diferencia de movimiento. «sequential» analiza cada fotograma
-      individualmente y devuelve el resultado más alarmante. «uniform»
-      es el modo antiguo de intervalo fijo.
+      Cómo se eligen de ese conjunto los fotogramas que se envían. «smart»
+      (por defecto) los ordena por movimiento y envía el de mayor
+      movimiento, el primero y el último, rellenando el presupuesto
+      restante con fotogramas de mucho movimiento repartidos por el clip.
+      «sequential» elige los mismos pero envía cada uno como su propia
+      llamada a la IA y se queda con la respuesta más alarmante: una
+      petición por fotograma en vez de una por clip. «uniform» omite el
+      análisis de movimiento y los espacia de forma uniforme (heredado).
   ai_car_cameras:
     name: Cámaras de protección de vehículo
     description: >-

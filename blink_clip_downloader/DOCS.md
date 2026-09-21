@@ -529,22 +529,32 @@ worth making for a few cents a month.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `ai_max_frames` | `5` | Number of frames extracted per clip for analysis (1–100). More frames = better coverage but higher API cost. |
-| `ai_frame_interval` | `2.0` | Seconds between frame extraction points (0.5–30). |
-| `ai_frame_strategy` | `"smart"` | How frames are selected and sent to the AI (see below). |
+| `ai_max_frames` | `5` | How many frames are **sent to the AI** per clip (1–100). This is the number that drives API cost. It is not how many are extracted — see below. |
+| `ai_frame_interval` | `2.0` | Seconds between the frames ffmpeg extracts (0.5–30). This sets how dense the pool of *candidates* is, not how many reach the AI. |
+| `ai_frame_strategy` | `"smart"` | How the frames that are sent get chosen out of that pool (see below). |
 
-`ai_max_frames`/`ai_frame_interval` apply as configured to clips estimated at 30
-seconds or less. Longer clips automatically get `ai_max_frames + 2` frames — a small
-bump that keeps API/token cost predictable while giving longer clips enough coverage
-to describe what happened across the whole clip, not just its first half.
+The two numbers do different jobs, and it is worth being precise because
+guessing wrong here is how people end up paying for frames they did not need.
+
+**Extraction** pulls one frame every `ai_frame_interval` seconds, for enough
+frames to cover a whole 60-second clip — at the defaults that is 30 frames, and
+it does not depend on `ai_max_frames` in any ordinary configuration. **Selection**
+then picks `ai_max_frames` of those to actually send. So raising
+`ai_max_frames` buys you a denser sample of the clip, never a *longer* stretch of
+it: coverage is already the whole clip.
+
+Clips estimated at over 30 seconds get **twice** `ai_max_frames` — 10 rather than
+5 at the defaults — because one budget spread over 60 seconds samples half as
+densely as the same budget over 30, and a Blink clip can be either. Budget for
+that when picking a paid model: a long clip costs double a short one.
 
 #### Frame Strategies
 
 | Value | Behaviour |
 |-------|-----------|
-| `"smart"` | (Default) Extracts 2× `ai_max_frames` candidates then uses inter-frame motion-diff (PIL) to pick the entry frame, peak-motion frame, and exit frame, then fills any remaining slots by motion score while enforcing a minimum spacing between picks so they spread across the clip's timeline instead of clustering around a single motion burst. Best accuracy for the same or fewer API calls. |
-| `"sequential"` | Analyses each frame individually via separate AI calls and returns the most alarming result (suspicious > non-suspicious; higher confidence when tied). Works well when the AI performs better on single images than on batches. Works with all six providers. |
-| `"uniform"` | Extracts exactly `ai_max_frames` (or the long-clip bonus count) at fixed time intervals (legacy behaviour, no motion analysis). |
+| `"smart"` | (Default) Ranks the extracted pool by inter-frame motion-diff (PIL) and sends the peak-motion frame, the first frame and the last frame, then fills any remaining budget by motion score while enforcing a minimum spacing so the picks spread across the clip instead of clustering on one burst. When the budget is smaller than three the peak wins first — a single frame of the scene *before* anything happened is rarely worth sending. It also asks ffmpeg for 2× `ai_max_frames` candidates, though that only raises the pool above the 60-second coverage floor if `ai_max_frames` is above 15 at the default interval. Best accuracy for a given number of API calls. |
+| `"sequential"` | Chooses frames exactly as `"smart"` does, then sends each one as its own AI call and keeps the most alarming answer (suspicious beats non-suspicious; higher confidence breaks a tie). Useful when a model reads one image better than a batch — but note it costs one request per frame rather than one per clip. Works with all six providers. |
+| `"uniform"` | Skips motion analysis entirely and spaces the frames it sends evenly across the whole extracted pool. Predictable and cheap to compute; it will happily spend the budget on empty frames if the event was brief. |
 
 ### Per-Camera Configuration
 

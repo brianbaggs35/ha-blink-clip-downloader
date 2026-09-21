@@ -280,14 +280,19 @@ configuration:
   ai_max_frames:
     name: Max Frames per Clip
     description: >-
-      Number of frames extracted per clip for analysis (1–100). More frames
-      give better coverage but increase API cost and analysis time. For
-      moondream_cloud each frame uses additional API requests.
+      How many frames are sent to the AI per clip (1-100) — the number
+      that drives API cost. Not the number extracted: extraction always
+      covers the whole clip, and these are chosen out of it. Raising this
+      samples the clip more densely; it does not make the analysis reach
+      further into it. Clips longer than 30 seconds get twice this many.
+      For moondream_cloud each frame uses an additional API request.
   ai_frame_interval:
     name: Frame Interval (seconds)
     description: >-
-      Extract one frame every this many seconds of video. With 5 frames and
-      2 s interval the analysis covers approximately the first 8 s of the clip.
+      Seconds between the frames extracted from the video. This sets how
+      dense the pool of candidates is, not how many reach the AI: enough
+      frames are extracted to cover a full 60-second clip either way, and
+      Max Frames decides how many of those are sent.
   ai_suspicious_keywords:
     name: Suspicious Keywords
     description: >-
@@ -339,10 +344,13 @@ configuration:
   ai_frame_strategy:
     name: Frame Extraction Strategy
     description: >-
-      "smart" (default) extracts 2x frames then picks entry, peak-motion, and
-      exit frames using motion-diff. "sequential" analyses each frame
-      individually and returns the most alarming result. "uniform" is the legacy
-      fixed-interval mode.
+      How the frames that get sent are chosen out of that pool. "smart"
+      (default) ranks them by motion and sends the peak-motion frame, the
+      first and the last, filling any remaining budget with high-motion
+      frames spread across the clip. "sequential" chooses the same frames
+      but sends each as its own AI call and keeps the most alarming answer
+      — one request per frame instead of one per clip. "uniform" skips
+      motion analysis and spaces them evenly (legacy).
   ai_car_cameras:
     name: Car-Protection Cameras
     description: >-
