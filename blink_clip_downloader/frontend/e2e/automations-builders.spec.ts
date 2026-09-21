@@ -1,4 +1,6 @@
 import { test, expect } from './coverage-fixtures'
+import { AUTOMATION_RECIPES as AUTOMATION_CATALOGUE } from '../src/components/automations/recipes/automations'
+import { SCRIPT_RECIPES as SCRIPT_CATALOGUE } from '../src/components/automations/recipes/scripts'
 
 // The builders' own catalogues, exercised through the real UI.
 //
@@ -8,29 +10,13 @@ import { test, expect } from './coverage-fixtures'
 // both sides of those decisions are exercised in a browser rather than only
 // in Vitest.
 
-const AUTOMATION_RECIPES = [
-  'Suspicious clip alert',
-  'Turn on lights when something looks off',
-  'Cast the camera feed to a display',
-  'Announce a clip on a speaker',
-  'Notify on a new clip',
-  'Alert on an unusually long clip',
-  'Cloud backup storage is filling up',
-  'Local clip storage is filling up',
-  'Cloud backups are falling behind',
-  'Camera battery went low',
-  'Nothing has downloaded in a while',
-  'Daily summary',
-]
-
-const SCRIPT_RECIPES = [
-  'Sync clips now',
-  'Show the camera feed on a display',
-  'Read out a storage report',
-  'Security alert lighting scene',
-  'A switch that pauses Blink alerts',
-  'Storage health template sensors',
-]
+// Derived from the catalogues themselves rather than hand-listed. The
+// hand-written lists had silently fallen eight recipes behind — every
+// recipe added in 6.0.5 was never built by this suite at all, so a new one
+// could ship emitting `undefined` and nothing here would notice. Reading
+// the real arrays means a recipe cannot be added without being exercised.
+const AUTOMATION_RECIPES = AUTOMATION_CATALOGUE.map((recipe) => recipe.name)
+const SCRIPT_RECIPES = SCRIPT_CATALOGUE.map((recipe) => recipe.name)
 
 /** The generated YAML, which every recipe renders into the same block. */
 const preview = (page: import('@playwright/test').Page) => page.locator('.code-block')
@@ -57,6 +43,29 @@ async function setNumber(page: import('@playwright/test').Page, field: string, v
   await input.fill(value)
   await input.blur()
 }
+
+async function setText(page: import('@playwright/test').Page, field: string, value: string) {
+  const input = page.locator(`#recipe-field-${field}`)
+  await input.fill(value)
+  await input.blur()
+}
+
+async function chooseSelect(page: import('@playwright/test').Page, field: string, option: string) {
+  await page.locator(`.recipe-field-${field} .p-select`).click()
+  await page.getByRole('option', { name: option, exact: true }).click()
+}
+
+/** MultiSelect puts its inputId on a hidden input, so click the widget. */
+async function chooseMulti(page: import('@playwright/test').Page, field: string, options: string[]) {
+  await page.locator(`.recipe-field-${field} .p-multiselect`).click()
+  for (const option of options) await page.getByRole('option', { name: option, exact: true }).click()
+  await page.keyboard.press('Escape')
+}
+
+test('the catalogues are non-empty, so the loops below cannot vacuously pass', () => {
+  expect(AUTOMATION_RECIPES.length).toBeGreaterThan(12)
+  expect(SCRIPT_RECIPES.length).toBeGreaterThan(6)
+})
 
 test('every automation recipe generates its YAML', async ({ page }) => {
   await openTab(page, 'Automations')
@@ -243,4 +252,113 @@ test('the Dashboards tab can generate a YAML dashboard of its own', async ({ pag
   await expect(blocks.nth(1)).toContainText('lovelace:')
   await expect(blocks.nth(1)).toContainText('show_in_sidebar: true')
   await expect(page.getByText('blink-cameras.yaml').first()).toBeVisible()
+})
+
+// The options below belong to recipes that only became reachable when the
+// lists above started coming from the catalogue, plus the three optional
+// fields the two notification recipes share. Each flips a decision that
+// changes the emitted YAML, so the assertion is on the change rather than
+// on the recipe merely rendering.
+
+test('the presence recipe can arm on departure without disarming on return', async ({ page }) => {
+  await openTab(page, 'Automations')
+  await pick(page, 'Arm Blink when everyone leaves')
+  await expect(preview(page)).toContainText('rest_command.blink_sync_disarm')
+
+  await toggle(page, 'disarm_home')
+
+  // Only the arm half is left, so the return trigger and its branch go too.
+  await expect(preview(page)).not.toContainText('rest_command.blink_sync_disarm')
+  await expect(preview(page)).not.toContainText('id: home')
+  await expect(preview(page)).toContainText('rest_command.blink_sync_arm')
+})
+
+test('the presence recipe can announce that it armed', async ({ page }) => {
+  await openTab(page, 'Automations')
+  await pick(page, 'Arm Blink when everyone leaves')
+  await expect(preview(page)).not.toContainText('🏠 Blink armed')
+
+  await toggle(page, 'notify_on_arm')
+
+  await expect(preview(page)).toContainText('🏠 Blink armed')
+  await expect(preview(page)).toContainText('Everyone is out')
+})
+
+test('the siren recipe can set off the alarm panel as well, and follows the armed state chosen', async ({ page }) => {
+  await openTab(page, 'Automations')
+  await pick(page, 'Sound the siren when the alarm is armed')
+  await expect(preview(page)).not.toContainText('alarm_control_panel.alarm_trigger')
+
+  await toggle(page, 'trigger_alarm')
+  await expect(preview(page)).toContainText('alarm_control_panel.alarm_trigger')
+
+  // "Armed away" is the default; any other choice has to reach the template.
+  await chooseSelect(page, 'armed_state', 'Armed home')
+  await expect(preview(page)).toContainText('armed_home')
+})
+
+test('the archive-on-full recipe can run without announcing itself', async ({ page }) => {
+  await openTab(page, 'Automations')
+  await pick(page, 'Archive old clips when storage fills')
+  await expect(preview(page)).toContainText('notify.notify')
+
+  await toggle(page, 'notify_after')
+
+  await expect(preview(page)).not.toContainText('notify.notify')
+  await expect(preview(page)).toContainText('rest_command')
+})
+
+test('the battery to-do recipe targets the list it is pointed at', async ({ page }) => {
+  await openTab(page, 'Automations')
+  await pick(page, 'Add a to-do when a battery goes low')
+  await setText(page, 'todo_entity', 'todo.house_jobs')
+  await expect(preview(page)).toContainText('todo.house_jobs')
+})
+
+test('a notification can attach a click-through path and honour a pause switch', async ({ page }) => {
+  await openTab(page, 'Automations')
+  await pick(page, 'Suspicious clip alert')
+  await expect(preview(page)).not.toContainText('input_boolean.blink_alerts_paused')
+
+  await setText(page, 'click_path', '/hassio/ingress/e2e_blink')
+  await setText(page, 'pause_entity', 'input_boolean.blink_alerts_paused')
+
+  await expect(preview(page)).toContainText('/hassio/ingress/e2e_blink')
+  // The pause helper gates the whole automation, so it lands as a condition.
+  await expect(preview(page)).toContainText('input_boolean.blink_alerts_paused')
+  await expect(preview(page)).toContainText('state: "off"')
+})
+
+test('a new-clip notification can be limited to chosen sources and a time window', async ({ page }) => {
+  await openTab(page, 'Automations')
+  await pick(page, 'Notify on a new clip')
+  await expect(preview(page)).not.toContainText('condition: time')
+
+  await chooseMulti(page, 'sources', ['Motion (pir)', 'Sync Module storage'])
+  await expect(preview(page)).toContainText('trigger.event.data.source in ["pir", "local_storage"]')
+
+  await setText(page, 'after', '21:30')
+  await setText(page, 'before', '06:00')
+  await expect(preview(page)).toContainText('condition: time')
+  await expect(preview(page)).toContainText('21:30')
+  await expect(preview(page)).toContainText('06:00')
+})
+
+test('the all-clear scene can leave the lights on instead of turning them off', async ({ page }) => {
+  await openTab(page, 'Scripts & Helpers')
+  await pick(page, 'All-clear lighting scene')
+  await expect(preview(page)).toContainText('state: "off"')
+
+  await toggle(page, 'leave_on')
+
+  await expect(preview(page)).toContainText('state: "on"')
+})
+
+test('the template sensors take the warning and critical levels they are given', async ({ page }) => {
+  await openTab(page, 'Scripts & Helpers')
+  await pick(page, 'Storage health template sensors')
+  await setNumber(page, 'warning', '55')
+  await setNumber(page, 'critical', '77')
+  await expect(preview(page)).toContainText('55')
+  await expect(preview(page)).toContainText('77')
 })
