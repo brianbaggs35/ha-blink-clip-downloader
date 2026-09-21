@@ -8,6 +8,7 @@ the only module that needs to know about all six at once.
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from .anthropic_provider import AnthropicAnalyzer
@@ -34,48 +35,88 @@ _ESCALATION_MODEL_KWARG: dict[str, str] = {
 }
 
 
+@dataclass(frozen=True)
+class AnalyzerSettings:
+    """How a clip is analyzed, independent of which provider does it.
+
+    Grouped because tier 1 and tier 2 always receive an identical copy:
+    the two analyzers differ only in which API they talk to, never in how
+    they read a clip. Passing these ten separately meant writing the same
+    ten arguments at both call sites, which is one edit away from the two
+    tiers quietly disagreeing about frame strategy or car cameras.
+    """
+
+    car_description: str = ""
+    max_frames: int = 3
+    frame_interval: float = 2.0
+    suspicious_keywords: list[str] | None = None
+    camera_prompts: dict[str, str] | None = None
+    camera_descriptions: dict[str, str] | None = None
+    frame_strategy: str = "smart"
+    car_cameras: list[str] | None = None
+    car_zones: dict[str, dict[str, Any]] | None = None
+    security_settings: SecurityLayerSettings | None = None
+
+
+@dataclass(frozen=True)
+class ProviderCredentials:
+    """Every provider's keys and model ids, in one object.
+
+    All nine together because ``create_analyzer`` cannot know which pair
+    it needs until it has looked at ``ai_provider`` — and because tier-2
+    escalation may pick a *different* provider, so the whole set has to
+    survive as far as the second analyzer is built.
+    """
+
+    ollama_url: str = ""
+    ollama_model: str = ""
+    ollama_cloud_api_key: str = ""
+    moondream_api_key: str = ""
+    moondream_finetune_model: str = ""
+    anthropic_api_key: str = ""
+    anthropic_model: str = ""
+    openai_api_key: str = ""
+    openai_model: str = ""
+
+
 def _build_single_analyzer(
     ai_provider: str,
     prompt: str,
-    car_description: str = "",
-    max_frames: int = 3,
-    frame_interval: float = 2.0,
-    suspicious_keywords: list[str] | None = None,
-    camera_prompts: dict[str, str] | None = None,
-    camera_descriptions: dict[str, str] | None = None,
-    frame_strategy: str = "smart",
-    car_cameras: list[str] | None = None,
-    car_zones: dict[str, dict[str, Any]] | None = None,
-    security_settings: SecurityLayerSettings | None = None,
-    *,
-    ollama_url: str = "",
-    ollama_model: str = "",
-    ollama_cloud_api_key: str = "",
-    moondream_api_key: str = "",
-    moondream_finetune_model: str = "",
-    anthropic_api_key: str = "",
-    anthropic_model: str = "",
-    openai_api_key: str = "",
-    openai_model: str = "",
+    settings: AnalyzerSettings,
+    **credentials: Any,
 ) -> BaseAnalyzer | None:
     """Build a single analyzer for *ai_provider*, with no escalation attached.
 
     Shared by :func:`create_analyzer` to build both the tier-1 analyzer and,
     when cross-provider escalation is configured, the tier-2 analyzer — see
     that function's ``escalation_provider``/``escalation_model``.
+
+    *credentials* are the provider-specific keys and model ids, exactly as
+    ``create_analyzer`` already assembles them into one dict to hand to
+    both tiers.
     """
+    ollama_url = credentials.get("ollama_url", "")
+    ollama_model = credentials.get("ollama_model", "")
+    ollama_cloud_api_key = credentials.get("ollama_cloud_api_key", "")
+    moondream_api_key = credentials.get("moondream_api_key", "")
+    moondream_finetune_model = credentials.get("moondream_finetune_model", "")
+    anthropic_api_key = credentials.get("anthropic_api_key", "")
+    anthropic_model = credentials.get("anthropic_model", "")
+    openai_api_key = credentials.get("openai_api_key", "")
+    openai_model = credentials.get("openai_model", "")
+
     common: dict[str, Any] = {
         "prompt": prompt,
-        "car_description": car_description,
-        "max_frames": max_frames,
-        "frame_interval": frame_interval,
-        "suspicious_keywords": suspicious_keywords,
-        "camera_prompts": camera_prompts,
-        "camera_descriptions": camera_descriptions,
-        "frame_strategy": frame_strategy,
-        "car_cameras": car_cameras,
-        "car_zones": car_zones,
-        "security_settings": security_settings,
+        "car_description": settings.car_description,
+        "max_frames": settings.max_frames,
+        "frame_interval": settings.frame_interval,
+        "suspicious_keywords": settings.suspicious_keywords,
+        "camera_prompts": settings.camera_prompts,
+        "camera_descriptions": settings.camera_descriptions,
+        "frame_strategy": settings.frame_strategy,
+        "car_cameras": settings.car_cameras,
+        "car_zones": settings.car_zones,
+        "security_settings": settings.security_settings,
     }
 
     if ai_provider == "ollama":
@@ -174,26 +215,9 @@ def _build_openai_analyzer(
 def create_analyzer(
     ai_provider: str,
     prompt: str,
-    car_description: str = "",
-    max_frames: int = 3,
-    frame_interval: float = 2.0,
-    suspicious_keywords: list[str] | None = None,
-    camera_prompts: dict[str, str] | None = None,
-    camera_descriptions: dict[str, str] | None = None,
-    frame_strategy: str = "smart",
-    car_cameras: list[str] | None = None,
-    car_zones: dict[str, dict[str, Any]] | None = None,
-    security_settings: SecurityLayerSettings | None = None,
+    settings: AnalyzerSettings | None = None,
+    credentials: ProviderCredentials | None = None,
     *,
-    ollama_url: str = "",
-    ollama_model: str = "",
-    ollama_cloud_api_key: str = "",
-    moondream_api_key: str = "",
-    moondream_finetune_model: str = "",
-    anthropic_api_key: str = "",
-    anthropic_model: str = "",
-    openai_api_key: str = "",
-    openai_model: str = "",
     escalation_provider: str = "",
     escalation_model: str = "",
     store_prompt_debug: bool = False,
@@ -210,33 +234,10 @@ def create_analyzer(
     ``anthropic_api_key``, ``openai_api_key``, ...) passed to this same call —
     no separate credential fields are needed for escalation.
     """
-    shared_kwargs: dict[str, Any] = {
-        "ollama_url": ollama_url,
-        "ollama_model": ollama_model,
-        "ollama_cloud_api_key": ollama_cloud_api_key,
-        "moondream_api_key": moondream_api_key,
-        "moondream_finetune_model": moondream_finetune_model,
-        "anthropic_api_key": anthropic_api_key,
-        "anthropic_model": anthropic_model,
-        "openai_api_key": openai_api_key,
-        "openai_model": openai_model,
-    }
+    settings = settings or AnalyzerSettings()
+    shared_kwargs: dict[str, Any] = asdict(credentials or ProviderCredentials())
 
-    analyzer = _build_single_analyzer(
-        ai_provider,
-        prompt,
-        car_description=car_description,
-        max_frames=max_frames,
-        frame_interval=frame_interval,
-        suspicious_keywords=suspicious_keywords,
-        camera_prompts=camera_prompts,
-        camera_descriptions=camera_descriptions,
-        frame_strategy=frame_strategy,
-        car_cameras=car_cameras,
-        car_zones=car_zones,
-        security_settings=security_settings,
-        **shared_kwargs,
-    )
+    analyzer = _build_single_analyzer(ai_provider, prompt, settings, **shared_kwargs)
     if analyzer is None:
         return None
 
@@ -247,20 +248,10 @@ def create_analyzer(
         if model_kwarg and escalation_model:
             tier2_kwargs[model_kwarg] = escalation_model
 
+        # The same settings object, deliberately: tier 2 differs only in
+        # provider and model, never in how it reads a clip.
         tier2 = _build_single_analyzer(
-            escalation_provider,
-            prompt,
-            car_description=car_description,
-            max_frames=max_frames,
-            frame_interval=frame_interval,
-            suspicious_keywords=suspicious_keywords,
-            camera_prompts=camera_prompts,
-            camera_descriptions=camera_descriptions,
-            frame_strategy=frame_strategy,
-            car_cameras=car_cameras,
-            car_zones=car_zones,
-            security_settings=security_settings,
-            **tier2_kwargs,
+            escalation_provider, prompt, settings, **tier2_kwargs
         )
         if tier2 is None:
             _LOGGER.warning(

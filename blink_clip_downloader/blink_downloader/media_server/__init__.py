@@ -93,7 +93,18 @@ class MediaServer(
 ):
     """aiohttp web server: clip library REST API + Video.js browser UI."""
 
-    def __init__(
+    # NOSONAR on the def line below suppresses S107. Every parameter is
+    # an independent, optional
+    # collaborator this server may be given — a database, a port, and
+    # sixteen callables and services that each area's mixin uses if it was
+    # handed one. Grouping them into a config object would satisfy the
+    # parameter count and make every one of the ~185 call sites worse:
+    # they are overwhelmingly of the form `MediaServer(db=db, port=0)`,
+    # naming only the two or three collaborators that test needs, and a
+    # bag object forces `MediaServer(deps=ServerDeps(db=db), port=0)` for
+    # no gain. This is constructor injection working as intended, not an
+    # over-long function.
+    def __init__(  # NOSONAR
         self,
         db: ClipDatabase,
         port: int,

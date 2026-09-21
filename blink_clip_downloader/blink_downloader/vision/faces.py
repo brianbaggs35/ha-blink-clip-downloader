@@ -195,31 +195,41 @@ class FaceRecognizer:
             approved: set[str] = set()
             other: set[str] = set()
             for frame in frames:
-                embeddings = await self._embedder.embed(frame)
-                for embedding in embeddings:
-                    best_name: str | None = None
-                    best_approved = False
-                    best_similarity = _FACE_MATCH_THRESHOLD
-                    for enrollment in enrollments:
-                        similarity = cosine_similarity(
-                            embedding, enrollment["embedding"]
-                        )
-                        if similarity >= best_similarity:
-                            best_similarity = similarity
-                            best_name = str(enrollment["name"])
-                            best_approved = bool(enrollment.get("approved", True))
-                    if best_name is None:
+                for embedding in await self._embedder.embed(frame):
+                    match = _best_enrollment(embedding, enrollments)
+                    if match is None:
                         result.unrecognized_present = True
-                    elif best_approved:
-                        approved.add(best_name)
+                    elif match[1]:
+                        approved.add(match[0])
                     else:
-                        other.add(best_name)
+                        other.add(match[0])
             result.approved_names = sorted(approved)
             result.other_names = sorted(other)
             return result
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Face recognition failed: %s", exc)
             return FaceRecognitionResult()
+
+
+def _best_enrollment(
+    embedding: Any, enrollments: list[dict[str, Any]]
+) -> tuple[str, bool] | None:
+    """The best-scoring enrollment for one face, or ``None`` below threshold.
+
+    Returns ``(name, approved)``. Comparison is ``>=`` so that a later
+    enrollment wins an exact tie — arbitrary either way, but preserved
+    from the loop this was lifted out of, because this feeds the
+    safety-critical suspicious-flag bypass and "arbitrary but unchanged"
+    is worth more here than "arbitrary and different".
+    """
+    best: tuple[str, bool] | None = None
+    best_similarity = _FACE_MATCH_THRESHOLD
+    for enrollment in enrollments:
+        similarity = cosine_similarity(embedding, enrollment["embedding"])
+        if similarity >= best_similarity:
+            best_similarity = similarity
+            best = (str(enrollment["name"]), bool(enrollment.get("approved", True)))
+    return best
 
 
 def _build_recognition_hint(result: FaceRecognitionResult) -> str | None:

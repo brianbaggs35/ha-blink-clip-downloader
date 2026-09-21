@@ -318,43 +318,52 @@ class StorageRoutesMixin(_MediaServerBase):
             "expires_in": info.expires_in,
         }
 
-        async def _poll() -> None:
-            global _gdrive_connect_state
-            assert self._gdrive_client is not None
-            deadline = time.monotonic() + info.expires_in
-            interval = max(1, info.interval)
-            while time.monotonic() < deadline:
-                await asyncio.sleep(interval)
-                result = await self._gdrive_client.poll_once_for_token(info.device_code)
-                if result.status == "success":
-                    _gdrive_connect_state = {
-                        "phase": "connected",
-                        "account_email": self._gdrive_client.account_email,
-                    }
-                    return
-                if result.status == "slow_down":
-                    interval += 5
-                    continue
-                if result.status == "expired":
-                    _gdrive_connect_state = {"phase": "expired"}
-                    return
-                if result.status == "denied":
-                    _gdrive_connect_state = {
-                        "phase": "error",
-                        "message": "Sign-in was denied",
-                    }
-                    return
-                if result.status == "error":
-                    _gdrive_connect_state = {
-                        "phase": "error",
-                        "message": result.message or "Sign-in failed",
-                    }
-                    return
-                # "pending" — keep polling until the deadline above.
-            _gdrive_connect_state = {"phase": "expired"}
-
-        self._gdrive_connect_task = asyncio.create_task(_poll())
+        self._gdrive_connect_task = asyncio.create_task(self._poll_for_token(info))
         return web.json_response(_gdrive_connect_state)
+
+    async def _poll_for_token(self, info: Any) -> None:
+        """Poll Google until the user finishes signing in, or time runs out.
+
+        A method rather than a closure inside the handler purely so the
+        two can be read — and measured — separately; it still rebinds the
+        module-level ``_gdrive_connect_state`` that the status endpoint
+        serves, which only works because both live in this module.
+        """
+        global _gdrive_connect_state
+        deadline = time.monotonic() + info.expires_in
+        interval = max(1, info.interval)
+        while time.monotonic() < deadline:
+            await asyncio.sleep(interval)
+            assert self._gdrive_client is not None
+            result = await self._gdrive_client.poll_once_for_token(info.device_code)
+            if result.status == "slow_down":
+                # Google asking us to back off is the one non-terminal
+                # answer that changes something, so it is handled here
+                # rather than in the state mapping below.
+                interval += 5
+                continue
+            final = self._token_poll_state(result)
+            if final is not None:
+                _gdrive_connect_state = final
+                return
+            # "pending" — keep polling until the deadline above.
+        _gdrive_connect_state = {"phase": "expired"}
+
+    def _token_poll_state(self, result: Any) -> dict[str, Any] | None:
+        """The connect state one poll result ends on, or ``None`` to keep going."""
+        if result.status == "success":
+            assert self._gdrive_client is not None
+            return {
+                "phase": "connected",
+                "account_email": self._gdrive_client.account_email,
+            }
+        if result.status == "expired":
+            return {"phase": "expired"}
+        if result.status == "denied":
+            return {"phase": "error", "message": "Sign-in was denied"}
+        if result.status == "error":
+            return {"phase": "error", "message": result.message or "Sign-in failed"}
+        return None
 
     async def _handle_gdrive_connect_status(  # NOSONAR
         self, _request: web.Request

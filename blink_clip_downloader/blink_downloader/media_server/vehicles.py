@@ -16,6 +16,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from ..database import ClipFilters
 from .camera_configs import CameraConfigsRoutesMixin
 from .support import (
     _CAMERA_CONFIGS_SAVE_ERROR,
@@ -224,7 +225,9 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
             # matching what the picker always showed before this redesign —
             # and persist it as the real snapshot so this is self-healing
             # after the first view.
-            clips = await self._db.get_clips(camera=camera, limit=1, sort="newest")
+            clips = await self._db.get_clips(
+                ClipFilters(camera=camera), limit=1, sort="newest"
+            )
             fallback = (
                 Path(clips[0]["file_path"]).with_suffix(".jpg") if clips else None
             )

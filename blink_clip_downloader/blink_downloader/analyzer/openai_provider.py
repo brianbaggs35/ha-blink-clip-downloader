@@ -19,6 +19,7 @@ from ..model_catalog import (
     _openai_model_rank,
     is_openai_vision_model,
     lookup_model_pricing,
+    model_entry,
 )
 from .base import _VISION_SYSTEM_PROMPT, BaseAnalyzer, SecurityLayerSettings
 
@@ -155,46 +156,44 @@ class OpenAIAnalyzer(BaseAnalyzer):
         exactly the id a user should paste into this add-on's
         ``openai_model`` configuration option — see _OPENAI_MODEL_DISPLAY_ORDER.
         """
-        if self._api_key:
-            try:
-                import openai as _openai  # type: ignore[import-not-found]
-            except ImportError:
-                pass
-            else:
-                try:
-                    client = self._get_client()
-                    pages = await client.models.list()
-                    result = []
-                    for m in pages.data:
-                        if not is_openai_vision_model(m.id):
-                            continue
-                        if _OPENAI_DATED_SNAPSHOT_RE.search(m.id):
-                            continue
-                        result.append(
-                            {
-                                "name": m.id,
-                                "id": m.id,
-                                "display_name": m.id,
-                                "description": m.id,
-                            }
-                        )
-                    if result:
-                        return sorted(
-                            result,
-                            key=lambda m: (_openai_model_rank(m["name"]), m["name"]),
-                        )
-                except _openai.AuthenticationError:
-                    _LOGGER.error(
-                        "OpenAI: invalid API key — "
-                        "check your openai_api_key in the add-on settings"
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    _LOGGER.debug("Failed to fetch OpenAI models from API: %s", exc)
+        live = await self._fetch_models_from_api()
+        if live:
+            return live
+        return [model_entry(name) for name in _OPENAI_FALLBACK_MODELS]
 
-        return [
-            {"name": name, "id": name, "display_name": name, "description": name}
-            for name in _OPENAI_FALLBACK_MODELS
-        ]
+    async def _fetch_models_from_api(self) -> list[dict[str, Any]]:
+        """The live vision-capable model list, newest first; empty on failure.
+
+        Empty rather than ``None``, because unlike Anthropic's list this one
+        is filtered down to vision models: an account whose models are all
+        text-only legitimately yields nothing, and the fallback list is the
+        right answer there too.
+        """
+        if not self._api_key:
+            return []
+        try:
+            import openai as _openai  # type: ignore[import-not-found]
+        except ImportError:
+            return []
+        try:
+            pages = await self._get_client().models.list()
+            result = [
+                model_entry(m.id)
+                for m in pages.data
+                if is_openai_vision_model(m.id)
+                and not _OPENAI_DATED_SNAPSHOT_RE.search(m.id)
+            ]
+            return sorted(
+                result, key=lambda m: (_openai_model_rank(m["name"]), m["name"])
+            )
+        except _openai.AuthenticationError:
+            _LOGGER.error(
+                "OpenAI: invalid API key — "
+                "check your openai_api_key in the add-on settings"
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.debug("Failed to fetch OpenAI models from API: %s", exc)
+        return []
 
     @staticmethod
     def _resize_frame(frame_bytes: bytes, max_dimension: int = 2048) -> bytes:

@@ -103,7 +103,8 @@ def test_the_event_says_it_was_heard_and_may_be_out_of_frame() -> None:
     assert "outside the camera's view" in event.detail
     assert event.evidence == {"sound": "Breaking glass", "sound_confidence": 0.77}
     # No offsets invented: the classifier says what, never when.
-    assert event.start_offset == 0.0 and event.end_offset == 0.0
+    assert event.start_offset == 0.0
+    assert event.end_offset == 0.0
 
 
 def test_every_audio_event_type_is_declared_as_one() -> None:

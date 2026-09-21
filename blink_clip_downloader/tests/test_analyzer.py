@@ -17,6 +17,7 @@ import pytest
 from blink_downloader import frame_motion, prompt_segments
 from blink_downloader.analyzer import (
     AnalysisResult,
+    AnalyzerSettings,
     AnthropicAnalyzer,
     BaseAnalyzer,
     ClipAnalyzer,
@@ -24,6 +25,7 @@ from blink_downloader.analyzer import (
     MoondreamLocalAnalyzer,
     OllamaCloudAnalyzer,
     OpenAIAnalyzer,
+    ProviderCredentials,
     create_analyzer,
 )
 from blink_downloader.analyzer.base import _CACHE_INERT_CALLS
@@ -810,7 +812,11 @@ async def test_ollama_cloud_fetch_models() -> None:
 
 def test_create_analyzer_ollama() -> None:
     a = create_analyzer(
-        "ollama", "prompt", ollama_url="http://localhost:11434", ollama_model="llava"
+        "ollama",
+        "prompt",
+        credentials=ProviderCredentials(
+            ollama_url="http://localhost:11434", ollama_model="llava"
+        ),
     )
     assert isinstance(a, ClipAnalyzer)
 
@@ -821,7 +827,11 @@ def test_create_analyzer_ollama_no_url() -> None:
 
 
 def test_create_analyzer_ollama_cloud() -> None:
-    a = create_analyzer("ollama_cloud", "prompt", ollama_cloud_api_key="key123")
+    a = create_analyzer(
+        "ollama_cloud",
+        "prompt",
+        credentials=ProviderCredentials(ollama_cloud_api_key="key123"),
+    )
     assert isinstance(a, OllamaCloudAnalyzer)
 
 
@@ -831,7 +841,11 @@ def test_create_analyzer_ollama_cloud_no_key() -> None:
 
 
 def test_create_analyzer_moondream_cloud() -> None:
-    a = create_analyzer("moondream_cloud", "prompt", moondream_api_key="key123")
+    a = create_analyzer(
+        "moondream_cloud",
+        "prompt",
+        credentials=ProviderCredentials(moondream_api_key="key123"),
+    )
     assert isinstance(a, MoondreamCloudAnalyzer)
 
 
@@ -2278,7 +2292,11 @@ async def test_anthropic_close_no_client() -> None:
 
 
 def test_create_analyzer_anthropic() -> None:
-    a = create_analyzer("anthropic", "prompt", anthropic_api_key="sk-ant-test")
+    a = create_analyzer(
+        "anthropic",
+        "prompt",
+        credentials=ProviderCredentials(anthropic_api_key="sk-ant-test"),
+    )
     assert isinstance(a, AnthropicAnalyzer)
     assert a.model_name() == "claude-haiku-4-5"  # default
 
@@ -2287,8 +2305,9 @@ def test_create_analyzer_anthropic_with_model() -> None:
     a = create_analyzer(
         "anthropic",
         "prompt",
-        anthropic_api_key="sk-ant-test",
-        anthropic_model="claude-opus-4-8",
+        credentials=ProviderCredentials(
+            anthropic_api_key="sk-ant-test", anthropic_model="claude-opus-4-8"
+        ),
     )
     assert isinstance(a, AnthropicAnalyzer)
     assert a.model_name() == "claude-opus-4-8"
@@ -4910,14 +4929,20 @@ async def test_openai_tokens_reset_between_calls(
 
 
 def test_create_analyzer_openai() -> None:
-    a = create_analyzer("openai", "prompt", openai_api_key="sk-test")
+    a = create_analyzer(
+        "openai", "prompt", credentials=ProviderCredentials(openai_api_key="sk-test")
+    )
     assert isinstance(a, OpenAIAnalyzer)
     assert a.model_name() == "gpt-4o-mini"  # default
 
 
 def test_create_analyzer_openai_with_model() -> None:
     a = create_analyzer(
-        "openai", "prompt", openai_api_key="sk-test", openai_model="gpt-4o"
+        "openai",
+        "prompt",
+        credentials=ProviderCredentials(
+            openai_api_key="sk-test", openai_model="gpt-4o"
+        ),
     )
     assert isinstance(a, OpenAIAnalyzer)
     assert a.model_name() == "gpt-4o"
@@ -4934,8 +4959,9 @@ def test_create_analyzer_same_provider_escalation() -> None:
     a = create_analyzer(
         "openai",
         "prompt",
-        openai_api_key="sk-test",
-        openai_model="gpt-4o-mini",
+        credentials=ProviderCredentials(
+            openai_api_key="sk-test", openai_model="gpt-4o-mini"
+        ),
         escalation_provider="openai",
         escalation_model="gpt-4o",
     )
@@ -4952,9 +4978,11 @@ def test_create_analyzer_cross_provider_escalation() -> None:
     a = create_analyzer(
         "openai",
         "prompt",
-        openai_api_key="sk-test",
-        openai_model="gpt-4o-mini",
-        moondream_api_key="md-test",
+        credentials=ProviderCredentials(
+            openai_api_key="sk-test",
+            openai_model="gpt-4o-mini",
+            moondream_api_key="md-test",
+        ),
         escalation_provider="moondream_cloud",
     )
     assert isinstance(a, OpenAIAnalyzer)
@@ -4963,7 +4991,9 @@ def test_create_analyzer_cross_provider_escalation() -> None:
 
 
 def test_create_analyzer_escalation_disabled_when_unset() -> None:
-    a = create_analyzer("openai", "prompt", openai_api_key="sk-test")
+    a = create_analyzer(
+        "openai", "prompt", credentials=ProviderCredentials(openai_api_key="sk-test")
+    )
     assert isinstance(a, OpenAIAnalyzer)
     assert a.escalation_analyzer is None
 
@@ -4974,8 +5004,9 @@ def test_create_analyzer_escalation_noop_when_matches_tier1_exactly() -> None:
     a = create_analyzer(
         "openai",
         "prompt",
-        openai_api_key="sk-test",
-        openai_model="gpt-4o-mini",
+        credentials=ProviderCredentials(
+            openai_api_key="sk-test", openai_model="gpt-4o-mini"
+        ),
         escalation_provider="openai",
         escalation_model="gpt-4o-mini",
     )
@@ -4991,8 +5022,8 @@ def test_create_analyzer_escalation_tier2_build_failure_falls_back_to_tier1_only
     a = create_analyzer(
         "openai",
         "prompt",
-        openai_api_key="sk-test",
-        escalation_provider="anthropic",  # no anthropic_api_key supplied
+        credentials=ProviderCredentials(openai_api_key="sk-test"),
+        escalation_provider="anthropic",
     )
     assert isinstance(a, OpenAIAnalyzer)
     assert a.escalation_analyzer is None
@@ -5044,8 +5075,8 @@ def test_create_analyzer_passes_camera_prompts() -> None:
     a = create_analyzer(
         "ollama",
         "default",
-        camera_prompts=prompts,
-        ollama_url="http://localhost:11434",
+        settings=AnalyzerSettings(camera_prompts=prompts),
+        credentials=ProviderCredentials(ollama_url="http://localhost:11434"),
     )
     assert isinstance(a, ClipAnalyzer)
     assert a._camera_prompts == prompts
@@ -5053,7 +5084,9 @@ def test_create_analyzer_passes_camera_prompts() -> None:
 
 def test_create_analyzer_moondream_local_passes_camera_prompts() -> None:
     prompts = {"Driveway": "Watch the car."}
-    a = create_analyzer("moondream_local", "default", camera_prompts=prompts)
+    a = create_analyzer(
+        "moondream_local", "default", settings=AnalyzerSettings(camera_prompts=prompts)
+    )
     assert isinstance(a, MoondreamLocalAnalyzer)
     assert a._camera_prompts == prompts
 
@@ -6454,9 +6487,10 @@ def test_create_analyzer_ollama_with_camera_descriptions() -> None:
     a = create_analyzer(
         ai_provider="ollama",
         prompt="Analyze.",
-        camera_descriptions=descriptions,
-        ollama_url="http://localhost:11434",
-        ollama_model="llava",
+        settings=AnalyzerSettings(camera_descriptions=descriptions),
+        credentials=ProviderCredentials(
+            ollama_url="http://localhost:11434", ollama_model="llava"
+        ),
     )
     assert isinstance(a, ClipAnalyzer)
     prompt = a._build_prompt("Backyard")
@@ -6503,9 +6537,10 @@ def test_create_analyzer_passes_frame_strategy() -> None:
     a = create_analyzer(
         ai_provider="ollama",
         prompt="p",
-        frame_strategy="sequential",
-        ollama_url="http://localhost:11434",
-        ollama_model="llava",
+        settings=AnalyzerSettings(frame_strategy="sequential"),
+        credentials=ProviderCredentials(
+            ollama_url="http://localhost:11434", ollama_model="llava"
+        ),
     )
     assert isinstance(a, ClipAnalyzer)
     assert a._frame_strategy == "sequential"
@@ -6515,8 +6550,8 @@ def test_create_analyzer_moondream_cloud_frame_strategy() -> None:
     a = create_analyzer(
         ai_provider="moondream_cloud",
         prompt="p",
-        frame_strategy="uniform",
-        moondream_api_key="key",
+        settings=AnalyzerSettings(frame_strategy="uniform"),
+        credentials=ProviderCredentials(moondream_api_key="key"),
     )
     assert isinstance(a, MoondreamCloudAnalyzer)
     assert a._frame_strategy == "uniform"
@@ -6526,7 +6561,7 @@ def test_create_analyzer_moondream_local_frame_strategy() -> None:
     a = create_analyzer(
         ai_provider="moondream_local",
         prompt="p",
-        frame_strategy="sequential",
+        settings=AnalyzerSettings(frame_strategy="sequential"),
     )
     assert isinstance(a, MoondreamLocalAnalyzer)
     assert a._frame_strategy == "sequential"
@@ -6536,9 +6571,10 @@ def test_create_analyzer_anthropic_frame_strategy() -> None:
     a = create_analyzer(
         ai_provider="anthropic",
         prompt="p",
-        frame_strategy="smart",
-        anthropic_api_key="key",
-        anthropic_model="claude-haiku-4-5",
+        settings=AnalyzerSettings(frame_strategy="smart"),
+        credentials=ProviderCredentials(
+            anthropic_api_key="key", anthropic_model="claude-haiku-4-5"
+        ),
     )
     assert isinstance(a, AnthropicAnalyzer)
     assert a._frame_strategy == "smart"
@@ -6548,9 +6584,10 @@ def test_create_analyzer_openai_frame_strategy() -> None:
     a = create_analyzer(
         ai_provider="openai",
         prompt="p",
-        frame_strategy="sequential",
-        openai_api_key="key",
-        openai_model="gpt-4o-mini",
+        settings=AnalyzerSettings(frame_strategy="sequential"),
+        credentials=ProviderCredentials(
+            openai_api_key="key", openai_model="gpt-4o-mini"
+        ),
     )
     assert isinstance(a, OpenAIAnalyzer)
     assert a._frame_strategy == "sequential"
@@ -9561,8 +9598,10 @@ def test_create_analyzer_moondream_cloud_with_finetune_model() -> None:
     a = create_analyzer(
         "moondream_cloud",
         "prompt",
-        moondream_api_key="key",
-        moondream_finetune_model="moondream3-preview/ft-123@75",
+        credentials=ProviderCredentials(
+            moondream_api_key="key",
+            moondream_finetune_model="moondream3-preview/ft-123@75",
+        ),
     )
     assert isinstance(a, MoondreamCloudAnalyzer)
     assert a.model_name() == "moondream3-preview/ft-123@75"
@@ -9570,7 +9609,11 @@ def test_create_analyzer_moondream_cloud_with_finetune_model() -> None:
 
 def test_create_analyzer_moondream_cloud_no_finetune_model() -> None:
     """create_analyzer works without finetune_model — uses base model."""
-    a = create_analyzer("moondream_cloud", "prompt", moondream_api_key="key")
+    a = create_analyzer(
+        "moondream_cloud",
+        "prompt",
+        credentials=ProviderCredentials(moondream_api_key="key"),
+    )
     assert isinstance(a, MoondreamCloudAnalyzer)
     assert a.model_name() == "moondream3-preview"
 
@@ -10522,7 +10565,7 @@ def test_create_analyzer_wires_store_prompt_debug() -> None:
     a = create_analyzer(
         "ollama",
         "prompt",
-        ollama_url="http://localhost:11434",
+        credentials=ProviderCredentials(ollama_url="http://localhost:11434"),
         store_prompt_debug=True,
     )
     assert isinstance(a, ClipAnalyzer)
@@ -10530,7 +10573,11 @@ def test_create_analyzer_wires_store_prompt_debug() -> None:
 
 
 def test_create_analyzer_store_prompt_debug_defaults_false() -> None:
-    a = create_analyzer("ollama", "prompt", ollama_url="http://localhost:11434")
+    a = create_analyzer(
+        "ollama",
+        "prompt",
+        credentials=ProviderCredentials(ollama_url="http://localhost:11434"),
+    )
     assert isinstance(a, ClipAnalyzer)
     assert a._store_prompt_debug is False
 

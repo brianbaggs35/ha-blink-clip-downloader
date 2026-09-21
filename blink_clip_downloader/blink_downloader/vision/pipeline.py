@@ -275,43 +275,59 @@ class VisionPipeline:
             hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
             hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
 
-        # The only stage that reads the file rather than the frames, so it
-        # is the only one that needs a path. A clip with no audio track --
-        # the camera's microphone switched off, or a model without one --
-        # simply produces no hint, which is why this cannot be inferred
-        # from the frames the other stages already hold.
-        #
-        # Deliberately *not* recorded in unavailable_sources when it finds
-        # nothing. That list feeds evidence.py's stage-coverage score,
-        # whose denominator (TOTAL_OPTIONAL_SOURCES) counts the four
-        # *visual* stages it was calibrated against. Appending a fifth,
-        # non-visual source would knock 25 points off the coverage of every
-        # clip that simply had nothing audible in it -- which is most of
-        # them -- and would do it only for users who turned audio on.
-        # Silence is not missing evidence about what the camera saw.
-        if self._config.audio_analysis_enabled and clip_path:
-            hints.audio_tags = await self._audio.tag(clip_path)
-            hints.audio_hint = build_audio_hint(hints.audio_tags)
+        await self._run_audio_stage(hints, clip_path)
+        await self._run_face_stage(hints, raw_pool)
+        self._log_result(hints)
+        return hints
 
-        if self._config.face_recognition_enabled and self._db is not None:
-            recognizer = FaceRecognizer(self._face_embedder, self._db)
-            face_result = await recognizer.recognize(raw_pool)
-            hints.face_recognition = face_result
-            hints.recognized_resident_hint = _build_recognition_hint(face_result)
-        else:
+    async def _run_audio_stage(self, hints: VisionHints, clip_path: str) -> None:
+        """Classify the clip's sound, when the stage is on and there is a file.
+
+        The only stage that reads the file rather than the frames, so the
+        only one that needs a path. A clip with no audio track -- the
+        camera's microphone switched off, or a model without one -- simply
+        produces no hint, which is why this cannot be inferred from the
+        frames the other stages already hold.
+
+        Deliberately *not* recorded in ``unavailable_sources`` when it
+        finds nothing. That list feeds evidence.py's stage-coverage score,
+        whose denominator (``TOTAL_OPTIONAL_SOURCES``) counts the four
+        *visual* stages it was calibrated against. Appending a fifth,
+        non-visual source would knock 25 points off the coverage of every
+        clip that simply had nothing audible in it -- which is most of
+        them -- and would do it only for users who turned audio on.
+        Silence is not missing evidence about what the camera saw.
+        """
+        if not (self._config.audio_analysis_enabled and clip_path):
+            return
+        hints.audio_tags = await self._audio.tag(clip_path)
+        hints.audio_hint = build_audio_hint(hints.audio_tags)
+
+    async def _run_face_stage(self, hints: VisionHints, raw_pool: list[bytes]) -> None:
+        """Recognize enrolled household members, or record the stage as absent."""
+        if not (self._config.face_recognition_enabled and self._db is not None):
             hints.unavailable_sources.append(SOURCE_FACE_RECOGNITION)
+            return
+        recognizer = FaceRecognizer(self._face_embedder, self._db)
+        face_result = await recognizer.recognize(raw_pool)
+        hints.face_recognition = face_result
+        hints.recognized_resident_hint = _build_recognition_hint(face_result)
 
-        # The only per-clip evidence any of this ran was the one-time
-        # "model ready" INFO log each stage prints on its first load —
-        # after that, every stage below runs (and produces real hints that
-        # do reach the AI prompt) completely silently, even at debug level.
-        # Names are deliberately never logged here, matching
-        # _build_recognition_hint's own name-free prompt guarantee — only
-        # counts, mirroring what the prompt itself is allowed to say.
+    def _log_result(self, hints: VisionHints) -> None:
+        """One debug line per clip saying which stages produced anything.
+
+        The only other evidence any of this ran is the one-time "model
+        ready" INFO each stage prints on its first load — after that every
+        stage runs, and produces real hints that do reach the AI prompt,
+        completely silently. Names are deliberately never logged, matching
+        ``_build_recognition_hint``'s own name-free prompt guarantee: only
+        counts, mirroring what the prompt itself is allowed to say.
+        """
+        faces = hints.face_recognition
         _LOGGER.debug(
             "Vision pipeline result: enhanced_detection=%s "
             "(detection=%r, tracking=%r, depth=%r, contact=%r, tracks=%d, "
-            "scan_frames=%d), face_recognition=%s "
+            "scan_frames=%d), audio=%s, face_recognition=%s "
             "(approved=%d, other=%d, unrecognized_present=%s)",
             self._config.enhanced_detection_enabled,
             hints.detection_hint,
@@ -320,15 +336,12 @@ class VisionPipeline:
             hints.contact_hint,
             len(hints.tracks or []),
             hints.scan_frame_count,
+            len(hints.audio_tags.labels) if hints.audio_tags else 0,
             self._config.face_recognition_enabled,
-            len(hints.face_recognition.approved_names) if hints.face_recognition else 0,
-            len(hints.face_recognition.other_names) if hints.face_recognition else 0,
-            hints.face_recognition.unrecognized_present
-            if hints.face_recognition
-            else False,
+            len(faces.approved_names) if faces else 0,
+            len(faces.other_names) if faces else 0,
+            faces.unrecognized_present if faces else False,
         )
-
-        return hints
 
     async def _run_detection_stages(
         self,

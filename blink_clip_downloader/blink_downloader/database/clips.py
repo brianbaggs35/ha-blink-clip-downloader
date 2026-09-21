@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -28,6 +29,35 @@ from .sql import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ClipFilters:
+    """Which clips a Library query should match.
+
+    Every field is a condition that narrows the result; all defaulted, so
+    ``ClipFilters()`` means "everything that is not archived". Grouped
+    because they arrive together — the Library's filter bar sends them as
+    one set of query parameters — and because a query taking fifteen
+    loose arguments is one positional slip away from filtering by the
+    wrong thing.
+    """
+
+    camera: str | None = None
+    since: str | None = None
+    until: str | None = None
+    starred: bool | None = None
+    source: str | None = None
+    tag: str | None = None
+    search: str | None = None
+    archived: bool = False
+    archive_path: str | None = None
+    notified_only: bool = False
+    recognized_only: bool = False
+    #: Confidence at or above which a suspicious verdict counts as
+    #: notified — the same gate AnalysisQueue uses to decide whether to
+    #: send an alert, so the badge and the alert cannot disagree.
+    min_confidence: float = 0.0
 
 
 class ClipLibraryMixin(_DatabaseBase):
@@ -180,23 +210,19 @@ class ClipLibraryMixin(_DatabaseBase):
 
     async def get_clips(
         self,
-        camera: str | None = None,
-        since: str | None = None,
-        until: str | None = None,
-        starred: bool | None = None,
-        source: str | None = None,
-        tag: str | None = None,
-        search: str | None = None,
-        archived: bool = False,
-        archive_path: str | None = None,
+        filters: ClipFilters | None = None,
+        *,
         sort: str = "newest",
         limit: int = 50,
         offset: int = 0,
-        notified_only: bool = False,
-        recognized_only: bool = False,
-        min_confidence: float = 0.0,
     ) -> list[dict[str, Any]]:
-        """Query clips with optional filters and sort order.
+        """Query clips matching *filters*, in *sort* order, one page at a time.
+
+        The twelve match conditions travel together as :class:`ClipFilters`
+        while sort/limit/offset stay loose, because they answer different
+        questions: one is "which clips", the other "how do I want them
+        back", and the Library sends the first from its filter bar and the
+        second from its paging controls.
 
         sort values: "newest" | "oldest" | "camera" | "size" | "duration"
 
@@ -243,6 +269,20 @@ class ClipLibraryMixin(_DatabaseBase):
         """
         if self._pool is None:
             return []
+
+        f = filters or ClipFilters()
+        camera = f.camera
+        since = f.since
+        until = f.until
+        starred = f.starred
+        source = f.source
+        tag = f.tag
+        search = f.search
+        archived = f.archived
+        archive_path = f.archive_path
+        notified_only = f.notified_only
+        recognized_only = f.recognized_only
+        min_confidence = f.min_confidence
 
         notified_exists = (
             "EXISTS (SELECT 1 FROM analysis_results ar WHERE ar.clip_id = clips.id "
@@ -377,11 +417,13 @@ class ClipLibraryMixin(_DatabaseBase):
             return {"items": [], "total": 0}
 
         clips = await self.get_clips(
-            camera=camera,
-            archived=True,
-            archive_path=archive_path,
-            since=since,
-            until=until,
+            ClipFilters(
+                camera=camera,
+                archived=True,
+                archive_path=archive_path,
+                since=since,
+                until=until,
+            ),
             sort="newest",
             limit=limit,
             offset=offset,

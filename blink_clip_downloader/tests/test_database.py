@@ -14,6 +14,7 @@ import pytest
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.database import (
     ClipDatabase,
+    ClipFilters,
     _affected,
     _local_day_bounds,
     _row_to_dict,
@@ -367,7 +368,7 @@ async def test_get_clips_all(db: ClipDatabase) -> None:
 async def test_get_clips_filter_by_camera(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1", camera="Front Door"))
     await db.add_clip(_make_clip("c2", camera="Back Yard"))
-    clips = await db.get_clips(camera="Back Yard")
+    clips = await db.get_clips(ClipFilters(camera="Back Yard"))
     assert len(clips) == 1
     assert clips[0]["camera"] == "Back Yard"
 
@@ -376,7 +377,7 @@ async def test_get_clips_filter_starred(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_clip(_make_clip("c2"))
     await db.star_clip("c1", True)
-    starred = await db.get_clips(starred=True)
+    starred = await db.get_clips(ClipFilters(starred=True))
     assert len(starred) == 1
     assert starred[0]["id"] == "c1"
 
@@ -409,12 +410,16 @@ async def test_get_clips_notified_flag_and_filter(db: ClipDatabase) -> None:
     )
     # c3: no analysis at all -> not notified
 
-    all_clips = {c["id"]: c for c in await db.get_clips(min_confidence=0.5)}
+    all_clips = {
+        c["id"]: c for c in await db.get_clips(ClipFilters(min_confidence=0.5))
+    }
     assert all_clips["c1"]["notified"] is True
     assert all_clips["c2"]["notified"] is False
     assert all_clips["c3"]["notified"] is False
 
-    notified_only = await db.get_clips(notified_only=True, min_confidence=0.5)
+    notified_only = await db.get_clips(
+        ClipFilters(notified_only=True, min_confidence=0.5)
+    )
     assert [c["id"] for c in notified_only] == ["c1"]
 
 
@@ -454,11 +459,14 @@ async def test_get_clips_notified_filter_counts_rows_tied_at_latest_analysis(
                 }
             )
 
-    flagged = {c["id"]: c["notified"] for c in await db.get_clips(min_confidence=0.5)}
+    flagged = {
+        c["id"]: c["notified"]
+        for c in await db.get_clips(ClipFilters(min_confidence=0.5))
+    }
     assert flagged["tie1"] is True
     assert flagged["tie2"] is True
 
-    filtered = await db.get_clips(notified_only=True, min_confidence=0.5)
+    filtered = await db.get_clips(ClipFilters(notified_only=True, min_confidence=0.5))
     assert {c["id"] for c in filtered} == {"tie1", "tie2"}
 
 
@@ -482,7 +490,9 @@ async def test_get_clips_recognized_filter_counts_rows_tied_at_latest_analysis(
 
     rows = {c["id"]: c for c in await db.get_clips()}
     assert rows["face1"]["face_recognized"] is True
-    assert [c["id"] for c in await db.get_clips(recognized_only=True)] == ["face1"]
+    assert [c["id"] for c in await db.get_clips(ClipFilters(recognized_only=True))] == [
+        "face1"
+    ]
 
 
 async def test_get_clips_notified_flag_reflects_latest_reanalysis_only(
@@ -512,7 +522,7 @@ async def test_get_clips_notified_flag_reflects_latest_reanalysis_only(
         )
     )
 
-    clips = {c["id"]: c for c in await db.get_clips(min_confidence=0.5)}
+    clips = {c["id"]: c for c in await db.get_clips(ClipFilters(min_confidence=0.5))}
     assert clips["c1"]["notified"] is False
 
     # And the reverse: cleared first, then a later re-analysis genuinely
@@ -534,7 +544,7 @@ async def test_get_clips_notified_flag_reflects_latest_reanalysis_only(
             analyzed_at="2024-06-01T10:00:00+00:00",
         )
     )
-    clips2 = {c["id"]: c for c in await db.get_clips(min_confidence=0.5)}
+    clips2 = {c["id"]: c for c in await db.get_clips(ClipFilters(min_confidence=0.5))}
     assert clips2["c2"]["notified"] is True
 
 
@@ -553,7 +563,7 @@ async def test_get_clips_face_recognized_flag(db: ClipDatabase) -> None:
     assert clips["c2"]["face_recognized"] is False
     assert clips["c3"]["face_recognized"] is False
 
-    recognized_only = await db.get_clips(recognized_only=True)
+    recognized_only = await db.get_clips(ClipFilters(recognized_only=True))
     assert [c["id"] for c in recognized_only] == ["c1"]
 
 
@@ -605,7 +615,7 @@ async def test_get_clips_face_recognized_flag_reflects_latest_reanalysis_only(
 async def test_get_clips_search(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("abc123", camera="Garage"))
     await db.add_clip(_make_clip("xyz999", camera="Office"))
-    results = await db.get_clips(search="Garage")
+    results = await db.get_clips(ClipFilters(search="Garage"))
     assert len(results) == 1
 
 
@@ -665,14 +675,18 @@ async def test_get_clips_archive_path_filter(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c2"))
     await db.mark_archived("c1", "/archives/2024-06.zip")
     await db.mark_archived("c2", "/archives/2024-07.zip")
-    clips = await db.get_clips(archived=True, archive_path="/archives/2024-06.zip")
+    clips = await db.get_clips(
+        ClipFilters(archived=True, archive_path="/archives/2024-06.zip")
+    )
     assert [c["id"] for c in clips] == ["c1"]
 
 
 async def test_get_clips_archive_path_filter_no_match(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.mark_archived("c1", "/archives/2024-06.zip")
-    clips = await db.get_clips(archived=True, archive_path="/archives/nope.zip")
+    clips = await db.get_clips(
+        ClipFilters(archived=True, archive_path="/archives/nope.zip")
+    )
     assert clips == []
 
 
@@ -1011,9 +1025,9 @@ async def test_rename_camera_migrates_library_and_battery_state(
 
     assert await db.rename_camera("Front Door", "Entryway") is True
 
-    clips = await db.get_clips(camera="Entryway")
+    clips = await db.get_clips(ClipFilters(camera="Entryway"))
     assert [clip["id"] for clip in clips] == ["rename-1"]
-    assert await db.get_clips(camera="Front Door") == []
+    assert await db.get_clips(ClipFilters(camera="Front Door")) == []
     battery = await db.get_latest_battery_state()
     assert [row["camera"] for row in battery] == ["Entryway"]
     queue = await db.get_pending_analysis()
@@ -2654,7 +2668,7 @@ async def test_get_clips_since_filter(db: ClipDatabase) -> None:
     """get_clips(since=...) restricts results to clips after the timestamp (lines 218-219)."""
     await db.add_clip(_make_clip("old", timestamp="2024-01-01T00:00:00+00:00"))
     await db.add_clip(_make_clip("new", timestamp="2024-06-01T00:00:00+00:00"))
-    clips = await db.get_clips(since="2024-03-01T00:00:00+00:00")
+    clips = await db.get_clips(ClipFilters(since="2024-03-01T00:00:00+00:00"))
     assert len(clips) == 1
     assert clips[0]["id"] == "new"
 
@@ -2663,7 +2677,7 @@ async def test_get_clips_until_filter(db: ClipDatabase) -> None:
     """get_clips(until=...) restricts results to clips before the timestamp (lines 221-222)."""
     await db.add_clip(_make_clip("old", timestamp="2024-01-01T00:00:00+00:00"))
     await db.add_clip(_make_clip("new", timestamp="2024-06-01T00:00:00+00:00"))
-    clips = await db.get_clips(until="2024-03-01T00:00:00+00:00")
+    clips = await db.get_clips(ClipFilters(until="2024-03-01T00:00:00+00:00"))
     assert len(clips) == 1
     assert clips[0]["id"] == "old"
 
@@ -2672,7 +2686,7 @@ async def test_get_clips_source_filter(db: ClipDatabase) -> None:
     """get_clips(source=...) filters by clip source (lines 227-228)."""
     await db.add_clip(_make_clip("c1", source="pir"))
     await db.add_clip(_make_clip("c2", source="cloud"))
-    clips = await db.get_clips(source="cloud")
+    clips = await db.get_clips(ClipFilters(source="cloud"))
     assert len(clips) == 1
     assert clips[0]["id"] == "c2"
 
@@ -2682,7 +2696,7 @@ async def test_get_clips_tag_filter(db: ClipDatabase) -> None:
     await db.add_clip(_make_clip("c1"))
     await db.add_clip(_make_clip("c2"))
     await db.set_tags("c1", ["important", "night"])
-    clips = await db.get_clips(tag="important")
+    clips = await db.get_clips(ClipFilters(tag="important"))
     assert len(clips) == 1
     assert clips[0]["id"] == "c1"
 
@@ -4738,9 +4752,12 @@ async def test_notified_badge_matches_the_risk_override_dispatch_exemption(
             "risk_override_applied": True,
         }
     )
-    (clip,) = await db.get_clips(min_confidence=0.9)
+    (clip,) = await db.get_clips(ClipFilters(min_confidence=0.9))
     assert clip["notified"] is True
-    assert len(await db.get_clips(min_confidence=0.9, notified_only=True)) == 1
+    assert (
+        len(await db.get_clips(ClipFilters(min_confidence=0.9, notified_only=True)))
+        == 1
+    )
 
 
 async def test_notified_badge_still_applies_the_threshold_without_an_override(
@@ -4757,7 +4774,7 @@ async def test_notified_badge_still_applies_the_threshold_without_an_override(
             "confidence": 0.2,
         }
     )
-    (clip,) = await db.get_clips(min_confidence=0.9)
+    (clip,) = await db.get_clips(ClipFilters(min_confidence=0.9))
     assert clip["notified"] is False
 
 

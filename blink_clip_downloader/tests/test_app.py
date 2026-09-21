@@ -2340,14 +2340,14 @@ def test_init_camera_configs_ui_file_populates_descriptions_and_car_cameras(
     )
 
     kwargs = mock_create_analyzer.call_args.kwargs
-    assert kwargs["camera_descriptions"] == {
+    assert kwargs["settings"].camera_descriptions == {
         "Driveway": "Watches the driveway and the owner's car",
         "Front Door": "Watches for package theft and unauthorized entry",
     }
-    assert kwargs["camera_prompts"] == {
+    assert kwargs["settings"].camera_prompts == {
         "Front Door": "Flag anyone lingering near the porch."
     }
-    assert kwargs["car_cameras"] == ["Driveway"]
+    assert kwargs["settings"].car_cameras == ["Driveway"]
     assert _app._auto_analysis_disabled_cameras == {"Front Door"}
 
 
@@ -2380,7 +2380,7 @@ def test_init_camera_configs_car_zone_reaches_analyzer(base_config, tmp_path) ->
     )
 
     kwargs = mock_create_analyzer.call_args.kwargs
-    assert kwargs["car_zones"] == {
+    assert kwargs["settings"].car_zones == {
         "Driveway": {
             "shape": "rect",
             "x_min": 0.2,
@@ -2414,7 +2414,7 @@ def test_init_camera_configs_polygon_car_zone_reaches_analyzer(
     )
 
     kwargs = mock_create_analyzer.call_args.kwargs
-    assert kwargs["car_zones"] == {
+    assert kwargs["settings"].car_zones == {
         "Driveway": {
             "shape": "polygon",
             "points": [[0.1, 0.1], [0.5, 0.1], [0.3, 0.5]],
@@ -2441,7 +2441,7 @@ def test_init_camera_configs_malformed_car_zone_is_ignored(
         ],
     )
 
-    assert mock_create_analyzer.call_args.kwargs["car_zones"] is None
+    assert mock_create_analyzer.call_args.kwargs["settings"].car_zones is None
 
 
 def test_init_camera_configs_inverted_car_zone_is_ignored(
@@ -2466,7 +2466,7 @@ def test_init_camera_configs_inverted_car_zone_is_ignored(
         ],
     )
 
-    assert mock_create_analyzer.call_args.kwargs["car_zones"] is None
+    assert mock_create_analyzer.call_args.kwargs["settings"].car_zones is None
 
 
 def test_init_camera_configs_options_json_fills_gaps_not_covered_by_ui(
@@ -2495,7 +2495,7 @@ def test_init_camera_configs_options_json_fills_gaps_not_covered_by_ui(
     )
 
     kwargs = mock_create_analyzer.call_args.kwargs
-    assert kwargs["camera_descriptions"] == {
+    assert kwargs["settings"].camera_descriptions == {
         "Driveway": "UI description",
         "Backyard": "options.json backyard description",
     }
@@ -2527,7 +2527,7 @@ def test_init_camera_prompts_options_json_fills_gaps_not_covered_by_ui(
     )
 
     kwargs = mock_create_analyzer.call_args.kwargs
-    assert kwargs["camera_prompts"] == {
+    assert kwargs["settings"].camera_prompts == {
         "Driveway": "UI prompt",
         "Backyard": "options.json backyard prompt",
     }
@@ -2552,7 +2552,7 @@ def test_init_car_cameras_ui_checkboxes_take_priority_over_options(
         ai_car_cameras=["Front Door"],
     )
 
-    assert mock_create_analyzer.call_args.kwargs["car_cameras"] == ["Driveway"]
+    assert mock_create_analyzer.call_args.kwargs["settings"].car_cameras == ["Driveway"]
 
 
 def test_init_car_cameras_falls_back_to_options_when_ui_file_has_none_checked(
@@ -2566,7 +2566,9 @@ def test_init_car_cameras_falls_back_to_options_when_ui_file_has_none_checked(
         ai_car_cameras=["Front Door"],
     )
 
-    assert mock_create_analyzer.call_args.kwargs["car_cameras"] == ["Front Door"]
+    assert mock_create_analyzer.call_args.kwargs["settings"].car_cameras == [
+        "Front Door"
+    ]
 
 
 def test_init_corrupt_camera_configs_file_falls_back_to_options_json(
@@ -2598,7 +2600,7 @@ def test_init_corrupt_camera_configs_file_falls_back_to_options_json(
         mock_create_analyzer.return_value = MagicMock()
         BlinkClipDownloaderApp(config)
 
-    assert mock_create_analyzer.call_args.kwargs["camera_descriptions"] == {
+    assert mock_create_analyzer.call_args.kwargs["settings"].camera_descriptions == {
         "Driveway": "fallback description"
     }
     assert "Could not load" in caplog.text
@@ -2657,7 +2659,8 @@ def test_init_vehicle_settings_ui_file_overrides_options_json(
     )
 
     assert (
-        mock_create_analyzer.call_args.kwargs["car_description"] == "Silver Kia Forte"
+        mock_create_analyzer.call_args.kwargs["settings"].car_description
+        == "Silver Kia Forte"
     )
 
 
@@ -2675,7 +2678,7 @@ def test_init_vehicle_settings_falls_back_to_options_when_file_missing(
     )
 
     assert (
-        mock_create_analyzer.call_args.kwargs["car_description"]
+        mock_create_analyzer.call_args.kwargs["settings"].car_description
         == "options.json description"
     )
 
@@ -2728,7 +2731,7 @@ def test_init_finetune_state_ui_file_overrides_options_json(
     )
 
     assert (
-        mock_create_analyzer.call_args.kwargs["moondream_finetune_model"]
+        mock_create_analyzer.call_args.kwargs["credentials"].moondream_finetune_model
         == "moondream3-preview/abc123@50"
     )
 
@@ -2746,7 +2749,7 @@ def test_init_finetune_state_falls_back_to_options_when_file_missing(
     )
 
     assert (
-        mock_create_analyzer.call_args.kwargs["moondream_finetune_model"]
+        mock_create_analyzer.call_args.kwargs["credentials"].moondream_finetune_model
         == "options.json model"
     )
 
@@ -2786,7 +2789,7 @@ def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
         BlinkClipDownloaderApp(config)
 
     assert (
-        mock_create_analyzer.call_args.kwargs["car_description"]
+        mock_create_analyzer.call_args.kwargs["settings"].car_description
         == "options.json fallback description"
     )
     assert "Could not load" in caplog.text
