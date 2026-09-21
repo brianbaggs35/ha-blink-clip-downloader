@@ -192,9 +192,15 @@ class MediaServer(
     def _build_app(self) -> web.Application:
         """Create the aiohttp application and let each area register itself.
 
-        Order is the nav order, and it does not matter: no two registered
-        path patterns can match the same URL, which
-        ``tests/test_media_server_routes.py`` asserts so that stays true.
+        Order is the nav order, and it does not matter — but not because
+        the patterns are disjoint: ``/api/ai/feedback/stats`` and
+        ``/api/ai/feedback/{clip_id}`` both match that URL. aiohttp's
+        dispatcher indexes plain paths ahead of dynamic ones, so a concrete
+        path wins over a placeholder whichever was registered first.
+        ``tests/test_media_server_routes.py`` asserts every registered
+        pattern still resolves to its own handler, so if that ever stops
+        holding it fails here rather than as one endpoint quietly
+        answering for another.
 
         aiohttp's default client_max_size (1 MB) is comfortably exceeded by
         a single base64-encoded face-enrollment photo (see

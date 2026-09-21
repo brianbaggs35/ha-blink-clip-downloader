@@ -19,8 +19,15 @@ chooses between them. The provider modules depend on :mod:`.base` and on
 nothing else in the package, so a provider can be read, changed or added
 without reading the other five.
 
-Importers are unaffected: every name the old module exposed is re-exported
-here, so ``from .analyzer import ...`` keeps working unchanged.
+What this module re-exports is the package's public surface — the six
+analyzer classes, :class:`BaseAnalyzer`, :class:`AnalysisResult`,
+:class:`SecurityLayerSettings`, :func:`create_analyzer` — plus the
+model-catalog names the old module happened to pass through. That covers
+every import anything in this repo makes, which is why the split needed no
+caller changes. It is deliberately *not* everything the old module had at
+module scope: its private constants, the ``_build_*`` helpers and
+``_MoondreamDetectionMixin`` now belong to the submodule that owns them,
+and a test wanting one should import it from there.
 """
 
 from __future__ import annotations

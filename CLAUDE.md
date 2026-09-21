@@ -44,7 +44,7 @@ architecture.
     `_MIGRATIONS`, not just adding the column to `_SCHEMA`'s `CREATE TABLE
     IF NOT EXISTS` — that statement is a no-op for a table that already
     exists, so upgrading installs would never get the new column otherwise.
-    A package since 6.0.7 (it was one 3,545-line module): `ClipDatabase` is
+    A package since 6.0.6 (it was one 3,545-line module): `ClipDatabase` is
     still **one class with an identical public API**, assembled in
     `__init__.py` from one mixin per job — `clips.py` (the library and its
     archive lifecycle), `analysis.py` (verdicts and token spend),
@@ -64,7 +64,7 @@ architecture.
     table with a `camera` column — there are 12, and the count is worth
     re-deriving from `schema.py` rather than trusting, since a missed one
     is this repo's most-repeated bug.
-  - `analyzer/` — AI vision analysis, a package since 6.0.7 (it was a
+  - `analyzer/` — AI vision analysis, a package since 6.0.6 (it was a
     single 5,200-line module). `base.py` holds `BaseAnalyzer` —
     everything that is the same whichever provider is configured: frame
     extraction/down-selection, prompt assembly, the vision and security
@@ -139,7 +139,7 @@ architecture.
     and is allowed to answer "none of them", which is what stops a
     neighbour's car being treated as yours.
   - `vision/` — optional, off-by-default computer-vision enhancement
-    pipeline, one module per stage since 6.0.7 (it was one 2,490-line
+    pipeline, one module per stage since 6.0.6 (it was one 2,490-line
     module, already written as "Stage 1..6 + Orchestrator" banners, which
     is exactly where it was cut): `enhance.py` (OpenCV frame
     preprocessing), `detection.py` (YOLO detection + ByteTrack tracking),
@@ -167,7 +167,7 @@ architecture.
     app as static files (`support.py`'s `_STATIC_DIR`, `app_shell.py`'s
     `_handle_index`). See **Web UI** below — the frontend itself lives in
     `frontend/`, a sibling of `blink_downloader/`.
-    A package since 6.0.7 (it was one 3,707-line module, 139 methods on one
+    A package since 6.0.6 (it was one 3,707-line module, 139 methods on one
     class). `MediaServer` is still **one class with an identical public
     API**, composed in `__init__.py` from **one mixin per tab of the web
     UI** — so the module to open is the one named after the tab you are
@@ -567,7 +567,7 @@ removed in 5.0.0.
   faster), or leave state alone when the test never wrote any. The same
   applies to a mid-test reload: only what happens after the last navigation
   is counted, which is a fair price for proving persistence but should be a
-  deliberate choice. Two specs were written this way in 6.0.7 and
+  deliberate choice. Two specs were written this way in 6.0.6 and
   contributed zero branches until it was noticed.
   No enforced coverage threshold either — this is a visibility tool for
   "what does this suite actually exercise", not a merge gate.

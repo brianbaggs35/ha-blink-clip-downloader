@@ -133,12 +133,13 @@ what Home Assistant actually allows before any request is built.
   of `ollama_provider.py`, `moondream_provider.py`, `anthropic_provider.py`
   and `openai_provider.py` holds only what differs about talking to one API, and
   `factory.py` holds `create_analyzer()`. Nothing outside the package had to
-  change: `__init__.py` re-exports every name the module used to expose, and
-  the provider modules depend on `base.py` and on nothing else in the
-  package, so any one of them can now be read or changed without the other
-  five in the way. A pure move — every class, function and constant is
-  byte-identical to where it came from — verified by comparing the parsed
-  syntax tree of each definition against the original file.
+  change: `__init__.py` re-exports the package's public surface, which is
+  every name anything in this repo actually imports, and the provider
+  modules depend on `base.py` and on nothing else in the package, so any
+  one of them can now be read or changed without the other five in the way.
+  A pure move: all 182 definitions are unchanged in their executable code,
+  verified by comparing parsed syntax trees with docstrings stripped. Only
+  docstrings differ, where they named a file that no longer exists.
 - Two docstrings still pointed at `_time_of_day_segment`, which stopped
   existing under that name when `prompt_segments.py` was split out.
 - `database.py`, at 3,545 lines the second-largest module, is now a
@@ -150,8 +151,9 @@ what Home Assistant actually allows before any request is built.
   learning loops, the two background queues, per-camera state and the
   legacy SQLite import, over a `schema.py` holding the DDL and a `sql.py`
   holding the pure text and row helpers. A pure move, verified the same way
-  as the analyzer: all 136 definitions are byte-identical to where they
-  came from.
+  as the analyzer: all 113 definitions unchanged in their executable code,
+  and the DDL itself compared statement by statement — 32 statements,
+  identical — so an existing database upgrades exactly as it did before.
 - `media_server.py`, at 3,707 lines and 139 methods on a single class, is
   now a `media_server/` package with **one module per tab of the web UI** —
   library, status, live view, security feed, AI, AI usage, camera configs,
@@ -178,9 +180,10 @@ what Home Assistant actually allows before any request is built.
   importing the name. Importing the name would have copied the reference
   into six stage modules — which hides that there is only *one* native-
   import lock and *one* concurrency semaphore, and would have forced a test
-  simulating "no torch" to patch a different target for every stage. Every
-  other definition is byte-identical to where it came from, verified by
-  comparing parsed syntax trees with that qualification normalised away.
+  simulating "no torch" to patch a different target for every stage. All 74
+  other definitions are unchanged in their executable code, verified by
+  comparing parsed syntax trees with that qualification normalised away and
+  docstrings stripped.
 - Every analyzer provider module is named `<provider>_provider.py`, and
   `tests/test_module_names.py` now enforces that no module is named after a
   package the codebase imports. Pyright resolves a bare `import <x>` to a
