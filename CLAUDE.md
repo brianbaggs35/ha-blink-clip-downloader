@@ -556,6 +556,19 @@ removed in 5.0.0.
   flag move the combined backend+frontend score for reasons unrelated to an
   actual regression in either. The `e2e` flag instead gets its own
   `informational: true` status check — visible on the PR, never gates it.
+  **A navigation at the end of a test throws that test's coverage away.**
+  The fixture reads `window.__coverage__` once, after the test body and its
+  hooks have run, and a `page.goto()`/`page.reload()` wipes the counters the
+  page had accumulated. A trailing navigation in an `afterEach` — cleaning
+  up by driving the UI back to a known state — therefore discards
+  *everything* that test exercised, while the test still passes, so the
+  symptom is a spec whose target file's coverage does not move at all. Clean
+  up over HTTP with `page.request` instead (it needs no page, and is
+  faster), or leave state alone when the test never wrote any. The same
+  applies to a mid-test reload: only what happens after the last navigation
+  is counted, which is a fair price for proving persistence but should be a
+  deliberate choice. Two specs were written this way in 6.0.7 and
+  contributed zero branches until it was noticed.
   No enforced coverage threshold either — this is a visibility tool for
   "what does this suite actually exercise", not a merge gate.
 - Responsive/mobile conventions carried over from the pre-Vue UI still
