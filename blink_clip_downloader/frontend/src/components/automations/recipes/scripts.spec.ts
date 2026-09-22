@@ -144,6 +144,77 @@ describe('snapshot script', () => {
   })
 })
 
+describe('stop casting', () => {
+  it('clears every display listed, and only turns them off when asked', () => {
+    const on = load(build('script-stop-cast', { displays: 'media_player.a, media_player.b' })) as {
+      blink_stop_casting: { sequence: { action: string; target: { entity_id: string[] } }[] }
+    }
+    expect(on.blink_stop_casting.sequence.map((step) => step.action)).toEqual([
+      'media_player.media_stop',
+      'media_player.turn_off',
+    ])
+    for (const step of on.blink_stop_casting.sequence) {
+      expect(step.target.entity_id).toEqual(['media_player.a', 'media_player.b'])
+    }
+
+    const off = load(build('script-stop-cast', { turn_off: false })) as {
+      blink_stop_casting: { sequence: { action: string }[] }
+    }
+    // Stopping without turning off is the whole point of the toggle: a
+    // Nest Hub goes back to its own screen rather than going dark.
+    expect(off.blink_stop_casting.sequence.map((step) => step.action)).toEqual(['media_player.media_stop'])
+  })
+})
+
+describe('pause alerts for a while', () => {
+  it('turns the helper back off after the delay, and leaves it on at zero', () => {
+    const timed = load(build('script-pause-alerts-for', { minutes: 45 })) as {
+      blink_pause_alerts_for: { mode: string; sequence: Record<string, unknown>[] }
+    }
+    expect(timed.blink_pause_alerts_for.sequence[1]).toEqual({ delay: '00:45:00' })
+    expect(timed.blink_pause_alerts_for.sequence[2]).toMatchObject({ action: 'input_boolean.turn_off' })
+    // restart, so pressing it again extends the quiet rather than letting
+    // an earlier run un-pause partway through the new one.
+    expect(timed.blink_pause_alerts_for.mode).toBe('restart')
+
+    const indefinite = load(build('script-pause-alerts-for', { minutes: 0 })) as {
+      blink_pause_alerts_for: { sequence: Record<string, unknown>[] }
+    }
+    expect(indefinite.blink_pause_alerts_for.sequence).toHaveLength(1)
+  })
+
+  it('targets the helper entity given rather than a baked-in one', () => {
+    expect(build('script-pause-alerts-for', { pause_entity: 'input_boolean.quiet' })).toContain(
+      'entity_id: "input_boolean.quiet"',
+    )
+  })
+})
+
+describe('night watch scene', () => {
+  it('sets every light to the chosen brightness and colour temperature', () => {
+    const parsed = load(
+      build('scene-night-watch', { lights: 'light.a, light.b', brightness: 20, warmth: 'daylight' }),
+    ) as [{ entities: Record<string, { brightness: number; color_temp_kelvin: number }> }]
+    expect(Object.keys(parsed[0].entities)).toEqual(['light.a', 'light.b'])
+    expect(parsed[0].entities['light.a']).toMatchObject({ brightness: 51, color_temp_kelvin: 5500 })
+  })
+
+  it('leaves the colour alone when asked, rather than picking one', () => {
+    expect(build('scene-night-watch', { warmth: 'none' })).not.toContain('color_temp_kelvin')
+  })
+})
+
+describe('quiet hours helper', () => {
+  it('seeds both helpers with the times chosen, normalized to HH:MM:SS', () => {
+    const parsed = load(build('helper-quiet-hours', { start: '23:15', end: '6:30' })) as {
+      input_datetime: Record<string, { initial: string; has_date: boolean }>
+    }
+    expect(parsed.input_datetime.blink_quiet_start.initial).toBe('23:15:00')
+    expect(parsed.input_datetime.blink_quiet_end.initial).toBe('06:30:00')
+    expect(parsed.input_datetime.blink_quiet_start.has_date).toBe(false)
+  })
+})
+
 describe('what can be created directly in Home Assistant', () => {
   it('only offers it for recipes the config API can actually create', () => {
     const creatable = SCRIPT_RECIPES.filter((r) => r.create).map((r) => r.id)
@@ -153,10 +224,13 @@ describe('what can be created directly in Home Assistant', () => {
     // of those, so they stay copy-only.
     expect(creatable).toEqual([
       'script-cast-feed',
+      'script-stop-cast',
       'script-storage-report',
       'script-snapshot-all',
       'scene-security-alert',
       'scene-all-clear',
+      'scene-night-watch',
+      'script-pause-alerts-for',
     ])
   })
 
