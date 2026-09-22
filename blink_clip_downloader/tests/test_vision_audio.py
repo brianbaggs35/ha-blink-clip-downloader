@@ -39,6 +39,7 @@ from blink_downloader.vision.audio import (
     AudioTagger,
     AudioTags,
     _loudest_window,
+    _peak_level,
     _rms,
     build_audio_hint,
     is_relevant_label,
@@ -60,7 +61,9 @@ def _make_clip(path: Path, *, audio: str, seconds: int = 2) -> Path:
 
     *audio* is "tone" (plainly audible), "silent" (digital zero),
     "noisefloor" (a muted microphone's inaudible hiss), "quiet-tail"
-    (silence except for a modest sound in the final two seconds) or
+    (silence except for a modest sound in the final two seconds),
+    "brief-sound" (a muted camera's noise floor with half a second of real
+    sound in it, which is what an actual security clip looks like) or
     "none" (no audio track at all).
     """
     args = [
@@ -72,13 +75,34 @@ def _make_clip(path: Path, *, audio: str, seconds: int = 2) -> Path:
         "silent": ["anullsrc=r=16000:cl=mono"],
         "noisefloor": [f"anoisesrc=color=white:amplitude=0.001:duration={seconds}"],
         "quiet-tail": [f"sine=frequency=880:duration={seconds}"],
+        "brief-sound": [
+            f"anoisesrc=color=pink:amplitude=0.0012:duration={seconds}",
+            f"sine=frequency=800:duration={seconds}",
+        ],
     }
     if audio in sources:
-        args += ["-f", "lavfi", "-i", *sources[audio]]
+        for source in sources[audio]:
+            args += ["-f", "lavfi", "-i", source]
         if audio == "quiet-tail":
             quiet = f"volume=enable='lt(t,{seconds - 2})':volume=0"
             loud = f"volume=enable='gte(t,{seconds - 2})':volume=0.05"
             args += ["-filter:a", f"{quiet},{loud}"]
+        if audio == "brief-sound":
+            # Half a second of sound partway through an otherwise
+            # inaudible track: loud enough to hear and classify, far too
+            # short to lift the ten-second average that used to gate this.
+            burst = "volume=0.02,atrim=0:0.5,adelay=800|800"
+            args += [
+                "-filter_complex",
+                (
+                    f"[2:a]{burst},apad=whole_dur={seconds}[b];"
+                    f"[1:a][b]amix=inputs=2:duration=first:normalize=0[a]"
+                ),
+                "-map",
+                "[a]",
+                "-map",
+                "0:v",
+            ]
         args += ["-c:a", "aac"]
     args += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest", str(path)]
     subprocess.run(args, check=True, capture_output=True)
@@ -130,6 +154,48 @@ def test_relevance_matching_respects_word_boundaries() -> None:
 
 def test_rms_of_empty_audio_is_zero() -> None:
     assert _rms(np.array([], dtype=np.float32)) == 0.0
+
+
+def test_peak_level_of_empty_audio_is_zero() -> None:
+    assert _peak_level(np.array([], dtype=np.float32)) == 0.0
+
+
+def test_peak_level_of_audio_shorter_than_one_frame_measures_all_of_it() -> None:
+    """Under a tenth of a second there is nothing to take a peak over."""
+    short = np.full(100, 0.5, dtype=np.float32)
+    assert _peak_level(short) == pytest.approx(_rms(short))
+
+
+def test_peak_level_finds_a_brief_sound_the_average_would_bury() -> None:
+    """The bug this replaced: a real sound discarded as silence.
+
+    Half a second of sound in a ten-second window is a fortieth of it, so
+    the window's average sits far closer to the quiet either side than to
+    the sound itself — which is exactly the shape of every clip a camera
+    records, and exactly what the old gate measured.
+    """
+    # 3e-3 against a 1e-4 floor: audible, ~30x the room tone around it, and
+    # still quiet enough that averaging it over ten seconds hides it.
+    samples = np.full(_SAMPLE_RATE * 10, 1e-4, dtype=np.float32)
+    samples[_SAMPLE_RATE * 2 : _SAMPLE_RATE * 2 + _SAMPLE_RATE // 2] = 3e-3
+
+    assert _rms(samples) < _SILENCE_RMS
+    assert _peak_level(samples) > _SILENCE_RMS
+
+
+def test_peak_level_hears_a_sound_the_clip_ends_on() -> None:
+    """A clip triggered by a sound often ends on it, and the frames do not
+    divide evenly — so the remainder has to be measured too."""
+    samples = np.full(_SAMPLE_RATE * 10 + 1234, 1e-5, dtype=np.float32)
+    samples[-(_SAMPLE_RATE // 20) :] = 0.05
+    assert _peak_level(samples) > _SILENCE_RMS
+
+
+def test_peak_level_still_reads_a_flat_noise_floor_as_silence() -> None:
+    """The case the gate exists for: a muted camera's track is flat, so
+    its peak is barely above its average and both stay inaudible."""
+    floor = np.full(_SAMPLE_RATE * 10, 2e-4, dtype=np.float32)
+    assert _peak_level(floor) < _SILENCE_RMS
 
 
 def test_rms_measures_signal_level() -> None:
@@ -476,6 +542,72 @@ async def test_a_quiet_event_in_a_long_clip_is_still_heard(
     tags = await tagger.tag(str(clip))
     assert tags is not None
     assert tags.labels == [("Glass", 0.8)]
+
+
+@needs_ffmpeg
+async def test_a_brief_real_sound_is_not_mistaken_for_a_silent_track(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real clip whose sound the window average used to swallow.
+
+    Half a second of sound well above the camera's own noise floor, in an
+    otherwise inaudible twenty-second track — which is what a camera
+    records when something brief happens. Gating on the window's average
+    read this as a muted microphone and told the user to go check a
+    setting that was never wrong.
+    """
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
+    module = _fake_transformers([{"label": "Dog", "score": 0.7}])
+    monkeypatch.setitem(sys.modules, "transformers", module)
+
+    clip = _make_clip(tmp_path / "brief.mp4", audio="brief-sound", seconds=20)
+    tagger = AudioTagger()
+    assert await tagger.ensure_ready() is True
+    samples = await tagger.extract_audio(str(clip))
+    assert samples is not None
+    window = _loudest_window(samples)
+    # The statistic that used to gate this still reads it as silence...
+    assert _rms(window) < _SILENCE_RMS
+    # ...while the loudest moment in it is plainly audible.
+    assert _peak_level(window) > _SILENCE_RMS
+
+    tags = await tagger.tag(str(clip))
+    assert tags is not None
+    assert tags.labels == [("Dog", 0.7)]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("seconds", [1, 2, 3, 5, 9, 20])
+async def test_a_sound_is_heard_whatever_the_clip_length(
+    seconds: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plenty of Blink clips are well under the classifier's own window.
+
+    The same sound has to be heard in a one-second clip and in a
+    twenty-second one. It is not a given: the average level of a clip
+    carrying one brief sound falls as the clip gets longer -- the same
+    sound measured -59 dBFS across one second and -67 dBFS across nine --
+    so a gate reading the average heard short clips and went deaf to long
+    ones. Reading the loudest moment instead is what makes the answer
+    depend on the sound rather than on the clip's length.
+    """
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
+    module = _fake_transformers([{"label": "Dog", "score": 0.7}])
+    monkeypatch.setitem(sys.modules, "transformers", module)
+
+    clip = _make_clip(
+        tmp_path / f"len{seconds}.mp4", audio="brief-sound", seconds=seconds
+    )
+    tagger = AudioTagger()
+    assert await tagger.ensure_ready() is True
+
+    tags = await tagger.tag(str(clip))
+    assert tags is not None, f"a {seconds}s clip's sound went unheard"
+    assert tags.labels == [("Dog", 0.7)]
 
 
 @needs_ffmpeg
