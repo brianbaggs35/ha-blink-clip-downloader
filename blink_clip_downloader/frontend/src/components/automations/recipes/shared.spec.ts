@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cameraCondition,
+  castViewActions,
   conditionsBlock,
   eventNumberCondition,
   forDuration,
@@ -95,5 +96,30 @@ describe('forDuration', () => {
     expect(forDuration(0)).toBe('')
     expect(forDuration(15)).toBe('    for: "00:15:00"')
     expect(forDuration(15, 6)).toBe('      for: "00:15:00"')
+  })
+})
+
+describe('castViewActions', () => {
+  it('indents for an automation by default and for a script on request', () => {
+    const auto = castViewActions({ player: 'media_player.hub', dashboardPath: 'blink', viewPath: 'feed', stopAfter: 0 })
+    expect(auto.split('\n')[0]).toBe('  - action: cast.show_lovelace_view')
+
+    const script = castViewActions({
+      player: 'media_player.hub',
+      dashboardPath: 'blink',
+      viewPath: 'feed',
+      stopAfter: 0,
+      indent: 4,
+    })
+    expect(script.split('\n')[0]).toBe('    - action: cast.show_lovelace_view')
+  })
+
+  it('adds the teardown only when a stop time is given', () => {
+    const base = { player: 'media_player.hub', dashboardPath: 'blink', viewPath: 'feed' }
+    expect(castViewActions({ ...base, stopAfter: 0 })).not.toContain('media_player.turn_off')
+    const timed = castViewActions({ ...base, stopAfter: 7 })
+    expect(timed).toContain('- delay: "00:07:00"')
+    // The same display it cast to, not a second field that could disagree.
+    expect(timed.match(/media_player\.hub/g)).toHaveLength(2)
   })
 })

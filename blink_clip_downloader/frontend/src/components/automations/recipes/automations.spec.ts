@@ -57,6 +57,95 @@ describe('every automation recipe', () => {
   })
 })
 
+describe('cast when a clip arrives', () => {
+  it('casts the view given and takes the screen back after the delay', () => {
+    const parsed = load(build('cast-on-new-clip', { stop_after: 4, view_path: 'cams' })) as {
+      triggers: { event_type?: string }[]
+      actions: Record<string, unknown>[]
+    }
+    expect(parsed.triggers[0]).toMatchObject({ event_type: 'blink_clip_downloaded' })
+    expect(parsed.actions[0]).toMatchObject({
+      action: 'cast.show_lovelace_view',
+      data: { view_path: 'cams' },
+    })
+    expect(parsed.actions[1]).toEqual({ delay: '00:04:00' })
+    expect(parsed.actions[2]).toMatchObject({ action: 'media_player.turn_off' })
+  })
+
+  it('leaves the feed up when no stop time is set', () => {
+    const parsed = load(build('cast-on-new-clip', { stop_after: 0 })) as { actions: unknown[] }
+    expect(parsed.actions).toHaveLength(1)
+  })
+
+  it('defaults to the two sources that mean something is happening now', () => {
+    // Every source would put the screen up for a Sync Module backfill, which
+    // is not something anyone wants to look at.
+    expect(build('cast-on-new-clip')).toContain('"pir", "button_press"')
+  })
+
+  it('drops the time window entirely when both ends are cleared', () => {
+    expect(build('cast-on-new-clip', { after: '', before: '' })).not.toContain('condition: time')
+  })
+})
+
+describe('alert only when nobody is home', () => {
+  it('counts an empty zone numerically and a person by state', () => {
+    // A zone's state is how many people are in it; a person's is a string.
+    const zone = load(build('suspicious-when-away')) as { conditions: Record<string, unknown>[] }
+    expect(zone.conditions).toContainEqual({
+      condition: 'numeric_state',
+      entity_id: 'zone.home',
+      below: 1,
+    })
+
+    const person = load(build('suspicious-when-away', { presence_entity: 'person.alex' })) as {
+      conditions: Record<string, unknown>[]
+    }
+    expect(person.conditions).toContainEqual({
+      condition: 'state',
+      entity_id: 'person.alex',
+      state: 'not_home',
+    })
+  })
+
+  it('still requires the suspicious flag, so presence only narrows it', () => {
+    const parsed = load(build('suspicious-when-away')) as {
+      conditions: { value_template?: string }[]
+    }
+    expect(parsed.conditions[0].value_template).toContain('is_suspicious')
+  })
+})
+
+describe('cloud backup stopped working', () => {
+  it('watches the connected attribute, and the pause only when asked', () => {
+    const both = load(build('cloud-backup-disconnected')) as {
+      triggers: { attribute?: string; to?: unknown }[]
+    }
+    expect(both.triggers).toHaveLength(2)
+    expect(both.triggers[0]).toMatchObject({ attribute: 'connected', to: false })
+    expect(both.triggers[1]).toMatchObject({ attribute: 'uploads_paused', to: true })
+
+    const one = load(build('cloud-backup-disconnected', { watch_paused: false })) as {
+      triggers: unknown[]
+    }
+    expect(one.triggers).toHaveLength(1)
+  })
+
+  it('does nothing on an install that never connected a cloud account', () => {
+    // `connected` is false forever there, so without this the first Home
+    // Assistant restart would notify every such user.
+    const parsed = load(build('cloud-backup-disconnected')) as {
+      conditions: { value_template?: string }[]
+    }
+    expect(parsed.conditions[0].value_template).toContain("'configured'")
+  })
+
+  it('holds off for the chosen settling time, or not at all', () => {
+    expect(build('cloud-backup-disconnected', { sustained: 25 })).toContain('for: "00:25:00"')
+    expect(build('cloud-backup-disconnected', { sustained: 0 })).not.toContain('for:')
+  })
+})
+
 describe('cloud storage threshold', () => {
   it('triggers on the percentage the user chose, not a baked-in one', () => {
     const parsed = load(build('cloud-storage-threshold', { threshold: 42 })) as {

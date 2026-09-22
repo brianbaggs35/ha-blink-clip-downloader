@@ -6,7 +6,7 @@
  * different, so every recipe says where in its `target`.
  */
 
-import { ADDON_URL_DEFAULT, CLOUD_STORAGE_SENSOR, LOCAL_STORAGE_SENSOR, STATUS_SENSOR } from './shared'
+import { ADDON_URL_DEFAULT, CLOUD_STORAGE_SENSOR, LOCAL_STORAGE_SENSOR, STATUS_SENSOR, castViewActions } from './shared'
 import {
   type Recipe,
   type RecipeValues,
@@ -18,6 +18,7 @@ import {
   numberValue,
   slugify,
   stringValue,
+  timeOfDay,
   trimTrailingChar,
   yamlString,
   yamlTemplate,
@@ -122,15 +123,13 @@ const castFeedScript: Recipe = {
       '  icon: mdi:cast',
       '  mode: restart',
       '  sequence:',
-      '    - action: cast.show_lovelace_view',
-      '      data:',
-      `        entity_id: ${yamlString(player)}`,
-      `        dashboard_path: ${yamlString(stringValue(v, 'dashboard_path', 'blink'))}`,
-      `        view_path: ${yamlString(stringValue(v, 'view_path', 'security-feed'))}`,
-      stopAfter > 0 ? `    - delay: ${yamlString(duration(stopAfter))}` : '',
-      stopAfter > 0 ? '    - action: media_player.turn_off' : '',
-      stopAfter > 0 ? '      target:' : '',
-      stopAfter > 0 ? `        entity_id: ${yamlString(player)}` : '',
+      castViewActions({
+        player,
+        dashboardPath: stringValue(v, 'dashboard_path', 'blink'),
+        viewPath: stringValue(v, 'view_path', 'security-feed'),
+        stopAfter,
+        indent: 4,
+      }),
     ])
   },
 }
@@ -592,15 +591,243 @@ const allClearScene: Recipe = {
   },
 }
 
+const stopCastScript: Recipe = {
+  id: 'script-stop-cast',
+  create: { kind: 'script', objectId: 'blink_stop_casting' },
+  name: 'Take the display back',
+  group: 'Scripts',
+  icon: '🛑',
+  description:
+    'The other half of casting: clears the camera view off a display on demand, from a dashboard button or a voice assistant, instead of waiting out whatever timer put it there.',
+  target: 'scripts.yaml',
+  filename: 'blink-stop-casting-script.yaml',
+  fields: [
+    {
+      key: 'displays',
+      label: 'Displays',
+      type: 'text',
+      default: 'media_player.nest_hub',
+      help: 'Comma separated media_player entity ids — all of them are cleared together.',
+    },
+    {
+      key: 'turn_off',
+      label: 'Turn the display off as well',
+      type: 'toggle',
+      default: true,
+      help: 'Off just stops the cast, which leaves a Nest Hub showing its own screen rather than going dark.',
+    },
+  ],
+  build: (v: RecipeValues) => {
+    const displays = entityList(v, 'displays', 'media_player.nest_hub')
+    const target = displays.map((entity) => `          - ${yamlString(entity)}`)
+    return joinLines([
+      '# scripts.yaml',
+      'blink_stop_casting:',
+      '  alias: Blink – stop casting the cameras',
+      '  icon: mdi:cast-off',
+      '  mode: single',
+      '  sequence:',
+      // media_stop first either way: turning a display off without ending
+      // the session can leave it resuming the cast when it wakes.
+      '    - action: media_player.media_stop',
+      '      target:',
+      '        entity_id:',
+      ...target,
+      boolValue(v, 'turn_off') ? '    - action: media_player.turn_off' : '',
+      boolValue(v, 'turn_off') ? '      target:' : '',
+      boolValue(v, 'turn_off') ? '        entity_id:' : '',
+      ...(boolValue(v, 'turn_off') ? target : []),
+    ])
+  },
+}
+
+const pauseAlertsScript: Recipe = {
+  id: 'script-pause-alerts-for',
+  create: { kind: 'script', objectId: 'blink_pause_alerts_for' },
+  name: 'Pause Blink alerts for a while',
+  group: 'Scripts',
+  icon: '🤫',
+  description:
+    'Flips the pause helper on, waits, and flips it back — so "quiet for the next half hour while I unload the car" is one button instead of a toggle you have to remember to undo.',
+  target: 'scripts.yaml',
+  filename: 'blink-pause-alerts-script.yaml',
+  fields: [
+    {
+      key: 'pause_entity',
+      label: 'Pause helper',
+      type: 'text',
+      default: 'input_boolean.blink_alerts_paused',
+      help: 'The input_boolean from the Helpers section below, and the one the automations check.',
+    },
+    {
+      key: 'minutes',
+      label: 'Stay paused for',
+      type: 'number',
+      default: 30,
+      min: 0,
+      max: 1440,
+      suffix: 'min',
+      help: '0 leaves it paused until you turn it back on yourself — the setting worth avoiding.',
+    },
+  ],
+  build: (v: RecipeValues) => {
+    const entity = stringValue(v, 'pause_entity', 'input_boolean.blink_alerts_paused')
+    const minutes = numberValue(v, 'minutes', 30)
+    return joinLines([
+      '# scripts.yaml',
+      'blink_pause_alerts_for:',
+      '  alias: Blink – pause alerts for a while',
+      '  icon: mdi:bell-sleep',
+      // restart: running it again while paused restarts the clock rather
+      // than leaving an earlier copy to un-pause early.
+      '  mode: restart',
+      '  sequence:',
+      '    - action: input_boolean.turn_on',
+      '      target:',
+      `        entity_id: ${yamlString(entity)}`,
+      minutes > 0 ? `    - delay: ${yamlString(duration(minutes))}` : '',
+      minutes > 0 ? '    - action: input_boolean.turn_off' : '',
+      minutes > 0 ? '      target:' : '',
+      minutes > 0 ? `        entity_id: ${yamlString(entity)}` : '',
+    ])
+  },
+}
+
+const nightWatchScene: Recipe = {
+  id: 'scene-night-watch',
+  create: { kind: 'scene', objectId: 'blink_night_watch' },
+  name: 'Overnight camera lighting scene',
+  group: 'Scenes',
+  icon: '🌘',
+  description:
+    'Enough light for the cameras to see by overnight, without lighting the house up like the alert scene does. Call it at sunset and let the all-clear scene put it back in the morning.',
+  target: 'scenes.yaml',
+  filename: 'blink-night-watch-scene.yaml',
+  fields: [
+    {
+      key: 'lights',
+      label: 'Lights',
+      type: 'text',
+      default: 'light.porch, light.driveway',
+      help: 'Comma separated light entity ids — the ones your cameras actually point at.',
+    },
+    {
+      key: 'brightness',
+      label: 'Brightness',
+      type: 'number',
+      default: 25,
+      min: 1,
+      max: 100,
+      suffix: '%',
+      help: 'Low on purpose: a camera needs far less light than a person reading does.',
+    },
+    {
+      key: 'warmth',
+      label: 'Colour temperature',
+      type: 'select',
+      default: 'warm',
+      options: [
+        { label: 'Warm (2700K) — least glare from a window', value: 'warm' },
+        { label: 'Neutral (4000K)', value: 'neutral' },
+        { label: 'Daylight (5500K) — truest colour on camera', value: 'daylight' },
+        { label: 'Leave the colour alone', value: 'none' },
+      ],
+    },
+  ],
+  build: (v: RecipeValues) => {
+    const lights = entityList(v, 'lights', 'light.porch')
+    const brightness = Math.round((numberValue(v, 'brightness', 25) / 100) * 255)
+    const kelvin: Record<string, number> = { warm: 2700, neutral: 4000, daylight: 5500 }
+    const temp = kelvin[stringValue(v, 'warmth', 'warm')]
+    return joinLines([
+      '# scenes.yaml',
+      '- id: blink_night_watch',
+      '  name: Blink night watch',
+      '  icon: mdi:weather-night',
+      '  entities:',
+      ...lights.flatMap((entity) =>
+        [
+          `    ${yamlString(entity)}:`,
+          '      state: "on"',
+          `      brightness: ${brightness}`,
+          temp ? `      color_temp_kelvin: ${temp}` : '',
+        ].filter(Boolean),
+      ),
+      '\n# Turn it on at sunset from an automation, and call',
+      '# scene.blink_all_clear in the morning to undo it:',
+      '#   - action: scene.turn_on',
+      '#     target:',
+      '#       entity_id: scene.blink_night_watch',
+    ])
+  },
+}
+
+const quietHoursHelper: Recipe = {
+  id: 'helper-quiet-hours',
+  name: 'Quiet hours you can change from a dashboard',
+  group: 'Helpers',
+  icon: '🕰️',
+  description:
+    'Two time helpers, so the hours your Blink alerts stay quiet live in one place you can edit from a dashboard instead of being typed into every automation separately.',
+  target: 'configuration.yaml',
+  filename: 'blink-quiet-hours-helper.yaml',
+  fields: [
+    {
+      key: 'start',
+      label: 'Quiet from',
+      type: 'time',
+      default: '22:00',
+    },
+    {
+      key: 'end',
+      label: 'Quiet until',
+      type: 'time',
+      default: '07:00',
+    },
+  ],
+  build: (v: RecipeValues) =>
+    joinLines([
+      '# configuration.yaml',
+      'input_datetime:',
+      '  blink_quiet_start:',
+      '    name: Blink quiet hours start',
+      '    icon: mdi:sleep',
+      '    has_date: false',
+      '    has_time: true',
+      `    initial: ${yamlString(timeOfDay(stringValue(v, 'start', '22:00'), '22:00:00'))}`,
+      '  blink_quiet_end:',
+      '    name: Blink quiet hours end',
+      '    icon: mdi:sleep-off',
+      '    has_date: false',
+      '    has_time: true',
+      `    initial: ${yamlString(timeOfDay(stringValue(v, 'end', '07:00'), '07:00:00'))}`,
+      // A plain time condition cannot read a helper, so the condition to
+      // paste is a template one. It handles the window crossing midnight,
+      // which is the case quiet hours are almost always in.
+      '\n# Add this condition to any generated automation to respect it. The',
+      '# two branches are what make a window that crosses midnight work:',
+      '#   - condition: template',
+      '#     value_template: >-',
+      "#       {% set now_t = now().strftime('%H:%M') %}",
+      "#       {% set a = states('input_datetime.blink_quiet_start')[:5] %}",
+      "#       {% set b = states('input_datetime.blink_quiet_end')[:5] %}",
+      '#       {{ not (now_t >= a or now_t < b) if a > b else not (a <= now_t < b) }}',
+    ]),
+}
+
 export const SCRIPT_RECIPES: Recipe[] = [
   syncNow,
   armSyncModule,
   archiveNow,
   castFeedScript,
+  stopCastScript,
   storageReport,
   snapshotAll,
   securityScene,
   allClearScene,
+  nightWatchScene,
+  pauseAlertsScript,
   pauseHelper,
+  quietHoursHelper,
   templateSensors,
 ]

@@ -89,6 +89,49 @@ export function notifyAction(
   return lines.join('\n')
 }
 
+interface CastOptions {
+  /** The Chromecast-based display to throw the view at. */
+  player: string
+  /** The dashboard's own URL segment, and the view's within it — both from
+   * the Dashboards tab, which generates the view these point at. */
+  dashboardPath: string
+  viewPath: string
+  /** Minutes to leave it up before turning the display off. 0 leaves it. */
+  stopAfter: number
+  /** Column the list items start at: 2 inside an automation's `actions:`,
+   * 4 inside a script's `sequence:`. */
+  indent?: number
+}
+
+/** Cast a Lovelace view to a display, and optionally put the display back
+ * to sleep afterwards.
+ *
+ * The same four lines plus the same timed teardown are wanted by an
+ * automation, by a script, and by every new recipe that shows the cameras
+ * on a screen — the only thing that differs between them is how far the
+ * block is indented.
+ */
+export function castViewActions(options: CastOptions): string {
+  const pad = ' '.repeat(options.indent ?? 2)
+  const player = yamlString(options.player)
+  const lines = [
+    `${pad}- action: cast.show_lovelace_view`,
+    `${pad}  data:`,
+    `${pad}    entity_id: ${player}`,
+    `${pad}    dashboard_path: ${yamlString(options.dashboardPath)}`,
+    `${pad}    view_path: ${yamlString(options.viewPath)}`,
+  ]
+  if (options.stopAfter > 0) {
+    lines.push(
+      `${pad}- delay: ${yamlString(duration(options.stopAfter))}`,
+      `${pad}- action: media_player.turn_off`,
+      `${pad}  target:`,
+      `${pad}    entity_id: ${player}`,
+    )
+  }
+  return lines.join('\n')
+}
+
 /** Restrict an event-triggered automation to specific cameras. Empty means
  * every camera — the same "empty is all" convention the add-on's own camera
  * options use. */
