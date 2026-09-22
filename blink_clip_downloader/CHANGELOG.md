@@ -23,7 +23,7 @@ template sensors and the Generic Camera platform live in
 `configuration.yaml`. Those recipes now say so plainly and tell you where
 the YAML goes.
 
-### Nine more recipes, including ones only this add-on can offer
+### Eight more recipes, including ones only this add-on can offer
 
 Several of them drive the add-on's own API, which is something no generic
 blueprint can do:

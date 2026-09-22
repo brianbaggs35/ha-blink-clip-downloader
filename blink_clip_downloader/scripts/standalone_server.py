@@ -124,10 +124,12 @@ def _force_face_recognition_available() -> None:
     which vision.is_face_recognition_available() genuinely does here:
     facenet_pytorch is part of the optional CV-pipeline extra (see
     pyproject.toml), not this lightweight test environment. Patched to
-    always return True (media_server/ imported the name directly, via
-    `from .vision import ... is_face_recognition_available`, so it must be
-    patched on the *media_server* module, not vision — same reasoning as
-    _redirect_data_files patching MediaServer's own class attributes
+    always return True (media_server/faces.py imported the name directly,
+    via `from ..vision import is_face_recognition_available`, so it must be
+    patched on that *route module* — not on vision, and not on the
+    media_server package facade, since rebinding a name there does not
+    change what an already-imported route module looks up — same reasoning
+    as _redirect_data_files patching MediaServer's own class attributes
     above) so the tab and its CRUD (list/rename/approve/remove the
     enrollments seeded below) are e2e-reachable. The actual embedding step
     (FaceEmbedder.embed(), called only from the enroll endpoint) still
