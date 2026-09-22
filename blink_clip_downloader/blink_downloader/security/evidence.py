@@ -100,6 +100,52 @@ def _scale(value: float, weak: float, strong: float) -> float:
     return max(0.0, min(1.0, (value - weak) / (strong - weak)))
 
 
+def _subject_factors(
+    subjects: list[ObjectTrack], frame_interval: float
+) -> tuple[dict[str, float], list[str]]:
+    """Score the factors that depend on the subjects actually in the clip.
+
+    Returns the sub-scores plus the plain-English notes explaining any weak
+    ones. A clip with no subject in it contributes no factors at all rather
+    than zeroes, so the remaining weights renormalize — averaging in a zero
+    would score an empty clip as bad evidence rather than as evidence about
+    nothing.
+    """
+    if not subjects:
+        return {}, ["no person or animal was detected in the analyzed frames"]
+
+    factors: dict[str, float] = {}
+    notes: list[str] = []
+
+    peak_height = max(t.peak_height_fraction for t in subjects)
+    factors["subject_size"] = _scale(
+        peak_height, _SUBJECT_HEIGHT_WEAK, _SUBJECT_HEIGHT_STRONG
+    )
+    if factors["subject_size"] < 0.5:
+        notes.append(
+            "the largest subject spanned only "
+            f"{peak_height * 100:.0f}% of the frame height"
+        )
+
+    factors["detector_confidence"] = sum(t.mean_confidence for t in subjects) / len(
+        subjects
+    )
+
+    continuities = [
+        t.continuity(frame_interval) * (1.0 if t.tracked else _UNTRACKED_PENALTY)
+        for t in subjects
+    ]
+    factors["tracking_continuity"] = sum(continuities) / len(continuities)
+    if any(not t.tracked for t in subjects):
+        notes.append(
+            "object tracking was unavailable, so subjects could not be told apart"
+        )
+    elif factors["tracking_continuity"] < 0.7:
+        notes.append("subjects were repeatedly lost and reacquired between frames")
+
+    return factors, notes
+
+
 def assess_evidence(
     frames_analyzed: int,
     target_frames: int,
@@ -152,35 +198,11 @@ def assess_evidence(
     if applicable > 0:
         factors["stage_coverage"] = max(0.0, 1.0 - len(unavailable) / applicable)
 
-    subjects = subject_tracks(tracks)
-    if subjects:
-        peak_height = max(t.peak_height_fraction for t in subjects)
-        factors["subject_size"] = _scale(
-            peak_height, _SUBJECT_HEIGHT_WEAK, _SUBJECT_HEIGHT_STRONG
-        )
-        if factors["subject_size"] < 0.5:
-            notes.append(
-                "the largest subject spanned only "
-                f"{peak_height * 100:.0f}% of the frame height"
-            )
-
-        factors["detector_confidence"] = sum(t.mean_confidence for t in subjects) / len(
-            subjects
-        )
-
-        continuities = [
-            t.continuity(frame_interval) * (1.0 if t.tracked else _UNTRACKED_PENALTY)
-            for t in subjects
-        ]
-        factors["tracking_continuity"] = sum(continuities) / len(continuities)
-        if any(not t.tracked for t in subjects):
-            notes.append(
-                "object tracking was unavailable, so subjects could not be told apart"
-            )
-        elif factors["tracking_continuity"] < 0.7:
-            notes.append("subjects were repeatedly lost and reacquired between frames")
-    else:
-        notes.append("no person or animal was detected in the analyzed frames")
+    subject_factors, subject_notes = _subject_factors(
+        subject_tracks(tracks), frame_interval
+    )
+    factors.update(subject_factors)
+    notes.extend(subject_notes)
 
     weights = {k: w for k, w in _WEIGHTS.items() if k in factors}
     total_weight = sum(weights.values())

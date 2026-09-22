@@ -36,6 +36,16 @@ _QUOTA_PAUSE_REASON = "Google Drive storage quota exceeded"
 _RATE_LIMIT_HOLD_OFF_SECONDS = 900
 
 
+class _ClipNotUploadable(Exception):
+    """A clip with no local source, or no reachable destination folder.
+
+    Raised by the two resolution steps of an upload so that recording the
+    failure stays in one place in ``_process_one``; the message is the error
+    text stored on the queue row. Deliberately distinct from an unexpected
+    exception, which is additionally logged as one.
+    """
+
+
 def _local_date_str(timestamp: str) -> str:
     """Best-effort local calendar date (``YYYY-MM-DD``) for a clip's stored
     (UTC) timestamp — the Drive backup folder structure
@@ -204,49 +214,8 @@ class GDriveUploadQueue:
 
         temp_path: Path | None = None
         try:
-            if clip.get("archived"):
-                # In a thread: this decompresses a whole clip out of its
-                # monthly ZIP and writes it to scratch, which is the same
-                # multi-megabyte blocking work archiver.py hands off for
-                # the same reason.
-                temp_path = await asyncio.to_thread(self._extract_archived_clip, clip)
-                if temp_path is None:
-                    await self._db.update_gdrive_queue_status(
-                        clip_id, "failed", error="Could not extract clip from archive"
-                    )
-                    return
-                upload_path = temp_path
-            else:
-                upload_path = Path(str(clip.get("file_path", "")))
-                if not upload_path.exists():
-                    await self._db.update_gdrive_queue_status(
-                        clip_id, "failed", error="Source file no longer exists"
-                    )
-                    return
-
-            # Organize backups as <date>/<camera>/<file> instead of dumping
-            # everything flat into one folder — otherwise unnavigable once
-            # a library has more than a handful of clips in Drive. Root is
-            # a manual one-off target if this was queued via Library's
-            # "Upload to Drive" bulk action (item["folder_id"]), else the
-            # connected default backup folder — same precedence upload_file
-            # itself already uses, just resolved a level earlier so the
-            # date/camera subfolders land under the *right* root either way.
-            root_folder = item.get("folder_id") or self._client.folder_id
-            dest_folder_id: str | None = None
-            if root_folder:
-                camera = str(clip.get("camera") or "unknown")
-                date_str = _local_date_str(str(clip.get("timestamp", "")))
-                dest_folder_id = await self._client.get_or_create_folder_path(
-                    [date_str, camera], root_id=root_folder
-                )
-                if dest_folder_id is None:
-                    await self._db.update_gdrive_queue_status(
-                        clip_id,
-                        "failed",
-                        error="Could not create Google Drive folder structure",
-                    )
-                    return
+            upload_path, temp_path = await self._resolve_upload_source(clip)
+            dest_folder_id = await self._resolve_destination_folder(item, clip)
 
             # Derived from the clip's own recorded file_path, not
             # upload_path.name — for an archived clip, upload_path is a
@@ -263,22 +232,7 @@ class GDriveUploadQueue:
             )
 
             if not file_id:
-                # A full Drive or a rate limit says nothing about this clip
-                # — it will upload perfectly once there is room, or once the
-                # limit resets. Recording it as *failed* was what buried the
-                # Storage tab under hundreds of identical "Google Drive
-                # storage quota exceeded" rows: one more clip was consumed
-                # and written off on every single cycle, for as long as the
-                # Drive stayed full. It goes back to pending instead,
-                # keeping its place in the queue, while
-                # _hold_off_for_drive_state stops the next cycle from
-                # immediately doing the same thing again.
-                if self._client.quota_exceeded or self._client.rate_limited:
-                    await self._db.update_gdrive_queue_status(clip_id, "pending")
-                else:
-                    await self._db.update_gdrive_queue_status(
-                        clip_id, "failed", error="Upload failed"
-                    )
+                await self._record_failed_upload(clip_id)
                 return
 
             await self._db.mark_gdrive_uploaded(clip_id, file_id)
@@ -286,6 +240,8 @@ class GDriveUploadQueue:
             _LOGGER.info(
                 "Uploaded clip %s to Google Drive (file_id=%s)", clip_id, file_id
             )
+        except _ClipNotUploadable as exc:
+            await self._db.update_gdrive_queue_status(clip_id, "failed", error=str(exc))
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning(
                 "Failed to upload clip %s to Google Drive: %s", clip_id, exc
@@ -302,6 +258,81 @@ class GDriveUploadQueue:
                     temp_path.unlink(missing_ok=True)
                 except OSError as exc:
                     _LOGGER.warning("Could not remove temp file %s: %s", temp_path, exc)
+
+    async def _resolve_upload_source(
+        self, clip: dict[str, Any]
+    ) -> tuple[Path, Path | None]:
+        """Resolve the local file to upload, plus any scratch copy of it.
+
+        The second element is the temp file the caller has to delete
+        afterwards — set only when the clip had to be decompressed out of
+        its archive first, and ``None`` when the original file was uploaded
+        where it already lay.
+        """
+        if clip.get("archived"):
+            # In a thread: this decompresses a whole clip out of its
+            # monthly ZIP and writes it to scratch, which is the same
+            # multi-megabyte blocking work archiver.py hands off for
+            # the same reason.
+            temp_path = await asyncio.to_thread(self._extract_archived_clip, clip)
+            if temp_path is None:
+                raise _ClipNotUploadable("Could not extract clip from archive")
+            return temp_path, temp_path
+
+        upload_path = Path(str(clip.get("file_path", "")))
+        if not upload_path.exists():
+            raise _ClipNotUploadable("Source file no longer exists")
+        return upload_path, None
+
+    async def _resolve_destination_folder(
+        self, item: dict[str, Any], clip: dict[str, Any]
+    ) -> str | None:
+        """Resolve — creating as needed — the folder this clip belongs in.
+
+        Returns ``None`` when no root folder is configured at all, which
+        uploads to the account root exactly as it did before the folder
+        structure existed.
+        """
+        # Organize backups as <date>/<camera>/<file> instead of dumping
+        # everything flat into one folder — otherwise unnavigable once
+        # a library has more than a handful of clips in Drive. Root is
+        # a manual one-off target if this was queued via Library's
+        # "Upload to Drive" bulk action (item["folder_id"]), else the
+        # connected default backup folder — same precedence upload_file
+        # itself already uses, just resolved a level earlier so the
+        # date/camera subfolders land under the *right* root either way.
+        root_folder = item.get("folder_id") or self._client.folder_id
+        if not root_folder:
+            return None
+
+        camera = str(clip.get("camera") or "unknown")
+        date_str = _local_date_str(str(clip.get("timestamp", "")))
+        dest_folder_id = await self._client.get_or_create_folder_path(
+            [date_str, camera], root_id=root_folder
+        )
+        if dest_folder_id is None:
+            raise _ClipNotUploadable("Could not create Google Drive folder structure")
+        return dest_folder_id
+
+    async def _record_failed_upload(self, clip_id: str) -> None:
+        """Record an upload that produced no file id, as pending or as failed.
+
+        A full Drive or a rate limit says nothing about this clip — it will
+        upload perfectly once there is room, or once the limit resets.
+        Recording it as *failed* was what buried the Storage tab under
+        hundreds of identical "Google Drive storage quota exceeded" rows:
+        one more clip was consumed and written off on every single cycle,
+        for as long as the Drive stayed full. It goes back to pending
+        instead, keeping its place in the queue, while
+        _hold_off_for_drive_state stops the next cycle from immediately
+        doing the same thing again.
+        """
+        if self._client.quota_exceeded or self._client.rate_limited:
+            await self._db.update_gdrive_queue_status(clip_id, "pending")
+        else:
+            await self._db.update_gdrive_queue_status(
+                clip_id, "failed", error="Upload failed"
+            )
 
     def _extract_archived_clip(self, clip: dict[str, Any]) -> Path | None:
         """Extract this clip's member from its monthly ZIP to a scratch temp file."""
