@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from ..database import ClipDatabase
+from ..face_enrollment import FaceCandidateStore
 from ..vision import FaceEmbedder
 
 if TYPE_CHECKING:
@@ -52,6 +53,8 @@ class _MediaServerBase:
     _live_view: LiveViewManager | None
     _moondream_api_key: str
     _prompt_debug_enabled: bool
+    _face_recognition_enabled: bool
+    _face_frame_width: int
 
     # Narrow callables from BlinkDownloader, so no route module has to
     # import blinkpy or reach through LiveViewManager to get at a camera.
@@ -64,6 +67,7 @@ class _MediaServerBase:
 
     # Runtime state.
     _face_embedder: FaceEmbedder
+    _face_candidates: FaceCandidateStore
     _runner: web.AppRunner | None
     _camera_configs_lock: asyncio.Lock
     _moondream_install_task: asyncio.Task | None

@@ -1,4 +1,4 @@
-import { ApiError, apiDelete, apiGet, apiGetWithHeaders, apiPatch, apiPost, apiPut } from './client'
+import { ApiError, apiDelete, apiGet, apiGetWithHeaders, apiPost, apiPut } from './client'
 import type {
   AiModelsResponse,
   AiStatus,
@@ -10,11 +10,6 @@ import type {
   CheckpointsResponse,
   DetectedBoxesResponse,
   EscalationModelsResponse,
-  FaceBypassStats,
-  FaceEnrollResult,
-  FaceFeedbackReportType,
-  FaceRecognitionFeedback,
-  FacesResponse,
   Feedback,
   FeedbackStats,
   FeedbackSubmission,
@@ -169,60 +164,6 @@ export function deleteFeedback(clipId: string): Promise<{ deleted: boolean }> {
 
 export function getUntrainedFeedbackCount(): Promise<{ count: number }> {
   return apiGet('/api/ai/feedback/untrained-count')
-}
-
-export function listFaces(): Promise<FacesResponse> {
-  return apiGet('/api/ai/faces')
-}
-
-export function enrollFace(name: string, imageBase64: string, approved = true): Promise<FaceEnrollResult> {
-  return apiPost('/api/ai/faces', { name, image_base64: imageBase64, approved })
-}
-
-export function deleteFace(id: number): Promise<{ deleted: boolean }> {
-  return apiDelete(`/api/ai/faces/${id}`)
-}
-
-export function setFaceApproved(id: number, approved: boolean): Promise<{ updated: boolean }> {
-  return apiPatch(`/api/ai/faces/${id}`, { approved })
-}
-
-export function renameFace(id: number, name: string): Promise<{ updated: boolean }> {
-  return apiPatch(`/api/ai/faces/${id}`, { name })
-}
-
-// Bulk-by-name variants — a multi-frame enrollment (ADVANCED FEATURE, see
-// BiometricsPage.vue's "enroll from a clip" flow) stores one row per
-// selected photo under the same name, so approving/renaming/removing a
-// person should affect every one of their enrolled photos at once rather
-// than one row at a time.
-export function setFacesApprovedByName(name: string, approved: boolean): Promise<{ updated: boolean }> {
-  return apiPatch(`/api/ai/faces/by-name/${encodeURIComponent(name)}`, { approved })
-}
-
-export function renameFacesByName(oldName: string, newName: string): Promise<{ updated: boolean }> {
-  return apiPatch(`/api/ai/faces/by-name/${encodeURIComponent(oldName)}`, { name: newName })
-}
-
-export function deleteFacesByName(name: string): Promise<{ deleted: boolean }> {
-  return apiDelete(`/api/ai/faces/by-name/${encodeURIComponent(name)}`)
-}
-
-export function getFaceBypassStats(): Promise<FaceBypassStats> {
-  return apiGet('/api/ai/faces/bypass-stats')
-}
-
-export function getFaceRecognitionFeedback(): Promise<FaceRecognitionFeedback[]> {
-  return apiGet('/api/ai/faces/feedback')
-}
-
-export function submitFaceRecognitionFeedback(
-  clipId: string,
-  reportType: FaceFeedbackReportType,
-  note = '',
-  personName = '',
-): Promise<{ saved: boolean } | { error: string }> {
-  return apiPost(`/api/ai/faces/feedback/${clipId}`, { report_type: reportType, note, person_name: personName })
 }
 
 export function fetchEscalationModels(): Promise<EscalationModelsResponse> {

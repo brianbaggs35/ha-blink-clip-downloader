@@ -74,7 +74,12 @@ from blink_downloader.vision.detection import (
     _proximity_label,
     _ZoneReference,
 )
-from blink_downloader.vision.faces import _build_recognition_hint
+from blink_downloader.vision.faces import (
+    _build_recognition_hint,
+    _frontality,
+    _sharpness,
+    match_enrollment,
+)
 from blink_downloader.vision.imaging import (
     _crop_region,
     _region_appearance_change,
@@ -1995,16 +2000,65 @@ async def test_face_embedder_ensure_ready_is_idempotent(
     mock_fp.MTCNN.assert_called_once()
 
 
+# Landmarks MTCNN returns per face: left eye, right eye, nose, mouth corners.
+_FRONTAL_POINTS = np.array(
+    [[[30.0, 40.0], [70.0, 40.0], [50.0, 55.0], [35.0, 70.0], [65.0, 70.0]]]
+)
+
+
+def _fake_facenet(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    boxes: Any = None,
+    probabilities: Any = None,
+    points: Any = None,
+    faces: Any = None,
+    embeddings: Any = None,
+) -> MagicMock:
+    """Install a stand-in facenet_pytorch whose MTCNN finds *boxes*.
+
+    Returns the MTCNN instance so a test can check what it was handed.
+    """
+    mtcnn = MagicMock()
+    mtcnn.detect.return_value = (boxes, probabilities, points)
+    mtcnn.extract.return_value = faces
+    mock_fp = MagicMock()
+    mock_fp.MTCNN.return_value = mtcnn
+    mock_fp.InceptionResnetV1.return_value.eval.return_value = MagicMock(
+        return_value=embeddings
+    )
+    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
+    monkeypatch.setitem(sys.modules, "torch", MagicMock())
+    return mtcnn
+
+
+def _one_face(monkeypatch: pytest.MonkeyPatch, box: list[float]) -> MagicMock:
+    return _fake_facenet(
+        monkeypatch,
+        boxes=np.array([box]),
+        probabilities=np.array([0.99]),
+        points=_FRONTAL_POINTS,
+        faces=_FakeFaceTensor(np.zeros((1, 3, 4, 4)), ndim=4),
+        embeddings=_FakeFaceTensor(np.array([[0.1, 0.2, 0.3]])),
+    )
+
+
+def _checkerboard_jpeg(size: tuple[int, int]) -> bytes:
+    """A detailed image — the sharpness measure has something to find.
+
+    Squares several pixels wide, so the detail survives the measure's own
+    resize to 64px instead of averaging out to flat grey.
+    """
+    pixels = ((np.indices(size[::-1]) // 6).sum(axis=0) % 2 * 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(pixels).convert("RGB").save(buf, format="JPEG", quality=95)
+    return buf.getvalue()
+
+
 async def test_face_embedder_embed_returns_empty_when_no_face(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mock_fp = MagicMock()
-    mock_mtcnn_instance = MagicMock(return_value=None)
-    mock_fp.MTCNN.return_value = mock_mtcnn_instance
-    mock_fp.InceptionResnetV1.return_value.eval.return_value = MagicMock()
-    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
-    monkeypatch.setitem(sys.modules, "torch", MagicMock())
-
+    _fake_facenet(monkeypatch)
     embedder = FaceEmbedder()
     assert await embedder.embed(_real_jpeg_bytes()) == []
 
@@ -2012,60 +2066,182 @@ async def test_face_embedder_embed_returns_empty_when_no_face(
 async def test_face_embedder_embed_returns_embeddings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    faces_tensor = _FakeFaceTensor(np.zeros((3, 4, 4)), ndim=4)  # already batched
-    embeddings_arr = np.array([[0.1, 0.2, 0.3]])
-
-    mock_fp = MagicMock()
-    mock_fp.MTCNN.return_value = MagicMock(return_value=faces_tensor)
-    mock_resnet_instance = MagicMock(return_value=_FakeFaceTensor(embeddings_arr))
-    mock_fp.InceptionResnetV1.return_value.eval.return_value = mock_resnet_instance
-    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
-    monkeypatch.setitem(sys.modules, "torch", MagicMock())
-
+    _one_face(monkeypatch, [2.0, 2.0, 8.0, 8.0])
     embedder = FaceEmbedder()
-    embeddings = await embedder.embed(_real_jpeg_bytes())
-    assert embeddings == [[0.1, 0.2, 0.3]]
+    assert await embedder.embed(_real_jpeg_bytes()) == [[0.1, 0.2, 0.3]]
+
+
+async def test_face_embedder_detect_matches_mtcnn_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """detect() + extract() is what MTCNN.forward() does with keep_all=True;
+    analysis relies on it seeing exactly the faces forward() would, so the
+    boxes detect() found must be the ones extract() crops."""
+    mtcnn = _one_face(monkeypatch, [2.0, 2.0, 8.0, 8.0])
+    embedder = FaceEmbedder()
+    await embedder.detect(_real_jpeg_bytes())
+    assert mtcnn.detect.call_args.kwargs == {"landmarks": True}
+    extract_args = mtcnn.extract.call_args.args
+    assert np.array_equal(extract_args[1], np.array([[2.0, 2.0, 8.0, 8.0]]))
+    assert extract_args[2] is None
 
 
 async def test_face_embedder_embed_unsqueezes_single_face(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    single_face = _FakeFaceTensor(np.zeros((3, 4, 4)), ndim=3)
-    embeddings_arr = np.array([[0.4, 0.5]])
-
-    mock_fp = MagicMock()
-    mock_fp.MTCNN.return_value = MagicMock(return_value=single_face)
-    mock_resnet_instance = MagicMock(return_value=_FakeFaceTensor(embeddings_arr))
-    mock_fp.InceptionResnetV1.return_value.eval.return_value = mock_resnet_instance
-    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
-    monkeypatch.setitem(sys.modules, "torch", MagicMock())
-
+    _fake_facenet(
+        monkeypatch,
+        boxes=np.array([[2.0, 2.0, 8.0, 8.0]]),
+        probabilities=np.array([0.99]),
+        points=_FRONTAL_POINTS,
+        faces=_FakeFaceTensor(np.zeros((3, 4, 4)), ndim=3),
+        embeddings=_FakeFaceTensor(np.array([[0.4, 0.5]])),
+    )
     embedder = FaceEmbedder()
-    embeddings = await embedder.embed(_real_jpeg_bytes())
-    assert embeddings == [[0.4, 0.5]]
+    assert await embedder.embed(_real_jpeg_bytes()) == [[0.4, 0.5]]
+    resnet_input = embedder._resnet.call_args.args[0]
+    assert resnet_input.dim() == 4
 
 
-async def test_face_embedder_embed_returns_empty_when_unavailable(
+async def test_face_embedder_embed_returns_none_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """None, not [] — "the models could not run" must not read as "nobody
+    was there" to a caller deciding whether everyone in a clip is known."""
     frame = _real_jpeg_bytes()
     monkeypatch.delitem(sys.modules, "facenet_pytorch", raising=False)
     with patch("builtins.__import__", side_effect=ImportError):
         embedder = FaceEmbedder()
-        assert await embedder.embed(frame) == []
+        assert await embedder.embed(frame) is None
 
 
-async def test_face_embedder_embed_returns_empty_on_exception(
+async def test_face_embedder_embed_returns_none_on_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mock_fp = MagicMock()
-    mock_fp.MTCNN.return_value = MagicMock(side_effect=RuntimeError("boom"))
-    mock_fp.InceptionResnetV1.return_value.eval.return_value = MagicMock()
-    monkeypatch.setitem(sys.modules, "facenet_pytorch", mock_fp)
-    monkeypatch.setitem(sys.modules, "torch", MagicMock())
-
+    mtcnn = _fake_facenet(monkeypatch)
+    mtcnn.detect.side_effect = RuntimeError("boom")
     embedder = FaceEmbedder()
-    assert await embedder.embed(_real_jpeg_bytes()) == []
+    assert await embedder.embed(_real_jpeg_bytes()) is None
+
+
+async def test_face_embedder_detect_returns_none_for_undecodable_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_facenet(monkeypatch)
+    embedder = FaceEmbedder()
+    assert await embedder.detect(b"not an image") is None
+
+
+async def test_face_embedder_honours_exif_orientation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A phone stores a portrait photo as landscape pixels plus an EXIF
+    "rotate 90°" tag. Measured with real models: ignoring the tag either
+    found no face, or enrolled one whose embedding matched the same person
+    upright at 0.07 — a useless reference. MTCNN must see it upright."""
+    mtcnn = _fake_facenet(monkeypatch)
+    exif = Image.Exif()
+    exif[0x0112] = 6  # stored rotated; turn 90° clockwise to display
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 20), (128, 128, 128)).save(buf, format="JPEG", exif=exif)
+
+    await FaceEmbedder().detect(buf.getvalue())
+
+    assert mtcnn.detect.call_args.args[0].size == (20, 40)
+
+
+async def test_face_embedder_shrinks_a_large_photo_before_detection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mtcnn = _fake_facenet(monkeypatch)
+    await FaceEmbedder().detect(_real_jpeg_bytes((3000, 1500)))
+    assert mtcnn.detect.call_args.args[0].size == (1280, 640)
+
+
+async def test_face_embedder_leaves_an_analysis_frame_at_full_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mtcnn = _fake_facenet(monkeypatch)
+    await FaceEmbedder().detect(_real_jpeg_bytes((640, 360)))
+    assert mtcnn.detect.call_args.args[0].size == (640, 360)
+
+
+async def test_face_embedder_detect_crops_a_thumbnail_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_face(monkeypatch, [50.0, 60.0, 150.0, 180.0])
+    embedder = FaceEmbedder()
+    frame = _real_jpeg_bytes((300, 300))
+
+    without = await embedder.detect(frame)
+    assert without is not None
+    assert without[0].thumbnail == b""
+
+    faces = await embedder.detect(frame, thumbnails=True)
+    assert faces is not None
+    thumbnail = Image.open(io.BytesIO(faces[0].thumbnail))
+    assert thumbnail.format == "JPEG"
+    assert max(thumbnail.size) <= 112
+    assert faces[0].width == 100
+    assert faces[0].probability == pytest.approx(0.99)
+
+
+async def test_face_embedder_thumbnail_stays_inside_the_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A face at the edge of the frame gets its margin clipped, not padded
+    with pixels from nowhere."""
+    _one_face(monkeypatch, [0.0, 0.0, 40.0, 50.0])
+    faces = await FaceEmbedder().detect(_real_jpeg_bytes((300, 300)), thumbnails=True)
+    assert faces is not None
+    width, height = Image.open(io.BytesIO(faces[0].thumbnail)).size
+    assert width < height  # the crop lost its left margin, not its top one
+
+
+async def test_face_quality_prefers_big_sharp_faces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = _checkerboard_jpeg((300, 300))
+
+    _one_face(monkeypatch, [20.0, 20.0, 120.0, 140.0])
+    big = await FaceEmbedder().detect(frame)
+    _one_face(monkeypatch, [20.0, 20.0, 30.0, 32.0])
+    tiny = await FaceEmbedder().detect(frame)
+    _one_face(monkeypatch, [20.0, 20.0, 120.0, 140.0])
+    blurry = await FaceEmbedder().detect(_real_jpeg_bytes((300, 300)))
+
+    assert big is not None and tiny is not None and blurry is not None
+    assert big[0].quality > 0.9
+    # Under 20px there is too little face to be worth enrolling at all.
+    assert tiny[0].quality == 0.0
+    assert blurry[0].quality < big[0].quality
+
+
+def test_frontality_falls_as_the_head_turns() -> None:
+    frontal = _frontality(_FRONTAL_POINTS[0])
+    turned = _frontality(np.array([[30, 40], [70, 40], [65, 55], [35, 70], [65, 70]]))
+    profile = _frontality(np.array([[30, 40], [70, 40], [70, 55], [35, 70], [65, 70]]))
+    assert frontal == pytest.approx(1.0)
+    assert 0.0 < turned < frontal
+    assert profile == 0.0
+
+
+def test_frontality_without_usable_landmarks_is_zero() -> None:
+    assert _frontality(None) == 0.0
+    assert _frontality(np.array([[50, 40], [50, 40], [50, 55]])) == 0.0
+
+
+def test_sharpness_of_a_degenerate_box_is_zero() -> None:
+    image = Image.new("RGB", (50, 50))
+    assert _sharpness(image, (10.0, 10.0, 11.0, 30.0)) == 0.0
+
+
+def test_sharpness_separates_detail_from_a_flat_patch() -> None:
+    flat = Image.new("RGB", (64, 64), (100, 100, 100))
+    detailed = Image.open(io.BytesIO(_checkerboard_jpeg((64, 64))))
+    box = (0.0, 0.0, 64.0, 64.0)
+    assert _sharpness(flat, box) == 0.0
+    assert _sharpness(detailed, box) > 150.0
 
 
 def test_cosine_similarity_identical_vectors() -> None:
@@ -2205,6 +2381,56 @@ async def test_face_recognizer_db_error_returns_empty(db: ClipDatabase) -> None:
     result = await recognizer.recognize([b"frame"])
     assert result == FaceRecognitionResult()
     embedder.embed.assert_not_called()
+
+
+async def test_face_recognizer_frame_that_cannot_be_examined_blocks_the_bypass(
+    db: ClipDatabase,
+) -> None:
+    """A frame detection could not run on might have held anyone. It used to
+    be skipped as if empty, so an approved match in the *other* frames made
+    the clip look fully accounted for — and eligible to have its suspicious
+    flag cleared — when it had not been fully checked."""
+    await db.add_face_enrollment("Brian", [1.0, 0.0, 0.0], approved=True)
+
+    async def _embed(frame: bytes) -> list[list[float]] | None:
+        return [[1.0, 0.0, 0.0]] if frame == b"frame-brian" else None
+
+    embedder = MagicMock(spec=FaceEmbedder)
+    embedder.embed = _embed
+
+    result = await FaceRecognizer(embedder, db).recognize(
+        [b"frame-brian", b"frame-unreadable"]
+    )
+    assert result.approved_names == ["Brian"]
+    assert result.unrecognized_present is True
+
+
+def test_match_enrollment_reports_name_and_similarity() -> None:
+    enrollments = [
+        {"name": "Amy", "embedding": [0.0, 1.0], "approved": True},
+        {"name": "Brian", "embedding": [1.0, 0.0], "approved": False},
+    ]
+    match = match_enrollment([0.99, 0.05], enrollments)
+    assert match is not None
+    assert match[0] == "Brian"
+    assert match[1] == pytest.approx(cosine_similarity([0.99, 0.05], [1.0, 0.0]))
+
+
+def test_match_enrollment_below_threshold_is_none() -> None:
+    enrollments = [{"name": "Brian", "embedding": [1.0, 0.0]}]
+    assert match_enrollment([0.6, 0.8], enrollments) is None
+
+
+def test_match_enrollment_breaks_ties_the_way_recognition_does() -> None:
+    """The picker's "already recognized as" must name whoever analysis
+    would: on an exact tie, that is the later enrollment."""
+    enrollments = [
+        {"name": "First", "embedding": [1.0, 0.0]},
+        {"name": "Second", "embedding": [1.0, 0.0]},
+    ]
+    match = match_enrollment([1.0, 0.0], enrollments)
+    assert match is not None
+    assert match[0] == "Second"
 
 
 def _async_result(value: Any):
@@ -2683,6 +2909,74 @@ async def test_vision_pipeline_face_recognition_prefers_face_recognition_frames_
     assert seen_frames == wider_pool
     assert hints.face_recognition is not None
     assert hints.face_recognition.approved_names == ["Brian"]
+
+
+async def _recognized_frames(
+    db: ClipDatabase,
+    width: int,
+    extracted: list[bytes],
+    clip_path: str = "/clips/a.mp4",
+) -> tuple[list[bytes], MagicMock]:
+    """Run the face stage at *width*; return the frames it matched in and
+    the frame-extraction mock."""
+    await db.add_face_enrollment("Brian", [1.0, 0.0])
+    seen: list[bytes] = []
+
+    async def _embed(frame: bytes) -> list[list[float]]:
+        seen.append(frame)
+        return []
+
+    pipeline = VisionPipeline(
+        VisionConfig(face_recognition_enabled=True, face_frame_width=width), db=db
+    )
+    extract = MagicMock(side_effect=lambda *a, **k: _async_result(extracted))
+    with (
+        patch.object(FaceEmbedder, "embed", side_effect=_embed),
+        patch("blink_downloader.vision.pipeline.extract_jpeg_frames", extract),
+    ):
+        await pipeline.process_clip(
+            [b"prompt"],
+            raw_frames=[b"pool-1", b"pool-2", b"pool-3"],
+            clip_path=clip_path,
+            frame_interval=1.5,
+        )
+    return seen, extract
+
+
+async def test_face_stage_at_standard_resolution_reuses_the_analysis_frames(
+    db: ClipDatabase,
+) -> None:
+    seen, extract = await _recognized_frames(db, 640, [b"never"])
+    assert seen == [b"pool-1", b"pool-2", b"pool-3"]
+    extract.assert_not_called()
+
+
+async def test_face_stage_at_higher_resolution_re_extracts_the_same_moments(
+    db: ClipDatabase,
+) -> None:
+    """Same interval and count as the analysis pool, so the same fps
+    sampling lands on the same timestamps — only bigger."""
+    seen, extract = await _recognized_frames(db, 1280, [b"wide-1", b"wide-2"])
+    assert seen == [b"wide-1", b"wide-2"]
+    assert extract.call_args.args == ("/clips/a.mp4",)
+    assert extract.call_args.kwargs == {
+        "width": 1280,
+        "interval": 1.5,
+        "count": 3,
+        "label": "/clips/a.mp4",
+    }
+
+
+async def test_face_stage_falls_back_to_the_analysis_frames(db: ClipDatabase) -> None:
+    """A smaller face than the enrollments can only match less often, never
+    as someone else — so a failed extraction still recognizes, safely."""
+    seen, _ = await _recognized_frames(db, 1280, [])
+    assert seen == [b"pool-1", b"pool-2", b"pool-3"]
+    seen_without_path, extract = await _recognized_frames(
+        db, 1280, [b"x"], clip_path=""
+    )
+    assert seen_without_path == [b"pool-1", b"pool-2", b"pool-3"]
+    extract.assert_not_called()
 
 
 async def test_vision_pipeline_face_recognition_without_db_is_noop() -> None:

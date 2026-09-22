@@ -9,3 +9,4 @@ Pillow>=12.3.0
 anthropic>=1.7.0
 openai>=3.16.2
 numpy>=2.5.3
+PyYAML>=6.0.3

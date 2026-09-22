@@ -1,51 +1,75 @@
 import { test, expect } from './coverage-fixtures'
 import type { Page } from '@playwright/test'
 
-// The clip picker that Biometrics enrolls from is only ever driven down
-// its happy path: one camera, clips present, enrollment reaching the real
-// (and honestly failing) embedder. Two states it never sees are a clip
-// list that failed to load, and an enrollment the server rejects with a
-// reason rather than an HTTP error.
-//
-// Its "show older clips" arrow stays out of reach: it is disabled unless
-// there are more clips than one page, and the seed has a single clip on
-// this camera. Covering it would need a much larger fixture, the same
-// structural limit that keeps LibraryPage's "Load more" untested.
+// The failure paths of Biometrics' enroll flow: a clip list that won't load,
+// a clip deleted before its turn to be scanned, a photo that isn't one, and
+// an enrollment the server turns down. Each has to reach the user as a
+// reason, not a raw status line or silence. Mutates nothing lasting —
+// biometrics.spec.ts (which runs after this file) asserts the seeded people.
 
-const CAMERA = 'Test Scratch'
-
-async function openPicker(page: Page) {
+async function openBiometrics(page: Page) {
   await page.goto('/')
   await page.locator('.app-nav-tab[data-tab="biometrics"]').click()
   await page.waitForSelector('.app-nav-tab.active[data-tab="biometrics"]')
-  await page.locator('#biometrics-camera-select').click()
-  await page.getByRole('option', { name: CAMERA }).click()
 }
 
-test('an enrollment the server rejects reports the reason it gave', async ({ page }) => {
-  await openPicker(page)
-  await page.locator('.thumb-strip-item').first().click()
-  const frames = page.locator('.frame-item')
-  await expect(frames.first()).toBeVisible()
-  await frames.first().click()
+async function chooseScratchCamera(page: Page) {
+  await page.locator('#biometrics-camera-select').click()
+  await page.getByRole('option', { name: 'Test Scratch', exact: true }).click()
+}
 
-  // A structured {"error": ...} rather than an HTTP failure: the handler
-  // returns one for a name clash or an unreadable frame, and it has to
-  // reach the user rather than being reported as a generic failure.
+test('a clip list that fails to load offers a retry', async ({ page }) => {
+  await page.route(/\/api\/clips\?/, (route) => route.fulfill({ status: 500, body: 'boom' }))
+  await openBiometrics(page)
+  await expect(page.getByText("Couldn't load clips.")).toBeVisible()
+
+  await page.unroute(/\/api\/clips\?/)
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.locator('.clip-tile').first()).toBeVisible()
+})
+
+test('a clip deleted before its scan says so', async ({ page }) => {
+  await page.route('**/api/ai/faces/scan/*', (route) => route.fulfill({ status: 404, body: 'Clip not found' }))
+  await openBiometrics(page)
+  await chooseScratchCamera(page)
+  const tile = page.locator('.clip-tile')
+  await tile.click()
+  await expect(tile).toContainText('Failed — hover for why')
+  await expect(tile).toHaveAttribute('title', 'This clip is no longer in the library')
+})
+
+test("a file that isn't a readable photo is explained", async ({ page }) => {
+  // Real server, no mocking: the bytes reach face detection, which cannot
+  // open them — the same path as an iPhone HEIC in a browser that can't
+  // decode one.
+  await openBiometrics(page)
+  await page.getByRole('tab', { name: 'From a photo' }).click()
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'notes.jpg',
+    mimeType: 'image/jpeg',
+    buffer: Buffer.from('definitely not a jpeg'),
+  })
+  await expect(page.locator('.photo-results')).toContainText("This photo couldn't be read")
+  await expect(page.locator('.face-tile')).toHaveCount(0)
+})
+
+test('an enrollment the server turns down reports the reason it gave', async ({ page }) => {
+  await openBiometrics(page)
+  await chooseScratchCamera(page)
+  await page.locator('.clip-tile').click()
+  await page.locator('.face-tile').first().click()
+
   await page.route('**/api/ai/faces', async (route) => {
     if (route.request().method() !== 'POST') {
       await route.fallback()
       return
     }
     await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ error: 'that name is already enrolled' }),
+      json: { error: 'Those faces are no longer available — scan again to pick them', enrolled: 0, expired: 1 },
     })
   })
-
   await page.locator('#biometrics-name').fill('e2e rejected enrollment')
-  await page.getByRole('button', { name: /Enroll 1 selected frame/ }).click()
-
-  await expect(page.getByText(/already enrolled|Enrollment failed/i).first()).toBeVisible()
+  await page.getByRole('button', { name: 'Enroll as e2e rejected enrollment' }).click()
+  await expect(page.getByText('Those faces are no longer available — scan again to pick them')).toBeVisible()
+  await expect(page.locator('.person-card', { hasText: 'e2e rejected enrollment' })).toHaveCount(0)
 })

@@ -420,9 +420,18 @@ configuration:
     description: >-
       Suppress alerts for enrolled household members. Enrollment (reference
       photos, computed face embeddings) happens entirely on-device via the
-      web UI's AI tab and never leaves this add-on or your network — it is
-      never sent to any cloud AI provider, regardless of which one is
-      configured above. Off by default.
+      web UI's Biometrics tab and never leaves this add-on or your network
+      — it is never sent to any cloud AI provider, regardless of which one
+      is configured above. Off by default.
+  ai_face_recognition_resolution:
+    name: Face Recognition Resolution
+    description: >-
+      How much detail faces are matched with. "standard" uses the 640px
+      frames analysis already extracts; "high" (960px) and "very_high"
+      (1280px) look again at the same moments in more detail, which
+      recognizes people farther from the camera at a modest extra CPU
+      cost. After changing it, re-scan a clip on the Biometrics tab —
+      faces match best against photos enrolled at the same resolution.
   hf_token:
     name: Hugging Face Token (optional)
     description: >-

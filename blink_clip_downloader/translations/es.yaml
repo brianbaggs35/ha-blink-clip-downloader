@@ -482,10 +482,20 @@ configuration:
       Suprime las alertas para los miembros del hogar registrados. El
       registro (fotos de referencia, incrustaciones faciales
       calculadas) ocurre por completo en el propio dispositivo a través
-      de la pestaña de IA de la interfaz web y nunca sale de este
+      de la pestaña Biometría de la interfaz web y nunca sale de este
       add-on ni de tu red — nunca se envía a ningún proveedor de IA en
       la nube, sea cual sea el configurado arriba. Desactivado por
       defecto.
+  ai_face_recognition_resolution:
+    name: Resolución del reconocimiento facial
+    description: >-
+      Con cuánto detalle se comparan los rostros. "standard" usa los
+      fotogramas de 640 px que el análisis ya extrae; "high" (960 px) y
+      "very_high" (1280 px) vuelven a mirar los mismos instantes con más
+      detalle, lo que reconoce a personas más alejadas de la cámara con
+      un coste moderado de CPU. Tras cambiarlo, vuelve a escanear un clip
+      en la pestaña Biometría: los rostros coinciden mejor con fotos
+      registradas a la misma resolución.
   hf_token:
     name: Token de Hugging Face (opcional)
     description: >-

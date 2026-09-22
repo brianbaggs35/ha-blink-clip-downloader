@@ -24,8 +24,9 @@ One module per stage, in the order a clip passes through them:
 - :mod:`.pose` — body posture (Ultralytics YOLO-pose): reaching, an arm
   raised, crouching.
 - :mod:`.faces` — local-only face recognition (facenet-pytorch) to
-  suppress alerts for enrolled household members. Enrollment data
-  (photos, embeddings) never leaves this add-on.
+  suppress alerts for enrolled household members, and the face detection
+  the Biometrics tab enrolls them with. Enrollment data (photos,
+  embeddings) never leaves this add-on.
 
 with :mod:`.pipeline` sequencing them, :mod:`.runtime` holding the
 process-wide concurrency limiter and availability checks every stage
@@ -57,6 +58,8 @@ from .depth import DepthComparison, DepthEstimator
 from .detection import DetectedObject, ObjectDetector
 from .enhance import FrameEnhancer
 from .faces import (
+    FACE_RESOLUTION_WIDTHS,
+    DetectedFace,
     FaceEmbedder,
     FaceRecognitionResult,
     FaceRecognizer,
@@ -81,6 +84,7 @@ from .runtime import (
 )
 
 __all__ = [
+    "FACE_RESOLUTION_WIDTHS",
     "SOURCE_CONTACT_SEGMENTATION",
     "SOURCE_DEPTH_ESTIMATION",
     "SOURCE_FACE_RECOGNITION",
@@ -93,6 +97,7 @@ __all__ = [
     "ContactSegmenter",
     "DepthComparison",
     "DepthEstimator",
+    "DetectedFace",
     "DetectedObject",
     "FaceEmbedder",
     "FaceRecognitionResult",

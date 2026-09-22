@@ -345,8 +345,17 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # is stored entirely on-device in the add-on's own database and never
     # uploaded to any cloud AI provider, and never leaves your network,
     # regardless of which ai_provider is configured. Off by default; enroll
-    # household members via the web UI's AI tab.
+    # household members via the web UI's Biometrics tab.
     ai_face_recognition_enabled: bool = False
+    # How much detail faces are matched with: "standard" matches in the
+    # 640px-wide frames analysis already extracts, "high"/"very_high"
+    # re-extract the same moments at 960/1280px (vision/faces.py's
+    # FACE_RESOLUTION_WIDTHS has the measurements). The face recognition
+    # equivalent of the other stages' model-size choice: facenet-pytorch has
+    # one recognition network, so what there is to trade is pixels per face.
+    # Enrollment scans follow it, so photos enrolled before a change match
+    # best after being re-scanned.
+    ai_face_recognition_resolution: str = "standard"
     # Body-keypoint estimation (Ultralytics YOLO-pose) for the subject
     # nearest a protected asset, on the single frame the depth/contact
     # stages already examine. Its own toggle and its own small checkpoint:
@@ -657,6 +666,18 @@ def _parse_ai_frame_strategy(data: dict) -> str:
     return strategy if strategy in valid else default
 
 
+#: Every ai_face_recognition_resolution value (vision/faces.py maps each to a
+#: width; tests/test_config.py keeps the two, and config.yaml, in step).
+FACE_RECOGNITION_RESOLUTIONS = ("standard", "high", "very_high")
+
+
+def _parse_face_recognition_resolution(data: dict) -> str:
+    """The configured face resolution; anything unrecognised is "standard",
+    the width every enrollment made before the option existed matches."""
+    value = str(data.get("ai_face_recognition_resolution", "") or "").strip().lower()
+    return value if value in FACE_RECOGNITION_RESOLUTIONS else "standard"
+
+
 def _parse_ai_provider_kwargs(
     data: dict,
     ai_provider: str,
@@ -776,6 +797,7 @@ def _parse_ai_detection_kwargs(data: dict) -> dict[str, Any]:
         "ai_face_recognition_enabled": bool(
             data.get("ai_face_recognition_enabled", False)
         ),
+        "ai_face_recognition_resolution": _parse_face_recognition_resolution(data),
         "ai_pose_estimation_enabled": bool(
             data.get("ai_pose_estimation_enabled", False)
         ),

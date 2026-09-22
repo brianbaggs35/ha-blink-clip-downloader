@@ -46,7 +46,12 @@ from .notifier import HANotifier
 from .sqlite_migration import migrate_legacy_sqlite
 from .storage import StorageManager
 from .tracker import ClipTracker
-from .vision import VisionConfig, VisionPipeline, configure_cv_concurrency
+from .vision import (
+    FACE_RESOLUTION_WIDTHS,
+    VisionConfig,
+    VisionPipeline,
+    configure_cv_concurrency,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -217,6 +222,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             archiver=self._archiver,
             moondream_api_key=config.moondream_api_key,
             prompt_debug_enabled=config.ai_prompt_debug_enabled,
+            face_recognition_enabled=config.ai_face_recognition_enabled,
+            face_frame_width=FACE_RESOLUTION_WIDTHS[
+                config.ai_face_recognition_resolution
+            ],
             live_view=self._live_view,
             list_camera_names=self._downloader.list_camera_names,
             get_camera_snapshot=self._downloader.get_camera_snapshot,
@@ -591,6 +600,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                     object_detection_model=config.ai_object_detection_model,
                     depth_estimation_model=config.ai_depth_estimation_model,
                     face_recognition_enabled=config.ai_face_recognition_enabled,
+                    face_frame_width=FACE_RESOLUTION_WIDTHS[
+                        config.ai_face_recognition_resolution
+                    ],
                     pose_estimation_enabled=config.ai_pose_estimation_enabled,
                     pose_model=config.ai_pose_model,
                     audio_analysis_enabled=config.ai_audio_analysis_enabled,

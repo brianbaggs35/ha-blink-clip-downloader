@@ -124,6 +124,15 @@ architecture.
     panel and every method swallows transport failures rather than raising,
     since nothing in clip analysis depends on it.
   - `analysis_queue.py` — async queue that feeds clips to the analyzer.
+  - `face_enrollment.py` — the Biometrics tab's enrollment logic, numpy
+    only: `FaceCandidateStore` (faces a scan found, held server-side by
+    opaque id until enrolled or expired — the browser never sees an
+    embedding), near-duplicate suppression, grouping candidates by person,
+    and `review_enrollments` (flags a photo unlike the person's others, or
+    one that also matches someone else). Its thresholds were measured on
+    real faces shrunk to camera size; the comments say what they are.
+    `media_server/faces.py` is the route side; `vision/faces.py`'s
+    `FaceEmbedder.detect()` finds the faces.
   - `security/` — the structured security layer (`events.py`, `tracks.py`,
     `geometry.py`, `zones`/`assets.py`, `vehicles.py`, `detector.py`,
     `sounds.py`, `scoring.py`, `evidence.py`, `narrative.py`,
@@ -523,11 +532,16 @@ removed in 5.0.0.
   patching `media_server.faces.is_face_recognition_available` (the route
   module that resolves the name, not the package facade) to always return
   `True` (real dependency: `facenet_pytorch`, part of the optional CV-
-  pipeline extra, genuinely absent in this lightweight test environment)
-  — the tab and its CRUD (list/rename/approve/remove enrollments) are
-  e2e-reachable this way, while the actual embedding step still
-  independently (and correctly) reports "no face detected" either way, so
-  an enrollment can never falsely succeed. The Vehicles tab's zone-drawing
+  pipeline extra, genuinely absent in this lightweight test environment),
+  plus `_E2EFaceEmbedder` standing in for the models themselves: it finds
+  the same three deterministic faces in any readable image (two people and
+  one too blurred to offer), so the whole enroll flow — scanning a real
+  ffmpeg-extracted clip, collapsing duplicate shots, grouping, enrolling
+  from server-held candidates, serving the stored thumbnail, recognizing
+  the enrolled face on the next scan — runs through the real server code.
+  Its 4-d embeddings share a space with the seeded enrollments, chosen so
+  nothing matches by accident and one of Riley's photos is flagged by the
+  photo review. The Vehicles tab's zone-drawing
   canvas depends on its background `<img>` firing a real `load` event,
   which needs a real thumbnail file on disk — solved by giving `Test
   Scratch` a real, `ffmpeg`-generated video (the same fixture Biometrics'
@@ -660,6 +674,24 @@ afterward, entirely locally, to personalize the human-facing summary text
 banner promises, and the promise and the implementation must stay in sync.
 `face_enrollments.approved` (per-enrollment, defaults `TRUE`) gates whether
 a match counts toward the bypass at all; enrolling ≠ approving forever.
+The Biometrics tab stores a small face crop per enrollment (`thumbnail`) —
+also local-only, and the privacy banner and DOCS.md say so.
+
+A frame face detection **could not examine** (models unavailable, an
+undecodable frame, a model error) counts as `unrecognized_present` in
+`FaceRecognizer.recognize` — it might have held anyone, so it can never help
+vouch that everyone in a clip is known. `FaceEmbedder.detect()`/`embed()`
+return `None` for that case, never `[]`, precisely so callers can tell it
+apart from "no face here"; keep that distinction.
+
+Enrollment and recognition must work at the **same frame width**
+(`ai_face_recognition_resolution` → `FACE_RESOLUTION_WIDTHS`, 640px by
+default = `ffmpeg_output.ANALYSIS_FRAME_WIDTH`): a face enrolled at one size
+matches poorly at another (measured: 2 of 30 recognized when the old picker
+enrolled at 480px against 640px recognition, 20 of 30 at matching widths).
+The clip scan reads the configured width from `MediaServer`, and each
+enrollment records the width it came from (`frame_width`) so the tab can
+flag photos a resolution change has left behind.
 
 Personalization and bypass-eligibility are **deliberately different
 widths**, both computed in `_analyze_clip_locked`: `_face_bypass_applies`

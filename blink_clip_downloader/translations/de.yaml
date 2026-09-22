@@ -494,10 +494,20 @@ configuration:
     description: >-
       Unterdrückt Warnungen für erfasste Haushaltsmitglieder. Die
       Erfassung (Referenzfotos, berechnete Gesichts-Embeddings) erfolgt
-      vollständig lokal auf dem Gerät über den KI-Tab der Web-UI und
-      verlässt niemals dieses Add-on oder dein Netzwerk — sie wird
+      vollständig lokal auf dem Gerät über den Biometrie-Tab der Web-UI
+      und verlässt niemals dieses Add-on oder dein Netzwerk — sie wird
       niemals an einen Cloud-KI-Anbieter gesendet, unabhängig davon,
       welcher oben konfiguriert ist. Standardmäßig deaktiviert.
+  ai_face_recognition_resolution:
+    name: Auflösung der Gesichtserkennung
+    description: >-
+      Mit wie viel Detail Gesichter verglichen werden. „standard“ nutzt
+      die 640 px breiten Bilder, die die Analyse ohnehin extrahiert;
+      „high“ (960 px) und „very_high“ (1280 px) betrachten dieselben
+      Momente detaillierter und erkennen so Personen weiter entfernt von
+      der Kamera, bei etwas höherer CPU-Last. Scanne nach einer Änderung
+      einen Clip im Biometrie-Tab erneut — Gesichter werden am besten
+      mit Fotos derselben Auflösung abgeglichen.
   hf_token:
     name: Hugging Face-Token (optional)
     description: >-

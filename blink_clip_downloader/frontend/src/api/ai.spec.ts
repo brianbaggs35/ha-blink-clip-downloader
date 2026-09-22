@@ -5,11 +5,8 @@ import {
   analyzeClipNow,
   clearAiUsage,
   createFinetune,
-  deleteFace,
-  deleteFacesByName,
   deleteFeedback,
   deleteFinetune,
-  enrollFace,
   fetchAiModels,
   fetchEscalationModels,
   getAiStatus,
@@ -24,15 +21,10 @@ import {
   getSuspiciousClips,
   getUntrainedFeedbackCount,
   listCheckpoints,
-  listFaces,
   listFinetunes,
-  renameFace,
-  renameFacesByName,
   resolveCameraAlias,
   saveCameraConfigs,
   saveCheckpoint,
-  setFaceApproved,
-  setFacesApprovedByName,
   startMoondreamInstall,
   submitFeedback,
   testDiscord,
@@ -221,59 +213,6 @@ describe('ai api', () => {
     expect(fetch).toHaveBeenCalledWith('/api/ai/feedback/c1', { method: 'DELETE' })
     await getUntrainedFeedbackCount()
     expect(fetch).toHaveBeenCalledWith('/api/ai/feedback/untrained-count', {})
-  })
-
-  it('faces list/enroll/delete/approve/rename', async () => {
-    await listFaces()
-    expect(fetch).toHaveBeenCalledWith('/api/ai/faces', {})
-    await enrollFace('Alice', 'base64data')
-    expect(fetch).toHaveBeenCalledWith('/api/ai/faces', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Alice', image_base64: 'base64data', approved: true }),
-    })
-    await enrollFace('Nanny', 'base64data', false)
-    expect(fetch).toHaveBeenCalledWith('/api/ai/faces', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Nanny', image_base64: 'base64data', approved: false }),
-    })
-    await deleteFace(3)
-    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/3', { method: 'DELETE' })
-    await setFaceApproved(3, false)
-    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/3', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved: false }),
-    })
-    await renameFace(3, 'Alicia')
-    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/3', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Alicia' }),
-    })
-  })
-
-  it('faces bulk-by-name approve/rename/delete', async () => {
-    await setFacesApprovedByName('Brian', false)
-    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/by-name/Brian', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved: false }),
-    })
-    await renameFacesByName('Brain', 'Brian')
-    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/by-name/Brain', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Brian' }),
-    })
-    await deleteFacesByName('Brian')
-    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/by-name/Brian', { method: 'DELETE' })
-    await setFacesApprovedByName('Amy Smith', true)
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/ai/faces/by-name/Amy%20Smith',
-      expect.objectContaining({ method: 'PATCH' }),
-    )
   })
 
   it('fetchEscalationModels()', async () => {

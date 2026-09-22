@@ -20,6 +20,10 @@ dependencies = [
     "anthropic>=1.7.0",
     "openai>=3.16.2",
     "numpy>=2.5.3",
+    # ha_config.py parses the Automations tab's YAML. Declared rather than
+    # left to arrive with ultralytics/transformers: the Dockerfile installs
+    # those best-effort, and without them the add-on could not start at all.
+    "PyYAML>=6.0.3",
 ]
 
 [project.optional-dependencies]
@@ -28,7 +32,6 @@ test = [
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "aioresponses>=0.7.9",
-    "PyYAML>=6.0.3",
 ]
 # Optional computer-vision enhancement pipeline (see the vision package and the
 # ai_enhanced_detection_enabled/ai_face_recognition_enabled config options —

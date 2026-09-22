@@ -5,15 +5,8 @@ import Chip from 'primevue/chip'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
-import {
-  analyzeClipNow,
-  deleteFeedback,
-  getClipAiResult,
-  getFeedbackForClip,
-  listFaces,
-  submitFaceRecognitionFeedback,
-  submitFeedback,
-} from '../../api/ai'
+import { analyzeClipNow, deleteFeedback, getClipAiResult, getFeedbackForClip, submitFeedback } from '../../api/ai'
+import { listFaces, submitFaceRecognitionFeedback } from '../../api/faces'
 import type {
   AnalysisResultDict,
   AudioLabel,
