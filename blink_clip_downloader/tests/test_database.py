@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import json
 import os
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
@@ -1092,6 +1094,87 @@ async def test_rename_camera_noop_with_no_matching_rows(db: ClipDatabase) -> Non
 
 async def test_rename_camera_noop_for_same_name(db: ClipDatabase) -> None:
     assert await db.rename_camera("Front Door", "Front Door") is False
+
+
+# ----------------------------------------------------------------------
+# A camera rename has to reach every table keyed by camera name. Missing
+# one is this repository's most-repeated bug — four separate releases have
+# shipped a table the rename did not touch, each found only by a user
+# whose renamed camera went half-stale. The tests above check the tables
+# somebody thought to write a case for, which is exactly the check that
+# keeps passing while a thirteenth table sits unmigrated.
+#
+# This one derives both sides instead: the tables from the live database,
+# and the coverage from the rename's own source. Add a table with a
+# `camera` column and this fails until the rename handles it.
+# ----------------------------------------------------------------------
+
+
+def _rename_sources() -> str:
+    """The source of rename_camera and every helper it delegates to.
+
+    Walks the call graph rather than naming the helpers, so splitting one
+    of them in two does not quietly shrink what this test inspects.
+    """
+    seen: set[str] = set()
+    pending = ["rename_camera"]
+    chunks: list[str] = []
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        method = getattr(ClipDatabase, name, None)
+        if method is None:
+            continue
+        source = inspect.getsource(method)
+        chunks.append(source)
+        pending.extend(re.findall(r"self\.(_[a-z_]+)\(", source))
+    return "\n".join(chunks)
+
+
+def _mentions(source: str, table: str) -> bool:
+    """Whether *source* names *table* at all.
+
+    Deliberately a whole-word search rather than SQL parsing: the eight
+    relabelled tables are a plain tuple the UPDATE is formatted against,
+    so the table name and the statement never appear together in the text.
+    A table named here but somehow not migrated would slip through, which
+    is a far less likely mistake than forgetting the table entirely — and
+    forgetting it is the one this exists to catch.
+    """
+    return re.search(rf"\b{re.escape(table)}\b", source) is not None
+
+
+async def test_rename_camera_touches_every_table_keyed_by_camera(
+    db: ClipDatabase,
+) -> None:
+    """Every table with a `camera` column is handled by the rename path.
+
+    Derived from information_schema rather than a hand-kept list, so a new
+    table arrives here on its own. If this fails, the fix is in
+    database/cameras.py, not in this test: add the table to
+    _rename_camera_rows, or give it its own _migrate_* helper when its
+    rows have to be merged rather than relabelled (a per-camera baseline
+    that already exists under the new name, for instance).
+    """
+    assert db._pool is not None
+    async with db._pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT table_name FROM information_schema.columns "
+            "WHERE column_name = 'camera' AND table_schema = current_schema()"
+        )
+    keyed_by_camera = {row["table_name"] for row in rows}
+    # A sanity floor: if the query ever returns nothing the assertion below
+    # would pass vacuously and guard nothing at all.
+    assert len(keyed_by_camera) >= 12
+
+    source = _rename_sources()
+    missing = {table for table in keyed_by_camera if not _mentions(source, table)}
+    assert not missing, (
+        f"rename_camera does not touch {sorted(missing)} — a camera renamed "
+        "in Blink would leave those rows under the old name"
+    )
 
 
 @pytest.mark.parametrize("tz_name", [_WEST_OF_UTC_TZ, _EAST_OF_UTC_TZ])
