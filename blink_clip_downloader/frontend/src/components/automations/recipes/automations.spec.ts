@@ -274,7 +274,19 @@ describe('entity fields a user can mistype', () => {
   // template — both things people really type — made the whole recipe
   // unparseable YAML rather than something Home Assistant could reject
   // with a useful message.
-  const awkward = ['notify: mobile_app_x', '{{ my_target }}', 'notify.a#b', '*alias', '@thing']
+  const awkward = [
+    'notify: mobile_app_x',
+    '{{ my_target }}',
+    'notify.a#b',
+    '*alias',
+    '@thing',
+    // An apostrophe used to be interpolated straight into
+    // states('<entity>'), which closed the Jinja literal early; a carriage
+    // return ended the folded YAML scalar and took the whole document with
+    // it. Both reach here through jinjaString() now.
+    "it's",
+    'has\rcarriage',
+  ]
 
   it.each(awkward)('still generates parseable YAML for a service of %o', (value) => {
     for (const r of AUTOMATION_RECIPES) {
@@ -284,5 +296,20 @@ describe('entity fields a user can mistype', () => {
         expect(() => load(yaml), `${r.id}.${key}`).not.toThrow()
       }
     }
+  })
+
+  it('keeps an apostrophe inside the alarm template instead of closing it', () => {
+    // The only user value the tab interpolates into a Jinja expression
+    // rather than a YAML scalar, so it is the only one yamlString() does
+    // not already cover.
+    // armed_state 'any' is the one branch that puts the entity inside a
+    // template; the others pass it through yamlString as a plain scalar.
+    const yaml = build('siren-on-suspicious', {
+      alarm_entity: "alarm_control_panel.brian's",
+      armed_state: 'any',
+    })
+    const doc = load(yaml) as { conditions: { value_template: string }[] }
+    const template = doc.conditions.map((c) => c.value_template).join('\n')
+    expect(template).toContain(String.raw`states("alarm_control_panel.brian's")`)
   })
 })

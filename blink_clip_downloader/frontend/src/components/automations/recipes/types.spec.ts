@@ -7,6 +7,7 @@ import {
   duration,
   entityList,
   jinjaList,
+  jinjaString,
   joinLines,
   listValue,
   numberValue,
@@ -80,6 +81,39 @@ describe('yaml helpers', () => {
     expect(jinjaList(['Front Door', 'Side "Gate"'])).toBe('["Front Door", "Side \\"Gate\\""]')
   })
 
+  it('jinjaString quotes one value the same way jinjaList quotes its items', () => {
+    expect(jinjaString('alarm_control_panel.home')).toBe('"alarm_control_panel.home"')
+    expect(jinjaList(['x'])).toBe(`[${jinjaString('x')}]`)
+  })
+
+  it('jinjaString escapes the non-printables JSON.stringify leaves raw', () => {
+    // JSON escapes everything below 0x20 and nothing above it, but a Jinja
+    // expression lands inside a YAML *block* scalar, which rejects DEL and
+    // the C1 range outright — so these need escaping that JSON alone will
+    // not give them.
+    expect(jinjaString('a\u007fb')).toBe(String.raw`"a\u007fb"`)
+    expect(jinjaString('a\u009fb')).toBe(String.raw`"a\u009fb"`)
+    expect(jinjaList(['a\u007fb'])).toBe(String.raw`["a\u007fb"]`)
+  })
+
+  it('a jinja list stays inside a block scalar the YAML parser accepts', () => {
+    const yaml = `value: ${yamlTemplate(`{{ x in ${jinjaList(['Cam\u007f1', 'Cam 2'])} }}`, 0)}`
+    // The escape survives as text — which is the point: the YAML parser
+    // never sees a raw DEL, and Jinja resolves the escape later.
+    expect(load(yaml)).toEqual({ value: String.raw`{{ x in ["Cam\u007f1", "Cam 2"] }}` })
+  })
+
+  it("jinjaString escapes the apostrophe that would otherwise close states('...')", () => {
+    // The whole reason the helper exists: interpolated raw, this ends the
+    // Jinja literal early and the template stops compiling.
+    expect(jinjaString("it's")).toBe('"it\'s"')
+  })
+
+  it('jinjaString escapes control characters, which would end the YAML scalar too', () => {
+    expect(jinjaString('a\nb')).toBe('"a\\nb"')
+    expect(jinjaString('a\rb')).toBe('"a\\rb"')
+  })
+
   it('duration renders minutes as HH:MM:SS', () => {
     expect(duration(15)).toBe('00:15:00')
     expect(duration(90)).toBe('01:30:00')
@@ -117,8 +151,23 @@ describe('yamlString and control characters', () => {
     ['Cam #2', 'Cam #2'],
     ['say "hi"', 'say "hi"'],
     ['back\\slash', 'back\\slash'],
+    // The rest of the C0 range has no letter spelling and is not legal raw
+    // in a double-quoted scalar at all — the parser rejects the whole
+    // document, not just the value, so these get a numeric \\xNN escape.
+    ['bell\u0007here', 'bell\u0007here'],
+    ['nul\u0000here', 'nul\u0000here'],
+    ['esc\u001bhere', 'esc\u001bhere'],
+    ['del\u007fhere', 'del\u007fhere'],
   ])('round-trips %o through a YAML parser unchanged', (input, expected) => {
     expect(load(`value: ${yamlString(input)}`)).toEqual({ value: expected })
+  })
+
+  it('spells the three YAML knows by letter, and the rest numerically', () => {
+    expect(yamlString('a\nb')).toBe(String.raw`"a\nb"`)
+    expect(yamlString('a\rb')).toBe(String.raw`"a\rb"`)
+    expect(yamlString('a\tb')).toBe(String.raw`"a\tb"`)
+    expect(yamlString('a\u0007b')).toBe(String.raw`"a\x07b"`)
+    expect(yamlString('a\u0000b')).toBe(String.raw`"a\x00b"`)
   })
 
   it('stays a single key when used as one', () => {

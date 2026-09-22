@@ -29,6 +29,7 @@ import {
   boolValue,
   duration,
   entityList,
+  jinjaString,
   joinLines,
   listValue,
   numberValue,
@@ -965,7 +966,7 @@ const armOnAway: Recipe = {
       '            id: away',
       '        sequence:',
       '          - action: rest_command.blink_sync_arm',
-      notify ? '          - action: ' + stringValue(v, 'notify_service', 'notify.notify') : '',
+      notify ? `          - action: ${yamlString(stringValue(v, 'notify_service', 'notify.notify'))}` : '',
       notify ? '            data:' : '',
       notify ? '              title: "🏠 Blink armed"' : '',
       notify ? '              message: "Everyone is out — the Sync Module is armed."' : '',
@@ -1036,7 +1037,7 @@ const sirenOnSuspicious: Recipe = {
     const alarm = stringValue(v, 'alarm_entity', 'alarm_control_panel.home')
     const armed = stringValue(v, 'armed_state', 'armed_away')
     const sirens = entityList(v, 'siren', 'siren.outdoor')
-    const anyArmed = `{{ states('${alarm}').startswith('armed') }}`
+    const anyArmed = `{{ states(${jinjaString(alarm)}).startswith('armed') }}`
     return joinLines([
       header(
         'Blink – siren on suspicious activity while armed',
