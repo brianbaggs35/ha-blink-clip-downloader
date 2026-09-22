@@ -128,6 +128,14 @@ const NAMED_CONTROL_ESCAPES: Record<string, string> = {
   '\r': String.raw`\r`,
   '\t': String.raw`\t`,
 }
+
+/** A control character as its numeric escape — ``\xNN`` for a YAML
+ * double-quoted scalar, ``\uNNNN`` for a JSON/Jinja literal. `codePointAt`
+ * cannot be undefined here: every caller passes a single character a regex
+ * has just matched. */
+function numericEscape(ch: string, prefix: string, digits: number): string {
+  return `${prefix}${ch.codePointAt(0)!.toString(16).padStart(digits, '0')}`
+}
 // C0, DEL and C1. The Python parser on the other end of the Create button
 // rejects every one of them raw, including the C1 range that the browser's
 // own YAML parser happens to accept — so the stricter of the two is what
@@ -163,7 +171,7 @@ export function yamlString(value: string): string {
     .replaceAll('"', ESCAPED_QUOTE)
     // Last: this step emits backslashes of its own, which the first step
     // must not then double.
-    .replace(CONTROL_CHARS, (ch) => NAMED_CONTROL_ESCAPES[ch] ?? `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`)
+    .replace(CONTROL_CHARS, (ch) => NAMED_CONTROL_ESCAPES[ch] ?? numericEscape(ch, String.raw`\x`, 2))
   return `"${escaped}"`
 }
 
@@ -189,10 +197,7 @@ const HIGH_CONTROL_CHARS = /[\u007f-\u009f]/g
 /** One string as a Jinja literal: JSON quoting, plus the non-printables
  * JSON leaves raw but the surrounding YAML will not accept. */
 function jinjaQuote(value: string): string {
-  return JSON.stringify(value).replace(
-    HIGH_CONTROL_CHARS,
-    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
-  )
+  return JSON.stringify(value).replace(HIGH_CONTROL_CHARS, (ch) => numericEscape(ch, String.raw`\u`, 4))
 }
 
 /** Render a list of strings as an inline Jinja list, quoted for Jinja (not
