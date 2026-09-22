@@ -32,6 +32,28 @@ for suspicious clips before:
   helpers, so the hours live in one place instead of being typed into every
   automation.
 
+### Audio analysis could not hear a short sound
+
+6.0.6's audio stage decided whether a clip carried any sound by averaging
+its level over ten seconds. A security clip is the opposite shape — a brief
+noise inside a long quiet stretch — so the average described the room tone
+rather than the event, and clips carrying a perfectly audible door slam,
+bark or knock were discarded as silent with a log line suggesting the
+camera's microphone was switched off.
+
+It now measures the loudest moment instead of the average. Measured on a
+clip whose sound sits 18 dB above its own noise floor, the ten-second
+average read -66.7 dBFS (below the silence threshold, so the sound was
+thrown away) while the loudest tenth of a second read -54.9 dBFS. A muted
+camera's noise floor is flat, so its peak barely exceeds its average and it
+is still correctly skipped.
+
+This also makes the answer independent of how long the clip is. The same
+sound measured -59 dBFS averaged across a one-second clip and -67 dBFS
+across a nine-second one, so the old gate heard short clips and went deaf to
+longer ones; plenty of Blink clips are well under ten seconds, and both ends
+of that range now behave the same.
+
 ### Bug fixes
 
 - The Automations tab's **Reset to defaults** and **Create in Home
