@@ -253,6 +253,9 @@ async function createInHa(create: RecipeCreate) {
 .recipe-actions {
   display: flex;
   justify-content: flex-end;
+  /* Without this the two buttons render edge to edge, reading as one
+     two-tone control rather than a destructive action beside a primary one. */
+  gap: 0.5rem;
   margin-bottom: 0.5rem;
 }
 .recipe-hint {
