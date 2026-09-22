@@ -981,7 +981,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # add-on's own shipped defaults (retention_days=30 <
         # archive_after_days=60) — got permanently deleted before the
         # archiver ever saw it, silently defeating archiving/Drive backup
-        # for most of the library. See _check_archive_retention_config below
+        # for most of the library. See _warn_if_archive_after_retention
         # for the startup-time warning covering that same misconfiguration.
         archived = await self._archiver.run()
         if archived:
@@ -1138,7 +1138,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
                 "session_downloads": self._session_downloads,
                 "used_mb": disk.get("used_mb", 0),
                 "free_gb": disk.get("free_gb", 0),
-                "last_download": datetime.now(UTC).isoformat(),
+                "last_download": last_dl,
             },
         )
 
