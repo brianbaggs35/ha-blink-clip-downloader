@@ -15,6 +15,7 @@ import {
   LOCAL_STORAGE_SENSOR,
   STATUS_SENSOR,
   cameraCondition,
+  castViewActions,
   conditionsBlock,
   eventNumberCondition,
   forDuration,
@@ -560,15 +561,12 @@ const castFeed: Recipe = {
         cameraCondition(listValue(v, 'cameras')),
       ]),
       'actions:',
-      '  - action: cast.show_lovelace_view',
-      '    data:',
-      `      entity_id: ${yamlString(player)}`,
-      `      dashboard_path: ${yamlString(stringValue(v, 'dashboard_path', 'blink'))}`,
-      `      view_path: ${yamlString(stringValue(v, 'view_path', 'security-feed'))}`,
-      stopAfter > 0 ? `  - delay: ${yamlString(duration(stopAfter))}` : '',
-      stopAfter > 0 ? '  - action: media_player.turn_off' : '',
-      stopAfter > 0 ? '    target:' : '',
-      stopAfter > 0 ? `      entity_id: ${yamlString(player)}` : '',
+      castViewActions({
+        player,
+        dashboardPath: stringValue(v, 'dashboard_path', 'blink'),
+        viewPath: stringValue(v, 'view_path', 'security-feed'),
+        stopAfter,
+      }),
     ])
   },
 }
@@ -1170,18 +1168,276 @@ const archiveWhenFull: Recipe = {
   },
 }
 
+const displayField = {
+  key: 'media_player',
+  label: 'Display',
+  type: 'text' as const,
+  default: 'media_player.nest_hub',
+  placeholder: 'media_player.kitchen_display',
+  help: 'The Chromecast-based display to cast to.',
+}
+
+const dashboardPathField = {
+  key: 'dashboard_path',
+  label: 'Dashboard path',
+  type: 'text' as const,
+  default: 'blink',
+  help: 'The URL segment after /lovelace — see the Dashboards tab, which generates the view itself.',
+}
+
+const viewPathField = {
+  key: 'view_path',
+  label: 'View path',
+  type: 'text' as const,
+  default: 'security-feed',
+}
+
+const castOnNewClip: Recipe = {
+  id: 'cast-on-new-clip',
+  create: { kind: 'automation', objectId: 'blink_cast_on_new_clip' },
+  name: 'Show the cameras whenever a clip arrives',
+  group: 'Security',
+  icon: '🖥️',
+  description:
+    'Puts the camera view on a display for every clip, not only the suspicious ones — the "glance at the screen and see who is at the door" version, with hours and cameras you choose so it is not on all day.',
+  target: 'automations.yaml',
+  filename: 'blink-cast-on-new-clip.yaml',
+  fields: [
+    displayField,
+    dashboardPathField,
+    viewPathField,
+    camerasField,
+    {
+      key: 'sources',
+      label: 'Sources',
+      type: 'multiselect',
+      default: ['pir', 'button_press'] as string[],
+      options: [
+        { label: 'Motion (pir)', value: 'pir' },
+        { label: 'Button press', value: 'button_press' },
+        { label: 'Live View recording', value: 'liveview' },
+        { label: 'Sync Module storage', value: 'local_storage' },
+      ],
+      help: 'Defaults to the two that mean something is happening right now. Leave empty for every source.',
+    },
+    {
+      key: 'after',
+      label: 'Not before',
+      type: 'time',
+      default: '07:00',
+      help: 'Leave both times empty for around the clock — a display that lights up at 3am is its own problem.',
+    },
+    {
+      key: 'before',
+      label: 'Not after',
+      type: 'time',
+      default: '22:00',
+    },
+    {
+      key: 'stop_after',
+      label: 'Stop casting after',
+      type: 'number',
+      default: 2,
+      min: 0,
+      max: 120,
+      suffix: 'min',
+      help: '0 leaves the feed up until something else takes the screen.',
+    },
+    pauseField,
+  ],
+  build: (v: RecipeValues) =>
+    joinLines([
+      header(
+        'Blink – show the cameras when a clip arrives',
+        'Casts the Blink dashboard view to a display whenever the add-on downloads a clip.',
+        // restart, so a second clip during the window re-casts and starts
+        // the countdown again rather than queueing a teardown behind it.
+        'restart',
+      ),
+      'triggers:',
+      '  - trigger: event',
+      `    event_type: ${CLIP_DOWNLOADED_EVENT}`,
+      conditionsBlock([
+        cameraCondition(listValue(v, 'cameras')),
+        sourceCondition(listValue(v, 'sources')),
+        // '' fallback: an empty time means "no limit" here, same as the
+        // new-clip notification above.
+        timeWindowCondition(timeOfDay(stringValue(v, 'after'), ''), timeOfDay(stringValue(v, 'before'), '')),
+        pauseSwitchCondition(stringValue(v, 'pause_entity')),
+      ]),
+      'actions:',
+      castViewActions({
+        player: stringValue(v, 'media_player', 'media_player.nest_hub'),
+        dashboardPath: stringValue(v, 'dashboard_path', 'blink'),
+        viewPath: stringValue(v, 'view_path', 'security-feed'),
+        stopAfter: numberValue(v, 'stop_after', 2),
+      }),
+    ]),
+}
+
+const suspiciousWhenAway: Recipe = {
+  id: 'suspicious-when-away',
+  create: { kind: 'automation', objectId: 'blink_suspicious_when_away' },
+  name: 'Alert only when nobody is home',
+  group: 'Security',
+  icon: '🏃',
+  description:
+    'The suspicious-clip alert, but silent while someone is in. Most of what a camera sees at home is the household, and an alert that fires for that is one you stop reading.',
+  target: 'automations.yaml',
+  filename: 'blink-suspicious-when-away.yaml',
+  fields: [
+    {
+      key: 'presence_entity',
+      label: 'Presence entity',
+      type: 'text',
+      default: 'zone.home',
+      placeholder: 'person.alex',
+      help: 'zone.home covers everyone Home Assistant tracks and needs no setup. A person or device_tracker entity narrows it to one of you.',
+    },
+    camerasField,
+    {
+      key: 'min_confidence',
+      label: 'Minimum confidence',
+      type: 'number',
+      default: 0.6,
+      min: 0,
+      max: 1,
+      step: 0.05,
+    },
+    notifyField(),
+    criticalField,
+    snapshotField,
+    clickPathField,
+    pauseField,
+  ],
+  build: (v: RecipeValues) => {
+    const entity = stringValue(v, 'presence_entity', 'zone.home')
+    // A zone's state is how many people are in it, so "empty" is a numeric
+    // test; a person's or device_tracker's is the string not_home. The
+    // entity itself says which applies, so there is no second field to set
+    // inconsistently with it — and the wrong test does not fail loudly, it
+    // just never matches, which reads as the automation being broken.
+    const presence = entity.startsWith('zone.')
+      ? ['  - condition: numeric_state', `    entity_id: ${yamlString(entity)}`, '    below: 1']
+      : ['  - condition: state', `    entity_id: ${yamlString(entity)}`, '    state: not_home']
+    return joinLines([
+      header(
+        'Blink – suspicious clip while nobody is home',
+        'Notifies about a suspicious clip only when presence says the house is empty.',
+        'queued',
+        10,
+      ),
+      'triggers:',
+      '  - trigger: event',
+      `    event_type: ${CLIP_ANALYZED_EVENT}`,
+      conditionsBlock([
+        joinLines([
+          '  - condition: template',
+          `    value_template: ${yamlTemplate('{{ trigger.event.data.is_suspicious }}', 4)}`,
+        ]),
+        eventNumberCondition('confidence', numberValue(v, 'min_confidence', 0.6)),
+        joinLines(presence),
+        cameraCondition(listValue(v, 'cameras')),
+        pauseSwitchCondition(stringValue(v, 'pause_entity')),
+      ]),
+      'actions:',
+      notifyAction(
+        stringValue(v, 'notify_service', 'notify.notify'),
+        '🚨 Blink: activity while you are out',
+        '{{ trigger.event.data.camera }} — {{ trigger.event.data.summary }} (confidence {{ (trigger.event.data.confidence | float(0) * 100) | round(0) }}%)',
+        {
+          critical: boolValue(v, 'critical'),
+          snapshot: boolValue(v, 'snapshot'),
+          clickPath: stringValue(v, 'click_path'),
+        },
+      ),
+    ])
+  },
+}
+
+const cloudBackupDisconnected: Recipe = {
+  id: 'cloud-backup-disconnected',
+  create: { kind: 'automation', objectId: 'blink_cloud_backup_disconnected' },
+  name: 'Cloud backup stopped working',
+  group: 'Storage',
+  icon: '🔌',
+  description:
+    'Tells you when the cloud backup drops its connection or pauses itself. An expired token is silent otherwise — clips keep queueing and nothing leaves the box until someone notices.',
+  target: 'automations.yaml',
+  filename: 'blink-cloud-backup-disconnected.yaml',
+  fields: [
+    {
+      key: 'sustained',
+      label: 'Only after it stays that way for',
+      type: 'number',
+      default: 10,
+      min: 0,
+      max: 720,
+      suffix: 'min',
+      help: '0 notifies immediately. A few minutes rides out a token refresh that was always going to succeed.',
+    },
+    {
+      key: 'watch_paused',
+      label: 'Also alert when uploads pause themselves',
+      type: 'toggle',
+      default: true,
+      help: 'A full cloud account pauses uploads rather than failing each one — it needs a person either way.',
+    },
+    notifyField(),
+    criticalField,
+  ],
+  build: (v: RecipeValues) => {
+    const watchPaused = boolValue(v, 'watch_paused')
+    return joinLines([
+      header(
+        'Blink – cloud backup stopped working',
+        'Notifies when the cloud backup destination disconnects, or pauses its own uploads.',
+      ),
+      'triggers:',
+      '  - trigger: state',
+      `    entity_id: ${CLOUD_STORAGE_SENSOR}`,
+      '    attribute: connected',
+      '    to: false',
+      forDuration(numberValue(v, 'sustained', 10)),
+      watchPaused ? '  - trigger: state' : '',
+      watchPaused ? `    entity_id: ${CLOUD_STORAGE_SENSOR}` : '',
+      watchPaused ? '    attribute: uploads_paused' : '',
+      watchPaused ? '    to: true' : '',
+      conditionsBlock([
+        // Nothing to report on an install that never connected a cloud
+        // account: `connected` is false there forever, which would fire
+        // this the first time Home Assistant restarted.
+        joinLines([
+          '  - condition: template',
+          `    value_template: ${yamlTemplate(`{{ state_attr(${jinjaString(CLOUD_STORAGE_SENSOR)}, 'configured') }}`, 4)}`,
+        ]),
+      ]),
+      'actions:',
+      notifyAction(
+        stringValue(v, 'notify_service', 'notify.notify'),
+        '☁️ Blink: cloud backup needs attention',
+        `{% set reason = state_attr(${jinjaString(CLOUD_STORAGE_SENSOR)}, 'pause_reason') %}Clip backups have stopped{% if reason %} — {{ reason }}{% endif %}. {{ state_attr(${jinjaString(CLOUD_STORAGE_SENSOR)}, 'pending_uploads') | int(0) }} clip(s) are waiting. Reconnect or resume from the add-on's Storage tab.`,
+        { critical: boolValue(v, 'critical') },
+      ),
+    ])
+  },
+}
+
 export const AUTOMATION_RECIPES: Recipe[] = [
   suspiciousAlert,
   securityLights,
   sirenOnSuspicious,
   castFeed,
+  castOnNewClip,
   announceClip,
+  suspiciousWhenAway,
   armOnAway,
   newClipNotify,
   longClip,
   cloudStorageThreshold,
   localStorageThreshold,
   uploadBacklog,
+  cloudBackupDisconnected,
   archiveWhenFull,
   batteryLow,
   batteryTodo,
