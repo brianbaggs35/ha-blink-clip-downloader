@@ -196,16 +196,27 @@ async function pollStatus() {
 function scheduleStatusPoll(generation: number) {
   const interval =
     status.value.active && status.value.state === 'live' ? STATUS_POLL_INTERVAL_MS : STARTING_POLL_INTERVAL_MS
-  statusTimer = setTimeout(async () => {
+  const handle: ReturnType<typeof setTimeout> = setTimeout(async () => {
     await pollStatus()
     // Stop the chain if this poll's session has been stopped, switched
     // away from, or unmounted while the request was in flight. No guard
     // is needed *before* the poll: every selectGeneration bump is
     // followed synchronously by stopTimers(), so a pending timeout is
     // always cleared before it could fire with a stale generation.
-    if (unmounted || generation !== selectGeneration) return
+    //
+    // `statusTimer !== handle` is what catches the server ending the
+    // session under us, which is how a Blink live view normally ends.
+    // applyStatus() calls stopTimers() on an inactive status, but by then
+    // this timeout has already fired, so its clearTimeout is a no-op and
+    // only the handle it left behind says so. Without this the chain
+    // re-armed itself against a session that no longer exists — and since
+    // an inactive status is not `live`, it re-armed at the *starting*
+    // interval, leaving the tab polling twice a second for as long as it
+    // stayed open.
+    if (unmounted || generation !== selectGeneration || statusTimer !== handle) return
     scheduleStatusPoll(generation)
   }, interval)
+  statusTimer = handle
 }
 
 function startTimers() {

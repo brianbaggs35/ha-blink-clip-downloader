@@ -352,6 +352,35 @@ describe('LiveViewPage', () => {
     expect(statusCalls() - whileLive).toBeLessThanOrEqual(1)
   })
 
+  it('stops polling once the server has ended the session', async () => {
+    // How a Blink live view normally ends: nobody presses Stop, the server
+    // hits the session's idle timeout or hard cap and reports it inactive.
+    // The poll chain has to notice, because an inactive status is not
+    // `live` and so would otherwise re-arm at the *starting* interval —
+    // leaving the tab polling twice a second for as long as it stayed open.
+    vi.useFakeTimers()
+    const routes: Routes = {
+      cameras: ['Front Door'],
+      status: { active: true, session_id: 's1', camera: 'Front Door', state: 'live' },
+    }
+    const fetchMock = routedFetch(routes)
+    vi.stubGlobal('fetch', fetchMock)
+    mountPage()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(600)
+    await flushPromises()
+
+    routes.status = INACTIVE
+    await vi.advanceTimersByTimeAsync(8000)
+    await flushPromises()
+
+    const statusCalls = () => fetchMock.mock.calls.filter((c) => c[0] === '/api/liveview/status').length
+    const afterEnd = statusCalls()
+    await vi.advanceTimersByTimeAsync(30000)
+    await flushPromises()
+    expect(statusCalls()).toBe(afterEnd)
+  })
+
   it('clears a playback error once the stream actually plays', async () => {
     const routes: Routes = {
       cameras: ['Front Door'],
