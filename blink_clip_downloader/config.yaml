@@ -1,6 +1,6 @@
 ---
 name: Blink Clip Downloader
-version: "v6.0.6"
+version: "v6.0.7"
 slug: blink_clip_downloader
 image: "ghcr.io/brianbaggs35/blink_clip_downloader"
 description: >-
@@ -627,7 +627,7 @@ schema:
   ai_camera_descriptions:
     - camera: "str"
       description: "str?"
-  ai_frame_strategy: "list(smart|sequential|uniform|adaptive)"
+  ai_frame_strategy: "list(adaptive|smart|sequential|uniform)"
   ai_car_cameras:
     - "str?"
   ai_prompt_debug_enabled: "bool"
