@@ -135,38 +135,72 @@ class FaceEnrollmentsMixin(_DatabaseBase):
         return [dict(r) for r in rows]
 
     async def add_face_enrollment(
-        self, name: str, embedding: list[float], approved: bool = True
+        self,
+        name: str,
+        embedding: list[float],
+        approved: bool = True,
+        thumbnail: bytes | None = None,
+        frame_width: int | None = None,
     ) -> int:
-        """Store a new enrolled household member's face embedding. Returns its id.
+        """Store one enrolled photo's face embedding. Returns its id.
 
         *approved* controls whether this person counts toward the
         suspicious-flag bypass (see analyzer/base.py's ``_face_bypass_applies``)
         — defaults to True so the common "add a family member" flow works
         immediately, but can be set False (or flipped later via
-        :meth:`set_face_enrollment_approved`) to enroll someone for
+        :meth:`set_face_enrollments_approved_by_name`) to enroll someone for
         recognition/labeling without granting them bypass trust.
+        *thumbnail* is the small JPEG of the face the Biometrics tab shows;
+        *frame_width* the width of the clip frame it was captured from
+        (``None`` for an uploaded photo), which the tab compares against the
+        width recognition currently matches at.
         """
         if self._pool is None:
             return 0
         new_id = await self._pool.fetchval(
             _qm(
-                "INSERT INTO face_enrollments (name, embedding, created_at, approved) "
-                "VALUES (?, ?, ?, ?) RETURNING id"
+                "INSERT INTO face_enrollments "
+                "(name, embedding, created_at, approved, thumbnail, frame_width) "
+                "VALUES (?, ?, ?, ?, ?, ?) RETURNING id"
             ),
             name,
             json.dumps(embedding),
             datetime.now(UTC).isoformat(),
             approved,
+            thumbnail,
+            frame_width,
         )
         return new_id or 0
 
+    async def get_person_approval(self, name: str) -> bool | None:
+        """Whether *name* is approved for the bypass, or ``None`` if nobody
+        by that name is enrolled.
+
+        A person counts as approved only when every one of their photos is
+        — the conservative reading of a mix that an older version could
+        leave behind — so a photo added to them inherits exactly what the
+        Biometrics tab's switch shows for them.
+        """
+        if self._pool is None:
+            return None
+        return await self._pool.fetchval(
+            _qm("SELECT BOOL_AND(approved) FROM face_enrollments WHERE name=?"),
+            name,
+        )
+
     async def list_face_enrollments(self) -> list[dict[str, Any]]:
-        """Return all enrolled household members, with embeddings decoded to lists."""
+        """Return every enrolled photo, with embeddings decoded to lists.
+
+        ``has_thumbnail`` says whether :meth:`get_face_enrollment_thumbnail`
+        has anything to return; the bytes themselves are left out, since
+        clip analysis reads this list for every clip and never needs them.
+        """
         if self._pool is None:
             return []
         rows = await self._pool.fetch(
-            "SELECT id, name, embedding, created_at, approved "
-            "FROM face_enrollments ORDER BY name"
+            "SELECT id, name, embedding, created_at, approved, frame_width, "
+            "thumbnail IS NOT NULL AS has_thumbnail "
+            "FROM face_enrollments ORDER BY name, id"
         )
         results = []
         for r in rows:
@@ -175,35 +209,20 @@ class FaceEnrollmentsMixin(_DatabaseBase):
             results.append(d)
         return results
 
+    async def get_face_enrollment_thumbnail(self, enrollment_id: int) -> bytes | None:
+        """The stored JPEG of one enrolled face, or ``None``."""
+        if self._pool is None:
+            return None
+        return await self._pool.fetchval(
+            _qm("SELECT thumbnail FROM face_enrollments WHERE id=?"), enrollment_id
+        )
+
     async def delete_face_enrollment(self, enrollment_id: int) -> None:
-        """Remove an enrolled household member by id."""
+        """Remove one enrolled photo by id."""
         if self._pool is None:
             return
         await self._pool.execute(
             _qm("DELETE FROM face_enrollments WHERE id=?"), enrollment_id
-        )
-
-    async def set_face_enrollment_approved(
-        self, enrollment_id: int, approved: bool
-    ) -> None:
-        """Flip whether an enrolled member counts toward the suspicious-flag
-        bypass, without deleting/re-enrolling them."""
-        if self._pool is None:
-            return
-        await self._pool.execute(
-            _qm("UPDATE face_enrollments SET approved=? WHERE id=?"),
-            approved,
-            enrollment_id,
-        )
-
-    async def rename_face_enrollment(self, enrollment_id: int, name: str) -> None:
-        """Correct an enrolled member's name without delete+re-enroll."""
-        if self._pool is None:
-            return
-        await self._pool.execute(
-            _qm("UPDATE face_enrollments SET name=? WHERE id=?"),
-            name,
-            enrollment_id,
         )
 
     async def set_face_enrollments_approved_by_name(

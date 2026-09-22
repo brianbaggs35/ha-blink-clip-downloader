@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from ..database import ClipDatabase
+from ..face_enrollment import FaceCandidateStore
+from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH
 from ..vision import FaceEmbedder
 from .ai import AiRoutesMixin
 from .app_shell import AppShellMixin
@@ -130,6 +132,8 @@ class MediaServer(
         archiver: ClipArchiver | None = None,
         moondream_api_key: str = "",
         prompt_debug_enabled: bool = False,
+        face_recognition_enabled: bool = False,
+        face_frame_width: int = ANALYSIS_FRAME_WIDTH,
         live_view: LiveViewManager | None = None,
         list_camera_names: Callable[[], list[str]] | None = None,
         get_camera_snapshot: Callable[[str], Awaitable[bytes | None]] | None = None,
@@ -172,11 +176,21 @@ class MediaServer(
         # unpopulated, even if a prompt happens to be stored from when the
         # feature was previously on.
         self._prompt_debug_enabled = prompt_debug_enabled
+        # Only reported, never acted on: the Biometrics tab uses it to say
+        # when enrolled people are not being recognized because the option
+        # is off. Recognition itself runs in the analyzer's VisionPipeline.
+        self._face_recognition_enabled = face_recognition_enabled
+        # The width recognition matches faces at, which enrollment scans
+        # must use too (see vision/faces.py's FACE_RESOLUTION_WIDTHS).
+        self._face_frame_width = face_frame_width
         # Independent from any FaceEmbedder the analyzer's VisionPipeline may
         # hold (see vision/runtime.py) — enrollment is a rare, occasional action, so
         # a second lazily-loaded model instance here is simpler than piping
         # a reference to the analyzer's private pipeline through for it.
         self._face_embedder = FaceEmbedder()
+        # Faces a Biometrics scan found, held until the user enrolls some —
+        # see face_enrollment.py for why the browser only ever gets ids.
+        self._face_candidates = FaceCandidateStore()
         self._runner: web.AppRunner | None = None
         self._camera_configs_lock = asyncio.Lock()
         self.extra_status: dict = {}
@@ -225,7 +239,7 @@ class MediaServer(
 
         aiohttp's default client_max_size (1 MB) is comfortably exceeded by
         a single base64-encoded face-enrollment photo (see
-        _handle_faces_enroll) — a normal phone photo is routinely 2-8 MB
+        _handle_faces_detect) — a normal phone photo is routinely 2-8 MB
         even before the ~33% base64 overhead, which would otherwise fail
         every real-world enrollment with an opaque 413 before the handler
         ever runs. 10 MB comfortably fits a real photo while still

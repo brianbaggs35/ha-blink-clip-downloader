@@ -31,7 +31,11 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from .. import frame_motion, prompt_segments
-from ..ffmpeg_output import format_ffmpeg_error, split_jpeg_frames
+from ..ffmpeg_output import (
+    ANALYSIS_FRAME_WIDTH,
+    format_ffmpeg_error,
+    split_jpeg_frames,
+)
 
 # Imported eagerly, unlike vision below: the security package is pure
 # stdlib — no torch, no opencv — so it costs nothing at import time and is
@@ -1853,7 +1857,7 @@ class BaseAnalyzer(abc.ABC):
             "-i",
             clip_path,
             "-vf",
-            f"fps=1/{interval},scale=640:-1",
+            f"fps=1/{interval},scale={ANALYSIS_FRAME_WIDTH}:-1",
             "-frames:v",
             str(extract_count),
             "-f",

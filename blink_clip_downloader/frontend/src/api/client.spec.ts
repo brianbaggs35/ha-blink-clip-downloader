@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, apiDelete, ApiError, apiGet, apiGetWithHeaders, apiPatch, apiPost, apiPut } from './client'
+import {
+  api,
+  apiDelete,
+  ApiError,
+  apiGet,
+  apiGetWithHeaders,
+  apiPatch,
+  apiPost,
+  apiPut,
+  describeApiError,
+} from './client'
 
 function jsonResponse(body: unknown, ok = true, status = 200, statusText = 'OK') {
   return {
@@ -133,11 +143,46 @@ describe('api client', () => {
     expect(fetch).toHaveBeenCalledWith('/api/clips/1', { method: 'DELETE' })
   })
 
+  it('apiDelete(): sends a JSON body when given one', async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({}))
+    await apiDelete('/api/ai/faces/people', { name: 'Mom/Dad' })
+    expect(fetch).toHaveBeenCalledWith('/api/ai/faces/people', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Mom/Dad' }),
+    })
+  })
+
   it('ApiError carries status and message', () => {
     const err = new ApiError(403, '403: Forbidden')
     expect(err.status).toBe(403)
     expect(err.message).toBe('403: Forbidden')
     expect(err.name).toBe('ApiError')
     expect(err).toBeInstanceOf(Error)
+  })
+
+  it('describeApiError(): prefers the reason the server gave', () => {
+    const fallback = 'Something went wrong'
+    const err = (body: string) => new ApiError(400, `400: ${body}`, body)
+    expect(describeApiError(err(JSON.stringify({ error: 'Name too long' })), fallback)).toBe('Name too long')
+    expect(describeApiError(err('Clip not found'), fallback)).toBe('Clip not found')
+    expect(describeApiError(err('  '), fallback)).toBe(fallback)
+    expect(describeApiError(err('<html>502 Bad Gateway</html>'), fallback)).toBe(fallback)
+    expect(describeApiError(err(JSON.stringify({ detail: 'x' })), fallback)).toBe(fallback)
+    expect(describeApiError(err(JSON.stringify({ error: '' })), fallback)).toBe(fallback)
+    expect(describeApiError(err('null'), fallback)).toBe(fallback)
+    expect(describeApiError(err('x'.repeat(201)), fallback)).toBe(fallback)
+    expect(describeApiError(new ApiError(500, '500: '), fallback)).toBe(fallback)
+    expect(describeApiError(new TypeError('Failed to fetch'), fallback)).toBe(fallback)
+  })
+
+  it('keeps the response body on the error it throws', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      text: () => Promise.resolve('{"error":"nope"}'),
+    } as Response)
+    await expect(apiGet('/x')).rejects.toMatchObject({ status: 400, body: '{"error":"nope"}' })
   })
 })

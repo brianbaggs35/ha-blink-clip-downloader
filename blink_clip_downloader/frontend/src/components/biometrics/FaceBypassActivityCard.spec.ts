@@ -213,4 +213,48 @@ describe('FaceBypassActivityCard', () => {
     expect(wrapper.text()).toContain('Entryway')
     expect(wrapper.text()).not.toContain('Front Door')
   })
+
+  it('shows a timestamp it cannot parse as it came', async () => {
+    mockFetch({
+      '/api/ai/faces/bypass-stats': {
+        total_bypassed: 1,
+        by_name: [],
+        recent: [{ clip_id: 'c1', camera: 'Front Door', face_bypass_names: 'Brian', analyzed_at: 'not-a-date' }],
+      },
+      '/api/ai/faces/feedback': [],
+    })
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.text()).toContain('not-a-date')
+  })
+
+  it('offers to find faces in a clip reported as a missed match, and only there', async () => {
+    mockFetch({
+      '/api/ai/faces/bypass-stats': { total_bypassed: 0, by_name: [], recent: [] },
+      '/api/ai/faces/feedback': [
+        {
+          clip_id: 'missed',
+          camera: 'Front Door',
+          report_type: 'false_negative',
+          note: '',
+          person_name: 'Brian',
+          created_at: '2026-01-05T10:00:00Z',
+        },
+        {
+          clip_id: 'wrong',
+          camera: 'Backyard',
+          report_type: 'false_positive',
+          note: '',
+          person_name: 'Amy',
+          created_at: '2026-01-05T09:00:00Z',
+        },
+      ],
+    })
+    const wrapper = mountCard()
+    await flushPromises()
+    const buttons = wrapper.findAll('button').filter((b) => b.text() === 'Find faces in this clip')
+    expect(buttons).toHaveLength(1)
+    await buttons[0].trigger('click')
+    expect(wrapper.emitted('scan-clip')).toEqual([['missed']])
+  })
 })

@@ -2,11 +2,39 @@ import { INGRESS_ROOT } from '../env'
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  /** The response body as the server sent it — see describeApiError(). */
+  body: string
+  constructor(status: number, message: string, body = '') {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.body = body
   }
+}
+
+// Longer than this and a plain-text body is a proxy's error page, not a
+// reason worth putting in front of someone.
+const MAX_REASON_LENGTH = 200
+
+/**
+ * What the server said went wrong — the `error` field of a JSON body, or a
+ * short plain-text reason (aiohttp's `HTTPBadRequest(text=...)`) — else
+ * *fallback*. For messages a person reads; ApiError.message keeps the raw
+ * status and body for logs and tests.
+ */
+export function describeApiError(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) return fallback
+  const body = error.body.trim()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    // Plain text: a reason, unless it's a proxy's HTML error page or too
+    // long to be one.
+    return body && !body.startsWith('<') && body.length <= MAX_REASON_LENGTH ? body : fallback
+  }
+  const reason = (parsed as { error?: unknown } | null)?.error
+  return typeof reason === 'string' && reason ? reason : fallback
 }
 
 /** Thin typed fetch wrapper mirroring the pre-Vue UI's `api()` helper. */
@@ -14,7 +42,7 @@ async function apiRequest<T>(path: string, opts: RequestInit = {}): Promise<{ da
   const res = await fetch(INGRESS_ROOT + path, opts)
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
-    throw new ApiError(res.status, `${res.status}: ${text}`)
+    throw new ApiError(res.status, `${res.status}: ${text}`, text)
   }
   return { data: (await res.json()) as T, headers: res.headers }
 }
@@ -65,6 +93,11 @@ export function apiPatch<T>(path: string, body?: unknown): Promise<T> {
   })
 }
 
-export function apiDelete<T>(path: string): Promise<T> {
-  return api<T>(path, { method: 'DELETE' })
+export function apiDelete<T>(path: string, body?: unknown): Promise<T> {
+  if (body === undefined) return api<T>(path, { method: 'DELETE' })
+  return api<T>(path, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }

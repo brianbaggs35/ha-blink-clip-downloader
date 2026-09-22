@@ -54,8 +54,97 @@ across a nine-second one, so the old gate heard short clips and went deaf to
 longer ones; plenty of Blink clips are well under ten seconds, and both ends
 of that range now behave the same.
 
+### Biometrics: find faces instead of hunting for frames
+
+Enrolling someone used to mean guessing which clip had them in it, then
+paging through a frame a second — most showing nobody, every one looking
+like the last — to click the few where their face happened to be clear. The
+tab now does the looking:
+
+- **Find faces in your clips.** Pick a camera (or all of them) and a time
+  range, then click a clip, or scan every clip shown in one go with a
+  progress bar and a Stop button. Only the faces come back, as close-up
+  crops, each with the camera and moment it came from. Near-identical shots
+  of the same second are collapsed into one, so a person standing in the
+  doorway for five seconds is one choice, not ten.
+- **Grouped by person.** Faces from every clip scanned so far are grouped
+  by who they look like, so "select all" on a group picks one person's faces
+  from across several clips. A face analysis would already recognize is
+  labelled **Already recognized as …**, with a one-click **Add to …**.
+- **Rated for quality.** Each face is rated Good, Fair or Low quality from
+  its sharpness, size and how squarely it faces the camera. Low-quality
+  faces are hidden until you ask: a blurred face 40 pixels wide was
+  measured matching the same person at 0.04, which makes it worse than no
+  photo at all.
+- **Photos work better too.** Every face in a photo is offered on its own,
+  so a group photo is fine — the old flow refused any photo in which it
+  found more than one face, and a single-person portrait was measured
+  producing three (the real one plus two patches of background). Phone
+  photos are straightened and shrunk in the browser before upload.
+- **See who is enrolled.** Each person now shows the faces they were
+  enrolled with, and a **Photos** list where individual photos can be
+  removed. It flags any photo that doesn't resemble the person's others —
+  usually someone else filed under their name, the one enrollment mistake
+  that could later let a stranger clear an alert — or that also looks like a
+  different enrolled person.
+- **A warning before a mix-up.** Picking a face that is already recognized
+  as someone else, then naming it as a different person, warns first.
+- **Status you can act on.** The tab says when face recognition is switched
+  off, or when no AI provider is configured (recognition runs inside clip
+  analysis), rather than letting you enroll people who will never be
+  recognized. A "Report a missed face match" from a clip's AI panel now has
+  **Find faces in this clip** beside it on the activity card.
+
+The same event saved twice — a clip and its backup to the Sync Module's USB
+drive — is listed once. Face crops are stored alongside each enrollment so
+you can see whose photo it is; like everything else here they stay in the
+add-on's own database and never leave it.
+
+People enrolled with an earlier version will match more reliably after
+adding a few photos from a clip — see the fix below.
+
+### Face Recognition Resolution
+
+A new option, `ai_face_recognition_resolution`, is face recognition's
+equivalent of the other stages' model size: facenet-pytorch has one
+recognition network, so what there is to trade is how many pixels each face
+gets. **standard** (the default, unchanged behaviour) matches in the 640px
+frames analysis already extracts; **high** (960px) and **very_high**
+(1280px) look again at the same moments in more detail. For a face about
+60px wide in a 1080p frame — someone a few metres from the camera — standard
+recognized it 11 times in 30, high 27 and very high 30, at roughly 1.2× and
+1.7× the face stage's CPU time. No setting ever matched the wrong person.
+Enrollment scans follow the setting, and after changing it the Biometrics
+tab points out photos captured at the old resolution.
+
 ### Bug fixes
 
+- **People enrolled from a clip were recognized far less often than they
+  should have been.** The old picker extracted frames 480px wide while
+  recognition matches in 640px ones, and a face enrolled at one size matches
+  poorly at another: for a typical doorstep face, 2 recognitions in 30
+  against 20 in 30 when the two agree. Enrollment scans now use exactly the
+  width recognition does.
+- **A sideways phone photo could enroll a useless face.** Phones store most
+  portrait photos sideways with a "rotate me" tag that enrollment ignored:
+  either no face was found, or one was and the stored reference matched the
+  same person upright at 0.07. Photos are now turned the right way up first.
+- **A frame face recognition could not examine was treated as empty.** If
+  detection failed on one frame of a clip (a decoding error, say) while an
+  approved person was recognized in the others, the clip could have its
+  suspicious flag cleared without every frame having been checked. A frame
+  that cannot be examined now counts as an unrecognized face — it might have
+  held anyone — so the bypass is withheld, as it would be for a stranger.
+- **A person whose name contained "/" could be enrolled but never approved,
+  renamed or removed.** Home Assistant's ingress decodes a URL before
+  forwarding it, turning the name into two path segments; the name now
+  travels in the request body.
+- Renaming a person to an invalid name while also changing their approval
+  applied the approval and then refused the rename, leaving half the change
+  made. Both are now checked before either is written.
+- A face-recognition report or an enrolled-photo request carrying a NUL
+  character, or a photo id beyond the database's range, failed with a bare
+  server error instead of being refused as a bad request.
 - The Automations tab's **Reset to defaults** and **Create in Home
   Assistant** buttons sat edge to edge, reading as one two-tone control
   rather than two buttons. They now have a gap between them.
@@ -63,6 +152,14 @@ of that range now behave the same.
   "last download" times — one on the Status card, one on
   `sensor.blink_downloader_status` — because each was generated from its own
   clock read. Both now report the one moment they are describing.
+
+### Dependencies
+
+- PyYAML is now declared as a dependency. The Automations tab's
+  Create-in-Home-Assistant support (6.0.6) imports it at startup, but it only
+  ever arrived as a dependency of the computer-vision packages, which the
+  image installs on a best-effort basis — had that install failed, the
+  add-on would not have started at all.
 
 ### Internal
 

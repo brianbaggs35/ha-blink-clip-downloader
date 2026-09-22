@@ -490,10 +490,21 @@ configuration:
     description: >-
       Supprime les alertes pour les membres du foyer enregistrés.
       L'enregistrement (photos de référence, empreintes faciales
-      calculées) se fait entièrement sur l'appareil via l'onglet IA de
-      l'interface Web et ne quitte jamais cet add-on ni votre réseau —
+      calculées) se fait entièrement sur l'appareil via l'onglet
+      Biométrie de l'interface Web et ne quitte jamais cet add-on ni
+      votre réseau —
       il n'est jamais envoyé à un fournisseur d'IA cloud, quel que soit
       celui configuré ci-dessus. Désactivé par défaut.
+  ai_face_recognition_resolution:
+    name: Résolution de la reconnaissance faciale
+    description: >-
+      Le niveau de détail avec lequel les visages sont comparés.
+      « standard » utilise les images de 640 px que l'analyse extrait
+      déjà ; « high » (960 px) et « very_high » (1280 px) réexaminent les
+      mêmes instants plus en détail, ce qui reconnaît des personnes plus
+      éloignées de la caméra pour un coût processeur modéré. Après un
+      changement, rescannez un clip dans l'onglet Biométrie — les visages
+      correspondent mieux aux photos enregistrées à la même résolution.
   hf_token:
     name: Jeton Hugging Face (optionnel)
     description: >-

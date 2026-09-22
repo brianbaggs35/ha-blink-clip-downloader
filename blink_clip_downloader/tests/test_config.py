@@ -658,6 +658,43 @@ def test_cv_pipeline_options_can_all_be_enabled():
     assert cfg.ai_face_recognition_enabled is True
 
 
+def test_face_recognition_resolution_defaults_to_standard():
+    """Standard is the width every enrollment made before the option existed
+    was captured at, so it is also where anything unrecognised lands."""
+    for data in (
+        {},
+        {"ai_face_recognition_resolution": "ultra"},
+        {"ai_face_recognition_resolution": None},
+    ):
+        cfg = _parse_config({"username": "u", "password": "p", **data})
+        assert cfg.ai_face_recognition_resolution == "standard"
+
+
+def test_face_recognition_resolution_accepts_every_listed_value():
+    for value in ("standard", "high", "very_high", " HIGH "):
+        cfg = _parse_config(
+            {"username": "u", "password": "p", "ai_face_recognition_resolution": value}
+        )
+        assert cfg.ai_face_recognition_resolution == value.strip().lower()
+
+
+def test_face_recognition_resolutions_agree_everywhere():
+    """config.py validates the option, vision/faces.py maps it to a width,
+    config.yaml offers it in the Configuration tab: a value any one of them
+    lacks is either unselectable or a KeyError at startup."""
+    from blink_downloader.config import FACE_RECOGNITION_RESOLUTIONS
+    from blink_downloader.vision import FACE_RESOLUTION_WIDTHS
+
+    manifest = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text()
+    )
+    offered = manifest["schema"]["ai_face_recognition_resolution"]
+    assert offered == "list(" + "|".join(FACE_RECOGNITION_RESOLUTIONS) + ")"
+    assert set(FACE_RESOLUTION_WIDTHS) == set(FACE_RECOGNITION_RESOLUTIONS)
+    assert manifest["options"]["ai_face_recognition_resolution"] == "standard"
+    assert FACE_RESOLUTION_WIDTHS["standard"] == 640
+
+
 def test_huggingface_token_is_trimmed():
     cfg = _parse_config(
         {"username": "u", "password": "p", "hf_token": "  hf_test_token  "}

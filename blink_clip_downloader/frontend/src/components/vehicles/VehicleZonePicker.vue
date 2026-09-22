@@ -83,7 +83,7 @@ type DragMode = {
 }
 const drag = ref<DragMode | null>(null)
 
-// Same request-sequencing guard as EnrollFromClipPicker.vue/LibraryPage.vue:
+// Same request-sequencing guard as ClipFaceScanner.vue/LibraryPage.vue:
 // only apply a response if it's still the most recently fired call by the
 // time it resolves, so a stale, slower response can't overwrite a newer
 // selection's data.

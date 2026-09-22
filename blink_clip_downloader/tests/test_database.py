@@ -4099,32 +4099,34 @@ async def test_add_face_enrollment_unapproved(db: ClipDatabase) -> None:
     assert enrollments[0]["approved"] is False
 
 
-async def test_set_face_enrollment_approved(db: ClipDatabase) -> None:
-    enrollment_id = await db.add_face_enrollment("Brian", [0.1, 0.2])
-    await db.set_face_enrollment_approved(enrollment_id, False)
-    enrollments = await db.list_face_enrollments()
-    assert enrollments[0]["approved"] is False
+async def test_add_face_enrollment_stores_its_thumbnail(db: ClipDatabase) -> None:
+    with_photo = await db.add_face_enrollment("Brian", [0.1], thumbnail=b"jpeg")
+    without = await db.add_face_enrollment("Brian", [0.2])
 
-    await db.set_face_enrollment_approved(enrollment_id, True)
-    enrollments = await db.list_face_enrollments()
-    assert enrollments[0]["approved"] is True
+    by_id = {e["id"]: e for e in await db.list_face_enrollments()}
+    assert by_id[with_photo]["has_thumbnail"] is True
+    assert by_id[without]["has_thumbnail"] is False
+    # Clip analysis reads this list for every clip; the bytes stay out of it.
+    assert "thumbnail" not in by_id[with_photo]
 
-
-async def test_rename_face_enrollment(db: ClipDatabase) -> None:
-    enrollment_id = await db.add_face_enrollment("Brain", [0.1, 0.2])
-    await db.rename_face_enrollment(enrollment_id, "Brian")
-    enrollments = await db.list_face_enrollments()
-    assert enrollments[0]["name"] == "Brian"
+    assert await db.get_face_enrollment_thumbnail(with_photo) == b"jpeg"
+    assert await db.get_face_enrollment_thumbnail(without) is None
+    assert await db.get_face_enrollment_thumbnail(999) is None
 
 
-async def test_set_face_enrollment_approved_without_init_is_noop() -> None:
-    d = ClipDatabase()
-    await d.set_face_enrollment_approved(1, False)  # must not raise
+async def test_get_person_approval(db: ClipDatabase) -> None:
+    await db.add_face_enrollment("Brian", [0.1], approved=True)
+    await db.add_face_enrollment("Brian", [0.2], approved=True)
+    await db.add_face_enrollment("Nanny", [0.3], approved=False)
+    await db.add_face_enrollment("Mixed", [0.4], approved=True)
+    await db.add_face_enrollment("Mixed", [0.5], approved=False)
 
-
-async def test_rename_face_enrollment_without_init_is_noop() -> None:
-    d = ClipDatabase()
-    await d.rename_face_enrollment(1, "New Name")  # must not raise
+    assert await db.get_person_approval("Brian") is True
+    assert await db.get_person_approval("Nanny") is False
+    # A mix left by an older version reads as not approved — the same as the
+    # Biometrics tab's switch shows it.
+    assert await db.get_person_approval("Mixed") is False
+    assert await db.get_person_approval("Nobody") is None
 
 
 async def test_set_face_enrollments_approved_by_name(db: ClipDatabase) -> None:
@@ -4174,11 +4176,12 @@ async def test_face_enrollments_by_name_without_init_is_noop() -> None:
     await d.delete_face_enrollments_by_name("Brian")  # must not raise
 
 
-async def test_list_face_enrollments_ordered_by_name(db: ClipDatabase) -> None:
-    await db.add_face_enrollment("Zoe", [0.1])
-    await db.add_face_enrollment("Amy", [0.2])
-    names = [e["name"] for e in await db.list_face_enrollments()]
-    assert names == ["Amy", "Zoe"]
+async def test_list_face_enrollments_ordered_by_name_then_age(db: ClipDatabase) -> None:
+    zoe = await db.add_face_enrollment("Zoe", [0.1])
+    amy_first = await db.add_face_enrollment("Amy", [0.2])
+    amy_second = await db.add_face_enrollment("Amy", [0.3])
+    ids = [e["id"] for e in await db.list_face_enrollments()]
+    assert ids == [amy_first, amy_second, zoe]
 
 
 async def test_delete_face_enrollment(db: ClipDatabase) -> None:
@@ -4191,6 +4194,8 @@ async def test_face_enrollment_without_init_is_noop() -> None:
     d = ClipDatabase()
     assert await d.add_face_enrollment("Brian", [0.1]) == 0
     assert await d.list_face_enrollments() == []
+    assert await d.get_person_approval("Brian") is None
+    assert await d.get_face_enrollment_thumbnail(1) is None
     await d.delete_face_enrollment(1)  # must not raise
 
 

@@ -53,7 +53,7 @@ import { useCapabilitiesStore } from '../../stores/capabilities'
 import { useNavCollapsedStore } from '../../stores/navCollapsed'
 import { apiPost } from '../../api/client'
 import { getCameras, getStats } from '../../api/clips'
-import { listFaces } from '../../api/ai'
+import { listFaces } from '../../api/faces'
 
 const activeTab = defineModel<TabName>({ required: true })
 const emit = defineEmits<{ help: []; refresh: [] }>()

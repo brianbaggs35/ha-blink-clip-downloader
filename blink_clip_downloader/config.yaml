@@ -439,10 +439,18 @@ options:
   # before choosing either. Downloaded automatically on first use.
   ai_depth_estimation_model: "depth-anything/Depth-Anything-V2-Small-hf"
   # Local-only face recognition to suppress alerts for enrolled household
-  # members. Enrollment happens entirely on-device via the web UI's AI tab
-  # — reference photos and computed face embeddings never leave this add-on
-  # or your network, and are never sent to any cloud AI provider.
+  # members. Enrollment happens entirely on-device via the web UI's
+  # Biometrics tab — reference photos and computed face embeddings never
+  # leave this add-on or your network, and are never sent to any cloud AI
+  # provider.
   ai_face_recognition_enabled: false
+  # How much detail faces are matched with: "standard" uses the 640px-wide
+  # frames analysis already extracts; "high" (960px) and "very_high"
+  # (1280px) re-extract the same moments larger, which recognizes people
+  # farther from the camera at a modest extra CPU cost. Re-scan a clip on
+  # the Biometrics tab after changing it — a face matches best against
+  # photos enrolled at the same resolution.
+  ai_face_recognition_resolution: "standard"
   # Body-keypoint (pose) estimation for whoever is nearest the protected
   # vehicle, on the one frame the depth/contact stages already examine.
   # Adds three narrow facts a bounding box cannot give: an arm extended
@@ -637,6 +645,7 @@ schema:
   ai_depth_estimation_model: "list(depth-anything/Depth-Anything-V2-Small-hf|depth-anything/Depth-Anything-V2-Base-hf|depth-anything/Depth-Anything-V2-Large-hf)"
   # yamllint enable rule:line-length
   ai_face_recognition_enabled: "bool"
+  ai_face_recognition_resolution: "list(standard|high|very_high)"
   ai_pose_estimation_enabled: "bool"
   # yamllint disable rule:line-length
   ai_pose_model: "list(yolo26n-pose.pt|yolo26s-pose.pt|yolo26m-pose.pt|yolo26l-pose.pt|yolo26x-pose.pt|yolo11n-pose.pt|yolo11s-pose.pt|yolo11m-pose.pt|yolo11l-pose.pt|yolo11x-pose.pt)"

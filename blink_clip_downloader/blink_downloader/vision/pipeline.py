@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH, extract_jpeg_frames
 from ..security import (
     VEHICLE_LABELS,
     Box,
@@ -74,6 +75,11 @@ class VisionConfig:
     object_detection_model: str = "yolo26n.pt"
     depth_estimation_model: str = "depth-anything/Depth-Anything-V2-Small-hf"
     face_recognition_enabled: bool = False
+    #: Width of the frames faces are matched in — ``ai_face_recognition_resolution``
+    #: mapped through :data:`.faces.FACE_RESOLUTION_WIDTHS`. At the analysis
+    #: width the face stage reuses the frames already extracted; any other
+    #: width re-extracts the same moments at that size.
+    face_frame_width: int = ANALYSIS_FRAME_WIDTH
     #: Body-keypoint estimation for the subject nearest a protected asset.
     #: Its own toggle, and its own (separate, small) model checkpoint — a
     #: user who wants object detection should not pay for a download they
@@ -276,7 +282,7 @@ class VisionPipeline:
             hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
 
         await self._run_audio_stage(hints, clip_path)
-        await self._run_face_stage(hints, raw_pool)
+        await self._run_face_stage(hints, raw_pool, clip_path, frame_interval)
         self._log_result(hints)
         return hints
 
@@ -303,15 +309,47 @@ class VisionPipeline:
         hints.audio_tags = await self._audio.tag(clip_path)
         hints.audio_hint = build_audio_hint(hints.audio_tags)
 
-    async def _run_face_stage(self, hints: VisionHints, raw_pool: list[bytes]) -> None:
+    async def _run_face_stage(
+        self,
+        hints: VisionHints,
+        raw_pool: list[bytes],
+        clip_path: str,
+        frame_interval: float,
+    ) -> None:
         """Recognize enrolled household members, or record the stage as absent."""
         if not (self._config.face_recognition_enabled and self._db is not None):
             hints.unavailable_sources.append(SOURCE_FACE_RECOGNITION)
             return
+        frames = await self._face_frames(raw_pool, clip_path, frame_interval)
         recognizer = FaceRecognizer(self._face_embedder, self._db)
-        face_result = await recognizer.recognize(raw_pool)
+        face_result = await recognizer.recognize(frames)
         hints.face_recognition = face_result
         hints.recognized_resident_hint = _build_recognition_hint(face_result)
+
+    async def _face_frames(
+        self, raw_pool: list[bytes], clip_path: str, frame_interval: float
+    ) -> list[bytes]:
+        """The frames faces are matched in.
+
+        *raw_pool* itself at the analysis width. At a wider configured
+        width, the same moments of the clip — same interval, same count, so
+        the same ``fps`` sampling lands on the same timestamps — extracted
+        again at that size. If that extraction fails, *raw_pool* again: a
+        smaller face than the enrolled photos were captured at can only
+        match less often, never match the wrong person, so falling back
+        errs the safe way.
+        """
+        width = self._config.face_frame_width
+        if width == ANALYSIS_FRAME_WIDTH or not clip_path or not raw_pool:
+            return raw_pool
+        frames = await extract_jpeg_frames(
+            clip_path,
+            width=width,
+            interval=frame_interval,
+            count=len(raw_pool),
+            label=clip_path,
+        )
+        return frames or raw_pool
 
     def _log_result(self, hints: VisionHints) -> None:
         """One debug line per clip saying which stages produced anything.

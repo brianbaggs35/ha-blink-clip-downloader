@@ -763,6 +763,7 @@ you'll see them report unavailable there.
 | `ai_object_detection_model` | `yolo26n.pt` | Which Ultralytics model the detection stage above runs. YOLO26 (`yolo26n/s/m/l/x.pt`) is the current generation — end-to-end inference, lighter and more accurate than YOLO11 at every size — and is the default; `yolo11n/s/m/l/x.pt` remain selectable for compatibility with existing configurations. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; "s"/"m"/"l"/"x" trade speed for accuracy, with "x" (extra-large) the most accurate and much slower. |
 | `ai_depth_estimation_model` | `depth-anything/Depth-Anything-V2-Small-hf` | Which Depth Anything V2 checkpoint the depth-estimation stage above runs. "Small" (default) is fastest/lightest and Apache-2.0 licensed; "Base"/"Large" are more accurate but slower/heavier, and are licensed CC-BY-NC-4.0 (**non-commercial use only**) by their publisher, unlike Small's Apache-2.0 — fine for this add-on's typical personal home-security use, but confirm that licensing fits your own situation before choosing either. |
 | `ai_face_recognition_enabled` | `false` | Local-only face recognition (facenet-pytorch) to suppress alerts for enrolled household members — see below. Kept as its own toggle since it's privacy-sensitive rather than just heavier compute. |
+| `ai_face_recognition_resolution` | `standard` | How much detail faces are matched with — face recognition's equivalent of the other stages' model size, since it has one recognition network and what there is to trade is pixels per face. `standard` uses the 640px-wide frames analysis already extracts; `high` (960px) and `very_high` (1280px) look again at the same moments in more detail. Measured on a face about 60px wide in a 1080p frame (someone a few metres from the camera), standard recognized it 11 times in 30, high 27 and very high 30, with no wrong-person match at any setting, at roughly 1.2× and 1.7× the face stage's CPU time. The Biometrics tab's clip scans use the same resolution, and a face matches best against photos enrolled at the same one — after changing it, scan a clip of each person again (the tab points out which photos were captured at the old one). |
 | `ai_pose_estimation_enabled` | `false` | Body-keypoint (pose) estimation for whoever is nearest the protected vehicle, on the one frame the depth and contact stages already examine. Adds three facts a bounding box cannot give: an arm extended toward the vehicle (trying a handle, reaching through a window), an arm raised above shoulder height, and a crouched or bent-over posture. Its own small model, downloaded on first use. |
 | `ai_pose_model` | `yolo26n-pose.pt` | Which Ultralytics pose checkpoint the stage above runs. YOLO26-pose is the current generation, matching the object detector's own default; `yolo11n/s/m/l/x-pose.pt` remain selectable for anyone already using them. "n" (nano) is fastest/lightest and the recommended starting point on CPU-only hardware; larger sizes are more accurate and much slower. All output the same 17 COCO keypoints. |
 | `ai_audio_analysis_enabled` | `false` | Sound-event classification of the clip's own audio track (an Audio Spectrogram Transformer fine-tuned on Google's AudioSet, via transformers). Adds an **AUDIO** hint naming what it heard — breaking glass, a raised voice, a car alarm, a door, footsteps, a power tool, a dog — as weak supporting evidence the model has to reconcile with the frames, never as a verdict of its own. It **classifies sound and never transcribes speech**: no words are read, nothing is sent anywhere, and the model runs on the same machine as the add-on (see *Audio analysis and privacy* below). Clips from a camera with no microphone, or with it switched off, produce no hint at all — the stage detects that in the same pass it uses to read the audio, so it costs nothing on installs that have no audio to analyze. Independent of `ai_enhanced_detection_enabled`: this one reads the clip file, not the sampled frames. |
@@ -1133,24 +1134,47 @@ saying nothing happened.
 #### Biometrics Tab — face-recognition enrollment and the suspicious-flag bypass
 
 Once `ai_face_recognition_enabled` is on, enroll household members from the
-**Biometrics** nav tab (moved out of the AI tab in 5.0.0). Two ways to
-enroll:
+**Biometrics** nav tab (moved out of the AI tab in 5.0.0). Face recognition
+runs as part of AI clip analysis, so an AI provider has to be configured too;
+the tab says so if either is missing. Enrolling is pick-from-what-was-found:
 
-- **From a clip (recommended)** — pick a camera and one of its recent clips,
-  extract several frames from it, and select as many as you like that show
-  the face clearly. Motion-triggered clips often don't have a good angle on
-  the face in the very first frame (e.g. a front door camera catching the
-  moment the door opens); pulling multiple frames from a real clip and
-  picking the good ones gives recognition several real reference angles to
-  match against instead of one posed photo, which is what actually makes
-  recognition reliable enough to cut down false positives on a camera the
-  same few people pass every day.
-- **From a photo** — the simpler original flow: give a name and a single
-  clear reference photo.
+- **From clips (recommended)** — choose a camera (or all of them) and a time
+  range, then click a clip, or **Find faces in N clips** to scan every clip
+  shown. Each clip is sampled every half second or so, and only the faces
+  found come back — as close-up crops, grouped by who they look like, with
+  near-identical shots of the same moment collapsed into one. Faces from the
+  cameras themselves recognize best, because they look the way that person
+  will look the next time a camera sees them. A face that is too small or
+  blurred to be a useful reference is rated **Low quality** and hidden until
+  you ask for it; one that clip analysis would already recognize is labelled
+  **Already recognized as …** with a one-click **Add to …**.
+- **From a photo** — upload one or more photos. Every face in a photo is
+  offered separately, so a group photo works; phone photos are straightened
+  and shrunk in the browser before upload.
 
-Each selected photo is converted to a numeric face embedding (the photo
-itself is not stored) and kept only in this add-on's own database — **never
-uploaded anywhere**, regardless of which `ai_provider` is configured. Even
+Pick the faces that are the person, type their name (existing people are
+suggested), and enroll. Adding photos to someone already enrolled keeps
+their current approval. If a picked face is already recognized as someone
+*else*, the tab warns you before you file it under another name, since that
+is how recognition learns to confuse two people. Near-duplicate copies of
+the same event — a clip and its backup to the Sync Module's USB drive — are
+listed once. A "Report a missed face match" on a clip's AI panel shows up on
+the Face-bypass activity card with **Find faces in this clip**, the fastest
+way to fix a person who isn't being recognized.
+
+Each person's **Photos** list shows every enrolled photo and flags any worth
+a second look: one that doesn't resemble the person's other photos (often
+someone else filed under their name), one that also looks like a different
+enrolled person, or one captured at a different **Face Recognition
+Resolution** than recognition now uses. Remove individual photos there.
+People enrolled before 6.0.7 were enrolled from smaller frames than
+recognition matches against; adding a few photos from a clip recognizes them
+much more reliably.
+
+Each enrolled face is kept as a numeric face embedding plus a small close-up
+crop (so you can see whose photo it is), only in this add-on's own database
+— **never uploaded anywhere**, regardless of which `ai_provider` is
+configured. Even
 the advisory hint sent to the AI model (any provider, including cloud ones)
 is strictly name-free — it only ever says how many locally-enrolled members
 matched, never who. A recognized person's actual name is only ever used
@@ -1290,8 +1314,9 @@ from any browser without leaving Home Assistant.
   flag, and a visual rectangle-or-freeform zone picker drawn over an actual recent
   frame from that camera, with a persisted reference snapshot — see
   **Vehicles Tab** above.
-- **Biometrics tab** — enroll household members' faces (from a clip's frames or a
-  single photo), approve/un-approve/rename/remove them, and the all-or-nothing
+- **Biometrics tab** — find faces in your clips (or photos) and enroll household
+  members from them, review and remove individual photos, approve/un-approve/
+  rename/remove people, and the all-or-nothing
   suspicious-flag bypass this powers — see **Biometrics Tab** above.
 - **Storage tab** — view and delete archived clips, run archiving on demand
   instead of waiting for the next poll cycle, and connect a Google Drive

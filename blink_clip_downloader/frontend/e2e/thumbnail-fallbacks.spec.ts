@@ -52,16 +52,19 @@ test("the Vehicles zone picker's clip strip falls back per clip", async ({ page 
   await card.locator('input[role="switch"]').click()
 })
 
-test('the Biometrics clip strip falls back per clip', async ({ page }) => {
+test('the Biometrics clip list falls back per clip, and a clip can still be scanned', async ({ page }) => {
   await breakThumbnails(page)
   await page.goto('/')
   await gotoTab(page, 'biometrics')
 
   await page.locator('#biometrics-camera-select').click()
-  await page.getByRole('option', { name: 'Test Scratch' }).click()
+  await page.getByRole('option', { name: 'Test Scratch', exact: true }).click()
 
-  await expect(page.locator('.thumb-strip-item').first()).toBeVisible()
-  await expect(page.locator('.thumb-strip-item .no-thumb').first()).toBeVisible()
+  const tile = page.locator('.clip-tile').first()
+  await expect(tile.locator('.clip-tile-no-thumb')).toBeVisible()
+  await expect(tile.locator('img')).toHaveCount(0)
+  await tile.click()
+  await expect(tile).toContainText('3 faces')
 })
 
 test('the Security timeline drops the thumbnail button rather than showing an empty one', async ({ page }) => {

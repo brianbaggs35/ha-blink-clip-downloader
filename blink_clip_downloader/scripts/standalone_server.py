@@ -44,7 +44,7 @@ from blink_downloader.media_server import MediaServer
 from blink_downloader.media_server import faces as media_server_faces
 from blink_downloader.security import SecurityEvent, SecurityEventType, Severity
 from blink_downloader.security.vehicles import VehicleSignature
-from blink_downloader.vision import DetectedObject
+from blink_downloader.vision import DetectedFace, DetectedObject, FaceEmbedder
 
 
 class _ExpectedE2ENoiseFilter(logging.Filter):
@@ -52,10 +52,6 @@ class _ExpectedE2ENoiseFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
-        if record.name.startswith("blink_downloader.media_server"):
-            return not (
-                message.startswith("ffmpeg exited ") and " for e2e-clip-" in message
-            )
         if record.name.startswith("blink_downloader.analyzer"):
             return not (
                 message.startswith("ffmpeg exited ")
@@ -79,7 +75,6 @@ def _configure_e2e_logging() -> None:
     # the submodule that actually emits the filtered message has to be named
     # here rather than just its parent package.
     for logger_name in (
-        "blink_downloader.media_server.library",
         "blink_downloader.analyzer.base",
         "blink_downloader.vision.faces",
     ):
@@ -119,7 +114,7 @@ def _redirect_data_files(data_dir: Path) -> None:
 
 
 def _force_face_recognition_available() -> None:
-    """Biometrics' nav tab — and BiometricsPage.vue's whole enroll form — are
+    """Biometrics' nav tab — and BiometricsPage.vue's whole enroll flow — are
     hidden/disabled whenever GET /api/ai/faces reports available=false,
     which vision.is_face_recognition_available() genuinely does here:
     facenet_pytorch is part of the optional CV-pipeline extra (see
@@ -130,15 +125,63 @@ def _force_face_recognition_available() -> None:
     media_server package facade, since rebinding a name there does not
     change what an already-imported route module looks up — same reasoning
     as _redirect_data_files patching MediaServer's own class attributes
-    above) so the tab and its CRUD (list/rename/approve/remove the
-    enrollments seeded below) are e2e-reachable. The actual embedding step
-    (FaceEmbedder.embed(), called only from the enroll endpoint) still
-    independently discovers facenet_pytorch is missing and gracefully
-    returns "no face detected" either way — a real, already-handled
-    response, not something this patch papers over — so an enrollment can
-    never actually (falsely) succeed here.
+    above). The model itself is replaced separately, by _E2EFaceEmbedder.
     """
     media_server_faces.is_face_recognition_available = lambda: True
+
+
+# The three "faces" _E2EFaceEmbedder finds in every image: two people and a
+# face too blurred to offer by default. 4-d rather than 512-d, like the seeded
+# enrollments in _seed(), and chosen so none of them matches any seeded
+# person (every cosine below 0.75) or either other face (cosine 0 or -1) —
+# so a scan offers three separate groups, and nothing is "already
+# recognized" until a test enrolls one of them itself.
+_E2E_FACES = (
+    ([0.5, 0.5, 0.5, 0.5], 0.9, (214, 120, 90)),
+    ([0.5, -0.5, 0.5, -0.5], 0.5, (90, 150, 214)),
+    ([-0.5, 0.5, -0.5, 0.5], 0.1, (130, 130, 130)),
+)
+
+
+def _solid_jpeg(colour: tuple[int, int, int]) -> bytes:
+    buf = BytesIO()
+    Image.new("RGB", (112, 112), colour).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+class _E2EFaceEmbedder(FaceEmbedder):
+    """Stands in for facenet-pytorch's models: every readable image holds the
+    same three faces (_E2E_FACES).
+
+    Only the model is fake, the way Security Feed's snapshots are Pillow-
+    generated rather than from a camera. Scanning a real ffmpeg-extracted
+    clip, collapsing the six identical shots of each face it yields,
+    grouping, enrolling from the held candidates and serving the stored
+    thumbnails are all the real server code, which is what lets
+    biometrics.spec.ts drive the whole enroll flow end to end. An
+    unreadable image still returns None, exactly like the real embedder.
+    """
+
+    async def ensure_ready(self) -> bool:
+        return True
+
+    async def detect(
+        self, frame: bytes, *, thumbnails: bool = False
+    ) -> list[DetectedFace] | None:
+        try:
+            Image.open(BytesIO(frame)).verify()
+        except Exception:  # noqa: BLE001
+            return None
+        return [
+            DetectedFace(
+                embedding=list(embedding),
+                probability=0.99,
+                width=80,
+                quality=quality,
+                thumbnail=_solid_jpeg(colour) if thumbnails else b"",
+            )
+            for embedding, quality, colour in _E2E_FACES
+        ]
 
 
 # Port 1 is a reserved/privileged port nothing ever listens on, so
@@ -313,10 +356,10 @@ _FAILED_UPLOAD_CLIP_ID = "e2e-failed-upload"
 
 # A real, valid (not just placeholder bytes) short video, on _SCRATCH_CAMERA
 # so it doesn't inflate any real camera's count. Unlocks two things that
-# otherwise fail/404 in this environment: Biometrics' "enroll from a clip"
-# frame picker (_handle_clip_frames genuinely shells out to ffmpeg against
-# the clip's file_path — placeholder bytes just fail extraction instead of
-# exercising the real success path) and VehicleZonePicker's background
+# otherwise fail/404 in this environment: Biometrics' clip scan (the scan
+# endpoint genuinely shells out to ffmpeg against the clip's file_path —
+# placeholder bytes just fail extraction instead of exercising the real
+# success path) and VehicleZonePicker's background
 # image (its drawing surface only initializes once a real <img> load event
 # fires on a clip thumbnail — reuses the exact camera the existing "car
 # camera" e2e test already marks, Test Scratch, so no new test dependency).
@@ -572,9 +615,8 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     # distribution clip already lives — see _distribution_clips): keeps it
     # from inserting into the *global* newest-first ordering those clips'
     # relative prev/next relationships depend on (library-modal.spec.ts),
-    # while staying inside EnrollFromClipPicker's default 24h lookback and
-    # still sorting newest-on-Test-Scratch (ahead of the ~100h-old scratch
-    # clips), so it's auto-selected with no extra click needed.
+    # while staying inside ClipFaceScanner's default 24h lookback, so
+    # biometrics.spec.ts finds it without widening the range.
     biometrics_clip = _clip(_BIOMETRICS_CLIP_ID, _SCRATCH_CAMERA, "snapshot", 12, now)
     biometrics_clip["path"] = str(biometrics_source)
     biometrics_clip["duration"] = _BIOMETRICS_CLIP_DURATION
@@ -586,29 +628,31 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     # this before status.spec.ts or storage.spec.ts run (declaration order
     # is execution order given workers: 1), so it never shows up in either
     # of their own Test-Scratch/total-clip counts. hours_ago=30, not
-    # something under 24: EnrollFromClipPicker's default lookback window is
-    # the last 24 hours on the selected camera (also Test Scratch), and
-    # biometrics.spec.ts (which runs first alphabetically, well before this
-    # clip is deleted) asserts exactly one clip shows up there — the
-    # biometrics-source clip itself, at hours_ago=12.
+    # something under 24: ClipFaceScanner's default lookback window is the
+    # last 24 hours, and biometrics.spec.ts (which runs first alphabetically,
+    # well before this clip is deleted) asserts exactly one Test Scratch clip
+    # shows up there — the biometrics-source clip itself, at hours_ago=12.
     await db.add_clip(_clip(_DELETE_TEST_CLIP_ID, _SCRATCH_CAMERA, "snapshot", 30, now))
 
-    # Enrolled household members, seeded directly rather than through the
-    # UI's enroll flow — that needs facenet_pytorch, not installed in this
-    # lightweight test environment (see is_face_recognition_available()).
-    # Real embedding vectors aren't needed: nothing in list/rename/approve/
-    # delete inspects embedding *values* — only enroll does, and that's
-    # blocked either way here. "Alex E2E" has two enrollments with
-    # different approved states (exercises the mixedApproval badge);
-    # "Jordan E2E" is fully approved.
-    await db.add_face_enrollment("Alex E2E", [0.1, 0.2, 0.3], approved=True)
-    await db.add_face_enrollment("Alex E2E", [0.4, 0.5, 0.6], approved=False)
-    await db.add_face_enrollment("Jordan E2E", [0.7, 0.8, 0.9], approved=True)
-    # A third, dedicated to the rename-then-remove test — kept apart from
-    # Alex (a static mixedApproval reference) and Jordan (dedicated to the
+    # Enrolled household members, seeded directly (as if by an older
+    # version: no stored photo), in the same 4-d space as _E2E_FACES. The
+    # values matter now that the tab reviews them: every person below is
+    # unlike every other (cosine under 0.75), so nobody is flagged as "also
+    # looks like" someone — except Riley's third photo, which resembles
+    # none of Riley's others and exists to be flagged. "Alex E2E" has two
+    # enrollments with different approved states (the mixedApproval
+    # badge); "Jordan E2E" is fully approved.
+    await db.add_face_enrollment("Alex E2E", [1.0, 0.0, 0.0, 0.0], approved=True)
+    await db.add_face_enrollment("Alex E2E", [0.97, 0.24, 0.0, 0.0], approved=False)
+    await db.add_face_enrollment("Jordan E2E", [0.0, 1.0, 0.0, 0.0], approved=True)
+    # Dedicated to the rename-then-remove test — kept apart from Alex (a
+    # static mixedApproval reference) and Jordan (dedicated to the
     # approve-toggle test) so those two tests' assertions never have to
     # account for this one's mutations.
-    await db.add_face_enrollment("Casey E2E", [0.15, 0.25, 0.35], approved=True)
+    await db.add_face_enrollment("Casey E2E", [0.0, 0.0, 1.0, 0.0], approved=True)
+    await db.add_face_enrollment("Riley E2E", [0.0, 0.0, 0.0, 1.0], approved=False)
+    await db.add_face_enrollment("Riley E2E", [0.0, 0.0, 0.2, 0.98], approved=False)
+    await db.add_face_enrollment("Riley E2E", [-0.6, -0.8, 0.0, 0.0], approved=False)
 
     # Security events for the Security tab, attached to *existing*
     # distribution clips rather than new ones: security_events is its own
@@ -815,6 +859,9 @@ async def _main() -> None:
         auth_state_getter=fake_auth.status,
         analyzer=analyzer,
         archiver=archiver,
+        # On, as it would be for anyone using the Biometrics tab; the
+        # "switched off" notice is covered by the page's Vitest spec.
+        face_recognition_enabled=True,
         list_camera_names=_list_camera_names,
         get_camera_snapshot=_camera_snapshot,
         live_view=live_view,
@@ -823,6 +870,9 @@ async def _main() -> None:
         arm_sync_module=sync_module.arm_module,
         arm_camera=sync_module.arm_camera,
     )
+    # After construction: MediaServer builds its own FaceEmbedder, and this
+    # replaces only the model behind it — see _E2EFaceEmbedder.
+    server._face_embedder = _E2EFaceEmbedder()
     await server.start()
     print(f"Standalone e2e server ready on http://localhost:{port}/", flush=True)
 

@@ -1,17 +1,15 @@
 """The Library tab's API: clips, their media, and their metadata.
 
 Listing and filtering, the video stream and thumbnail a player asks for,
-starring and tagging, frame extraction for the zone picker and enrollment,
-the ZIP export, and deleting a clip — including its Google Drive copy,
-which is the one piece of deletion that reaches outside this container.
+starring and tagging, the ZIP export, and deleting a clip — including its
+Google Drive copy, which is the one piece of deletion that reaches outside
+this container.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
-import math
 import os
 import tempfile
 import zipfile
@@ -21,13 +19,11 @@ import aiofiles
 from aiohttp import web
 
 from ..database import ClipFilters
-from ..ffmpeg_output import format_ffmpeg_error, split_jpeg_frames
 from .storage import StorageRoutesMixin
 from .support import (
     _CLIP_NOT_FOUND,
     _INVALID_JSON_BODY,
     _INVALID_REQUEST_BODY,
-    _MAX_CLIP_FRAMES,
     _paging,
 )
 
@@ -52,7 +48,6 @@ class LibraryRoutesMixin(StorageRoutesMixin):
         app.router.add_put("/api/clips/{id}/tags", self._handle_set_tags)
         app.router.add_get("/api/clips/{id}/stream", self._handle_stream)
         app.router.add_get("/api/clips/{id}/thumb", self._handle_thumbnail)
-        app.router.add_get("/api/clips/{id}/frames", self._handle_clip_frames)
         app.router.add_post("/api/clips/export-zip", self._handle_export_zip)
         app.router.add_post("/api/download-now", self._handle_download_now)
 
@@ -189,104 +184,6 @@ class LibraryRoutesMixin(StorageRoutesMixin):
             )
 
         raise web.HTTPNotFound(text="Thumbnail not available")
-
-    async def _handle_clip_frames(self, request: web.Request) -> web.Response:
-        """Extract several evenly-spaced frames from one clip's video, for
-        the Biometrics tab's "enroll from a clip" flow (ADVANCED FEATURE).
-
-        Motion often starts recording before someone's face is framed well
-        (e.g. a front door camera catching the moment a door opens) — a
-        single thumbnail frequently isn't a usable enrollment photo. This
-        lets the user browse several frames from a clip they choose and pick
-        out the ones that show a face clearly, across as many
-        angles/lighting conditions as they like, which is what actually
-        makes recognition robust enough to reduce false positives on an
-        access-point camera watched by the same few people every day.
-
-        Query: ``count`` (default: one frame per second of the clip's
-        duration, clamped 1-``_MAX_CLIP_FRAMES``). Defaulting to duration
-        rather than a fixed count matters here specifically: someone facing
-        the camera is often a brief, low-motion moment, easy to land between
-        samples when a fixed handful of frames get stretched across a whole
-        clip. Returns ``{"frames": ["data:image/jpeg;base64,...", ...]}`` —
-        capped and scaled down (480px wide) since this is a manual,
-        occasional action, not a hot path; the picker paginates client-side
-        rather than this endpoint truncating what it returns.
-        """
-        clip_id = request.match_info["id"]
-        clip = await self._db.get_clip(clip_id)
-        if not clip:
-            raise web.HTTPNotFound()
-
-        duration = float(clip.get("duration") or 0) or 10.0
-        default_count = max(1, min(math.ceil(duration), _MAX_CLIP_FRAMES))
-        try:
-            count = max(
-                1,
-                min(
-                    int(request.rel_url.query.get("count", default_count)),
-                    _MAX_CLIP_FRAMES,
-                ),
-            )
-        except ValueError:
-            count = default_count
-
-        interval = max(duration / count, 0.5)
-        cmd = [
-            "ffmpeg",
-            # See BaseAnalyzer.extract_frames (analyzer/base.py) for why the
-            # banner is suppressed: without it the truncated stderr captured
-            # on failure below is all banner and no error.
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            clip["file_path"],
-            "-vf",
-            f"fps=1/{interval},scale=480:-1",
-            "-frames:v",
-            str(count),
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "-q:v",
-            "3",
-            "pipe:1",
-        ]
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except OSError as exc:
-            _LOGGER.warning("ffmpeg not available: %s", exc)
-            return web.json_response({"frames": []})
-
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except TimeoutError:
-            _LOGGER.warning("ffmpeg timed out extracting frames for %s", clip_id)
-            proc.kill()
-            await proc.wait()
-            return web.json_response({"frames": []})
-
-        if proc.returncode != 0:
-            _LOGGER.warning(
-                "ffmpeg exited %d extracting frames for %s: %s",
-                proc.returncode,
-                clip_id,
-                format_ffmpeg_error(stderr),
-            )
-            return web.json_response({"frames": []})
-
-        frames = split_jpeg_frames(stdout or b"")
-        encoded = [
-            "data:image/jpeg;base64," + base64.b64encode(f).decode("ascii")
-            for f in frames
-        ]
-        return web.json_response({"frames": encoded})
 
     async def _handle_export_zip(self, request: web.Request) -> web.StreamResponse:
         """Package up to 25 selected clips into a ZIP and return it."""
