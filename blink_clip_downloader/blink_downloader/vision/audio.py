@@ -48,7 +48,7 @@ _LOGGER = logging.getLogger(__name__)
 # What the Audio Spectrogram Transformer expects: 16 kHz mono.
 _SAMPLE_RATE = 16_000
 
-# Below this RMS the clip is treated as carrying no sound and is skipped
+# Below this level the clip is treated as carrying no sound and is skipped
 # without troubling the model.
 #
 # A camera with audio recording switched off in the Blink app still writes
@@ -63,13 +63,18 @@ _SAMPLE_RATE = 16_000
 # audible at all; a sound worth classifying is an order of magnitude
 # above it.
 #
-# Applied to the *window* that would actually be classified, not to the
-# whole track. A two-second sound in a sixty-second clip measures 0.18x
-# its own level once averaged over the track but 0.45x over the ten-second
-# window — 2.4x higher, and the difference between landing above this
-# threshold and below it. Gating on the track average would discard
-# exactly the short quiet events worth hearing.
+# Compared against the loudest *moment* in the classification window (see
+# _peak_level), not the window's average. Which statistic this reads is
+# the whole difference between hearing a clip and discarding it: a
+# security clip is brief noise inside a long quiet stretch, so its average
+# describes the room tone rather than the event.
 _SILENCE_RMS = 1e-3
+
+# Length of the frames _peak_level measures over. Short enough that a
+# half-second sound dominates the frame it lands in instead of being
+# averaged into the quiet around it, long enough that a stray sample of
+# encoder noise cannot pass for one.
+_LEVEL_FRAME_SECONDS = 0.1
 
 # A label has to clear this to be mentioned at all. These are independent
 # per-class probabilities (see _ACTIVATION), not shares of one budget, so
@@ -223,6 +228,38 @@ def _rms(samples: Any) -> float:
     if samples.size == 0:
         return 0.0
     return float((samples.astype("float64") ** 2).mean() ** 0.5)
+
+
+def _peak_level(samples: Any) -> float:
+    """The loudest short frame's RMS — "was anything audible at any point".
+
+    The average of the whole classification window answers a different
+    question, "was this clip loud throughout", and a security clip almost
+    never is: whatever triggered it lasts a moment and the rest is room
+    tone, so the average describes the tone. Measured on a clip carrying a
+    half-second sound 18 dB above its own noise floor, the ten-second
+    average came out at -66.7 dBFS — under :data:`_SILENCE_RMS`, so the
+    sound was thrown away unheard — while the loudest tenth of a second
+    measured -54.9 dBFS. A muted camera's flat noise floor reads much the
+    same either way (-72.5 dBFS average against a -69.5 dBFS peak), which
+    is what lets the peak tell the two apart where the average runs them
+    together.
+
+    Deliberately the same reasoning that picks the window in the first
+    place, applied one level further down: the whole point of finding the
+    loudest stretch is undone by then averaging across all of it.
+    """
+    frame = int(_LEVEL_FRAME_SECONDS * _SAMPLE_RATE)
+    if samples.size < frame:
+        return _rms(samples)
+    usable = (samples.size // frame) * frame
+    frames = samples[:usable].astype("float64").reshape(-1, frame)
+    peak = float((frames**2).mean(axis=1).max() ** 0.5)
+    # The trailing part-frame explicitly, for the same reason
+    # _loudest_window checks its final window: a clip triggered by a sound
+    # often ends on it, and dropping the remainder would measure the quiet
+    # before it instead.
+    return max(peak, _rms(samples[-frame:]))
 
 
 def _loudest_window(samples: Any, sample_rate: int = _SAMPLE_RATE) -> Any:
@@ -556,7 +593,7 @@ class AudioTagger:
         if samples is None:
             return None
         window = _loudest_window(samples)
-        if _rms(window) < _SILENCE_RMS:
+        if _peak_level(window) < _SILENCE_RMS:
             self._note_no_sound(clip_path)
             return None
         if not self._model_ready():
