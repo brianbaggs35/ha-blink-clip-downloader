@@ -520,7 +520,8 @@ removed in 5.0.0.
   instead, the same "mock the API layer, not the application" approach
   `mocked-integrations.spec.ts` uses for Google Drive's connected state.
   Biometrics is unlocked via `_force_face_recognition_available()`
-  patching `media_server.is_face_recognition_available` to always return
+  patching `media_server.faces.is_face_recognition_available` (the route
+  module that resolves the name, not the package facade) to always return
   `True` (real dependency: `facenet_pytorch`, part of the optional CV-
   pipeline extra, genuinely absent in this lightweight test environment)
   — the tab and its CRUD (list/rename/approve/remove enrollments) are
