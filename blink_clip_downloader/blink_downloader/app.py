@@ -720,8 +720,16 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             return
 
         await self._finish_startup()
+        await self._run_poll_loop()
+        await self._shutdown()
 
-        # Main poll loop.
+    async def _run_poll_loop(self) -> None:
+        """Poll Blink until shutdown, healing what can be healed in place.
+
+        An expired session is reconnected rather than fatal; any other error
+        is logged and the next cycle simply tries again, so a single bad
+        cycle never ends the add-on.
+        """
         while self._running:
             try:
                 await self._poll_cycle()
@@ -733,8 +741,6 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
 
             if self._running:
                 await self._wait_with_trigger_check()
-
-        await self._shutdown()
 
     async def _run_config_error_mode(self) -> None:
         """Keep the web server alive so the config error is visible in the UI."""
