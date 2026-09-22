@@ -83,10 +83,10 @@ blink_downloader/security/tracks.py
 blink_downloader/security/vehicles.py
 blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
-blink_downloader/static/assets/index-7trSGqnJ.css
-blink_downloader/static/assets/index-7trSGqnJ.css.gz
-blink_downloader/static/assets/index-DeRgw7K_.js
-blink_downloader/static/assets/index-DeRgw7K_.js.gz
+blink_downloader/static/assets/index-BQ5x-SQL.css
+blink_downloader/static/assets/index-BQ5x-SQL.css.gz
+blink_downloader/static/assets/index-ZB28Im8s.js
+blink_downloader/static/assets/index-ZB28Im8s.js.gz
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2

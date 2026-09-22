@@ -1,7 +1,7 @@
 {
   "name": "blink-clip-downloader-e2e",
   "private": true,
-  "version": "6.0.6",
+  "version": "6.0.7",
   "description": "Playwright checks for the Blink Clip Downloader Vue web UI (frontend/). smoke.mjs is invoked by scripts/smoke-test.sh and CI's smoke-test job; verify.mjs is ad-hoc dev/AI tooling for taking UI screenshots, not run in CI.",
   "type": "module",
   "scripts": {

@@ -1,5 +1,56 @@
 # Changelog
 
+## 6.0.7
+
+### Frame Extraction Strategy lists the recommended choice first
+
+On the add-on's Configuration tab, **adaptive** now appears at the top of
+the Frame Extraction Strategy options instead of the bottom. It is the
+default and the one to pick, and it was the last thing you read. Nothing
+about the strategies themselves changed, and a configuration already set to
+something else is untouched.
+
+### Seven more recipes on the Automations tab
+
+Mostly about getting the cameras onto a screen, which the tab could only do
+for suspicious clips before:
+
+- **Show the cameras whenever a clip arrives** — the "glance up and see who
+  is at the door" version, restricted to the sources, cameras and hours you
+  choose so the display is not on all day.
+- **Take the display back** — a script that clears the cast on demand,
+  rather than waiting out whatever timer put it there.
+- **Alert only when nobody is home** — the suspicious-clip alert, silent
+  while someone is in. Most of what a camera sees at home is the household.
+- **Cloud backup stopped working** — an expired token is otherwise silent:
+  clips keep queueing and nothing leaves the box until somebody notices.
+- **Overnight camera lighting scene** — enough light for the cameras to see
+  by, without lighting the house up the way the alert scene does.
+- **Pause Blink alerts for a while** — one button for "quiet for the next
+  half hour", which un-pauses itself.
+- **Quiet hours you can change from a dashboard** — two `input_datetime`
+  helpers, so the hours live in one place instead of being typed into every
+  automation.
+
+### Bug fixes
+
+- The Automations tab's **Reset to defaults** and **Create in Home
+  Assistant** buttons sat edge to edge, reading as one two-tone control
+  rather than two buttons. They now have a gap between them.
+- A poll cycle that downloaded clips reported two very slightly different
+  "last download" times — one on the Status card, one on
+  `sensor.blink_downloader_status` — because each was generated from its own
+  clock read. Both now report the one moment they are describing.
+
+### Internal
+
+- `app.py`'s `run()`, `gdrive_queue.py`'s `_process_one()` and the security
+  layer's `assess_evidence()` were each doing enough in one function to be
+  hard to follow; the parts that stand alone — the poll loop, resolving an
+  upload's source file and destination folder, and scoring the factors that
+  depend on a clip's subjects — are now their own named pieces. No behavior
+  changed.
+
 ## 6.0.6
 
 ### Create automations, scripts and scenes without leaving the tab
