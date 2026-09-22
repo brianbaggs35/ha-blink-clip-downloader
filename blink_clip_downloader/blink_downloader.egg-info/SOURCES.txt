@@ -18,7 +18,6 @@ blink_downloader/ha_entities.py
 blink_downloader/library_scanner.py
 blink_downloader/live_view.py
 blink_downloader/manifest.py
-blink_downloader/media_server
 blink_downloader/model_catalog.py
 blink_downloader/moondream_finetune.py
 blink_downloader/notification_channels.py
@@ -79,14 +78,15 @@ blink_downloader/security/geometry.py
 blink_downloader/security/narrative.py
 blink_downloader/security/pipeline.py
 blink_downloader/security/scoring.py
+blink_downloader/security/sounds.py
 blink_downloader/security/tracks.py
 blink_downloader/security/vehicles.py
 blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
-blink_downloader/static/assets/index-Bb96Bd8R.css
-blink_downloader/static/assets/index-Bb96Bd8R.css.gz
-blink_downloader/static/assets/index-wxLghkkE.js
-blink_downloader/static/assets/index-wxLghkkE.js.gz
+blink_downloader/static/assets/index-7trSGqnJ.css
+blink_downloader/static/assets/index-7trSGqnJ.css.gz
+blink_downloader/static/assets/index-DeRgw7K_.js
+blink_downloader/static/assets/index-DeRgw7K_.js.gz
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2
@@ -164,6 +164,7 @@ blink_downloader/static/assets/primeicons-DI7WxhAS.svg
 blink_downloader/static/assets/primeicons-DI7WxhAS.svg.gz
 blink_downloader/static/assets/primeicons-MNyB0pWW.ttf
 blink_downloader/vision/__init__.py
+blink_downloader/vision/audio.py
 blink_downloader/vision/contact.py
 blink_downloader/vision/depth.py
 blink_downloader/vision/detection.py
@@ -208,6 +209,7 @@ tests/test_security_narrative.py
 tests/test_security_pipeline.py
 tests/test_security_scenarios.py
 tests/test_security_scoring.py
+tests/test_security_sounds.py
 tests/test_security_tracks.py
 tests/test_security_vehicles.py
 tests/test_sqlite_migration.py
@@ -215,3 +217,4 @@ tests/test_storage.py
 tests/test_tracker.py
 tests/test_upgrade_from_previous_release.py
 tests/test_vision.py
+tests/test_vision_audio.py
