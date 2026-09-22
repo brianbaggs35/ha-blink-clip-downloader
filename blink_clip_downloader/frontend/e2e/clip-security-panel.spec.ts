@@ -167,6 +167,58 @@ test('the panel is divided into named sections rather than one flat block', asyn
   await expect(titles).toHaveText(['What was detected', 'Security evidence', 'Verdict feedback', 'Face recognition'])
 })
 
+test('what the clip sounded like reads as one more row of chips, not a new panel', async ({ page }) => {
+  // The audio stage is the one piece of evidence that is not visual, and
+  // the temptation is to give it a panel of its own. It gets the same
+  // shape as "What was detected" instead -- a heading and a row of chips --
+  // so a clip that happened to be noisy does not push the verdict, the
+  // risk bar and the feedback buttons off the screen.
+  await serveAiResult(page, {
+    ...BASE,
+    detected_objects: [{ label: 'person', count: 1, detections: 4, max_confidence: 0.9 }],
+    audio_labels: [
+      { label: 'Glass, breaking', score: 0.71 },
+      { label: 'Speech', score: 0.44 },
+    ],
+  })
+
+  const modal = await openPanel(page)
+  const audio = modal.locator('[data-testid="ai-audio"]')
+  await expect(audio.locator('.ai-section-title')).toHaveText('What was heard')
+
+  // The first synonym only: AudioSet names a class as a comma-separated
+  // list, and "Glass, breaking" in a chip reads as two chips run together.
+  const chips = audio.locator('.detection-chip')
+  await expect(chips).toHaveCount(2)
+  await expect(chips.first()).toContainText('Glass')
+  await expect(chips.first()).not.toContainText('breaking')
+  await expect(chips.nth(1)).toContainText('Speech')
+
+  // The confidence and the "not a transcript" caveat live in the tooltip,
+  // so neither costs a line under every clip that ever heard something.
+  await expect(chips.first()).toHaveAttribute('title', /71% confidence/)
+  await expect(chips.first()).toHaveAttribute('title', /not a transcript/)
+
+  // The privacy fact is on the heading line rather than its own paragraph.
+  await expect(audio.locator('.ai-section-note')).toHaveText('sounds only · never transcribed')
+
+  // Sound sits with the other evidence, directly after what was seen.
+  await expect(modal.locator('.ai-section-title')).toHaveText([
+    'What was detected',
+    'What was heard',
+    'Verdict feedback',
+    'Face recognition',
+  ])
+})
+
+test('a clip with nothing audible shows no sound heading at all', async ({ page }) => {
+  // Most clips hear nothing, and a standing "What was heard: (none)" under
+  // every one of them is exactly the clutter this panel cannot afford.
+  await serveAiResult(page, { ...BASE, audio_labels: [] })
+  const modal = await openPanel(page)
+  await expect(modal.locator('[data-testid="ai-audio"]')).toHaveCount(0)
+})
+
 test('a detection chip names what it counted, and says what the number means', async ({ page }) => {
   // The count is how many distinct ones the tracker followed through the
   // clip, not the stored box total — counting boxes reported 3 cars as "33".
