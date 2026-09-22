@@ -120,6 +120,24 @@ const ESCAPED_BACKSLASH = String.raw`\\`
 const BACKSLASH = ESCAPED_BACKSLASH[0]
 const ESCAPED_QUOTE = String.raw`\"`
 
+/** The three control characters YAML spells with a letter; everything else
+ * in the C0 range gets a numeric \xNN escape, which double-quoted scalars
+ * also understand. */
+const NAMED_CONTROL_ESCAPES: Record<string, string> = {
+  '\n': String.raw`\n`,
+  '\r': String.raw`\r`,
+  '\t': String.raw`\t`,
+}
+// C0, DEL and C1. The Python parser on the other end of the Create button
+// rejects every one of them raw, including the C1 range that the browser's
+// own YAML parser happens to accept — so the stricter of the two is what
+// this escapes against.
+// Matching control characters is the entire point here — they are what has
+// to be escaped, so the rule that warns about them in a regex does not
+// apply.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g
+
 /** A double-quoted YAML scalar — safe for text starting with an emoji, a
  * brace, or anything else a plain scalar would choke on.
  *
@@ -127,19 +145,25 @@ const ESCAPED_QUOTE = String.raw`\"`
  * raw newline inside a double-quoted scalar is legal YAML but *folds* to a
  * space, so the value silently stops being what the user typed — and when
  * the scalar is a mapping key, the text after the newline is read as a
- * sibling key instead and the document usually stops parsing at all.
- * Reaching this needs a newline in a value, which a single-line <input>
- * will not produce; camera names arrive from Blink's API rather than from
- * an input, so this helper does not get to assume where its argument
- * came from.
+ * sibling key instead and the document usually stops parsing at all. The
+ * rest of the C0 range is worse still: a raw NUL or BEL is not legal in a
+ * double-quoted scalar at all, and the parser rejects the whole document
+ * rather than the one value.
+ *
+ * Reaching any of this needs a control character in a value, which a
+ * single-line <input> will not produce; camera names arrive from Blink's
+ * API rather than from an input, so this helper does not get to assume
+ * where its argument came from. Escaping the whole range rather than the
+ * three characters with letter spellings is what makes that assumption
+ * unnecessary instead of merely unlikely to matter.
  */
 export function yamlString(value: string): string {
   const escaped = value
     .replaceAll(BACKSLASH, ESCAPED_BACKSLASH)
     .replaceAll('"', ESCAPED_QUOTE)
-    .replaceAll('\n', String.raw`\n`)
-    .replaceAll('\r', String.raw`\r`)
-    .replaceAll('\t', String.raw`\t`)
+    // Last: this step emits backslashes of its own, which the first step
+    // must not then double.
+    .replace(CONTROL_CHARS, (ch) => NAMED_CONTROL_ESCAPES[ch] ?? `\\x${ch.charCodeAt(0).toString(16).padStart(2, '0')}`)
   return `"${escaped}"`
 }
 
@@ -155,10 +179,41 @@ export function yamlTemplate(template: string, indent: number): string {
   return `>-\n${body}`
 }
 
+/** DEL and the C1 range. ``JSON.stringify`` escapes everything below
+ * 0x20 and nothing above it, but a Jinja expression is emitted inside a
+ * YAML *block* scalar, which rejects these as non-printable and takes the
+ * whole document with it — a stricter context than the double-quoted
+ * scalar `yamlString` produces, where the same bytes are accepted. */
+const HIGH_CONTROL_CHARS = /[\u007f-\u009f]/g
+
+/** One string as a Jinja literal: JSON quoting, plus the non-printables
+ * JSON leaves raw but the surrounding YAML will not accept. */
+function jinjaQuote(value: string): string {
+  return JSON.stringify(value).replace(
+    HIGH_CONTROL_CHARS,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  )
+}
+
 /** Render a list of strings as an inline Jinja list, quoted for Jinja (not
  * for YAML — the caller puts this inside a template). */
 export function jinjaList(items: string[]): string {
-  return `[${items.map((item) => JSON.stringify(item)).join(', ')}]`
+  return `[${items.map(jinjaQuote).join(', ')}]`
+}
+
+/** One string as a Jinja literal, quoted the same way `jinjaList` quotes
+ * its items.
+ *
+ * Interpolating a value straight into `states('...')` breaks on the one
+ * character an entity id would never legitimately contain and a user can
+ * still type: an apostrophe closes the literal early and the template stops
+ * being valid Jinja. A control character is worse — a raw newline ends the
+ * YAML scalar too, so the whole document stops parsing. `JSON.stringify`
+ * escapes both, and the double quotes it emits are as valid in Jinja as the
+ * single quotes were.
+ */
+export function jinjaString(value: string): string {
+  return jinjaQuote(value)
 }
 
 /** Minutes as HH:MM:SS, which is what `for:`/`delay:` want. */
