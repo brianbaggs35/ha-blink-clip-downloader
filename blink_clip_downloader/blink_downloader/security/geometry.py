@@ -31,9 +31,8 @@ Box = tuple[float, float, float, float]
 #: an approximate distance by treating a detected vehicle's own pixel width
 #: as the scale. The same "a typical car is about 6 feet wide" reference
 #: ``analyzer/base.py``'s ``_car_protection_segment`` already gives the AI
-#: model,
-#: so code-computed distances and the model's own written 1 ft / 3 ft rules
-#: reason about one consistent scale instead of two invented separately.
+#: model, so code-computed distances and the model's own written 1 ft / 3 ft
+#: rules reason about one consistent scale instead of two invented separately.
 TYPICAL_VEHICLE_WIDTH_FEET = 6.0
 
 

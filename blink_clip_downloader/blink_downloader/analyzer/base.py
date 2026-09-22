@@ -1593,8 +1593,8 @@ class BaseAnalyzer(abc.ABC):
         Blink timestamps are UTC, but "is this an odd hour to be in someone's
         driveway" is inherently a local question — the same reasoning as
         :func:`prompt_segments.time_of_day_segment`, and the same hour
-        boundaries, so the
-        risk score and the prompt never disagree about whether it was night.
+        boundaries, so the risk score and the prompt never disagree about
+        whether it was night.
         """
         if not clip_timestamp:
             return False

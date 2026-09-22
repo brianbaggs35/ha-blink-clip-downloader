@@ -352,16 +352,16 @@ ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_width DOUBLE PRECISI
 ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_height DOUBLE PRECISION DEFAULT 0.0;
 -- 6.0.5: object detection and every model stage beside it now scan raw frames
 -- rather than CLAHE-enhanced ones (see vision/pipeline.py's
--- _run_detection_stages), and
--- a learned vehicle colour fingerprint is measured from those same frames. The
--- two are not interchangeable: measured on real night footage, the same car's
--- raw and enhanced fingerprints score ~0.72-0.88 cosine against each other,
--- while two genuinely different cars score ~0.69 — so an already-learned
--- signature would go on judging its own vehicle by a yardstick that no longer
--- matches, and blend() only walks it back a few percent per clip. Clearing the
--- vector (and nothing else — the learned parking position and sample count are
--- measured the same way as before and stay) lets the next confident sighting
--- relearn it in one step, via blend()'s own length-mismatch path.
+-- _run_detection_stages), and a learned vehicle colour fingerprint is measured
+-- from those same frames. The two are not interchangeable: measured on real
+-- night footage, the same car's raw and enhanced fingerprints score ~0.72-0.88
+-- cosine against each other, while two genuinely different cars score ~0.69 —
+-- so an already-learned signature would go on judging its own vehicle by a
+-- yardstick that no longer matches, and blend() only walks it back a few
+-- percent per clip. Clearing the vector (and nothing else — the learned
+-- parking position and sample count are measured the same way as before and
+-- stay) lets the next confident sighting relearn it in one step, via blend()'s
+-- own length-mismatch path.
 --
 -- Idempotent in three steps, and the ordering is load-bearing: the column is
 -- added defaulting to 'enhanced', which is what every row predating this
