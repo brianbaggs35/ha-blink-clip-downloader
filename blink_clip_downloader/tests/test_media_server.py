@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import sys
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -45,6 +47,8 @@ from blink_downloader.security import (
     Severity,
     VehicleSignature,
 )
+from blink_downloader.vision import FaceEmbedder
+from blink_downloader.vision.faces import DetectedFace
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1016,219 +1020,6 @@ async def test_thumbnail_returns_jpeg(
     resp = await client.get("/api/clips/th2/thumb")
     assert resp.status == 200
     assert resp.content_type == "image/jpeg"
-
-
-# ---------------------------------------------------------------------------
-# /api/clips/{id}/frames — multi-frame extraction for Biometrics enrollment
-# ---------------------------------------------------------------------------
-
-
-def _concat_jpegs(*frames: bytes) -> bytes:
-    return b"".join(b"\xff\xd8" + f + b"\xff\xd9" for f in frames)
-
-
-async def test_clip_frames_not_found(client: TestClient) -> None:
-    resp = await client.get("/api/clips/missing/frames")
-    assert resp.status == 404
-
-
-async def test_clip_frames_returns_base64_frames(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    await db.add_clip(_make_clip("f1", path="/data/f1.mp4", duration=10))
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(
-        return_value=(_concat_jpegs(b"frame-a", b"frame-b"), b"")
-    )
-    mock_proc.returncode = 0
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        resp = await client.get("/api/clips/f1/frames?count=2")
-    assert resp.status == 200
-    data = await resp.json()
-    assert len(data["frames"]) == 2
-    assert data["frames"][0].startswith("data:image/jpeg;base64,")
-    import base64 as _b64
-
-    decoded = _b64.b64decode(data["frames"][0].split(",", 1)[1])
-    assert decoded == b"\xff\xd8frame-a\xff\xd9"
-
-
-async def test_clip_frames_clamps_count(client: TestClient, db: ClipDatabase) -> None:
-    await db.add_clip(_make_clip("f2", path="/data/f2.mp4", duration=10))
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-    mock_proc.returncode = 0
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-        await client.get("/api/clips/f2/frames?count=999")
-    cmd = mock_exec.call_args.args
-    assert "60" in cmd  # clamped to the max
-
-
-async def test_clip_frames_bad_count_falls_back_to_default(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    await db.add_clip(_make_clip("f3", path="/data/f3.mp4", duration=10))
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-    mock_proc.returncode = 0
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-        resp = await client.get("/api/clips/f3/frames?count=notanumber")
-    assert resp.status == 200
-    cmd = mock_exec.call_args.args
-    assert "10" in cmd  # default: ~1fps of a 10s clip
-
-
-async def test_clip_frames_default_count_derives_from_duration(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    """No ?count= at all should sample roughly one frame per second of the
-    clip's actual duration, not a fixed number regardless of length."""
-    await db.add_clip(_make_clip("f10", path="/data/f10.mp4", duration=25))
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-    mock_proc.returncode = 0
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-        resp = await client.get("/api/clips/f10/frames")
-    assert resp.status == 200
-    cmd = mock_exec.call_args.args
-    assert "25" in cmd
-    assert "-frames:v" in cmd
-
-
-async def test_clip_frames_default_count_clamped_to_max_for_long_clip(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    await db.add_clip(_make_clip("f11", path="/data/f11.mp4", duration=200))
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-    mock_proc.returncode = 0
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-        await client.get("/api/clips/f11/frames")
-    cmd = mock_exec.call_args.args
-    assert "60" in cmd  # clamped to the max even though duration is 200s
-
-
-async def test_clip_frames_ffmpeg_not_available(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    await db.add_clip(_make_clip("f4", path="/data/f4.mp4", duration=10))
-    with patch("asyncio.create_subprocess_exec", side_effect=OSError("no ffmpeg")):
-        resp = await client.get("/api/clips/f4/frames")
-    assert resp.status == 200
-    assert (await resp.json())["frames"] == []
-
-
-async def test_clip_frames_ffmpeg_timeout(client: TestClient, db: ClipDatabase) -> None:
-    await db.add_clip(_make_clip("f5", path="/data/f5.mp4", duration=10))
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
-    mock_proc.kill = MagicMock()
-    mock_proc.wait = AsyncMock()
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        resp = await client.get("/api/clips/f5/frames")
-    assert resp.status == 200
-    assert (await resp.json())["frames"] == []
-    mock_proc.kill.assert_called_once()
-
-
-async def test_clip_frames_ffmpeg_nonzero_exit(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    await db.add_clip(_make_clip("f6", path="/data/f6.mp4", duration=10))
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", b"bad input"))
-    mock_proc.returncode = 1
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        resp = await client.get("/api/clips/f6/frames")
-    assert resp.status == 200
-    assert (await resp.json())["frames"] == []
-
-
-async def test_clip_frames_suppresses_ffmpeg_banner(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    """Without this, the truncated stderr logged on failure below is nothing
-    but ffmpeg's version/build banner and the real error never shows up."""
-    await db.add_clip(_make_clip("f12", path="/data/f12.mp4", duration=10))
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-    mock_proc.returncode = 0
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-        await client.get("/api/clips/f12/frames")
-    cmd = list(mock_exec.call_args.args)
-    assert "-hide_banner" in cmd
-    assert cmd[cmd.index("-loglevel") + 1] == "error"
-
-
-async def test_clip_frames_failure_logs_the_end_of_ffmpeg_stderr(
-    client: TestClient, db: ClipDatabase, caplog: pytest.LogCaptureFixture
-) -> None:
-    """ffmpeg names the actual reason on its last stderr line, so the log
-    must keep the tail rather than the head — and keep it on one line."""
-    await db.add_clip(_make_clip("f13", path="/data/f13.mp4", duration=10))
-    stderr = (
-        b"[h264] error while decoding MB 1\n" * 40
-        + b"Error opening output files: Invalid argument\n"
-    )
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", stderr))
-    mock_proc.returncode = 234
-    with (
-        caplog.at_level(logging.WARNING),
-        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
-    ):
-        resp = await client.get("/api/clips/f13/frames")
-    assert resp.status == 200
-    assert (await resp.json())["frames"] == []
-    assert "Error opening output files: Invalid argument" in caplog.text
-    assert "\n" not in caplog.records[-1].getMessage()
-
-
-async def test_clip_frames_ignores_truncated_trailing_data(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    """A well-formed frame followed by a truncated/incomplete one (missing
-    EOI) must not raise — the split just stops there."""
-    await db.add_clip(_make_clip("f8", path="/data/f8.mp4", duration=10))
-    truncated = _concat_jpegs(b"frame-a") + b"\xff\xd8no-eoi-here"
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(truncated, b""))
-    mock_proc.returncode = 0
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        resp = await client.get("/api/clips/f8/frames")
-    assert resp.status == 200
-    assert len((await resp.json())["frames"]) == 1
-
-
-async def test_clip_frames_stops_when_no_further_soi_marker(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    """A well-formed frame followed by trailing bytes with no JPEG start
-    marker at all must not raise — the split just stops there."""
-    await db.add_clip(_make_clip("f9", path="/data/f9.mp4", duration=10))
-    trailing_garbage = _concat_jpegs(b"frame-a") + b"not-a-jpeg-at-all"
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(trailing_garbage, b""))
-    mock_proc.returncode = 0
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        resp = await client.get("/api/clips/f9/frames")
-    assert resp.status == 200
-    assert len((await resp.json())["frames"]) == 1
-
-
-async def test_clip_frames_zero_duration_uses_fallback_interval(
-    client: TestClient, db: ClipDatabase
-) -> None:
-    """A clip with an unknown/zero duration (e.g. local-storage clips) must
-    still produce a sane, non-zero ffmpeg sampling interval rather than
-    dividing by zero."""
-    await db.add_clip(_make_clip("f7", path="/data/f7.mp4", duration=0))
-    mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-    mock_proc.returncode = 0
-    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-        resp = await client.get("/api/clips/f7/frames")
-    assert resp.status == 200
 
 
 # ---------------------------------------------------------------------------
@@ -4720,19 +4511,80 @@ async def test_ai_feedback_submit_keeps_typed_note(
 
 
 # ---------------------------------------------------------------------------
-# /api/ai/faces — local-only face-recognition enrollment
+# /api/ai/faces — finding faces to enroll, enrolling them, managing people
 # ---------------------------------------------------------------------------
 
 
-async def _real_jpeg_base64() -> str:
+def _concat_jpegs(*frames: bytes) -> bytes:
+    return b"".join(b"\xff\xd8" + f + b"\xff\xd9" for f in frames)
+
+
+def _face(
+    embedding: list[float],
+    *,
+    quality: float = 0.8,
+    probability: float = 0.99,
+    thumbnail: bytes = b"thumb",
+) -> DetectedFace:
+    return DetectedFace(
+        embedding=embedding,
+        probability=probability,
+        width=60,
+        quality=quality,
+        thumbnail=thumbnail,
+    )
+
+
+@contextlib.contextmanager
+def _detection(result: Any = None, *, ready: bool = True, side_effect: Any = None):
+    """Face recognition installed and loaded, answering every detect() with
+    *result* (or *side_effect*) — the real models are an optional extra this
+    suite never installs."""
+    with (
+        patch(
+            "blink_downloader.media_server.faces.is_face_recognition_available",
+            return_value=True,
+        ),
+        patch.object(FaceEmbedder, "ensure_ready", AsyncMock(return_value=ready)),
+        patch.object(
+            FaceEmbedder,
+            "detect",
+            AsyncMock(return_value=result, side_effect=side_effect),
+        ) as detect,
+    ):
+        yield detect
+
+
+def _photo_body() -> dict[str, str]:
     import base64
-    import io as _io
 
-    from PIL import Image
+    return {
+        "image_base64": "data:image/jpeg;base64," + base64.b64encode(b"jpeg").decode()
+    }
 
-    buf = _io.BytesIO()
-    Image.new("RGB", (10, 10), color=(100, 100, 100)).save(buf, format="JPEG")
-    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+async def _offer(client: TestClient, *faces: DetectedFace) -> list[dict[str, Any]]:
+    """Run faces through the photo detector and return the candidates offered."""
+    with _detection(list(faces)):
+        resp = await client.post("/api/ai/faces/detect", json=_photo_body())
+    assert resp.status == 200
+    return (await resp.json())["faces"]
+
+
+async def _enroll(
+    client: TestClient, name: str, *embeddings: list[float], approved: bool = True
+) -> dict[str, Any]:
+    offered = await _offer(client, *(_face(e) for e in embeddings))
+    resp = await client.post(
+        "/api/ai/faces",
+        json={
+            "name": name,
+            "approved": approved,
+            "candidate_ids": [f["id"] for f in offered],
+        },
+    )
+    assert resp.status == 200
+    return await resp.json()
 
 
 async def test_faces_list_empty(client: TestClient) -> None:
@@ -4740,25 +4592,519 @@ async def test_faces_list_empty(client: TestClient) -> None:
     assert resp.status == 200
     data = await resp.json()
     assert data["faces"] == []
+    assert data["recognition_enabled"] is False
+    assert data["analysis_enabled"] is False
 
 
-async def test_faces_enroll_requires_name(client: TestClient) -> None:
+async def test_faces_list_reports_whether_recognition_actually_runs(
+    db: ClipDatabase,
+) -> None:
+    """Recognition runs inside clip analysis, so it needs both the option
+    and an AI provider — the tab says which one is missing."""
+    server = MediaServer(
+        db=db, port=0, face_recognition_enabled=True, analyzer=_make_analyzer()
+    )
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        data = await (await tc.get("/api/ai/faces")).json()
+    finally:
+        await tc.close()
+    assert data["recognition_enabled"] is True
+    assert data["analysis_enabled"] is True
+
+
+async def test_faces_list_flags_a_photo_unlike_the_persons_others(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_face_enrollment("Amy", [1.0, 0.0])
+    await db.add_face_enrollment("Amy", [0.99, 0.1])
+    stranger = await db.add_face_enrollment("Amy", [0.0, 1.0])
+    faces = (await (await client.get("/api/ai/faces")).json())["faces"]
+    warnings = {f["id"]: f["warning"] for f in faces}
+    assert warnings[stranger] == {"unlike_others": True, "also_matches": ""}
+    assert sum(1 for w in warnings.values() if w) == 1
+
+
+# --- photo detection -------------------------------------------------------
+
+
+async def test_faces_detect_offers_every_face_best_first(client: TestClient) -> None:
+    """A photo with more than one face offers each of them instead of being
+    refused — the old enrollment endpoint rejected it outright."""
+    offered = await _offer(
+        client, _face([1.0, 0.0], quality=0.4), _face([0.0, 1.0], quality=0.9)
+    )
+    assert [f["quality"] for f in offered] == [0.9, 0.4]
+    assert offered[0]["thumbnail"] == "data:image/jpeg;base64,dGh1bWI="
+    assert offered[0]["time"] is None
+    assert offered[0]["match"] is None
+
+
+async def test_faces_detect_drops_low_confidence_detections(client: TestClient) -> None:
+    """Measured on a real portrait: MTCNN found the face at 1.0 and two
+    "faces" in the background at 0.80-0.85. Only the real one is offered."""
+    offered = await _offer(
+        client, _face([1.0, 0.0], probability=1.0), _face([0.0, 1.0], probability=0.85)
+    )
+    assert len(offered) == 1
+
+
+async def test_faces_detect_says_who_a_face_is_already_recognized_as(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_face_enrollment("Brian", [1.0, 0.0])
+    offered = await _offer(client, _face([0.99, 0.05]), _face([0.0, 1.0]))
+    matches = [f["match"] for f in offered]
+    assert {"name": "Brian", "similarity": pytest.approx(0.999, abs=0.001)} in matches
+    assert None in matches
+
+
+async def test_faces_detect_requires_an_image(client: TestClient) -> None:
+    resp = await client.post("/api/ai/faces/detect", json={})
+    assert resp.status == 400
+
+
+async def test_faces_detect_rejects_invalid_base64(client: TestClient) -> None:
+    resp = await client.post(
+        "/api/ai/faces/detect", json={"image_base64": "not-base64!!"}
+    )
+    assert resp.status == 400
+
+
+async def test_faces_detect_bad_json(client: TestClient) -> None:
+    resp = await client.post(
+        "/api/ai/faces/detect",
+        data="not json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status == 400
+
+
+async def test_faces_detect_unavailable_when_dependency_missing(
+    client: TestClient,
+) -> None:
+    with patch(
+        "blink_downloader.media_server.faces.is_face_recognition_available",
+        return_value=False,
+    ):
+        resp = await client.post("/api/ai/faces/detect", json=_photo_body())
+    assert resp.status == 400
+
+
+async def test_faces_detect_reports_models_that_would_not_load(
+    client: TestClient,
+) -> None:
+    with _detection([], ready=False):
+        resp = await client.post("/api/ai/faces/detect", json=_photo_body())
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["faces"] == []
+    assert "could not be loaded" in body["error"]
+
+
+async def test_faces_detect_reports_a_photo_it_could_not_read(
+    client: TestClient,
+) -> None:
+    """None from detect() means the image could not be examined — an
+    iPhone's HEIC is the usual culprit — not "no face in it"."""
+    with _detection(None):
+        resp = await client.post("/api/ai/faces/detect", json=_photo_body())
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["faces"] == []
+    assert "HEIC" in body["error"]
+
+
+async def test_faces_detect_accepts_realistic_photo_size(client: TestClient) -> None:
+    """A real phone photo, base64-encoded, routinely exceeds aiohttp's
+    default 1 MB request-body limit — _build_app() raises client_max_size
+    so a legitimate enrollment photo isn't rejected with an opaque 413
+    before the handler even runs."""
+    import base64
+
+    large_payload = base64.b64encode(b"\xff" * (2 * 1024 * 1024)).decode()
+    with _detection([]):
+        resp = await client.post(
+            "/api/ai/faces/detect", json={"image_base64": large_payload}
+        )
+    assert resp.status == 200
+
+
+# --- clip scanning ---------------------------------------------------------
+
+
+def _ffmpeg(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0) -> AsyncMock:
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(stdout, stderr))
+    proc.returncode = returncode
+    return proc
+
+
+async def _scannable_clip(
+    db: ClipDatabase, tmp_path: Path, clip_id: str = "s1", duration: float = 10
+) -> None:
+    video = tmp_path / f"{clip_id}.mp4"
+    video.write_bytes(b"video")
+    await db.add_clip(_make_clip(clip_id, path=str(video), duration=duration))
+
+
+async def test_faces_scan_not_found(client: TestClient) -> None:
+    resp = await client.get("/api/ai/faces/scan/missing")
+    assert resp.status == 404
+
+
+async def test_faces_scan_finds_faces_with_their_time_in_the_clip(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _scannable_clip(db, tmp_path, duration=10)
+    frames = _concat_jpegs(b"f0", b"f1", b"f2")
+    per_frame = [[], [_face([1.0, 0.0])], [_face([0.0, 1.0], quality=0.95)]]
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=_ffmpeg(frames)),
+        _detection(side_effect=per_frame) as detect,
+    ):
+        resp = await client.get("/api/ai/faces/scan/s1")
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["clip_id"] == "s1"
+    assert body["frames_scanned"] == 3
+    assert body["duplicates_hidden"] == 0
+    # Frames are 0.5s apart for a 10s clip; best face first.
+    assert [(f["time"], f["quality"]) for f in body["faces"]] == [
+        (1.0, 0.95),
+        (0.5, 0.8),
+    ]
+    assert all(call.kwargs == {"thumbnails": True} for call in detect.call_args_list)
+
+
+async def test_faces_scan_collapses_near_identical_shots(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    """The same face a fraction of a second later is one choice, not three —
+    what made the old frame-by-frame picker look full of duplicates."""
+    await _scannable_clip(db, tmp_path)
+    frames = _concat_jpegs(b"f0", b"f1", b"f2")
+    per_frame = [
+        [_face([1.0, 0.0], quality=0.5)],
+        [_face([0.999, 0.01], quality=0.9)],
+        [_face([0.998, 0.02], quality=0.6), _face([0.0, 1.0], probability=0.5)],
+    ]
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=_ffmpeg(frames)),
+        _detection(side_effect=per_frame),
+    ):
+        body = await (await client.get("/api/ai/faces/scan/s1")).json()
+    assert body["duplicates_hidden"] == 2
+    assert [f["quality"] for f in body["faces"]] == [0.9]
+
+
+async def test_faces_scan_skips_a_frame_detection_could_not_read(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _scannable_clip(db, tmp_path)
+    frames = _concat_jpegs(b"f0", b"f1")
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=_ffmpeg(frames)),
+        _detection(side_effect=[None, [_face([1.0, 0.0])]]),
+    ):
+        body = await (await client.get("/api/ai/faces/scan/s1")).json()
+    assert len(body["faces"]) == 1
+
+
+async def test_faces_scan_samples_densely_but_caps_long_clips(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _scannable_clip(db, tmp_path, "short", duration=6)
+    await _scannable_clip(db, tmp_path, "long", duration=200)
+    await _scannable_clip(db, tmp_path, "unknown", duration=0)
+    commands = []
+    for clip_id in ("short", "long", "unknown"):
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=_ffmpeg()) as exec_,
+            _detection([]),
+        ):
+            await client.get(f"/api/ai/faces/scan/{clip_id}")
+        commands.append(list(exec_.call_args.args))
+    short, long, unknown = commands
+    assert short[short.index("-frames:v") + 1] == "12"  # every half second
+    assert "fps=1/0.5,scale=640:-1" in short
+    assert long[long.index("-frames:v") + 1] == "40"
+    assert "fps=1/5.0,scale=640:-1" in long
+    # An unknown duration is treated as 10s rather than dividing by zero.
+    assert unknown[unknown.index("-frames:v") + 1] == "20"
+    assert "-hide_banner" in short
+    assert short[short.index("-loglevel") + 1] == "error"
+
+
+async def test_faces_scan_uses_the_recognition_resolution(
+    db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Enrollment scans extract at the width recognition matches at, and
+    each enrolled photo records it, so the tab can flag photos captured at
+    a width recognition no longer uses."""
+    await _scannable_clip(db, tmp_path)
+    server = MediaServer(db=db, port=0, face_frame_width=1280)
+    tc = TestClient(TestServer(server._build_app()))
+    await tc.start_server()
+    try:
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                return_value=_ffmpeg(_concat_jpegs(b"f0")),
+            ) as exec_,
+            _detection([_face([1.0, 0.0])]),
+        ):
+            scan = await (await tc.get("/api/ai/faces/scan/s1")).json()
+        assert "scale=1280:-1" in " ".join(exec_.call_args.args)
+        await tc.post(
+            "/api/ai/faces",
+            json={"name": "Brian", "candidate_ids": [scan["faces"][0]["id"]]},
+        )
+        listing = await (await tc.get("/api/ai/faces")).json()
+    finally:
+        await tc.close()
+    assert listing["frame_width"] == 1280
+    assert listing["faces"][0]["frame_width"] == 1280
+
+
+async def test_faces_enrolled_from_a_photo_record_no_frame_width(
+    client: TestClient,
+) -> None:
+    await _enroll(client, "Brian", [1.0, 0.0])
+    listing = await (await client.get("/api/ai/faces")).json()
+    assert listing["frame_width"] == 640
+    assert listing["faces"][0]["frame_width"] is None
+
+
+async def test_faces_scan_unavailable_when_dependency_missing(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _scannable_clip(db, tmp_path)
+    with patch(
+        "blink_downloader.media_server.faces.is_face_recognition_available",
+        return_value=False,
+    ):
+        resp = await client.get("/api/ai/faces/scan/s1")
+    assert resp.status == 400
+
+
+async def test_faces_scan_reports_models_that_would_not_load(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _scannable_clip(db, tmp_path)
+    with _detection([], ready=False):
+        body = await (await client.get("/api/ai/faces/scan/s1")).json()
+    assert body["faces"] == []
+    assert "could not be loaded" in body["error"]
+
+
+async def test_faces_scan_reports_a_missing_video_file(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_clip(_make_clip("gone", path="/nonexistent/gone.mp4"))
+    with _detection([]):
+        body = await (await client.get("/api/ai/faces/scan/gone")).json()
+    assert "no longer on disk" in body["error"]
+
+
+async def test_faces_scan_ffmpeg_not_available(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _scannable_clip(db, tmp_path)
+    with (
+        patch("asyncio.create_subprocess_exec", side_effect=OSError("no ffmpeg")),
+        _detection([]),
+    ):
+        body = await (await client.get("/api/ai/faces/scan/s1")).json()
+    assert body["faces"] == []
+    assert "No frames could be extracted" in body["error"]
+
+
+async def test_faces_scan_ffmpeg_timeout(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    await _scannable_clip(db, tmp_path)
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+    proc.kill = MagicMock()
+    proc.wait = AsyncMock()
+    with patch("asyncio.create_subprocess_exec", return_value=proc), _detection([]):
+        body = await (await client.get("/api/ai/faces/scan/s1")).json()
+    assert body["faces"] == []
+    proc.kill.assert_called_once()
+
+
+async def test_faces_scan_failure_logs_the_end_of_ffmpeg_stderr(
+    client: TestClient,
+    db: ClipDatabase,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ffmpeg names the actual reason on its last stderr line, so the log
+    must keep the tail rather than the head — and keep it on one line."""
+    await _scannable_clip(db, tmp_path)
+    stderr = (
+        b"[h264] error while decoding MB 1\n" * 40
+        + b"Error opening output files: Invalid argument\n"
+    )
+    with (
+        caplog.at_level(logging.WARNING),
+        patch(
+            "asyncio.create_subprocess_exec",
+            return_value=_ffmpeg(stderr=stderr, returncode=234),
+        ),
+        _detection([]),
+    ):
+        body = await (await client.get("/api/ai/faces/scan/s1")).json()
+    assert body["faces"] == []
+    assert "Error opening output files: Invalid argument" in caplog.text
+    assert "\n" not in caplog.records[-1].getMessage()
+
+
+# --- grouping ----------------------------------------------------------------
+
+
+async def test_faces_group_groups_candidates_and_lists_expired_ones(
+    client: TestClient,
+) -> None:
+    offered = await _offer(
+        client, _face([1.0, 0.0]), _face([0.98, 0.1]), _face([0.0, 1.0])
+    )
+    ids = [f["id"] for f in offered]
+    resp = await client.post(
+        "/api/ai/faces/group", json={"candidate_ids": [*ids, "gone"]}
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert sorted(len(g) for g in body["groups"]) == [1, 2]
+    assert body["expired"] == ["gone"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"candidate_ids": []}, {"candidate_ids": "abc"}, {"candidate_ids": [1, 2]}],
+)
+async def test_faces_group_requires_a_list_of_ids(
+    client: TestClient, body: dict[str, Any]
+) -> None:
+    resp = await client.post("/api/ai/faces/group", json=body)
+    assert resp.status == 400
+
+
+async def test_faces_group_bounds_a_crafted_request(client: TestClient) -> None:
+    resp = await client.post("/api/ai/faces/group", json={"candidate_ids": ["x"] * 501})
+    assert resp.status == 400
+
+
+# --- enrolling ---------------------------------------------------------------
+
+
+async def test_faces_enroll_picked_faces_then_list_then_delete_one(
+    client: TestClient,
+) -> None:
+    result = await _enroll(client, "Brian", [1.0, 0.0], [0.9, 0.1])
+    assert result == {
+        "name": "Brian",
+        "enrolled": 2,
+        "expired": 0,
+        "approved": True,
+        "existing": False,
+    }
+
+    faces = (await (await client.get("/api/ai/faces")).json())["faces"]
+    assert [f["name"] for f in faces] == ["Brian", "Brian"]
+    assert all(f["has_thumbnail"] and f["approved"] for f in faces)
+
+    resp = await client.delete(f"/api/ai/faces/{faces[0]['id']}")
+    assert resp.status == 200
+    remaining = (await (await client.get("/api/ai/faces")).json())["faces"]
+    assert [f["id"] for f in remaining] == [faces[1]["id"]]
+
+
+async def test_faces_enroll_stores_the_thumbnail_it_was_offered(
+    client: TestClient,
+) -> None:
+    await _enroll(client, "Brian", [1.0, 0.0])
+    face_id = (await (await client.get("/api/ai/faces")).json())["faces"][0]["id"]
+    resp = await client.get(f"/api/ai/faces/thumbs/{face_id}")
+    assert resp.status == 200
+    assert resp.content_type == "image/jpeg"
+    assert await resp.read() == b"thumb"
+    # A face: cacheable by this browser only, never by a proxy in between.
+    assert resp.headers["Cache-Control"].startswith("private")
+
+
+async def test_faces_enroll_explicitly_unapproved(client: TestClient) -> None:
+    result = await _enroll(client, "Nanny", [1.0, 0.0], approved=False)
+    assert result["approved"] is False
+    faces = (await (await client.get("/api/ai/faces")).json())["faces"]
+    assert faces[0]["approved"] is False
+
+
+async def test_faces_enroll_adding_to_a_person_inherits_their_approval(
+    client: TestClient,
+) -> None:
+    """Photos added to someone already enrolled take that person's approval,
+    whatever the request asked — so adding photos can never leave a person
+    half-approved, which is what the old per-photo flow could do."""
+    await _enroll(client, "Nanny", [1.0, 0.0], approved=False)
+    result = await _enroll(client, "Nanny", [0.9, 0.1], approved=True)
+    assert result["existing"] is True
+    assert result["approved"] is False
+    faces = (await (await client.get("/api/ai/faces")).json())["faces"]
+    assert [f["approved"] for f in faces] == [False, False]
+
+
+async def test_faces_enroll_a_candidate_only_once(client: TestClient) -> None:
+    offered = await _offer(client, _face([1.0, 0.0]))
+    body = {"name": "Brian", "candidate_ids": [offered[0]["id"]]}
+    first = await (await client.post("/api/ai/faces", json=body)).json()
+    again = await (await client.post("/api/ai/faces", json=body)).json()
+    assert first["enrolled"] == 1
+    assert again["enrolled"] == 0
+    assert "scan again" in again["error"]
+    assert len((await (await client.get("/api/ai/faces")).json())["faces"]) == 1
+
+
+async def test_faces_enroll_counts_the_faces_that_had_expired(
+    client: TestClient,
+) -> None:
+    offered = await _offer(client, _face([1.0, 0.0]))
     resp = await client.post(
         "/api/ai/faces",
-        json={"name": "", "image_base64": await _real_jpeg_base64()},
+        json={"name": "Brian", "candidate_ids": [offered[0]["id"], "long-gone"]},
     )
-    assert resp.status == 400
+    body = await resp.json()
+    assert (body["enrolled"], body["expired"]) == (1, 1)
 
 
-async def test_faces_enroll_requires_image(client: TestClient) -> None:
-    resp = await client.post("/api/ai/faces", json={"name": "Brian"})
-    assert resp.status == 400
-
-
-async def test_faces_enroll_rejects_invalid_base64(client: TestClient) -> None:
+@pytest.mark.parametrize(
+    "name", ["", "   ", "x" * 61, "Bad\x00Name", "Two\nLines", 42, None]
+)
+async def test_faces_enroll_rejects_an_unusable_name(
+    client: TestClient, name: Any
+) -> None:
+    offered = await _offer(client, _face([1.0, 0.0]))
     resp = await client.post(
-        "/api/ai/faces", json={"name": "Brian", "image_base64": "not-base64!!"}
+        "/api/ai/faces", json={"name": name, "candidate_ids": [offered[0]["id"]]}
     )
+    assert resp.status == 400
+
+
+async def test_faces_enroll_trims_the_name(client: TestClient) -> None:
+    offered = await _offer(client, _face([1.0, 0.0]))
+    body = await (
+        await client.post(
+            "/api/ai/faces",
+            json={"name": "  Brian  ", "candidate_ids": [offered[0]["id"]]},
+        )
+    ).json()
+    assert body["name"] == "Brian"
+
+
+async def test_faces_enroll_requires_candidates(client: TestClient) -> None:
+    resp = await client.post("/api/ai/faces", json={"name": "Brian"})
     assert resp.status == 400
 
 
@@ -4769,323 +5115,122 @@ async def test_faces_enroll_bad_json(client: TestClient) -> None:
     assert resp.status == 400
 
 
-async def test_faces_enroll_unavailable_when_dependency_missing(
-    client: TestClient,
+async def test_face_thumbnail_missing(client: TestClient, db: ClipDatabase) -> None:
+    legacy = await db.add_face_enrollment("Brian", [1.0, 0.0])
+    assert (await client.get(f"/api/ai/faces/thumbs/{legacy}")).status == 404
+    assert (await client.get("/api/ai/faces/thumbs/999")).status == 404
+
+
+@pytest.mark.parametrize("bad_id", ["abc", "0", "-3", "99999999999999999999"])
+async def test_face_ids_out_of_range_are_bad_requests(
+    client: TestClient, bad_id: str
 ) -> None:
-    with patch(
-        "blink_downloader.media_server.faces.is_face_recognition_available",
-        return_value=False,
-    ):
-        resp = await client.post(
-            "/api/ai/faces",
-            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
-        )
-    assert resp.status == 400
+    """An id past the INTEGER column's range used to reach asyncpg and come
+    back as a bare 500."""
+    assert (await client.get(f"/api/ai/faces/thumbs/{bad_id}")).status == 400
+    assert (await client.delete(f"/api/ai/faces/{bad_id}")).status == 400
 
 
-async def test_faces_enroll_no_face_detected(client: TestClient) -> None:
-    with (
-        patch(
-            "blink_downloader.media_server.faces.is_face_recognition_available",
-            return_value=True,
-        ),
-        patch(
-            "blink_downloader.media_server.FaceEmbedder.embed",
-            new=AsyncMock(return_value=[]),
-        ),
-    ):
-        resp = await client.post(
-            "/api/ai/faces",
-            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
-        )
-    # 200, not 400: "no face detected" is an expected outcome of a normal
-    # enrollment attempt (a bad frame), not a malformed request -- a 400
-    # here would make the browser log a spurious network error to the
-    # console for something the UI already reports via a toast.
-    assert resp.status == 200
-    body = await resp.json()
-    assert body["error"] == "No face detected in the provided photo"
+# --- people ----------------------------------------------------------------
 
 
-async def test_faces_enroll_multiple_faces_rejected(client: TestClient) -> None:
-    with (
-        patch(
-            "blink_downloader.media_server.faces.is_face_recognition_available",
-            return_value=True,
-        ),
-        patch(
-            "blink_downloader.media_server.FaceEmbedder.embed",
-            new=AsyncMock(return_value=[[0.1, 0.2], [0.3, 0.4]]),
-        ),
-    ):
-        resp = await client.post(
-            "/api/ai/faces",
-            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
-        )
-    assert resp.status == 200
-    body = await resp.json()
-    assert "Detected 2 faces" in body["error"]
-
-
-async def test_faces_enroll_success_then_list_then_delete(client: TestClient) -> None:
-    with (
-        patch(
-            "blink_downloader.media_server.faces.is_face_recognition_available",
-            return_value=True,
-        ),
-        patch(
-            "blink_downloader.media_server.FaceEmbedder.embed",
-            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
-        ),
-    ):
-        resp = await client.post(
-            "/api/ai/faces",
-            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
-        )
-        assert resp.status == 200
-        enrolled = await resp.json()
-        assert enrolled["name"] == "Brian"
-
-    resp = await client.get("/api/ai/faces")
-    data = await resp.json()
-    assert len(data["faces"]) == 1
-    face_id = data["faces"][0]["id"]
-
-    resp = await client.delete(f"/api/ai/faces/{face_id}")
-    assert resp.status == 200
-
-    resp = await client.get("/api/ai/faces")
-    data = await resp.json()
-    assert data["faces"] == []
-
-
-async def test_faces_enroll_accepts_realistic_photo_size(client: TestClient) -> None:
-    """A real phone photo, base64-encoded, routinely exceeds aiohttp's
-    default 1 MB request-body limit — _build_app() raises client_max_size
-    specifically so a legitimate enrollment photo isn't rejected with an
-    opaque 413 before the handler even runs."""
-    import base64
-
-    large_payload = base64.b64encode(b"\xff" * (2 * 1024 * 1024)).decode()
-    with (
-        patch(
-            "blink_downloader.media_server.faces.is_face_recognition_available",
-            return_value=True,
-        ),
-        patch(
-            "blink_downloader.media_server.FaceEmbedder.embed",
-            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
-        ),
-    ):
-        resp = await client.post(
-            "/api/ai/faces",
-            json={"name": "Brian", "image_base64": large_payload},
-        )
-    assert resp.status != 413
-    assert resp.status == 200
-
-
-async def test_faces_delete_invalid_id(client: TestClient) -> None:
-    resp = await client.delete("/api/ai/faces/not-a-number")
-    assert resp.status == 400
-
-
-async def test_faces_enroll_defaults_to_approved(client: TestClient) -> None:
-    with (
-        patch(
-            "blink_downloader.media_server.faces.is_face_recognition_available",
-            return_value=True,
-        ),
-        patch(
-            "blink_downloader.media_server.FaceEmbedder.embed",
-            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
-        ),
-    ):
-        resp = await client.post(
-            "/api/ai/faces",
-            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
-        )
-        assert resp.status == 200
-        assert (await resp.json())["approved"] is True
-
-    resp = await client.get("/api/ai/faces")
-    data = await resp.json()
-    assert data["faces"][0]["approved"] is True
-
-
-async def test_faces_enroll_explicitly_unapproved(client: TestClient) -> None:
-    with (
-        patch(
-            "blink_downloader.media_server.faces.is_face_recognition_available",
-            return_value=True,
-        ),
-        patch(
-            "blink_downloader.media_server.FaceEmbedder.embed",
-            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
-        ),
-    ):
-        resp = await client.post(
-            "/api/ai/faces",
-            json={
-                "name": "Nanny",
-                "image_base64": await _real_jpeg_base64(),
-                "approved": False,
-            },
-        )
-        assert resp.status == 200
-        assert (await resp.json())["approved"] is False
-
-    resp = await client.get("/api/ai/faces")
-    data = await resp.json()
-    assert data["faces"][0]["approved"] is False
-
-
-async def test_faces_patch_updates_approved(client: TestClient) -> None:
-    with (
-        patch(
-            "blink_downloader.media_server.faces.is_face_recognition_available",
-            return_value=True,
-        ),
-        patch(
-            "blink_downloader.media_server.FaceEmbedder.embed",
-            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
-        ),
-    ):
-        resp = await client.post(
-            "/api/ai/faces",
-            json={"name": "Brian", "image_base64": await _real_jpeg_base64()},
-        )
-    face_id = (await resp.json())["id"]
-
-    resp = await client.patch(f"/api/ai/faces/{face_id}", json={"approved": False})
-    assert resp.status == 200
-
-    resp = await client.get("/api/ai/faces")
-    data = await resp.json()
-    assert data["faces"][0]["approved"] is False
-
-
-async def test_faces_patch_updates_name(client: TestClient) -> None:
-    with (
-        patch(
-            "blink_downloader.media_server.faces.is_face_recognition_available",
-            return_value=True,
-        ),
-        patch(
-            "blink_downloader.media_server.FaceEmbedder.embed",
-            new=AsyncMock(return_value=[[0.1, 0.2, 0.3]]),
-        ),
-    ):
-        resp = await client.post(
-            "/api/ai/faces",
-            json={"name": "Brain", "image_base64": await _real_jpeg_base64()},
-        )
-    face_id = (await resp.json())["id"]
-
-    resp = await client.patch(f"/api/ai/faces/{face_id}", json={"name": "Brian"})
-    assert resp.status == 200
-
-    resp = await client.get("/api/ai/faces")
-    data = await resp.json()
-    assert data["faces"][0]["name"] == "Brian"
-
-
-async def test_faces_patch_rejects_empty_name(client: TestClient) -> None:
-    resp = await client.patch("/api/ai/faces/1", json={"name": "   "})
-    assert resp.status == 400
-
-
-async def test_faces_patch_requires_at_least_one_field(client: TestClient) -> None:
-    resp = await client.patch("/api/ai/faces/1", json={})
-    assert resp.status == 400
-
-
-async def test_faces_patch_invalid_id(client: TestClient) -> None:
-    resp = await client.patch("/api/ai/faces/not-a-number", json={"approved": True})
-    assert resp.status == 400
-
-
-async def test_faces_patch_bad_json(client: TestClient) -> None:
+async def test_people_patch_approves_every_photo(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_face_enrollment("Brian", [0.1], approved=True)
+    await db.add_face_enrollment("Brian", [0.2], approved=True)
+    await db.add_face_enrollment("Amy", [0.3], approved=True)
     resp = await client.patch(
-        "/api/ai/faces/1", data="not json", headers={"Content-Type": "application/json"}
+        "/api/ai/faces/people", json={"name": "Brian", "approved": False}
+    )
+    assert resp.status == 200
+    faces = (await (await client.get("/api/ai/faces")).json())["faces"]
+    assert {(f["name"], f["approved"]) for f in faces} == {
+        ("Brian", False),
+        ("Amy", True),
+    }
+
+
+async def test_people_patch_renames_every_photo(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_face_enrollment("Brain", [0.1])
+    await db.add_face_enrollment("Brain", [0.2])
+    resp = await client.patch(
+        "/api/ai/faces/people", json={"name": "Brain", "new_name": " Brian "}
+    )
+    assert resp.status == 200
+    faces = (await (await client.get("/api/ai/faces")).json())["faces"]
+    assert [f["name"] for f in faces] == ["Brian", "Brian"]
+
+
+async def test_people_names_that_a_path_segment_could_not_carry(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """Home Assistant's ingress decodes a path before forwarding it, so a
+    person called "Mom/Dad" became two path segments and 404'd under the old
+    /by-name/{name} routes. A name in the body survives any proxy."""
+    await db.add_face_enrollment("Mom/Dad", [0.1])
+    resp = await client.patch(
+        "/api/ai/faces/people", json={"name": "Mom/Dad", "new_name": "Parents"}
+    )
+    assert resp.status == 200
+    resp = await client.delete("/api/ai/faces/people", json={"name": "Parents"})
+    assert resp.status == 200
+    assert (await (await client.get("/api/ai/faces")).json())["faces"] == []
+
+
+async def test_people_patch_validates_before_writing_anything(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """An invalid new name used to be refused only after the approval had
+    already been applied, leaving half the request done behind a 400."""
+    await db.add_face_enrollment("Brian", [0.1], approved=True)
+    resp = await client.patch(
+        "/api/ai/faces/people",
+        json={"name": "Brian", "approved": False, "new_name": "  "},
     )
     assert resp.status == 400
+    faces = (await (await client.get("/api/ai/faces")).json())["faces"]
+    assert faces[0]["approved"] is True
 
 
-# ---------------------------------------------------------------------------
-# /api/ai/faces/by-name/{name} — bulk multi-frame-enrollment management
-# ---------------------------------------------------------------------------
-
-
-async def _enroll_two_photos(client: TestClient, name: str = "Brian") -> None:
-    with (
-        patch(
-            "blink_downloader.media_server.faces.is_face_recognition_available",
-            return_value=True,
-        ),
-        patch(
-            "blink_downloader.media_server.FaceEmbedder.embed",
-            new=AsyncMock(side_effect=[[[0.1, 0.2]], [[0.3, 0.4]]]),
-        ),
-    ):
-        for _ in range(2):
-            resp = await client.post(
-                "/api/ai/faces",
-                json={"name": name, "image_base64": await _real_jpeg_base64()},
-            )
-            assert resp.status == 200
-
-
-async def test_faces_patch_by_name_updates_approved_for_all_photos(
-    client: TestClient,
+@pytest.mark.parametrize(
+    "body",
+    [{"name": "Brian"}, {"approved": True}, {"name": "", "approved": True}],
+)
+async def test_people_patch_requires_a_name_and_a_change(
+    client: TestClient, body: dict[str, Any]
 ) -> None:
-    await _enroll_two_photos(client)
-    resp = await client.patch("/api/ai/faces/by-name/Brian", json={"approved": False})
-    assert resp.status == 200
-
-    data = await (await client.get("/api/ai/faces")).json()
-    assert len(data["faces"]) == 2
-    assert all(f["approved"] is False for f in data["faces"])
-
-
-async def test_faces_patch_by_name_renames_all_photos(client: TestClient) -> None:
-    await _enroll_two_photos(client, name="Brain")
-    resp = await client.patch("/api/ai/faces/by-name/Brain", json={"name": "Brian"})
-    assert resp.status == 200
-
-    data = await (await client.get("/api/ai/faces")).json()
-    assert all(f["name"] == "Brian" for f in data["faces"])
-
-
-async def test_faces_patch_by_name_rejects_empty_name(client: TestClient) -> None:
-    resp = await client.patch("/api/ai/faces/by-name/Brian", json={"name": "   "})
+    resp = await client.patch("/api/ai/faces/people", json=body)
     assert resp.status == 400
 
 
-async def test_faces_patch_by_name_requires_at_least_one_field(
-    client: TestClient,
-) -> None:
-    resp = await client.patch("/api/ai/faces/by-name/Brian", json={})
-    assert resp.status == 400
+async def test_people_requests_reject_a_nul_in_the_name(client: TestClient) -> None:
+    body = {"name": "Bri\x00an", "approved": True}
+    assert (await client.patch("/api/ai/faces/people", json=body)).status == 400
+    assert (await client.delete("/api/ai/faces/people", json=body)).status == 400
 
 
-async def test_faces_patch_by_name_bad_json(client: TestClient) -> None:
+async def test_people_patch_bad_json(client: TestClient) -> None:
     resp = await client.patch(
-        "/api/ai/faces/by-name/Brian",
+        "/api/ai/faces/people",
         data="not json",
         headers={"Content-Type": "application/json"},
     )
     assert resp.status == 400
 
 
-async def test_faces_delete_by_name_removes_all_photos(client: TestClient) -> None:
-    await _enroll_two_photos(client)
-    resp = await client.delete("/api/ai/faces/by-name/Brian")
+async def test_people_delete_removes_every_photo(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    await db.add_face_enrollment("Brian", [0.1])
+    await db.add_face_enrollment("Brian", [0.2])
+    await db.add_face_enrollment("Amy", [0.3])
+    resp = await client.delete("/api/ai/faces/people", json={"name": "Brian"})
     assert resp.status == 200
-    assert (await resp.json())["deleted"] is True
-
-    data = await (await client.get("/api/ai/faces")).json()
-    assert data["faces"] == []
+    faces = (await (await client.get("/api/ai/faces")).json())["faces"]
+    assert [f["name"] for f in faces] == ["Amy"]
 
 
 # ---------------------------------------------------------------------------
@@ -6193,6 +6338,21 @@ async def test_face_recognition_feedback_submit_bad_json(
         headers={"Content-Type": "text/plain"},
     )
     assert resp.status == 400
+
+
+@pytest.mark.parametrize("field", ["note", "person_name"])
+async def test_face_recognition_feedback_submit_rejects_a_nul(
+    client: TestClient, db: ClipDatabase, field: str
+) -> None:
+    """A NUL cannot be stored in a text column; it used to reach asyncpg
+    and come back as a bare 500 rather than a bad request."""
+    await db.add_clip(_make_clip("c1"))
+    resp = await client.post(
+        "/api/ai/faces/feedback/c1",
+        json={"report_type": "false_negative", field: "Bri\x00an"},
+    )
+    assert resp.status == 400
+    assert await db.get_face_recognition_feedback() == []
 
 
 async def test_face_recognition_feedback_submit_invalid_report_type(

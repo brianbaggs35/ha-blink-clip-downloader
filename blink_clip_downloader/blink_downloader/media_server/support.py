@@ -66,13 +66,6 @@ _SETTINGS_WRITE_FAILED = "Could not save — check the add-on logs"
 _LIVEVIEW_FILENAME_RE = re.compile(r"^(stream\.m3u8|seg_\d{5}\.ts)$")
 
 
-# Upper bound on how many frames _handle_clip_frames will ever extract from
-# one clip, whether derived from duration (the ~1fps default) or requested
-# explicitly via ?count=. Bounds ffmpeg's work and the JSON response size
-# (each frame is a base64 480px-wide JPEG) for an unusually long clip.
-_MAX_CLIP_FRAMES = 60
-
-
 #: Most pending feedback rows one "Train" press may consume. Each example
 #: costs a frame extraction and a paid Moondream API call, so this is a
 #: spend ceiling as much as a paging one — press it again for more.

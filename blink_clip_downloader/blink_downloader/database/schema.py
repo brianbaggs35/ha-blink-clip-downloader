@@ -255,13 +255,21 @@ CREATE INDEX IF NOT EXISTS idx_feedback_clip   ON analysis_feedback (clip_id);
 -- list of floats (a 512-dim facenet-pytorch InceptionResnetV1 embedding) —
 -- stored as TEXT rather than a native array/vector type for the same reason
 -- `tags` above is TEXT: simplicity over compactness for a table that will
--- only ever hold a handful of rows. Never leaves this database.
+-- only ever hold a handful of rows. Never leaves this database. thumbnail is
+-- a small JPEG of the enrolled face, so the Biometrics tab can show whose
+-- photo each row is; NULL for a row enrolled before 6.0.7, which only ever
+-- stored the embedding. frame_width is the width of the clip frame the face
+-- was captured from (NULL for an uploaded photo, and before 6.0.7): a face
+-- enrolled at one size matches poorly at another, so the tab flags a photo
+-- whose width no longer matches ai_face_recognition_resolution.
 CREATE TABLE IF NOT EXISTS face_enrollments (
     id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name       TEXT    NOT NULL,
     embedding  TEXT    NOT NULL,
     created_at TEXT    NOT NULL,
-    approved   BOOLEAN NOT NULL DEFAULT TRUE
+    approved   BOOLEAN NOT NULL DEFAULT TRUE,
+    thumbnail  BYTEA,
+    frame_width INTEGER
 );
 
 -- Human feedback specifically on face-recognition accuracy, distinct from
@@ -329,6 +337,8 @@ CREATE INDEX IF NOT EXISTS idx_battery_history_camera ON battery_history (camera
 # already-existing database the moment it reached that statement.
 _MIGRATIONS = """
 ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS thumbnail BYTEA;
+ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS frame_width INTEGER;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_applied BOOLEAN DEFAULT FALSE;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_names TEXT DEFAULT '';
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS approved_faces_seen BOOLEAN DEFAULT FALSE;

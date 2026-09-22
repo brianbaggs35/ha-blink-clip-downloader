@@ -2293,7 +2293,28 @@ def test_init_wires_vision_pipeline_from_config(
     assert config.object_detection_model == "yolo11s.pt"
     assert config.depth_estimation_model == "depth-anything/Depth-Anything-V2-Base-hf"
     assert config.face_recognition_enabled is True
+    assert config.face_frame_width == 640
     assert config.hf_token == "hf_test_token"
+
+
+def test_face_recognition_resolution_reaches_recognition_and_enrollment(
+    base_config, tmp_path
+) -> None:
+    """Recognition and the Biometrics tab's enrollment scans must use the
+    same width — a face enrolled at one size matches poorly at another."""
+    app, mock_create_analyzer = _build_app_with_camera_configs(
+        base_config,
+        tmp_path,
+        None,
+        ai_face_recognition_enabled=True,
+        ai_face_recognition_resolution="very_high",
+    )
+    pipeline = mock_create_analyzer.return_value.attach_vision_pipeline.call_args.args[
+        0
+    ]
+    assert pipeline._config.face_frame_width == 1280
+    assert app._media_server._face_frame_width == 1280
+    assert app._media_server._face_recognition_enabled is True
 
 
 def test_init_sets_huggingface_token_environment(base_config, monkeypatch) -> None:

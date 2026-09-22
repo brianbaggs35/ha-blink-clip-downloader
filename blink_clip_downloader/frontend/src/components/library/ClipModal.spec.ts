@@ -1005,7 +1005,7 @@ describe('ClipModal', () => {
     // sequencing guard, clip c1's late response would overwrite the player
     // source and metadata back to c1 even though the user has already moved
     // on to c2 — the same stale-response-race class already fixed in
-    // LibraryPage.vue and VehicleZonePicker/EnrollFromClipPicker.
+    // LibraryPage.vue, VehicleZonePicker and ClipFaceScanner.
     let resolveC1: (v: Response) => void = () => {}
     vi.stubGlobal(
       'fetch',

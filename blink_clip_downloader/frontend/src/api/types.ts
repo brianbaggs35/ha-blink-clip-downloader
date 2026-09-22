@@ -460,6 +460,15 @@ export interface FeedbackSubmission {
 // Face recognition
 // ---------------------------------------------------------------------
 
+/** What review_enrollments (face_enrollment.py) found wrong with a photo. */
+export interface FacePhotoWarning {
+  /** Resembles none of the person's other photos — probably someone else. */
+  unlike_others: boolean
+  /** Another person this photo would be recognized as, or ''. */
+  also_matches: string
+}
+
+/** One enrolled photo; a person is every photo sharing a name. */
 export interface FaceEnrollment {
   id: number
   name: string
@@ -468,28 +477,75 @@ export interface FaceEnrollment {
   // analyzer/base.py's _face_bypass_applies) — a recognized-but-not-approved
   // enrollment is labeled but never suppresses an alert on its own.
   approved: boolean
+  /** False for a photo enrolled before 6.0.7, which stored no image. */
+  has_thumbnail: boolean
+  /** Width of the clip frame it was captured from; null for an uploaded
+   *  photo, or one enrolled before 6.0.7. */
+  frame_width: number | null
+  warning: FacePhotoWarning | null
 }
 
 export interface FacesResponse {
   available: boolean
+  /** ai_face_recognition_enabled. */
+  recognition_enabled: boolean
+  /** Whether AI analysis is configured — recognition runs inside it. */
+  analysis_enabled: boolean
+  /** The width recognition matches faces at (ai_face_recognition_resolution). */
+  frame_width: number
   faces: FaceEnrollment[]
 }
 
+/** A face a scan found, held server-side until it is enrolled or expires. */
+export interface FaceCandidate {
+  id: string
+  /** data: URL of a small crop of the face. */
+  thumbnail: string
+  /** 0-1: sharpness, size and how squarely it faces the camera. */
+  quality: number
+  width: number
+  /** Seconds into the clip; null for an uploaded photo. */
+  time: number | null
+  /** Who clip analysis would already recognize this face as. */
+  match: { name: string; similarity: number } | null
+}
+
+// "Nothing usable found" and "couldn't read this" come back as 200s with an
+// `error` field — expected outcomes the UI reports itself.
+export interface FaceDetectResult {
+  faces: FaceCandidate[]
+  error?: string
+}
+
+export interface FaceScanResult extends FaceDetectResult {
+  clip_id: string
+  frames_scanned: number
+  duplicates_hidden: number
+}
+
+export interface FaceGroupResult {
+  groups: string[][]
+  /** Ids no longer held server-side (too old, or already enrolled). */
+  expired: string[]
+}
+
 export interface FaceEnrollSuccess {
-  id: number
   name: string
+  enrolled: number
+  expired: number
   approved: boolean
+  /** True when the photos were added to someone already enrolled. */
+  existing: boolean
 }
 
 export interface FaceEnrollFailure {
   error: string
+  enrolled: 0
+  expired: number
 }
 
-// The backend answers "no face detected" / "multiple faces detected" with
-// HTTP 200 and this failure shape rather than a 400 — those are expected,
-// recoverable outcomes of a normal enrollment attempt (a bad frame), not a
-// malformed request, so callers must check for `error` rather than relying
-// on the promise rejecting.
+// Every picked face having expired is a 200 with this shape, not a
+// rejection, so callers must check for `error`.
 export type FaceEnrollResult = FaceEnrollSuccess | FaceEnrollFailure
 
 export interface FaceBypassEvent {

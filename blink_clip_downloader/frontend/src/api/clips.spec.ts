@@ -9,7 +9,6 @@ import {
   getActivity,
   getCameras,
   getClip,
-  getClipFrames,
   getStats,
   getTags,
   listClips,
@@ -135,14 +134,6 @@ describe('clips api', () => {
     expect(fetch).toHaveBeenCalledWith('/api/stats', {})
     await getTags()
     expect(fetch).toHaveBeenCalledWith('/api/tags', {})
-  })
-
-  it('getClipFrames(): omits count by default (server derives it from duration) and forwards a custom count', async () => {
-    vi.mocked(fetch).mockResolvedValue(jsonResponse({ frames: [] }))
-    await getClipFrames('c1')
-    expect(fetch).toHaveBeenCalledWith('/api/clips/c1/frames', {})
-    await getClipFrames('c1', 12)
-    expect(fetch).toHaveBeenCalledWith('/api/clips/c1/frames?count=12', {})
   })
 
   it('getActivity(): defaults to 7 days', async () => {

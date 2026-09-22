@@ -9,6 +9,7 @@ blink_downloader/config.py
 blink_downloader/digest.py
 blink_downloader/downloader.py
 blink_downloader/event_watcher.py
+blink_downloader/face_enrollment.py
 blink_downloader/ffmpeg_output.py
 blink_downloader/frame_motion.py
 blink_downloader/gdrive_client.py
@@ -83,10 +84,10 @@ blink_downloader/security/tracks.py
 blink_downloader/security/vehicles.py
 blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
-blink_downloader/static/assets/index-BQ5x-SQL.css
-blink_downloader/static/assets/index-BQ5x-SQL.css.gz
-blink_downloader/static/assets/index-ZB28Im8s.js
-blink_downloader/static/assets/index-ZB28Im8s.js.gz
+blink_downloader/static/assets/index-BWpvlXya.css
+blink_downloader/static/assets/index-BWpvlXya.css.gz
+blink_downloader/static/assets/index-DXzDb4JD.js
+blink_downloader/static/assets/index-DXzDb4JD.js.gz
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2
@@ -184,6 +185,7 @@ tests/test_database.py
 tests/test_digest.py
 tests/test_downloader.py
 tests/test_event_watcher.py
+tests/test_face_enrollment.py
 tests/test_ffmpeg_output.py
 tests/test_frame_motion.py
 tests/test_gdrive_client.py

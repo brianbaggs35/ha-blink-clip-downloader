@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import Button from 'primevue/button'
 import Card from 'primevue/card'
 import Tag from 'primevue/tag'
-import { getFaceBypassStats, getFaceRecognitionFeedback } from '../../api/ai'
+import { getFaceBypassStats, getFaceRecognitionFeedback } from '../../api/faces'
 import type { FaceBypassStats, FaceRecognitionFeedback } from '../../api/types'
 import { useRefreshStore } from '../../stores/refresh'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
@@ -21,6 +22,9 @@ const stats = ref<FaceBypassStats | null>(null)
 // — surfaced here for a human to notice and act on, not auto-applied.
 const feedback = ref<FaceRecognitionFeedback[]>([])
 const refresh = useRefreshStore()
+// A missed match is a clip with an enrolled person in it who wasn't
+// recognized — exactly the clip worth adding photos from.
+const emit = defineEmits<{ 'scan-clip': [clipId: string] }>()
 
 async function load() {
   loading.value = true
@@ -101,6 +105,14 @@ function fmtTs(iso: string): string {
               on <em>{{ row.camera }}</em>
               <span class="muted-note">— {{ fmtTs(row.created_at) }}</span>
               <span v-if="row.note" class="muted-note">— "{{ row.note }}"</span>
+              <Button
+                v-if="row.report_type === 'false_negative'"
+                label="Find faces in this clip"
+                size="small"
+                text
+                class="scan-report-btn"
+                @click="emit('scan-clip', row.clip_id)"
+              />
             </li>
           </ul>
         </div>
@@ -154,5 +166,8 @@ function fmtTs(iso: string): string {
 .muted-note {
   font-size: 0.78rem;
   color: var(--muted);
+}
+.scan-report-btn {
+  padding-block: 0;
 }
 </style>

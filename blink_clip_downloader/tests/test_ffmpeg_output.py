@@ -7,7 +7,17 @@ means one set of tests.
 
 from __future__ import annotations
 
-from blink_downloader.ffmpeg_output import format_ffmpeg_error, split_jpeg_frames
+import asyncio
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from blink_downloader.ffmpeg_output import (
+    extract_jpeg_frames,
+    format_ffmpeg_error,
+    split_jpeg_frames,
+)
 
 _FAKE_JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\xff\xd9"
 _TWO_JPEGS = _FAKE_JPEG + _FAKE_JPEG
@@ -68,3 +78,68 @@ def test_format_ffmpeg_error_keeps_the_tail_not_the_head() -> None:
     out = format_ffmpeg_error(noise + b"Error opening output files: Invalid argument")
     assert out.endswith("Error opening output files: Invalid argument")
     assert len(out) == 200
+
+
+# ------------------------------------------------------------------
+# extract_jpeg_frames
+# ------------------------------------------------------------------
+
+
+def _proc(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0) -> AsyncMock:
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(return_value=(stdout, stderr))
+    proc.returncode = returncode
+    return proc
+
+
+async def _extract(**overrides) -> list[bytes]:
+    kwargs = {"width": 960, "interval": 0.75, "count": 12, "label": "clip-1"}
+    return await extract_jpeg_frames("/clips/a.mp4", **(kwargs | overrides))
+
+
+async def test_extract_jpeg_frames_samples_at_the_requested_width_and_rate() -> None:
+    with patch(
+        "asyncio.create_subprocess_exec", return_value=_proc(_TWO_JPEGS)
+    ) as exec_:
+        frames = await _extract()
+    assert frames == [_FAKE_JPEG, _FAKE_JPEG]
+    cmd = list(exec_.call_args.args)
+    assert cmd[cmd.index("-i") + 1] == "/clips/a.mp4"
+    assert cmd[cmd.index("-vf") + 1] == "fps=1/0.75,scale=960:-1"
+    assert cmd[cmd.index("-frames:v") + 1] == "12"
+    assert "-hide_banner" in cmd
+    assert cmd[cmd.index("-loglevel") + 1] == "error"
+
+
+async def test_extract_jpeg_frames_without_ffmpeg(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with patch("asyncio.create_subprocess_exec", side_effect=OSError("missing")):
+        assert await _extract() == []
+    assert "ffmpeg not available" in caplog.text
+
+
+async def test_extract_jpeg_frames_kills_a_hung_ffmpeg() -> None:
+    proc = AsyncMock()
+    proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError)
+    proc.kill = MagicMock()
+    proc.wait = AsyncMock()
+    with patch("asyncio.create_subprocess_exec", return_value=proc):
+        assert await _extract() == []
+    proc.kill.assert_called_once()
+    proc.wait.assert_awaited_once()
+
+
+async def test_extract_jpeg_frames_logs_the_reason_ffmpeg_gave(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with (
+        caplog.at_level(logging.WARNING),
+        patch(
+            "asyncio.create_subprocess_exec",
+            return_value=_proc(stderr=b"noise\nInvalid data found\n", returncode=1),
+        ),
+    ):
+        assert await _extract() == []
+    assert "clip-1" in caplog.text
+    assert "Invalid data found" in caplog.text

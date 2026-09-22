@@ -1,280 +1,134 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import Button from 'primevue/button'
+import { computed, onMounted, ref, watch } from 'vue'
 import Card from 'primevue/card'
-import FileUpload, { type FileUploadSelectEvent } from 'primevue/fileupload'
-import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
-import Select from 'primevue/select'
+import Skeleton from 'primevue/skeleton'
 import Tag from 'primevue/tag'
-import ToggleSwitch from 'primevue/toggleswitch'
-import { deleteFacesByName, enrollFace, listFaces, renameFacesByName, setFacesApprovedByName } from '../../api/ai'
-import type { FaceEnrollment } from '../../api/types'
+import { describeApiError } from '../../api/client'
+import { deleteFacePhoto, listFaces, removePerson, updatePerson } from '../../api/faces'
+import type { FacesResponse } from '../../api/types'
 import { useConfirm } from '../../composables/useConfirm'
+import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
-import LoadingIndicator from '../layout/LoadingIndicator.vue'
-import EnrollFromClipPicker from './EnrollFromClipPicker.vue'
 import FaceBypassActivityCard from './FaceBypassActivityCard.vue'
-
-interface PersonGroup {
-  name: string
-  ids: number[]
-  photoCount: number
-  approved: boolean
-  mixedApproval: boolean
-  createdAt: string
-}
+import FaceFinder from './FaceFinder.vue'
+import { groupPeople, isResolutionMismatch, type Person } from './people'
+import PersonCard from './PersonCard.vue'
+import PersonPhotosDialog from './PersonPhotosDialog.vue'
 
 const toast = useToastStore()
 const confirm = useConfirm()
+const refresh = useRefreshStore()
 
-const available = ref(true)
 const loading = ref(true)
-const faces = ref<FaceEnrollment[]>([])
+const loadFailed = ref(false)
+const data = ref<FacesResponse | null>(null)
+const finder = ref<InstanceType<typeof FaceFinder> | null>(null)
 
-type EnrollMode = 'clip' | 'photo'
-const enrollMode = ref<EnrollMode>('clip')
+const available = computed(() => data.value?.available ?? true)
+const frameWidth = computed(() => data.value?.frame_width ?? 640)
+const people = computed<Person[]>(() => groupPeople(data.value?.faces ?? [], frameWidth.value))
+const approvedCount = computed(() => people.value.filter((p) => p.approved).length)
+const mismatchedCount = computed(
+  () => data.value?.faces.filter((f) => isResolutionMismatch(f, frameWidth.value)).length ?? 0,
+)
 
-const name = ref('')
-const approvedOnEnroll = ref(true)
-const enrolling = ref(false)
-const addToExistingName = ref('')
+// Whose photos the dialog shows. Held by name, so it follows a reload.
+const managingName = ref<string | null>(null)
+const managing = computed(() => people.value.find((p) => p.name === managingName.value) ?? null)
+const busy = ref(false)
 
-// "From a clip" mode (ADVANCED FEATURE, recommended) — pull several frames
-// from a real clip and pick out whichever ones show the face clearly,
-// across as many angles/lighting conditions as needed. This is what
-// actually makes recognition robust enough to cut down false positives on
-// a camera like a front door, where the very first frame of a
-// motion-triggered clip often doesn't have a good angle on the face.
-const selectedClipFrames = ref<string[]>([])
-
-// "From a photo" mode — the simple single-photo flow from v5's first cut,
-// kept for enrolling from a phone photo with no existing clip.
-const selectedFile = ref<File | null>(null)
-const previewUrl = ref('')
-
-const editingName = ref<string | null>(null)
-const editingNameValue = ref('')
-
+let loadSeq = 0
 async function load() {
-  loading.value = true
+  const seq = ++loadSeq
   try {
-    const data = await listFaces()
-    available.value = data.available
-    faces.value = data.faces
+    const result = await listFaces()
+    if (seq !== loadSeq) return
+    data.value = result
+    loadFailed.value = false
   } catch {
-    /* non-fatal — mirrors the pre-Vue UI's console.error-only handling */
+    if (seq === loadSeq) loadFailed.value = true
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 onMounted(load)
+// A camera rename or a manual refresh; nothing on this page is an unsaved
+// edit a reload could clobber — a rename in progress lives in its card.
+watch(() => refresh.tick, load)
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-}
-
-function onFileSelect(event: FileUploadSelectEvent) {
-  const files = (event.files || []) as File[]
-  const file = files[files.length - 1] || null
-  selectedFile.value = file
-  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
-  previewUrl.value = file ? URL.createObjectURL(file) : ''
-}
-
-function clearSelection() {
-  selectedFile.value = null
-  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
-  previewUrl.value = ''
-}
-
-// The Biometrics tab is v-if-gated (see App.vue) — fully destroyed on tab
-// switch — so a preview object URL left over from an abandoned photo
-// selection (switched tabs without enrolling or clicking Clear) must be
-// revoked here too, or it leaks for the rest of the page's lifetime.
-onUnmounted(() => {
-  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
-})
-
-function resetEnrollForm() {
-  name.value = ''
-  approvedOnEnroll.value = true
-  selectedClipFrames.value = []
-  clearSelection()
-}
-
-async function enrollFromPhoto() {
-  const trimmedName = name.value.trim()
-  if (!trimmedName) {
-    toast.show('Enter a name', true)
-    return
-  }
-  if (!selectedFile.value) {
-    toast.show('Choose a photo', true)
-    return
-  }
-  enrolling.value = true
+async function run(action: () => Promise<unknown>, success: string, failure: string) {
+  busy.value = true
   try {
-    const imageBase64 = await fileToBase64(selectedFile.value)
-    const result = await enrollFace(trimmedName, imageBase64, approvedOnEnroll.value)
-    if ('error' in result) {
-      toast.show(`Enrollment failed: ${result.error}`, true)
-      return
-    }
-    toast.show(`Enrolled ${trimmedName}`)
-    resetEnrollForm()
-    await load()
+    await action()
+    toast.show(success)
   } catch (e) {
-    toast.show(`Enrollment failed: ${e instanceof Error ? e.message : 'unknown error'}`, true)
+    toast.show(`${failure}: ${describeApiError(e, 'check your connection and try again')}`, true)
   } finally {
-    enrolling.value = false
-  }
-}
-
-async function enrollFromClipFrames() {
-  const trimmedName = name.value.trim()
-  if (!trimmedName) {
-    toast.show('Enter a name', true)
-    return
-  }
-  if (!selectedClipFrames.value.length) {
-    toast.show('Select at least one frame that shows the face clearly', true)
-    return
-  }
-  enrolling.value = true
-  let succeeded = 0
-  let failed = 0
-  for (const frame of selectedClipFrames.value) {
-    try {
-      const result = await enrollFace(trimmedName, frame, approvedOnEnroll.value)
-      if ('error' in result) {
-        failed++
-      } else {
-        succeeded++
-      }
-    } catch {
-      failed++
-    }
-  }
-  enrolling.value = false
-  if (succeeded) {
-    toast.show(
-      failed
-        ? `Enrolled ${succeeded} of ${succeeded + failed} photo(s) — ${failed} skipped (no face detected)`
-        : `Enrolled ${succeeded} photo(s) for ${trimmedName}`,
-    )
-    resetEnrollForm()
+    busy.value = false
     await load()
-  } else {
-    toast.show('Enrollment failed for every selected frame — no clear face detected', true)
   }
 }
 
-function enroll() {
-  return enrollMode.value === 'clip' ? enrollFromClipFrames() : enrollFromPhoto()
+function setApproved(person: Person, approved: boolean) {
+  return run(
+    () => updatePerson(person.name, { approved }),
+    approved ? `${person.name} can now clear alerts` : `${person.name} no longer clears alerts`,
+    'Failed to update approval',
+  )
 }
 
-// More reference photos — especially covering different cameras, distances,
-// and angles — is the single biggest lever on match accuracy, and adding
-// them to an already-enrolled person needs no new backend support at all:
-// face_enrollments has no uniqueness constraint on name, so enrollFace()
-// already just adds another independently-matched row under whichever name
-// it's given. The only gap was the UI only ever offering a free-text name
-// field, with no guaranteed-exact-match way to target an existing person
-// (a typo'd or differently-cased name would silently create a new, separate
-// person instead of adding to the right one).
-// The "Add to person" button is only ever enabled once addToExistingName
-// is set (see its :disabled binding below), so there's no reachable state
-// here to guard against.
-async function enrollToExisting() {
-  const target = groupedPeople.value.find((g) => g.name === addToExistingName.value)
-  name.value = addToExistingName.value
-  approvedOnEnroll.value = target?.approved ?? true
-  await enroll()
-  addToExistingName.value = ''
-}
-
-async function toggleApproved(group: PersonGroup, approved: boolean) {
-  try {
-    await setFacesApprovedByName(group.name, approved)
-    for (const f of faces.value) if (f.name === group.name) f.approved = approved
-    toast.show(approved ? `${group.name} approved for auto-clear` : `${group.name} no longer approved`)
-  } catch {
-    toast.show('Failed to update approval', true)
-  }
-}
-
-function startEdit(group: PersonGroup) {
-  editingName.value = group.name
-  editingNameValue.value = group.name
-}
-
-async function saveEdit(group: PersonGroup) {
-  const trimmed = editingNameValue.value.trim()
+async function rename(person: Person, newName: string) {
+  const trimmed = newName.trim()
   if (!trimmed) {
     toast.show('Name cannot be empty', true)
     return
   }
-  try {
-    await renameFacesByName(group.name, trimmed)
-    for (const f of faces.value) if (f.name === group.name) f.name = trimmed
-    editingName.value = null
-  } catch {
-    toast.show('Failed to rename', true)
-  }
-}
-
-function cancelEdit() {
-  editingName.value = null
-}
-
-async function remove(group: PersonGroup) {
-  const photoWord = group.photoCount === 1 ? 'photo' : 'photos'
-  const ok = await confirm(
-    `Remove "${group.name}" (${group.photoCount} ${photoWord}) from Biometrics? This cannot be undone.`,
-    'Remove enrollment?',
+  if (trimmed === person.name) return
+  const merging = people.value.some((p) => p.name === trimmed)
+  if (
+    merging &&
+    !(await confirm(`"${trimmed}" is already enrolled. Merge ${person.name}'s photos into theirs?`, 'Merge people?'))
   )
-  if (!ok) return
-  try {
-    await deleteFacesByName(group.name)
-    await load()
-    toast.show(`Removed ${group.name}`)
-  } catch {
-    toast.show('Failed to remove enrollment', true)
-  }
+    return
+  await run(
+    () => updatePerson(person.name, { newName: trimmed }),
+    merging ? `Merged into ${trimmed}` : `Renamed to ${trimmed}`,
+    'Failed to rename',
+  )
 }
 
-const groupedPeople = computed<PersonGroup[]>(() => {
-  const byName = new Map<string, FaceEnrollment[]>()
-  for (const f of faces.value) {
-    if (!byName.has(f.name)) byName.set(f.name, [])
-    byName.get(f.name)!.push(f)
-  }
-  return [...byName.entries()]
-    .map(([name, rows]) => ({
-      name,
-      ids: rows.map((r) => r.id),
-      photoCount: rows.length,
-      approved: rows.every((r) => r.approved),
-      mixedApproval: rows.some((r) => r.approved) && rows.some((r) => !r.approved),
-      // `rows` always has at least the entry that created this group (see
-      // the push right above `byName.set`), and FaceEnrollment.created_at
-      // is a required string, so `.sort()[0]` is never actually undefined.
-      /* v8 ignore next */
-      createdAt:
-        /* istanbul ignore next -- see v8-ignore comment above; same dead branch */ rows
-          .map((r) => r.created_at)
-          .sort()[0] ?? '',
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name))
-})
+async function remove(person: Person) {
+  const photos = `${person.photos.length} photo${person.photos.length === 1 ? '' : 's'}`
+  const ok = await confirm(
+    `Remove "${person.name}" (${photos}) from Biometrics? They will no longer be recognized. This cannot be undone.`,
+    'Remove person?',
+  )
+  if (ok) await run(() => removePerson(person.name), `Removed ${person.name}`, 'Failed to remove')
+}
 
-const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approved).length)
+async function removePhoto(id: number) {
+  const person = managing.value
+  if (!person) return
+  const last = person.photos.length === 1
+  const ok = await confirm(
+    last
+      ? `This is ${person.name}'s only photo — removing it removes ${person.name} entirely. Continue?`
+      : `Remove this photo of ${person.name}? This cannot be undone.`,
+    'Remove photo?',
+  )
+  if (ok)
+    await run(() => deleteFacePhoto(id), last ? `Removed ${person.name}` : 'Photo removed', 'Failed to remove photo')
+}
+
+function addPhotos(person: Person) {
+  managingName.value = null
+  finder.value?.addPhotosFor(person.name)
+}
+
+function scanReportedClip(clipId: string) {
+  void finder.value?.scanClip(clipId)
+}
 </script>
 
 <template>
@@ -284,173 +138,97 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
       <Tag severity="info" value="🧪 Advanced feature" />
     </div>
     <p class="page-intro">
-      Enroll household members so their clips can be recognized and treated as routine. An approved, recognized person
-      can automatically clear a clip's suspicious flag — but only when no one else unrecognized or not-approved also
-      appears in the same clip. This is entirely optional: with face recognition off (the default — the Enable Local
-      Face Recognition option in the add-on's Configuration tab), everything works exactly as it does without it —
-      nothing here is required.
+      Enroll household members so clips of them can be recognized as routine. An approved, recognized person can
+      automatically clear a clip's suspicious flag — but only when nobody unrecognized appears in the same clip.
+      Entirely optional: with face recognition off, everything else works exactly the same.
     </p>
 
-    <Message severity="info" size="small" :closable="false" class="privacy-banner">
-      <strong>🔒 Everything here stays local.</strong> Photos, face embeddings, and names never leave this
-      device/network and are never sent to any AI provider. Even when using a cloud AI provider (Anthropic, OpenAI,
-      Moondream Cloud, Ollama Cloud), analysis only ever receives a generic "recognized household member" signal — never
-      a name, photo, or embedding. A recognized person's name is only ever used afterward, entirely locally, to
-      personalize your own notifications (e.g. "Brian walked up the driveway").
+    <Message v-if="!available" severity="warn" size="small" :closable="false" class="status-banner">
+      Face-recognition dependencies are not available on this system, so faces can't be found or enrolled.
+    </Message>
+    <Message
+      v-else-if="data && !data.recognition_enabled"
+      severity="warn"
+      size="small"
+      :closable="false"
+      class="status-banner"
+    >
+      Face recognition is switched off, so nobody enrolled here is being recognized yet. Turn on
+      <strong>Enable Local Face Recognition</strong> in the add-on's Configuration tab.
+    </Message>
+    <Message
+      v-else-if="data && !data.analysis_enabled"
+      severity="warn"
+      size="small"
+      :closable="false"
+      class="status-banner"
+    >
+      Face recognition runs as part of AI clip analysis, which isn't configured — enrolled people won't be recognized
+      until an AI provider is set up in the add-on's Configuration tab.
+    </Message>
+    <Message v-if="mismatchedCount" severity="info" size="small" :closable="false" class="status-banner">
+      {{ mismatchedCount }} photo{{ mismatchedCount === 1 ? ' was' : 's were' }} captured at a different Face
+      Recognition Resolution than the {{ frameWidth }}px recognition now uses, and will match less reliably — each
+      person's Photos list shows which. Scanning a clip of them again adds photos that match.
     </Message>
 
-    <Message severity="warn" size="small" :closable="false" class="safety-banner">
-      <strong>Safety guarantee:</strong> the suspicious-flag bypass is all-or-nothing per clip. It only fires when
-      <em>every</em> face detected belongs to an <strong>approved</strong> enrollment below — a single stranger, or a
-      recognized-but-not-approved person, standing next to an approved family member still gets flagged normally.
+    <Message severity="secondary" size="small" :closable="false" class="privacy-banner">
+      <strong>🔒 Everything here stays local.</strong> Photos, face data and names never leave this device and are never
+      sent to any AI provider — not even a cloud one. Analysis only ever receives a nameless "recognized household
+      member" signal; names are used afterwards, locally, to personalize your own notifications.
     </Message>
 
-    <Message v-if="!available" severity="warn" size="small" :closable="false">
-      Face-recognition dependencies are not installed in this image — enrollment is disabled.
-    </Message>
-
-    <FaceBypassActivityCard />
-
-    <Card class="enroll-card">
-      <template #title>Add a person</template>
+    <Card class="people-card">
+      <template #title>Household members</template>
       <template #subtitle>
-        Recognition accuracy depends on enrolling a good range of angles/lighting — a single posed photo often doesn't
-        match well against a camera catching someone mid-stride. Enrolling several frames from a real clip (recommended)
-        fixes this directly.
+        The bypass is all-or-nothing per clip: it only clears a clip when every face in it belongs to someone
+        <strong>approved</strong> below. A stranger — or someone recognized but not approved — standing next to an
+        approved person still gets flagged.
       </template>
       <template #content>
-        <div class="mode-toggle">
-          <Button :outlined="enrollMode !== 'clip'" size="small" @click="enrollMode = 'clip'">
-            🧪 From a clip (recommended)
-          </Button>
-          <Button :outlined="enrollMode !== 'photo'" size="small" severity="secondary" @click="enrollMode = 'photo'">
-            Upload a photo
-          </Button>
+        <div v-if="loading" class="people-grid">
+          <Skeleton v-for="n in 2" :key="n" height="9rem" />
         </div>
-
-        <EnrollFromClipPicker v-if="enrollMode === 'clip'" v-model:selected-frames="selectedClipFrames" />
-
-        <div v-else class="photo-picker">
-          <FileUpload
-            mode="basic"
-            size="small"
-            :auto="false"
-            custom-upload
-            accept="image/*"
-            choose-label="Choose photo…"
-            :disabled="!available"
-            @select="onFileSelect"
-          />
-          <img v-if="previewUrl" :src="previewUrl" alt="Enrollment preview" class="preview-thumb" />
-          <Button v-if="selectedFile" text size="small" severity="secondary" @click="clearSelection">Clear</Button>
-        </div>
-
-        <div class="enroll-form-row">
-          <label for="biometrics-name" class="field-label">Name</label>
-          <InputText id="biometrics-name" v-model="name" size="small" placeholder="e.g. Brian" :disabled="!available" />
-        </div>
-
-        <div class="enroll-form-row approved-row">
-          <ToggleSwitch v-model="approvedOnEnroll" input-id="biometrics-approved-on-enroll" :disabled="!available" />
-          <label for="biometrics-approved-on-enroll" class="field-label"
-            >Approve immediately (bypass alerts for this person)</label
-          >
-        </div>
-
-        <div class="enroll-actions-row">
-          <Button
-            class="enroll-submit-btn"
-            size="small"
-            :disabled="!available || enrolling"
-            :loading="enrolling"
-            @click="enroll"
-          >
-            {{
-              enrolling
-                ? 'Enrolling…'
-                : enrollMode === 'clip' && selectedClipFrames.length
-                  ? `+ Enroll ${selectedClipFrames.length} selected frame(s)`
-                  : '+ Enroll'
-            }}
-          </Button>
-
-          <template v-if="groupedPeople.length">
-            <span class="enroll-actions-or">or</span>
-            <label for="biometrics-add-to-existing" class="sr-only">Add to existing person</label>
-            <Select
-              id="biometrics-add-to-existing"
-              v-model="addToExistingName"
-              size="small"
-              :options="groupedPeople.map((g) => g.name)"
-              placeholder="Add to existing person…"
-              :disabled="!available"
-              show-clear
+        <Message v-else-if="loadFailed && !data" severity="error" size="small" :closable="false">
+          Couldn't load enrolled people.
+        </Message>
+        <p v-else-if="!people.length" class="muted-note">
+          Nobody enrolled yet — find someone's face in a clip below to get started.
+        </p>
+        <template v-else>
+          <div class="people-grid">
+            <PersonCard
+              v-for="person in people"
+              :key="person.name"
+              :person="person"
+              @set-approved="setApproved(person, $event)"
+              @rename="rename(person, $event)"
+              @remove="remove(person)"
+              @manage="managingName = person.name"
+              @add-photos="addPhotos(person)"
             />
-            <Button
-              size="small"
-              severity="secondary"
-              :disabled="!available || enrolling || !addToExistingName"
-              :loading="enrolling"
-              @click="enrollToExisting"
-            >
-              ➕ Add to person
-            </Button>
-          </template>
-        </div>
+          </div>
+          <p class="muted-note approved-summary">
+            {{ approvedCount }} of {{ people.length }} enrolled
+            {{ people.length === 1 ? 'person is' : 'people are' }} approved for the suspicious-flag bypass.
+          </p>
+        </template>
       </template>
     </Card>
 
-    <div v-if="loading" style="padding: 1rem"><LoadingIndicator /></div>
-    <div v-else-if="!groupedPeople.length" class="muted-note">No one enrolled yet.</div>
-    <div v-else class="people-grid">
-      <div v-for="group in groupedPeople" :key="group.name" class="person-card">
-        <Card>
-          <template #content>
-            <div class="person-card-header">
-              <template v-if="editingName === group.name">
-                <InputText
-                  v-model="editingNameValue"
-                  size="small"
-                  class="rename-input"
-                  @keyup.enter="saveEdit(group)"
-                />
-                <Button text size="small" @click="saveEdit(group)">Save</Button>
-                <Button text size="small" severity="secondary" @click="cancelEdit">Cancel</Button>
-              </template>
-              <template v-else>
-                <strong class="person-name">{{ group.name }}</strong>
-                <Button text size="small" severity="secondary" title="Rename" @click="startEdit(group)">✎</Button>
-              </template>
-            </div>
-            <div class="person-card-meta">
-              <Tag :severity="group.approved ? 'success' : 'secondary'">
-                {{ group.mixedApproval ? 'Partially approved' : group.approved ? 'Approved' : 'Not approved' }}
-              </Tag>
-              <span class="person-photo-count"
-                >{{ group.photoCount }} photo{{ group.photoCount === 1 ? '' : 's' }}</span
-              >
-              <span class="person-created">Enrolled {{ group.createdAt.slice(0, 10) }}</span>
-            </div>
-            <div class="person-card-actions">
-              <div class="approved-row">
-                <ToggleSwitch
-                  :model-value="group.approved"
-                  :input-id="`biometrics-approved-${group.name}`"
-                  @update:model-value="toggleApproved(group, $event)"
-                />
-                <label :for="`biometrics-approved-${group.name}`" class="field-label">Approved for bypass</label>
-              </div>
-              <Button text size="small" severity="danger" @click="remove(group)">Remove</Button>
-            </div>
-          </template>
-        </Card>
-      </div>
-    </div>
+    <FaceFinder ref="finder" :available="available" :people="people" @enrolled="load" />
 
-    <p v-if="groupedPeople.length" class="muted-note approved-summary">
-      {{ approvedCount }} of {{ groupedPeople.length }} enrolled
-      {{ groupedPeople.length === 1 ? 'person is' : 'people are' }} approved for the suspicious-flag bypass.
-    </p>
+    <FaceBypassActivityCard @scan-clip="scanReportedClip" />
+
+    <PersonPhotosDialog
+      :visible="managing !== null"
+      :person="managing"
+      :frame-width="frameWidth"
+      :busy="busy"
+      @update:visible="managingName = null"
+      @remove-photo="removePhoto"
+      @add-photos="managing && addPhotos(managing)"
+    />
   </div>
 </template>
 
@@ -458,7 +236,7 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
 .biometrics-page {
   padding: 1.75rem;
   padding-bottom: 3rem;
-  max-width: 900px;
+  max-width: 1000px;
   /* Flex items default to min-width:auto, refusing to shrink below their
      content's natural width — on a narrow (mobile) viewport that pushed
      this whole page wider than the screen instead of wrapping its text,
@@ -479,125 +257,25 @@ const approvedCount = computed(() => groupedPeople.value.filter((g) => g.approve
   margin-bottom: 1rem;
 }
 
-.privacy-banner,
-.safety-banner {
+.status-banner,
+.privacy-banner {
   margin-bottom: 0.9rem;
 }
 
-.enroll-card {
+.people-card {
   margin-bottom: 1.5rem;
-}
-
-.mode-toggle {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.9rem;
-  flex-wrap: wrap;
-}
-
-.enroll-form-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin-top: 0.9rem;
-}
-
-.enroll-actions-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  margin-top: 0.9rem;
-}
-
-.enroll-actions-or {
-  color: var(--muted);
-  font-size: 0.8rem;
-}
-
-.field-label {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
-.photo-picker {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-}
-
-.preview-thumb {
-  width: 48px;
-  height: 48px;
-  object-fit: cover;
-  border-radius: 50%;
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
-}
-
-.approved-row {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 0.5rem;
 }
 
 .people-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
   gap: 1rem;
-}
-
-.person-card-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
-  /* Without this, the Save/Cancel buttons get pushed out of the card and
-     their text clips — a flex item's default min-width is auto (bounded by
-     its content), so .rename-input's flex:1 alone can't shrink it below
-     the "Brian"-length text, no matter how little room is left. Wrap as a
-     second line of defense on very narrow cards instead of overflowing. */
-  flex-wrap: wrap;
-}
-
-.person-name {
-  font-size: 1rem;
-  flex: 1;
-  min-width: 0;
-}
-
-.rename-input {
-  flex: 1;
-  min-width: 0;
-}
-
-.person-card-meta {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin-bottom: 0.7rem;
-  flex-wrap: wrap;
-}
-
-.person-photo-count,
-.person-created {
-  font-size: 0.76rem;
-  color: var(--muted);
-}
-
-.person-card-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  flex-wrap: wrap;
 }
 
 .muted-note {
   color: var(--muted);
   font-size: 0.85rem;
-  padding: 0.5rem 0;
+  margin: 0;
 }
 
 .approved-summary {
