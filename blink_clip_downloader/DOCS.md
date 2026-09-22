@@ -1690,27 +1690,32 @@ create it: blueprints and helpers are WebSocket-only, and `rest_command`,
 template sensors and the Generic Camera platform live in
 `configuration.yaml`. Those recipes say where the YAML goes instead.
 
-- **Automations** — pick one of sixteen recipes (suspicious clip alerts,
-  storage thresholds, backup backlog, lights on suspicious activity, a siren
-  while the alarm is armed, casting a camera view, speaker announcements,
-  arming Blink when everyone leaves, new-clip and long-clip notifications,
-  low battery, a to-do item for a low battery, archiving when storage fills,
-  "nothing has downloaded in a while", daily summary), set the
-  threshold/cameras/notify service you want, and copy, download, or create
-  it in Home Assistant directly.
+- **Automations** — pick one of nineteen recipes (suspicious clip alerts,
+  the same alert but only while nobody is home, storage thresholds, backup
+  backlog, a cloud backup that has stopped working, lights on suspicious
+  activity, a siren while the alarm is armed, casting a camera view on
+  suspicious activity or on every clip, speaker announcements, arming Blink
+  when everyone leaves, new-clip and long-clip notifications, low battery, a
+  to-do item for a low battery, archiving when storage fills, "nothing has
+  downloaded in a while", daily summary), set the threshold/cameras/notify
+  service you want, and copy, download, or create it in Home Assistant
+  directly.
   The camera pickers list your real cameras.
   The two notification recipes can also attach the camera's snapshot (via
   Home Assistant's own camera proxy, so it reaches your phone wherever it
   is) and open a path you choose when tapped.
 - **Scripts & Helpers** — a `rest_command` + script that triggers a download
-  cycle from Home Assistant, a cast-to-a-display script, a spoken storage
-  report, a security-alert lighting scene, a "pause Blink alerts"
-  `input_boolean` (with an automation that un-pauses it so a forgotten toggle
-  cannot silently disable your alerts), and template sensors that turn the two
-  storage percentages into an ok/warning/critical state, a script that arms
-  or disarms the Sync Module (so presence or a dashboard button can), one
-  that runs the archiver on demand, and one that sends a snapshot of every
-  camera to your phone.
+  cycle from Home Assistant, a cast-to-a-display script and the one that
+  takes the display back again, a spoken storage report, a security-alert
+  lighting scene, an all-clear scene, an overnight camera-lighting scene, a
+  "pause Blink alerts" `input_boolean` (with an automation that un-pauses it
+  so a forgotten toggle cannot silently disable your alerts), a script that
+  pauses those alerts for a set number of minutes and un-pauses itself,
+  `input_datetime` helpers for quiet hours you can edit from a dashboard,
+  template sensors that turn the two storage percentages into an
+  ok/warning/critical state, a script that arms or disarms the Sync Module
+  (so presence or a dashboard button can), one that runs the archiver on
+  demand, and one that sends a snapshot of every camera to your phone.
 - **Dashboards** — builds a Lovelace view of camera tiles, storage gauges and a
   status card, either from Generic Camera entities (it generates the exact
   snapshot URL per camera) or by embedding this tab's own Security Feed in an
