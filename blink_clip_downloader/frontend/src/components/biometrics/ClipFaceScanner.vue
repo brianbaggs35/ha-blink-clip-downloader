@@ -177,7 +177,8 @@ function statusText(clip: ClipListItem): string {
   if (s.status === 'queued') return 'Queued'
   if (s.status === 'scanning') return 'Scanning…'
   if (s.status === 'error') return 'Failed — hover for why'
-  return s.faces ? `${s.faces} face${s.faces === 1 ? '' : 's'}` : 'No faces'
+  if (!s.faces) return 'No faces'
+  return `${s.faces} face${s.faces === 1 ? '' : 's'}`
 }
 
 defineExpose({ scan })
@@ -187,10 +188,15 @@ defineExpose({ scan })
   <div class="clip-face-scanner">
     <div class="scanner-controls">
       <div class="scanner-field">
-        <label for="biometrics-camera-select" class="field-label">Camera</label>
+        <!-- aria-labelledby as well as the label's for: the for makes clicking
+             the label open the Select, and aria-labelledby is the association
+             an HTML-level checker can see, since it reads <Select> as a native
+             <select> and knows nothing of PrimeVue's input-id. -->
+        <label id="biometrics-camera-label" for="biometrics-camera-select" class="field-label">Camera</label>
         <Select
           v-model="camera"
           input-id="biometrics-camera-select"
+          aria-labelledby="biometrics-camera-label"
           size="small"
           :options="cameraOptions"
           option-label="label"
@@ -199,10 +205,11 @@ defineExpose({ scan })
         />
       </div>
       <div class="scanner-field">
-        <label for="biometrics-lookback-select" class="field-label">Clips from</label>
+        <label id="biometrics-lookback-label" for="biometrics-lookback-select" class="field-label">Clips from</label>
         <Select
           v-model="lookbackHours"
           input-id="biometrics-lookback-select"
+          aria-labelledby="biometrics-lookback-label"
           size="small"
           :options="LOOKBACK_OPTIONS"
           option-label="label"
@@ -224,15 +231,17 @@ defineExpose({ scan })
       />
     </div>
 
-    <div v-if="running" class="scan-progress" role="status">
+    <div v-if="running" class="scan-progress">
       <ProgressBar :value="Math.round((progress.done / progress.total) * 100)" :show-value="false" />
-      <span class="field-label">
+      <!-- <output> is itself a polite live region: the progress is announced
+           as it changes, without the bar or the Stop button being read out. -->
+      <output class="field-label">
         {{
           stopRequested
             ? 'Stopping after this clip…'
             : `Scanning clip ${Math.min(progress.done + 1, progress.total)} of ${progress.total}…`
         }}
-      </span>
+      </output>
       <Button label="Stop" size="small" text severity="secondary" :disabled="stopRequested" @click="stop" />
     </div>
 

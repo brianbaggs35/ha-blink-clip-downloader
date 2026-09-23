@@ -221,7 +221,7 @@ defineExpose({ scanClip, addPhotosFor })
           />
         </div>
 
-        <div v-if="selected.length" class="enroll-bar" role="region" aria-label="Enroll selected faces">
+        <section v-if="selected.length" class="enroll-bar" aria-label="Enroll selected faces">
           <div class="enroll-bar-fields">
             <label for="biometrics-name" class="field-label">
               {{ selected.length }} face{{ selected.length === 1 ? '' : 's' }} selected — who is this?
@@ -266,7 +266,7 @@ defineExpose({ scanClip, addPhotosFor })
             />
             <Button label="Clear selection" size="small" text severity="secondary" @click="selected = []" />
           </div>
-        </div>
+        </section>
       </template>
     </Card>
   </div>
