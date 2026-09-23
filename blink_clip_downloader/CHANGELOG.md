@@ -166,6 +166,10 @@ tab points out photos captured at the old resolution.
 - Updated to jsdom 30.1.1
 - Updated to prettier 3.9.9
 - Updated to typescript-eslint 8.70.1
+- The Docker image's `python-dateutil` floor said `2.9.0` where the package
+  metadata said `2.9.0.post0`; both now say `2.9.0.post0`. No effect on
+  what gets installed — the same class of mismatch 6.0.2 fixed for
+  `transformers`, closed before it could matter.
 
 ### Internal
 
