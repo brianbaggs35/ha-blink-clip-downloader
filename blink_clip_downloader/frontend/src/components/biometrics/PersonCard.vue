@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, useId } from 'vue'
 import Avatar from 'primevue/avatar'
 import AvatarGroup from 'primevue/avatargroup'
 import Button from 'primevue/button'
@@ -20,6 +20,8 @@ const emit = defineEmits<{
 }>()
 
 const MAX_AVATARS = 4
+// Not built from the name: a name can hold spaces, which an id cannot.
+const approvedId = useId()
 
 const withPhotos = computed(() => props.person.photos.filter((p) => p.has_thumbnail))
 const shown = computed(() => withPhotos.value.slice(0, MAX_AVATARS))
@@ -58,7 +60,13 @@ function save() {
         <Avatar v-else :label="initials(person.name)" shape="circle" size="large" class="person-initials" />
 
         <div class="person-heading">
-          <form v-if="editing" ref="renameForm" class="person-rename" @submit.prevent="save">
+          <form
+            v-if="editing"
+            ref="renameForm"
+            class="person-rename"
+            @submit.prevent="save"
+            @keydown.esc="editing = false"
+          >
             <InputText v-model="draft" size="small" class="rename-input" aria-label="New name" maxlength="60" />
             <Button type="submit" label="Save" text size="small" />
             <Button label="Cancel" text size="small" severity="secondary" @click="editing = false" />
@@ -114,10 +122,10 @@ function save() {
         <div class="approved-row">
           <ToggleSwitch
             :model-value="person.approved"
-            :input-id="`biometrics-approved-${person.name}`"
+            :input-id="approvedId"
             @update:model-value="emit('set-approved', $event)"
           />
-          <label :for="`biometrics-approved-${person.name}`" class="field-label">Approved for alert bypass</label>
+          <label :for="approvedId" class="field-label">Approved for alert bypass</label>
         </div>
         <div class="person-buttons">
           <Button label="Photos" icon="pi pi-images" size="small" text @click="emit('manage')" />

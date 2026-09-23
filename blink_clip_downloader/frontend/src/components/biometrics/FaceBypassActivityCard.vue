@@ -70,8 +70,10 @@ function fmtTs(iso: string): string {
         </div>
         <template v-else>
           <div class="bypass-summary-row">
-            <span class="bypass-total">{{ stats.total_bypassed }}</span>
-            <span class="muted-note">total bypass(es) recorded</span>
+            <!-- The space is for the text, not the layout (the gap spaces them):
+                 without it a screen reader reads "3bypasses". -->
+            <span class="bypass-total">{{ stats.total_bypassed }}</span
+            >{{ ' ' }}<span class="muted-note">{{ stats.total_bypassed === 1 ? 'bypass' : 'bypasses' }} recorded</span>
           </div>
           <div v-if="stats.by_name.length" class="bypass-name-tags">
             <Tag

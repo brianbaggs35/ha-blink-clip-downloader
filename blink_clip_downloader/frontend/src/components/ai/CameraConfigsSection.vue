@@ -168,7 +168,11 @@ async function save() {
       Download at least one clip to populate the camera list.
     </EmptyState>
     <Accordion v-else multiple>
-      <AccordionPanel v-for="cfg in configs" :key="cfg.camera" :value="cfg.camera">
+      <!-- value becomes part of the header's aria-controls, a space-separated
+           id list: a camera name with a space in it pointed at two ids that
+           don't exist. Encoded, it stays one token, and still follows its
+           camera if a reload adds another ahead of it. -->
+      <AccordionPanel v-for="cfg in configs" :key="cfg.camera" :value="encodeURIComponent(cfg.camera)">
         <AccordionHeader>
           <span style="flex: 1; text-align: left">📷 {{ cfg.camera }}</span>
           <Tag v-if="isConfigured(cfg)" severity="secondary" value="Configured" style="margin-right: 0.5rem" />

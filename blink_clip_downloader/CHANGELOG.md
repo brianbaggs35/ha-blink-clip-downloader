@@ -66,7 +66,8 @@ tab now does the looking:
   progress bar and a Stop button. Only the faces come back, as close-up
   crops, each with the camera and moment it came from. Near-identical shots
   of the same second are collapsed into one, so a person standing in the
-  doorway for five seconds is one choice, not ten.
+  doorway for five seconds is one choice, not ten. A clip that fails to
+  scan says why on its tile, and picking it again tries again.
 - **Grouped by person.** Faces from every clip scanned so far are grouped
   by who they look like, so "select all" on a group picks one person's faces
   from across several clips. A face analysis would already recognize is
@@ -169,6 +170,20 @@ tab points out photos captured at the old resolution.
   renamed or removed.** Home Assistant's ingress decodes a URL before
   forwarding it, turning the name into two path segments; the name now
   travels in the request body.
+- **Light mode had text too faint to read comfortably.** Buttons and links
+  used a lighter violet than the rest of the app's light theme, "Remove"
+  buttons a light red, and warning messages a yellow at 2.8:1 against their
+  background — under the 4.5:1 minimum for readable text. They now use the
+  app's own light-theme colours, one shade darker, which clears every
+  contrast failure an automated audit found on the Biometrics, AI, Models,
+  Vehicles and Storage tabs, and 10 of Automations' 11. Dark mode is
+  unchanged.
+- Renaming someone to an enrolled person's name in different capitals
+  (`brian` when Brian exists) created a second person rather than merging
+  the two; it now asks to merge, as the exact name always did. Screen
+  readers also now hear a label on the name picker's dropdown button, and
+  the AI tab's camera headers point at the right panel for a camera whose
+  name contains a space.
 - Renaming a person to an invalid name while also changing their approval
   applied the approval and then refused the rename, leaving half the change
   made. Both are now checked before either is written.

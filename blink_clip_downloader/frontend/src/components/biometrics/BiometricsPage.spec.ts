@@ -147,6 +147,14 @@ describe('BiometricsPage', () => {
     expect(wrapper.text()).not.toContain('earlier version')
   })
 
+  it("gives every person's approval switch its own id", async () => {
+    stubFetch(() => facesResponse(PEOPLE))
+    const wrapper = await mountPage()
+    const ids = wrapper.findAll('input[role="switch"]').map((input) => input.attributes('id'))
+    expect(ids).toHaveLength(2)
+    expect(new Set(ids).size).toBe(2)
+  })
+
   it('reads naturally for a single person', async () => {
     stubFetch(() => facesResponse(BRIAN))
     const wrapper = await mountPage()
@@ -252,6 +260,26 @@ describe('BiometricsPage', () => {
     await answer(true)
     expect(writes(fetchMock)).toEqual([['PATCH', '/api/ai/faces/people', { name: 'Amy', new_name: 'Brian' }]])
     expect(useToastStore().message).toBe('Merged into Brian')
+  })
+
+  it('merges into someone enrolled whatever capitals the new name uses', async () => {
+    const fetchMock = stubFetch(() => facesResponse(PEOPLE))
+    const wrapper = await mountPage()
+    card(wrapper, 'Amy').vm.$emit('rename', ' BRIAN ')
+    await flushPromises()
+    expect(useConfirmStore().message).toContain('"Brian" is already enrolled')
+    await answer(true)
+    expect(writes(fetchMock)).toEqual([['PATCH', '/api/ai/faces/people', { name: 'Amy', new_name: 'Brian' }]])
+    expect(useToastStore().message).toBe('Merged into Brian')
+  })
+
+  it('renames someone to their own name in other capitals without asking', async () => {
+    const fetchMock = stubFetch(() => facesResponse(PEOPLE))
+    const wrapper = await mountPage()
+    card(wrapper, 'Amy').vm.$emit('rename', 'AMY')
+    await flushPromises()
+    expect(writes(fetchMock)).toEqual([['PATCH', '/api/ai/faces/people', { name: 'Amy', new_name: 'AMY' }]])
+    expect(useToastStore().message).toBe('Renamed to AMY')
   })
 
   it('removes a person after confirming', async () => {

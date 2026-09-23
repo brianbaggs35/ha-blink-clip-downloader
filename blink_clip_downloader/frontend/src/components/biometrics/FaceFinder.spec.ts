@@ -200,6 +200,9 @@ describe('FaceFinder', () => {
     expect(wrapper.find('.enroll-bar').text()).toContain('2 faces selected')
 
     const autocomplete = wrapper.findComponent(AutoComplete)
+    // Its dropdown button is an icon: without a label a screen reader only
+    // announces "button".
+    expect(wrapper.find('.p-autocomplete-dropdown').attributes('aria-label')).toBe('Show enrolled people')
     autocomplete.vm.$emit('complete', { query: 'an', originalEvent: new Event('input') })
     await flushPromises()
     expect(autocomplete.props('suggestions')).toEqual(['Brian', 'Nanny'])

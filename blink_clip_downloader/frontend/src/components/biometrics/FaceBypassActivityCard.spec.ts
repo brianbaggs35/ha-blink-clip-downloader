@@ -78,11 +78,21 @@ describe('FaceBypassActivityCard', () => {
     })
     const wrapper = mountCard()
     await flushPromises()
-    expect(wrapper.text()).toContain('3')
+    expect(wrapper.find('.bypass-summary-row').text()).toBe('3 bypasses recorded')
     expect(wrapper.text()).toContain('Brian × 2')
     expect(wrapper.text()).toContain('Amy × 1')
     expect(wrapper.text()).toContain('Driveway')
     expect(wrapper.text()).toContain('Front Door')
+  })
+
+  it('reads naturally for a single bypass', async () => {
+    mockFetch({
+      '/api/ai/faces/bypass-stats': { total_bypassed: 1, by_name: [{ name: 'Brian', count: 1 }], recent: [] },
+      '/api/ai/faces/feedback': [],
+    })
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.find('.bypass-summary-row').text()).toBe('1 bypass recorded')
   })
 
   it('shows an error message when the fetch fails', async () => {

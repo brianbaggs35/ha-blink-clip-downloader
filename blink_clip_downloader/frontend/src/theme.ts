@@ -107,6 +107,19 @@ export const AppTheme = definePreset(Aura, {
       800: '#4a2fa8',
       900: '#3c2985',
       950: '#241659',
+      // Light mode only: Aura's light primary is the 500 shade, which on
+      // white is 4.35:1 — under WCAG AA's 4.5 for every text button and
+      // link — and a different violet from the rest of the app, whose own
+      // light accent (base.css --accent) is already this 600. The dark
+      // halves are Aura's own values, unchanged.
+      color: 'light-dark({primary.600}, {primary.400})',
+      hoverColor: 'light-dark({primary.700}, {primary.300})',
+      activeColor: 'light-dark({primary.800}, {primary.200})',
+    },
+    // Same reasoning: Aura's light muted text (surface.500, 4.47:1 on white)
+    // becomes base.css's own light --muted.
+    text: {
+      mutedColor: 'light-dark(#6b6b78, {surface.400})',
     },
     colorScheme: {
       light: {
@@ -163,6 +176,36 @@ export const AppTheme = definePreset(Aura, {
     },
   },
   components: {
+    // Light-mode text colours Aura leaves under WCAG AA's 4.5:1 on their own
+    // backgrounds: a danger text button's red.500 (3.3-3.8 — every "Remove"),
+    // a secondary one's surface.500 (4.47 — "Cancel", "Clear selection"),
+    // and the warn/error/success messages' 600 shades on their tinted fills
+    // (warn 2.8). One shade darker passes (secondary takes base.css's own
+    // --muted, as text.mutedColor above does); dark halves are Aura's own.
+    button: {
+      text: {
+        danger: { color: 'light-dark({red.700}, {red.400})' },
+        secondary: { color: 'light-dark(#6b6b78, {surface.400})' },
+      },
+      outlined: {
+        danger: { color: 'light-dark({red.700}, {red.400})' },
+        secondary: { color: 'light-dark(#6b6b78, {surface.400})' },
+      },
+    },
+    message: {
+      warn: {
+        color: 'light-dark({yellow.700}, {yellow.500})',
+        simple: { color: 'light-dark({yellow.700}, {yellow.500})' },
+      },
+      error: {
+        color: 'light-dark({red.700}, {red.500})',
+        simple: { color: 'light-dark({red.700}, {red.500})' },
+      },
+      success: {
+        color: 'light-dark({green.700}, {green.500})',
+        simple: { color: 'light-dark({green.700}, {green.500})' },
+      },
+    },
     card: {
       colorScheme: {
         light: { root: contentColorScheme },
