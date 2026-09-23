@@ -727,7 +727,7 @@ class BaseAnalyzer(abc.ABC):
         )
 
     @staticmethod
-    def _faces_all_approved(vision_hints: VisionHints | None) -> bool:
+    def _faces_all_approved(faces: FaceRecognitionResult) -> bool:
         """True when every face found in this clip is an approved member.
 
         Deliberately all-or-nothing and fail-safe: a positive approved match
@@ -740,13 +740,10 @@ class BaseAnalyzer(abc.ABC):
         hard safety requirement, not a convenience default, so do not loosen
         this condition without equally strong justification.
         """
-        if vision_hints is None or vision_hints.face_recognition is None:
-            return False
-        fr = vision_hints.face_recognition
         return (
-            bool(fr.approved_names)
-            and not fr.other_names
-            and not fr.unrecognized_present
+            bool(faces.approved_names)
+            and not faces.other_names
+            and not faces.unrecognized_present
         )
 
     @classmethod
@@ -757,8 +754,9 @@ class BaseAnalyzer(abc.ABC):
         alone, never looser."""
         if vision_hints is None or vision_hints.face_recognition is None:
             return False
-        return cls._faces_all_approved(vision_hints) and not _unaccounted_people(
-            vision_hints, vision_hints.face_recognition
+        faces = vision_hints.face_recognition
+        return cls._faces_all_approved(faces) and not _unaccounted_people(
+            vision_hints, faces
         )
 
     @classmethod
@@ -785,11 +783,12 @@ class BaseAnalyzer(abc.ABC):
         ordinary contact with one's own vehicle, and every everyday sound,
         are *not* in it and must not be added.
         """
-        if not cls._faces_all_approved(vision_hints):
+        if vision_hints is None or vision_hints.face_recognition is None:
             return False
-        # Both present: _faces_all_approved is False without them.
-        assert vision_hints is not None and vision_hints.face_recognition is not None
-        unaccounted = _unaccounted_people(vision_hints, vision_hints.face_recognition)
+        faces = vision_hints.face_recognition
+        if not cls._faces_all_approved(faces):
+            return False
+        unaccounted = _unaccounted_people(vision_hints, faces)
         if unaccounted:
             _LOGGER.info(
                 "Face-recognition bypass withheld despite an approved match: "

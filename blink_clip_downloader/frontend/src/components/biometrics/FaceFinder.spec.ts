@@ -509,7 +509,7 @@ describe('FaceFinder', () => {
     const before = fetchMock.mock.calls.length
     await wrapper.setProps({ people: [...PEOPLE] })
     await flushPromises()
-    expect(fetchMock.mock.calls.length).toBe(before + 1)
+    expect(fetchMock.mock.calls).toHaveLength(before + 1)
     expect(faces().map((f) => f.match)).toEqual([{ name: 'Brian', similarity: 0.9 }, null])
   })
 
