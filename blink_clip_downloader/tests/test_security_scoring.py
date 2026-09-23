@@ -181,6 +181,115 @@ def test_custom_point_overrides_are_merged_not_replaced() -> None:
 
 
 # ----------------------------------------------------------------------
+# a group, or a walker and their dog, counted once
+# ----------------------------------------------------------------------
+
+
+def test_one_subjects_movement_counts_once_per_type_at_its_strongest() -> None:
+    """Two people walking up together, or a person and the dog on its
+    lead, each enter the zone and approach the car. The second adds no
+    evidence the first did not — MULTIPLE_SUBJECTS is what says there was a
+    group — so each type counts once, at its most heavily weighted."""
+    one = [
+        _event(SecurityEventType.ZONE_ENTERED, confidence=0.8),
+        _event(SecurityEventType.ASSET_APPROACHED, confidence=0.7),
+    ]
+    pair = [
+        *one,
+        _event(SecurityEventType.ZONE_ENTERED, confidence=0.5),
+        _event(SecurityEventType.ASSET_APPROACHED, confidence=0.9),
+    ]
+    scorer = RiskScorer()
+    single = scorer.score(one, 1.0)
+    both = scorer.score(pair, 1.0)
+    assert [f.name for f in both.factors] == ["zone_entered", "asset_approached"]
+    # The zone entry from the first, the stronger approach from the second.
+    assert both.score == pytest.approx(
+        single.score
+        + DEFAULT_EVENT_POINTS[SecurityEventType.ASSET_APPROACHED] * (0.9 - 0.7) * 0.65
+    )
+    # Every instance is still reported.
+    assert len(both.events) == 4
+
+
+def test_events_that_are_not_one_subjects_movement_still_add_up() -> None:
+    """Two parcels taken are two parcels."""
+    removed = _event(SecurityEventType.OBJECT_REMOVED)
+    one = RiskScorer().score([removed], 1.0).score
+    assert RiskScorer().score([removed, removed], 1.0).score == pytest.approx(2 * one)
+
+
+# ----------------------------------------------------------------------
+# an unconfirmed contact cannot force an alert
+# ----------------------------------------------------------------------
+
+#: One overlap's worth of events: someone walking close past the front of
+#: the car, which a camera cannot tell apart from touching it without the
+#: depth and segmentation stages.
+_WALK_PAST = [
+    _event(SecurityEventType.ZONE_ENTERED, confidence=0.8),
+    _event(SecurityEventType.ASSET_APPROACHED, confidence=0.7),
+    _event(SecurityEventType.ASSET_PROXIMITY, confidence=0.75),
+    _event(SecurityEventType.CONTACT_CANDIDATE, confidence=0.45),
+    _event(SecurityEventType.RETREAT_AFTER_CONTACT, confidence=0.45),
+]
+
+
+def test_an_unconfirmed_contact_cannot_lift_a_clip_into_the_alert_band() -> None:
+    assessment = RiskScorer().score(_WALK_PAST, 1.0, ScoringContext(is_night=True))
+    assert assessment.raw_score >= 75.0
+    assert assessment.score == 74.0
+    assert assessment.severity is Severity.SUSPICIOUS
+    held = assessment.factors[-1]
+    assert held.name == "unconfirmed_contact"
+    assert held.points < 0
+    assert "no depth or segmentation" in held.detail
+
+
+def test_a_confirmed_contact_is_not_held_back() -> None:
+    confirmed = [
+        *_WALK_PAST[:3],
+        _event(
+            SecurityEventType.CONTACT_CANDIDATE, Severity.SUSPICIOUS, confidence=0.8
+        ),
+        _event(SecurityEventType.RETREAT_AFTER_CONTACT, Severity.SUSPICIOUS, 0.6),
+    ]
+    assessment = RiskScorer().score(confirmed, 1.0, ScoringContext(is_night=True))
+    assert assessment.score >= 75.0
+    assert "unconfirmed_contact" not in [f.name for f in assessment.factors]
+
+
+def test_other_evidence_strong_enough_on_its_own_still_alerts() -> None:
+    """The contact being unconfirmed only matters when it is the reason for
+    the alert: glass heard breaking alerts whatever the overlap was."""
+    events = [
+        *_WALK_PAST,
+        _event(SecurityEventType.GLASS_BREAK_HEARD, Severity.CRITICAL),
+    ]
+    assessment = RiskScorer().score(events, 1.0)
+    assert assessment.score >= 75.0
+    assert "unconfirmed_contact" not in [f.name for f in assessment.factors]
+
+
+def test_an_unconfirmed_contact_below_the_alert_band_is_left_alone() -> None:
+    assessment = RiskScorer().score(_WALK_PAST[3:], 1.0)
+    assert assessment.score < 74.0
+    assert "unconfirmed_contact" not in [f.name for f in assessment.factors]
+
+
+def test_an_unconfirmed_animal_contact_is_held_back_too() -> None:
+    events = [
+        *_WALK_PAST[:3],
+        _event(SecurityEventType.ANIMAL_ASSET_INTERACTION, confidence=0.45),
+        _event(SecurityEventType.CONTACT_CANDIDATE, confidence=0.45),
+        _event(SecurityEventType.RETREAT_AFTER_CONTACT, confidence=0.45),
+    ]
+    assessment = RiskScorer().score(events, 1.0, ScoringContext(is_night=True))
+    assert assessment.raw_score >= 75.0
+    assert assessment.score == 74.0
+
+
+# ----------------------------------------------------------------------
 # severity resolution
 # ----------------------------------------------------------------------
 

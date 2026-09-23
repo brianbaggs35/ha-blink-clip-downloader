@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .detector import _CONFIRMED_CONTACT_CONFIDENCE
 from .events import (
     AUDIO_EVENTS,
     SecurityEvent,
@@ -120,10 +121,72 @@ OTHER_VEHICLE_POINTS = -15.0
 #: evidence discounts a conclusion without discarding it.
 _EVIDENCE_FLOOR = 0.55
 
+#: Events that rest on a claim of contact with the asset. Below
+#: :data:`.detector._CONFIRMED_CONTACT_CONFIDENCE` that claim is a bare 2D
+#: overlap — which a person or dog walking in front of the car produces in
+#: every frame — and the "retreat after contact" built on it inherits the
+#: same confidence.
+_CONTACT_EVENTS: frozenset[SecurityEventType] = frozenset(
+    {
+        SecurityEventType.CONTACT_CANDIDATE,
+        SecurityEventType.ANIMAL_ASSET_INTERACTION,
+        SecurityEventType.RETREAT_AFTER_CONTACT,
+    }
+)
+
+#: Events that describe one subject's own movement around the asset. Each
+#: type counts once per clip, at its strongest: a second person — or the dog
+#: on its lead — repeating the same approach adds no evidence the first did
+#: not, and :data:`SecurityEventType.MULTIPLE_SUBJECTS` is what already
+#: accounts for there being a group. Summed, a family walking past the car
+#: at night scored 100. Every instance still reaches the prompt and the
+#: Security tab; only the score counts it once.
+_ONCE_PER_CLIP: frozenset[SecurityEventType] = frozenset(
+    {
+        SecurityEventType.SUBJECT_PRESENT,
+        SecurityEventType.ZONE_ENTERED,
+        SecurityEventType.ASSET_APPROACHED,
+        SecurityEventType.ASSET_PROXIMITY,
+        SecurityEventType.LOITERING,
+        SecurityEventType.RETREAT,
+        SecurityEventType.ASSET_REACH,
+        SecurityEventType.CONTACT_CANDIDATE,
+        SecurityEventType.ANIMAL_ASSET_INTERACTION,
+        SecurityEventType.IMPACT_CANDIDATE,
+        SecurityEventType.RETREAT_AFTER_CONTACT,
+    }
+)
+
+#: Where the critical band — and the default ``ai_risk_alert_threshold`` —
+#: begins, and the highest score a clip may hold when an unconfirmed contact
+#: is the only reason it would be higher.
+_CRITICAL_SCORE = next(t for t, s in SEVERITY_BANDS if s is Severity.CRITICAL)
+_UNCONFIRMED_CONTACT_CEILING = _CRITICAL_SCORE - 1.0
+
 #: Factor names produced by the heard-not-seen events. ``_event_factor``
 #: names each factor after its event type, so this is the same set as
 #: :data:`.events.AUDIO_EVENTS` in the form ``score`` compares against.
 _AUDIO_FACTOR_NAMES: frozenset[str] = frozenset(str(e) for e in AUDIO_EVENTS)
+
+
+def _strongest_of_each_subject_event(
+    scored: list[tuple[SecurityEvent, RiskFactor]],
+) -> list[tuple[SecurityEvent, RiskFactor]]:
+    """*scored* with each :data:`_ONCE_PER_CLIP` type reduced to its most
+    heavily weighted instance, everything else untouched and in order."""
+    strongest: dict[SecurityEventType, int] = {}
+    for index, (event, factor) in enumerate(scored):
+        if event.event_type not in _ONCE_PER_CLIP:
+            continue
+        best = strongest.get(event.event_type)
+        if best is None or factor.points > scored[best][1].points:
+            strongest[event.event_type] = index
+    kept = set(strongest.values())
+    return [
+        pair
+        for index, pair in enumerate(scored)
+        if pair[0].event_type not in _ONCE_PER_CLIP or index in kept
+    ]
 
 
 def band_for_score(score: float) -> Severity:
@@ -211,7 +274,16 @@ class RiskScorer:
     ) -> RiskAssessment:
         """Score *events*, damping by *evidence_quality* (0.0-1.0)."""
         ctx = context or ScoringContext()
-        factors = [f for f in map(self._event_factor, events) if f is not None]
+        scored = _strongest_of_each_subject_event(
+            [(e, f) for e in events if (f := self._event_factor(e)) is not None]
+        )
+        factors = [f for _, f in scored]
+        unconfirmed = sum(
+            f.points
+            for e, f in scored
+            if e.event_type in _CONTACT_EVENTS
+            and e.confidence < _CONFIRMED_CONTACT_CONFIDENCE
+        )
 
         if ctx.is_night:
             factors.append(
@@ -231,7 +303,8 @@ class RiskScorer:
         heard = sum(f.points for f in factors if f.name in _AUDIO_FACTOR_NAMES)
         seen = sum(f.points for f in factors) - heard
         quality = max(0.0, min(1.0, evidence_quality))
-        damped = seen * (_EVIDENCE_FLOOR + (1.0 - _EVIDENCE_FLOOR) * quality) + heard
+        damping = _EVIDENCE_FLOOR + (1.0 - _EVIDENCE_FLOOR) * quality
+        damped = seen * damping + heard
         positive = seen + heard
 
         # Applied after damping, not before: a household member being
@@ -273,6 +346,34 @@ class RiskScorer:
         # into what was heard, and the whole thing is still a 0-100 score:
         # clamping last, not first, is what keeps both true at once.
         score = max(0.0, min(100.0, max(damped + penalty, heard)))
+
+        # An unconfirmed contact may raise a clip, but never be the reason
+        # it reaches the band that forces an alert past the model's verdict.
+        # Each event on its own already carries only a noteworthy claim,
+        # yet someone walking close past the front of the car at night
+        # collects five of them from one overlap — zone, approach,
+        # proximity, "contact", "retreat after contact" — and summed they
+        # scored 79. What the same clip scores without the unconfirmed
+        # claim decides: anything else strong enough (a confirmed touch, a
+        # sound, lingering) still carries it into the alert band; a bare
+        # overlap cannot. The model still sees the frames and the claim.
+        without = max(
+            0.0, min(100.0, max(damped - unconfirmed * damping + penalty, heard))
+        )
+        if score >= _CRITICAL_SCORE > without:
+            held = _UNCONFIRMED_CONTACT_CEILING - score
+            factors.append(
+                RiskFactor(
+                    name="unconfirmed_contact",
+                    points=held,
+                    detail=(
+                        "The possible contact rests only on outlines overlapping "
+                        "in the image, with no depth or segmentation to confirm "
+                        "it, so it is held below the alert band."
+                    ),
+                )
+            )
+            score = _UNCONFIRMED_CONTACT_CEILING
 
         return RiskAssessment(
             score=score,

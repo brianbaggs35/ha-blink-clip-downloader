@@ -970,7 +970,11 @@ what changes:
 - So a contact claim resting on nothing but that overlap is reported as
   **noteworthy**, not suspicious, and says so in its own text. It reaches
   the prompt and the Security Events tab either way; what it does not do is carry
-  the weight of a confirmed one, or raise a possible-impact alert.
+  the weight of a confirmed one, raise a possible-impact alert, or be the
+  reason a clip reaches the critical band that forces an alert past the
+  model's verdict — the score is held at 74 and says why. Something else
+  strong enough on its own (a confirmed touch, a sound, a long linger)
+  still takes it over.
 - With the stages available, the same geometry is **believed**: contact
   becomes suspicious, and impact candidates become possible. That is the
   concrete thing they buy you.
@@ -990,6 +994,12 @@ listed back to you in the UI — "protected-zone entry +20, possible contact +32
 recognized household member −32" — so a verdict is auditable rather than being a
 number nobody can inspect. It maps onto four bands: **routine** (0-24),
 **noteworthy** (25-49), **suspicious** (50-74), **critical** (75+).
+
+Each kind of movement counts once per clip, at its strongest: when two people
+walk up together, or someone walks their dog past the car, the second one
+entering the zone or approaching the car adds nothing the first did not —
+a separate `multiple_subjects` event accounts for there being a group. Every
+instance is still listed as evidence.
 
 *Evidence quality* is scored separately and deliberately: a model can be 95%
 sure it saw someone try a car door, and the underlying imagery can still be
