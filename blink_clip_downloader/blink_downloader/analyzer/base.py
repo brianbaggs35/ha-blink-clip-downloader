@@ -24,6 +24,7 @@ import logging
 import math
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC
 from typing import TYPE_CHECKING, Any
@@ -53,7 +54,12 @@ from ..security import (
 
 if TYPE_CHECKING:
     from ..database import ClipDatabase
-    from ..vision import DetectedObject, VisionHints, VisionPipeline
+    from ..vision import (
+        DetectedObject,
+        FaceRecognitionResult,
+        VisionHints,
+        VisionPipeline,
+    )
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -166,6 +172,34 @@ def _audio_labels_json(vision_hints: VisionHints | None) -> str:
     return json.dumps(
         [{"label": label, "score": round(score, 4)} for label, score in tags.labels]
     )
+
+
+def _people_in_one_frame(vision_hints: VisionHints) -> int:
+    """Most people object detection saw together in any one sampled frame.
+
+    0 when detection did not run. The per-frame peak rather than a count of
+    track ids: tracking across frames sampled seconds apart can split one
+    person into two ids, and a safety gate that miscounted a lone resident
+    as two people would withhold their bypass for no reason.
+    """
+    per_frame = Counter(
+        d.frame_index for d in vision_hints.detections or () if d.label == "person"
+    )
+    return max(per_frame.values(), default=0)
+
+
+def _unaccounted_people(vision_hints: VisionHints, faces: FaceRecognitionResult) -> int:
+    """People seen together beyond the approved members recognized.
+
+    Faces alone cannot see a stranger who never shows one — back to the
+    camera, hood up, too far away — so an approved face beside them read as
+    "only approved people here". When object detection saw more people in
+    one frame than there are approved members recognized anywhere in the
+    clip, the difference is someone unaccounted for. 0 when detection did
+    not run: recognition then vouches only for the faces it saw, as it
+    always has.
+    """
+    return max(0, _people_in_one_frame(vision_hints) - len(faces.approved_names))
 
 
 @dataclass
@@ -666,7 +700,7 @@ class BaseAnalyzer(abc.ABC):
         )
 
     @staticmethod
-    def _face_match_is_unambiguous(vision_hints: VisionHints | None) -> bool:
+    def _faces_all_approved(vision_hints: VisionHints | None) -> bool:
         """True when every face found in this clip is an approved member.
 
         Deliberately all-or-nothing and fail-safe: a positive approved match
@@ -689,6 +723,18 @@ class BaseAnalyzer(abc.ABC):
         )
 
     @classmethod
+    def _face_match_is_unambiguous(cls, vision_hints: VisionHints | None) -> bool:
+        """True when everyone seen in this clip is an approved member: every
+        face (:meth:`_faces_all_approved`) and every person object detection
+        found (:func:`_unaccounted_people`). Only ever stricter than faces
+        alone, never looser."""
+        if vision_hints is None or vision_hints.face_recognition is None:
+            return False
+        return cls._faces_all_approved(vision_hints) and not _unaccounted_people(
+            vision_hints, vision_hints.face_recognition
+        )
+
+    @classmethod
     def _face_bypass_applies(
         cls,
         vision_hints: VisionHints | None,
@@ -699,8 +745,9 @@ class BaseAnalyzer(abc.ABC):
         locally-enrolled household member — and nothing happened that a
         household member's identity cannot explain.
 
-        The identity condition is :meth:`_face_match_is_unambiguous`. The
-        second condition is narrow: an event in
+        The identity condition is :meth:`_face_match_is_unambiguous`: every
+        face approved, and nobody seen whose face was not. The second
+        condition is narrow: an event in
         :data:`~blink_downloader.security.BYPASS_BLOCKING_EVENTS` blocks the
         bypass outright, because some things a familiar face simply cannot
         account for. A recognized person denting the car is still a dented
@@ -711,7 +758,18 @@ class BaseAnalyzer(abc.ABC):
         ordinary contact with one's own vehicle, and every everyday sound,
         are *not* in it and must not be added.
         """
-        if not cls._face_match_is_unambiguous(vision_hints):
+        if not cls._faces_all_approved(vision_hints):
+            return False
+        # Both present: _faces_all_approved is False without them.
+        assert vision_hints is not None and vision_hints.face_recognition is not None
+        unaccounted = _unaccounted_people(vision_hints, vision_hints.face_recognition)
+        if unaccounted:
+            _LOGGER.info(
+                "Face-recognition bypass withheld despite an approved match: "
+                "%d more %s seen at once than approved faces recognized",
+                unaccounted,
+                "person" if unaccounted == 1 else "people",
+            )
             return False
         blocking = [e for e in (events or []) if e.event_type in BYPASS_BLOCKING_EVENTS]
         if blocking:
@@ -742,14 +800,19 @@ class BaseAnalyzer(abc.ABC):
         Still returns no names at all if a genuinely unrecognized face
         (``unrecognized_present``) also appears — an unidentified stranger
         sharing the frame means it's not safe to attribute the AI's summary
-        to the person(s) who *were* identified.
+        to the person(s) who *were* identified. Likewise when object
+        detection saw more people at once than there are names: the one
+        whose face never showed may be the one the summary describes.
         """
         if vision_hints is None or vision_hints.face_recognition is None:
             return []
         fr = vision_hints.face_recognition
         if fr.unrecognized_present:
             return []
-        return sorted({*fr.approved_names, *fr.other_names})
+        names = sorted({*fr.approved_names, *fr.other_names})
+        if _people_in_one_frame(vision_hints) > len(names):
+            return []
+        return names
 
     # Leading generic-subject phrases a vision model commonly opens a
     # description with — matched case-insensitively, anchored to the start
