@@ -358,6 +358,17 @@ class SecurityEventDetector:
         depth_verdict = ctx.depth_similar if cv_applies else None
         if depth_verdict is False:
             near = False
+        elif depth_verdict is True and profile.min_box_gap <= 0 and not near:
+            # On the far side of the car — the driver's door, from a camera
+            # facing its passenger side — the car hides the subject's feet,
+            # so their box ends mid-car and the foot point reads as metres
+            # behind it. Depth placing them at the car's own distance with
+            # their outlines overlapping is being at the car, wherever the
+            # feet appear to be. Without it the same confirmed touch scored
+            # 69 on the far side against 86 on the near one, below the
+            # alert band.
+            min_feet = min(min_feet, self._t.close_feet)
+            near = True
 
         zone_event = self._zone_event(track, asset, ctx, depth_verdict)
         if zone_event is not None:

@@ -445,6 +445,48 @@ SCENARIOS: list[Scenario] = [
             SecurityEventType.MULTIPLE_SUBJECTS,
         },
     ),
+    # -- the far side of the car: it hides the subject's feet ----------
+    Scenario(
+        name="a stranger at the car's far side at night, confirmed by both stages",
+        # Their box ends mid-car, so the foot point reads as behind it.
+        detections=_walk(
+            1,
+            [
+                _person_at(560, height=120, ground=250),
+                _person_at(480, height=120, ground=250),
+            ]
+            + [(330.0, 150.0, 378.0, 250.0)] * 6,
+        )
+        + _parked(2, MY_CAR, 8),
+        frame_count=8,
+        is_night=True,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=(Severity.CRITICAL, Severity.CRITICAL),
+        expect_events={
+            SecurityEventType.CONTACT_CANDIDATE,
+            SecurityEventType.ASSET_PROXIMITY,
+        },
+    ),
+    Scenario(
+        name="someone passes behind the car, depth says further away",
+        detections=_walk(
+            1,
+            [
+                (float(x), 150.0, float(x) + 48, 250.0)
+                for x in (200, 260, 320, 380, 440)
+            ],
+        )
+        + _parked(2, MY_CAR, 5),
+        frame_count=5,
+        is_night=True,
+        depth_similar=False,
+        expect_severity=ROUTINE_ONLY,
+        forbid_events={
+            SecurityEventType.ASSET_PROXIMITY,
+            SecurityEventType.CONTACT_CANDIDATE,
+        },
+    ),
     Scenario(
         name="the camera view is swamped and nothing is in it",
         detections=[],

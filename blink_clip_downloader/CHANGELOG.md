@@ -149,6 +149,17 @@ tab points out photos captured at the old resolution.
   still alerts exactly as before: a touch confirmed by depth or
   segmentation, day or night, one stranger or two, and a rush at the car
   that leaves it looking different all stay critical.
+- **Someone at the far side of the protected car was scored as further
+  away than they were.** From a camera facing the car's passenger side, the
+  driver's door is on the far side, where the car hides a person's feet:
+  their box ends mid-car, and distance is measured from the feet, so they
+  read as well behind it and the "within a foot of the car" event never
+  fired. The same touch, confirmed by depth estimation and segmentation,
+  scored 69 on the far side against 86 on the near one — below the alert
+  band. When depth places someone at the car's own distance with their
+  outline over it, they now count as at the car, wherever their feet
+  appear; without depth, or when depth places them elsewhere, nothing
+  changes.
 - **An approved person's face could clear a clip that also held someone
   whose face never showed.** The suspicious-flag bypass required every
   *face* in a clip to belong to an approved person, so a stranger with their
