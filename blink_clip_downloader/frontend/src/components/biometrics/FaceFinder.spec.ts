@@ -296,7 +296,7 @@ describe('FaceFinder', () => {
     await flushPromises()
     expect(useToastStore().message).toBe('Those faces are no longer available')
     expect(useToastStore().isError).toBe(true)
-    expect(fetchMock.mock.calls.filter(([u]) => u === '/api/ai/faces/group').length).toBe(groupCallsBefore + 1)
+    expect(fetchMock.mock.calls.filter(([u]) => u === '/api/ai/faces/group')).toHaveLength(groupCallsBefore + 1)
     expect(wrapper.emitted('enrolled')).toBeUndefined()
   })
 

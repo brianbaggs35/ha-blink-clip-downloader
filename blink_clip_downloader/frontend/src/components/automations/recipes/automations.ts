@@ -1355,6 +1355,10 @@ const suspiciousWhenAway: Recipe = {
   },
 }
 
+// True once a cloud account has ever been connected; see the recipe's
+// condition below for why it matters.
+const CLOUD_BACKUP_CONFIGURED = `{{ state_attr(${jinjaString(CLOUD_STORAGE_SENSOR)}, 'configured') }}`
+
 const cloudBackupDisconnected: Recipe = {
   id: 'cloud-backup-disconnected',
   create: { kind: 'automation', objectId: 'blink_cloud_backup_disconnected' },
@@ -1407,10 +1411,7 @@ const cloudBackupDisconnected: Recipe = {
         // Nothing to report on an install that never connected a cloud
         // account: `connected` is false there forever, which would fire
         // this the first time Home Assistant restarted.
-        joinLines([
-          '  - condition: template',
-          `    value_template: ${yamlTemplate(`{{ state_attr(${jinjaString(CLOUD_STORAGE_SENSOR)}, 'configured') }}`, 4)}`,
-        ]),
+        joinLines(['  - condition: template', `    value_template: ${yamlTemplate(CLOUD_BACKUP_CONFIGURED, 4)}`]),
       ]),
       'actions:',
       notifyAction(
