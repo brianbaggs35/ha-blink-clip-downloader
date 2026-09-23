@@ -164,6 +164,7 @@ tab points out photos captured at the old resolution.
 - Updated to openai 3.19.0
 - Updated to anthropic 1.8.0
 - Updated to jsdom 30.1.1
+- Updated to prettier 3.9.9
 
 ### Internal
 
