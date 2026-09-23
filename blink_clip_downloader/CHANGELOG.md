@@ -165,6 +165,7 @@ tab points out photos captured at the old resolution.
 - Updated to anthropic 1.8.0
 - Updated to jsdom 30.1.1
 - Updated to prettier 3.9.9
+- Updated to typescript-eslint 8.70.1
 
 ### Internal
 
