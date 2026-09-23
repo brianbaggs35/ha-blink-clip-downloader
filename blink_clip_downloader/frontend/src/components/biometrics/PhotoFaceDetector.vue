@@ -28,11 +28,14 @@ async function detect(file: File, row: PhotoResult) {
       row.message = result.error
       return
     }
-    row.status = result.faces.length ? 'done' : 'error'
-    row.message = result.faces.length
-      ? `${result.faces.length} face${result.faces.length === 1 ? '' : 's'} found`
-      : 'No clear face found — try a closer, sharper photo'
-    if (result.faces.length) emit('found', result.faces, file.name)
+    if (!result.faces.length) {
+      row.status = 'error'
+      row.message = 'No clear face found — try a closer, sharper photo'
+      return
+    }
+    row.status = 'done'
+    row.message = `${result.faces.length} face${result.faces.length === 1 ? '' : 's'} found`
+    emit('found', result.faces, file.name)
   } catch (e) {
     row.status = 'error'
     row.message = describeApiError(e, 'Detection failed — check your connection and try again')

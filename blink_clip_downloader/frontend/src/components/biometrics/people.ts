@@ -86,5 +86,5 @@ export function initials(name: string): string {
     .filter(Boolean)
     .map((part) => Array.from(part)[0])
   if (!letters.length) return '?'
-  return (letters.length > 1 ? letters[0] + letters[letters.length - 1] : letters[0]).toUpperCase()
+  return (letters.length > 1 ? [letters[0], letters.at(-1)].join('') : letters[0]).toUpperCase()
 }
