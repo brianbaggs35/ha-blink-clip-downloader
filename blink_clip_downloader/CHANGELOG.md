@@ -168,6 +168,16 @@ tab points out photos captured at the old resolution.
   car was then left with a contact nothing could confirm. They now look at
   whoever stands nearest the car (feet the car hides, or up on it, count as
   at it), and still at that person's closest moment.
+- **Walking to your own car could read as a possible impact.** A "possible
+  impact" needs a confirmed touch plus something sudden, such as the
+  subject rushing at the car. The rush was measured anywhere in the clip, so
+  a resident who stood at the front door and then set off at a normal pace
+  — from standstill to walking speed, metres from the car — counted, and
+  touching the car afterwards, confirmed by depth and segmentation, made a
+  critical possible impact: a forced alert, and their face-recognition
+  bypass withheld, since that is the one event it never excuses. The
+  speed-up now has to happen at the car — rushing into it or bolting from
+  it, both of which still raise a possible impact.
 - **An approved person's face could clear a clip that also held someone
   whose face never showed.** The suspicious-flag bypass required every
   *face* in a clip to belong to an approved person, so a stranger with their
