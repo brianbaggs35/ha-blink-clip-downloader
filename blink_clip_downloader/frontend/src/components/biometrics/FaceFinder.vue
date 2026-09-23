@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import AutoComplete, { type AutoCompleteCompleteEvent } from 'primevue/autocomplete'
 import Button from 'primevue/button'
 import Card from 'primevue/card'
@@ -43,10 +43,25 @@ const name = ref('')
 const approveNew = ref(true)
 const enrolling = ref(false)
 const nameSuggestions = ref<string[]>([])
+// Set by a person's "Add photos": who the finder is collecting faces of, kept
+// across enrolls so faces can be added from one camera, then another.
+const addingFor = ref<string | null>(null)
 
 const trimmedName = computed(() => name.value.trim())
-const existingPerson = computed(() => props.people.find((p) => p.name === trimmedName.value) ?? null)
+// Case-insensitively, so "brian" adds to Brian rather than quietly starting
+// a second person whose photos recognition would never pool with his.
+const existingPerson = computed(() => {
+  const typed = trimmedName.value
+  const folded = typed.toLowerCase()
+  return props.people.find((p) => p.name === typed) ?? props.people.find((p) => p.name.toLowerCase() === folded) ?? null
+})
+const targetName = computed(() => existingPerson.value?.name ?? trimmedName.value)
 const selectedFaces = computed(() => found.value.filter((f) => selected.value.includes(f.id)))
+const enrollLabel = computed(() => {
+  const count = `${selected.value.length} photo${selected.value.length === 1 ? '' : 's'}`
+  if (existingPerson.value) return `Add ${count} to ${existingPerson.value.name}`
+  return trimmedName.value ? `Enroll as ${trimmedName.value}` : 'Enroll'
+})
 
 // A picked face that analysis already recognizes as someone *else* is the
 // mistake that teaches recognition to confuse two people — and if the
@@ -55,7 +70,7 @@ const conflictingMatches = computed(() => [
   ...new Set(
     selectedFaces.value
       .map((f) => f.match?.name)
-      .filter((matched): matched is string => !!matched && matched !== trimmedName.value),
+      .filter((matched): matched is string => !!matched && matched !== targetName.value),
   ),
 ])
 const spansGroups = computed(() => groups.value.filter((g) => g.some((id) => selected.value.includes(id))).length > 1)
@@ -78,16 +93,31 @@ async function regroup() {
   try {
     const result = await groupFaces(found.value.map((f) => f.id))
     if (seq !== groupSeq) return
-    if (result.expired.length) {
-      const expired = new Set(result.expired)
-      found.value = found.value.filter((f) => !expired.has(f.id))
-      selected.value = selected.value.filter((id) => !expired.has(id))
-    }
+    // Current (by the sequence check): anything found since would have sent
+    // a newer request, so every face still held has an answer here.
+    const expired = new Set(result.expired)
+    found.value = found.value.filter((f) => !expired.has(f.id)).map((f) => ({ ...f, match: result.matches[f.id] }))
+    selected.value = selected.value.filter((id) => !expired.has(id))
     groups.value = result.groups
   } catch {
     // Ungrouped faces still show, each on its own — see FoundFaces.
   }
 }
+
+// Enrolling, renaming or removing someone changes who each found face is
+// recognized as: regroup, which answers again against the people as they
+// are now. And a person removed or renamed mid-way is no longer being added to.
+watch(
+  () => props.people,
+  (people) => {
+    if (addingFor.value && !people.some((p) => p.name === addingFor.value)) stopAdding()
+    void regroup()
+  },
+)
+// Typing someone else's name means these faces are for them instead.
+watch(trimmedName, (typed) => {
+  if (addingFor.value && typed && typed.toLowerCase() !== addingFor.value.toLowerCase()) addingFor.value = null
+})
 
 function addFound(faces: FaceCandidate[], source: FoundFace['source']) {
   found.value = [...found.value, ...faces.map((face) => ({ ...face, source }))]
@@ -114,7 +144,7 @@ function addTo(person: string, ids: string[]) {
 }
 
 async function enroll() {
-  const target = trimmedName.value
+  const target = targetName.value
   if (!target) {
     toast.show('Enter a name for the selected faces', true)
     return
@@ -133,17 +163,14 @@ async function enroll() {
       return
     }
     const photos = `${result.enrolled} photo${result.enrolled === 1 ? '' : 's'}`
-    toast.show(
-      result.expired
-        ? `Enrolled ${photos} of ${result.name} — ${result.expired} had expired; scan again to add them`
-        : `Enrolled ${photos} of ${result.name}`,
-    )
-    const done = new Set(ids)
-    found.value = found.value.filter((f) => !done.has(f.id))
+    const done = result.existing ? `Added ${photos} to ${result.name}` : `Enrolled ${photos} of ${result.name}`
+    toast.show(result.expired ? `${done} — ${result.expired} had expired; scan again to add them` : done)
+    const enrolled = new Set(ids)
+    found.value = found.value.filter((f) => !enrolled.has(f.id))
     selected.value = []
-    name.value = ''
+    name.value = addingFor.value ?? ''
     approveNew.value = true
-    await regroup()
+    // The page reloads its people, which regroups (see the watch above).
     emit('enrolled')
   } catch (e) {
     toast.show(`Enrollment failed: ${describeApiError(e, 'check your connection and try again')}`, true)
@@ -152,10 +179,15 @@ async function enroll() {
   }
 }
 
+/** Scroll the finder into view. */
+function reveal() {
+  root.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 /** Scan one clip, wherever it is — a "missed match" report's clip, say. */
 async function scanClip(clipId: string) {
   source.value = 'clips'
-  root.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  reveal()
   try {
     const clip = await getClip(clipId)
     await nextTick()
@@ -170,13 +202,21 @@ async function scanClip(clipId: string) {
   }
 }
 
-/** Point the finder at adding photos of *person*. */
+/** Point the finder at adding photos of *person*, until told otherwise. */
 function addPhotosFor(person: string) {
+  addingFor.value = person
   name.value = person
-  root.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  reveal()
 }
 
-defineExpose({ scanClip, addPhotosFor })
+// Whatever the name field holds is theirs: typing anyone else's name has
+// already ended adding (see the watch above).
+function stopAdding() {
+  name.value = ''
+  addingFor.value = null
+}
+
+defineExpose({ reveal, scanClip, addPhotosFor })
 </script>
 
 <template>
@@ -188,6 +228,15 @@ defineExpose({ scanClip, addPhotosFor })
         from the cameras themselves recognize best — they look the way that person will look next time.
       </template>
       <template #content>
+        <Message v-if="addingFor" severity="info" :closable="false" class="adding-for">
+          <div class="adding-for-body">
+            <span>
+              Adding photos of <strong>{{ addingFor }}</strong
+              >. Scan clips from each camera they're seen on — or upload a photo — then pick their faces below.
+            </span>
+            <Button label="Done" size="small" text @click="stopAdding" />
+          </div>
+        </Message>
         <Tabs v-model:value="source">
           <TabList>
             <Tab value="clips">From clips</Tab>
@@ -249,7 +298,7 @@ defineExpose({ scanClip, addPhotosFor })
           </div>
           <Message v-if="conflictingMatches.length" severity="warn" size="small" :closable="false">
             Some of these faces are already recognized as {{ conflictingMatches.join(', ') }}. Enrolling them as
-            {{ trimmedName || 'someone else' }} could make recognition confuse the two.
+            {{ targetName || 'someone else' }} could make recognition confuse the two.
           </Message>
           <Message v-else-if="spansGroups" severity="info" size="small" :closable="false">
             These faces come from more than one group — make sure they're all the same person.
@@ -259,7 +308,7 @@ defineExpose({ scanClip, addPhotosFor })
               class="enroll-submit-btn"
               size="small"
               icon="pi pi-user-plus"
-              :label="trimmedName ? `Enroll as ${trimmedName}` : 'Enroll'"
+              :label="enrollLabel"
               :loading="enrolling"
               :disabled="enrolling || !props.available"
               @click="enroll"
@@ -276,6 +325,32 @@ defineExpose({ scanClip, addPhotosFor })
 .face-finder-anchor {
   scroll-margin-top: 1rem;
   margin-bottom: 1.5rem;
+}
+
+@media (max-width: 600px) {
+  .face-finder :deep(.p-card-body) {
+    padding: 1rem;
+  }
+}
+
+.adding-for {
+  margin-bottom: 1rem;
+}
+
+/* Done stays beside the text, which wraps, rather than dropping below it. */
+.adding-for-body {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.adding-for-body > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.adding-for-body > :last-child {
+  flex-shrink: 0;
 }
 
 .found-section {

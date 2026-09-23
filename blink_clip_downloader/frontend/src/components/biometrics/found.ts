@@ -23,11 +23,6 @@ export function qualityLevel(quality: number): QualityLevel {
 }
 
 export const QUALITY_LABEL: Record<QualityLevel, string> = { good: 'Good', fair: 'Fair', low: 'Low quality' }
-export const QUALITY_SEVERITY: Record<QualityLevel, 'success' | 'info' | 'warn'> = {
-  good: 'success',
-  fair: 'info',
-  low: 'warn',
-}
 
 /** "0:07" — how far into its clip a face was found. */
 export function fmtOffset(seconds: number): string {

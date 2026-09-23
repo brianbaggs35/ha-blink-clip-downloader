@@ -32,12 +32,20 @@ interface Routes {
   clip?: () => Promise<Response>
 }
 
+// Like the server, the grouping answer says who every face it was asked about
+// is recognized as — here nobody, unless a test's own answer says otherwise.
+function noMatches(ids: string[]) {
+  return Object.fromEntries(ids.map((id) => [id, null]))
+}
+
 function stubFetch(routes: Routes = {}) {
   const fetchMock = vi.fn((url: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(init.body as string) : {}
     if (url === '/api/ai/faces/group') {
       const result = routes.group ? routes.group(body.candidate_ids) : { groups: [body.candidate_ids], expired: [] }
-      return result instanceof Error ? Promise.reject(result) : Promise.resolve(jsonResponse(result))
+      return result instanceof Error
+        ? Promise.reject(result)
+        : Promise.resolve(jsonResponse({ matches: noMatches(body.candidate_ids), ...(result as object) }))
     }
     if (url === '/api/ai/faces') {
       return (
@@ -172,13 +180,13 @@ describe('FaceFinder', () => {
       vi.fn(() => {
         calls++
         if (calls === 1) return new Promise<Response>((resolve) => (release = resolve))
-        return Promise.resolve(jsonResponse({ groups: [['a'], ['b']], expired: [] }))
+        return Promise.resolve(jsonResponse({ groups: [['a'], ['b']], expired: [], matches: {} }))
       }),
     )
     const wrapper = mountFinder()
     await findFromClip(wrapper, [candidate('a')])
     await findFromClip(wrapper, [candidate('b')])
-    release(jsonResponse({ groups: [['a']], expired: ['b'] }))
+    release(jsonResponse({ groups: [['a']], expired: ['b'], matches: {} }))
     await flushPromises()
     expect(wrapper.findComponent(FoundFaces).props('groups')).toEqual([['a'], ['b']])
   })
@@ -215,9 +223,10 @@ describe('FaceFinder', () => {
   })
 
   it('warns before filing a face recognized as someone else under another name', async () => {
-    stubFetch()
+    const brian = { name: 'Brian', similarity: 0.9 }
+    stubFetch({ group: (ids) => ({ groups: [ids], expired: [], matches: { ...noMatches(ids), a: brian } }) })
     const wrapper = mountFinder()
-    await findFromClip(wrapper, [candidate('a', { match: { name: 'Brian', similarity: 0.9 } }), candidate('b')])
+    await findFromClip(wrapper, [candidate('a', { match: brian }), candidate('b')])
     await select(wrapper, ['a', 'b'])
     expect(wrapper.text()).toContain('already recognized as Brian')
     expect(wrapper.text()).toContain('as someone else could make recognition confuse the two')
@@ -400,14 +409,108 @@ describe('FaceFinder', () => {
     expect(scanSpy).not.toHaveBeenCalled()
   })
 
-  it('can be pointed at adding photos of someone', async () => {
-    stubFetch()
+  describe('adding photos of someone already enrolled', () => {
+    function addPhotosFor(wrapper: ReturnType<typeof mountFinder>, person: string) {
+      ;(wrapper.vm as unknown as { addPhotosFor: (name: string) => void }).addPhotosFor(person)
+      return flushPromises()
+    }
+
+    const existing = (body: Record<string, unknown>) =>
+      Promise.resolve(jsonResponse({ name: body.name, enrolled: 1, expired: 0, approved: true, existing: true }))
+
+    it('adds from one camera, then another, without asking who again', async () => {
+      const fetchMock = stubFetch({ enroll: existing })
+      const wrapper = mountFinder()
+      await addPhotosFor(wrapper, 'Brian')
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+      expect(wrapper.find('.adding-for').text()).toContain('Adding photos of Brian')
+
+      await findFromClip(wrapper, [candidate('d')], clip('drive', { camera: 'Driveway' }))
+      await select(wrapper, ['d'])
+      await button(wrapper, 'Add 1 photo to Brian')!.trigger('click')
+      await flushPromises()
+      expect(useToastStore().message).toBe('Added 1 photo to Brian')
+
+      await findFromClip(wrapper, [candidate('f')], clip('door', { camera: 'Front Door' }))
+      await select(wrapper, ['f'])
+      expect(wrapper.find('.adding-for').exists()).toBe(true)
+      await button(wrapper, 'Add 1 photo to Brian')!.trigger('click')
+      await flushPromises()
+
+      const enrolled = fetchMock.mock.calls
+        .filter(([u, init]) => u === '/api/ai/faces' && init?.method === 'POST')
+        .map(([, init]) => JSON.parse(init!.body as string))
+      expect(enrolled.map((b) => [b.name, b.candidate_ids])).toEqual([
+        ['Brian', ['d']],
+        ['Brian', ['f']],
+      ])
+    })
+
+    it('stops when done, when another name is typed, or when the person is gone', async () => {
+      stubFetch()
+      const wrapper = mountFinder()
+      await findFromClip(wrapper, [candidate('a')])
+      await select(wrapper, ['a'])
+
+      await addPhotosFor(wrapper, 'Brian')
+      await button(wrapper, 'Done')!.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.adding-for').exists()).toBe(false)
+      expect(wrapper.findComponent(AutoComplete).props('modelValue')).toBe('')
+
+      await addPhotosFor(wrapper, 'Brian')
+      await typeName(wrapper, '')
+      expect(wrapper.find('.adding-for').exists()).toBe(true)
+      await typeName(wrapper, 'BRIAN')
+      expect(wrapper.find('.adding-for').exists()).toBe(true)
+      await typeName(wrapper, 'Morgan')
+      expect(wrapper.find('.adding-for').exists()).toBe(false)
+      expect(wrapper.findComponent(AutoComplete).props('modelValue')).toBe('Morgan')
+
+      await addPhotosFor(wrapper, 'Brian')
+      await wrapper.setProps({ people: PEOPLE.filter((p) => p.name !== 'Brian') })
+      await flushPromises()
+      expect(wrapper.find('.adding-for').exists()).toBe(false)
+      expect(wrapper.findComponent(AutoComplete).props('modelValue')).toBe('')
+    })
+
+    it('adds to the enrolled person whatever case the name is typed in', async () => {
+      const fetchMock = stubFetch({ enroll: existing })
+      const wrapper = mountFinder()
+      await findFromClip(wrapper, [candidate('a')])
+      await select(wrapper, ['a'])
+      await typeName(wrapper, ' brian ')
+      expect(wrapper.find('.enroll-bar').text()).toContain('Adds to Brian')
+      await button(wrapper, 'Add 1 photo to Brian')!.trigger('click')
+      await flushPromises()
+      const enrollCall = fetchMock.mock.calls.find(([u, init]) => u === '/api/ai/faces' && init?.method === 'POST')!
+      expect(JSON.parse(enrollCall[1]!.body as string).name).toBe('Brian')
+    })
+  })
+
+  it('asks nothing of the server when people change before any face is found', async () => {
+    const fetchMock = stubFetch()
     const wrapper = mountFinder()
-    ;(wrapper.vm as unknown as { addPhotosFor: (name: string) => void }).addPhotosFor('Brian')
-    await findFromClip(wrapper, [candidate('a')])
-    await select(wrapper, ['a'])
-    expect(wrapper.findComponent(AutoComplete).props('modelValue')).toBe('Brian')
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+    await wrapper.setProps({ people: [...PEOPLE] })
+    await flushPromises()
+    // The server refuses an empty list; there is nothing to regroup anyway.
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('says again who each face is recognized as whenever the people change', async () => {
+    let matches: Record<string, unknown> = { a: null, b: { name: 'Old', similarity: 0.8 } }
+    const fetchMock = stubFetch({ group: (ids) => ({ groups: [ids], expired: [], matches }) })
+    const wrapper = mountFinder()
+    await findFromClip(wrapper, [candidate('a'), candidate('b', { match: { name: 'Old', similarity: 0.8 } })])
+    const faces = () => wrapper.findComponent(FoundFaces).props('faces') as FaceCandidate[]
+    expect(faces().map((f) => f.match)).toEqual([null, { name: 'Old', similarity: 0.8 }])
+
+    matches = { a: { name: 'Brian', similarity: 0.9 }, b: null }
+    const before = fetchMock.mock.calls.length
+    await wrapper.setProps({ people: [...PEOPLE] })
+    await flushPromises()
+    expect(fetchMock.mock.calls.length).toBe(before + 1)
+    expect(faces().map((f) => f.match)).toEqual([{ name: 'Brian', similarity: 0.9 }, null])
   })
 
   it('cannot enroll while face recognition is unavailable', async () => {

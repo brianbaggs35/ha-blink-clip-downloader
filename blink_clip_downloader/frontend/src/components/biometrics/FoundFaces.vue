@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import Button from 'primevue/button'
-import Tag from 'primevue/tag'
 import ToggleSwitch from 'primevue/toggleswitch'
-import { fmtOffset, groupMatch, QUALITY_LABEL, QUALITY_SEVERITY, qualityLevel, type FoundFace } from './found'
+import { fmtOffset, groupMatch, QUALITY_LABEL, qualityLevel, type FoundFace } from './found'
 
 const props = defineProps<{
   faces: FoundFace[]
@@ -141,11 +140,9 @@ function caption(face: FoundFace): string {
         >
           <img :src="face.thumbnail" alt="" />
           <span v-if="selectedSet.has(face.id)" class="face-check" aria-hidden="true">✓</span>
-          <Tag
-            class="face-quality"
-            :severity="QUALITY_SEVERITY[qualityLevel(face.quality)]"
-            :value="QUALITY_LABEL[qualityLevel(face.quality)]"
-          />
+          <span class="face-quality" :class="`face-quality--${qualityLevel(face.quality)}`" aria-hidden="true">
+            {{ QUALITY_LABEL[qualityLevel(face.quality)] }}
+          </span>
           <span class="face-caption">{{ caption(face) }}</span>
           <span v-if="face.match && face.match.name !== group.match" class="face-caption face-match">
             Recognized as {{ face.match.name }}
@@ -257,11 +254,42 @@ function caption(face: FoundFace): string {
   font-size: 0.8rem;
 }
 
+/* Solid, like the clip tiles' status pill: it sits on a photo, which no
+   translucent theme colour can be relied on to contrast with. The dot
+   carries the level; the word says it. */
 .face-quality {
   position: absolute;
   top: 0.35rem;
   left: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
   font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.face-quality::before {
+  content: '';
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--dot);
+}
+
+.face-quality--good {
+  --dot: #22c55e;
+}
+
+.face-quality--fair {
+  --dot: #60a5fa;
+}
+
+.face-quality--low {
+  --dot: #f5a524;
 }
 
 .face-caption {

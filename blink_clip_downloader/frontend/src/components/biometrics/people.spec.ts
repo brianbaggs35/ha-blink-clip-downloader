@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { FaceEnrollment } from '../../api/types'
-import { groupPeople, initials, isLegacyPhoto, isResolutionMismatch, photoProblems } from './people'
+import { groupPeople, initials, isLegacyPhoto, isResolutionMismatch, photoProblems, photoSource } from './people'
 
 function photo(overrides: Partial<FaceEnrollment> = {}): FaceEnrollment {
   return {
@@ -10,6 +10,7 @@ function photo(overrides: Partial<FaceEnrollment> = {}): FaceEnrollment {
     approved: true,
     has_thumbnail: true,
     frame_width: 640,
+    camera: 'Front Door',
     warning: null,
     ...overrides,
   }
@@ -59,6 +60,26 @@ describe('groupPeople', () => {
     expect(person.onlyLegacy).toBe(false)
   })
 
+  it('counts photos by where they came from: cameras most first, uploads last', () => {
+    const [person] = groupPeople(
+      [
+        photo({ id: 1, camera: 'Front Door' }),
+        photo({ id: 2, frame_width: null, camera: null }),
+        photo({ id: 3, camera: 'Driveway' }),
+        photo({ id: 4, camera: 'Backyard' }),
+        photo({ id: 5, camera: 'Driveway' }),
+        photo({ id: 6, has_thumbnail: false, frame_width: null, camera: null }),
+      ],
+      640,
+    )
+    expect(person.sources).toEqual([
+      { source: { kind: 'camera', camera: 'Driveway' }, count: 2 },
+      { source: { kind: 'camera', camera: 'Backyard' }, count: 1 },
+      { source: { kind: 'camera', camera: 'Front Door' }, count: 1 },
+      { source: { kind: 'upload' }, count: 1 },
+    ])
+  })
+
   it('knows when every photo predates stored thumbnails', () => {
     const [person] = groupPeople([photo({ has_thumbnail: false, frame_width: null })], 640)
     expect(person.onlyLegacy).toBe(true)
@@ -71,6 +92,14 @@ describe('photo checks', () => {
     expect(isResolutionMismatch(photo({ frame_width: 960 }), 640)).toBe(true)
     expect(isResolutionMismatch(photo({ frame_width: 640 }), 640)).toBe(false)
     expect(isResolutionMismatch(photo({ frame_width: null }), 640)).toBe(false)
+  })
+
+  it('says where a photo came from, when that was recorded', () => {
+    expect(photoSource(photo({ camera: 'Driveway' }))).toEqual({ kind: 'camera', camera: 'Driveway' })
+    expect(photoSource(photo({ camera: null, frame_width: null }))).toEqual({ kind: 'upload' })
+    expect(photoSource(photo({ camera: null, has_thumbnail: false, frame_width: null }))).toBeNull()
+    // From a clip, before its camera was recorded: not an upload.
+    expect(photoSource(photo({ camera: null }))).toBeNull()
   })
 
   it('recognizes a photo from before thumbnails were kept', () => {

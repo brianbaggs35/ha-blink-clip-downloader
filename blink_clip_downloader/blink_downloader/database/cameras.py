@@ -328,6 +328,7 @@ class CameraStateMixin(_DatabaseBase):
             "gdrive_upload_queue",
             "analysis_feedback",
             "face_recognition_feedback",
+            "face_enrollments",
             "battery_history",
             "security_events",
         ):

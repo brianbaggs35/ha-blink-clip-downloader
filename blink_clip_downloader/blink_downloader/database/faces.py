@@ -141,6 +141,7 @@ class FaceEnrollmentsMixin(_DatabaseBase):
         approved: bool = True,
         thumbnail: bytes | None = None,
         frame_width: int | None = None,
+        camera: str | None = None,
     ) -> int:
         """Store one enrolled photo's face embedding. Returns its id.
 
@@ -153,15 +154,16 @@ class FaceEnrollmentsMixin(_DatabaseBase):
         *thumbnail* is the small JPEG of the face the Biometrics tab shows;
         *frame_width* the width of the clip frame it was captured from
         (``None`` for an uploaded photo), which the tab compares against the
-        width recognition currently matches at.
+        width recognition currently matches at; *camera* the camera whose
+        clip it came from (``None`` for an uploaded photo).
         """
         if self._pool is None:
             return 0
         new_id = await self._pool.fetchval(
             _qm(
                 "INSERT INTO face_enrollments "
-                "(name, embedding, created_at, approved, thumbnail, frame_width) "
-                "VALUES (?, ?, ?, ?, ?, ?) RETURNING id"
+                "(name, embedding, created_at, approved, thumbnail, frame_width, "
+                "camera) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id"
             ),
             name,
             json.dumps(embedding),
@@ -169,6 +171,7 @@ class FaceEnrollmentsMixin(_DatabaseBase):
             approved,
             thumbnail,
             frame_width,
+            camera,
         )
         return new_id or 0
 
@@ -198,7 +201,7 @@ class FaceEnrollmentsMixin(_DatabaseBase):
         if self._pool is None:
             return []
         rows = await self._pool.fetch(
-            "SELECT id, name, embedding, created_at, approved, frame_width, "
+            "SELECT id, name, embedding, created_at, approved, frame_width, camera, "
             "thumbnail IS NOT NULL AS has_thumbnail "
             "FROM face_enrollments ORDER BY name, id"
         )

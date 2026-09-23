@@ -62,6 +62,12 @@ const progress = ref({ done: 0, total: 0 })
 let alive = true
 
 const unscanned = computed(() => listed.value.clips.filter((clip) => !scans.value[clip.id]))
+// While a run is going, what is left is queued rather than scanned.
+const scanAllLabel = computed(() => {
+  const count = unscanned.value.length
+  if (count) return `Find faces in ${count} clip${count === 1 ? '' : 's'}`
+  return running.value ? 'Scanning…' : 'All shown clips scanned'
+})
 
 async function loadCameras() {
   try {
@@ -221,11 +227,7 @@ defineExpose({ scan })
         class="scan-all-btn"
         size="small"
         icon="pi pi-search"
-        :label="
-          unscanned.length
-            ? `Find faces in ${unscanned.length} clip${unscanned.length === 1 ? '' : 's'}`
-            : 'All shown clips scanned'
-        "
+        :label="scanAllLabel"
         :disabled="!props.available || !unscanned.length"
         @click="scan(unscanned)"
       />
@@ -358,7 +360,7 @@ defineExpose({ scan })
 
 .clip-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(140px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(120px, 100%), 1fr));
   gap: 0.6rem;
 }
 

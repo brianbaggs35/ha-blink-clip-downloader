@@ -70,7 +70,9 @@ tab now does the looking:
 - **Grouped by person.** Faces from every clip scanned so far are grouped
   by who they look like, so "select all" on a group picks one person's faces
   from across several clips. A face analysis would already recognize is
-  labelled **Already recognized as …**, with a one-click **Add to …**.
+  labelled **Already recognized as …**, with a one-click **Add to …** — and
+  the label keeps up as you enroll, rename or remove people, rather than
+  describing whoever was enrolled when the clip was scanned.
 - **Rated for quality.** Each face is rated Good, Fair or Low quality from
   its sharpness, size and how squarely it faces the camera. Low-quality
   faces are hidden until you ask: a blurred face 40 pixels wide was
@@ -81,8 +83,21 @@ tab now does the looking:
   found more than one face, and a single-person portrait was measured
   producing three (the real one plus two patches of background). Phone
   photos are straightened and shrunk in the browser before upload.
-- **See who is enrolled.** Each person now shows the faces they were
-  enrolled with, and a **Photos** list where individual photos can be
+- **Add photos to someone already enrolled, from every camera.** A person's
+  **Add photos** points the finder at them and keeps it there until you
+  click **Done**: scan the Driveway and add their faces, switch to the Front
+  Door and add more, upload a photo — each goes to the same person without
+  retyping their name. Typing a name that differs only in capitals (`brian`
+  for Brian) adds to the existing person instead of quietly starting a
+  second one. It is worth doing: measured over 40 people, one face was
+  recognized 56% of the time with one photo enrolled, 68% with two and 75%
+  with three; and photos from a second camera raised recognition on *that*
+  camera more than the same number from the first did (3 from each camera:
+  80% and 67%). More photos never caused a wrong match — no stranger out of
+  298 matched anyone, at any number of photos.
+- **See who is enrolled, and from where.** Each person now shows the faces
+  they were enrolled with, which cameras their photos came from (and how
+  many from each), and a **Photos** list where individual photos can be
   removed. It flags any photo that doesn't resemble the person's others —
   usually someone else filed under their name, the one enrollment mistake
   that could later let a stranger clear an alert — or that also looks like a

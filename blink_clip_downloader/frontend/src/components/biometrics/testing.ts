@@ -66,6 +66,7 @@ export function enrollment(overrides: Partial<FaceEnrollment> = {}): FaceEnrollm
     approved: true,
     has_thumbnail: true,
     frame_width: 640,
+    camera: 'Front Door',
     warning: null,
     ...overrides,
   }

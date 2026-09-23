@@ -61,9 +61,10 @@ test('lists enrolled people with their approval, photo counts and anything to re
   await expect(alex.getByText('Partially approved')).toBeVisible()
   await expect(alex.getByText('2 photos')).toBeVisible()
   // Seeded as if by an earlier version: no stored image, so initials, and a
-  // nudge to add fresh photos rather than a warning.
-  await expect(alex.getByText('Enrolled with an earlier version')).toBeVisible()
+  // nudge to add fresh photos rather than a warning — said once for the page.
+  await expect(alex.getByText('Earlier version')).toBeVisible()
   await expect(alex.getByText(/to review/)).toHaveCount(0)
+  await expect(page.getByText(/people were enrolled with an earlier version/)).toBeVisible()
 
   const jordan = personCard(page, 'Jordan E2E')
   await expect(jordan.getByText('Approved', { exact: true })).toBeVisible()
@@ -139,9 +140,37 @@ test('recognizes someone already enrolled, and adds more photos to them in one s
   const bar = page.locator('.enroll-bar')
   await expect(bar).toContainText('Adds to Morgan E2E, who stays approved')
   await expect(page.locator('#biometrics-approve-new')).toHaveCount(0)
-  await bar.getByRole('button', { name: 'Enroll as Morgan E2E' }).click()
-  await expect(page.getByText('Enrolled 1 photo of Morgan E2E')).toBeVisible()
-  await expect(personCard(page, 'Morgan E2E').getByText('2 photos')).toBeVisible()
+  await bar.getByRole('button', { name: 'Add 1 photo to Morgan E2E' }).click()
+  await expect(page.getByText('Added 1 photo to Morgan E2E')).toBeVisible()
+  const morgan = personCard(page, 'Morgan E2E')
+  await expect(morgan.getByText('2 photos')).toBeVisible()
+  // Each photo remembers where it came from: the clip's camera, and the upload.
+  await expect(morgan.locator('.person-sources li')).toHaveText(['Test Scratch 1', 'Uploaded 1'])
+})
+
+test("adds photos to someone from their card, and keeps adding until they're done", async ({ page }) => {
+  const morgan = personCard(page, 'Morgan E2E')
+  await morgan.getByRole('button', { name: 'Add photos' }).click()
+  const adding = page.locator('.adding-for')
+  await expect(adding).toContainText('Adding photos of Morgan E2E')
+
+  await chooseCamera(page, 'Test Scratch')
+  await page.locator('.clip-tile').click()
+  await page.locator('.face-group', { hasText: 'Already recognized as Morgan E2E' }).locator('.face-tile').click()
+  const bar = page.locator('.enroll-bar')
+  await bar.getByRole('button', { name: 'Add 1 photo to Morgan E2E' }).click()
+  await expect(page.getByText('Added 1 photo to Morgan E2E')).toBeVisible()
+  await expect(morgan.getByText('3 photos')).toBeVisible()
+  await expect(morgan.locator('.person-sources li')).toHaveText(['Test Scratch 2', 'Uploaded 1'])
+
+  // Still adding to Morgan: the next face picked is already addressed to them.
+  await expect(adding).toBeVisible()
+  await page.locator('.face-group').first().locator('.face-tile').first().click()
+  await expect(bar.getByRole('button', { name: 'Add 1 photo to Morgan E2E' })).toBeVisible()
+  await adding.getByRole('button', { name: 'Done' }).click()
+  await expect(adding).toBeHidden()
+  await expect(bar.getByRole('button', { name: 'Enroll', exact: true })).toBeVisible()
+  await bar.getByRole('button', { name: 'Clear selection' }).click()
 })
 
 test('warns before filing a recognized face under someone else', async ({ page }) => {
@@ -159,13 +188,14 @@ test('removes one photo of a person, keeping the rest', async ({ page }) => {
   const morgan = personCard(page, 'Morgan E2E')
   await morgan.getByRole('button', { name: 'Photos', exact: true }).click()
   const dialog = page.locator('.person-photos-dialog')
-  await expect(dialog.locator('.photo-item')).toHaveCount(2)
+  await expect(dialog.locator('.photo-item')).toHaveCount(3)
+  await expect(dialog.locator('.photo-origin')).toHaveText(['From Test Scratch', 'Uploaded photo', 'From Test Scratch'])
   await dialog.getByRole('button', { name: 'Remove photo' }).first().click()
   await expect(page.getByText('Remove this photo of Morgan E2E?')).toBeVisible()
   await page.getByRole('button', { name: 'Confirm' }).click()
   await expect(page.getByText('Photo removed')).toBeVisible()
-  await expect(dialog.locator('.photo-item')).toHaveCount(1)
-  await expect(morgan.getByText('1 photo', { exact: true })).toBeVisible()
+  await expect(dialog.locator('.photo-item')).toHaveCount(2)
+  await expect(morgan.getByText('2 photos', { exact: true })).toBeVisible()
 })
 
 test("toggling a person's approval switch flips their badge", async ({ page }) => {

@@ -1154,7 +1154,16 @@ the tab says so if either is missing. Enrolling is pick-from-what-was-found:
 
 Pick the faces that are the person, type their name (existing people are
 suggested), and enroll. Adding photos to someone already enrolled keeps
-their current approval. If a picked face is already recognized as someone
+their current approval. A person's **Add photos** button keeps the finder
+on them until you click **Done**, so faces from one camera, then another,
+then an uploaded photo all go to the same person — and their card shows
+which cameras their photos came from. Add a few from **each** camera they
+are seen on: recognition compares a face against every photo and keeps the
+closest, and a photo from the same camera — same angle, same light — is
+usually the closest. Measured over 40 people, a single face was recognized
+56% of the time with one photo enrolled and 75% with three, and photos from
+a second camera helped that camera more than extra ones from the first;
+more photos never caused a wrong match. If a picked face is already recognized as someone
 *else*, the tab warns you before you file it under another name, since that
 is how recognition learns to confuse two people. Near-duplicate copies of
 the same event — a clip and its backup to the Sync Module's USB drive — are

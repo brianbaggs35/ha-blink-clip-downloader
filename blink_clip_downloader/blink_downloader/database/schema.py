@@ -261,7 +261,10 @@ CREATE INDEX IF NOT EXISTS idx_feedback_clip   ON analysis_feedback (clip_id);
 -- stored the embedding. frame_width is the width of the clip frame the face
 -- was captured from (NULL for an uploaded photo, and before 6.0.7): a face
 -- enrolled at one size matches poorly at another, so the tab flags a photo
--- whose width no longer matches ai_face_recognition_resolution.
+-- whose width no longer matches ai_face_recognition_resolution. camera is
+-- the camera whose clip it came from (NULL for an uploaded photo, and
+-- before 6.0.7), so a person's photos can be seen to cover each camera they
+-- are recognized on; a camera rename carries it like every other table's.
 CREATE TABLE IF NOT EXISTS face_enrollments (
     id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name       TEXT    NOT NULL,
@@ -269,7 +272,8 @@ CREATE TABLE IF NOT EXISTS face_enrollments (
     created_at TEXT    NOT NULL,
     approved   BOOLEAN NOT NULL DEFAULT TRUE,
     thumbnail  BYTEA,
-    frame_width INTEGER
+    frame_width INTEGER,
+    camera     TEXT
 );
 
 -- Human feedback specifically on face-recognition accuracy, distinct from
@@ -339,6 +343,7 @@ _MIGRATIONS = """
 ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS thumbnail BYTEA;
 ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS frame_width INTEGER;
+ALTER TABLE face_enrollments ADD COLUMN IF NOT EXISTS camera TEXT;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_applied BOOLEAN DEFAULT FALSE;
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS face_bypass_names TEXT DEFAULT '';
 ALTER TABLE analysis_results ADD COLUMN IF NOT EXISTS approved_faces_seen BOOLEAN DEFAULT FALSE;

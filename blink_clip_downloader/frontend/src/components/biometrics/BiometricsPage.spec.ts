@@ -12,12 +12,13 @@ import { deferred, enrollment, errorResponse, jsonResponse } from './testing'
 
 const addPhotosFor = vi.fn()
 const scanClip = vi.fn()
+const reveal = vi.fn()
 const FinderStub = defineComponent({
   name: 'FaceFinder',
   props: { available: Boolean, people: { type: Array, default: () => [] } },
   emits: ['enrolled'],
   setup(_, { expose }) {
-    expose({ addPhotosFor, scanClip })
+    expose({ addPhotosFor, scanClip, reveal })
     return {}
   },
   template: '<div class="finder-stub" />',
@@ -85,6 +86,7 @@ describe('BiometricsPage', () => {
     setActivePinia(createPinia())
     addPhotosFor.mockReset()
     scanClip.mockReset()
+    reveal.mockReset()
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -110,9 +112,39 @@ describe('BiometricsPage', () => {
   it('invites a first enrollment when nobody is enrolled', async () => {
     stubFetch(() => facesResponse([]))
     const wrapper = await mountPage()
+    // e2e/smoke.mjs waits for exactly this text on an empty install.
     expect(wrapper.text()).toContain('Nobody enrolled yet')
     expect(wrapper.text()).toContain('stays local')
     expect(wrapper.text()).toContain('all-or-nothing')
+    await wrapper.find('.empty-state button').trigger('click')
+    expect(reveal).toHaveBeenCalled()
+  })
+
+  it('cannot start finding faces where recognition cannot run', async () => {
+    stubFetch(() => facesResponse([], { available: false }))
+    const wrapper = await mountPage()
+    expect(wrapper.find('.empty-state button').attributes('disabled')).toBeDefined()
+  })
+
+  it('says once, not on every card, who was enrolled by an earlier version', async () => {
+    const legacy = { has_thumbnail: false, frame_width: null, camera: null }
+    stubFetch(() =>
+      facesResponse([
+        enrollment({ id: 1, name: 'Amy', ...legacy }),
+        enrollment({ id: 2, name: 'Ben', ...legacy }),
+        enrollment({ id: 3, name: 'Cal' }),
+      ]),
+    )
+    let wrapper = await mountPage()
+    expect(wrapper.text()).toContain('2 people were enrolled with an earlier version')
+
+    stubFetch(() => facesResponse([enrollment({ id: 1, name: 'Amy', ...legacy })]))
+    wrapper = await mountPage()
+    expect(wrapper.text()).toContain('1 person was enrolled with an earlier version')
+
+    stubFetch(() => facesResponse(BRIAN))
+    wrapper = await mountPage()
+    expect(wrapper.text()).not.toContain('earlier version')
   })
 
   it('reads naturally for a single person', async () => {
