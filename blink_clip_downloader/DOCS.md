@@ -1200,8 +1200,10 @@ not (or no longer) approved, standing next to an approved family member
 still gets the clip flagged normally. With object detection on
 (`ai_enhanced_detection_enabled`), that
 includes a stranger whose face never shows (back to the camera, hood up):
-if more people are seen together in one frame than approved people were
-recognized, the flag stays. Turn a person's approval off (without
+if more people are confidently seen together in one frame than approved
+people were recognized, the flag stays. That catches most such strangers,
+not all — one who never stands beside the resident, or is too far away or
+dark to detect, still isn't counted. Turn a person's approval off (without
 deleting them) to keep recognizing/labeling someone — e.g. a regular visitor
 — without granting them bypass trust. Enrolled photos and the approved flag
 can be managed per person (rename, approve/un-approve, or remove every photo

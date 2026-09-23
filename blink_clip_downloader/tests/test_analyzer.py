@@ -5788,17 +5788,21 @@ def test_face_bypass_does_not_apply_no_vision_hints() -> None:
 
 
 def _people(*per_frame: int) -> list:
-    """Person detections: *per_frame[i]* people in sampled frame *i*, each
-    its own track, plus a car in every frame that must not count."""
+    """Person detections: *per_frame[i]* people standing apart in sampled
+    frame *i*, each its own track, plus a car in every frame that must not
+    count."""
     from blink_downloader.vision import DetectedObject
 
     boxes = []
     track = 0
     for frame, count in enumerate(per_frame):
-        boxes.append(DetectedObject("car", 0.9, (0, 0, 9, 9), 99, frame))
-        for _ in range(count):
+        boxes.append(DetectedObject("car", 0.9, (0, 200, 90, 260), 99, frame))
+        for i in range(count):
             track += 1
-            boxes.append(DetectedObject("person", 0.8, (0, 0, 9, 9), track, frame))
+            x = 100.0 * i
+            boxes.append(
+                DetectedObject("person", 0.8, (x, 0, x + 40, 120), track, frame)
+            )
     return boxes
 
 
@@ -5843,6 +5847,52 @@ def test_face_bypass_is_not_withheld_for_one_person_tracked_as_several() -> None
     )
     assert ClipAnalyzer._face_bypass_applies(hints) is True
     assert ClipAnalyzer._personalization_names(hints) == ["Brian"]
+
+
+def test_face_bypass_is_not_withheld_for_one_person_boxed_twice() -> None:
+    """The detector's commonest way of seeing two people where there is
+    one: a second, weaker box on the same body (the upper half inside the
+    whole). Measured, most of the lone residents it miscounted were this."""
+    from blink_downloader.vision import DetectedObject
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Brian"]),
+        detections=[
+            DetectedObject("person", 0.79, (128, 108, 181, 223), 2, 0),
+            DetectedObject("person", 0.6, (144, 109, 181, 223), 3, 0),
+        ],
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is True
+
+
+def test_face_bypass_is_not_withheld_for_a_low_confidence_shape() -> None:
+    """A second "person" under 0.5 was, measured, a shape (an elephant's
+    trunk, a patch of shadow) far more often than a person."""
+    from blink_downloader.vision import DetectedObject
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Brian"]),
+        detections=[
+            DetectedObject("person", 0.73, (367, 264, 465, 358), 2, 0),
+            DetectedObject("person", 0.49, (67, 256, 120, 360), 3, 0),
+        ],
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is True
+
+
+def test_face_bypass_is_withheld_for_someone_standing_close_but_apart() -> None:
+    """Beside, not inside: two people shoulder to shoulder overlap a little,
+    which is not the same person boxed twice."""
+    from blink_downloader.vision import DetectedObject
+
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Brian"]),
+        detections=[
+            DetectedObject("person", 0.8, (100, 0, 160, 200), 1, 0),
+            DetectedObject("person", 0.7, (145, 0, 205, 200), 2, 0),
+        ],
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is False
 
 
 def test_face_bypass_without_object_detection_rests_on_faces_alone() -> None:
