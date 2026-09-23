@@ -157,9 +157,12 @@ tab points out photos captured at the old resolution.
   fired. The same touch, confirmed by depth estimation and segmentation,
   scored 69 on the far side against 86 on the near one — below the alert
   band. When depth places someone at the car's own distance with their
-  outline over it, they now count as at the car, wherever their feet
-  appear; without depth, or when depth places them elsewhere, nothing
-  changes.
+  outline over it and their feet where the car could be hiding them, they
+  now count as at the car. Feet in plain view in front of the car are
+  still measured as they are — depth reads a passer-by overlapping a car
+  in the image as "similar" more often than not, so it is not allowed to
+  overrule a gap the camera can see. Without depth, or when depth places
+  them elsewhere, nothing changes.
 - **With two people in view, the checks that confirm a touch could examine
   the wrong one.** Depth estimation and contact segmentation look at one
   person per clip, chosen as whoever's outline overlapped the car most in

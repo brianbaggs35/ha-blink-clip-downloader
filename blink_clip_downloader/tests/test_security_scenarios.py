@@ -499,6 +499,22 @@ SCENARIOS: list[Scenario] = [
         },
     ),
     Scenario(
+        name="a passer-by five feet in front of the car, depth wrongly similar",
+        # What the far-side rule must not reach: their feet are in plain
+        # view in front of the car's ground line, and depth calls someone
+        # overlapping a car in the image "similar" more often than not.
+        # Letting that override the visible gap put them "within 1 ft" of
+        # the car and forced a critical alert.
+        detections=_walk(1, [_person_at(x, height=155, ground=330) for x in _PASS])
+        + _parked(2, MY_CAR, 6),
+        frame_count=6,
+        is_night=True,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=UP_TO_SUSPICIOUS,
+        forbid_events={SecurityEventType.ASSET_PROXIMITY},
+    ),
+    Scenario(
         name="someone passes behind the car, depth says further away",
         detections=_walk(
             1,
