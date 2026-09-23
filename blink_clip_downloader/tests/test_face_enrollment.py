@@ -61,7 +61,8 @@ def test_store_keeps_where_a_face_came_from() -> None:
     store = FaceCandidateStore()
     from_clip = store.get(store.add([0.1], b"", 0.5, 640, "Driveway"))
     uploaded = store.get(store.add([0.1], b"", 0.5))
-    assert from_clip is not None and uploaded is not None
+    assert from_clip is not None
+    assert uploaded is not None
     assert (from_clip.frame_width, from_clip.camera) == (640, "Driveway")
     assert (uploaded.frame_width, uploaded.camera) == (None, None)
 
