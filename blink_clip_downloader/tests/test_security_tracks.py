@@ -317,34 +317,54 @@ def test_direction(boxes: list[Box], expected: str) -> None:
     assert _track(boxes).direction == expected
 
 
+#: A car the tracks below walk up to, rush at, or leave.
+_TARGET: Box = (290.0, 0.0, 400.0, 40.0)
+
+
 def test_max_speed_increase_detects_a_sudden_rush() -> None:
     steady = _track([(0, 0, 10, 10), (64, 0, 74, 10), (128, 0, 138, 10)])
     lurching = _track([(0, 0, 10, 10), (10, 0, 20, 10), (300, 0, 310, 10)])
-    assert steady.max_speed_increase == pytest.approx(0.0)
-    assert lurching.max_speed_increase > steady.max_speed_increase
+    assert steady.max_speed_increase_at(_TARGET) == pytest.approx(0.0)
+    # Well over the detector's abrupt_speed_change (0.12 widths/second).
+    assert lurching.max_speed_increase_at(_TARGET) > 0.2
+
+
+def test_max_speed_increase_counts_bolting_away_from_the_target() -> None:
+    bolting = _track([(300, 0, 310, 10), (302, 0, 312, 10), (620, 0, 630, 10)])
+    assert bolting.max_speed_increase_at(_TARGET) > 0.2
+
+
+def test_max_speed_increase_ignores_setting_off_away_from_the_target() -> None:
+    """A resident standing at their door, then walking to their car at a
+    normal pace, goes from nothing to walking speed — a large increase, but
+    nowhere near the car, and not what rushing at it means."""
+    doorstep = [(20, 0, 30, 10), (20, 0, 30, 10), (110, 0, 120, 10), (200, 0, 210, 10)]
+    walks_on = _track([*doorstep, (290, 0, 300, 10), (295, 0, 305, 10)])
+    assert walks_on.max_speed_increase_at(_TARGET) == pytest.approx(0.0)
 
 
 def test_max_speed_increase_ignores_slowing_down() -> None:
     """Everyone slows to a stop on reaching a car; only speeding up is
     unusual enough to mean anything."""
     stopping = _track([(0, 0, 10, 10), (300, 0, 310, 10), (302, 0, 312, 10)])
-    assert stopping.max_speed_increase == pytest.approx(0.0)
+    assert stopping.max_speed_increase_at(_TARGET) == pytest.approx(0.0)
 
 
 def test_max_speed_increase_needs_three_sightings() -> None:
-    assert _track([(0, 0, 10, 10), (200, 0, 210, 10)]).max_speed_increase == 0.0
+    two = _track([(0, 0, 10, 10), (300, 0, 310, 10)])
+    assert two.max_speed_increase_at(_TARGET) == 0.0
 
 
 def test_max_speed_increase_zero_width_frame() -> None:
     track = _track([(0, 0, 10, 10)] * 3, frame_size=(0.0, 360.0))
-    assert track.max_speed_increase == 0.0
+    assert track.max_speed_increase_at(_TARGET) == 0.0
 
 
 def test_max_speed_increase_ignores_duplicate_offsets() -> None:
     """Two sightings in the same frame give no time to divide by, so they
     contribute no leg rather than an infinite speed."""
-    track = _track([(0, 0, 10, 10)] * 3, frames=[0, 0, 1])
-    assert track.max_speed_increase == 0.0
+    track = _track([(300, 0, 310, 10)] * 3, frames=[0, 0, 1])
+    assert track.max_speed_increase_at(_TARGET) == 0.0
 
 
 # ----------------------------------------------------------------------

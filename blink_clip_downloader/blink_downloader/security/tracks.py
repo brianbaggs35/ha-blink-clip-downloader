@@ -292,30 +292,45 @@ class ObjectTrack:
             )
         return "moving down the frame" if dy > 0 else "moving up the frame"
 
-    @property
-    def max_speed_increase(self) -> float:
-        """Largest *acceleration* between consecutive legs, in widths/second.
+    def max_speed_increase_at(self, target: Box) -> float:
+        """Largest *acceleration* between consecutive legs, in widths/second,
+        counting only a change of speed at *target* — on a leg arriving at
+        it or leaving it (a sighting whose outline meets it).
 
         Deliberately one-directional. Slowing to a stop is what everyone
         does on reaching a car, a door, or a gate, so treating any large
         speed *change* as "something sudden happened" would flag every
         ordinary arrival. A sharp acceleration is the unusual half: rushing
-        at something, or bolting away from it. Zero for tracks with too few
-        sightings to have two legs to compare.
+        at something, or bolting away from it.
+
+        And only at the target, because that is what "rushing at it" and
+        "bolting from it" mean. Measured anywhere, a resident who stood at
+        their front door and then set off for their car counted as
+        accelerating sharply — from nothing to walking pace, metres from the
+        car — and touching the car then read as a possible impact: a forced
+        alert, and their face-recognition bypass withheld. Zero for tracks
+        with too few sightings to have two legs to compare.
         """
         width = self.frame_size[0]
         if width <= 0 or len(self.points) < 3:
             return 0.0
-        speeds: list[float] = []
+        at_target = [box_gap(p.box, target) <= 0 for p in self.points]
+        # One speed per leg (sighting k to k+1); None where time stood still.
+        legs: list[float | None] = []
         for a, b in pairwise(self.points):
             dt = b.offset - a.offset
-            if dt <= 0:
-                continue
             (x1, y1), (x2, y2) = box_center(a.box), box_center(b.box)
-            speeds.append(math.hypot(x2 - x1, y2 - y1) / width / dt)
-        if len(speeds) < 2:
-            return 0.0
-        return max(max(b - a, 0.0) for a, b in pairwise(speeds))
+            legs.append(math.hypot(x2 - x1, y2 - y1) / width / dt if dt > 0 else None)
+        best = 0.0
+        # The change of speed at sighting k is between the leg arriving
+        # there and the leg leaving; it involves sightings k-1, k and k+1.
+        for k in range(1, len(legs)):
+            before, after = legs[k - 1], legs[k]
+            if before is None or after is None:
+                continue
+            if at_target[k - 1] or at_target[k] or at_target[k + 1]:
+                best = max(best, after - before)
+        return best
 
     # -- relationships to a fixed target -------------------------------
 

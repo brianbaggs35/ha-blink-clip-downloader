@@ -807,7 +807,10 @@ class SecurityEventDetector:
         """
         if track.label != PERSON_LABEL:
             return None
-        speed_increase = track.max_speed_increase
+        # _asset_events only reaches here for an asset with a box: contact
+        # was measured against it.
+        assert asset.box is not None
+        speed_increase = track.max_speed_increase_at(asset.box)
         change = ctx.appearance_change
         # None of the three signals below is worth anything unless the
         # contact under it is itself well evidenced. Bare box overlap plus a

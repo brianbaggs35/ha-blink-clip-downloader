@@ -114,11 +114,14 @@ class Scenario:
     #: Highest severity any single event is allowed to claim. Used to pin
     #: that an unconfirmed claim stays unconfirmed.
     max_event_severity: Severity | None = None
+    #: Seconds between sampled frames. The temporal scan's is the clip's
+    #: length over ai_temporal_scan_frames — about 1s for a typical clip.
+    frame_interval: float = 2.0
 
 
 def _run(scenario: Scenario) -> tuple[RiskAssessment, set[SecurityEventType]]:
     """Run one scenario through the whole deterministic pipeline."""
-    tracks = build_tracks(scenario.detections, 2.0, FRAME)
+    tracks = build_tracks(scenario.detections, scenario.frame_interval, FRAME)
     asset = resolve_vehicle_asset(
         "Driveway", scenario.car_description, tracks, FRAME, zone=scenario.zone
     )
@@ -126,14 +129,14 @@ def _run(scenario: Scenario) -> tuple[RiskAssessment, set[SecurityEventType]]:
         scenario.frame_count,
         scenario.frame_count,
         tracks,
-        2.0,
+        scenario.frame_interval,
         scenario.unavailable_sources,
     )
     events = SecurityEventDetector().detect(
         DetectionContext(
             camera="Driveway",
             tracks=tracks,
-            frame_interval=2.0,
+            frame_interval=scenario.frame_interval,
             frame_count=scenario.frame_count,
             asset=asset,
             depth_similar=scenario.depth_similar,
@@ -225,6 +228,33 @@ SCENARIOS: list[Scenario] = [
         expect_severity=UP_TO_NOTEWORTHY,
         approved_person=True,
         depth_similar=True,
+    ),
+    Scenario(
+        name="a recognized resident steps out of the door and walks to their car",
+        # Standing still, then walking at an ordinary pace, is a large
+        # acceleration — but at the doorstep, not the car. Measured anywhere,
+        # it read as rushing the car: a possible impact, which forces an
+        # alert and withholds this resident's face-recognition bypass.
+        detections=_walk(1, [_person_at(x) for x in (20, 20, 110, 200, 240, 250, 250)])
+        + _parked(2, MY_CAR, 7),
+        frame_count=7,
+        frame_interval=1.0,
+        approved_person=True,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=UP_TO_NOTEWORTHY,
+        forbid_events={SecurityEventType.IMPACT_CANDIDATE},
+    ),
+    Scenario(
+        name="someone rushes the car from standing still",
+        detections=_walk(1, [_person_at(x) for x in (20, 20, 300, 300, 300)])
+        + _parked(2, MY_CAR, 5),
+        frame_count=5,
+        frame_interval=1.0,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=(Severity.CRITICAL, Severity.CRITICAL),
+        expect_events={SecurityEventType.IMPACT_CANDIDATE},
     ),
     Scenario(
         name="a neighbour returns to the car parked beside ours",
