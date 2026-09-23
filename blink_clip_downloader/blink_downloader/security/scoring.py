@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .detector import _CONFIRMED_CONTACT_CONFIDENCE
 from .events import (
     AUDIO_EVENTS,
     SecurityEvent,
@@ -121,11 +120,11 @@ OTHER_VEHICLE_POINTS = -15.0
 #: evidence discounts a conclusion without discarding it.
 _EVIDENCE_FLOOR = 0.55
 
-#: Events that rest on a claim of contact with the asset. Below
-#: :data:`.detector._CONFIRMED_CONTACT_CONFIDENCE` that claim is a bare 2D
-#: overlap — which a person or dog walking in front of the car produces in
-#: every frame — and the "retreat after contact" built on it inherits the
-#: same confidence.
+#: Events that rest on a claim of contact with the asset. Unless depth or
+#: segmentation backed it — the ``confirmed`` flag in the event's evidence —
+#: that claim is a bare 2D overlap, which a person or dog walking in front
+#: of the car produces in every frame; the "retreat after contact" built on
+#: it carries the same flag.
 _CONTACT_EVENTS: frozenset[SecurityEventType] = frozenset(
     {
         SecurityEventType.CONTACT_CANDIDATE,
@@ -282,7 +281,7 @@ class RiskScorer:
             f.points
             for e, f in scored
             if e.event_type in _CONTACT_EVENTS
-            and e.confidence < _CONFIRMED_CONTACT_CONFIDENCE
+            and e.evidence.get("confirmed") is not True
         )
 
         if ctx.is_night:

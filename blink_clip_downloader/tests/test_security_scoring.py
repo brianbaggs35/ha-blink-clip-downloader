@@ -22,12 +22,14 @@ def _event(
     event_type: SecurityEventType,
     severity: Severity = Severity.NOTEWORTHY,
     confidence: float = 1.0,
+    evidence: dict[str, object] | None = None,
 ) -> SecurityEvent:
     return SecurityEvent(
         event_type=event_type,
         severity=severity,
         confidence=confidence,
         detail=f"{event_type} happened",
+        evidence=dict(evidence or {}),
     )
 
 
@@ -234,6 +236,8 @@ _WALK_PAST = [
     _event(SecurityEventType.RETREAT_AFTER_CONTACT, confidence=0.45),
 ]
 
+_CONFIRMED = {"confirmed": True}
+
 
 def test_an_unconfirmed_contact_cannot_lift_a_clip_into_the_alert_band() -> None:
     assessment = RiskScorer().score(_WALK_PAST, 1.0, ScoringContext(is_night=True))
@@ -250,11 +254,40 @@ def test_a_confirmed_contact_is_not_held_back() -> None:
     confirmed = [
         *_WALK_PAST[:3],
         _event(
-            SecurityEventType.CONTACT_CANDIDATE, Severity.SUSPICIOUS, confidence=0.8
+            SecurityEventType.CONTACT_CANDIDATE, Severity.SUSPICIOUS, 0.8, _CONFIRMED
         ),
-        _event(SecurityEventType.RETREAT_AFTER_CONTACT, Severity.SUSPICIOUS, 0.6),
+        _event(
+            SecurityEventType.RETREAT_AFTER_CONTACT,
+            Severity.SUSPICIOUS,
+            0.6,
+            _CONFIRMED,
+        ),
     ]
     assessment = RiskScorer().score(confirmed, 1.0, ScoringContext(is_night=True))
+    assert assessment.score >= 75.0
+    assert "unconfirmed_contact" not in [f.name for f in assessment.factors]
+
+
+def test_a_confirmed_contact_on_an_uncertainly_identified_car_is_not_held_back() -> (
+    None
+):
+    """An uncertain identification of which car is protected — one car in
+    frame and no zone drawn — scales every event's confidence down, to 0.48
+    for a contact depth and segmentation both confirmed. That says nothing
+    about the contact itself, so it must not read as a bare overlap."""
+    scaled = [
+        *_WALK_PAST[:3],
+        _event(
+            SecurityEventType.CONTACT_CANDIDATE, Severity.SUSPICIOUS, 0.48, _CONFIRMED
+        ),
+        _event(
+            SecurityEventType.RETREAT_AFTER_CONTACT,
+            Severity.SUSPICIOUS,
+            0.36,
+            _CONFIRMED,
+        ),
+    ]
+    assessment = RiskScorer().score(scaled, 1.0, ScoringContext(is_night=True))
     assert assessment.score >= 75.0
     assert "unconfirmed_contact" not in [f.name for f in assessment.factors]
 
