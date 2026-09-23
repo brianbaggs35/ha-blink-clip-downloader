@@ -2210,7 +2210,9 @@ async def test_face_quality_prefers_big_sharp_faces(
     _one_face(monkeypatch, [20.0, 20.0, 120.0, 140.0])
     blurry = await FaceEmbedder().detect(_real_jpeg_bytes((300, 300)))
 
-    assert big is not None and tiny is not None and blurry is not None
+    assert big is not None
+    assert tiny is not None
+    assert blurry is not None
     assert big[0].quality > 0.9
     # Under 20px there is too little face to be worth enrolling at all.
     assert tiny[0].quality == 0.0

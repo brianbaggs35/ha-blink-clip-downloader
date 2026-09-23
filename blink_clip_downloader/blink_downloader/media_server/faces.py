@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import logging
 import math
 import unicodedata
@@ -263,7 +262,7 @@ class FaceRoutesMixin(_MediaServerBase):
             image_b64 = image_b64.split(",", 1)[1]
         try:
             image = base64.b64decode(image_b64, validate=True)
-        except (binascii.Error, ValueError):
+        except ValueError:  # binascii.Error is a ValueError
             return web.json_response(
                 {"error": "image_base64 is not valid base64"}, status=400
             )
