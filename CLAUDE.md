@@ -651,17 +651,25 @@ adversarial "stays suspicious when a stranger is also present" tests exist
 specifically to catch a regression here.
 
 Since 6.0.7 the identity condition also counts people, not just faces:
-`_unaccounted_people` withholds the bypass when object detection saw more
-people together in **one frame** than there are approved names recognized
-— a stranger with their back to the camera has no face to be
-"unrecognized", so faces alone called that clip "only Brian here". It is
-the per-frame peak on purpose, not distinct track ids: tracking across
-frames sampled seconds apart can split one person into two ids, and
-counting ids would withhold a lone resident's bypass. It sits inside
-`_face_match_is_unambiguous`, so the Library badge and the known-person
-risk discount follow it too, and `_personalization_names` applies the
-same count (the unseen face may be whoever the summary describes). With
-detection off it counts 0 and the old faces-only rule stands.
+`_unaccounted_people` withholds the bypass when object detection
+confidently saw more people together in **one frame** than there are
+approved names recognized — a stranger with their back to the camera has
+no face to be "unrecognized", so faces alone called that clip "only Brian
+here". `_people_in_one_frame` is tuned against the opposite mistake, a lone
+resident miscounted as two, which costs them a bypass they should have
+had: it counts only boxes at 0.5+ confidence, and not one mostly inside a
+more confident person box (the same body boxed twice — the commonest
+miscount), and takes the per-frame peak rather than track ids (tracking on
+frames seconds apart splits one person into several). Measured with the
+real detector on 100 real one-person scenes: counting every kept box
+miscounted 10 by day and 7 at night; the tuned rule 2 by day (one a man on
+a bus advert) and 0 at night, while still catching the second person in
+66/50 of 100 real two-person scenes. Re-measure before changing either
+constant. It sits inside `_face_match_is_unambiguous`, so the Library badge
+and the known-person risk discount follow it too, and
+`_personalization_names` applies the same count (the unseen face may be
+whoever the summary describes). With detection off it counts 0 and the old
+faces-only rule stands.
 
 Since 6.0.0 there is a **second** condition: an event in
 `security.BYPASS_BLOCKING_EVENTS` withholds the bypass even on a clean

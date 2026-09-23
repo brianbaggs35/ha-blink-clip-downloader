@@ -140,12 +140,15 @@ tab points out photos captured at the old resolution.
   back to the camera — or hooded, or too far away for a face — was simply
   not counted, and walking beside a recognized resident cleared their clip.
   When object detection is on, the bypass is now also withheld whenever it
-  saw more people together in one frame than there were approved people
-  recognized, and so is the known-person discount on the risk score and the
-  "Brian walked up…" rewrite of the summary (the person who did it may be
-  the one whose face was not seen). It counts people per frame rather than
-  per tracked identity, so one resident whom tracking splits in two across
-  frames does not lose their bypass.
+  confidently saw more people together in one frame than there were
+  approved people recognized, and so is the known-person discount on the
+  risk score and the "Brian walked up…" rewrite of the summary (the person
+  who did it may be the one whose face was not seen). Measured on 100 real
+  two-person scenes, it catches the second person in 66 by day and 50 at
+  night. It is tuned so a resident alone is almost never miscounted as two
+  — the detector boxing one body twice, or a low-confidence shape, does not
+  count — which on 100 real one-person scenes cost the bypass in 2 by day
+  (one of them a man pictured on a bus advert) and none at night.
 - **People enrolled from a clip were recognized far less often than they
   should have been.** The old picker extracted frames 480px wide while
   recognition matches in 640px ones, and a face enrolled at one size matches
