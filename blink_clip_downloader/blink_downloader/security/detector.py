@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 
 from .assets import ProtectedAsset
 from .events import SecurityEvent, SecurityEventType, Severity, severity_rank
+from .geometry import box_foot_point
 from .tracks import (
     ANIMAL_LABELS,
     CARRYABLE_LABELS,
@@ -358,7 +359,12 @@ class SecurityEventDetector:
         depth_verdict = ctx.depth_similar if cv_applies else None
         if depth_verdict is False:
             near = False
-        elif depth_verdict is True and profile.min_box_gap <= 0 and not near:
+        elif (
+            depth_verdict is True
+            and profile.min_box_gap <= 0
+            and not near
+            and self._feet_could_be_hidden(track, profile, asset)
+        ):
             # On the far side of the car — the driver's door, from a camera
             # facing its passenger side — the car hides the subject's feet,
             # so their box ends mid-car and the foot point reads as metres
@@ -367,6 +373,13 @@ class SecurityEventDetector:
             # feet appear to be. Without it the same confirmed touch scored
             # 69 on the far side against 86 on the near one, below the
             # alert band.
+            #
+            # Only feet the car could be hiding, though. Feet in plain view
+            # in front of it are a measured distance, and depth calls a
+            # passer-by who overlaps the car in the image "similar" more
+            # often than not (10 of 13 real photos) — letting that override
+            # a visible gap put someone walking past five feet in front of
+            # the car "within 1 ft" of it and forced a critical alert.
             min_feet = min(min_feet, self._t.close_feet)
             near = True
 
@@ -444,6 +457,18 @@ class SecurityEventDetector:
         if retreat is not None:
             events.append(retreat)
         return events
+
+    @staticmethod
+    def _feet_could_be_hidden(
+        track: ObjectTrack, profile: ApproachProfile, asset: ProtectedAsset
+    ) -> bool:
+        """Whether the subject's feet, where they overlapped the asset most,
+        were no nearer the camera than its ground line — where the asset
+        itself could be hiding them."""
+        # Only reached for an overlapping outline, so the asset has a box.
+        assert asset.box is not None
+        _, foot_y = box_foot_point(track.points[profile.min_box_gap_index].box)
+        return foot_y <= asset.box[3]
 
     def _zone_event(
         self,
