@@ -115,6 +115,20 @@ describe('PersonCard', () => {
       .trigger('click')
     expect(wrapper.find('form').exists()).toBe(false)
     expect(wrapper.emitted('rename')).toBeUndefined()
+
+    await wrapper.find('button[aria-label="Rename"]').trigger('click')
+    await wrapper.find('form').trigger('keydown', { key: 'Escape' })
+    expect(wrapper.find('form').exists()).toBe(false)
+    expect(wrapper.emitted('rename')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('labels its switch by an id a name with spaces cannot break', async () => {
+    const wrapper = mountCard(photos(1, { name: 'Mary Ann Smith' }))
+    const input = wrapper.find('input[role="switch"]')
+    const id = input.attributes('id')!
+    expect(id).not.toMatch(/\s/)
+    expect(wrapper.find(`label[for="${id}"]`).text()).toBe('Approved for alert bypass')
     wrapper.unmount()
   })
 })

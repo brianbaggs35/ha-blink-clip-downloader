@@ -120,9 +120,10 @@ onUnmounted(() => {
   alive = false
 })
 
-/** Queue *clips* for scanning, skipping any already scanned or queued. */
+/** Queue *clips* for scanning, skipping any already scanned or queued — a
+ * failed one is queued again, which is how a failure is retried. */
 function scan(clips: ClipListItem[]) {
-  const fresh = clips.filter((clip) => !scans.value[clip.id])
+  const fresh = clips.filter((clip) => canScan(clip))
   if (!fresh.length) return
   for (const clip of fresh) scans.value[clip.id] = { status: 'queued', faces: 0 }
   queue.push(...fresh)
@@ -173,6 +174,17 @@ function stop() {
   stopRequested.value = true
 }
 
+function canScan(clip: ClipListItem): boolean {
+  const status = scans.value[clip.id]?.status
+  return status === undefined || status === 'error'
+}
+
+function tileLabel(clip: ClipListItem): string {
+  const label = `${statusText(clip)}: ${clip.camera}, ${clipTime(clip.timestamp)}`
+  const error = scans.value[clip.id]?.error
+  return error ? `${label} — ${error}` : label
+}
+
 function clipTime(ts: string): string {
   return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
@@ -182,7 +194,7 @@ function statusText(clip: ClipListItem): string {
   if (!s) return 'Scan'
   if (s.status === 'queued') return 'Queued'
   if (s.status === 'scanning') return 'Scanning…'
-  if (s.status === 'error') return 'Failed — hover for why'
+  if (s.status === 'error') return 'Failed — tap to retry'
   if (!s.faces) return 'No faces'
   return `${s.faces} face${s.faces === 1 ? '' : 's'}`
 }
@@ -268,9 +280,9 @@ defineExpose({ scan })
           type="button"
           class="clip-tile"
           :class="[`clip-tile--${scans[clip.id]?.status ?? 'new'}`]"
-          :disabled="!props.available || !!scans[clip.id]"
+          :disabled="!props.available || !canScan(clip)"
           :title="scans[clip.id]?.error ?? ''"
-          :aria-label="`${statusText(clip)}: ${clip.camera}, ${clipTime(clip.timestamp)}`"
+          :aria-label="tileLabel(clip)"
           @click="scan([clip])"
         >
           <img
@@ -288,6 +300,8 @@ defineExpose({ scan })
             <span v-if="clip.duration">· {{ fmtDur(clip.duration) }}</span>
             <span v-if="clip.face_recognized" title="Someone enrolled was already recognized in this clip">· 👤</span>
           </span>
+          <!-- On the tile itself, not only in the title: a phone has no hover. -->
+          <span v-if="scans[clip.id]?.error" class="clip-tile-error">{{ scans[clip.id].error }}</span>
         </button>
       </div>
       <div class="scanner-footer">
@@ -419,9 +433,16 @@ defineExpose({ scan })
   background: var(--danger);
 }
 
-.clip-tile--done,
-.clip-tile--error {
+.clip-tile--done {
   opacity: 0.8;
+}
+
+/* The red status pill already says it failed; the reason just has to be
+   readable, which --danger at this size is not on a light tile. */
+.clip-tile-error {
+  padding: 0 0.5rem 0.4rem;
+  font-size: 0.7rem;
+  color: var(--text-dim);
 }
 
 .clip-tile-meta {

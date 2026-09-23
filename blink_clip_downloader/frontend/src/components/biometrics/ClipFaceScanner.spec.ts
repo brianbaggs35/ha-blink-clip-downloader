@@ -261,14 +261,44 @@ describe('ClipFaceScanner', () => {
     await scanAllButton(wrapper).trigger('click')
     await flushPromises()
 
-    expect(tiles(wrapper).every((t) => t.text().includes('Failed — hover for why'))).toBe(true)
-    expect(tiles(wrapper).map((t) => t.attributes('title'))).toEqual([
+    const reasonsShown = [
       "This clip's video file is no longer on disk",
       'This clip is no longer in the library',
       'Face recognition is not available',
       'Scan failed — check your connection and try again',
-    ])
+    ]
+    expect(tiles(wrapper).every((t) => t.text().includes('Failed — tap to retry'))).toBe(true)
+    // On the tile itself as well as in its tooltip: a phone has no hover.
+    expect(tiles(wrapper).map((t) => t.find('.clip-tile-error').text())).toEqual(reasonsShown)
+    expect(tiles(wrapper).map((t) => t.attributes('title'))).toEqual(reasonsShown)
+    expect(tiles(wrapper)[1].attributes('aria-label')).toContain('— This clip is no longer in the library')
     expect(wrapper.emitted('found')).toBeUndefined()
+  })
+
+  it('retries a failed clip when it is picked again', async () => {
+    let fail = true
+    const fetchMock = stubFetch({
+      clips: () => [clip('a')],
+      scan: () =>
+        fail ? Promise.reject(new TypeError('Failed to fetch')) : Promise.resolve(jsonResponse(scanResult('a'))),
+    })
+    const wrapper = mountScanner()
+    await flushPromises()
+    await tiles(wrapper)[0].trigger('click')
+    await flushPromises()
+    expect(tiles(wrapper)[0].attributes('disabled')).toBeUndefined()
+    // A failure is not "scanned": the scan-all button still offers nothing
+    // new, rather than retrying a clip that may never scan.
+    expect(scanAllButton(wrapper).text()).toBe('All shown clips scanned')
+
+    fail = false
+    await tiles(wrapper)[0].trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls.filter(([u]) => u.includes('/scan/'))).toHaveLength(2)
+    expect(tiles(wrapper)[0].text()).toContain('1 face')
+    expect(tiles(wrapper)[0].find('.clip-tile-error').exists()).toBe(false)
+    expect(tiles(wrapper)[0].attributes('disabled')).toBeDefined()
+    expect(wrapper.emitted('found')).toHaveLength(1)
   })
 
   it('counts faces, duplicates and unknown lengths in plain words', async () => {

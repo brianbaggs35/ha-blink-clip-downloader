@@ -280,6 +280,7 @@ defineExpose({ reveal, scanClip, addPhotosFor })
               input-id="biometrics-name"
               :suggestions="nameSuggestions"
               dropdown
+              :pt="{ dropdown: { 'aria-label': 'Show enrolled people' } }"
               :show-empty-message="false"
               size="small"
               placeholder="Name, e.g. Brian"

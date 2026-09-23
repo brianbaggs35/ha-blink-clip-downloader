@@ -87,15 +87,19 @@ async function rename(person: Person, newName: string) {
     return
   }
   if (trimmed === person.name) return
-  const merging = people.value.some((p) => p.name === trimmed)
+  // Someone else by that name, whatever its capitals — the same rule the
+  // face finder enrolls by, so "brian" never becomes a second Brian.
+  const folded = trimmed.toLowerCase()
+  const other = people.value.find((p) => p !== person && p.name.toLowerCase() === folded)
   if (
-    merging &&
-    !(await confirm(`"${trimmed}" is already enrolled. Merge ${person.name}'s photos into theirs?`, 'Merge people?'))
+    other &&
+    !(await confirm(`"${other.name}" is already enrolled. Merge ${person.name}'s photos into theirs?`, 'Merge people?'))
   )
     return
+  const target = other?.name ?? trimmed
   await run(
-    () => updatePerson(person.name, { newName: trimmed }),
-    merging ? `Merged into ${trimmed}` : `Renamed to ${trimmed}`,
+    () => updatePerson(person.name, { newName: target }),
+    other ? `Merged into ${target}` : `Renamed to ${target}`,
     'Failed to rename',
   )
 }

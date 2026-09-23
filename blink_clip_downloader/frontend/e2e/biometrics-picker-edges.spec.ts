@@ -28,14 +28,22 @@ test('a clip list that fails to load offers a retry', async ({ page }) => {
   await expect(page.locator('.clip-tile').first()).toBeVisible()
 })
 
-test('a clip deleted before its scan says so', async ({ page }) => {
+test('a clip deleted before its scan says so, and can be tried again', async ({ page }) => {
   await page.route('**/api/ai/faces/scan/*', (route) => route.fulfill({ status: 404, body: 'Clip not found' }))
   await openBiometrics(page)
   await chooseScratchCamera(page)
   const tile = page.locator('.clip-tile')
   await tile.click()
-  await expect(tile).toContainText('Failed — hover for why')
+  await expect(tile).toContainText('Failed — tap to retry')
+  // Shown on the tile, not only in a tooltip a phone cannot hover for.
+  await expect(tile.locator('.clip-tile-error')).toHaveText('This clip is no longer in the library')
   await expect(tile).toHaveAttribute('title', 'This clip is no longer in the library')
+
+  // A failure is retried by picking the clip again — here it scans for real.
+  await page.unroute('**/api/ai/faces/scan/*')
+  await tile.click()
+  await expect(tile).toContainText('3 faces')
+  await expect(tile.locator('.clip-tile-error')).toHaveCount(0)
 })
 
 test("a file that isn't a readable photo is explained", async ({ page }) => {

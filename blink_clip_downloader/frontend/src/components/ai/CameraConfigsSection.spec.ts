@@ -86,6 +86,27 @@ describe('CameraConfigsSection', () => {
     expect(wrapper.text()).not.toContain('Configured')
   })
 
+  it('points each camera header at its panel, even for a name with spaces', async () => {
+    // aria-controls is a space-separated id list: "Front Door" used to split
+    // into two ids that did not exist.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          jsonResponse([
+            { camera: 'Front Door', description: '', custom_prompt: '', is_car_camera: false, car_zone: null },
+          ]),
+        ),
+      ),
+    )
+    const wrapper = mount(CameraConfigsSection, { attachTo: document.body })
+    await flushPromises()
+    const controls = wrapper.find('.p-accordionheader').attributes('aria-controls')!
+    expect(controls).not.toMatch(/\s/)
+    expect(document.getElementById(controls)).not.toBeNull()
+    wrapper.unmount()
+  })
+
   it('expands a camera panel when its accordion header is clicked', async () => {
     vi.stubGlobal(
       'fetch',
