@@ -21,8 +21,10 @@ from typing import TYPE_CHECKING, Any
 
 from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH, extract_jpeg_frames
 from ..security import (
+    PERSON_LABEL,
     VEHICLE_LABELS,
     Box,
+    DetectorThresholds,
     ObjectTrack,
     ProtectedAsset,
     Zone,
@@ -75,6 +77,12 @@ def _in_front_gap(subject: Box, asset: Box) -> float:
     dx = max(asset[0] - fx, fx - asset[2], 0.0)
     dy = max(0.0, fy - asset[3]) * GROUND_DEPTH_WEIGHT
     return math.hypot(dx, dy)
+
+
+#: How close, in feet, a subject has to stand to count as *at* the asset
+#: when choosing whom the pair stages examine — the security layer's own
+#: "near" distance, so both agree on who was at the car.
+_AT_ASSET_FEET = DetectorThresholds().near_feet
 
 
 @dataclass
@@ -713,6 +721,7 @@ class VisionPipeline:
             subjects = [d for d in detections if d.label in _SUBJECT_CLASSES]
             if not subjects:
                 return None
+
             # Whom to examine: whoever stands nearest the car, then — only
             # among that one subject's sightings, exactly as before — the
             # moment their outline overlaps it most deeply. Choosing the
@@ -720,9 +729,26 @@ class VisionPipeline:
             # the camera, who covers far more of the car in the image than
             # someone standing at its door, leaving the person actually at
             # the car with a contact nothing could confirm.
-            chosen = min(
-                subjects, key=lambda d: (_in_front_gap(d.box, car), box_gap(d.box, car))
-            )
+            #
+            # A person at the car outranks an animal at it. Theirs is the
+            # contact these stages can raise to suspicious or critical — an
+            # animal's stays noteworthy whatever confirms it (see
+            # security/detector.py's _contact_severity) — and pose only
+            # reads people. Examining the dog at a stranger's feet left the
+            # stranger's touch unconfirmed and the clip held below the alert
+            # band. Only *at* the car, though: a dog on the bonnet is still
+            # examined ahead of its owner across the lawn.
+            def rank(d: DetectedObject) -> tuple[bool, float, float]:
+                gap = _in_front_gap(d.box, car)
+                feet = asset.gap_feet(gap)
+                person_at_car = (
+                    d.label == PERSON_LABEL
+                    and feet is not None
+                    and feet <= _AT_ASSET_FEET
+                )
+                return (not person_at_car, gap, box_gap(d.box, car))
+
+            chosen = min(subjects, key=rank)
             sightings = [d for d in subjects if d.track_id == chosen.track_id]
             nearest = min(sightings, key=lambda d: box_gap(d.box, car))
             return (nearest, car, nearest.frame_index, nearest.track_id)
