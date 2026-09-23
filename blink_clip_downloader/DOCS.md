@@ -963,9 +963,13 @@ what changes:
 
 - **A camera cannot see depth.** Anybody who walks in front of or behind a
   parked car overlaps it in the image in every single frame. With the depth
-  stage available, that subject is placed at a different distance and their
-  proximity, approach and zone events are suppressed outright — a passer-by
-  scores essentially zero. Without it, the geometry alone genuinely cannot
+  stage available, a subject it places at a clearly different distance has
+  their proximity, approach and zone events suppressed outright — a
+  passer-by scores essentially zero. Only a clear difference does that:
+  depth read from overlapping boxes is rough evidence, and on real photos
+  people genuinely at a vehicle sometimes measured a modest difference, so
+  an in-between reading is treated as "can't tell" rather than as proof
+  they were elsewhere. Without depth, the geometry alone genuinely cannot
   tell "walked past the car" from "stood at the car".
 - So a contact claim resting on nothing but that overlap is reported as
   **noteworthy**, not suspicious, and says so in its own text. It reaches

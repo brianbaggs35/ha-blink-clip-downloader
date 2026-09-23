@@ -1529,6 +1529,36 @@ async def test_depth_estimator_compare_returns_none_on_exception(
     assert result is None
 
 
+async def test_depth_estimator_compare_is_inconclusive_in_between(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A "different" verdict vetoes every claim about the subject being at
+    the vehicle, so it waits for a clear difference: people genuinely at a
+    vehicle differed by up to 0.25 of the range in real photos."""
+    depth_map = np.zeros((100, 100), dtype=np.float32)
+    depth_map[0:10, 0:10] = 100.0  # person region
+    depth_map[20:30, 20:30] = 160.0  # vehicle region: 0.24 of the range away
+    depth_map[90:100, 90:100] = 255.0
+
+    mock_pipe = MagicMock(return_value={"depth": depth_map})
+    mock_transformers = MagicMock()
+    mock_transformers.pipeline.return_value = mock_pipe
+    monkeypatch.setitem(sys.modules, "transformers", mock_transformers)
+
+    result = await DepthEstimator().compare(
+        _real_jpeg_bytes((100, 100)), (0, 0, 10, 10), (20, 20, 30, 30)
+    )
+    assert result is not None
+    assert result.similar_depth is None
+
+
+def test_build_depth_hint_inconclusive() -> None:
+    hint = _build_depth_hint(DepthComparison(None, 100.0, 160.0), "person")
+    assert "cannot tell whether the detected person is at the vehicle" in hint
+    assert "Judge from the frames" in hint
+    assert "noticeably different" not in hint
+
+
 def test_build_depth_hint_similar() -> None:
     hint = _build_depth_hint(DepthComparison(True, 10.0, 11.0), "dog")
     assert "roughly the same distance" in hint

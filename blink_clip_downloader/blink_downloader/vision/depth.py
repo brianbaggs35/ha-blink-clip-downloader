@@ -26,12 +26,29 @@ _LOGGER = logging.getLogger(__name__)
 # as being at roughly the same distance from the camera.
 _DEPTH_SIMILARITY_FRACTION = 0.15
 
+# At or above this fraction they are treated as at clearly different
+# distances; in between, the comparison says nothing either way. A
+# "different" verdict is a veto — the security layer then drops every zone,
+# proximity and contact claim for that subject — so it must not fire on
+# someone who really is at the vehicle. Measured with Depth Anything V2
+# Small on 29 real photos of a person overlapping a car or truck: the 16
+# people at the vehicle (at its boot, in its cab, leaning into its engine,
+# beside it) differed by up to 0.254, so a 0.15 cut vetoed 3 of them,
+# while only one of the 13 people in front of or behind a vehicle fell
+# between 0.15 and 0.30. A box comparison cannot do better than that: the
+# boxes overlap, and each takes in the other's pixels.
+_DEPTH_DIFFERENCE_FRACTION = 0.30
+
 
 @dataclass
 class DepthComparison:
-    """Relative-depth comparison between two detected regions in one frame."""
+    """Relative-depth comparison between two detected regions in one frame.
 
-    similar_depth: bool
+    ``similar_depth`` is ``None`` when the difference was too small to call
+    them apart and too large to call them together.
+    """
+
+    similar_depth: bool | None
     subject_depth: float
     vehicle_depth: float
 
@@ -149,8 +166,13 @@ class DepthEstimator:
 
         depth_range = max(float(depth_arr.max() - depth_arr.min()), 1e-6)
         normalized_diff = abs(subject_depth - vehicle_depth) / depth_range
+        similar: bool | None = None
+        if normalized_diff < _DEPTH_SIMILARITY_FRACTION:
+            similar = True
+        elif normalized_diff >= _DEPTH_DIFFERENCE_FRACTION:
+            similar = False
         return DepthComparison(
-            similar_depth=normalized_diff < _DEPTH_SIMILARITY_FRACTION,
+            similar_depth=similar,
             subject_depth=subject_depth,
             vehicle_depth=vehicle_depth,
         )
@@ -189,6 +211,14 @@ def _build_depth_hint(result: DepthComparison, subject_label: str) -> str:
             "at roughly the same distance from the camera — consistent "
             "with them actually being near the vehicle in 3D space, not "
             "just overlapping it in the 2D frame"
+        )
+    elif result.similar_depth is None:
+        body = (
+            f"it cannot tell whether the detected {subject_label} is at the "
+            "vehicle or in front of or behind it — the difference in "
+            "distance is too small to separate them and too large to call "
+            "them together. Judge from the frames whether they are actually "
+            "at the vehicle"
         )
     else:
         # Depth Anything's output is inverse depth/disparity (verified
