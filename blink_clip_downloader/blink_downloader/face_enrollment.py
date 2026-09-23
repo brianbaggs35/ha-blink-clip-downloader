@@ -55,6 +55,10 @@ _OUTLIER_SIMILARITY = 0.55
 # Enrollment has no reason to offer those; analysis is unaffected by this.
 MIN_CANDIDATE_PROBABILITY = 0.90
 
+#: Most faces the candidate store holds at once — and so the most any one
+#: request can usefully name, since an older id would already be gone.
+CANDIDATE_CAPACITY = 2000
+
 
 @dataclass(frozen=True)
 class FaceCandidate:
@@ -80,7 +84,7 @@ class FaceCandidateStore:
 
     def __init__(
         self,
-        capacity: int = 2000,
+        capacity: int = CANDIDATE_CAPACITY,
         ttl: float = 3600.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -169,26 +173,36 @@ def group_candidates(candidates: Sequence[FaceCandidate]) -> list[list[str]]:
     new one. Averaging is what makes this steadier than comparing faces
     pairwise: one blurry frame cannot bridge two different people.
     Presentation only; the user still sees and picks every face.
+
+    One matrix product per face against every group's running sum, rather
+    than a Python loop over the groups: at the candidate store's capacity
+    the loop took 3-5 seconds, which a request handler cannot afford. An
+    exact tie goes to the later group, as the loop's ``>=`` did.
     """
     if not candidates:
         return []
     ordered = sorted(candidates, key=lambda c: -c.quality)
     unit = _unit_rows([c.embedding for c in ordered])
     members: list[list[int]] = []
-    sums: list[np.ndarray] = []
+    sums = np.zeros_like(unit)
+    norms = np.zeros(len(unit))
     for index, vector in enumerate(unit):
-        best, best_similarity = -1, _GROUP_SIMILARITY
-        for group, total in enumerate(sums):
-            centroid = total / np.linalg.norm(total)
-            similarity = float(centroid @ vector)
-            if similarity >= best_similarity:
-                best, best_similarity = group, similarity
+        count = len(members)
+        best = -1
+        if count:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                similarity = (sums[:count] @ vector) / norms[:count]
+            # A zero-length sum (an all-zero embedding) matches nothing.
+            similarity[norms[:count] == 0] = -np.inf
+            last_best = count - 1 - int(np.argmax(similarity[::-1]))
+            if similarity[last_best] >= _GROUP_SIMILARITY:
+                best = last_best
         if best < 0:
-            members.append([index])
-            sums.append(vector.copy())
-        else:
-            members[best].append(index)
-            sums[best] += vector
+            best = count
+            members.append([])
+        members[best].append(index)
+        sums[best] += vector
+        norms[best] = np.linalg.norm(sums[best])
     groups = [[ordered[i].id for i in group] for group in members]
     return sorted(groups, key=len, reverse=True)
 

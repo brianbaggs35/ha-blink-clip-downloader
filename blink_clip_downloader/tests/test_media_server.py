@@ -20,6 +20,7 @@ from blinkpy.auth import TokenRefreshFailed
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.archiver import ClipArchiver
 from blink_downloader.database import ClipDatabase
+from blink_downloader.face_enrollment import CANDIDATE_CAPACITY
 from blink_downloader.gdrive_client import (
     DeviceFlowInfo,
     DriveFolder,
@@ -4993,8 +4994,24 @@ async def test_faces_group_requires_a_list_of_ids(
 
 
 async def test_faces_group_bounds_a_crafted_request(client: TestClient) -> None:
-    resp = await client.post("/api/ai/faces/group", json={"candidate_ids": ["x"] * 501})
+    ids = [f"x{i}" for i in range(CANDIDATE_CAPACITY + 1)]
+    resp = await client.post("/api/ai/faces/group", json={"candidate_ids": ids})
     assert resp.status == 400
+
+
+async def test_faces_group_handles_more_faces_than_one_busy_scan(
+    client: TestClient,
+) -> None:
+    """The picker regroups every face found so far in one request. The cap
+    used to be 500, so after a few dozen busy clips every regroup was a 400
+    and new faces stopped being grouped at all."""
+    offered = await _offer(client, *(_face([1.0, i / 1000.0]) for i in range(501)))
+    ids = [f["id"] for f in offered]
+    resp = await client.post("/api/ai/faces/group", json={"candidate_ids": ids})
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["expired"] == []
+    assert sorted(i for group in body["groups"] for i in group) == sorted(ids)
 
 
 # --- enrolling ---------------------------------------------------------------

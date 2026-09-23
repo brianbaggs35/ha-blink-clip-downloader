@@ -28,6 +28,7 @@ from typing import Any
 from aiohttp import web
 
 from ..face_enrollment import (
+    CANDIDATE_CAPACITY,
     MIN_CANDIDATE_PROBABILITY,
     group_candidates,
     review_enrollments,
@@ -53,9 +54,10 @@ _MAX_NAME_LENGTH = 60
 _SCAN_MAX_FRAMES = 40
 _SCAN_MIN_INTERVAL = 0.5
 
-# Most faces one enroll or group request may name. The picker offers far
-# fewer; this only bounds a crafted request.
-_MAX_CANDIDATES_PER_REQUEST = 500
+# Most faces one enroll or group request may name: everything the store can
+# hold. The picker groups every face found so far in one request, so a lower
+# cap (it was 500) silently stopped grouping after a few dozen busy clips.
+_MAX_CANDIDATES_PER_REQUEST = CANDIDATE_CAPACITY
 
 # The largest id a face_enrollments row can have (an INTEGER column). An id
 # beyond it can match nothing, and passing it to asyncpg is a bare 500.
@@ -372,11 +374,13 @@ class FaceRoutesMixin(_MediaServerBase):
         """
         ids = _candidate_ids(await _json_object(request))
         held = {i: self._face_candidates.get(i) for i in ids}
+        # In a worker thread: even vectorized, a full store is real numpy
+        # work, and it must not stall every other request while it runs.
+        groups = await asyncio.to_thread(
+            group_candidates, [c for c in held.values() if c]
+        )
         return web.json_response(
-            {
-                "groups": group_candidates([c for c in held.values() if c]),
-                "expired": [i for i, c in held.items() if c is None],
-            }
+            {"groups": groups, "expired": [i for i, c in held.items() if c is None]}
         )
 
     async def _handle_faces_enroll(self, request: web.Request) -> web.Response:
