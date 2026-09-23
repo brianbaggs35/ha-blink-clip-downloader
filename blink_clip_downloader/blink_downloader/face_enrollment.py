@@ -217,7 +217,8 @@ def review_enrollments(enrollments: Sequence[dict[str, Any]]) -> dict[int, dict]
         )
         also_matches = ""
         if other:
-            closest = max(other, key=lambda j: similarity[i, j])
+            # argmax, like max(), takes the first of any tie.
+            closest = other[int(np.argmax(similarity[i, other]))]
             if float(similarity[i, closest]) >= _FACE_MATCH_THRESHOLD:
                 also_matches = names[closest]
         if unlike_others or also_matches:
