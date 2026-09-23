@@ -5471,6 +5471,56 @@ def test_build_prompt_zone_motion_low_fraction() -> None:
     assert "elsewhere in the frame" in prompt
 
 
+def _outcome_with(*event_types: str):
+    from blink_downloader.security import (
+        RiskAssessment,
+        SecurityEvent,
+        SecurityEventType,
+        SecurityOutcome,
+        Severity,
+    )
+
+    return SecurityOutcome(
+        assessment=RiskAssessment(
+            events=[
+                SecurityEvent(
+                    event_type=SecurityEventType(t),
+                    severity=Severity.NOTEWORTHY,
+                    confidence=0.8,
+                    detail=t,
+                )
+                for t in event_types
+            ]
+        )
+    )
+
+
+def test_build_prompt_low_zone_motion_defers_to_tracking_at_the_car() -> None:
+    """Someone who crosses the frame to the car and then works quietly at
+    its door puts most of the motion into the walk. Tracking placed them at
+    the car, so the prompt must not tell the model to discount the vehicle
+    right before the evidence says otherwise."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt(
+        "Driveway",
+        zone_motion_fraction=0.2,
+        security=_outcome_with("zone_entered", "asset_proximity"),
+    )
+    assert "20%" in prompt
+    assert "placed a subject at the protected vehicle" in prompt
+    assert "Do not assume the vehicle is involved" not in prompt
+
+
+def test_build_prompt_low_zone_motion_unchanged_without_anyone_at_the_car() -> None:
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt(
+        "Driveway",
+        zone_motion_fraction=0.2,
+        security=_outcome_with("subject_present", "zone_entered"),
+    )
+    assert "Do not assume the vehicle is involved" in prompt
+
+
 def test_build_prompt_no_zone_motion_hint_when_not_provided() -> None:
     a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
     prompt = a._build_prompt("Driveway")

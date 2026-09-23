@@ -226,13 +226,24 @@ def corrections_segment(
     )
 
 
-def zone_motion_segment(zone_motion_fraction: float | None) -> str | None:
+def zone_motion_segment(
+    zone_motion_fraction: float | None, subject_at_asset: bool = False
+) -> str | None:
     """Zone-motion evidence — a code-computed signal (see
     frame_motion.zone_motion_fraction) telling the model what share of
     this clip's overall pixel motion actually fell inside the
     configured car zone, versus happening elsewhere in the frame. Only
     emitted when a zone is configured and there's enough clip motion to
-    attribute meaningfully."""
+    attribute meaningfully.
+
+    *subject_at_asset* is object tracking having placed someone at the
+    protected vehicle. Pixel motion alone cannot tell walking up to a car
+    from working quietly at it: someone who crosses the frame to the car
+    and then tries its door puts most of the clip's motion into the walk,
+    outside the zone. Telling the model then to "not assume the vehicle is
+    involved" argues against the security evidence it is about to read,
+    so the low-share wording says what the share does and doesn't mean.
+    """
     if zone_motion_fraction is None:
         return None
     if zone_motion_fraction >= 0.5:
@@ -242,6 +253,16 @@ def zone_motion_segment(zone_motion_fraction: float | None) -> str | None:
             "within the configured car zone — the activity is concentrated at or "
             "near the protected vehicle's usual spot, not just passing through the "
             "wider frame."
+        )
+    if subject_at_asset:
+        return (
+            "\n\nZONE MOTION: "
+            f"Only {zone_motion_fraction:.0%} of this clip's overall motion "
+            "occurred within the configured car zone, but object tracking placed "
+            "a subject at the protected vehicle (see the evidence below) — most "
+            "of the motion may simply be them walking to or from it. Judge the "
+            "vehicle's involvement by what they did there, not by where most of "
+            "the motion was."
         )
     return (
         "\n\nZONE MOTION: "

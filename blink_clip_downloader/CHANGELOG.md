@@ -178,6 +178,15 @@ tab points out photos captured at the old resolution.
   bypass withheld, since that is the one event it never excuses. The
   speed-up now has to happen at the car — rushing into it or bolting from
   it, both of which still raise a possible impact.
+- **The prompt could talk the AI model out of a real approach to the car.**
+  When under half of a clip's pixel motion fell inside the car zone, the
+  prompt told the model "do not assume the vehicle is involved". Someone
+  who crosses the frame to the car and then works quietly at its door puts
+  most of the motion into the walk, so the model was told to discount the
+  car right before reading evidence that someone was at it. When object
+  tracking has placed a subject at the protected vehicle, the prompt now
+  says the motion may just be them walking to or from it, and to judge by
+  what they did there.
 - **An approved person's face could clear a clip that also held someone
   whose face never showed.** The suspicious-flag bypass required every
   *face* in a clip to belong to an approved person, so a stranger with their
