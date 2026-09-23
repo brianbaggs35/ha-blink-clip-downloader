@@ -161,6 +161,8 @@ tab points out photos captured at the old resolution.
   image installs on a best-effort basis — had that install failed, the
   add-on would not have started at all.
 
+- Updated to openai 3.19.0
+
 ### Internal
 
 - `app.py`'s `run()`, `gdrive_queue.py`'s `_process_one()` and the security
