@@ -187,6 +187,17 @@ tab points out photos captured at the old resolution.
   tracking has placed a subject at the protected vehicle, the prompt now
   says the motion may just be them walking to or from it, and to judge by
   what they did there.
+- **Depth estimation could silence someone genuinely at the protected
+  car.** When depth says a subject is at a different distance from the
+  vehicle, every zone, proximity and contact claim about them is dropped.
+  It said so at 15% of the depth range, but measured with the depth model
+  on 29 real photos of a person overlapping a car or truck, the 16 people
+  actually at the vehicle — at its boot, in its cab, leaning into its
+  engine, beside it — differed by up to 25%, so a real approach could be
+  silenced one time in five. A difference now has to reach 30% before it
+  vetoes anything; in between, depth says it can't tell, and the subject
+  is judged exactly as on a device without depth. On the same photos no
+  one at a vehicle is vetoed any more, and one fewer passer-by is.
 - **An approved person's face could clear a clip that also held someone
   whose face never showed.** The suspicious-flag bypass required every
   *face* in a clip to belong to an approved person, so a stranger with their
