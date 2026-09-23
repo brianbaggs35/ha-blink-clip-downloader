@@ -110,6 +110,23 @@ describe('ClipFaceScanner', () => {
     expect(wrapper.text()).toContain('No clips from Backyard in that time range')
   })
 
+  it('labels both pickers by their visible label', async () => {
+    stubFetch({ clips: () => [] })
+    const wrapper = mountScanner()
+    await flushPromises()
+    for (const [control, text] of [
+      ['biometrics-camera-select', 'Camera'],
+      ['biometrics-lookback-select', 'Clips from'],
+    ]) {
+      // The focusable combobox itself, not PrimeVue's wrapper, carries both.
+      const combobox = wrapper.find(`#${control}`)
+      expect(combobox.attributes('role')).toBe('combobox')
+      const label = wrapper.find(`#${combobox.attributes('aria-labelledby')}`)
+      expect(label.text()).toBe(text)
+      expect(label.attributes('for')).toBe(control)
+    }
+  })
+
   it('filters by camera and time range', async () => {
     const fetchMock = stubFetch({ clips: () => [clip('a')] })
     const wrapper = mountScanner()
