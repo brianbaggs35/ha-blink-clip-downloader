@@ -15,6 +15,7 @@ did arrive — the AI provider still makes the final call either way.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +30,7 @@ from ..security import (
     build_tracks,
     resolve_vehicle_asset,
 )
+from ..security.geometry import GROUND_DEPTH_WEIGHT, box_foot_point
 from ..security.vehicles import VehicleSignature
 from . import imaging
 from .audio import AudioTagger, AudioTags, build_audio_hint
@@ -57,6 +59,22 @@ if TYPE_CHECKING:
     from ..database import ClipDatabase
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _in_front_gap(subject: Box, asset: Box) -> float:
+    """How far from the asset a subject stands, counting only feet *in front
+    of* its ground line.
+
+    :func:`~blink_downloader.security.geometry.ground_gap` with the one
+    change that matters for choosing whom to examine: feet the asset hides
+    (someone at its far side) or feet up on it (a dog on the bonnet) are
+    consistent with being at it, where feet well in front of it — lower in
+    the frame, nearer the camera — are what a passer-by has.
+    """
+    fx, fy = box_foot_point(subject)
+    dx = max(asset[0] - fx, fx - asset[2], 0.0)
+    dy = max(0.0, fy - asset[3]) * GROUND_DEPTH_WEIGHT
+    return math.hypot(dx, dy)
 
 
 @dataclass
@@ -691,11 +709,23 @@ class VisionPipeline:
         """
         asset = hints.asset
         if asset is not None and asset.present and asset.box is not None:
+            car = asset.box
             subjects = [d for d in detections if d.label in _SUBJECT_CLASSES]
             if not subjects:
                 return None
-            nearest = min(subjects, key=lambda d: box_gap(d.box, asset.box))  # type: ignore[arg-type]
-            return (nearest, asset.box, nearest.frame_index, nearest.track_id)
+            # Whom to examine: whoever stands nearest the car, then — only
+            # among that one subject's sightings, exactly as before — the
+            # moment their outline overlaps it most deeply. Choosing the
+            # subject by overlap too sent these stages to a passer-by near
+            # the camera, who covers far more of the car in the image than
+            # someone standing at its door, leaving the person actually at
+            # the car with a contact nothing could confirm.
+            chosen = min(
+                subjects, key=lambda d: (_in_front_gap(d.box, car), box_gap(d.box, car))
+            )
+            sightings = [d for d in subjects if d.track_id == chosen.track_id]
+            nearest = min(sightings, key=lambda d: box_gap(d.box, car))
+            return (nearest, car, nearest.frame_index, nearest.track_id)
 
         legacy = _best_subject_vehicle_pair(detections, zone_ref)
         if legacy is None:

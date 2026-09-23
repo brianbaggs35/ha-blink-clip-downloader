@@ -160,6 +160,14 @@ tab points out photos captured at the old resolution.
   outline over it, they now count as at the car, wherever their feet
   appear; without depth, or when depth places them elsewhere, nothing
   changes.
+- **With two people in view, the checks that confirm a touch could examine
+  the wrong one.** Depth estimation and contact segmentation look at one
+  person per clip, chosen as whoever's outline overlapped the car most in
+  the image — which is a passer-by near the camera, covering far more of
+  the car than someone standing at its door. The person actually at the
+  car was then left with a contact nothing could confirm. They now look at
+  whoever stands nearest the car (feet the car hides, or up on it, count as
+  at it), and still at that person's closest moment.
 - **An approved person's face could clear a clip that also held someone
   whose face never showed.** The suspicious-flag bypass required every
   *face* in a clip to belong to an approved person, so a stranger with their

@@ -51,6 +51,7 @@ from blink_downloader.vision import (
     PoseEstimator,
     PostureResult,
     VisionConfig,
+    VisionHints,
     VisionPipeline,
     cosine_similarity,
     is_face_recognition_available,
@@ -3666,6 +3667,62 @@ async def test_pipeline_skips_colour_matching_for_non_vehicle_tracks(
         vehicle_signature=signature,
     )
     assert (5.0, 5.0, 25.0, 95.0) not in fingerprinted
+
+
+def _pair_hints(car: tuple[float, float, float, float]) -> VisionHints:
+    from blink_downloader.security import AssetLocation, AssetType, ProtectedAsset
+
+    return VisionHints(
+        asset=ProtectedAsset(
+            name="Silver Kia",
+            asset_type=AssetType.VEHICLE,
+            camera="Driveway",
+            box=car,
+            location=AssetLocation.DETECTED,
+        )
+    )
+
+
+_CAR = (240.0, 170.0, 420.0, 290.0)
+
+
+def test_pair_stages_examine_whoever_is_at_the_car_not_the_nearest_to_the_camera() -> (
+    None
+):
+    """A passer-by close to the camera covers much more of the car in the
+    image than someone at its door, so choosing by overlap sent depth and
+    segmentation to the passer-by and left the person at the car with a
+    contact nothing could confirm."""
+    passer_by = DetectedObject("person", 0.9, (250.0, 60.0, 400.0, 355.0), 1, 2)
+    at_the_door = DetectedObject("person", 0.9, (380.0, 140.0, 430.0, 292.0), 2, 3)
+    subject, _box, frame, track = VisionPipeline._select_pair(
+        _pair_hints(_CAR), [passer_by, at_the_door], None
+    )  # type: ignore[misc]
+    assert (subject, frame, track) == (at_the_door, 3, 2)
+
+
+def test_pair_stages_count_hidden_or_raised_feet_as_at_the_car() -> None:
+    """Feet the car hides (its far side) or up on it (a dog on the bonnet)
+    are consistent with being at it; its owner a pace in front is not
+    closer for having their feet on show."""
+    dog_on_bonnet = DetectedObject("dog", 0.8, (300.0, 150.0, 360.0, 230.0), 7, 1)
+    owner_in_front = DetectedObject("person", 0.9, (180.0, 150.0, 230.0, 330.0), 1, 1)
+    subject, *_ = VisionPipeline._select_pair(
+        _pair_hints(_CAR), [owner_in_front, dog_on_bonnet], None
+    )  # type: ignore[misc]
+    assert subject is dog_on_bonnet
+
+
+def test_pair_stages_keep_one_subjects_deepest_overlap_frame() -> None:
+    """Only the choice of *whom* changed: with one subject, the frame is
+    still the one where their outline overlaps the car most deeply."""
+    approaching = DetectedObject("person", 0.9, (180.0, 150.0, 240.0, 292.0), 4, 0)
+    at_the_car = DetectedObject("person", 0.9, (260.0, 150.0, 320.0, 300.0), 4, 1)
+    leaving = DetectedObject("person", 0.9, (400.0, 150.0, 460.0, 292.0), 4, 2)
+    subject, _box, frame, _track = VisionPipeline._select_pair(
+        _pair_hints(_CAR), [approaching, at_the_car, leaving], None
+    )  # type: ignore[misc]
+    assert (subject, frame) == (at_the_car, 1)
 
 
 async def test_pipeline_pair_stages_need_a_subject(
