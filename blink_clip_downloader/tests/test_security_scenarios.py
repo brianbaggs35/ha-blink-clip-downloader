@@ -166,6 +166,12 @@ def _run(scenario: Scenario) -> tuple[RiskAssessment, set[SecurityEventType]]:
 
 ROUTINE_ONLY = (Severity.ROUTINE, Severity.ROUTINE)
 UP_TO_NOTEWORTHY = (Severity.ROUTINE, Severity.NOTEWORTHY)
+#: Never the critical band, which forces an alert past the model's verdict.
+UP_TO_SUSPICIOUS = (Severity.ROUTINE, Severity.SUSPICIOUS)
+#: A device running detection but none of the heavy torch stages.
+_BASIC = ["depth estimation", "contact segmentation", "pose estimation"]
+#: A walker's left edge, frame by frame, crossing the whole view.
+_PASS = (0, 90, 180, 270, 360, 450)
 
 SCENARIOS: list[Scenario] = [
     # -- ordinary activity that must NOT raise an alert ----------------
@@ -368,6 +374,76 @@ SCENARIOS: list[Scenario] = [
         # alert band on its own — not silence, and not a suspicious verdict.
         expect_severity=(Severity.ROUTINE, Severity.NOTEWORTHY),
         max_event_severity=Severity.NOTEWORTHY,
+    ),
+    # -- walking close past the car's front at night, no depth stages ----
+    # Five noteworthy events from one overlap summed to 79 (a forced alert)
+    # for one walker and 100 for a couple or a dog walk, until an
+    # unconfirmed contact was barred from being the reason a clip alerts,
+    # and one subject's movement counted once per type.
+    Scenario(
+        name="someone walks close past the front of the car at night, no depth",
+        detections=_walk(1, [_person_at(x, height=140, ground=305) for x in _PASS])
+        + _parked(2, MY_CAR, 6),
+        frame_count=6,
+        is_night=True,
+        unavailable_sources=_BASIC,
+        expect_severity=UP_TO_SUSPICIOUS,
+        max_event_severity=Severity.NOTEWORTHY,
+    ),
+    Scenario(
+        name="a couple walks close past the front of the car at night",
+        detections=_walk(1, [_person_at(x, height=140, ground=305) for x in _PASS])
+        + _walk(3, [_person_at(x - 50, height=130, ground=300) for x in _PASS])
+        + _parked(2, MY_CAR, 6),
+        frame_count=6,
+        is_night=True,
+        unavailable_sources=_BASIC,
+        expect_severity=UP_TO_SUSPICIOUS,
+    ),
+    Scenario(
+        name="a person walks their dog close past the car at night",
+        detections=_walk(1, [_person_at(x, height=140, ground=305) for x in _PASS])
+        + _walk(
+            3,
+            [
+                (x + 64.0, 283.0, x + 98.0, 305.0)  # on the lead, just ahead
+                for x in _PASS
+            ],
+            label="dog",
+        )
+        + _parked(2, MY_CAR, 6),
+        frame_count=6,
+        is_night=True,
+        unavailable_sources=_BASIC,
+        expect_severity=UP_TO_SUSPICIOUS,
+    ),
+    # ...while the same close contact, confirmed, still alerts — by one
+    # stranger or two, day or night.
+    Scenario(
+        name="a stranger touches the car at night, confirmed by both stages",
+        detections=_walk(1, [_person_at(560), _person_at(480)] + [_person_at(300)] * 6)
+        + _parked(2, MY_CAR, 8),
+        frame_count=8,
+        is_night=True,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=(Severity.CRITICAL, Severity.CRITICAL),
+        expect_events={SecurityEventType.CONTACT_CANDIDATE},
+    ),
+    Scenario(
+        name="two strangers at the car at night, contact confirmed",
+        detections=_walk(1, [_person_at(560), _person_at(480)] + [_person_at(300)] * 6)
+        + _walk(3, [_person_at(560), _person_at(470)] + [_person_at(330)] * 6)
+        + _parked(2, MY_CAR, 8),
+        frame_count=8,
+        is_night=True,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=(Severity.CRITICAL, Severity.CRITICAL),
+        expect_events={
+            SecurityEventType.CONTACT_CANDIDATE,
+            SecurityEventType.MULTIPLE_SUBJECTS,
+        },
     ),
     Scenario(
         name="the camera view is swamped and nothing is in it",

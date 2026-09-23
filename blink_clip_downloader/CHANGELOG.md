@@ -135,6 +135,20 @@ tab points out photos captured at the old resolution.
 
 ### Bug fixes
 
+- **Walking past the protected car at night could force an alert.** With a
+  zone drawn and no depth estimation to tell "in front of the car" from "at
+  the car", someone walking close past its front collected five events from
+  one overlap in the image — zone, approach, proximity, a possible contact
+  and a "retreat after contact" — which summed to 79: the critical band,
+  which flags the clip whatever the AI model concluded. A couple or a dog
+  walk scored 100, each person (and the dog) counted in full. Now an
+  unconfirmed contact can raise a clip but never be the reason it reaches
+  the critical band (it is held at 74, saying why), and each kind of
+  movement counts once per clip at its strongest, with the separate
+  multiple-people event accounting for a group. Every real threat checked
+  still alerts exactly as before: a touch confirmed by depth or
+  segmentation, day or night, one stranger or two, and a rush at the car
+  that leaves it looking different all stay critical.
 - **An approved person's face could clear a clip that also held someone
   whose face never showed.** The suspicious-flag bypass required every
   *face* in a clip to belong to an approved person, so a stranger with their
