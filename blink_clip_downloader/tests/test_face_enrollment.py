@@ -4,14 +4,18 @@ and reviewing what is already enrolled."""
 from __future__ import annotations
 
 import math
+import random
 
 from blink_downloader.face_enrollment import (
     FaceCandidate,
     FaceCandidateStore,
+    describe_match,
     group_candidates,
+    match_candidates,
     review_enrollments,
     suppress_near_duplicates,
 )
+from blink_downloader.vision.faces import match_enrollment
 
 
 def _unit(angle_degrees: float) -> list[float]:
@@ -51,6 +55,15 @@ def test_store_round_trips_a_candidate() -> None:
     assert candidate.embedding == [0.1, 0.2]
     assert candidate.thumbnail == b"jpeg"
     assert candidate.quality == 0.7
+
+
+def test_store_keeps_where_a_face_came_from() -> None:
+    store = FaceCandidateStore()
+    from_clip = store.get(store.add([0.1], b"", 0.5, 640, "Driveway"))
+    uploaded = store.get(store.add([0.1], b"", 0.5))
+    assert from_clip is not None and uploaded is not None
+    assert (from_clip.frame_width, from_clip.camera) == (640, "Driveway")
+    assert (uploaded.frame_width, uploaded.camera) == (None, None)
 
 
 def test_store_ids_are_unguessable_and_distinct() -> None:
@@ -169,6 +182,94 @@ def test_group_candidates_one_outlier_cannot_bridge_two_people() -> None:
     ]
     groups = group_candidates(candidates)
     assert all(not ({"a1", "b1"} <= set(group)) for group in groups)
+
+
+# ---------------------------------------------------------------------------
+# match_candidates
+# ---------------------------------------------------------------------------
+
+
+def _enrolled(name: str, angle: float) -> dict:
+    return {"id": 0, "name": name, "embedding": _unit(angle)}
+
+
+def test_match_candidates_empty() -> None:
+    assert match_candidates([], [_enrolled("Amy", 0)]) == {}
+
+
+def test_match_candidates_nobody_enrolled() -> None:
+    assert match_candidates([_candidate("a", 0)], []) == {"a": None}
+
+
+def test_match_candidates_names_the_closest_person_above_the_threshold() -> None:
+    enrollments = [_enrolled("Amy", 0), _enrolled("Ben", 30), _enrolled("Cat", 90)]
+    matches = match_candidates(
+        # 70°: Ben (cos 40° ≈ 0.77) would match on his own, but Cat is closer.
+        [_candidate("near-amy", 5), _candidate("near-cat", 70), _candidate("x", 180)],
+        enrollments,
+    )
+    assert matches == {
+        "near-amy": {"name": "Amy", "similarity": 0.996},
+        "near-cat": {"name": "Cat", "similarity": 0.94},
+        "x": None,
+    }
+    # cos 45° ≈ 0.71: close, but below the 0.75 recognition needs.
+    assert match_candidates([_candidate("y", 45)], [_enrolled("Amy", 0)]) == {"y": None}
+
+
+def test_match_candidates_skips_an_enrollment_it_cannot_compare() -> None:
+    enrollments = [
+        {"id": 1, "name": "Old", "embedding": [1.0, 0.0, 0.0]},
+        {"id": 2, "name": "Empty", "embedding": []},
+        _enrolled("Amy", 0),
+    ]
+    assert match_candidates([_candidate("a", 0)], enrollments)["a"] == {
+        "name": "Amy",
+        "similarity": 1.0,
+    }
+    only_old = match_candidates([_candidate("a", 0)], enrollments[:2])
+    assert only_old == {"a": None}
+
+
+def test_match_candidates_a_zero_vector_matches_nobody() -> None:
+    zero = FaceCandidate(
+        id="z", embedding=[0.0, 0.0], thumbnail=b"", quality=0.5, created=0
+    )
+    assert match_candidates([zero], [_enrolled("Amy", 0)]) == {"z": None}
+
+
+def test_match_candidates_agrees_with_recognition() -> None:
+    """The picker's "already recognized as" must be what clip analysis
+    would conclude — same threshold, same closest, same tie-break (the
+    later enrollment) — so it is checked against match_enrollment itself,
+    over random faces plus exact duplicates to force ties."""
+    rng = random.Random(11)
+    angles = [rng.uniform(0, 360) for _ in range(40)]
+    enrollments = [
+        {"id": i, "name": f"P{i % 7}", "embedding": _unit(a)}
+        for i, a in enumerate(angles)
+    ]
+    # Exact copies under different names: a tie only the order can break.
+    enrollments += [
+        {"id": 100 + i, "name": f"Twin{i}", "embedding": list(e["embedding"])}
+        for i, e in enumerate(enrollments[:10])
+    ]
+    candidates = [_candidate(f"c{i}", rng.uniform(0, 360)) for i in range(300)]
+    candidates += [_candidate(f"t{i}", angles[i]) for i in range(10)]
+
+    matches = match_candidates(candidates, enrollments)
+
+    for candidate in candidates:
+        expected = describe_match(match_enrollment(candidate.embedding, enrollments))
+        assert matches[candidate.id] == expected, candidate.id
+    assert all(
+        matches[f"t{i}"] == {"name": f"Twin{i}", "similarity": 1.0} for i in range(10)
+    )
+
+
+def test_describe_match() -> None:
+    assert describe_match(None) is None
+    assert describe_match(("Amy", 0.81234)) == {"name": "Amy", "similarity": 0.812}
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import Button from 'primevue/button'
 import Card from 'primevue/card'
 import Message from 'primevue/message'
 import Skeleton from 'primevue/skeleton'
@@ -32,6 +33,7 @@ const approvedCount = computed(() => people.value.filter((p) => p.approved).leng
 const mismatchedCount = computed(
   () => data.value?.faces.filter((f) => isResolutionMismatch(f, frameWidth.value)).length ?? 0,
 )
+const legacyCount = computed(() => people.value.filter((p) => p.onlyLegacy).length)
 
 // Whose photos the dialog shows. Held by name, so it follows a reload.
 const managingName = ref<string | null>(null)
@@ -171,6 +173,11 @@ function scanReportedClip(clipId: string) {
       Recognition Resolution than the {{ frameWidth }}px recognition now uses, and will match less reliably — each
       person's Photos list shows which. Scanning a clip of them again adds photos that match.
     </Message>
+    <Message v-if="legacyCount" severity="info" size="small" :closable="false" class="status-banner">
+      {{ legacyCount === 1 ? '1 person was' : `${legacyCount} people were` }} enrolled with an earlier version, from
+      smaller frames than recognition now uses. Use <strong>Add photos</strong> to add a few of each from a clip — they
+      will be recognized far more reliably.
+    </Message>
 
     <Message severity="secondary" size="small" :closable="false" class="privacy-banner">
       <strong>🔒 Everything here stays local.</strong> Photos, face data and names never leave this device and are never
@@ -192,9 +199,21 @@ function scanReportedClip(clipId: string) {
         <Message v-else-if="loadFailed && !data" severity="error" size="small" :closable="false">
           Couldn't load enrolled people.
         </Message>
-        <p v-else-if="!people.length" class="muted-note">
-          Nobody enrolled yet — find someone's face in a clip below to get started.
-        </p>
+        <div v-else-if="!people.length" class="empty-state">
+          <i class="pi pi-users" aria-hidden="true" />
+          <p class="empty-title">Nobody enrolled yet</p>
+          <p class="muted-note">
+            Find someone's face in a clip, pick it and give it a name. A few photos from each camera they're seen on
+            work best.
+          </p>
+          <Button
+            label="Find faces"
+            icon="pi pi-search"
+            size="small"
+            :disabled="!available"
+            @click="finder?.reveal()"
+          />
+        </div>
         <template v-else>
           <div class="people-grid">
             <PersonCard
@@ -280,5 +299,39 @@ function scanReportedClip(clipId: string) {
 
 .approved-summary {
   margin-top: 1rem;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+  text-align: center;
+}
+
+.empty-state .pi {
+  font-size: 1.75rem;
+  color: var(--muted);
+}
+
+.empty-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.empty-state .muted-note {
+  max-width: 420px;
+}
+
+@media (max-width: 600px) {
+  .biometrics-page {
+    padding: 1rem;
+  }
+  /* Cards inside cards: at full padding each, a person card's actions had
+     under 300px of a phone's width and wrapped onto a third line. */
+  .people-card :deep(.p-card-body) {
+    padding: 1rem;
+  }
 }
 </style>

@@ -482,6 +482,9 @@ export interface FaceEnrollment {
   /** Width of the clip frame it was captured from; null for an uploaded
    *  photo, or one enrolled before 6.0.7. */
   frame_width: number | null
+  /** Camera whose clip it came from; null for an uploaded photo, or one
+   *  enrolled before 6.0.7. */
+  camera: string | null
   warning: FacePhotoWarning | null
 }
 
@@ -507,7 +510,12 @@ export interface FaceCandidate {
   /** Seconds into the clip; null for an uploaded photo. */
   time: number | null
   /** Who clip analysis would already recognize this face as. */
-  match: { name: string; similarity: number } | null
+  match: FaceMatch | null
+}
+
+export interface FaceMatch {
+  name: string
+  similarity: number
 }
 
 // "Nothing usable found" and "couldn't read this" come back as 200s with an
@@ -527,6 +535,9 @@ export interface FaceGroupResult {
   groups: string[][]
   /** Ids no longer held server-side (too old, or already enrolled). */
   expired: string[]
+  /** Who each held face would be recognized as against the people enrolled
+   *  now — a scan's own `match` is only true of the moment it ran. */
+  matches: Record<string, FaceMatch | null>
 }
 
 export interface FaceEnrollSuccess {

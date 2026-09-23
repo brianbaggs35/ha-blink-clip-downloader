@@ -1136,7 +1136,7 @@ def _rename_sources() -> str:
 def _mentions(source: str, table: str) -> bool:
     """Whether *source* names *table* at all.
 
-    Deliberately a whole-word search rather than SQL parsing: the eight
+    Deliberately a whole-word search rather than SQL parsing: the nine
     relabelled tables are a plain tuple the UPDATE is formatted against,
     so the table name and the statement never appear together in the text.
     A table named here but somehow not migrated would slip through, which
@@ -1167,7 +1167,7 @@ async def test_rename_camera_touches_every_table_keyed_by_camera(
     keyed_by_camera = {row["table_name"] for row in rows}
     # A sanity floor: if the query ever returns nothing the assertion below
     # would pass vacuously and guard nothing at all.
-    assert len(keyed_by_camera) >= 12
+    assert len(keyed_by_camera) >= 13
 
     source = _rename_sources()
     missing = {table for table in keyed_by_camera if not _mentions(source, table)}
@@ -4112,6 +4112,63 @@ async def test_add_face_enrollment_stores_its_thumbnail(db: ClipDatabase) -> Non
     assert await db.get_face_enrollment_thumbnail(with_photo) == b"jpeg"
     assert await db.get_face_enrollment_thumbnail(without) is None
     assert await db.get_face_enrollment_thumbnail(999) is None
+
+
+async def test_add_face_enrollment_records_where_it_came_from(
+    db: ClipDatabase,
+) -> None:
+    from_clip = await db.add_face_enrollment(
+        "Brian", [0.1], frame_width=640, camera="Driveway"
+    )
+    uploaded = await db.add_face_enrollment("Brian", [0.2], thumbnail=b"jpeg")
+
+    by_id = {e["id"]: e for e in await db.list_face_enrollments()}
+    assert (by_id[from_clip]["camera"], by_id[from_clip]["frame_width"]) == (
+        "Driveway",
+        640,
+    )
+    assert (by_id[uploaded]["camera"], by_id[uploaded]["frame_width"]) == (None, None)
+
+
+async def test_rename_camera_carries_face_enrollments(db: ClipDatabase) -> None:
+    """A person's photos keep saying which camera they came from after
+    Blink renames it; photos from another camera, and uploads, are left."""
+    renamed = await db.add_face_enrollment("Brian", [0.1], camera="Front door")
+    other = await db.add_face_enrollment("Brian", [0.2], camera="Driveway")
+    uploaded = await db.add_face_enrollment("Brian", [0.3])
+
+    assert await db.rename_camera("Front Door", "Porch") is True
+
+    cameras = {e["id"]: e["camera"] for e in await db.list_face_enrollments()}
+    assert cameras == {renamed: "Porch", other: "Driveway", uploaded: None}
+
+
+async def test_upgrading_keeps_enrollments_made_before_6_0_7(db: ClipDatabase) -> None:
+    """6.0.7 adds thumbnail, frame_width and camera to a table every earlier
+    install already has — so they must come from _MIGRATIONS, and a row
+    enrolled the old way must still list, as a photo with nothing known
+    about where it came from."""
+    assert db._pool is not None
+    for column in ("thumbnail", "frame_width", "camera"):
+        await db._pool.execute(f"ALTER TABLE face_enrollments DROP COLUMN {column}")
+    await db._pool.execute(
+        "INSERT INTO face_enrollments (name, embedding, created_at, approved) "
+        "VALUES ('Brian', '[0.1, 0.2]', '2026-01-01T00:00:00+00:00', TRUE)"
+    )
+
+    upgraded = ClipDatabase(TEST_DB_DSN)
+    await upgraded.init()
+    try:
+        (legacy,) = await upgraded.list_face_enrollments()
+        assert legacy["embedding"] == [0.1, 0.2]
+        assert legacy["has_thumbnail"] is False
+        assert (legacy["frame_width"], legacy["camera"]) == (None, None)
+        await upgraded.add_face_enrollment(
+            "Brian", [0.3], thumbnail=b"jpeg", frame_width=640, camera="Driveway"
+        )
+        assert len(await upgraded.list_face_enrollments()) == 2
+    finally:
+        await upgraded.close()
 
 
 async def test_get_person_approval(db: ClipDatabase) -> None:

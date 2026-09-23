@@ -13,6 +13,49 @@ export interface Person {
   problemCount: number
   /** Every photo predates 6.0.7 — worth adding fresh ones from a clip. */
   onlyLegacy: boolean
+  /** Where the photos came from, most first — see photoSource. */
+  sources: SourceCount[]
+}
+
+/** A camera whose clips a photo was found in, or an uploaded photo. */
+export type PhotoSource = { kind: 'camera'; camera: string } | { kind: 'upload' }
+
+export interface SourceCount {
+  source: PhotoSource
+  count: number
+}
+
+/**
+ * Where one photo came from, or null when that is unknown — a photo
+ * enrolled before 6.0.7, which recorded neither.
+ */
+export function photoSource(photo: FaceEnrollment): PhotoSource | null {
+  if (photo.camera) return { kind: 'camera', camera: photo.camera }
+  if (photo.has_thumbnail && photo.frame_width == null) return { kind: 'upload' }
+  return null
+}
+
+export function sourceLabel(source: PhotoSource): string {
+  return source.kind === 'camera' ? source.camera : 'Uploaded'
+}
+
+/** Cameras by how many photos came from them, then uploads. */
+function countSources(photos: FaceEnrollment[]): SourceCount[] {
+  const counts = new Map<string, SourceCount>()
+  for (const photo of photos) {
+    const source = photoSource(photo)
+    if (!source) continue
+    const key = source.kind === 'camera' ? `camera:${source.camera}` : 'upload'
+    const entry = counts.get(key)
+    if (entry) entry.count += 1
+    else counts.set(key, { source, count: 1 })
+  }
+  return [...counts.values()].sort(
+    (a, b) =>
+      Number(a.source.kind === 'upload') - Number(b.source.kind === 'upload') ||
+      b.count - a.count ||
+      sourceLabel(a.source).localeCompare(sourceLabel(b.source)),
+  )
 }
 
 /**
@@ -72,6 +115,7 @@ export function groupPeople(faces: FaceEnrollment[], frameWidth: number): Person
         firstEnrolled: photos.map((p) => p.created_at).sort((a, b) => a.localeCompare(b))[0],
         problemCount: photos.filter((p) => photoProblems(p, frameWidth).length > 0).length,
         onlyLegacy: photos.every(isLegacyPhoto),
+        sources: countSources(photos),
       }
     })
     .sort((a, b) => a.name.localeCompare(b.name))

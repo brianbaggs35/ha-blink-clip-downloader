@@ -6,9 +6,10 @@ import { enrollment } from './testing'
 
 const PERSON = groupPeople(
   [
-    enrollment({ id: 1 }),
-    enrollment({ id: 2, has_thumbnail: false, frame_width: null }),
+    enrollment({ id: 1, camera: 'Driveway' }),
+    enrollment({ id: 2, has_thumbnail: false, frame_width: null, camera: null }),
     enrollment({ id: 3, frame_width: 1280, warning: { unlike_others: true, also_matches: 'Amy' } }),
+    enrollment({ id: 4, frame_width: null, camera: null }),
   ],
   640,
 )[0]
@@ -35,7 +36,14 @@ describe('PersonPhotosDialog', () => {
     await mountDialog()
     expect(body().text()).toContain("Brian's photos")
     const items = body().findAll('.photo-item')
-    expect(items).toHaveLength(3)
+    expect(items).toHaveLength(4)
+    // Where each came from; nothing claimed for one enrolled before that was kept.
+    expect(items.map((item) => item.find('.photo-origin').exists() && item.find('.photo-origin').text())).toEqual([
+      'From Driveway',
+      false,
+      'From Front Door',
+      'Uploaded photo',
+    ])
     expect(items[0].find('img').attributes('src')).toBe('/api/ai/faces/thumbs/1')
     expect(items[1].find('img').exists()).toBe(false)
     expect(items[1].text()).toContain('no image kept')

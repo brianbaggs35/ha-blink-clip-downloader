@@ -24,21 +24,41 @@ describe('PersonCard', () => {
     expect(avatars[0].props('image')).toBe('/api/ai/faces/thumbs/1')
     expect(avatars[4].props('label')).toBe('+2')
     expect(wrapper.text()).toContain('6 photos')
-    expect(wrapper.text()).not.toContain('More photos')
+    expect(wrapper.text()).not.toContain('A few more photos')
   })
 
-  it('falls back to initials, and suggests fresh photos, for an older enrollment', () => {
-    const wrapper = mountCard(photos(1, { name: 'Mary Smith', has_thumbnail: false, frame_width: null }))
+  it('falls back to initials, and tags an older enrollment', () => {
+    const wrapper = mountCard(photos(1, { name: 'Mary Smith', has_thumbnail: false, frame_width: null, camera: null }))
     const avatars = wrapper.findAllComponents(Avatar)
     expect(avatars).toHaveLength(1)
     expect(avatars[0].props('label')).toBe('MS')
-    expect(wrapper.text()).toContain('Enrolled with an earlier version')
+    expect(wrapper.text()).toContain('Earlier version')
     expect(wrapper.text()).toContain('1 photo')
+    // Where it came from was never recorded, so nothing claims to know.
+    expect(wrapper.find('.person-sources').exists()).toBe(false)
+    // The page says what to do about it once, rather than every card.
+    expect(wrapper.text()).not.toContain('A few more photos')
   })
 
-  it('suggests more photos when there are only a couple', () => {
-    const wrapper = mountCard(photos(2))
-    expect(wrapper.text()).toContain('More photos from different cameras')
+  it('suggests more photos, from each camera, when there are only a couple', () => {
+    const wrapper = mountCard(photos(2, { name: 'Amy' }))
+    expect(wrapper.text()).toContain('A few more photos — from each camera Amy is seen on')
+  })
+
+  it('shows which cameras the photos came from, most first, uploads last', () => {
+    const wrapper = mountCard([
+      enrollment({ id: 1, camera: 'Front Door' }),
+      enrollment({ id: 2, camera: 'Driveway' }),
+      enrollment({ id: 3, camera: 'Driveway' }),
+      enrollment({ id: 4, camera: null, frame_width: null }),
+    ])
+    const sources = wrapper.findAll('.person-sources li')
+    expect(sources.map((li) => li.text())).toEqual(['Driveway 2', 'Front Door 1', 'Uploaded 1'])
+    expect(sources.map((li) => li.find('i').classes())).toEqual([
+      ['pi', 'pi-video'],
+      ['pi', 'pi-video'],
+      ['pi', 'pi-upload'],
+    ])
   })
 
   it('shows approval, including a mix left by an older version', () => {

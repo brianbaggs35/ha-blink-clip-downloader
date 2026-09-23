@@ -61,7 +61,7 @@ architecture.
     `save_analysis` does, writing a verdict plus its detections and events
     together), which is what keeps each mixin independently type-checkable;
     and anything added to `cameras.py`'s rename path must cover **every**
-    table with a `camera` column — there are 12, and the count is worth
+    table with a `camera` column — there are 13, and the count is worth
     re-deriving from `schema.py` rather than trusting, since a missed one
     is this repo's most-repeated bug.
   - `analyzer/` — AI vision analysis, a package since 6.0.6 (it was a

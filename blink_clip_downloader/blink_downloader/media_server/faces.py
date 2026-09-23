@@ -30,7 +30,9 @@ from aiohttp import web
 from ..face_enrollment import (
     CANDIDATE_CAPACITY,
     MIN_CANDIDATE_PROBABILITY,
+    describe_match,
     group_candidates,
+    match_candidates,
     review_enrollments,
     suppress_near_duplicates,
 )
@@ -188,6 +190,7 @@ class FaceRoutesMixin(_MediaServerBase):
                         "approved": bool(e["approved"]),
                         "has_thumbnail": bool(e.get("has_thumbnail")),
                         "frame_width": e.get("frame_width"),
+                        "camera": e.get("camera"),
                         "warning": warnings.get(e["id"]),
                     }
                     for e in enrollments
@@ -223,27 +226,25 @@ class FaceRoutesMixin(_MediaServerBase):
         enrollments: list[dict[str, Any]],
         time: float | None = None,
         frame_width: int | None = None,
+        camera: str | None = None,
     ) -> dict[str, Any]:
         """Hold *face* as a candidate and describe it for the picker.
 
         ``match`` is who clip analysis would recognize this face as today
         (same threshold, same tie-break), so the picker can say "already
         recognized as Brian" — a face that is *not* yet recognized is the
-        more valuable one to enroll. *frame_width* is the width of the clip
-        frame it came from, ``None`` for an uploaded photo.
+        more valuable one to enroll. *frame_width* and *camera* describe the
+        clip frame it came from, both ``None`` for an uploaded photo.
         """
-        match = match_enrollment(face.embedding, enrollments)
         return {
             "id": self._face_candidates.add(
-                face.embedding, face.thumbnail, face.quality, frame_width
+                face.embedding, face.thumbnail, face.quality, frame_width, camera
             ),
             "thumbnail": _data_url(face.thumbnail),
             "quality": face.quality,
             "width": face.width,
             "time": time,
-            "match": (
-                {"name": match[0], "similarity": round(match[1], 3)} if match else None
-            ),
+            "match": describe_match(match_enrollment(face.embedding, enrollments)),
         }
 
     async def _handle_faces_detect(self, request: web.Request) -> web.Response:
@@ -358,7 +359,11 @@ class FaceRoutesMixin(_MediaServerBase):
                 "duplicates_hidden": len(found) - len(keep),
                 "faces": [
                     self._offer(
-                        found[i][0], enrollments, found[i][1], self._face_frame_width
+                        found[i][0],
+                        enrollments,
+                        found[i][1],
+                        self._face_frame_width,
+                        clip["camera"],
                     )
                     for i in keep
                 ],
@@ -369,18 +374,27 @@ class FaceRoutesMixin(_MediaServerBase):
         """Group candidates by apparent person, across every scan so far.
 
         Body: ``{"candidate_ids": [...]}``. Returns ``{"groups": [[id, ...],
-        ...], "expired": [id, ...]}`` — the second listing ids no longer
-        held (too old, or already enrolled), so the picker can drop them.
+        ...], "expired": [id, ...], "matches": {id: match}}`` — ``expired``
+        listing ids no longer held (too old, or already enrolled), so the
+        picker can drop them, and ``matches`` who each held face would be
+        recognized as against the people enrolled *now* (see
+        :func:`~blink_downloader.face_enrollment.match_candidates`).
         """
         ids = _candidate_ids(await _json_object(request))
         held = {i: self._face_candidates.get(i) for i in ids}
+        live = [c for c in held.values() if c]
+        enrollments = await self._db.list_face_enrollments()
         # In a worker thread: even vectorized, a full store is real numpy
         # work, and it must not stall every other request while it runs.
-        groups = await asyncio.to_thread(
-            group_candidates, [c for c in held.values() if c]
+        groups, matches = await asyncio.to_thread(
+            lambda: (group_candidates(live), match_candidates(live, enrollments))
         )
         return web.json_response(
-            {"groups": groups, "expired": [i for i, c in held.items() if c is None]}
+            {
+                "groups": groups,
+                "expired": [i for i, c in held.items() if c is None],
+                "matches": matches,
+            }
         )
 
     async def _handle_faces_enroll(self, request: web.Request) -> web.Response:
@@ -415,6 +429,7 @@ class FaceRoutesMixin(_MediaServerBase):
                 approved=approved,
                 thumbnail=candidate.thumbnail or None,
                 frame_width=candidate.frame_width,
+                camera=candidate.camera,
             )
             self._face_candidates.take(candidate_id)
             enrolled += 1

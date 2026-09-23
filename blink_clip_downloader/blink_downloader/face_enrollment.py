@@ -71,6 +71,8 @@ class FaceCandidate:
     created: float
     #: Width of the clip frame the face came from; None for an uploaded photo.
     frame_width: int | None = None
+    #: Camera whose clip the face came from; None for an uploaded photo.
+    camera: str | None = None
 
 
 class FaceCandidateStore:
@@ -99,6 +101,7 @@ class FaceCandidateStore:
         thumbnail: bytes,
         quality: float,
         frame_width: int | None = None,
+        camera: str | None = None,
     ) -> str:
         """Store one face and return the id the browser will refer to it by."""
         self._expire()
@@ -109,6 +112,7 @@ class FaceCandidateStore:
             quality=quality,
             created=self._clock(),
             frame_width=frame_width,
+            camera=camera,
         )
         self._items[candidate.id] = candidate
         while len(self._items) > self._capacity:
@@ -205,6 +209,51 @@ def group_candidates(candidates: Sequence[FaceCandidate]) -> list[list[str]]:
         norms[best] = np.linalg.norm(sums[best])
     groups = [[ordered[i].id for i in group] for group in members]
     return sorted(groups, key=len, reverse=True)
+
+
+def match_candidates(
+    candidates: Sequence[FaceCandidate], enrollments: Sequence[dict[str, Any]]
+) -> dict[str, dict[str, Any] | None]:
+    """Per candidate id, who clip analysis would recognize it as right now.
+
+    The same answer as :func:`~blink_downloader.vision.faces.match_enrollment`
+    gives one face — the closest enrollment at or above ``_FACE_MATCH_THRESHOLD``, a tie
+    going to the later one — as ``{"name", "similarity"}`` or ``None``. A
+    scan answers this once, when a face is found; the picker asks again
+    whenever the enrolled people change, so "already recognized as" never
+    describes someone since renamed, removed or newly enrolled.
+
+    One matrix product rather than ``match_enrollment`` per pair: the
+    candidate store can hold 2,000 faces, and the pure-Python cosine it uses
+    would take seconds over that many. An enrollment whose embedding cannot
+    be compared (another length, or empty) matches nothing, as there.
+    Every candidate comes from the one embedder, so they share a length.
+    """
+    result: dict[str, dict[str, Any] | None] = {c.id: None for c in candidates}
+    if not candidates:
+        return result
+    dimension = len(candidates[0].embedding)
+    usable = [e for e in enrollments if len(e.get("embedding") or []) == dimension]
+    if not usable:
+        return result
+    similarity = _unit_rows([c.embedding for c in candidates]) @ (
+        _unit_rows([e["embedding"] for e in usable]).T
+    )
+    for row, candidate in zip(similarity, candidates):
+        best = len(row) - 1 - int(np.argmax(row[::-1]))
+        if row[best] >= _FACE_MATCH_THRESHOLD:
+            result[candidate.id] = describe_match(
+                (str(usable[best]["name"]), float(row[best]))
+            )
+    return result
+
+
+def describe_match(match: tuple[str, float] | None) -> dict[str, Any] | None:
+    """A :func:`~blink_downloader.vision.faces.match_enrollment` answer as
+    the picker's JSON: ``{"name", "similarity"}``, or ``None``."""
+    if match is None:
+        return None
+    return {"name": match[0], "similarity": round(match[1], 3)}
 
 
 def review_enrollments(enrollments: Sequence[dict[str, Any]]) -> dict[int, dict]:

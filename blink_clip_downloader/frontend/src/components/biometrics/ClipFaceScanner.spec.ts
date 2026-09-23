@@ -194,6 +194,9 @@ describe('ClipFaceScanner', () => {
     expect(wrapper.text()).toContain('Scanning clip 1 of 3')
     expect(tiles(wrapper)[0].text()).toContain('Scanning…')
     expect(tiles(wrapper)[1].text()).toContain('Queued')
+    // Queued is not scanned: the button must not claim they all are yet.
+    expect(scanAllButton(wrapper).text()).toBe('Scanning…')
+    expect(scanAllButton(wrapper).attributes('disabled')).toBeDefined()
 
     pending.get('a')!.resolve(jsonResponse(scanResult('a', [])))
     await flushPromises()

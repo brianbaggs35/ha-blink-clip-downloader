@@ -8,7 +8,7 @@ import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import ToggleSwitch from 'primevue/toggleswitch'
 import { faceThumbUrl } from '../../api/faces'
-import { initials, type Person } from './people'
+import { initials, sourceLabel, type Person } from './people'
 
 const props = defineProps<{ person: Person }>()
 const emit = defineEmits<{
@@ -88,16 +88,26 @@ function save() {
               icon="pi pi-exclamation-triangle"
               :value="`${person.problemCount} to review`"
             />
+            <Tag
+              v-if="person.onlyLegacy"
+              severity="secondary"
+              icon="pi pi-history"
+              value="Earlier version"
+              title="Enrolled before 6.0.7 — add a few photos from a clip"
+            />
           </div>
         </div>
       </div>
 
-      <p v-if="person.onlyLegacy" class="person-hint">
-        Enrolled with an earlier version, from smaller frames than recognition uses — adding a few photos from a clip
-        will recognize {{ person.name }} much more reliably.
-      </p>
-      <p v-else-if="photoCount < 3" class="person-hint">
-        More photos from different cameras and angles make recognition much more reliable.
+      <ul v-if="person.sources.length" class="person-sources" aria-label="Where the photos came from">
+        <li v-for="{ source, count } in person.sources" :key="sourceLabel(source)">
+          <i :class="source.kind === 'camera' ? 'pi pi-video' : 'pi pi-upload'" aria-hidden="true" />
+          {{ sourceLabel(source) }} <span class="person-source-count">{{ count }}</span>
+        </li>
+      </ul>
+
+      <p v-if="!person.onlyLegacy && photoCount < 3" class="person-hint">
+        A few more photos — from each camera {{ person.name }} is seen on — will recognize them far more reliably.
       </p>
 
       <div class="person-card-actions">
@@ -120,6 +130,12 @@ function save() {
 </template>
 
 <style scoped>
+/* Its own edge: inside the Household members card, the two surfaces are
+   close enough in dark mode that the cards otherwise run together. */
+.person-card {
+  border: 1px solid var(--border);
+}
+
 .person-card-top {
   display: flex;
   align-items: flex-start;
@@ -184,6 +200,36 @@ function save() {
   margin: 0 0 0.6rem;
 }
 
+.person-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  list-style: none;
+}
+
+.person-sources li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: var(--card2);
+  border: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.person-sources .pi {
+  font-size: 0.7rem;
+}
+
+.person-source-count {
+  font-weight: 700;
+  color: var(--text);
+}
+
 .person-card-actions {
   display: flex;
   flex-direction: column;
@@ -201,5 +247,11 @@ function save() {
   flex-wrap: wrap;
   gap: 0.1rem;
   margin-left: -0.5rem;
+}
+
+@media (max-width: 600px) {
+  .person-card :deep(.p-card-body) {
+    padding: 0.9rem;
+  }
 }
 </style>

@@ -4743,11 +4743,31 @@ def _ffmpeg(stdout: bytes = b"", stderr: bytes = b"", returncode: int = 0) -> As
 
 
 async def _scannable_clip(
-    db: ClipDatabase, tmp_path: Path, clip_id: str = "s1", duration: float = 10
+    db: ClipDatabase,
+    tmp_path: Path,
+    clip_id: str = "s1",
+    duration: float = 10,
+    camera: str = "Front Door",
 ) -> None:
     video = tmp_path / f"{clip_id}.mp4"
     video.write_bytes(b"video")
-    await db.add_clip(_make_clip(clip_id, path=str(video), duration=duration))
+    await db.add_clip(
+        _make_clip(clip_id, camera=camera, path=str(video), duration=duration)
+    )
+
+
+async def _scan(client: TestClient, clip_id: str, *faces: DetectedFace) -> list[dict]:
+    """Scan one clip whose single frame holds *faces*; the faces offered."""
+    with (
+        patch(
+            "asyncio.create_subprocess_exec",
+            return_value=_ffmpeg(_concat_jpegs(b"f0")),
+        ),
+        _detection(list(faces)),
+    ):
+        resp = await client.get(f"/api/ai/faces/scan/{clip_id}")
+    assert resp.status == 200
+    return (await resp.json())["faces"]
 
 
 async def test_faces_scan_not_found(client: TestClient) -> None:
@@ -4876,6 +4896,51 @@ async def test_faces_enrolled_from_a_photo_record_no_frame_width(
     listing = await (await client.get("/api/ai/faces")).json()
     assert listing["frame_width"] == 640
     assert listing["faces"][0]["frame_width"] is None
+    assert listing["faces"][0]["camera"] is None
+
+
+async def test_faces_one_person_enrolled_from_several_cameras(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    """Enroll someone from the Driveway, then add photos of them from the
+    Front Door and an uploaded photo: one person, each photo remembering
+    where it came from, all taking the approval they were enrolled with."""
+    await _scannable_clip(db, tmp_path, "drive", camera="Driveway")
+    await _scannable_clip(db, tmp_path, "door", camera="Front Door")
+
+    driveway = await _scan(client, "drive", _face([1.0, 0.0]))
+    first = await client.post(
+        "/api/ai/faces",
+        json={"name": "Brian", "approved": False, "candidate_ids": [driveway[0]["id"]]},
+    )
+    assert (await first.json())["existing"] is False
+
+    front_door = await _scan(client, "door", _face([0.8, 0.6]), _face([0.2, 0.98]))
+    uploaded = await _offer(client, _face([0.7, 0.7]))
+    added = await client.post(
+        "/api/ai/faces",
+        json={
+            "name": "Brian",
+            "candidate_ids": [f["id"] for f in [*front_door, *uploaded]],
+        },
+    )
+    assert await added.json() == {
+        "name": "Brian",
+        "enrolled": 3,
+        "expired": 0,
+        "approved": False,
+        "existing": True,
+    }
+
+    faces = (await (await client.get("/api/ai/faces")).json())["faces"]
+    assert {f["name"] for f in faces} == {"Brian"}
+    assert sorted((f["camera"] or "", f["frame_width"] or 0) for f in faces) == [
+        ("", 0),
+        ("Driveway", 640),
+        ("Front Door", 640),
+        ("Front Door", 640),
+    ]
+    assert not any(f["approved"] for f in faces)
 
 
 async def test_faces_scan_unavailable_when_dependency_missing(
@@ -4980,6 +5045,33 @@ async def test_faces_group_groups_candidates_and_lists_expired_ones(
     body = await resp.json()
     assert sorted(len(g) for g in body["groups"]) == [1, 2]
     assert body["expired"] == ["gone"]
+    assert body["matches"] == dict.fromkeys(ids)
+
+
+async def test_faces_group_says_who_each_face_is_recognized_as_now(
+    client: TestClient, db: ClipDatabase
+) -> None:
+    """A scan records who a face matched when it was found; regrouping
+    answers again against the people enrolled now, so a label never names
+    someone since renamed or removed, and a face of someone just enrolled
+    from another camera shows as recognized."""
+    (face,) = await _offer(client, _face([1.0, 0.0]))
+    assert face["match"] is None
+
+    async def matches() -> dict[str, Any]:
+        resp = await client.post(
+            "/api/ai/faces/group", json={"candidate_ids": [face["id"]]}
+        )
+        return (await resp.json())["matches"]
+
+    await db.add_face_enrollment("Brian", [0.98, 0.2])
+    assert await matches() == {face["id"]: {"name": "Brian", "similarity": 0.98}}
+
+    await db.rename_face_enrollments_by_name("Brian", "Bri")
+    assert (await matches())[face["id"]]["name"] == "Bri"
+
+    await db.delete_face_enrollments_by_name("Bri")
+    assert await matches() == {face["id"]: None}
 
 
 @pytest.mark.parametrize(
