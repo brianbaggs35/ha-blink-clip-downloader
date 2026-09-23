@@ -650,6 +650,19 @@ missed genuine intrusion, not a cosmetic bug. `tests/test_analyzer.py`'s
 adversarial "stays suspicious when a stranger is also present" tests exist
 specifically to catch a regression here.
 
+Since 6.0.7 the identity condition also counts people, not just faces:
+`_unaccounted_people` withholds the bypass when object detection saw more
+people together in **one frame** than there are approved names recognized
+— a stranger with their back to the camera has no face to be
+"unrecognized", so faces alone called that clip "only Brian here". It is
+the per-frame peak on purpose, not distinct track ids: tracking across
+frames sampled seconds apart can split one person into two ids, and
+counting ids would withhold a lone resident's bypass. It sits inside
+`_face_match_is_unambiguous`, so the Library badge and the known-person
+risk discount follow it too, and `_personalization_names` applies the
+same count (the unseen face may be whoever the summary describes). With
+detection off it counts 0 and the old faces-only rule stands.
+
 Since 6.0.0 there is a **second** condition: an event in
 `security.BYPASS_BLOCKING_EVENTS` withholds the bypass even on a clean
 identity match — a recognized person denting the car is still a dented car.

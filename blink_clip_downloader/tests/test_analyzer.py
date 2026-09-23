@@ -5787,6 +5787,86 @@ def test_face_bypass_does_not_apply_no_vision_hints() -> None:
     assert ClipAnalyzer._face_bypass_applies(None) is False
 
 
+def _people(*per_frame: int) -> list:
+    """Person detections: *per_frame[i]* people in sampled frame *i*, each
+    its own track, plus a car in every frame that must not count."""
+    from blink_downloader.vision import DetectedObject
+
+    boxes = []
+    track = 0
+    for frame, count in enumerate(per_frame):
+        boxes.append(DetectedObject("car", 0.9, (0, 0, 9, 9), 99, frame))
+        for _ in range(count):
+            track += 1
+            boxes.append(DetectedObject("person", 0.8, (0, 0, 9, 9), track, frame))
+    return boxes
+
+
+def test_face_bypass_does_not_apply_beside_someone_whose_face_never_showed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The stranger case again, but with their back to the camera: no face
+    to be unrecognized, so faces alone read "only Brian here". Object
+    detection saw two people at once, and only one approved face — someone
+    is unaccounted for, which must keep the clip flagged."""
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Brian"]),
+        detections=_people(1, 2, 1),
+    )
+    with caplog.at_level(logging.INFO):
+        assert ClipAnalyzer._face_bypass_applies(hints) is False
+    assert "1 more person seen at once than approved faces recognized" in caplog.text
+    assert ClipAnalyzer._face_match_is_unambiguous(hints) is False
+    assert ClipAnalyzer._personalization_names(hints) == []
+
+
+def test_face_bypass_counts_everyone_recognized_against_everyone_seen() -> None:
+    both = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Amy", "Brian"]),
+        detections=_people(2, 2),
+    )
+    assert ClipAnalyzer._face_bypass_applies(both) is True
+    three = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Amy", "Brian"]),
+        detections=_people(1, 3),
+    )
+    assert ClipAnalyzer._face_bypass_applies(three) is False
+
+
+def test_face_bypass_is_not_withheld_for_one_person_tracked_as_several() -> None:
+    """Tracking across frames sampled seconds apart can give one person a
+    new id each frame. Counting ids would call a lone resident three people
+    and withhold their bypass; the per-frame peak does not."""
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(approved_names=["Brian"]),
+        detections=_people(1, 1, 1),
+    )
+    assert ClipAnalyzer._face_bypass_applies(hints) is True
+    assert ClipAnalyzer._personalization_names(hints) == ["Brian"]
+
+
+def test_face_bypass_without_object_detection_rests_on_faces_alone() -> None:
+    for detections in (None, []):
+        hints = VisionHints(
+            face_recognition=FaceRecognitionResult(approved_names=["Brian"]),
+            detections=detections,
+        )
+        assert ClipAnalyzer._face_bypass_applies(hints) is True
+
+
+def test_personalization_names_count_unapproved_names_as_accounted_for() -> None:
+    """Naming is cosmetic, so a recognized nanny counts as someone seen and
+    named — two people, two names — even though she could never bypass."""
+    hints = VisionHints(
+        face_recognition=FaceRecognitionResult(
+            approved_names=["Brian"], other_names=["Nanny"]
+        ),
+        detections=_people(2),
+    )
+    assert ClipAnalyzer._personalization_names(hints) == ["Brian", "Nanny"]
+    assert ClipAnalyzer._face_bypass_applies(hints) is False
+
+
 def test_face_bypass_does_not_apply_vision_hints_without_face_recognition() -> None:
     from blink_downloader.vision import VisionHints
 
@@ -6130,6 +6210,39 @@ async def test_analyze_clip_stays_suspicious_when_stranger_also_present() -> Non
     # The badge must not claim "recognized" either - a stranger is also
     # present, so this is exactly the ambiguous case neither signal may
     # paper over, whether or not the clip stayed suspicious.
+    assert result.approved_faces_seen is False
+
+
+async def test_analyze_clip_stays_suspicious_beside_a_faceless_stranger() -> None:
+    """End to end: Brian's face recognized, a second person in frame whose
+    face never showed. Flag kept, summary not attributed to Brian, no badge,
+    and no known-person discount on the risk score."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    fake_pipeline = MagicMock()
+    fake_pipeline.process_clip = AsyncMock(
+        return_value=VisionHints(
+            face_recognition=FaceRecognitionResult(approved_names=["Brian"]),
+            detections=_people(2, 2),
+        )
+    )
+    a.attach_vision_pipeline(fake_pipeline)
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_real_jpeg(100) * 3, b""))
+    mock_proc.returncode = 0
+    a._call_model = AsyncMock(  # type: ignore[method-assign]
+        return_value=(
+            '{"suspicious": true, "confidence": 0.9, '
+            '"description": "A person is tampering with the vehicle."}'
+        )
+    )
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        result = await a.analyze_clip("/clips/test.mp4", "c1", "Driveway")
+
+    assert result.is_suspicious is True
+    assert result.summary == "A person is tampering with the vehicle."
+    assert result.face_bypass_applied is False
     assert result.approved_faces_seen is False
 
 

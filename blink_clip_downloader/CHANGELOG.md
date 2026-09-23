@@ -134,6 +134,18 @@ tab points out photos captured at the old resolution.
 
 ### Bug fixes
 
+- **An approved person's face could clear a clip that also held someone
+  whose face never showed.** The suspicious-flag bypass required every
+  *face* in a clip to belong to an approved person, so a stranger with their
+  back to the camera — or hooded, or too far away for a face — was simply
+  not counted, and walking beside a recognized resident cleared their clip.
+  When object detection is on, the bypass is now also withheld whenever it
+  saw more people together in one frame than there were approved people
+  recognized, and so is the known-person discount on the risk score and the
+  "Brian walked up…" rewrite of the summary (the person who did it may be
+  the one whose face was not seen). It counts people per frame rather than
+  per tracked identity, so one resident whom tracking splits in two across
+  frames does not lose their bypass.
 - **People enrolled from a clip were recognized far less often than they
   should have been.** The old picker extracted frames 480px wide while
   recognition matches in 640px ones, and a face enrolled at one size matches

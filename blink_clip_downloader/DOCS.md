@@ -1197,7 +1197,11 @@ enrollment — and only then — the clip's suspicious flag is automatically
 cleared, on top of whatever the AI model itself concluded. This is
 deliberately all-or-nothing: a single stranger, or someone recognized but
 not (or no longer) approved, standing next to an approved family member
-still gets the clip flagged normally. Turn a person's approval off (without
+still gets the clip flagged normally. With object detection on
+(`ai_enhanced_detection_enabled`), that
+includes a stranger whose face never shows (back to the camera, hood up):
+if more people are seen together in one frame than approved people were
+recognized, the flag stays. Turn a person's approval off (without
 deleting them) to keep recognizing/labeling someone — e.g. a regular visitor
 — without granting them bypass trust. Enrolled photos and the approved flag
 can be managed per person (rename, approve/un-approve, or remove every photo

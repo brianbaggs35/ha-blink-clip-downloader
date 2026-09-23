@@ -263,7 +263,8 @@ class RiskScorer:
                     name="known_person",
                     points=KNOWN_PERSON_POINTS,
                     detail=(
-                        "Every face in the clip matched an approved household member."
+                        "Everyone seen in the clip was recognized as an approved "
+                        "household member."
                     ),
                 )
             )
