@@ -68,14 +68,25 @@ async function stubClipTotal(page: Page, total: () => number) {
 const fired = (page: Page) =>
   page.evaluate(() => (window as unknown as { __firedNotifications: { title: string }[] }).__firedNotifications)
 
-async function openLibrary(page: Page) {
+async function openLibrary(page: Page, served: { served: number }) {
   await page.goto('/')
   await page.waitForSelector('.app-nav-tab.active[data-tab="library"]')
   // The first poll only records a baseline — checkNewClipsNotification
   // deliberately stays quiet until it has a previous count to compare to,
   // so that opening the app never announces the whole existing library.
-  await expect.poll(async () => (await fired(page)).length).toBe(0)
+  // Wait for that poll to have been answered: until it has, a test changing
+  // the total would change the baseline itself, and the rise it then
+  // expects announced would never be seen as one. loadStats handles
+  // responses in the order they arrive, so every later poll lands after it.
+  await expect.poll(() => served.served).toBeGreaterThan(0)
+  expect(await fired(page)).toEqual([])
 }
+
+// A poll can still be in flight when a test ends; its route handler then
+// fails with "Test ended" and takes the test down with it.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' })
+})
 
 /** Click Refresh and wait until the resulting /api/stats poll has landed. */
 async function refreshAndSettle(page: Page, served: { served: number }) {
@@ -88,7 +99,7 @@ test('announces new clips, and gets the singular and plural wording right', asyn
   let total = 10
   await stubNotifications(page, { enabled: true, permission: 'granted' })
   const served = await stubClipTotal(page, () => total)
-  await openLibrary(page)
+  await openLibrary(page, served)
 
   total = 11
   await refreshAndSettle(page, served)
@@ -113,7 +124,7 @@ test('stays silent when the clip count has not grown', async ({ page }) => {
   let total = 10
   await stubNotifications(page, { enabled: true, permission: 'granted' })
   const served = await stubClipTotal(page, () => total)
-  await openLibrary(page)
+  await openLibrary(page, served)
 
   // A clip deleted between polls must not be announced as an arrival.
   total = 8
@@ -125,7 +136,7 @@ test('stays silent when notifications are switched off', async ({ page }) => {
   let total = 10
   await stubNotifications(page, { enabled: false, permission: 'granted' })
   const served = await stubClipTotal(page, () => total)
-  await openLibrary(page)
+  await openLibrary(page, served)
 
   total = 12
   await refreshAndSettle(page, served)
@@ -137,7 +148,7 @@ test('stays silent when permission was never granted', async ({ page }) => {
   let total = 10
   await stubNotifications(page, { enabled: true, permission: 'default' })
   const served = await stubClipTotal(page, () => total)
-  await openLibrary(page)
+  await openLibrary(page, served)
 
   total = 12
   await refreshAndSettle(page, served)
