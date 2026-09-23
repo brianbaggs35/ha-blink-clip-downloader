@@ -168,6 +168,15 @@ tab points out photos captured at the old resolution.
   car was then left with a contact nothing could confirm. They now look at
   whoever stands nearest the car (feet the car hides, or up on it, count as
   at it), and still at that person's closest moment.
+- **A dog could take those same checks from a person touching the car.**
+  A stranger trying the door at night with a dog at their feet was held
+  at 74, below the alert band, where the same stranger alone scored
+  critical — the dog stood nearer the car's wheels, so depth and
+  segmentation examined it and the person's touch stayed unconfirmed. A
+  person within 3 feet of the car is now examined ahead of any animal:
+  only a person's contact can raise a clip to suspicious or critical, and
+  only a person has a pose to read. A dog on the car while its owner is
+  further away is still the one examined.
 - **Walking to your own car could read as a possible impact.** A "possible
   impact" needs a confirmed touch plus something sudden, such as the
   subject rushing at the car. The rush was measured anywhere in the clip, so

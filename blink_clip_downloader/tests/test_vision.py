@@ -3743,6 +3743,19 @@ def test_pair_stages_count_hidden_or_raised_feet_as_at_the_car() -> None:
     assert subject is dog_on_bonnet
 
 
+def test_pair_stages_examine_the_person_at_the_car_before_their_dog() -> None:
+    """Only a person's contact can reach suspicious or critical, and only a
+    person has a pose, so a dog at a stranger's feet — its paws nearer the
+    car's ground line than the stranger's shoes — must not take the checks
+    that would confirm the stranger's touch."""
+    stranger_at_door = DetectedObject("person", 0.9, (380.0, 140.0, 430.0, 296.0), 1, 3)
+    dog_at_wheel = DetectedObject("dog", 0.8, (360.0, 262.0, 400.0, 292.0), 3, 3)
+    subject, *_ = VisionPipeline._select_pair(
+        _pair_hints(_CAR), [dog_at_wheel, stranger_at_door], None
+    )  # type: ignore[misc]
+    assert subject is stranger_at_door
+
+
 def test_pair_stages_keep_one_subjects_deepest_overlap_frame() -> None:
     """Only the choice of *whom* changed: with one subject, the frame is
     still the one where their outline overlaps the car most deeply."""
