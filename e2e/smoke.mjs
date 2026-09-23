@@ -97,7 +97,9 @@ export const TAB_CHECKS = {
     loadingSelector: ".loading-indicator",
   },
   biometrics: {
-    loadedText: "No one enrolled yet",
+    // The Household members card's empty state. Must follow BiometricsPage.vue's
+    // wording: frontend/e2e never sees it, since the standalone server seeds people.
+    loadedText: "Nobody enrolled yet",
     loadingSelector: ".loading-indicator",
     // Hidden from the nav entirely on hosts where face recognition can't
     // run (see vision/runtime.py's torch_cpu_compatible()) - absence is correct
