@@ -44,6 +44,7 @@ from ..security import (
     BYPASS_BLOCKING_EVENTS,
     ClipMeasurements,
     SecurityEvent,
+    SecurityEventType,
     SecurityOutcome,
     Severity,
     assess_clip,
@@ -180,6 +181,20 @@ _PERSON_COUNT_MIN_CONFIDENCE = 0.5
 #: person box, which is the same person boxed twice (the upper body inside
 #: the whole body, say), not a second one.
 _PERSON_NESTED_OVERLAP = 0.7
+
+
+#: Events meaning object tracking measured a subject at the protected vehicle
+#: itself — within reach, touching, or striking it — rather than merely in
+#: the frame or the zone.
+_AT_ASSET_EVENTS = frozenset(
+    {
+        SecurityEventType.ASSET_PROXIMITY,
+        SecurityEventType.ASSET_REACH,
+        SecurityEventType.CONTACT_CANDIDATE,
+        SecurityEventType.IMPACT_CANDIDATE,
+        SecurityEventType.ANIMAL_ASSET_INTERACTION,
+    }
+)
 
 
 def _people_in_one_frame(vision_hints: VisionHints) -> int:
@@ -2578,7 +2593,11 @@ class BaseAnalyzer(abc.ABC):
         if corrections_segment:
             parts.append(corrections_segment)
 
-        zone_segment = prompt_segments.zone_motion_segment(zone_motion_fraction)
+        zone_segment = prompt_segments.zone_motion_segment(
+            zone_motion_fraction,
+            subject_at_asset=security is not None
+            and any(e.event_type in _AT_ASSET_EVENTS for e in security.events),
+        )
         if zone_segment:
             parts.append(zone_segment)
 
