@@ -805,6 +805,12 @@ class SecurityEventDetector:
                 {
                     "min_overlap_pixels": profile.min_box_gap,
                     "basis": reason,
+                    # Recorded here rather than read back off `confidence`:
+                    # an uncertain identification of the car scales every
+                    # event's confidence down afterwards (see
+                    # _asset_events), which says nothing about whether a
+                    # second stage backed this contact.
+                    "confirmed": confidence >= _CONFIRMED_CONTACT_CONFIDENCE,
                     "segmentation_contact": ctx.contact_touching,
                     "similar_depth": ctx.depth_similar,
                 }
@@ -938,6 +944,7 @@ class SecurityEventDetector:
                     "retreat_fraction": profile.retreat_fraction,
                     "min_gap_pixels": profile.min_gap,
                     "last_gap_pixels": profile.last_gap,
+                    "confirmed": contact.evidence["confirmed"],
                 }
             ),
         )
