@@ -5176,6 +5176,31 @@ async def test_faces_enroll_a_candidate_only_once(client: TestClient) -> None:
     assert len((await (await client.get("/api/ai/faces")).json())["faces"]) == 1
 
 
+async def test_faces_enroll_a_double_submit_stores_each_face_once(
+    client: TestClient, db: ClipDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A double-clicked Enroll sends the same request twice at once. The
+    first must claim each face before awaiting its insert, or the second
+    finds it still held and enrolls the same face again."""
+    insert = db.add_face_enrollment
+
+    async def busy_insert(*args: Any, **kwargs: Any) -> int:
+        # A database under load: the other request runs while this waits.
+        await asyncio.sleep(0.05)
+        return await insert(*args, **kwargs)
+
+    monkeypatch.setattr(db, "add_face_enrollment", busy_insert)
+    offered = await _offer(client, _face([1.0, 0.0]), _face([0.0, 1.0]))
+    body = {"name": "Brian", "candidate_ids": [f["id"] for f in offered]}
+    first, second = await asyncio.gather(
+        client.post("/api/ai/faces", json=body),
+        client.post("/api/ai/faces", json=body),
+    )
+    results = [await first.json(), await second.json()]
+    assert sum(r["enrolled"] for r in results) == 2
+    assert len((await (await client.get("/api/ai/faces")).json())["faces"]) == 2
+
+
 async def test_faces_enroll_counts_the_faces_that_had_expired(
     client: TestClient,
 ) -> None:

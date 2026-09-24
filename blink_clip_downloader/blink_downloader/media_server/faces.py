@@ -420,7 +420,10 @@ class FaceRoutesMixin(_MediaServerBase):
         )
         enrolled = 0
         for candidate_id in ids:
-            candidate = self._face_candidates.get(candidate_id)
+            # Taken before the insert is awaited, not after: a double-clicked
+            # Enroll sends two of these at once, and a face merely looked up
+            # here was still there for the second request to enroll again.
+            candidate = self._face_candidates.take(candidate_id)
             if candidate is None:
                 continue
             await self._db.add_face_enrollment(
@@ -431,7 +434,6 @@ class FaceRoutesMixin(_MediaServerBase):
                 frame_width=candidate.frame_width,
                 camera=candidate.camera,
             )
-            self._face_candidates.take(candidate_id)
             enrolled += 1
 
         expired = len(ids) - enrolled
