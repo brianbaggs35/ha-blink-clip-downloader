@@ -24,6 +24,7 @@ blink_downloader/moondream_finetune.py
 blink_downloader/notification_channels.py
 blink_downloader/notifier.py
 blink_downloader/prompt_segments.py
+blink_downloader/protected_assets.py
 blink_downloader/sqlite_migration.py
 blink_downloader/storage.py
 blink_downloader/tracker.py
@@ -54,6 +55,7 @@ blink_downloader/database/sql.py
 blink_downloader/media_server/__init__.py
 blink_downloader/media_server/ai.py
 blink_downloader/media_server/app_shell.py
+blink_downloader/media_server/assets.py
 blink_downloader/media_server/automations.py
 blink_downloader/media_server/camera_configs.py
 blink_downloader/media_server/core.py
@@ -84,10 +86,10 @@ blink_downloader/security/tracks.py
 blink_downloader/security/vehicles.py
 blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
-blink_downloader/static/assets/index-BWpvlXya.css
-blink_downloader/static/assets/index-BWpvlXya.css.gz
-blink_downloader/static/assets/index-DXzDb4JD.js
-blink_downloader/static/assets/index-DXzDb4JD.js.gz
+blink_downloader/static/assets/index-D1gMJO4t.css
+blink_downloader/static/assets/index-D1gMJO4t.css.gz
+blink_downloader/static/assets/index-D_hHTL4u.js
+blink_downloader/static/assets/index-D_hHTL4u.js.gz
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2
@@ -177,6 +179,7 @@ blink_downloader/vision/pose.py
 blink_downloader/vision/runtime.py
 tests/test_analysis_queue.py
 tests/test_analyzer.py
+tests/test_analyzer_marked_assets.py
 tests/test_app.py
 tests/test_archiver.py
 tests/test_battery_monitor.py
@@ -197,16 +200,20 @@ tests/test_live_view.py
 tests/test_main_logging.py
 tests/test_manifest.py
 tests/test_media_server.py
+tests/test_media_server_assets.py
 tests/test_media_server_routes.py
 tests/test_module_names.py
 tests/test_notification_channels.py
 tests/test_notifier.py
 tests/test_only_release_workflow_publishes.py
+tests/test_protected_assets.py
+tests/test_scene_baseline_lighting.py
 tests/test_security_assets.py
 tests/test_security_detector.py
 tests/test_security_events.py
 tests/test_security_evidence.py
 tests/test_security_geometry.py
+tests/test_security_marked_assets.py
 tests/test_security_narrative.py
 tests/test_security_pipeline.py
 tests/test_security_scenarios.py
@@ -220,3 +227,4 @@ tests/test_tracker.py
 tests/test_upgrade_from_previous_release.py
 tests/test_vision.py
 tests/test_vision_audio.py
+tests/test_vision_marked_assets.py
