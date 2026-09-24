@@ -181,7 +181,7 @@ async def test_create_takes_a_freeform_zone(api: _Api) -> None:
         ({"name": "   "}, 400, "Give the asset a name"),
         ({"asset_type": "vehicle"}, 400, "Unknown asset type"),
         ({"zone": {"x_min": 0.5}}, 400, "Invalid or missing zone"),
-        ({"clip_id": ""}, 400, "Missing clip_id"),
+        ({"clip_id": ""}, 400, "Pick a frame to draw on"),
         ({"clip_id": "nope"}, 404, "Clip not found"),
         ({"clip_id": "yard1"}, 400, "different camera"),
         ({"clip_id": "nothumb"}, 404, "Thumbnail not available"),
