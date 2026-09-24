@@ -31,11 +31,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from .. import frame_motion, prompt_segments
-from ..ffmpeg_output import (
-    ANALYSIS_FRAME_WIDTH,
-    format_ffmpeg_error,
-    split_jpeg_frames,
-)
+from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH, extract_jpeg_frames
 from ..protected_assets import assets_by_camera
 
 # Imported eagerly, unlike vision below: the security package is pure
@@ -2061,61 +2057,18 @@ class BaseAnalyzer(abc.ABC):
         coverage_seconds = max(_MAX_CLIP_COVERAGE_SECONDS, clip_duration)
         coverage_count = math.ceil(coverage_seconds / interval)
         extract_count = min(max(base_count, coverage_count), _MAX_EXTRACTED_FRAMES)
-        cmd = [
-            "ffmpeg",
-            # Without these, ffmpeg's multi-line version/build banner is the
-            # first thing on stderr, and the truncated copy captured below
-            # on failure contains nothing but that banner — the actual error
-            # never reaches the log. Matches the other ffmpeg call sites
-            # (downloader.py, live_view.py).
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
+        # The one shared ffmpeg invocation, not a copy of it: face
+        # recognition at a wider ai_face_recognition_resolution re-extracts
+        # "the same moments" through this same helper (see
+        # vision/pipeline.py's _face_frames), and the face bypass relies on
+        # those being the frames this pool was drawn from.
+        return await extract_jpeg_frames(
             clip_path,
-            "-vf",
-            f"fps=1/{interval},scale={ANALYSIS_FRAME_WIDTH}:-1",
-            "-frames:v",
-            str(extract_count),
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "-q:v",
-            "2",
-            "pipe:1",
-        ]
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except OSError as exc:
-            _LOGGER.warning("ffmpeg not available: %s", exc)
-            return []
-
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except TimeoutError:
-            _LOGGER.warning("ffmpeg timed out for %s", clip_path)
-            # communicate() timing out leaves the child process running;
-            # kill it and reap it so it doesn't linger as a zombie/orphan.
-            proc.kill()
-            await proc.wait()
-            return []
-
-        if proc.returncode != 0:
-            _LOGGER.warning(
-                "ffmpeg exited %d for %s: %s",
-                proc.returncode,
-                clip_path,
-                format_ffmpeg_error(stderr),
-            )
-            return []
-
-        return split_jpeg_frames(stdout or b"")
+            width=ANALYSIS_FRAME_WIDTH,
+            interval=interval,
+            count=extract_count,
+            label=clip_path,
+        )
 
     def _extraction_pool_size(self) -> int:
         """How many candidate frames the configured strategy wants to rank.

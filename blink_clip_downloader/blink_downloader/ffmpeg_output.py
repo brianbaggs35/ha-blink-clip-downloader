@@ -10,7 +10,10 @@ copy to avoid exactly that; a leaf module gives them one implementation
 without the heavy import, the same way ``frame_motion.py`` takes
 ``point_in_polygon`` from ``security/geometry.py`` rather than keeping a
 second copy of it. :func:`extract_jpeg_frames` is the one helper that runs
-ffmpeg itself, for the two callers that extract frames for faces.
+ffmpeg itself: clip analysis extracts its frames through it, and so do the
+two places that extract frames for faces, which is what keeps "the same
+moments of the clip" true by construction rather than by two copies of one
+command staying in step.
 """
 
 from __future__ import annotations
@@ -73,9 +76,9 @@ async def extract_jpeg_frames(
     """Up to *count* JPEG frames of *path*, *interval* seconds apart, scaled
     to *width* pixels wide.
 
-    The same ``fps=1/interval`` sampling :meth:`BaseAnalyzer.extract_frames`
-    uses, so asking for the analyzer's interval and frame count lands on
-    the same moments of the clip. ``[]`` on any failure — ffmpeg missing,
+    :meth:`BaseAnalyzer.extract_frames` extracts through this too, so
+    asking for the analyzer's interval and frame count lands on the same
+    moments of the clip. ``[]`` on any failure — ffmpeg missing,
     too slow, or exiting non-zero — each logged once as a warning naming
     *label*, with the tail of ffmpeg's stderr.
     """
