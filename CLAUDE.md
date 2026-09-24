@@ -85,6 +85,21 @@ architecture.
     `from .analyzer import ...` is unchanged for callers — reach into a
     submodule only for an internal the facade deliberately doesn't
     export. See **AI provider architecture** below.
+  - `protected_assets.py` — the stored form of assets marked on the Assets
+    tab (`/data/protected_assets.json`: one entry per asset per camera —
+    id, camera, name, `asset_type`, description, zone, enabled) and its one
+    validator, `normalize_zone`, which the Vehicles tab's `car_zone` now
+    shares. Names and descriptions are cleaned to one bounded line with no
+    double quotes, because every one lands inside a prompt in quotes.
+    `app.py` reads it once at startup into
+    `BaseAnalyzer.update_protected_assets()`; the Assets tab's API writes it
+    and pushes each change to the same setter. What a marked asset *does*
+    lives elsewhere: the prompt section in `prompt_segments.py`
+    (`protected_assets_segment`, part of the cached per-camera prefix), the
+    security rules in `security/assets.py` + `detector.py`, and pair
+    selection in `vision/pipeline.py`. A camera with nothing marked must
+    get byte-for-byte the prompt it got before this existed —
+    `tests/test_analyzer_marked_assets.py` holds that.
   - `model_catalog.py` — per-provider model reference data: which ids can
     see images, which accept a structured-output schema, and per-token
     pricing, plus the small pure functions that read it. Split out of
@@ -136,7 +151,17 @@ architecture.
   - `security/` — the structured security layer (`events.py`, `tracks.py`,
     `geometry.py`, `zones`/`assets.py`, `vehicles.py`, `detector.py`,
     `sounds.py`, `scoring.py`, `evidence.py`, `narrative.py`,
-    `pipeline.py`). Turns
+    `pipeline.py`). `assets.py` also builds the assets marked on the
+    Assets tab (`build_marked_asset`), located by their zones; the detector
+    runs the same asset rules over each (`DetectionContext.marked_assets`),
+    with three per-type properties deciding the differences —
+    `handled_routinely` (door/gate/garage/mailbox/parcel spot: touching is
+    use, so no contact or reach events), `fixed`, and `impact_applies`
+    (vehicle only: knocking on a door is a raised arm at a confirmed
+    touch). `examined_asset_key` says which asset the depth/contact/pose
+    verdict belongs to (`None` = the vehicle), and the marked-only
+    `asset_disturbed` event reads each asset's before/after appearance
+    change. Turns
     `vision/`'s per-frame boxes into typed `ObjectTrack`s, deterministic
     `SecurityEvent`s, a 0-100 risk score and an evidence-quality score, and
     renders them as prompt text the AI provider verifies rather than
@@ -222,7 +247,7 @@ architecture.
     UI** — so the module to open is the one named after the tab you are
     changing: `app_shell` (the SPA, `/health`, Blink auth), `library`,
     `status`, `liveview`, `security_feed`, `ai`, `usage`,
-    `camera_configs`, `vehicles`, `security_events`, `sync_module`,
+    `camera_configs`, `vehicles`, `assets`, `security_events`, `sync_module`,
     `feedback`, `faces`, `finetune`, `storage`, `automations` — over
     `support.py` (middleware, CSP, JSON parsing, paging, shared error
     strings) and `core.py` (`_MediaServerBase`, which declares the
@@ -245,7 +270,9 @@ architecture.
       `LibraryRoutesMixin` extends `StorageRoutesMixin` (deleting a clip has
       to delete its Drive copy). A subclass must be listed **before** its
       base in `MediaServer`'s bases or C3 linearization fails. `rename_camera`
-      spans three areas, so it sits on `MediaServer` itself.
+      spans four areas (camera configs, Security Feed settings, the vehicle
+      zone snapshot, and the Assets tab's assets and frame), so it sits on
+      `MediaServer` itself.
     - **`_STATIC_DIR` is anchored on the parent package**
       (`Path(__file__).resolve().parent.parent`), not on `support.py` — a
       plain `.parent` points one directory too deep now and 500s every page.
@@ -433,15 +460,15 @@ removed in 5.0.0.
   `components/icons/paths.ts`'s `ICONS` map (add a `tab-X` entry; icons are
   plain path/rect/circle data, not separate `.vue` files — see `AppIcon.vue`),
   and an `#page-X { overflow-y: auto; }` override in `assets/styles/base.css`
-  (grouped with `#page-vehicles`/`#page-biometrics`/`#page-storage`/
-  `#page-liveview`) unless the page's content is certain to always fit
+  (grouped with `#page-vehicles`/`#page-assets`/`#page-biometrics`/
+  `#page-storage`/`#page-liveview`) unless the page's content is certain to always fit
   within the viewport — `.page` defaults to `overflow: hidden` (the
   fixed-height sidebar/content shell), so a page that doesn't opt in just
   clips its content with no scrollbar. The Storage tab shipped without this
   once; it only surfaced via live browser testing under a real Home
   Assistant OS install, not any automated test. Current nav order: Library,
   Live View, Security Feed, Automations, Sync Module, Status, AI, AI Usage,
-  Models, Security Events, Vehicles, Biometrics, Storage. Note the two
+  Models, Security Events, Vehicles, Assets, Biometrics, Storage. Note the two
   similarly-named tabs are unrelated: **Security Feed** is the grid of
   near-live camera snapshots; **Security Events** is the structured
   security-event timeline (`components/security/`, backed by
@@ -696,8 +723,10 @@ faces-only rule stands.
 Since 6.0.0 there is a **second** condition: an event in
 `security.BYPASS_BLOCKING_EVENTS` withholds the bypass even on a clean
 identity match — a recognized person denting the car is still a dented car.
-That set is deliberately a single entry (`IMPACT_CANDIDATE`) and **must not
-be widened casually**: `CONTACT_CANDIDATE` in particular is what a resident
+That set is deliberately narrow — `IMPACT_CANDIDATE` and the two heard
+events above — and **must not be widened casually** (nor may impact be
+enabled for marked assets, or `asset_disturbed`, which is a resident
+collecting their own parcel, be added): `CONTACT_CANDIDATE` in particular is what a resident
 opening their own car door produces several times a day, so adding it would
 make routine household activity permanently suspicious — exactly the
 false-positive problem the bypass exists to solve. See the set's own comment
