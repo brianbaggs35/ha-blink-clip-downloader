@@ -31,7 +31,6 @@ from blink_downloader.vision.detection import DetectedObject
 from blink_downloader.vision.pipeline import VisionConfig, VisionHints, VisionPipeline
 
 
-
 @pytest.fixture(autouse=True)
 def _yolo_cache_dir_in_tmp_path(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """The detector creates its weights cache under /data — see

@@ -67,6 +67,20 @@ export const ICONS = {
       { cx: 17, cy: 16, r: 1.6 },
     ],
   },
+  'tab-assets': {
+    // A parcel inside selection-corner brackets: something marked out on the
+    // frame to be protected. Brackets rather than a closed box so it reads
+    // as "marked", not as another camera tile.
+    paths: [
+      'M4 8V5a1 1 0 0 1 1-1h3',
+      'M16 4h3a1 1 0 0 1 1 1v3',
+      'M20 16v3a1 1 0 0 1-1 1h-3',
+      'M8 20H5a1 1 0 0 1-1-1v-3',
+      'M12 7.5l4 2v5l-4 2-4-2v-5z',
+      'M8 9.5l4 2 4-2',
+      'M12 11.5v5',
+    ],
+  },
   'tab-biometrics': {
     paths: [
       'M4 8V6a2 2 0 0 1 2-2h2',

@@ -414,6 +414,60 @@ export interface CarZonePolygon {
 
 export type CarZone = CarZoneRect | CarZonePolygon
 
+// ---------------------------------------------------------------------
+// Assets tab (media_server/assets.py, protected_assets.py)
+// ---------------------------------------------------------------------
+
+/** The kinds of thing that can be marked — protected_assets.MARKABLE_TYPES. */
+export type AssetType =
+  'door' | 'window' | 'garage' | 'gate' | 'package_area' | 'mailbox' | 'bicycle' | 'equipment' | 'other'
+
+/** A marked zone, normalized 0-1 — the same two shapes a car zone has. */
+export type AssetZone = CarZone
+
+export interface ProtectedAsset {
+  id: string
+  camera: string
+  name: string
+  asset_type: AssetType
+  description: string
+  zone: AssetZone
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AssetLimits {
+  per_camera: number
+  name: number
+  description: number
+}
+
+export interface AssetsResponse {
+  assets: ProtectedAsset[]
+  limits: AssetLimits
+  /** Whether an AI provider is analysing clips at all. */
+  analysis_enabled: boolean
+  /** Whether object detection and the security layer run, which the
+   * per-asset checks (entering, handling, disturbed) need. */
+  detection_enabled: boolean
+}
+
+export interface AssetDraft {
+  name: string
+  asset_type: AssetType
+  description: string
+  zone: AssetZone
+}
+
+export interface AssetActivity {
+  camera: string
+  asset_name: string
+  clips: number
+  last_seen: string
+  top_severity: 'routine' | 'noteworthy' | 'suspicious' | 'critical'
+}
+
 export interface CameraConfig {
   camera: string
   description: string

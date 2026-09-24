@@ -72,3 +72,19 @@ describe('severity helpers', () => {
     expect(evidenceLabel(0.7)).toBe('strong')
   })
 })
+
+describe('assetOf', () => {
+  it('names a marked asset, labels the vehicle, and has nothing for no asset', async () => {
+    const { assetOf } = await import('./severity')
+    expect(assetOf({ asset_name: 'Front door', asset_type: 'door' })).toEqual({
+      label: 'Front door',
+      icon: 'pi pi-shield',
+    })
+    expect(assetOf({ asset_name: 'Silver Kia Forte sedan, parked nose-in', asset_type: 'vehicle' })).toEqual({
+      label: 'Protected vehicle',
+      icon: 'pi pi-car',
+    })
+    expect(assetOf({ asset_name: '', asset_type: '' })).toBeNull()
+    expect(assetOf({})).toBeNull()
+  })
+})
