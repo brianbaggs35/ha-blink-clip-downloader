@@ -96,6 +96,13 @@ export const TAB_CHECKS = {
     loadedText: "No cameras found",
     loadingSelector: ".loading-indicator",
   },
+  assets: {
+    // Same empty state as Vehicles: assets are marked on a camera's frame,
+    // and this container has no cameras. Its loading state is a Skeleton,
+    // not the shared spinner. Must follow AssetsPage.vue's wording.
+    loadedText: "No cameras found",
+    loadingSelector: ".p-skeleton",
+  },
   biometrics: {
     // The Household members card's empty state. Must follow BiometricsPage.vue's
     // wording: frontend/e2e never sees it, since the standalone server seeds people.

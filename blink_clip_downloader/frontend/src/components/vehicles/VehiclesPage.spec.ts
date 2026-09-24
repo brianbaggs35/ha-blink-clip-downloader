@@ -228,6 +228,24 @@ describe('VehiclesPage', () => {
     expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('Red Honda Civic')
   })
 
+  it('says so when the description could not be saved', async () => {
+    stubRoutedFetch({ vehicle_settings: { car_description: '' }, camera_configs: [FRONT_CAM] })
+    const routed = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation((url, init) =>
+      init?.method === 'PUT' ? Promise.resolve(jsonResponse({}, false)) : routed(url, init),
+    )
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.find('textarea').setValue('Red Honda Civic')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Save Description'))!
+      .trigger('click')
+    await flushPromises()
+    expect(useToastStore().message).toBe('Failed to save description')
+    expect(useToastStore().isError).toBe(true)
+  })
+
   it('reveals the zone picker only when a camera is marked as a car camera, and saves camera settings', async () => {
     stubRoutedFetch({ vehicle_settings: { car_description: '' }, camera_configs: [FRONT_CAM] })
     const wrapper = mountPage()

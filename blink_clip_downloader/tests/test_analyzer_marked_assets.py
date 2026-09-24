@@ -354,3 +354,115 @@ def test_the_example_phrase_uses_the_cameras_own_asset() -> None:
     prompt = a._build_prompt("Porch")
     assert "'a person is standing at the AC unit'" in prompt
     assert "front door" not in prompt
+
+
+# ----------------------------------------------------------------------
+# A whole property: six cameras, the car on two, assets on two, two bare
+# ----------------------------------------------------------------------
+
+_HOUSE_ASSETS = [
+    {**DOOR, "id": "house0000001", "camera": "Front Door", "name": "Front door"},
+    {
+        **DOOR,
+        "id": "house0000002",
+        "camera": "Front Door",
+        "name": "Mailbox",
+        "asset_type": "mailbox",
+        "zone": {
+            "shape": "rect",
+            "x_min": 0.7,
+            "y_min": 0.4,
+            "x_max": 0.85,
+            "y_max": 0.75,
+        },
+    },
+    {
+        **BIKE,
+        "id": "house0000003",
+        "camera": "Garage",
+        "name": "Barbecue",
+        "asset_type": "equipment",
+    },
+]
+
+
+def _house() -> ClipAnalyzer:
+    a = _analyzer(
+        car_description="Silver Kia sedan", car_cameras=["Driveway 1", "Driveway 2"]
+    )
+    a.update_protected_assets(_HOUSE_ASSETS)
+    return a
+
+
+@pytest.mark.parametrize(
+    ("camera", "vehicle_rules", "assets", "high_recall"),
+    [
+        ("Driveway 1", True, [], True),
+        ("Driveway 2", True, [], True),
+        ("Front Door", False, ["Front door", "Mailbox"], True),
+        ("Garage", False, ["Barbecue"], True),
+        ("Back Door", False, [], False),
+        ("Walkway", False, [], False),
+    ],
+)
+def test_each_camera_of_a_whole_property_gets_its_own_protection(
+    camera: str, vehicle_rules: bool, assets: list[str], high_recall: bool
+) -> None:
+    a = _house()
+    prompt = a._build_prompt(camera, clip_duration=6.0, scene_deviation=0.02)
+    assert ("PROTECTED VEHICLE: Silver Kia sedan" in prompt) is vehicle_rules
+    assert ("PROTECTED ASSETS" in prompt) is bool(assets)
+    for name in assets:
+        assert f'"{name}"' in prompt
+    # No camera is told about another camera's assets.
+    for other in {"Front door", "Mailbox", "Barbecue"} - set(assets):
+        assert f'"{other}"' not in prompt
+    assert a._asset_protection_applies(camera) is high_recall
+    assert [x["name"] for x in a._marked_assets_for(camera)] == assets
+
+
+def test_cameras_with_nothing_marked_keep_their_basic_protection() -> None:
+    """Back Door and Walkway are analyzed exactly as they would be on a
+    property where nobody had ever opened the Assets tab: same prompt, and
+    still told the car belongs to other cameras."""
+    plain = _analyzer(
+        car_description="Silver Kia sedan", car_cameras=["Driveway 1", "Driveway 2"]
+    )
+    house = _house()
+    for camera in ("Back Door", "Walkway"):
+        prompt = house._build_prompt(camera, clip_duration=6.0, scene_deviation=0.02)
+        assert prompt == plain._build_prompt(
+            camera, clip_duration=6.0, scene_deviation=0.02
+        )
+        assert "does not view the protected vehicle" in prompt
+        # The calm scene framing an unmarked camera has always had.
+        assert "Favor a calm" in prompt
+
+
+def test_the_rules_sent_match_what_each_camera_has() -> None:
+    a = _house()
+    front = a._build_prompt("Front Door")
+    garage = a._build_prompt("Garage")
+    assert "Doors, gates and garage doors" in front and "Mailboxes" in front
+    assert "Bikes, equipment and other marked items" not in front
+    assert "Bikes, equipment and other marked items" in garage
+    assert "Mailboxes" not in garage and "Doors, gates" not in garage
+
+
+async def test_each_camera_hands_the_vision_pipeline_only_its_own_assets() -> None:
+    a = _house()
+    pipeline = MagicMock()
+    pipeline.process_clip = AsyncMock(return_value=VisionHints())
+    a.attach_vision_pipeline(pipeline)
+    seen: dict[str, list[str]] = {}
+    for camera in ("Driveway 1", "Front Door", "Garage", "Walkway"):
+        await a._apply_vision_pipeline([b"frame"], camera)
+        kwargs = pipeline.process_clip.call_args.kwargs
+        seen[camera] = [x["name"] for x in kwargs["marked_assets"]]
+        assert kwargs["car_protection_applies"] is (camera == "Driveway 1")
+    assert seen == {
+        "Driveway 1": [],
+        "Front Door": ["Front door", "Mailbox"],
+        "Garage": ["Barbecue"],
+        "Walkway": [],
+    }

@@ -739,6 +739,12 @@ jobs:
           echo "GET /api/ai/camera-configs (Vehicles/AI tab camera config)"
           curl -fsS http://localhost:8099/api/ai/camera-configs | jq -e 'type == "array"' >/dev/null
 
+          echo "GET /api/assets (Assets tab)"
+          curl -fsS http://localhost:8099/api/assets | jq -e '(.assets | type == "array") and has("limits")' >/dev/null
+
+          echo "GET /api/assets/activity (Assets tab activity counts)"
+          curl -fsS http://localhost:8099/api/assets/activity | jq -e '.activity | type == "array"' >/dev/null
+
           echo "All media server endpoints responded as expected"
 
       - name: Playwright e2e smoke check

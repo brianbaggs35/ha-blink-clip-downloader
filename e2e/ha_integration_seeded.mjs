@@ -71,6 +71,7 @@ try {
   await checkClipModalOpens(frame, issues);
   await checkSecurityTimelineHasEvents(frame, issues);
   await checkStorageListsArchive(frame, issues);
+  await markAnAssetThroughIngress(page, frame, issues);
   await checkStatusShowsBatteries(frame, issues);
   await checkAiUsageReflectsSeededTokens(frame, issues);
   await checkSeededDataRoundTripsThroughIngress(page, issues);
@@ -87,7 +88,8 @@ try {
   console.log(
     "Seeded check passed through real ingress: the Library lists and filters real " +
       "clips, a clip opens with its stored detail, the Security Events timeline " +
-      "renders, the Storage tab lists an archive, Status shows per-camera " +
+      "renders, the Storage tab lists an archive, an asset can be marked on the " +
+      "Assets tab, Status shows per-camera " +
       "batteries, AI Usage reflects the stored tokens, and the stored analysis, " +
       "detections and security events round-trip through the ingress proxy.",
   );
@@ -290,6 +292,71 @@ async function checkStorageListsArchive(frame, issuesList) {
     console.log("Storage tab lists the seeded archive.");
   } catch (err) {
     issuesList.push(`Storage never listed the seeded archive: ${err.message}`);
+  }
+}
+
+// Must match the workflow's `assert-asset-persisted` step, which reads this
+// asset back after the container is recreated.
+const CI_ASSET_NAME = "CI mailbox";
+
+async function waitForDecoded(image, what) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const decoded = await image
+      .evaluate((el) => el.complete && el.naturalWidth > 0)
+      .catch(() => false);
+    if (decoded) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`${what} never loaded`);
+}
+
+/**
+ * The Assets tab end to end, through the proxy: mark a mailbox on Front
+ * Door by drawing on its newest clip's real thumbnail (seed-media made one),
+ * then see it listed over the camera's saved frame. That is four things
+ * ingress has to carry for this tab — the clip thumbnail, a pointer drag
+ * inside the iframe, the POST, and the saved frame served back from
+ * /api/assets/snapshot — and a user's own asset for the restart that
+ * follows to preserve.
+ */
+async function markAnAssetThroughIngress(page, frame, issuesList) {
+  try {
+    await frame.locator('.app-nav-tab[data-tab="assets"]').click();
+    await frame
+      .locator('.app-nav-tab.active[data-tab="assets"]')
+      .waitFor({ state: "visible", timeout: 5000 });
+    const card = frame.locator(".asset-camera-card", {
+      has: frame.getByRole("heading", { name: "📷 Front Door", exact: true }),
+    });
+    await card.getByRole("button", { name: "Mark an asset" }).click();
+
+    const editor = frame.locator(".p-dialog.asset-editor");
+    await editor.waitFor({ state: "visible", timeout: 10000 });
+    await editor.locator(".p-select").click();
+    await frame.getByRole("option", { name: "Mailbox", exact: true }).click();
+    await editor.getByPlaceholder("e.g. Front door").fill(CI_ASSET_NAME);
+    await waitForDecoded(editor.locator(".zone-canvas-image"), "Front Door's clip thumbnail");
+
+    // boundingBox() is in the top page's coordinates even for an element
+    // inside the ingress iframe, which is what page.mouse works in.
+    const surface = editor.getByTestId("zone-canvas-surface");
+    await surface.scrollIntoViewIfNeeded();
+    const box = await surface.boundingBox();
+    if (!box) throw new Error("the drawing surface has no size");
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.7, { steps: 5 });
+    await page.mouse.up();
+
+    await editor.getByRole("button", { name: "Save asset" }).click();
+    await editor.waitFor({ state: "hidden", timeout: 10000 });
+    await card
+      .locator(".asset-name", { hasText: CI_ASSET_NAME })
+      .waitFor({ state: "visible", timeout: 10000 });
+    await waitForDecoded(card.locator(".camera-frame-image"), "Front Door's saved asset frame");
+    console.log(`Marked "${CI_ASSET_NAME}" on Front Door through ingress; its frame loads.`);
+  } catch (err) {
+    issuesList.push(`could not mark an asset through ingress: ${err.message}`);
   }
 }
 

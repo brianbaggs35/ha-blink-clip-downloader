@@ -1040,6 +1040,26 @@ cmd_assert_clip_starred() {
   echo "OK: the star set through the ingress UI survived the restart"
 }
 
+cmd_assert_asset_persisted() {
+  # The Assets tab's half of a user's own edits surviving an update:
+  # ha_integration_seeded.mjs's markAnAssetThroughIngress drew and saved an
+  # asset in the real ingress-proxied UI, and this reads it back through
+  # the app after Supervisor recreated the container. Unlike a starred
+  # clip, an asset lives in /data/protected_assets.json rather than in
+  # PostgreSQL, so this is the file-backed counterpart of
+  # assert-clip-starred.
+  local name="${1:?asset name required}"
+  local body
+  body="$(curl -sf --max-time 30 "http://127.0.0.1:${ADDON_PORT}/api/assets" || true)"
+  if [[ "$body" != *"\"name\": \"${name}\""* || "$body" != *"\"camera\": \"Front Door\""* ]]; then
+    echo "The asset marked through the UI before the restart did not survive it." >&2
+    echo "  expected an asset named: ${name}, on Front Door" >&2
+    echo "  got: ${body:-<no response>}" >&2
+    return 1
+  fi
+  echo "OK: the asset marked through the ingress UI survived the restart"
+}
+
 cmd_assert_seed_survived() {
   # The real database-durability check, and only possible because
   # seed-data puts actual rows in PostgreSQL. assert-persisted re-reads a
@@ -1120,6 +1140,10 @@ case "${1:-}" in
     shift
     cmd_assert_clip_starred "$@"
     ;;
+  assert-asset-persisted)
+    shift
+    cmd_assert_asset_persisted "$@"
+    ;;
   assert-log-contains)
     shift
     cmd_assert_log_contains "$@"
@@ -1129,7 +1153,7 @@ case "${1:-}" in
     cmd_diagnostics "$@"
     ;;
   *)
-    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-option-rejected <key> <value>|assert-capabilities|seed-data|assert-seed-survived|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
+    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-option-rejected <key> <value>|assert-capabilities|seed-data|assert-seed-survived|assert-clip-starred <clip>|assert-asset-persisted <name>|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
     exit 64
     ;;
 esac

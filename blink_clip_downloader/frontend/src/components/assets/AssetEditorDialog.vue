@@ -365,15 +365,19 @@ const header = computed(() => (props.asset ? `Edit “${props.asset.name}”` : 
     </div>
 
     <template #footer>
-      <span v-if="missing.length" class="muted-note footer-hint">To save, {{ missing.join(', then ') }}.</span>
-      <Button label="Cancel" severity="secondary" text :disabled="saving" @click="close" />
-      <Button
-        :label="asset ? 'Save changes' : 'Save asset'"
-        icon="pi pi-check"
-        :loading="saving"
-        :disabled="!canSave"
-        @click="save"
-      />
+      <div class="editor-footer">
+        <span v-if="missing.length" class="muted-note footer-hint">To save, {{ missing.join(', then ') }}.</span>
+        <div class="footer-buttons">
+          <Button label="Cancel" severity="secondary" text :disabled="saving" @click="close" />
+          <Button
+            :label="asset ? 'Save changes' : 'Save asset'"
+            icon="pi pi-check"
+            :loading="saving"
+            :disabled="!canSave"
+            @click="save"
+          />
+        </div>
+      </div>
     </template>
   </Dialog>
 </template>
@@ -538,8 +542,30 @@ const header = computed(() => (props.asset ? `Edit “${props.asset.name}”` : 
   font-size: 0.8rem;
 }
 
+.editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  width: 100%;
+}
+
 .footer-hint {
   margin-right: auto;
+}
+
+.footer-buttons {
+  display: flex;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  /* The hint takes its own line, so the buttons never wrap mid-label. */
+  .footer-hint {
+    flex-basis: 100%;
+  }
 }
 
 @media (max-width: 760px) {
@@ -549,6 +575,23 @@ const header = computed(() => (props.asset ? `Edit “${props.asset.name}”` : 
   /* On a phone the form reads first, then the frame to draw on. */
   .editor-form {
     order: -1;
+  }
+}
+</style>
+
+<style>
+/* Not scoped: the dialog is teleported to <body>, outside this component's
+   scope. On a phone the editor is the whole screen — drawing round a door
+   with a fingertip needs every pixel of the frame, not a card floating in a
+   margin. */
+@media (max-width: 640px) {
+  .p-dialog.asset-editor {
+    width: 100vw !important;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border-radius: 0;
   }
 }
 </style>
