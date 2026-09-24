@@ -8,7 +8,10 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Message from 'primevue/message'
-import Select from 'primevue/select'
+// Imported under a name that is not an HTML tag: a template parsed as HTML
+// (accessibility tooling, SonarCloud) reads `<Select>` as a `<select>` with no
+// id, and cannot see its `input-id` belongs to the label beside it.
+import PvSelect from 'primevue/select'
 import SelectButton from 'primevue/selectbutton'
 import Textarea from 'primevue/textarea'
 import { createAsset, updateAsset } from '../../api/assets'
@@ -255,9 +258,9 @@ const header = computed(() => (props.asset ? `Edit “${props.asset.name}”` : 
           </Message>
         </template>
 
-        <div v-if="hasReferenceFrame || clips.length" class="frame-strip-wrap">
-          <span class="field-label">Frame to draw on</span>
-          <div class="frame-strip" role="group" aria-label="Frame to draw on">
+        <fieldset v-if="hasReferenceFrame || clips.length" class="frame-strip-wrap">
+          <legend class="field-label">Frame to draw on</legend>
+          <div class="frame-strip">
             <button
               v-if="hasReferenceFrame"
               type="button"
@@ -291,13 +294,13 @@ const header = computed(() => (props.asset ? `Edit “${props.asset.name}”` : 
             </button>
           </div>
           <p class="muted-note">The camera doesn't move, so a zone stays put when you switch frames.</p>
-        </div>
+        </fieldset>
       </section>
 
       <section class="editor-form" aria-label="What it is">
         <div class="field">
           <label :for="ids.type" class="field-label">What is it?</label>
-          <Select
+          <PvSelect
             v-model="assetType"
             :input-id="ids.type"
             :options="ASSET_TYPES"
@@ -319,7 +322,7 @@ const header = computed(() => (props.asset ? `Edit “${props.asset.name}”` : 
                 {{ option.label }}
               </span>
             </template>
-          </Select>
+          </PvSelect>
           <p v-if="typeInfo" class="watched-for">
             <i class="pi pi-eye" aria-hidden="true" />
             <span>{{ typeInfo.watchedFor }}</span>
@@ -420,6 +423,15 @@ const header = computed(() => (props.asset ? `Edit “${props.asset.name}”` : 
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.frame-strip-wrap legend {
+  padding: 0;
+  margin-bottom: 0.35rem;
 }
 
 .frame-strip {
