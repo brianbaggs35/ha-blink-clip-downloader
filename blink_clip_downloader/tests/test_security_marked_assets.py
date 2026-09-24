@@ -57,6 +57,10 @@ BIKE_ZONE = Zone.from_config(
         "points": [[0.72, 0.55], [0.95, 0.55], [0.95, 0.86], [0.72, 0.86]],
     }
 )
+#: A kitchen window above the ground, right of centre.
+WINDOW_ZONE = Zone.from_config(
+    {"x_min": 0.45, "y_min": 0.25, "x_max": 0.62, "y_max": 0.55}
+)
 #: A car parked in the middle of the same view, for the tests about which
 #: asset a depth/contact verdict belongs to.
 CAR: Box = (300.0, 170.0, 450.0, 280.0)
@@ -177,6 +181,20 @@ def test_what_each_type_is_watched_for(
     assert asset.located_exactly is fixed
 
 
+def test_a_window_is_stood_at_from_the_ground_below_it() -> None:
+    window = build_marked_asset("Porch", "w1", "Window", "window", WINDOW_ZONE, FRAME)
+    door = _door()
+    assert window is not None and window.elevated is True
+    x1, y1, x2, y2 = window.box  # type: ignore[misc]
+    assert window.standing_box == (x1, y2, x2, y2 + (y2 - y1))
+    assert door.elevated is False
+    assert door.standing_box == door.box
+    assert (
+        ProtectedAsset(name="x", asset_type=AssetType.WINDOW, camera="c").standing_box
+        is None
+    )
+
+
 def test_only_the_vehicle_can_be_struck() -> None:
     car = ProtectedAsset(name="car", asset_type=AssetType.VEHICLE, camera="c")
     assert car.impact_applies is True
@@ -280,6 +298,34 @@ def test_the_doors_verdict_is_never_read_as_the_vehicles() -> None:
     # Only the bare overlap backs the car's contact: segmentation looked at
     # the door, not at it.
     assert contact.evidence["confirmed"] is False
+
+
+def test_a_hand_on_a_window_is_close_and_a_possible_contact() -> None:
+    """Measured to the window's sill, someone with their hand on the glass
+    read as eight feet away and no touch was possible — their feet are on
+    the ground a metre below it."""
+    window = build_marked_asset("Porch", "w1", "Window", "window", WINDOW_ZONE, FRAME)
+    boxes: list[Box] = [
+        (180.0, 140.0, 240.0, 310.0),
+        (250.0, 140.0, 310.0, 310.0),
+        (300.0, 130.0, 360.0, 310.0),
+        (305.0, 130.0, 365.0, 310.0),
+        (305.0, 130.0, 365.0, 310.0),
+    ]
+    events = _detect(_walk(1, boxes), 5, marked_assets=[window])
+    assert {"asset_proximity", "contact_candidate", "zone_entered"} <= _types(events)
+    proximity = next(e for e in events if e.event_type == "asset_proximity")
+    assert proximity.severity is Severity.SUSPICIOUS
+
+
+def test_a_passer_by_in_front_of_a_window_is_not_at_it() -> None:
+    window = build_marked_asset("Porch", "w1", "Window", "window", WINDOW_ZONE, FRAME)
+    boxes: list[Box] = [
+        (100.0 + i * 90, 120.0, 200.0 + i * 90, 359.0) for i in range(5)
+    ]
+    kinds = _types(_detect(_walk(1, boxes), 5, marked_assets=[window]))
+    assert "asset_proximity" not in kinds
+    assert "contact_candidate" not in kinds
 
 
 def test_a_depth_veto_on_the_examined_asset_stands_down_its_zone() -> None:

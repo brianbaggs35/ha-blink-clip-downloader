@@ -173,6 +173,24 @@ def test_nobody_at_anything_keeps_the_old_vehicle_pair() -> None:
     assert (pair[3], pair[4]) == (2, None)
 
 
+def test_someone_below_a_window_is_at_it_from_the_ground() -> None:
+    """Their feet are on the ground a sill's height below the glass: at it,
+    though six feet from its bottom edge by a ground-line measure."""
+    from blink_downloader.vision.pipeline import _is_at
+
+    window = _marked("win1", "Kitchen window", "window", WINDOW_ZONE)
+    standing_below = _person((300.0, 110.0, 340.0, 195.0), 1)
+    assert _is_at(standing_below, window, FRAME) is True
+    # The same spot measured to the window's own bottom edge is not at it.
+    grounded = ProtectedAsset(
+        name="Kitchen window",
+        asset_type=AssetType.OTHER,
+        camera="Porch",
+        box=window.box,
+    )
+    assert _is_at(standing_below, grounded, None) is False
+
+
 def test_marked_only_examines_someone_approaching_but_not_far_away() -> None:
     door = _marked("door1", "Front door", "door", DOOR_ZONE)
     approaching = _person((140.0, 170.0, 190.0, 320.0), 1)
