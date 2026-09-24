@@ -208,15 +208,22 @@ class ContactSegmenter:
                 return None
 
 
-def _build_contact_hint(result: ContactResult, subject_label: str) -> str:
+def _build_contact_hint(
+    result: ContactResult, subject_label: str, target: str = "vehicle"
+) -> str:
     """Render a contact-segmentation result into a CONTACT ANALYSIS prompt
     hint. *subject_label* is the actual detected class ("person", "dog",
-    "cat", ...) — see :func:`_build_depth_hint`'s docstring for why."""
+    "cat", ...) and *target* what it was checked against — see
+    :func:`_build_depth_hint`'s docstring for why both are named."""
     if result.touching:
-        body = f"the {subject_label}'s and vehicle's precise segmented outlines appear to touch or overlap"
+        body = (
+            f"the precise segmented outlines of the {subject_label} and the "
+            f"{target} appear to touch or overlap"
+        )
     else:
         body = (
-            f"the {subject_label}'s and vehicle's precise segmented outlines are "
+            f"the precise segmented outlines of the {subject_label} and the "
+            f"{target} are "
             f"separated by roughly {result.mask_gap_pixels:.0f} pixels — not touching"
         )
     return (

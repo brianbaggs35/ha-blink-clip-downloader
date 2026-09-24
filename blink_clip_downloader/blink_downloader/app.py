@@ -43,6 +43,7 @@ from .manifest import ClipManifest
 from .media_server import MediaServer
 from .notification_channels import NotificationDispatcher
 from .notifier import HANotifier
+from .protected_assets import read_assets
 from .sqlite_migration import migrate_legacy_sqlite
 from .storage import StorageManager
 from .tracker import ClipTracker
@@ -588,6 +589,11 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             return
 
         self._analyzer.attach_database(self._db)
+        # Assets marked on the Assets tab. Handed over here rather than
+        # threaded through create_analyzer(): none of the six providers does
+        # anything with them except inherit BaseAnalyzer's handling, and the
+        # Assets tab updates the live analyzer through this same setter.
+        self._analyzer.update_protected_assets(read_assets())
         # Applied before the first clip is analyzed: this caps how many heavy
         # torch stages may be resident at once across every concurrent
         # analysis, which on a Raspberry Pi is the difference between slow

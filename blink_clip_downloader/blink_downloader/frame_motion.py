@@ -23,6 +23,10 @@ from typing import Any
 
 from .security.geometry import point_in_polygon
 
+#: A normalized ``x1, y1, x2, y2`` rectangle, the shape every zone is reduced
+#: to before it ranks frames.
+ZoneBox = tuple[float, float, float, float]
+
 # Fixed-size grayscale thumbnail used for the visual scene-baseline ("smart
 # brain") comparison — see scene_thumbnail(). Small enough to
 # store cheaply per-camera and compare quickly; large enough to notice a
@@ -98,7 +102,7 @@ def scene_thumbnail(frame: bytes) -> list[float] | None:
 
 def frame_motion_diffs(
     frames: list[bytes],
-    zone_box: tuple[float, float, float, float] | None = None,
+    zone_box: ZoneBox | list[ZoneBox] | None = None,
 ) -> list[float]:
     """Per-pixel inter-frame absolute difference for each consecutive pair.
 
@@ -107,7 +111,9 @@ def frame_motion_diffs(
     thumbnail — a polygon zone must already be reduced to its
     bounding box by the caller (see ``BaseAnalyzer._car_zone_bbox``), the same
     coarse approximation used everywhere else a zone feeds a ranking/
-    proximity signal rather than exact geometry.
+    proximity signal rather than exact geometry. A list of boxes sums the
+    pixels inside *any* of them — the car's zone and every marked asset on
+    one camera, say — so a pixel two overlapping zones share is counted once.
     """
     import io as _io
 
@@ -126,22 +132,27 @@ def frame_motion_diffs(
 
     width, height = _THUMB
     pixels = width * height
-    if zone_box is None:
+    boxes = [zone_box] if isinstance(zone_box, tuple) else list(zone_box or [])
+    if not boxes:
         return [
             sum(abs(a - b) for a, b in zip(thumbs[i - 1], thumbs[i])) / pixels
             for i in range(1, len(thumbs))
         ]
 
-    zx1 = max(0, min(width - 1, round(zone_box[0] * width)))
-    zy1 = max(0, min(height - 1, round(zone_box[1] * height)))
-    zx2 = max(zx1 + 1, min(width, round(zone_box[2] * width)))
-    zy2 = max(zy1 + 1, min(height, round(zone_box[3] * height)))
+    inside = [False] * pixels
+    for box in boxes:
+        zx1 = max(0, min(width - 1, round(box[0] * width)))
+        zy1 = max(0, min(height - 1, round(box[1] * height)))
+        zx2 = max(zx1 + 1, min(width, round(box[2] * width)))
+        zy2 = max(zy1 + 1, min(height, round(box[3] * height)))
+        for y in range(zy1, zy2):
+            for x in range(zx1, zx2):
+                inside[y * width + x] = True
     diffs: list[float] = []
     for i in range(1, len(thumbs)):
         total = 0
         for idx, (a, b) in enumerate(zip(thumbs[i - 1], thumbs[i])):
-            x, y = idx % width, idx // width
-            if zx1 <= x < zx2 and zy1 <= y < zy2:
+            if inside[idx]:
                 total += abs(a - b)
         diffs.append(total / pixels)
     return diffs
@@ -375,3 +386,21 @@ def _zone_membership_test(
     zx2 = max(zx1 + 1, min(width, round((raw_x_max + pad_x) * width)))
     zy2 = max(zy1 + 1, min(height, round((raw_y_max + pad_y) * height)))
     return lambda x, y: zx1 <= x < zx2 and zy1 <= y < zy2
+
+
+def asset_motion_shares(
+    thumbs: list[bytes] | None, assets: list[dict[str, Any]]
+) -> list[tuple[str, float]]:
+    """``(name, share)`` of this clip's motion inside each marked asset's zone.
+
+    :func:`zone_motion_fraction` once per asset, over the same precomputed
+    thumbnails. Assets whose share can't be attributed (too little motion
+    overall) are left out, which is exactly what the prompt segment built
+    from this needs: nothing to say about them.
+    """
+    shares: list[tuple[str, float]] = []
+    for asset in assets:
+        share = zone_motion_fraction(thumbs, asset["zone"])
+        if share is not None:
+            shares.append((asset["name"], share))
+    return shares
