@@ -114,6 +114,18 @@ describe('SecurityPage', () => {
     expect(wrapper.text()).toContain('Risk 81')
   })
 
+  it('names the protected thing each clip was about', async () => {
+    const wrapper = await mountPage({
+      rows: [
+        row(),
+        row({ id: 2, clip_id: 'c2', camera: 'Front Door', asset_name: 'Mailbox', asset_type: 'mailbox' }),
+        row({ id: 3, clip_id: 'c3', camera: 'Backyard', asset_name: '', asset_type: '' }),
+      ],
+    })
+    const chips = wrapper.findAll('.security-asset').map((chip) => chip.text())
+    expect(chips).toEqual(['Protected vehicle', 'Mailbox'])
+  })
+
   it('shows the severity summary for the recent window', async () => {
     const wrapper = await mountPage({ rows: [row()] })
     expect(wrapper.find('[data-testid="security-stats"]').text()).toContain('Suspicious')

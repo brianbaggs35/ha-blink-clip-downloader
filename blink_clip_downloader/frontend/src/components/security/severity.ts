@@ -86,3 +86,14 @@ export function evidenceLabel(score: number): string {
   if (score < 0.7) return 'moderate'
   return 'strong'
 }
+
+/** Which protected thing an event was about, for a chip beside it: the
+ *  protected vehicle, or an asset marked on the Assets tab by the name it was
+ *  given there. Null for events about no asset (someone merely present, a
+ *  sound, the camera itself). The vehicle's own name is its description,
+ *  which can run to a sentence, so it gets a short fixed label instead. */
+export function assetOf(event: { asset_name?: string; asset_type?: string }): { label: string; icon: string } | null {
+  if (!event.asset_name) return null
+  if (event.asset_type === 'vehicle') return { label: 'Protected vehicle', icon: 'pi pi-car' }
+  return { label: event.asset_name, icon: 'pi pi-shield' }
+}

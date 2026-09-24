@@ -114,16 +114,21 @@ class AssetsRoutesMixin(_MediaServerBase):
     # -- writing ---------------------------------------------------------
 
     async def _handle_asset_create(self, request: web.Request) -> web.Response:
-        """Mark a new asset on one camera, drawn on one of its clips' frames."""
+        """Mark a new asset on one camera.
+
+        Drawn on one of its clips' frames (``clip_id``), or — once the
+        camera has assets and so a reference frame — on that frame, which
+        keeps every asset on a camera drawn over the same picture.
+        """
         body = await _json_object(request)
         camera = str(body.get("camera") or "").strip()
         if not camera:
             raise web.HTTPBadRequest(text="Missing camera")
         fields = self._asset_fields(body, require_all=True)
         clip_id = str(body.get("clip_id") or "")
-        if not clip_id:
+        frame = await self._asset_frame(camera, clip_id) if clip_id else None
+        if frame is None and not self._asset_snapshot_path(camera).exists():
             raise web.HTTPBadRequest(text="Missing clip_id")
-        frame = await self._asset_frame(camera, clip_id)
 
         now = datetime.now(UTC).isoformat()
         asset = {
@@ -136,6 +141,7 @@ class AssetsRoutesMixin(_MediaServerBase):
         }
         async with self._camera_configs_lock:
             assets = protected_assets.read_assets(self._PROTECTED_ASSETS_FILE)
+            self._refuse_duplicate_name(assets, camera, fields["name"])
             on_camera = sum(1 for a in assets if a["camera"].lower() == camera.lower())
             if on_camera >= protected_assets.MAX_ASSETS_PER_CAMERA:
                 raise web.HTTPConflict(
@@ -146,7 +152,8 @@ class AssetsRoutesMixin(_MediaServerBase):
                     )
                 )
             assets.append(asset)
-            self._save_asset_snapshot(camera, frame)
+            if frame is not None:
+                self._save_asset_snapshot(camera, frame)
             self._store_assets(assets)
         return web.json_response({"asset": asset})
 
@@ -170,6 +177,10 @@ class AssetsRoutesMixin(_MediaServerBase):
             asset = next((a for a in assets if a["id"] == asset_id), None)
             if asset is None:
                 raise web.HTTPNotFound(text=_ASSET_NOT_FOUND)
+            if "name" in fields:
+                self._refuse_duplicate_name(
+                    assets, asset["camera"], fields["name"], asset_id
+                )
             frame = (
                 await self._asset_frame(asset["camera"], clip_id) if clip_id else None
             )
@@ -226,6 +237,30 @@ class AssetsRoutesMixin(_MediaServerBase):
                 raise web.HTTPBadRequest(text="Invalid or missing zone")
             fields["zone"] = zone
         return fields
+
+    @staticmethod
+    def _refuse_duplicate_name(
+        assets: list[dict[str, Any]], camera: str, name: str, own_id: str = ""
+    ) -> None:
+        """Refuse a second asset with the same name on one camera.
+
+        The name is how an asset is referred to everywhere after it is
+        saved — in the analysis prompt, in each security event's detail and
+        ``asset_name``, and in the tab's activity counts — so two called
+        "Door" on one camera would make every one of those ambiguous.
+        Case-insensitive, like camera names. The same name on another camera
+        is fine: events always carry their camera too.
+        """
+        wanted = name.lower()
+        for other in assets:
+            if (
+                other["id"] != own_id
+                and other["camera"].lower() == camera.lower()
+                and other["name"].lower() == wanted
+            ):
+                raise web.HTTPConflict(
+                    text=f"This camera already has an asset called “{other['name']}”"
+                )
 
     async def _asset_frame(self, camera: str, clip_id: str) -> bytes:
         """The thumbnail of *clip_id*, which must be one of *camera*'s clips.
