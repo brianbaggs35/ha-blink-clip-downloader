@@ -55,6 +55,12 @@ DEFAULT_EVENT_POINTS: dict[SecurityEventType, float] = {
     # less than a person merely standing beside the car. Scratched paintwork
     # is precisely what an owner wants told about.
     SecurityEventType.ANIMAL_ASSET_INTERACTION: 18.0,
+    # A marked asset looking different after someone was at it. Weighted
+    # like an approach rather than a contact: it is the evidence a parcel
+    # or a bike went missing, but a courier leaving one, a resident taking
+    # their own, and a door left ajar all produce it too, so on its own it
+    # directs the model's attention without deciding anything.
+    SecurityEventType.ASSET_DISTURBED: 16.0,
     SecurityEventType.CAMERA_OBSTRUCTION: 40.0,
     # Heard, not seen (see .sounds). Glass and gunfire are weighted so
     # that clearing .sounds' own 50% confidence gate is on its own enough
@@ -139,7 +145,10 @@ _CONTACT_EVENTS: frozenset[SecurityEventType] = frozenset(
 #: not, and :data:`SecurityEventType.MULTIPLE_SUBJECTS` is what already
 #: accounts for there being a group. Summed, a family walking past the car
 #: at night scored 100. Every instance still reaches the prompt and the
-#: Security tab; only the score counts it once.
+#: Security tab; only the score counts it once. The same holds across the
+#: assets on one camera: someone walking up to the door past the parcel spot
+#: beside it did one thing, not two, and scoring it twice would make marking
+#: two neighbouring assets double every visitor's score.
 _ONCE_PER_CLIP: frozenset[SecurityEventType] = frozenset(
     {
         SecurityEventType.SUBJECT_PRESENT,
@@ -153,6 +162,7 @@ _ONCE_PER_CLIP: frozenset[SecurityEventType] = frozenset(
         SecurityEventType.ANIMAL_ASSET_INTERACTION,
         SecurityEventType.IMPACT_CANDIDATE,
         SecurityEventType.RETREAT_AFTER_CONTACT,
+        SecurityEventType.ASSET_DISTURBED,
     }
 )
 

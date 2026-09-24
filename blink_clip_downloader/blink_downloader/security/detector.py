@@ -16,7 +16,7 @@ rule's own comment for exactly what it does and does not establish.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from .assets import ProtectedAsset
 from .events import SecurityEvent, SecurityEventType, Severity, severity_rank
@@ -143,6 +143,22 @@ class DetectionContext:
     posture_reaching: bool | None = None
     posture_arm_raised: bool | None = None
     posture_crouching: bool | None = None
+    #: Assets marked on the Assets tab for this camera, each located by the
+    #: zone its owner drew (see :func:`~.assets.build_marked_asset`). Held to
+    #: the same rules as the protected vehicle, with the differences each
+    #: asset's own properties decide — see ``ProtectedAsset.handled_routinely``
+    #: and ``impact_applies``. Empty on every camera nobody marked anything
+    #: on, which leaves this detector exactly as it was.
+    marked_assets: list[ProtectedAsset] = field(default_factory=list)
+    #: Which marked asset the depth/contact/pose stages examined, by key.
+    #: ``None`` means the protected vehicle, as it always has. Those stages
+    #: look at one subject and one asset per clip, so a verdict about the car
+    #: must never be read as one about the door beside it, or the reverse.
+    examined_asset_key: str | None = None
+    #: How much each marked asset's own region changed between the clip's
+    #: first and last scan frames, by key — only for assets nobody was
+    #: standing in front of in either frame (see vision/pipeline.py).
+    marked_asset_changes: dict[str, float] = field(default_factory=dict)
 
     @property
     def timeline_end(self) -> float:
@@ -290,9 +306,18 @@ class SecurityEventDetector:
     # -- protected asset ----------------------------------------------
 
     def _asset_events(self, ctx: DetectionContext) -> list[SecurityEvent]:
-        """Every rule that needs a located protected asset to mean anything."""
-        asset = ctx.asset
-        if asset is None or asset.box is None:
+        """Every rule that needs a located protected asset to mean anything,
+        for the protected vehicle and for each marked asset in turn."""
+        events = self._events_for_asset(ctx.asset, ctx) if ctx.asset else []
+        for asset in ctx.marked_assets:
+            events.extend(self._events_for_asset(asset, ctx))
+        return events
+
+    def _events_for_asset(
+        self, asset: ProtectedAsset, ctx: DetectionContext
+    ) -> list[SecurityEvent]:
+        """The asset rules for one asset, over every subject in the clip."""
+        if asset.box is None:
             return []
         subjects = subject_tracks(ctx.tracks)
         if not subjects:
@@ -300,6 +325,7 @@ class SecurityEventDetector:
 
         profiles = [t.approach_to(asset.box) for t in subjects]
         primary = min(range(len(subjects)), key=lambda i: profiles[i].min_box_gap)
+        examined = self._examined(asset, ctx)
 
         events: list[SecurityEvent] = []
         for index, track in enumerate(subjects):
@@ -309,9 +335,13 @@ class SecurityEventDetector:
                     profiles[index],
                     asset,
                     ctx,
-                    cv_applies=self._cv_evidence_applies(track, index == primary, ctx),
+                    cv_applies=examined
+                    and self._cv_evidence_applies(track, index == primary, ctx),
                 )
             )
+        disturbed = self._disturbed_event(asset, ctx, events)
+        if disturbed is not None:
+            events.append(disturbed)
         if not asset.confident:
             # Every one of these events is a claim about the protected
             # vehicle specifically. If which car that is was a guess, the
@@ -322,6 +352,13 @@ class SecurityEventDetector:
                 for e in events
             ]
         return events
+
+    @staticmethod
+    def _examined(asset: ProtectedAsset, ctx: DetectionContext) -> bool:
+        """Whether this clip's depth/contact/pose verdict is about *asset*."""
+        if ctx.examined_asset_key is None:
+            return asset is ctx.asset
+        return asset.marked and asset.key == ctx.examined_asset_key
 
     @staticmethod
     def _cv_evidence_applies(
@@ -421,6 +458,15 @@ class SecurityEventDetector:
         if approach is not None:
             events.append(approach)
 
+        if asset.handled_routinely:
+            # Reaching for a door and touching it is how a door is used, so
+            # neither is evidence here — see ProtectedAsset.handled_routinely.
+            # Coming close and leaving again still is the plain record of a
+            # visit, and costs next to nothing in the score.
+            if near and profile.retreated:
+                events.append(self._retreat_event(track, profile, asset))
+            return events
+
         if near and cv_applies and ctx.posture_reaching:
             events.append(self._reach_event(track, profile, asset, ctx))
 
@@ -444,7 +490,7 @@ class SecurityEventDetector:
         so neither can exist without it — and a subject who came close and
         then left without one gets the plain retreat instead.
         """
-        contact = self._contact_event(track, profile, asset, ctx, cv_applies)
+        contact = self._contact_event(track, profile, asset, ctx, cv_applies, near)
         if contact is None:
             if near and profile.retreated:
                 return [self._retreat_event(track, profile, asset)]
@@ -453,7 +499,7 @@ class SecurityEventDetector:
         events = [contact]
         impact = (
             self._impact_event(track, profile, asset, ctx, contact)
-            if cv_applies
+            if cv_applies and asset.impact_applies
             else None
         )
         if impact is not None:
@@ -502,7 +548,9 @@ class SecurityEventDetector:
         """
         if asset.zone is None or not track.in_zone(asset.zone):
             return None
-        if depth_similar is False and asset.detected:
+        # A marked asset's zone *is* the asset, so a depth comparison against
+        # it measured the asset itself, detected or not.
+        if depth_similar is False and (asset.detected or asset.marked):
             return None
         dwell = track.zone_dwell(asset.zone)
         # A single in-zone sighting gives a zero-length span, which is a
@@ -511,10 +559,10 @@ class SecurityEventDetector:
         # duration the frames cannot support.
         stayed = f" and stayed at least {dwell:.0f}s" if dwell >= 1.0 else ""
         crossed = track.entered_zone(asset.zone)
-        # Named after the vehicle rather than via _asset_place: the zone is a
+        # Named after the asset rather than via _asset_place: the zone is a
         # fixed region the user drew, and it keeps that name whether or not
         # the car is currently parked in it.
-        place = asset.description or "the protected asset"
+        place = asset.reference
         movement = (
             f"crossed into the area marked around {place}"
             if crossed
@@ -550,21 +598,28 @@ class SecurityEventDetector:
         depth_similar: bool | None = None,
     ) -> SecurityEvent:
         close = min_feet <= self._t.close_feet
-        confidence = 0.75 if asset.detected else 0.5
+        confidence = 0.75 if asset.located_exactly else 0.5
         if depth_similar is True:
             # Independent confirmation that the subject really is at the
             # vehicle's distance, not merely overlapping it in projection.
             confidence = min(0.95, confidence + 0.15)
         return SecurityEvent(
             event_type=SecurityEventType.ASSET_PROXIMITY,
-            severity=Severity.SUSPICIOUS if close else Severity.NOTEWORTHY,
+            # Standing within a foot of a door is ringing its bell. Closeness
+            # to an asset people are meant to walk up to stays a fact on the
+            # record rather than a concern; lingering there is what escalates.
+            severity=(
+                Severity.SUSPICIOUS
+                if close and not asset.handled_routinely
+                else Severity.NOTEWORTHY
+            ),
             confidence=confidence,
             detail=(
                 f"The {track.label} came within {_feet_phrase(min_feet)} of "
-                f"{asset.description or 'the protected asset'}"
+                f"{asset.reference}"
                 + (
                     ""
-                    if asset.detected
+                    if asset.located_exactly
                     else ", measured against where it normally sits"
                 )
                 + "."
@@ -580,6 +635,7 @@ class SecurityEventDetector:
                     "min_gap_pixels": profile.min_gap,
                     "min_gap_feet": min_feet,
                     "asset_detected": asset.detected,
+                    "asset_marked": asset.marked,
                     "similar_depth": depth_similar,
                 }
             ),
@@ -606,7 +662,7 @@ class SecurityEventDetector:
             confidence=0.7 if track.tracked else 0.45,
             detail=(
                 f"The {track.label} closed {profile.approach_fraction * 100:.0f}% of "
-                f"the distance to {asset.description or 'the protected asset'}, "
+                f"the distance to {asset.reference}, "
                 f"ending within {_feet_phrase(min_feet)}."
             ),
             subject_label=track.label,
@@ -680,7 +736,7 @@ class SecurityEventDetector:
             confidence=0.65,
             detail=(
                 f"The {track.label} had an arm extended toward "
-                f"{asset.description or 'the protected asset'} from close "
+                f"{asset.reference} from close "
                 f"range{crouched}."
             ),
             subject_label=track.label,
@@ -702,8 +758,10 @@ class SecurityEventDetector:
         self,
         track: ObjectTrack,
         profile: ApproachProfile,
+        asset: ProtectedAsset,
         ctx: DetectionContext,
         cv_applies: bool,
+        near: bool,
     ) -> tuple[float, str] | None:
         """Grade the evidence that a subject actually touched the asset.
 
@@ -732,6 +790,16 @@ class SecurityEventDetector:
         if cv_applies and ctx.contact_touching is True:
             return 0.8, "pixel-level segmentation found the outlines touching"
         if profile.min_box_gap > 0 or not self._overlap_is_deep(track, profile):
+            return None
+        if not near and not self._feet_could_be_hidden(track, profile, asset):
+            # The outlines overlap only in the picture: the subject's feet
+            # were in plain view, further in front of the asset than anyone
+            # can reach. That is a passer-by between the camera and the car,
+            # and "possible contact" is a claim their own position rules
+            # out — one that still reached the prompt and the Security tab
+            # for everyone walking along the pavement past a parked car. The
+            # far side of the asset, where it hides the feet, keeps the
+            # overlap as its evidence.
             return None
         if cv_applies and ctx.contact_touching is False:
             return None
@@ -781,8 +849,9 @@ class SecurityEventDetector:
         asset: ProtectedAsset,
         ctx: DetectionContext,
         cv_applies: bool,
+        near: bool,
     ) -> SecurityEvent | None:
-        basis = self._contact_basis(track, profile, ctx, cv_applies)
+        basis = self._contact_basis(track, profile, asset, ctx, cv_applies, near)
         if basis is None:
             return None
         confidence, reason = basis
@@ -798,7 +867,7 @@ class SecurityEventDetector:
             confidence=confidence,
             detail=(
                 f"Possible contact between the {track.label} and "
-                f"{asset.description or 'the protected asset'} — {reason}."
+                f"{asset.reference} — {reason}."
             ),
             subject_label=track.label,
             track_id=track.track_id,
@@ -891,7 +960,7 @@ class SecurityEventDetector:
             severity=Severity.CRITICAL,
             confidence=min(0.85, contact.confidence + 0.1),
             detail=(
-                f"Possible impact with {asset.description or 'the protected asset'}: "
+                f"Possible impact with {asset.reference}: "
                 + " and ".join(reasons)
                 + ". This is a candidate for review, not a confirmed impact."
             ),
@@ -935,7 +1004,7 @@ class SecurityEventDetector:
             confidence=min(0.6, contact.confidence),
             detail=(
                 f"The {track.label} moved away from "
-                f"{asset.description or 'the protected asset'} directly after the "
+                f"{asset.reference} directly after the "
                 "possible contact."
             ),
             subject_label=track.label,
@@ -963,7 +1032,7 @@ class SecurityEventDetector:
             confidence=0.6,
             detail=(
                 f"The {track.label} came close to "
-                f"{asset.description or 'the protected asset'} and then moved away "
+                f"{asset.reference} and then moved away "
                 "again."
             ),
             subject_label=track.label,
@@ -978,6 +1047,58 @@ class SecurityEventDetector:
                     "min_gap_pixels": profile.min_gap,
                 }
             ),
+        )
+
+    def _disturbed_event(
+        self,
+        asset: ProtectedAsset,
+        ctx: DetectionContext,
+        events: list[SecurityEvent],
+    ) -> SecurityEvent | None:
+        """A marked asset that looked different after someone was at it.
+
+        The detectable half of a parcel or a bike going missing: COCO has no
+        class for either, so the only evidence a camera holds is that the
+        spot looks different at the end of the clip than at the start. Two
+        things keep a lighting change from reading as a theft. The
+        comparison is contrast-normalized and skipped whenever anybody stood
+        in front of the asset in either frame compared (see
+        vision/pipeline.py), and the event needs a subject to have actually
+        been at the asset in between — a region that changed while nobody
+        went near it is weather, not a visitor. Noteworthy whatever the
+        type: the same evidence is a courier leaving a parcel and a resident
+        collecting one, and telling those apart is the model's job.
+        """
+        if not asset.marked:
+            return None
+        change = ctx.marked_asset_changes.get(asset.key)
+        if change is None or change < self._t.appearance_change:
+            return None
+        visits = [e for e in events if e.event_type in _VISIT_EVENTS]
+        if not visits:
+            return None
+        visit = min(visits, key=lambda e: (-severity_rank(e.severity), e.start_offset))
+        what = (
+            "it may have been opened, closed or left ajar, or something may have "
+            "been left at it"
+            if asset.fixed
+            else "something may have been taken, moved or left there"
+        )
+        return SecurityEvent(
+            event_type=SecurityEventType.ASSET_DISTURBED,
+            severity=Severity.NOTEWORTHY,
+            confidence=0.5,
+            detail=(
+                f"The area marked around {asset.reference} looked different after "
+                f"the {visit.subject_label} was at it — {what}."
+            ),
+            subject_label=visit.subject_label,
+            track_id=visit.track_id,
+            asset_name=asset.name,
+            asset_type=str(asset.asset_type),
+            start_offset=visit.start_offset,
+            end_offset=ctx.timeline_end,
+            evidence=_round_evidence({"appearance_change": change}),
         )
 
     # -- carryable objects ---------------------------------------------
@@ -1075,6 +1196,20 @@ class SecurityEventDetector:
         ]
 
 
+#: Events that put a subject at an asset rather than merely in frame — what
+#: :meth:`SecurityEventDetector._disturbed_event` needs before it will blame
+#: a change in the asset's region on anyone.
+_VISIT_EVENTS: frozenset[SecurityEventType] = frozenset(
+    {
+        SecurityEventType.ZONE_ENTERED,
+        SecurityEventType.ASSET_PROXIMITY,
+        SecurityEventType.ASSET_REACH,
+        SecurityEventType.CONTACT_CANDIDATE,
+        SecurityEventType.ANIMAL_ASSET_INTERACTION,
+    }
+)
+
+
 def _track_key(event: SecurityEvent) -> tuple[object, ...]:
     """Identify the track an event belongs to, for cross-rule deduplication.
 
@@ -1094,7 +1229,7 @@ def _asset_place(asset: ProtectedAsset) -> str:
     just concluded the blue sedan is not in frame is a claim the evidence
     contradicts, and it reaches both the prompt and the Security tab.
     """
-    described = asset.description or "the protected asset"
+    described = asset.reference
     if asset.present:
         return described
     return f"the space where {described} normally sits"

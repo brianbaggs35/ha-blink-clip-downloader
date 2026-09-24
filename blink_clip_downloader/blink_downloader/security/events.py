@@ -116,6 +116,13 @@ class SecurityEventType(StrEnum):
     #: An animal, rather than a person, in contact with or very close to the
     #: protected asset.
     ANIMAL_ASSET_INTERACTION = "animal_asset_interaction"
+    #: A marked asset's own region looked different after a subject had
+    #: been at it — something taken, moved or left, or a door or gate left
+    #: open. Model-free, contrast-normalized before/after comparison, so it
+    #: says the region changed and never what changed; the model reads the
+    #: frames for that. Deliberately not in BYPASS_BLOCKING_EVENTS: a
+    #: resident collecting their own parcel produces exactly this.
+    ASSET_DISTURBED = "asset_disturbed"
     #: More than one distinct person tracked in the same clip.
     MULTIPLE_SUBJECTS = "multiple_subjects"
     #: The scene changed drastically with nothing detected in it — the

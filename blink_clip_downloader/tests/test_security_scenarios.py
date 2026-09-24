@@ -192,6 +192,28 @@ SCENARIOS: list[Scenario] = [
         },
     ),
     Scenario(
+        name="a pedestrian passes in front of the parked car, overlapping it",
+        # Nearer the camera than the car, so their box covers the lower half
+        # of it in every frame — a deep 2D overlap — while their feet are in
+        # plain view over five feet in front of its bumper. The overlap was
+        # reported as a possible contact, which reached the prompt and the
+        # Security tab for everyone walking along the pavement.
+        detections=_walk(
+            1,
+            [_person_at(x, height=120, ground=355) for x in (100, 200, 300, 400, 500)],
+        )
+        + _parked(2, MY_CAR, 5),
+        frame_count=5,
+        zone=None,
+        unavailable_sources=_BASIC,
+        is_night=True,
+        expect_severity=ROUTINE_ONLY,
+        forbid_events={
+            SecurityEventType.CONTACT_CANDIDATE,
+            SecurityEventType.RETREAT_AFTER_CONTACT,
+        },
+    ),
+    Scenario(
         name="a car drives past with nobody around",
         detections=_parked(2, MY_CAR, 5)
         + [
