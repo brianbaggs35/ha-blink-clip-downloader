@@ -32,3 +32,4 @@ lcov.info
 .ha-integration-addon-copy/
 ha-integration-diagnostics/
 e2e/ha-integration-failure-*.png
+sonar-local.log
