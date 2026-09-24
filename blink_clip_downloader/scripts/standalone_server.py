@@ -23,19 +23,22 @@ the database itself).
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import logging
 import os
+import pkgutil
 import sys
 import tempfile
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Any
 
 from PIL import Image
 
-from blink_downloader import gdrive_client, media_server
+import blink_downloader
+from blink_downloader import media_server
 from blink_downloader.analyzer import ClipAnalyzer
 from blink_downloader.archiver import ClipArchiver
 from blink_downloader.database import ClipDatabase
@@ -83,38 +86,54 @@ def _configure_e2e_logging() -> None:
         logging.getLogger(logger_name).addFilter(noise_filter)
 
 
-# MediaServer's per-feature settings files (camera_configs.json,
-# vehicle_settings.json, etc.) are hardcoded to live under /data — the HA
-# Supervisor's persistent-storage mount, always present and writable in
-# the real add-on container. This script runs directly on the host, where
-# /data doesn't exist (and creating it would need root) — so these class
-# attributes are redirected to a throwaway temp dir before MediaServer is
-# constructed, same idea as pointing BLINK_DB_DSN at a throwaway database
-# instead of the bundled one. Genuinely required for any standalone (no
-# Supervisor) deployment, not just for tests.
+# The package keeps its state (camera_configs.json, vehicle_settings.json,
+# the Download Now trigger file, etc.) at fixed paths under /data, the HA
+# Supervisor's persistent-storage mount, always present and writable in the
+# real add-on container. This script runs directly on the host, where /data
+# either doesn't exist (creating it needs root) or, worse, does: as root or
+# in an HA devcontainer, a file written there leaks into anything else
+# reading it, including a pytest run alongside this server. So every such
+# path is redirected to a throwaway temp dir before anything is constructed,
+# same idea as pointing BLINK_DB_DSN at a throwaway database instead of the
+# bundled one. Genuinely required for any standalone (no Supervisor)
+# deployment, not just for tests.
+#
+# Found by walking the package rather than listed, the same way
+# tests/conftest.py's data_dir fixture does it: a list here once missed
+# media_server/library.py's trigger file, which pytest's app tests then saw
+# as a manual Download Now. Each constant is rebound where code looks it
+# up: in every module's own globals (a route module resolves names in its
+# own namespace, not the package facade's), and on the class that declares
+# it (MediaServer inherits its settings-file attributes from its mixins).
+# Every path keeps its place relative to /data, so two constants naming the
+# same file still agree. Must run before GDriveClient() is constructed in
+# _main(): its __init__ reads both of its files immediately.
 def _redirect_data_files(data_dir: Path) -> None:
-    media_server.MediaServer._SECURITY_FEED_SETTINGS_FILE = (
-        data_dir / "security_feed_settings.json"
-    )
-    media_server.MediaServer._CAMERA_CONFIGS_FILE = data_dir / "camera_configs.json"
-    media_server.MediaServer._VEHICLE_SETTINGS_FILE = data_dir / "vehicle_settings.json"
-    media_server.MediaServer._FINETUNE_STATE_FILE = data_dir / "finetune_state.json"
-    media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR = (
-        data_dir / "vehicle_zone_snapshots"
-    )
-    media_server.MediaServer._PROTECTED_ASSETS_FILE = data_dir / "protected_assets.json"
-    media_server.MediaServer._ASSET_SNAPSHOTS_DIR = data_dir / "asset_snapshots"
-    # gdrive_client.py's CREDENTIALS_FILE/SETTINGS_FILE are bare
-    # module-level constants — referenced as globals throughout that
-    # module (SETTINGS_FILE.write_text(...), etc.), not MediaServer class
-    # attributes like the others above — so they're redirected on the
-    # gdrive_client module itself, same reasoning as
-    # _force_face_recognition_available() patching media_server directly
-    # below. Must happen before GDriveClient() is constructed in _main():
-    # its __init__ reads both files immediately via _load_settings()/
-    # _load_credentials().
-    gdrive_client.CREDENTIALS_FILE = data_dir / "google_drive_credentials.json"
-    gdrive_client.SETTINGS_FILE = data_dir / "google_drive_settings.json"
+    data_root = PurePosixPath("/data")
+    modules = [blink_downloader] + [
+        importlib.import_module(info.name)
+        for info in pkgutil.walk_packages(
+            blink_downloader.__path__, f"{blink_downloader.__name__}."
+        )
+    ]
+    for module in modules:
+        owners = [module] + [
+            value
+            for value in vars(module).values()
+            if isinstance(value, type) and value.__module__ == module.__name__
+        ]
+        for owner in owners:
+            for name, value in list(vars(owner).items()):
+                if not isinstance(value, str | PurePath):
+                    continue
+                if not PurePosixPath(value).is_relative_to(data_root):
+                    continue
+                redirected = data_dir / PurePosixPath(value).relative_to(data_root)
+                setattr(
+                    owner,
+                    name,
+                    redirected if isinstance(value, PurePath) else str(redirected),
+                )
 
 
 def _force_face_recognition_available() -> None:
@@ -128,7 +147,7 @@ def _force_face_recognition_available() -> None:
     patched on that *route module* — not on vision, and not on the
     media_server package facade, since rebinding a name there does not
     change what an already-imported route module looks up — same reasoning
-    as _redirect_data_files patching MediaServer's own class attributes
+    as _redirect_data_files rebinding each constant where it is defined
     above). The model itself is replaced separately, by _E2EFaceEmbedder.
     """
     media_server_faces.is_face_recognition_available = lambda: True

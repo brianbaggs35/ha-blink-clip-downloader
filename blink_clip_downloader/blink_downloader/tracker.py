@@ -18,8 +18,9 @@ _MAX_TRACKED_IDS = 100_000
 class ClipTracker:
     """Stores downloaded clip IDs in a JSON file so restarts don't re-download."""
 
-    def __init__(self, tracker_file: Path = DEFAULT_TRACKER_FILE) -> None:
-        self._file = tracker_file
+    def __init__(self, tracker_file: Path | None = None) -> None:
+        # None looks the module default up at call time, so tests can redirect it.
+        self._file = tracker_file or DEFAULT_TRACKER_FILE
         # Insertion-ordered so _prune_if_needed() can actually drop the oldest
         # IDs first — a plain set()'s iteration order is a hash-table
         # artifact in CPython, not insertion order, so pruning "from the

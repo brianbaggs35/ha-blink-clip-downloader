@@ -20,8 +20,9 @@ class ClipManifest:
     entire file, which keeps the operation O(1) regardless of file size.
     """
 
-    def __init__(self, manifest_file: Path = DEFAULT_MANIFEST_FILE) -> None:
-        self._file = manifest_file
+    def __init__(self, manifest_file: Path | None = None) -> None:
+        # None looks the module default up at call time, so tests can redirect it.
+        self._file = manifest_file or DEFAULT_MANIFEST_FILE
 
     def append(self, clip_result: dict[str, Any]) -> None:
         """Append one clip record to the manifest file."""

@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import importlib
 import io
 import json
 import os
+import pkgutil
 import sys
+import tempfile
 import types
-from collections.abc import AsyncGenerator
-from pathlib import Path
+from collections.abc import AsyncGenerator, Iterator
+from functools import cache
+from pathlib import Path, PurePath, PurePosixPath
 from typing import Any
 
 import pytest
 
+import blink_downloader
 from blink_downloader.config import AppConfig
 from blink_downloader.database import ClipDatabase
 
@@ -47,6 +52,108 @@ async def db() -> AsyncGenerator[ClipDatabase]:
     await d._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")
     yield d
     await d.close()
+
+
+# The Supervisor's persistent-storage mount, where the add-on keeps its
+# state files.
+DATA_ROOT = PurePosixPath("/data")
+
+
+def is_data_path(value: object) -> bool:
+    """True for a string or path naming ``/data`` or anything beneath it."""
+    return isinstance(value, str | PurePath) and PurePosixPath(value).is_relative_to(
+        DATA_ROOT
+    )
+
+
+@cache
+def package_modules() -> tuple[types.ModuleType, ...]:
+    """``blink_downloader`` and every module beneath it, imported."""
+    return (
+        blink_downloader,
+        *(
+            importlib.import_module(info.name)
+            for info in pkgutil.walk_packages(
+                blink_downloader.__path__, f"{blink_downloader.__name__}."
+            )
+        ),
+    )
+
+
+def attribute_owners(module: types.ModuleType) -> list[Any]:
+    """*module* itself plus each class it defines (not ones it imports)."""
+    return [
+        module,
+        *(
+            value
+            for value in vars(module).values()
+            if isinstance(value, type) and value.__module__ == module.__name__
+        ),
+    ]
+
+
+@cache
+def data_path_attributes() -> tuple[tuple[Any, str, str | PurePath], ...]:
+    """Every module- or class-level attribute in the package that holds a
+    path under /data, as ``(owner, name, original value)``.
+
+    Found by walking the package rather than listed, so a constant added
+    later is covered without anyone remembering to add it here. A class
+    attribute is taken from the class that defines it (a mixin, for
+    MediaServer's), which is what every subclass inherits.
+    """
+    return tuple(
+        (owner, name, value)
+        for module in package_modules()
+        for owner in attribute_owners(module)
+        for name, value in vars(owner).items()
+        if is_data_path(value)
+    )
+
+
+@pytest.fixture(scope="session")
+def _data_dirs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("data")
+
+
+@pytest.fixture(autouse=True)
+def data_dir(_data_dirs: Path) -> Iterator[Path]:
+    """A per-test stand-in for /data, which no test may touch.
+
+    The package keeps its state at fixed /data paths. Wherever the suite can
+    create /data (as root, or in a Home Assistant devcontainer), a file one
+    test writes there changes what a later, unrelated test reads: a stale
+    camera_identities.json turns a same-camera refresh into a replacement,
+    and a trigger_download from the e2e backend cuts a poll wait short. CI's
+    runners cannot create /data, so every write fails silently there and
+    the suite stays green, which is why it went unnoticed.
+
+    Each path keeps its place relative to /data, so two constants naming one
+    file (app.TRIGGER_FILE and media_server/library.py's _TRIGGER_FILE) still
+    agree. This directory is separate from the test's ``tmp_path``, so
+    nothing appears in that one unexpectedly. A test's own ``patch(...)`` of
+    one of these attributes still wins: it is applied after this fixture
+    runs and undone before this fixture's teardown.
+    """
+    # mkdtemp inside one session directory, not tmp_path_factory.mktemp per
+    # test: that lists every directory already in the base temp dir to pick
+    # the next number, so one more per test added ~10s to a full run and
+    # slowed every tmp_path created after it.
+    root = Path(tempfile.mkdtemp(dir=_data_dirs))
+    # Its own MonkeyPatch, not the shared `monkeypatch` fixture: requesting
+    # that here would set it up ahead of every other fixture, so it would
+    # be undone only after all their teardowns, which would then run against
+    # whatever the test patched through it (db's close() hitting a test's
+    # stub pool).
+    with pytest.MonkeyPatch.context() as patcher:
+        for owner, name, original in data_path_attributes():
+            redirected = root / PurePosixPath(original).relative_to(DATA_ROOT)
+            patcher.setattr(
+                owner,
+                name,
+                redirected if isinstance(original, PurePath) else str(redirected),
+            )
+        yield root
 
 
 @pytest.fixture
