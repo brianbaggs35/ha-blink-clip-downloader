@@ -68,8 +68,7 @@ describe('App', () => {
             analysis_enabled: false,
             detection_enabled: false,
           }
-        }
-        else if (url.startsWith('/api/ai/faces/bypass-stats')) {
+        } else if (url.startsWith('/api/ai/faces/bypass-stats')) {
           body = { total_bypassed: 0, by_name: [], recent: [] }
         } else if (url.startsWith('/api/ai/faces')) body = { available: true, faces: [] }
         return Promise.resolve({ ok: true, json: () => Promise.resolve(body), text: () => Promise.resolve('') })

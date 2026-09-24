@@ -398,6 +398,12 @@ jobs:
         run: >-
           scripts/ci/ha_integration_setup.sh assert-clip-starred ci-seed-2
 
+      # The same for an asset marked on the Assets tab, which lives in a
+      # /data file rather than the database — see assert-asset-persisted.
+      - name: Verify an asset marked in the UI survived the restart
+        run: >-
+          scripts/ci/ha_integration_setup.sh assert-asset-persisted "CI mailbox"
+
       # The other half of the restart: the add-on logs its resolved
       # configuration at startup, so the new value appearing there is
       # end-to-end evidence that Supervisor's stored option reached

@@ -615,7 +615,8 @@ async function checkIngressApi(page, issuesList) {
     // One endpoint per backing concern, so a failure says *which* half of
     // the add-on is broken behind a UI that still renders: the clip
     // database, the settings files under /data, the camera-config file the
-    // Vehicles and AI tabs share, and the structured security layer. All
+    // Vehicles and AI tabs share, the Assets tab's own file, and the
+    // structured security layer. All
     // are GETs -- this must not mutate anything the persistence marker and
     // the restart assertions downstream depend on.
     const endpoints = [
@@ -624,6 +625,7 @@ async function checkIngressApi(page, issuesList) {
       ["/api/cameras", (b) => typeof b === "object" && b !== null, "an object"],
       ["/api/vehicle/settings", (b) => "car_description" in b, "car_description"],
       ["/api/ai/camera-configs", (b) => typeof b === "object" && b !== null, "an object"],
+      ["/api/assets", (b) => Array.isArray(b.assets), "an assets array"],
       ["/api/security/stats", (b) => "by_severity" in b, "by_severity"],
       ["/api/storage/archives", (b) => typeof b === "object" && b !== null, "an object"],
     ];
