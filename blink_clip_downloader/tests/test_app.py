@@ -2924,3 +2924,43 @@ async def test_storage_sensors_are_published_when_the_quota_stops_downloads(app)
     assert "sensor.blink_local_storage" in names
     assert "sensor.blink_cloud_storage" in names
     app._downloader.download_new_clips.assert_not_awaited()
+
+
+def test_init_hands_marked_assets_to_the_analyzer(
+    base_config, tmp_path, monkeypatch
+) -> None:
+    """Assets marked on the Assets tab must reach the analyzer on startup,
+    not only after the next save from the tab."""
+    import dataclasses
+
+    from blink_downloader import protected_assets
+
+    assets_file = tmp_path / "protected_assets.json"
+    asset = {
+        "id": "abc123def456",
+        "camera": "Porch",
+        "name": "Front door",
+        "asset_type": "door",
+        "description": "",
+        "zone": {
+            "shape": "rect",
+            "x_min": 0.1,
+            "y_min": 0.1,
+            "x_max": 0.3,
+            "y_max": 0.9,
+        },
+        "enabled": True,
+        "created_at": "",
+        "updated_at": "",
+    }
+    assets_file.write_text(json.dumps({"assets": [asset]}))
+    monkeypatch.setattr(protected_assets, "ASSETS_FILE", assets_file)
+    config = dataclasses.replace(
+        base_config, ai_analysis_enabled=True, ollama_url="http://localhost:11434"
+    )
+    with patch("blink_downloader.app.create_analyzer") as mock_create_analyzer:
+        mock_create_analyzer.return_value = MagicMock()
+        BlinkClipDownloaderApp(config)
+
+    analyzer = mock_create_analyzer.return_value
+    analyzer.update_protected_assets.assert_called_once_with([asset])

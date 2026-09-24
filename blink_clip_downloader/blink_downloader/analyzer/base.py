@@ -36,6 +36,7 @@ from ..ffmpeg_output import (
     format_ffmpeg_error,
     split_jpeg_frames,
 )
+from ..protected_assets import assets_by_camera
 
 # Imported eagerly, unlike vision below: the security package is pure
 # stdlib — no torch, no opencv — so it costs nothing at import time and is
@@ -508,6 +509,12 @@ class BaseAnalyzer(abc.ABC):
         # it never needs to be re-derived per clip. Used to compute
         # zone-restricted motion evidence — see ``frame_motion.zone_motion_fraction``.
         self._car_zones: dict[str, dict[str, Any]] = car_zones or {}
+        # Assets marked on the Assets tab, enabled ones only, by camera (see
+        # protected_assets.py). Filled by update_protected_assets() — once at
+        # startup from app.py and on every save from the Assets tab — and
+        # empty is exactly how every camera behaved before assets existed:
+        # each use below is gated on a camera actually having some.
+        self._marked_assets: dict[str, list[dict[str, Any]]] = {}
         # Whether the deterministic security layer runs at all (see
         # blink_downloader.security). It costs no extra model inference on
         # top of object detection, so it is on by default and simply
@@ -639,6 +646,11 @@ class BaseAnalyzer(abc.ABC):
         self._car_cameras = {
             new_name if camera == old_name else camera for camera in self._car_cameras
         }
+        if old_name in self._marked_assets:
+            moved = self._marked_assets.pop(old_name)
+            self._marked_assets.setdefault(new_name, []).extend(
+                {**asset, "camera": new_name} for asset in moved
+            )
 
     def update_camera_prompts(self, prompts: dict[str, str]) -> None:
         """Replace per-camera custom prompts at runtime without restart.
@@ -692,6 +704,29 @@ class BaseAnalyzer(abc.ABC):
         xs = [p[0] for p in points]
         ys = [p[1] for p in points]
         return {"x_min": min(xs), "y_min": min(ys), "x_max": max(xs), "y_max": max(ys)}
+
+    def update_protected_assets(self, assets: list[dict[str, Any]]) -> None:
+        """Replace the marked-asset map at runtime without restart.
+
+        Full replace, like every other ``update_*`` here: turning an asset
+        off or deleting it on the Assets tab must stop it applying to the
+        very next clip. *assets* is the stored list (see
+        ``protected_assets.read_assets``); only enabled ones are kept.
+        """
+        self._marked_assets = assets_by_camera(assets)
+
+    def _marked_assets_for(self, camera: str) -> list[dict[str, Any]]:
+        """The enabled assets marked on *camera*, or ``[]``."""
+        return self._marked_assets.get(camera, [])
+
+    def _asset_protection_applies(self, camera: str) -> bool:
+        """True when *camera* watches something the user asked to protect:
+        the protected vehicle (see :meth:`_car_protection_applies`) or at
+        least one marked asset. Decides the high-recall escalation policy,
+        which is about protecting assets, not specifically cars."""
+        return self._car_protection_applies(camera) or bool(
+            self._marked_assets_for(camera)
+        )
 
     def update_car_description(self, description: str) -> None:
         """Replace the protected-vehicle description at runtime without restart.
@@ -1122,6 +1157,9 @@ class BaseAnalyzer(abc.ABC):
         motion_thumbs = await self._maybe_compute_motion_thumbnails(frames, camera)
 
         zone_motion_fraction = self._maybe_compute_zone_motion(motion_thumbs, camera)
+        asset_motion_shares = await self._maybe_compute_asset_motion(
+            motion_thumbs, camera
+        )
         # The car-zone box drawn in the Vehicles tab only ever showed up as
         # a difference in the AI's final prompt text — nothing logged
         # whether a zone was even found for this camera, let alone what
@@ -1160,6 +1198,7 @@ class BaseAnalyzer(abc.ABC):
             clip_duration=clip_duration,
             vision_hints=vision_hints,
             security=security,
+            asset_motion_shares=asset_motion_shares,
         )
 
         response = await self._generate_response(frames, prompt)
@@ -1401,8 +1440,8 @@ class BaseAnalyzer(abc.ABC):
         """
         _LOGGER.info(
             "Analyzed clip=%r camera=%r provider=%s frames=%d suspicious=%s "
-            "detections=%d tracks=%d scan_frames=%d vehicle=%s missing=%s "
-            "n/a=%s %s%s",
+            "detections=%d tracks=%d scan_frames=%d vehicle=%s assets=%d "
+            "missing=%s n/a=%s %s%s",
             clip_id,
             camera,
             self.provider_name,
@@ -1412,6 +1451,7 @@ class BaseAnalyzer(abc.ABC):
             len(getattr(vision_hints, "tracks", None) or []),
             getattr(vision_hints, "scan_frame_count", 0),
             self._describe_vehicle_identification(vision_hints),
+            len(self._marked_assets_for(camera)),
             ",".join(getattr(vision_hints, "unavailable_sources", []) or []) or "none",
             # Separate from missing= on purpose: these are stages that had
             # nothing in this clip to measure, which reads very differently
@@ -1488,7 +1528,9 @@ class BaseAnalyzer(abc.ABC):
         :meth:`_maybe_compute_zone_motion` already uses), motion-weighted
         selection is biased toward motion concentrated inside that zone
         rather than the whole frame — see :meth:`_select_best_frames`'s
-        own docstring for why. The actual selection is CPU-bound (PIL
+        own docstring for why. Assets marked on the camera join it: the
+        frames sent are the ones showing activity at whatever the user
+        asked to protect. The actual selection is CPU-bound (PIL
         decode + per-pixel diffing), so it runs in a thread executor
         rather than blocking the event loop, matching every CPU-bound
         stage in the ``vision`` package.
@@ -1501,15 +1543,28 @@ class BaseAnalyzer(abc.ABC):
         if self._frame_strategy == "uniform":
             return self._select_uniform_frames(frames, target_frame_count)
 
-        zone_box: tuple[float, float, float, float] | None = None
+        zones: list[dict[str, Any]] = [
+            a["zone"] for a in self._marked_assets_for(camera)
+        ]
         if self._car_zones.get(camera) and self._car_protection_applies(camera):
-            bbox = self._car_zone_bbox(self._car_zones[camera])
-            zone_box = (
-                bbox.get("x_min", 0.0),
-                bbox.get("y_min", 0.0),
-                bbox.get("x_max", 1.0),
-                bbox.get("y_max", 1.0),
+            zones.insert(0, self._car_zones[camera])
+        boxes: list[tuple[float, float, float, float]] = []
+        for zone in zones:
+            bbox = self._car_zone_bbox(zone)
+            boxes.append(
+                (
+                    bbox.get("x_min", 0.0),
+                    bbox.get("y_min", 0.0),
+                    bbox.get("x_max", 1.0),
+                    bbox.get("y_max", 1.0),
+                )
             )
+        # One zone passes as a plain box, exactly as it always did; several —
+        # the car's and each marked asset's — rank frames by motion inside
+        # any of them.
+        zone_box: tuple[float, float, float, float] | list | None = (
+            boxes[0] if len(boxes) == 1 else boxes or None
+        )
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -1558,6 +1613,7 @@ class BaseAnalyzer(abc.ABC):
             frame_interval=self._current_frame_interval,
             vehicle_signature=await self._load_vehicle_signature(camera),
             clip_path=clip_path,
+            marked_assets=self._marked_assets_for(camera),
         )
         if vision_hints.enhanced_frames is not None:
             frames = vision_hints.enhanced_frames
@@ -1691,6 +1747,11 @@ class BaseAnalyzer(abc.ABC):
                 audio_labels=(
                     vision_hints.audio_tags.labels if vision_hints.audio_tags else None
                 ),
+                marked_assets=getattr(vision_hints, "marked_assets", None) or [],
+                examined_asset_key=getattr(vision_hints, "examined_asset_key", None),
+                marked_asset_changes=(
+                    getattr(vision_hints, "marked_asset_changes", None) or {}
+                ),
             )
         )
 
@@ -1731,6 +1792,23 @@ class BaseAnalyzer(abc.ABC):
             return frame_motion.zone_motion_fraction(thumbs, car_zone)
         return None
 
+    async def _maybe_compute_asset_motion(
+        self, thumbs: list[bytes] | None, camera: str
+    ) -> list[tuple[str, float]]:
+        """Each marked asset's share of this clip's motion, or ``[]``.
+
+        Walks every thumbnail pixel once per asset, so it runs in a thread
+        executor like :meth:`_maybe_compute_motion_thumbnails` rather than
+        on the event loop the web UI is also served from.
+        """
+        assets = self._marked_assets_for(camera)
+        if not assets or not thumbs:
+            return []
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, frame_motion.asset_motion_shares, thumbs, assets
+        )
+
     async def _maybe_compute_motion_thumbnails(
         self, frames: list[bytes], camera: str
     ) -> list[bytes] | None:
@@ -1750,7 +1828,7 @@ class BaseAnalyzer(abc.ABC):
         """
         zone_motion_possible = bool(
             self._car_zones.get(camera) and self._car_protection_applies(camera)
-        )
+        ) or bool(self._marked_assets_for(camera))
         trajectory_possible = len(frames) >= frame_motion.MOTION_TRAJECTORY_MIN_FRAMES
         if not zone_motion_possible and not trajectory_possible:
             return None
@@ -1822,8 +1900,9 @@ class BaseAnalyzer(abc.ABC):
         """Escalate a tier-1 verdict to the attached tier-2 analyzer.
 
         Two escalation policies apply, chosen by whether the camera being
-        analyzed is under protected-vehicle asset protection (see
-        :meth:`_car_protection_applies`):
+        analyzed is under asset protection — the protected vehicle or any
+        asset marked on the Assets tab (see
+        :meth:`_asset_protection_applies`):
 
         - **Asset-protection cameras** always get a tier-2 double-check,
           even when tier 1 said "clear". A missed contact/proximity event
@@ -1855,7 +1934,7 @@ class BaseAnalyzer(abc.ABC):
 
         suspicious, _, _ = self._try_parse_json(response)
         camera = getattr(self, "_current_camera", "")
-        high_recall = self._car_protection_applies(camera)
+        high_recall = self._asset_protection_applies(camera)
         if not suspicious and not high_recall:
             return response
 
@@ -1866,7 +1945,7 @@ class BaseAnalyzer(abc.ABC):
             self.model_name(),
             "flagged a suspicious result"
             if suspicious
-            else "cleared a protected-vehicle camera clip; double-checking",
+            else "cleared a protected-asset camera clip; double-checking",
             tier2.provider_name,
             tier2.model_name(),
         )
@@ -2088,7 +2167,7 @@ class BaseAnalyzer(abc.ABC):
     def _select_best_frames(
         frames: list[bytes],
         target_count: int,
-        zone_box: tuple[float, float, float, float] | None = None,
+        zone_box: frame_motion.ZoneBox | list[frame_motion.ZoneBox] | None = None,
         prefer_event: bool = False,
     ) -> list[bytes]:
         """Pick the *target_count* most informative frames using motion scoring.
@@ -2120,7 +2199,8 @@ class BaseAnalyzer(abc.ABC):
         the frame(s) actually showing activity at the protected vehicle —
         this makes selection agree with what :func:`_build_prompt`'s ZONE
         MOTION hint already tells the model about *after* selection has
-        already happened.
+        already happened. A list of boxes ranks by motion inside any of
+        them (the car's zone and each marked asset's).
 
         Falls back to even-spaced selection if PIL is unavailable.
         """
@@ -2425,9 +2505,11 @@ class BaseAnalyzer(abc.ABC):
         billing dashboard.
         """
         camera = getattr(self, "_current_camera", "")
-        return self._camera_prompts.get(
-            camera, self._base_prompt
-        ) + self._camera_context_segment(camera)
+        return (
+            self._camera_prompts.get(camera, self._base_prompt)
+            + self._camera_context_segment(camera)
+            + self._marked_assets_segment(camera)
+        )
 
     #: Whether this provider has a prompt cache at all. Only the two that
     #: do put a ``cache=`` field on the per-clip summary line — on every
@@ -2553,14 +2635,23 @@ class BaseAnalyzer(abc.ABC):
         clip_duration: float = 0.0,
         vision_hints: VisionHints | None = None,
         security: SecurityOutcome | None = None,
+        asset_motion_shares: list[tuple[str, float]] | None = None,
     ) -> str:
-        """Build a rich analysis prompt with camera context, temporal context,
-        anomaly alert, scene-baseline signal, movement hint, recent human
-        corrections, zone-motion evidence, short-event hint, optional
-        computer-vision pipeline hints, structured security evidence, and
-        asset-protection distance rules."""
+        """Build a rich analysis prompt with camera context, the assets marked
+        on this camera, temporal context, anomaly alert, scene-baseline
+        signal, movement hint, recent human corrections, zone-motion
+        evidence, short-event hint, optional computer-vision pipeline hints,
+        structured security evidence, and asset-protection distance rules."""
         base = self._camera_prompts.get(camera, self._base_prompt)
-        parts = [base, self._camera_context_segment(camera)]
+        # The marked assets sit with the camera context — both describe what
+        # this camera is for, neither changes from clip to clip, and together
+        # they are the prompt's cacheable prefix (see _prompt_cache_prefix).
+        parts = [
+            base,
+            self._camera_context_segment(camera),
+            self._marked_assets_segment(camera),
+        ]
+        assets_marked = bool(self._marked_assets_for(camera))
 
         time_segment = prompt_segments.time_of_day_segment(clip_timestamp)
         if time_segment:
@@ -2570,7 +2661,9 @@ class BaseAnalyzer(abc.ABC):
         if anomaly_segment:
             parts.append(anomaly_segment)
 
-        short_event_segment = prompt_segments.short_event_segment(clip_duration)
+        short_event_segment = prompt_segments.short_event_segment(
+            clip_duration, assets_marked
+        )
         if short_event_segment:
             parts.append(short_event_segment)
 
@@ -2579,8 +2672,12 @@ class BaseAnalyzer(abc.ABC):
         # see that block's comment for why.
         car_applies = self._car_protection_applies(camera)
 
+        # A marked asset gets the same treatment as the car here, for the same
+        # reason: the door or the bike in its usual place *is* this camera's
+        # usual background, so a close match says nothing about whether
+        # someone is at it now.
         scene_segment = prompt_segments.scene_baseline_segment(
-            scene_deviation, car_applies
+            scene_deviation, car_applies or assets_marked
         )
         if scene_segment:
             parts.append(scene_segment)
@@ -2600,6 +2697,10 @@ class BaseAnalyzer(abc.ABC):
         )
         if zone_segment:
             parts.append(zone_segment)
+
+        asset_motion = prompt_segments.asset_motion_segment(asset_motion_shares or [])
+        if asset_motion:
+            parts.append(asset_motion)
 
         parts.extend(prompt_segments.vision_hint_segments(vision_hints))
 
@@ -2650,6 +2751,14 @@ class BaseAnalyzer(abc.ABC):
                 "what deserves scrutiny; everything else on this camera is routine."
             )
         return f"\n\nCamera: {camera}"
+
+    def _marked_assets_segment(self, camera: str) -> str:
+        """The PROTECTED ASSETS section for *camera*, or "" with none marked
+        (see :func:`prompt_segments.protected_assets_segment`)."""
+        return (
+            prompt_segments.protected_assets_segment(self._marked_assets_for(camera))
+            or ""
+        )
 
     def _car_protection_segment(
         self, camera: str, car_applies: bool, vehicle_absent: bool = False

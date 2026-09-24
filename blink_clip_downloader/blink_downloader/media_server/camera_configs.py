@@ -19,6 +19,7 @@ from typing import Any
 
 from aiohttp import web
 
+from ..protected_assets import normalize_zone
 from .core import _MediaServerBase
 from .support import (
     _CAMERA_CONFIGS_SAVE_ERROR,
@@ -238,43 +239,11 @@ class CameraConfigsRoutesMixin(_MediaServerBase):
 
     @staticmethod
     def _normalize_car_zone(zone: Any) -> dict[str, Any] | None:
-        """Validate and coerce a raw ``car_zone`` value from stored/incoming
-        JSON into either a clean ``{shape: "rect", x_min, y_min, x_max,
-        y_max}`` or ``{shape: "polygon", points: [[x, y], ...]}`` dict, or
-        ``None`` if it's missing or malformed.
-
-        Zones saved before the freeform-polygon feature have no ``shape``
-        key at all — treated as ``"rect"`` here so existing saved data keeps
-        working without a migration, and always stamped with an explicit
-        ``shape`` going forward.
-        """
-        if not isinstance(zone, dict):
-            return None
-        if zone.get("shape") == "polygon":
-            points = zone.get("points")
-            if not isinstance(points, list) or len(points) < 3:
-                return None
-            try:
-                norm_points = [[float(p[0]), float(p[1])] for p in points]
-            except (TypeError, ValueError, IndexError):
-                return None
-            if not all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in norm_points):
-                return None
-            return {"shape": "polygon", "points": norm_points}
-        try:
-            x_min, y_min = float(zone["x_min"]), float(zone["y_min"])
-            x_max, y_max = float(zone["x_max"]), float(zone["y_max"])
-        except (KeyError, TypeError, ValueError):
-            return None
-        if not (0.0 <= x_min < x_max <= 1.0 and 0.0 <= y_min < y_max <= 1.0):
-            return None
-        return {
-            "shape": "rect",
-            "x_min": x_min,
-            "y_min": y_min,
-            "x_max": x_max,
-            "y_max": y_max,
-        }
+        """Validate a raw ``car_zone`` from stored/incoming JSON — see
+        :func:`~blink_downloader.protected_assets.normalize_zone`, which the
+        Assets tab's zones share so the two can never disagree about what a
+        valid drawn zone is."""
+        return normalize_zone(zone)
 
     @staticmethod
     def _camera_configs_revision(configs: list[dict[str, Any]]) -> str:

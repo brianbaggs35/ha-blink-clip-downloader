@@ -196,7 +196,9 @@ class DepthEstimator:
                 return None
 
 
-def _build_depth_hint(result: DepthComparison, subject_label: str) -> str:
+def _build_depth_hint(
+    result: DepthComparison, subject_label: str, target: str = "vehicle"
+) -> str:
     """Render a depth comparison into a DEPTH ESTIMATE prompt hint.
 
     *subject_label* is the actual detected class ("person", "dog", "cat",
@@ -204,21 +206,26 @@ def _build_depth_hint(result: DepthComparison, subject_label: str) -> str:
     generic "person/animal" this used to say unconditionally, since the
     depth/contact pairing already treats animals as valid subjects (see
     :data:`_SUBJECT_CLASSES`) and the hint text should match.
+
+    *target* names what the subject was compared against: the protected
+    vehicle by default, or an asset marked on the Assets tab — which the
+    comparison measured just the same, and which the hint must not call a
+    vehicle when the camera may have none in view.
     """
     if result.similar_depth:
         body = (
-            f"the detected {subject_label} and detected vehicle appear to be "
+            f"the detected {subject_label} and the {target} appear to be "
             "at roughly the same distance from the camera — consistent "
-            "with them actually being near the vehicle in 3D space, not "
+            f"with them actually being near the {target} in 3D space, not "
             "just overlapping it in the 2D frame"
         )
     elif result.similar_depth is None:
         body = (
             f"it cannot tell whether the detected {subject_label} is at the "
-            "vehicle or in front of or behind it — the difference in "
+            f"{target} or in front of or behind it — the difference in "
             "distance is too small to separate them and too large to call "
             "them together. Judge from the frames whether they are actually "
-            "at the vehicle"
+            f"at the {target}"
         )
     else:
         # Depth Anything's output is inverse depth/disparity (verified
@@ -236,21 +243,21 @@ def _build_depth_hint(result: DepthComparison, subject_label: str) -> str:
         if result.subject_depth > result.vehicle_depth:
             side = (
                 f"the {subject_label} appears nearer to the camera than the "
-                "vehicle — the near/same side, in plain view"
+                f"{target} — the near/same side, in plain view"
             )
         else:
             side = (
                 f"the {subject_label} appears farther from the camera than "
-                "the vehicle — consistent with being on the vehicle's far "
-                "side, partly out of this camera's clear view, which "
+                f"the {target} — consistent with being on the far side of the "
+                f"{target}, partly out of this camera's clear view, which "
                 "deserves extra scrutiny"
             )
         body = (
-            f"the detected {subject_label} and detected vehicle appear to be "
+            f"the detected {subject_label} and the {target} appear to be "
             f"at noticeably different distances from the camera: {side}. "
             "They may only appear close together because one is in front "
             "of the other from this camera's angle, not because they're "
-            "actually near the vehicle"
+            f"actually near the {target}"
         )
     return (
         "\n\nDEPTH ESTIMATE: A monocular depth model estimates that "
