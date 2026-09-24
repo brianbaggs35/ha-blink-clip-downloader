@@ -14,7 +14,7 @@ await page.screenshot({ path: '/tmp/shots/01-library.png' });
 // sync with the same source of truth for the CI-run check) - this list
 // had gone stale from before the vehicles/biometrics tabs existed, so
 // this manual verification helper was never actually screenshotting them.
-const tabs = ['status', 'usage', 'automations', 'ai', 'models', 'vehicles', 'biometrics'];
+const tabs = ['status', 'usage', 'automations', 'ai', 'models', 'vehicles', 'assets', 'biometrics'];
 for (const tab of tabs) {
   await page.click(`[data-tab="${tab}"]`);
   await page.waitForTimeout(700);

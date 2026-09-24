@@ -128,7 +128,7 @@ class AssetsRoutesMixin(_MediaServerBase):
         clip_id = str(body.get("clip_id") or "")
         frame = await self._asset_frame(camera, clip_id) if clip_id else None
         if frame is None and not self._asset_snapshot_path(camera).exists():
-            raise web.HTTPBadRequest(text="Missing clip_id")
+            raise web.HTTPBadRequest(text="Pick a frame to draw on")
 
         now = datetime.now(UTC).isoformat()
         asset = {
