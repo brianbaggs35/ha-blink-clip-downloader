@@ -59,6 +59,9 @@ def test_asset_confident_without_an_identification() -> None:
         (AssetType.OTHER, 3.0),
         (AssetType.WINDOW, 3.0),
         (AssetType.PACKAGE_AREA, 3.0),
+        (AssetType.GATE, 4.0),
+        (AssetType.BICYCLE, 5.5),
+        (AssetType.EQUIPMENT, 3.0),
     ],
 )
 def test_asset_width_feet_by_type(asset_type: AssetType, expected: float) -> None:
@@ -169,3 +172,10 @@ def test_zone_is_ignored_for_the_asset_box_when_the_frame_size_is_unknown() -> N
     assert asset is not None
     assert asset.box is None
     assert asset.location is AssetLocation.UNKNOWN
+
+
+def test_every_asset_type_has_a_width() -> None:
+    """A type with no reference width would fall back to OTHER's silently."""
+    from blink_downloader.security.assets import _ASSET_WIDTH_FEET
+
+    assert set(_ASSET_WIDTH_FEET) == set(AssetType)
