@@ -237,7 +237,8 @@ class CameraStateMixin(_DatabaseBase):
         rows = await conn.fetch(
             _qm(
                 "SELECT thumbnail, sample_count, updated_at, "
-                "consecutive_deviation_count FROM camera_scene_baselines "
+                "consecutive_deviation_count, night_thumbnail, night_sample_count, "
+                "night_consecutive_deviation_count FROM camera_scene_baselines "
                 "WHERE LOWER(camera) = LOWER(?) OR LOWER(camera) = LOWER(?) "
                 "ORDER BY sample_count DESC LIMIT 1"
             ),
@@ -259,13 +260,17 @@ class CameraStateMixin(_DatabaseBase):
             _qm(
                 "INSERT INTO camera_scene_baselines "
                 "(camera, thumbnail, sample_count, updated_at, "
-                "consecutive_deviation_count) VALUES (?, ?, ?, ?, ?)"
+                "consecutive_deviation_count, night_thumbnail, night_sample_count, "
+                "night_consecutive_deviation_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             ),
             new_name,
             scene["thumbnail"],
             scene["sample_count"],
             scene["updated_at"],
             scene["consecutive_deviation_count"],
+            scene["night_thumbnail"],
+            scene["night_sample_count"],
+            scene["night_consecutive_deviation_count"],
         )
         return True
 

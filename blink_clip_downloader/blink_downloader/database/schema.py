@@ -220,12 +220,19 @@ CREATE TABLE IF NOT EXISTS camera_duration_stats (
     avg_duration DOUBLE PRECISION DEFAULT 0.0,
     sample_count INTEGER DEFAULT 0
 );
+-- Two learned backgrounds per camera: thumbnail/sample_count/... for daylight
+-- colour frames, night_* for the monochrome infrared ones a Blink camera
+-- switches to after dark (see frame_motion.is_infrared). One average of both
+-- described neither — see learning.py's record_scene_baseline.
 CREATE TABLE IF NOT EXISTS camera_scene_baselines (
     camera       TEXT PRIMARY KEY,
     thumbnail    TEXT    NOT NULL,
     sample_count INTEGER DEFAULT 0,
     updated_at   TEXT,
-    consecutive_deviation_count INTEGER DEFAULT 0
+    consecutive_deviation_count INTEGER DEFAULT 0,
+    night_thumbnail TEXT DEFAULT '',
+    night_sample_count INTEGER DEFAULT 0,
+    night_consecutive_deviation_count INTEGER DEFAULT 0
 );
 
 -- Human feedback on stored AI verdicts (adaptive learning — "smart brain").
@@ -387,4 +394,10 @@ ALTER TABLE detected_objects ADD COLUMN IF NOT EXISTS frame_height DOUBLE PRECIS
 ALTER TABLE camera_vehicle_signatures ADD COLUMN IF NOT EXISTS histogram_pipeline TEXT NOT NULL DEFAULT 'enhanced';
 UPDATE camera_vehicle_signatures SET histogram = '[]', histogram_pipeline = 'raw' WHERE histogram_pipeline <> 'raw';
 ALTER TABLE camera_vehicle_signatures ALTER COLUMN histogram_pipeline SET DEFAULT 'raw';
+-- 6.0.7: a separate infrared (night) scene baseline. An existing row's single
+-- baseline carries on as the daylight one; the night one starts empty and
+-- reports nothing until it has learned enough of its own.
+ALTER TABLE camera_scene_baselines ADD COLUMN IF NOT EXISTS night_thumbnail TEXT DEFAULT '';
+ALTER TABLE camera_scene_baselines ADD COLUMN IF NOT EXISTS night_sample_count INTEGER DEFAULT 0;
+ALTER TABLE camera_scene_baselines ADD COLUMN IF NOT EXISTS night_consecutive_deviation_count INTEGER DEFAULT 0;
 """

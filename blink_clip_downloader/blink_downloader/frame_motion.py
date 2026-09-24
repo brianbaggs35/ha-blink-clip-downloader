@@ -100,6 +100,41 @@ def scene_thumbnail(frame: bytes) -> list[float] | None:
         return None
 
 
+#: Mean per-pixel colour spread (max minus min channel, 0-1) below which a
+#: frame is taken to be infrared night vision. Blink's night mode is
+#: monochrome. Measured on scikit-image's sample photographs: a greyscale
+#: frame reads exactly 0 even after JPEG compression, the colour originals
+#: 0.14-0.43, and the same photos with their colour cut to a quarter — a
+#: grey, overcast day — still 0.036-0.107. So this sits well clear of both.
+INFRARED_MAX_CHROMA = 0.02
+
+
+def is_infrared(frame: bytes) -> bool | None:
+    """True for an infrared (monochrome) night-vision frame, False for a
+    colour one, ``None`` when the frame can't be decoded.
+
+    Decides which of a camera's two learned backgrounds a clip is compared
+    with (see ``ClipDatabase.record_scene_baseline``): the same view at night
+    and by day are two different pictures, and a single average of both
+    made the "differs from its usual background" signal mostly a clock.
+    """
+    try:
+        import io as _io
+
+        from PIL import Image as _Image
+
+        with _Image.open(_io.BytesIO(frame)) as img:
+            rgb = img.convert("RGB").resize((32, 32), _Image.Resampling.BILINEAR)
+            data = rgb.tobytes()
+    except Exception:  # noqa: BLE001
+        return None
+    spread = sum(
+        max(data[i], data[i + 1], data[i + 2]) - min(data[i], data[i + 1], data[i + 2])
+        for i in range(0, len(data), 3)
+    )
+    return spread / (len(data) / 3) / 255.0 < INFRARED_MAX_CHROMA
+
+
 def frame_motion_diffs(
     frames: list[bytes],
     zone_box: ZoneBox | list[ZoneBox] | None = None,
