@@ -16,6 +16,15 @@ export interface AssetTypeInfo {
   watchedFor: string
 }
 
+/** "Something else": the catch-all, and what an unknown type renders as. */
+const OTHER: AssetTypeInfo = {
+  value: 'other',
+  label: 'Something else',
+  icon: 'pi pi-tag',
+  defaultName: '',
+  watchedFor: 'Anything else worth watching. Anyone handling or moving it is flagged.',
+}
+
 export const ASSET_TYPES: AssetTypeInfo[] = [
   {
     value: 'door',
@@ -75,13 +84,7 @@ export const ASSET_TYPES: AssetTypeInfo[] = [
     defaultName: 'Equipment',
     watchedFor: 'Grills, generators, AC units, tools: anyone handling or moving one is flagged.',
   },
-  {
-    value: 'other',
-    label: 'Something else',
-    icon: 'pi pi-tag',
-    defaultName: '',
-    watchedFor: 'Anything else worth watching. Anyone handling or moving it is flagged.',
-  },
+  OTHER,
 ]
 
 const BY_VALUE = new Map(ASSET_TYPES.map((info) => [info.value, info]))
@@ -89,7 +92,7 @@ const BY_VALUE = new Map(ASSET_TYPES.map((info) => [info.value, info]))
 /** The catalogue entry for *type*, or "Something else" for one this build
  * doesn't know — a newer backend's type must still render. */
 export function assetTypeInfo(type: string): AssetTypeInfo {
-  return BY_VALUE.get(type as AssetType) ?? ASSET_TYPES[ASSET_TYPES.length - 1]
+  return BY_VALUE.get(type as AssetType) ?? OTHER
 }
 
 /** Zone colours, chosen to stay distinct from each other and visible on

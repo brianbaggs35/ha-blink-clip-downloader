@@ -115,7 +115,9 @@ async def test_the_analyzer_compares_and_learns_under_the_clips_own_lighting(
     thumb, deviation, night = await analyzer._lookup_scene_baseline(
         "Porch", [night_frame]
     )
-    assert thumb is not None and deviation is None and night is True
+    assert thumb is not None
+    assert deviation is None
+    assert night is True
     await analyzer._maybe_update_scene_baseline("Porch", thumb, False, 0.1, night=night)
     assert db._pool is not None
     row = await db._pool.fetchrow(

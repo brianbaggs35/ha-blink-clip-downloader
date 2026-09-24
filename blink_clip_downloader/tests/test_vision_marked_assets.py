@@ -414,10 +414,10 @@ async def test_process_clip_examines_the_door_and_says_so(
     assert [a.key for a in hints.marked_assets] == ["door1", "bike1"]
     assert hints.examined_asset_key == "door1"
     assert hints.contact_track_id == 1
-    assert (
-        hints.depth_hint is not None and 'asset marked "Front door"' in hints.depth_hint
-    )
-    assert hints.contact_hint is not None and "vehicle" not in hints.contact_hint
+    assert hints.depth_hint is not None
+    assert 'asset marked "Front door"' in hints.depth_hint
+    assert hints.contact_hint is not None
+    assert "vehicle" not in hints.contact_hint
     # The vehicle was not examined, so its own before/after is not taken.
     assert hints.asset_appearance_change is None
     # The door has someone in front of it in every frame; the bike does not.

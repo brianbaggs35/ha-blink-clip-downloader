@@ -75,7 +75,10 @@ export function zoneLabelStyle(zone: AssetZone): Record<string, string> {
  * uses for it (security/vehicles.py's describe_region). */
 export function zoneRegion(zone: AssetZone): string {
   const b = zoneBounds(zone)
-  const band = (v: number, low: string, mid: string, high: string) => (v < 1 / 3 ? low : v < 2 / 3 ? mid : high)
+  const band = (v: number, low: string, mid: string, high: string) => {
+    if (v < 1 / 3) return low
+    return v < 2 / 3 ? mid : high
+  }
   const vertical = band((b.y_min + b.y_max) / 2, 'upper', 'middle', 'lower')
   const horizontal = band((b.x_min + b.x_max) / 2, 'left', 'centre', 'right')
   if (vertical === 'middle' && horizontal === 'centre') return 'centre of the frame'
