@@ -236,7 +236,7 @@ _WALK_PAST = [
     _event(SecurityEventType.RETREAT_AFTER_CONTACT, confidence=0.45),
 ]
 
-_CONFIRMED = {"confirmed": True}
+_CONFIRMED: dict[str, object] = {"confirmed": True}
 
 
 def test_an_unconfirmed_contact_cannot_lift_a_clip_into_the_alert_band() -> None:
