@@ -23,6 +23,7 @@ the database itself).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -42,6 +43,7 @@ from blink_downloader.gdrive_client import GDriveClient
 from blink_downloader.live_view import LiveViewManager
 from blink_downloader.media_server import MediaServer
 from blink_downloader.media_server import faces as media_server_faces
+from blink_downloader.protected_assets import read_assets
 from blink_downloader.security import SecurityEvent, SecurityEventType, Severity
 from blink_downloader.security.vehicles import VehicleSignature
 from blink_downloader.vision import DetectedFace, DetectedObject, FaceEmbedder
@@ -100,6 +102,8 @@ def _redirect_data_files(data_dir: Path) -> None:
     media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR = (
         data_dir / "vehicle_zone_snapshots"
     )
+    media_server.MediaServer._PROTECTED_ASSETS_FILE = data_dir / "protected_assets.json"
+    media_server.MediaServer._ASSET_SNAPSHOTS_DIR = data_dir / "asset_snapshots"
     # gdrive_client.py's CREDENTIALS_FILE/SETTINGS_FILE are bare
     # module-level constants — referenced as globals throughout that
     # module (SETTINGS_FILE.write_text(...), etc.), not MediaServer class
@@ -804,6 +808,61 @@ async def _seed(db: ClipDatabase, archive_source_dir: Path) -> None:
     await db.add_battery_reading("Backyard", "low", 0, 104)
 
 
+#: The asset the Assets tab starts with, on a camera whose clips have no
+#: real thumbnail: seeded straight into the redirected assets file, with a
+#: reference frame of its own, rather than as a new clip — a clip would shift
+#: the per-camera counts other specs assert, and this is all assets.spec.ts
+#: needs to prove a second camera's assets live beside the first's.
+_SEEDED_ASSET = {
+    "id": "e2emailbox01",
+    "camera": "Front Door",
+    "name": "Mailbox",
+    "asset_type": "mailbox",
+    "description": "Black mailbox on a post",
+    "zone": {
+        "shape": "rect",
+        "x_min": 0.66,
+        "y_min": 0.42,
+        "x_max": 0.8,
+        "y_max": 0.72,
+    },
+    "enabled": True,
+    "created_at": "2026-09-24T00:00:00+00:00",
+    "updated_at": "2026-09-24T00:00:00+00:00",
+}
+
+
+def _asset_frame_jpeg() -> bytes:
+    """A 16:9 porch-ish scene: a wall, a door, a mailbox on a post, a path.
+
+    Only there so the Assets tab has a real, decodable frame to draw on and
+    to screenshot — the shapes line up with _SEEDED_ASSET's zone.
+    """
+    from PIL import ImageDraw
+
+    image = Image.new("RGB", (640, 360), color=(92, 108, 96))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 640, 250), fill=(176, 160, 138))
+    draw.rectangle((90, 70, 190, 250), fill=(120, 60, 48))
+    draw.ellipse((170, 150, 180, 160), fill=(220, 190, 90))
+    draw.rectangle((190, 250, 290, 360), fill=(150, 146, 140))
+    draw.rectangle((440, 150, 500, 190), fill=(30, 30, 34))
+    draw.rectangle((464, 190, 476, 260), fill=(60, 50, 40))
+    buf = BytesIO()
+    image.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
+def _seed_assets() -> None:
+    media_server.MediaServer._ASSET_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    media_server.MediaServer._asset_snapshot_path("Front Door").write_bytes(
+        _asset_frame_jpeg()
+    )
+    media_server.MediaServer._PROTECTED_ASSETS_FILE.write_text(
+        json.dumps({"assets": [_SEEDED_ASSET]})
+    )
+
+
 async def _main() -> None:
     _configure_e2e_logging()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8199
@@ -821,9 +880,14 @@ async def _main() -> None:
     await db._pool.execute(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE")
     archive_dir = data_dir / "archives"
     await _seed(db, data_dir / "pending-archive-source")
+    _seed_assets()
 
     analyzer = ClipAnalyzer(
         ollama_url=_UNREACHABLE_OLLAMA_URL, model="llava", prompt="Describe this clip."
+    )
+    # As app.py does at startup, so the seeded asset is live from the start.
+    analyzer.update_protected_assets(
+        read_assets(media_server.MediaServer._PROTECTED_ASSETS_FILE)
     )
     fake_auth = _FakeBlinkAuth()
     # archive_after_days=5 (not the config.yaml default of 60) — see

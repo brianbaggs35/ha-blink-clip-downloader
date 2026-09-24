@@ -173,6 +173,11 @@ export const AppTheme = definePreset(Aura, {
         paddingX: '0.68rem',
         paddingY: '0.32rem',
       },
+      // Light mode only, for the reason text.mutedColor above changed: Aura's
+      // surface.500 placeholder is 4.47:1 on a white field. Placeholders are
+      // text someone has to read ("Choose what it is"), so they are held to
+      // the same 4.5.
+      placeholderColor: 'light-dark(#6b6b78, {surface.400})',
     },
   },
   components: {
@@ -191,6 +196,13 @@ export const AppTheme = definePreset(Aura, {
         danger: { color: 'light-dark({red.700}, {red.400})' },
         secondary: { color: 'light-dark(#6b6b78, {surface.400})' },
       },
+    },
+    // The unchosen options of every SelectButton (the Assets editor's
+    // Rectangle/Freeform, Automations' pickers): surface.500 on the group's
+    // surface.100 background is 3.87:1. Same fix as the secondary button.
+    togglebutton: {
+      root: { color: 'light-dark(#6b6b78, {surface.400})' },
+      icon: { color: 'light-dark(#6b6b78, {surface.400})' },
     },
     message: {
       warn: {

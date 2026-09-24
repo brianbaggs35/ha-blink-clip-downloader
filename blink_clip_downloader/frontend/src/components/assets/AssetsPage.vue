@@ -205,7 +205,12 @@ async function remove(asset: ProtectedAsset) {
       {{ watchedCameras === 1 ? 'camera' : 'cameras' }}.
     </Message>
 
-    <Panel toggleable collapsed class="how-panel">
+    <Panel
+      toggleable
+      collapsed
+      class="how-panel"
+      :toggle-button-props="{ ariaLabel: 'Show or hide how each kind of asset is watched' }"
+    >
       <template #header>
         <span class="how-title"><i class="pi pi-shield" aria-hidden="true" /> How each kind of asset is watched</span>
       </template>
