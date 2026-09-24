@@ -324,6 +324,16 @@ class SecurityEventDetector:
             return []
 
         profiles = [t.approach_to(asset.box) for t in subjects]
+        # How close each came is measured to where someone at the asset
+        # would stand, which for a window is the ground below it rather than
+        # its sill; whether they touched it is measured against the asset.
+        standing_box = asset.standing_box
+        assert standing_box is not None
+        standing = (
+            [t.approach_to(standing_box) for t in subjects]
+            if asset.elevated
+            else profiles
+        )
         primary = min(range(len(subjects)), key=lambda i: profiles[i].min_box_gap)
         examined = self._examined(asset, ctx)
 
@@ -337,6 +347,7 @@ class SecurityEventDetector:
                     ctx,
                     cv_applies=examined
                     and self._cv_evidence_applies(track, index == primary, ctx),
+                    standing=standing[index],
                 )
             )
         disturbed = self._disturbed_event(asset, ctx, events)
@@ -382,9 +393,14 @@ class SecurityEventDetector:
         asset: ProtectedAsset,
         ctx: DetectionContext,
         cv_applies: bool,
+        standing: ApproachProfile | None = None,
     ) -> list[SecurityEvent]:
+        """*profile* is measured against the asset itself (overlap, contact);
+        *standing* against where someone at it stands (distance, approach,
+        retreat), which differ only for an elevated asset."""
+        standing = standing or profile
         events: list[SecurityEvent] = []
-        min_feet = asset.gap_feet(profile.min_gap)
+        min_feet = asset.gap_feet(standing.min_gap)
         # _asset_events only calls this for an asset with a box, which is
         # the one thing gap_feet needs to produce a number.
         assert min_feet is not None
@@ -443,7 +459,7 @@ class SecurityEventDetector:
 
         if near:
             events.append(
-                self._proximity_event(track, profile, asset, min_feet, depth_verdict)
+                self._proximity_event(track, standing, asset, min_feet, depth_verdict)
             )
 
         # Gated on the same depth verdict as proximity: a passer-by on the
@@ -451,7 +467,7 @@ class SecurityEventDetector:
         # near, and "approached the vehicle" is exactly as wrong for them as
         # "stood next to it" would be.
         approach = (
-            self._approach_event(track, profile, asset, min_feet)
+            self._approach_event(track, standing, asset, min_feet)
             if depth_verdict is not False
             else None
         )
@@ -464,14 +480,14 @@ class SecurityEventDetector:
             # Coming close and leaving again still is the plain record of a
             # visit, and costs next to nothing in the score.
             if near and profile.retreated:
-                events.append(self._retreat_event(track, profile, asset))
+                events.append(self._retreat_event(track, standing, asset))
             return events
 
         if near and cv_applies and ctx.posture_reaching:
-            events.append(self._reach_event(track, profile, asset, ctx))
+            events.append(self._reach_event(track, standing, asset, ctx))
 
         events.extend(
-            self._contact_events(track, profile, asset, ctx, cv_applies, near)
+            self._contact_events(track, profile, standing, asset, ctx, cv_applies, near)
         )
         return events
 
@@ -479,6 +495,7 @@ class SecurityEventDetector:
         self,
         track: ObjectTrack,
         profile: ApproachProfile,
+        standing: ApproachProfile,
         asset: ProtectedAsset,
         ctx: DetectionContext,
         cv_applies: bool,
@@ -492,8 +509,8 @@ class SecurityEventDetector:
         """
         contact = self._contact_event(track, profile, asset, ctx, cv_applies, near)
         if contact is None:
-            if near and profile.retreated:
-                return [self._retreat_event(track, profile, asset)]
+            if near and standing.retreated:
+                return [self._retreat_event(track, standing, asset)]
             return []
 
         events = [contact]
@@ -504,7 +521,7 @@ class SecurityEventDetector:
         )
         if impact is not None:
             events.append(impact)
-        retreat = self._retreat_after_contact_event(track, profile, asset, contact)
+        retreat = self._retreat_after_contact_event(track, standing, asset, contact)
         if retreat is not None:
             events.append(retreat)
         return events

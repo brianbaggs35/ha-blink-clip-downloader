@@ -89,6 +89,13 @@ _HANDLED_ROUTINELY: frozenset[AssetType] = frozenset(
     }
 )
 
+#: Assets that sit above the ground, so the bottom of the zone drawn round
+#: one is not where anybody stands. Someone at a window has their feet a
+#: metre or so below its sill; measured to the sill itself, as a ground-level
+#: asset's zone bottom is, they read as several feet away while their hand
+#: is on the glass.
+_ELEVATED: frozenset[AssetType] = frozenset({AssetType.WINDOW})
+
 #: Assets that are part of the building and cannot be moved, so the zone
 #: drawn around one is exactly where it is rather than where it usually sits.
 _FIXTURES: frozenset[AssetType] = frozenset(
@@ -206,6 +213,24 @@ class ProtectedAsset:
         """True when this asset cannot move, so where it was marked is where
         it is — a closeness measured against it is not a guess."""
         return self.asset_type in _FIXTURES
+
+    @property
+    def elevated(self) -> bool:
+        """True when this asset sits above the ground (see :data:`_ELEVATED`)."""
+        return self.asset_type in _ELEVATED
+
+    @property
+    def standing_box(self) -> Box | None:
+        """Where someone at this asset stands, for measuring how close they
+        came: the asset's own box, or for an elevated one the wall below it
+        down to the ground — taken as its own height again, which is about
+        where a window's sill sits. Contact is still judged against
+        :attr:`box` itself, the glass rather than the wall.
+        """
+        if self.box is None or not self.elevated:
+            return self.box
+        x1, y1, x2, y2 = self.box
+        return (x1, y2, x2, y2 + (y2 - y1))
 
     @property
     def impact_applies(self) -> bool:
