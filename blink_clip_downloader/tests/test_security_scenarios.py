@@ -246,6 +246,36 @@ SCENARIOS: list[Scenario] = [
         forbid_events={SecurityEventType.IMPACT_CANDIDATE},
     ),
     Scenario(
+        name="a recognized resident gets out of their car and walks indoors",
+        # Standing at the car and then walking off at an ordinary 4.5 ft/s
+        # (0.9 of their own height a second) is a speed-up at the car. In
+        # frame widths a second it cleared the "bolting" bar on any camera
+        # close enough to the car, and with the contact confirmed that made
+        # every homecoming a possible impact: forced alert, bypass withheld.
+        detections=_walk(
+            1, [_person_at(300, ground=296)] * 3 + [_person_at(435), _person_at(570)]
+        )
+        + _parked(2, MY_CAR, 5),
+        frame_count=5,
+        frame_interval=1.0,
+        approved_person=True,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=UP_TO_SUSPICIOUS,
+        forbid_events={SecurityEventType.IMPACT_CANDIDATE},
+    ),
+    Scenario(
+        name="someone touches the car and then runs from it",
+        detections=_walk(1, [_person_at(300, ground=296)] * 3 + [_person_at(0)])
+        + _parked(2, MY_CAR, 4),
+        frame_count=4,
+        frame_interval=1.0,
+        depth_similar=True,
+        contact_touching=True,
+        expect_severity=(Severity.CRITICAL, Severity.CRITICAL),
+        expect_events={SecurityEventType.IMPACT_CANDIDATE},
+    ),
+    Scenario(
         name="someone rushes the car from standing still",
         detections=_walk(1, [_person_at(x) for x in (20, 20, 300, 300, 300)])
         + _parked(2, MY_CAR, 5),
