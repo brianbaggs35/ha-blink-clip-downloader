@@ -35,6 +35,9 @@ const OWNER = {
   password: "ci-integration-test-password-1",
 };
 const SEEDED_CAMERAS = ["Front Door", "Driveway", "Backyard"];
+// Must match the workflow's `assert-asset-persisted` step, which reads this
+// asset back after the container is recreated.
+const CI_ASSET_NAME = "CI mailbox";
 
 const issues = [];
 const browser = await chromium.launch();
@@ -295,14 +298,14 @@ async function checkStorageListsArchive(frame, issuesList) {
   }
 }
 
-// Must match the workflow's `assert-asset-persisted` step, which reads this
-// asset back after the container is recreated.
-const CI_ASSET_NAME = "CI mailbox";
-
 async function waitForDecoded(image, what) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
+    // Each attempt is bounded on its own: evaluate() otherwise first waits
+    // Playwright's default 30s for the element to exist, and the Assets
+    // card replaces a frame that failed to load with a message -- thirty
+    // of those waits is fifteen minutes before a broken route is reported.
     const decoded = await image
-      .evaluate((el) => el.complete && el.naturalWidth > 0)
+      .evaluate((el) => el.complete && el.naturalWidth > 0, undefined, { timeout: 500 })
       .catch(() => false);
     if (decoded) return;
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -357,6 +360,17 @@ async function markAnAssetThroughIngress(page, frame, issuesList) {
     console.log(`Marked "${CI_ASSET_NAME}" on Front Door through ingress; its frame loads.`);
   } catch (err) {
     issuesList.push(`could not mark an asset through ingress: ${err.message}`);
+    // A modal dialog left open covers the nav, so every tab check after
+    // this one would time out on its click and report a failure of its own
+    // -- one problem read as three. Leave the page as the step found it.
+    const editor = frame.locator(".p-dialog.asset-editor");
+    if (await editor.isVisible().catch(() => false)) {
+      await editor
+        .getByRole("button", { name: "Cancel" })
+        .click({ timeout: 5000 })
+        .then(() => editor.waitFor({ state: "hidden", timeout: 5000 }))
+        .catch(() => {});
+    }
   }
 }
 
