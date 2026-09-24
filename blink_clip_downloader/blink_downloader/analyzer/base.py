@@ -43,6 +43,7 @@ from ..protected_assets import assets_by_camera
 # available whether or not the optional CV extra is installed.
 from ..security import (
     BYPASS_BLOCKING_EVENTS,
+    AssetType,
     ClipMeasurements,
     SecurityEvent,
     SecurityEventType,
@@ -184,9 +185,10 @@ _PERSON_COUNT_MIN_CONFIDENCE = 0.5
 _PERSON_NESTED_OVERLAP = 0.7
 
 
-#: Events meaning object tracking measured a subject at the protected vehicle
-#: itself — within reach, touching, or striking it — rather than merely in
-#: the frame or the zone.
+#: Events meaning object tracking measured a subject at an asset itself —
+#: within reach, touching, or striking it — rather than merely in the frame
+#: or the zone. Which asset is the event's own ``asset_type``: see
+#: :func:`_subject_at_vehicle`.
 _AT_ASSET_EVENTS = frozenset(
     {
         SecurityEventType.ASSET_PROXIMITY,
@@ -196,6 +198,20 @@ _AT_ASSET_EVENTS = frozenset(
         SecurityEventType.ANIMAL_ASSET_INTERACTION,
     }
 )
+
+
+def _subject_at_vehicle(security: SecurityOutcome | None) -> bool:
+    """True when object tracking placed a subject at the protected vehicle.
+
+    Only the vehicle's own events count. The same event types fire at every
+    asset marked on the Assets tab, and the car zone's ZONE MOTION hint that
+    reads this would otherwise tell the model someone was at the car when
+    they were ringing the doorbell beside it.
+    """
+    return security is not None and any(
+        e.event_type in _AT_ASSET_EVENTS and e.asset_type == AssetType.VEHICLE
+        for e in security.events
+    )
 
 
 def _people_in_one_frame(vision_hints: VisionHints) -> int:
@@ -2710,8 +2726,7 @@ class BaseAnalyzer(abc.ABC):
 
         zone_segment = prompt_segments.zone_motion_segment(
             zone_motion_fraction,
-            subject_at_asset=security is not None
-            and any(e.event_type in _AT_ASSET_EVENTS for e in security.events),
+            subject_at_asset=_subject_at_vehicle(security),
         )
         if zone_segment:
             parts.append(zone_segment)
