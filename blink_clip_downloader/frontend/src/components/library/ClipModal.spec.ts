@@ -769,7 +769,12 @@ describe('ClipModal', () => {
     const confirm = useConfirmStore()
     const deleteBtn = wrapper.findAll('button').find((b) => b.text().includes('Delete'))!
     const clickPromise = deleteBtn.trigger('click')
-    await flushPromises()
+    // The prompt has to really be up before it is answered, or settling it
+    // resolves nothing and "no delete was emitted" holds without the guard
+    // under test ever running — which is what happened under a loaded
+    // full-suite run.
+    await vi.waitFor(() => expect(confirm.open).toBe(true))
+    expect(confirm.message).toBe('Delete this clip permanently?')
     // The clip moves on while the dialog is up — what prev/next used to do
     // straight through the open dialog, and what the Security tab can still
     // do through the clip-viewer store.
