@@ -2,6 +2,79 @@
 
 ## 6.0.7
 
+### New Assets tab: mark what you want protected on each camera
+
+A new **Assets** tab, between Vehicles and Biometrics, for marking the
+things on each camera's view you most want watched — a front door, the spot
+where parcels are left, a mailbox, a gate, a window, a bike, a barbecue.
+Pick what it is, give it a name, and draw it on the camera's frame with a
+rectangle or a freeform outline. Any camera can have assets, including ones
+that watch the protected vehicle, and each camera keeps its own.
+
+It is optional in the plainest sense: a camera with nothing marked is
+analysed exactly as before, prompt for prompt. On a camera that does have
+assets:
+
+- The AI is told what each one is, what it's called and where it sits in
+  the frame, with the rules for that kind of thing — at a door, knocking,
+  ringing and deliveries are routine but trying the handle or hanging around
+  is not; nobody should be handling your bike at all — and it names the
+  asset in its description.
+- The frames it's shown are chosen for activity at the assets, not for the
+  busiest part of the view, and the prompt says which assets a clip's motion
+  was concentrated at.
+- With a second-opinion model configured, a clip the first model calls
+  quiet is double-checked, as protected-vehicle cameras already were.
+- The "short clip, probably routine" and "calm background" hints are
+  withheld at marked assets, since a parcel is carried off in seconds.
+- With Enhanced Detection on, the security layer checks every asset the way
+  it checks the car: someone entering its area, standing at it, lingering,
+  reaching for or touching it — never for a door, gate, mailbox or parcel
+  spot, where that is ordinary use — and a new **asset disturbed** event when
+  an asset's area looks different after someone was at it, which is the only
+  evidence a camera holds that a parcel or a bike went missing. Each event
+  names the asset, and the Security Events timeline now shows which asset
+  (or the protected vehicle) each clip was about.
+
+The `blink_clip_analyzed` Home Assistant event gains an `assets` list: the
+marked assets a clip's security events were about, by name, so an
+automation can act on activity at one asset in particular. The Automations
+tab has a recipe for exactly that — **Activity at a marked asset** — with
+your asset names to pick from, a severity floor, and an option to wait for
+the AI to agree it's suspicious.
+
+Each camera card shows its frame with every asset outlined and labelled,
+hover-linked to the list beside it, with a switch to stop watching one and a
+count of clips with activity at it this week. Works in light and dark themes
+and on a phone, where the editor takes the whole screen for drawing.
+
+### The scene baseline learns day and night separately
+
+The add-on learns what each camera normally looks like and tells the AI when
+a clip's opening frame doesn't match. It kept one average per camera, but a
+Blink camera switches to monochrome infrared after dark, and the same view
+by day and under infrared is two different pictures — so most night clips
+were described as differing from the usual background, and every morning
+and evening the average was dragged from one to the other. Each camera now
+keeps a daylight baseline and an infrared one, told apart by whether the
+frame has any colour at all. Existing baselines carry on as the daylight
+one; the infrared one reports once it has learned from 20 night clips.
+
+### Walking past a parked car no longer reads as possible contact
+
+Someone on the pavement nearer the camera than a parked car overlaps it in
+the picture, and that overlap was being reported as a possible contact —
+in the analysis prompt and on the Security Events tab — even with their feet
+in plain view several feet in front of it. A bare overlap now counts only
+when the person was actually at the car, or on its far side where the car
+hides their feet.
+
+### Light theme: two more contrast fixes
+
+The unselected options of every button group (such as Rectangle/Freeform)
+and the placeholder text in form fields were below WCAG AA contrast in the
+light theme. Both are now readable; the dark theme is unchanged.
+
 ### Frame Extraction Strategy lists the recommended choice first
 
 On the add-on's Configuration tab, **adaptive** now appears at the top of
