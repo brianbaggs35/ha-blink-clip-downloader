@@ -264,6 +264,17 @@ class VisionPipeline:
         self._face_embedder = FaceEmbedder()
         self._audio = AudioTagger(config.audio_model, config.hf_token)
 
+    @property
+    def tracks_subjects(self) -> bool:
+        """True when this pipeline turns clips into tracked subjects for the
+        security layer — object detection on, and the layer itself not
+        switched off. Without it, marked assets and the protected vehicle
+        still shape the prompt, but no per-asset rule can run."""
+        return (
+            self._config.enhanced_detection_enabled
+            and self._config.security_events_enabled
+        )
+
     async def process_clip(
         self,
         frames: list[bytes],

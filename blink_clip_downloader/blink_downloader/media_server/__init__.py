@@ -11,6 +11,7 @@ module to open is the one named after the tab you are changing:
     liveview         one live session at a time, and its HLS output
     security_feed    the grid of near-live snapshot tiles
     ai               analyzer status, models, queue, results
+    assets           the things marked for protection on each camera's view
     usage            token spend, priced and bucketed
     camera_configs   /data/camera_configs.json, shared by AI and Vehicles
     vehicles         protected-vehicle settings, zones, learned signatures
@@ -46,6 +47,7 @@ from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH
 from ..vision import FaceEmbedder
 from .ai import AiRoutesMixin
 from .app_shell import AppShellMixin
+from .assets import AssetsRoutesMixin
 from .automations import AutomationRoutesMixin
 from .camera_configs import CameraConfigsRoutesMixin
 from .faces import FaceRoutesMixin
@@ -85,6 +87,7 @@ class MediaServer(
     UsageRoutesMixin,
     VehicleRoutesMixin,
     CameraConfigsRoutesMixin,
+    AssetsRoutesMixin,
     SecurityEventsRoutesMixin,
     SyncModuleRoutesMixin,
     FeedbackRoutesMixin,
@@ -257,6 +260,7 @@ class MediaServer(
         self._register_usage_routes(app)
         self._register_camera_configs_routes(app)
         self._register_vehicles_routes(app)
+        self._register_assets_routes(app)
         self._register_security_routes(app)
         self._register_syncmodule_routes(app)
         self._register_feedback_routes(app)
@@ -275,6 +279,7 @@ class MediaServer(
             self._migrate_camera_configs(old_name, new_name)
             self._migrate_security_feed_settings(old_name, new_name)
             self._migrate_vehicle_zone_snapshot(old_name, new_name)
+            self._migrate_protected_assets(old_name, new_name)
 
 
 __all__ = ["MediaServer"]

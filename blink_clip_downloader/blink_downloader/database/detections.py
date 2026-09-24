@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from ..security import SecurityEvent, VehicleSignature
 from .core import _DatabaseBase
 from .sql import (
+    _SEVERITY_ORDER,
     _SEVERITY_RANK_SQL,
     _affected,
     _decode_security_event,
@@ -388,6 +389,47 @@ class DetectionsMixin(_DatabaseBase):
             "total": sum(by_severity.values()),
             "days": days,
         }
+
+    async def get_asset_activity(self, days: int = 7) -> list[dict[str, Any]]:
+        """Per marked asset, how many clips had an event at it lately.
+
+        One row per camera and asset name over the last *days* of clip time,
+        with the most severe event seen and when the latest was. Counted in
+        clips rather than events for the reason the timeline collapses them:
+        one visit to the front door is half a dozen events and one clip.
+        Vehicle events are left out — the protected vehicle is not a marked
+        asset, and its own activity already has the Security Events tab.
+        """
+        if self._pool is None:
+            return []
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        rows = await self._pool.fetch(
+            _qm(
+                f"""
+                SELECT se.camera, se.asset_name,
+                       COUNT(DISTINCT se.clip_id) AS clips,
+                       MAX(c.timestamp) AS last_seen,
+                       MAX({_SEVERITY_RANK_SQL}) AS top_rank
+                FROM security_events se
+                JOIN clips c ON c.id = se.clip_id
+                WHERE c.timestamp >= ? AND se.asset_name <> ''
+                  AND se.asset_type <> 'vehicle'
+                GROUP BY se.camera, se.asset_name
+                ORDER BY se.camera, se.asset_name
+                """
+            ),
+            cutoff,
+        )
+        return [
+            {
+                "camera": str(r["camera"]),
+                "asset_name": str(r["asset_name"]),
+                "clips": int(r["clips"]),
+                "last_seen": str(r["last_seen"]),
+                "top_severity": _SEVERITY_ORDER[int(r["top_rank"])],
+            }
+            for r in rows
+        ]
 
     async def get_vehicle_signature(self, camera: str) -> VehicleSignature | None:
         """This camera's learned protected-vehicle signature, if it has one."""

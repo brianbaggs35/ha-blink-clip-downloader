@@ -715,6 +715,14 @@ class BaseAnalyzer(abc.ABC):
         """
         self._marked_assets = assets_by_camera(assets)
 
+    @property
+    def object_detection_enabled(self) -> bool:
+        """True when clips are run through object detection and the security
+        layer (see ``VisionPipeline.tracks_subjects``) — what the per-asset
+        checks need, and what the Assets tab tells its user about."""
+        pipeline = self._vision_pipeline
+        return pipeline is not None and pipeline.tracks_subjects
+
     def _marked_assets_for(self, camera: str) -> list[dict[str, Any]]:
         """The enabled assets marked on *camera*, or ``[]``."""
         return self._marked_assets.get(camera, [])
