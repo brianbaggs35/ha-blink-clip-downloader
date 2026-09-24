@@ -220,6 +220,13 @@ async def test_a_real_previous_release_database_upgrades_in_place() -> None:
                 " analyzed_at) VALUES ('legacy-1', 'Front Door', 'llava', '{}', TRUE,"
                 " 0.91, 'Someone at the door', 3, 1.25, '2026-01-01T09:02:00+00:00')"
             )
+            # A camera's learned background from before the day/night split.
+            await conn.execute(
+                "INSERT INTO camera_scene_baselines (camera, thumbnail,"
+                " sample_count, updated_at, consecutive_deviation_count)"
+                " VALUES ('Front Door', $1, 40, '2026-01-01T09:00:00+00:00', 0)",
+                json.dumps([0.5] * 256),
+            )
             await conn.execute(
                 "INSERT INTO analysis_queue (clip_id, camera, clip_path, status,"
                 " queued_at) VALUES ('legacy-1', 'Front Door',"
@@ -262,6 +269,13 @@ async def test_a_real_previous_release_database_upgrades_in_place() -> None:
                 "SELECT retry_count FROM analysis_queue WHERE clip_id='legacy-1'"
             )
             assert pending["retry_count"] == 0
+            # The old single background carries on as the daylight one; the
+            # infrared one starts empty and says nothing until it has learned.
+            assert await db.get_scene_deviation("Front Door", [0.5] * 256) == 0.0
+            assert (
+                await db.get_scene_deviation("Front Door", [0.5] * 256, night=True)
+                is None
+            )
         finally:
             await db.close()
     finally:

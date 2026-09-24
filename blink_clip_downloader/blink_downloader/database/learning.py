@@ -19,8 +19,6 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-import asyncpg
-
 from .core import _DatabaseBase
 from .sql import (
     _affected,
@@ -48,6 +46,19 @@ _SCENE_REFRESH_STREAK = 5
 # baseline snaps to the new normal quickly instead of waiting 45+ samples
 # for the slow steady-state EMA (alpha floor 0.05) to catch up.
 _SCENE_REFRESH_ALPHA = 0.5
+
+# Columns holding each of a camera's two scene baselines — daylight colour
+# (False) and infrared night (True): (thumbnail, sample count, deviation
+# streak). Fixed names, never user input, which is what makes interpolating
+# them into the SQL below safe.
+_SCENE_COLUMNS: dict[bool, tuple[str, str, str]] = {
+    False: ("thumbnail", "sample_count", "consecutive_deviation_count"),
+    True: (
+        "night_thumbnail",
+        "night_sample_count",
+        "night_consecutive_deviation_count",
+    ),
+}
 
 # --- Adaptive learning from feedback (analysis_feedback) ---
 # Trailing window of feedback rows considered per camera by
@@ -421,27 +432,24 @@ class AdaptiveLearningMixin(_DatabaseBase):
 
     @staticmethod
     def _blend_scene_baseline(
-        row: asyncpg.Record, thumbnail: list[float]
+        stored: Any, sample_count: Any, streak_value: Any, thumbnail: list[float]
     ) -> tuple[list[float], int, int]:
-        """Blend a new thumbnail into an existing scene baseline row.
+        """Blend a new thumbnail into one of a camera's stored baselines.
 
         Returns ``(blended_thumbnail, sample_count_before_this_sample,
         deviation_streak)``.
         """
         try:
-            existing = json.loads(row["thumbnail"])
+            existing = json.loads(stored)
         except (json.JSONDecodeError, TypeError):
             existing = []
-        count = int(row["sample_count"])
-        streak = (
-            int(row["consecutive_deviation_count"])
-            if row["consecutive_deviation_count"] is not None
-            else 0
-        )
+        count = int(sample_count or 0)
+        streak = int(streak_value) if streak_value is not None else 0
 
         if not existing or len(existing) != len(thumbnail):
-            # Thumbnail size changed (or prior data was corrupt) — restart
-            # the baseline from this sample rather than blending mismatched data.
+            # No baseline yet for this lighting (a camera's first night), or
+            # the thumbnail size changed, or prior data was corrupt — start
+            # from this sample rather than blending mismatched data.
             return thumbnail, 0, 0
 
         alpha = max(0.05, 1.0 / (count + 1))
@@ -459,7 +467,9 @@ class AdaptiveLearningMixin(_DatabaseBase):
         blended = [e * (1 - alpha) + t * alpha for e, t in zip(existing, thumbnail)]
         return blended, count, streak
 
-    async def record_scene_baseline(self, camera: str, thumbnail: list[float]) -> None:
+    async def record_scene_baseline(
+        self, camera: str, thumbnail: list[float], night: bool = False
+    ) -> None:
         """Fold a clip's opening-frame thumbnail into this camera's learned scene.
 
         Blink cameras are fixed in place, so a given camera's background
@@ -468,11 +478,21 @@ class AdaptiveLearningMixin(_DatabaseBase):
         flagged suspicious (see ``analyzer.BaseAnalyzer.analyze_clip``) so a
         genuine intruder is never absorbed into what counts as normal.
 
-        The blend rate is faster while a camera has little history (so the
-        baseline converges quickly instead of being anchored to whatever the
-        first clip or two happened to show) and settles into a slow-moving
-        average once established, so gradual lighting/seasonal drift is
-        absorbed without letting any single clip swing the baseline.
+        Each camera learns two: one for daylight colour frames and one for
+        the monochrome infrared frames it switches to after dark (*night*,
+        see ``frame_motion.is_infrared``). The same view by day and under
+        infrared is two different pictures, and one average of both was a
+        picture of neither — a night clip read as "differs from the usual
+        background" against a mostly-daylight average, the deviation streak
+        below then snapped the average to night, and the next morning
+        snapped it back, so the signal mostly told the model what time it
+        was.
+
+        The blend rate is faster while a baseline has little history (so it
+        converges quickly instead of being anchored to whatever the first
+        clip or two happened to show) and settles into a slow-moving average
+        once established, so gradual lighting/seasonal drift is absorbed
+        without letting any single clip swing it.
 
         Once established, if several consecutive ordinary clips in a row
         show elevated deviation from the current baseline, that's treated as
@@ -483,37 +503,47 @@ class AdaptiveLearningMixin(_DatabaseBase):
         """
         if self._pool is None:
             return
+        image_col, count_col, streak_col = _SCENE_COLUMNS[night]
         row = await self._pool.fetchrow(
             _qm(
-                "SELECT thumbnail, sample_count, consecutive_deviation_count "
-                "FROM camera_scene_baselines WHERE camera=?"
+                f"SELECT {image_col} AS image, {count_col} AS count, "
+                f"{streak_col} AS streak FROM camera_scene_baselines WHERE camera=?"
             ),
             camera,
         )
 
         now = datetime.now(UTC).isoformat()
         if row is None:
+            # The daylight thumbnail column is NOT NULL, so a camera whose
+            # first recorded clip is at night starts with an empty daylight
+            # baseline, which _blend_scene_baseline then reads as "nothing
+            # learned yet".
+            columns = [image_col, count_col, streak_col]
+            values: list[Any] = [json.dumps(thumbnail), 1, 0]
+            if night:
+                columns.append("thumbnail")
+                values.append("")
             await self._pool.execute(
                 _qm(
-                    """
-                    INSERT INTO camera_scene_baselines
-                        (camera, thumbnail, sample_count, updated_at, consecutive_deviation_count)
-                    VALUES (?, ?, 1, ?, 0)
-                    """
+                    "INSERT INTO camera_scene_baselines (camera, updated_at, "
+                    f"{', '.join(columns)}) VALUES (?, ?, "
+                    f"{', '.join('?' for _ in columns)})"
                 ),
                 camera,
-                json.dumps(thumbnail),
                 now,
+                *values,
             )
             return
 
-        blended, count, streak = self._blend_scene_baseline(row, thumbnail)
+        blended, count, streak = self._blend_scene_baseline(
+            row["image"], row["count"], row["streak"], thumbnail
+        )
 
         await self._pool.execute(
             _qm(
-                """
+                f"""
                 UPDATE camera_scene_baselines
-                SET thumbnail = ?, sample_count = ?, updated_at = ?, consecutive_deviation_count = ?
+                SET {image_col} = ?, {count_col} = ?, updated_at = ?, {streak_col} = ?
                 WHERE camera = ?
                 """
             ),
@@ -525,27 +555,31 @@ class AdaptiveLearningMixin(_DatabaseBase):
         )
 
     async def get_scene_deviation(
-        self, camera: str, thumbnail: list[float]
+        self, camera: str, thumbnail: list[float], night: bool = False
     ) -> float | None:
         """Return how much *thumbnail* deviates (0.0-1.0) from the camera's learned scene.
 
-        Returns ``None`` until at least :data:`_SCENE_BASELINE_MIN_SAMPLES` clips
-        have been recorded for this camera — with too little history the
-        "baseline" is just whatever the last clip or two happened to show,
-        which isn't a reliable signal yet.
+        Compared with the baseline for the same lighting — daylight colour,
+        or infrared when *night* (see :meth:`record_scene_baseline`). Returns
+        ``None`` until that baseline has at least
+        :data:`_SCENE_BASELINE_MIN_SAMPLES` clips behind it — with too little
+        history the "baseline" is just whatever the last clip or two happened
+        to show, which isn't a reliable signal yet.
         """
         if self._pool is None:
             return None
+        image_col, count_col, _streak_col = _SCENE_COLUMNS[night]
         row = await self._pool.fetchrow(
             _qm(
-                "SELECT thumbnail, sample_count FROM camera_scene_baselines WHERE camera=?"
+                f"SELECT {image_col} AS image, {count_col} AS count "
+                "FROM camera_scene_baselines WHERE camera=?"
             ),
             camera,
         )
-        if row is None or int(row["sample_count"]) < _SCENE_BASELINE_MIN_SAMPLES:
+        if row is None or int(row["count"] or 0) < _SCENE_BASELINE_MIN_SAMPLES:
             return None
         try:
-            existing = json.loads(row["thumbnail"])
+            existing = json.loads(row["image"])
         except (json.JSONDecodeError, TypeError):
             return None
         if not existing or len(existing) != len(thumbnail):

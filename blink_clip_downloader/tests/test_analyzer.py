@@ -4917,12 +4917,13 @@ async def test_lookup_scene_baseline_none_when_scene_thumbnail_fails() -> None:
     fake_db.get_scene_deviation = AsyncMock(return_value=0.5)
     a.attach_database(fake_db)
 
-    thumbnail, deviation = await a._lookup_scene_baseline(
+    thumbnail, deviation, night = await a._lookup_scene_baseline(
         "Driveway", [b"not a real jpeg"]
     )
 
     assert thumbnail is None
     assert deviation is None
+    assert night is False
     fake_db.get_scene_deviation.assert_not_awaited()
 
 

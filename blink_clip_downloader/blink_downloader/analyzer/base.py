@@ -1132,9 +1132,11 @@ class BaseAnalyzer(abc.ABC):
                 anomaly_score=anomaly_score,
             )
 
-        scene_thumbnail, scene_deviation = await self._lookup_scene_baseline(
-            camera, frames
-        )
+        (
+            scene_thumbnail,
+            scene_deviation,
+            scene_night,
+        ) = await self._lookup_scene_baseline(camera, frames)
 
         # Captured before down-selection narrows `frames` to the handful
         # actually sent to the AI model — face recognition gets this wider
@@ -1269,7 +1271,7 @@ class BaseAnalyzer(abc.ABC):
         risk_override_applied = verdict.risk_override_applied
 
         await self._maybe_update_scene_baseline(
-            camera, scene_thumbnail, is_suspicious, confidence
+            camera, scene_thumbnail, is_suspicious, confidence, night=scene_night
         )
 
         self._log_analysis_summary(
@@ -1500,20 +1502,26 @@ class BaseAnalyzer(abc.ABC):
 
     async def _lookup_scene_baseline(
         self, camera: str, frames: list[bytes]
-    ) -> tuple[list[float] | None, float | None]:
+    ) -> tuple[list[float] | None, float | None, bool]:
         """Compare this clip's opening frame against the camera's learned background.
 
-        The opening frame is closest to the pre-motion scene. The result is
-        folded back into the baseline by ``_maybe_update_scene_baseline()``
-        once we know whether this clip was suspicious.
+        The opening frame is closest to the pre-motion scene. Compared with
+        the background learned under the same lighting — daylight colour or
+        infrared night vision (see ``frame_motion.is_infrared``) — and
+        returned with which one that was, so ``_maybe_update_scene_baseline()``
+        folds it back into the same one once we know whether this clip was
+        suspicious.
         """
         if self._db is None:
-            return None, None
+            return None, None, False
         scene_thumbnail = frame_motion.scene_thumbnail(frames[0])
         if scene_thumbnail is None:
-            return None, None
-        scene_deviation = await self._db.get_scene_deviation(camera, scene_thumbnail)
-        return scene_thumbnail, scene_deviation
+            return None, None, False
+        night = frame_motion.is_infrared(frames[0]) is True
+        scene_deviation = await self._db.get_scene_deviation(
+            camera, scene_thumbnail, night=night
+        )
+        return scene_thumbnail, scene_deviation, night
 
     async def _downselect_frames(
         self, frames: list[bytes], clip_duration: float, camera: str
@@ -1866,8 +1874,10 @@ class BaseAnalyzer(abc.ABC):
         scene_thumbnail: list[float] | None,
         is_suspicious: bool,
         confidence: float,
+        night: bool = False,
     ) -> None:
-        """Fold this clip's opening frame into the learned scene baseline.
+        """Fold this clip's opening frame into the learned scene baseline —
+        the daylight or the infrared one, as *night* says.
 
         Skipped for a *confident* suspicious call — a low-confidence hedge
         (often just the scene-deviation hint above making the model cautious
@@ -1886,7 +1896,7 @@ class BaseAnalyzer(abc.ABC):
             and self._db is not None
             and not confident_suspicious
         ):
-            await self._db.record_scene_baseline(camera, scene_thumbnail)
+            await self._db.record_scene_baseline(camera, scene_thumbnail, night=night)
 
     # ------------------------------------------------------------------
     # Two-tier escalation (any provider may act as tier 2 for any other)
