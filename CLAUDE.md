@@ -165,6 +165,28 @@ architecture.
     a learned per-camera parking position + a learned colour fingerprint),
     and is allowed to answer "none of them", which is what stops a
     neighbour's car being treated as yours.
+    Four rules around the protected car that are easy to break, each pinned
+    by a scenario in `tests/test_security_scenarios.py`:
+    - **Whether a contact was confirmed is recorded, not re-derived.** The
+      detector writes `evidence["confirmed"]` on contact events (and carries
+      it onto `retreat_after_contact`) when it grades the contact, *before*
+      an uncertain car identification scales every event's confidence by
+      0.6. `scoring.py`'s unconfirmed-contact ceiling (a bare 2D overlap may
+      not be the reason a clip reaches 75) reads that flag; reading
+      `confidence < 0.6` instead held confirmed touches on a no-zone
+      single-car camera at 74.
+    - **Depth, segmentation and pose examine one subject per clip**
+      (`vision/pipeline.py`'s `_select_pair`): nearest by the in-front ground
+      gap, and a person within `near_feet` of the car ahead of any animal —
+      only a person's contact can reach suspicious/critical.
+    - **The far-side rule** (depth "similar" plus an overlapping outline
+      counts as at the car) applies only to feet at or above the car's
+      ground line. Depth calls most passers-by in front of a car "similar",
+      so letting it overrule a visible gap forced alerts on them.
+    - **A possible impact's speed-up is in the subject's own heights per
+      second** (`max_speed_increase_at`, bar 1.2 = a jog), and only at the
+      car. Frame widths made walking away from a parked car an impact on
+      any close camera — which also withholds the face bypass.
   - `vision/` — optional, off-by-default computer-vision enhancement
     pipeline, one module per stage since 6.0.6 (it was one 2,490-line
     module, already written as "Stage 1..6 + Orchestrator" banners, which

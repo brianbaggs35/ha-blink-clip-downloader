@@ -211,6 +211,34 @@ and performs well for security-camera analysis. `gpt-4o` ($2.50/$10 per 1M token
 offers higher accuracy, while `gpt-4.1-nano` ($0.10/$0.40 per 1M tokens) is the
 lowest-cost option available.
 
+## Protecting your car
+
+With AI analysis on, the **Vehicles** tab is where you tell the add-on which
+vehicle to protect: describe it, tick the cameras that can see it, and draw a
+zone around where it parks. The AI model is then instructed to flag a person
+touching, reaching into or lingering at that vehicle, or an animal jumping up
+on it, and to leave people who simply walk past alone. The zone matters even
+with one car in view, since it is how the add-on knows which car is yours.
+
+Turn on **Enhanced Detection & Tracking** (`ai_enhanced_detection_enabled`,
+off by default) and code measures the same things too. Object detection and
+tracking, depth estimation and contact segmentation work out who was at the
+car and whether they touched it. A touch those stages confirm raises an alert
+even when the AI model called the clip unremarkable. Without depth and
+segmentation, for example on a low-powered device, an outline overlapping the
+car in the image can't be told apart from someone walking past in front of
+it, so that call is left to the AI model. Face recognition on the
+**Biometrics** tab can clear the routine clips of household members you
+enroll, such as getting in or out of their own car. It never clears a
+possible impact, a clip with someone it doesn't recognize, or evidence
+strong enough to raise an alert on its own.
+
+Details are in the docs:
+[Vehicles tab](blink_clip_downloader/DOCS.md#vehicles-tab--protected-vehicle-monitoring),
+[Structured Security Analysis](blink_clip_downloader/DOCS.md#structured-security-analysis),
+and
+[running it on a low-powered device](blink_clip_downloader/DOCS.md#running-it-on-a-low-powered-device).
+
 ## Audio Analysis (optional, off by default)
 
 Blink cameras record sound, and the frames an AI provider sees are silent. Turn on
