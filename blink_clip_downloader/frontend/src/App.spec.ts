@@ -11,13 +11,11 @@ function mountApp() {
 
 describe('App', () => {
   beforeEach(() => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ state: 'connected' }),
-      }),
-    )
+    // The endpoint-aware mock below, not one object for every URL: the
+    // Library tab is always mounted, and a `{ state }` answer to /api/tags
+    // or /api/clips crashed its render whenever that response landed late —
+    // an unhandled error reported against whichever test ran next.
+    mockArrayAwareFetch()
     document.body.className = ''
   })
   afterEach(() => {

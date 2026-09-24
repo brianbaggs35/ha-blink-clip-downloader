@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DOMWrapper, mount, flushPromises } from '@vue/test-utils'
+import { DOMWrapper, enableAutoUnmount, mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
 // LibraryPage teleports <ClipModal> to <body> (see LibraryPage.vue) so it
@@ -150,6 +150,17 @@ function mockFetch(overrides: Record<string, unknown> = {}, clips = [clip()]) {
   )
 }
 
+// A test that fails before reaching its own wrapper.unmount() used to leave
+// its page mounted and its teleported ClipModal in <body>, where every later
+// test's body() queries found the stale modal's buttons first — so one
+// timing-dependent failure in a loaded full-suite run took the next eight
+// modal tests down with it, retries included (reproduced by injecting one
+// failing test). Unmounting after every test confines a failure to the test
+// that had it, which is what lets `retry` recover it. Not also clearing
+// <body>: that breaks dozens of tests, which rely on what PrimeVue leaves
+// there between them.
+enableAutoUnmount(afterEach)
+
 describe('LibraryPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -159,6 +170,20 @@ describe('LibraryPage', () => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
     vi.clearAllMocks()
+  })
+
+  it('passes the AI status down to the clip viewer, defaulting what an older backend omits', async () => {
+    mockFetch({ '/api/ai/status': { enabled: true, prompt_debug_enabled: true } })
+    const debugOn = mountLibrary()
+    await flushPromises()
+    expect(debugOn.findComponent(ClipModal).props()).toMatchObject({ aiEnabled: true, promptDebugEnabled: true })
+    debugOn.unmount()
+
+    mockFetch({ '/api/ai/status': {} })
+    const older = mountLibrary()
+    await flushPromises()
+    expect(older.findComponent(ClipModal).props()).toMatchObject({ aiEnabled: false, promptDebugEnabled: false })
+    older.unmount()
   })
 
   it('loads stats, cameras, and clips on mount', async () => {
