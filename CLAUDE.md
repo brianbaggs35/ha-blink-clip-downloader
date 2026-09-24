@@ -346,7 +346,16 @@ architecture.
   including `frontend/e2e/`'s Playwright interaction tests.
 - `tests/` — pytest test suite, one `test_<module>.py` per module above, plus
   `conftest.py` with shared fixtures (`base_config`, `sample_clip`,
-  `options_file`, `tmp_download_dir`).
+  `options_file`, `tmp_download_dir`). Its autouse `data_dir` fixture
+  points every `/data` path the package holds at a per-test directory,
+  found by walking the package's modules and classes, so no test reads or
+  writes the real `/data` (which is writable as root or in an HA
+  devcontainer, never on CI's runners). That only reaches a module- or
+  class-level constant looked up at call time: a `/data` literal inside a
+  function, or a constant bound as a default argument, fails
+  `tests/test_data_dir.py`. `scripts/standalone_server.py`'s
+  `_redirect_data_files` walks the package the same way for the e2e
+  backend.
 - `scripts/standalone_server.py` — boots a real `MediaServer` against a
   seeded throwaway Postgres database with no Home Assistant, blinkpy, or
   Docker involved; the backend `frontend/e2e/`'s Playwright tests run

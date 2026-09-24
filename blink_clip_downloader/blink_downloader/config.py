@@ -454,8 +454,10 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     startup_error: str = ""
 
 
-def load_config(options_path: Path = OPTIONS_FILE) -> AppConfig:
+def load_config(options_path: Path | None = None) -> AppConfig:
     """Load and validate configuration from *options_path*."""
+    # None looks the module default up at call time, so tests can redirect it.
+    options_path = options_path or OPTIONS_FILE
     if not options_path.exists():
         raise FileNotFoundError(f"Options file not found: {options_path}")
 

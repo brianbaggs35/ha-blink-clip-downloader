@@ -59,6 +59,10 @@ _LOGGER = logging.getLogger(__name__)
 STATS_FILE = Path("/data/stats.json")
 TRIGGER_FILE = Path("/data/trigger_download")
 CAMERA_NAME_ALIASES_FILE = Path("/data/camera_name_aliases.json")
+# Written by the web UI (media_server/), read here once at startup.
+CAMERA_CONFIGS_FILE = Path("/data/camera_configs.json")
+VEHICLE_SETTINGS_FILE = Path("/data/vehicle_settings.json")
+FINETUNE_STATE_FILE = Path("/data/finetune_state.json")
 
 # How many missing clip thumbnails to generate per poll cycle. Keeps ffmpeg
 # CPU usage low on constrained hardware while gradually backfilling large
@@ -303,7 +307,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         car_zones: dict[str, dict[str, Any]] = {}
         auto_analysis_disabled_cameras: set[str] = set()
 
-        cam_desc_file = Path("/data/camera_configs.json")
+        cam_desc_file = CAMERA_CONFIGS_FILE
         if not cam_desc_file.exists():
             return (
                 camera_descriptions,
@@ -351,7 +355,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         yet" apart from "written as an empty string" and fall back to
         options.json only for the former.
         """
-        settings_file = Path("/data/vehicle_settings.json")
+        settings_file = VEHICLE_SETTINGS_FILE
         if not settings_file.exists():
             return None
         try:
@@ -380,7 +384,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         Returns None (not "") when the file doesn't exist or is
         unreadable, matching _load_vehicle_settings_from_ui's contract.
         """
-        state_file = Path("/data/finetune_state.json")
+        state_file = FINETUNE_STATE_FILE
         if not state_file.exists():
             return None
         try:

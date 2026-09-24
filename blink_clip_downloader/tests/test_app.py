@@ -2255,7 +2255,7 @@ def _build_app_with_camera_configs(
     )
 
     with (
-        patch("blink_downloader.app.Path", return_value=cfg_file),
+        patch("blink_downloader.app.CAMERA_CONFIGS_FILE", cfg_file),
         patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
     ):
         mock_create_analyzer.return_value = MagicMock()
@@ -2614,7 +2614,7 @@ def test_init_corrupt_camera_configs_file_falls_back_to_options_json(
     )
 
     with (
-        patch("blink_downloader.app.Path", return_value=cfg_file),
+        patch("blink_downloader.app.CAMERA_CONFIGS_FILE", cfg_file),
         patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
         caplog.at_level("WARNING"),
     ):
@@ -2632,20 +2632,12 @@ def _build_app_with_vehicle_settings(
 ):
     """Construct a BlinkClipDownloaderApp with AI enabled and a fake
     vehicle_settings.json, capturing the kwargs passed to create_analyzer().
-    Routes "/data/camera_configs.json" and "/data/vehicle_settings.json" to
-    separate tmp_path files so each can be controlled independently, unlike
-    _build_app_with_camera_configs's single fixed-return-value patch."""
+    camera_configs.json stays unwritten (conftest's data_dir fixture)."""
     import dataclasses
 
-    cam_cfg_file = tmp_path / "camera_configs.json"
     vehicle_file = tmp_path / "vehicle_settings.json"
     if vehicle_settings_content is not None:
         vehicle_file.write_text(json.dumps(vehicle_settings_content))
-
-    def _fake_path(path_str):
-        return (
-            vehicle_file if path_str == "/data/vehicle_settings.json" else cam_cfg_file
-        )
 
     config = dataclasses.replace(
         base_config,
@@ -2655,7 +2647,7 @@ def _build_app_with_vehicle_settings(
     )
 
     with (
-        patch("blink_downloader.app.Path", side_effect=_fake_path),
+        patch("blink_downloader.app.VEHICLE_SETTINGS_FILE", vehicle_file),
         patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
     ):
         mock_create_analyzer.return_value = MagicMock()
@@ -2711,13 +2703,9 @@ def _build_app_with_finetune_state(
     activated-Moondream-checkpoint state file."""
     import dataclasses
 
-    cam_cfg_file = tmp_path / "camera_configs.json"
     state_file = tmp_path / "finetune_state.json"
     if finetune_state_content is not None:
         state_file.write_text(json.dumps(finetune_state_content))
-
-    def _fake_path(path_str):
-        return state_file if path_str == "/data/finetune_state.json" else cam_cfg_file
 
     config = dataclasses.replace(
         base_config,
@@ -2727,7 +2715,7 @@ def _build_app_with_finetune_state(
     )
 
     with (
-        patch("blink_downloader.app.Path", side_effect=_fake_path),
+        patch("blink_downloader.app.FINETUNE_STATE_FILE", state_file),
         patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
     ):
         mock_create_analyzer.return_value = MagicMock()
@@ -2785,13 +2773,6 @@ def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
     vehicle_file = tmp_path / "vehicle_settings.json"
     vehicle_file.write_text("{not valid json")
 
-    def _fake_path(path_str):
-        return (
-            vehicle_file
-            if path_str == "/data/vehicle_settings.json"
-            else tmp_path / "camera_configs.json"
-        )
-
     import dataclasses
 
     config = dataclasses.replace(
@@ -2802,7 +2783,7 @@ def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
     )
 
     with (
-        patch("blink_downloader.app.Path", side_effect=_fake_path),
+        patch("blink_downloader.app.VEHICLE_SETTINGS_FILE", vehicle_file),
         patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
         caplog.at_level("WARNING"),
     ):
@@ -2814,6 +2795,39 @@ def test_init_corrupt_vehicle_settings_file_falls_back_to_options_json(
         == "options.json fallback description"
     )
     assert "Could not load" in caplog.text
+
+
+def test_init_corrupt_finetune_state_file_falls_back_to_options_json(
+    base_config, tmp_path, caplog
+) -> None:
+    """A corrupt finetune_state.json must not crash startup either — the
+    moondream_finetune_model option still reaches the analyzer, and the
+    failure is logged."""
+    state_file = tmp_path / "finetune_state.json"
+    state_file.write_text("{not valid json")
+
+    import dataclasses
+
+    config = dataclasses.replace(
+        base_config,
+        ai_analysis_enabled=True,
+        ollama_url="http://localhost:11434",
+        moondream_finetune_model="options.json model",
+    )
+
+    with (
+        patch("blink_downloader.app.FINETUNE_STATE_FILE", state_file),
+        patch("blink_downloader.app.create_analyzer") as mock_create_analyzer,
+        caplog.at_level("WARNING"),
+    ):
+        mock_create_analyzer.return_value = MagicMock()
+        BlinkClipDownloaderApp(config)
+
+    assert (
+        mock_create_analyzer.call_args.kwargs["credentials"].moondream_finetune_model
+        == "options.json model"
+    )
+    assert "moondream_finetune_model option" in caplog.text
 
 
 def test_init_attaches_db_and_creates_analysis_queue(base_config, tmp_path):

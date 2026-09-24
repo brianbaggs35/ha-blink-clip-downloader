@@ -85,13 +85,18 @@ def _setup_logging(level: str) -> None:
     logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 
 
+# Where the AI tab's moondream install lands — the same directory as
+# media_server/ai.py's _MOONDREAM_PACKAGES_DIR.
+_MOONDREAM_PACKAGES_DIR = Path("/data/moondream_packages")
+
+
 def main() -> None:
     # Prepend the persistent moondream packages dir so a moondream install
     # performed via the web UI survives container restarts.  Must run before
     # BlinkClipDownloaderApp is constructed (moondream is imported lazily).
-    _md_packages = Path("/data/moondream_packages")
-    if _md_packages.exists() and str(_md_packages) not in sys.path:
-        sys.path.insert(0, str(_md_packages))
+    pkg = str(_MOONDREAM_PACKAGES_DIR)
+    if _MOONDREAM_PACKAGES_DIR.exists() and pkg not in sys.path:
+        sys.path.insert(0, pkg)
 
     # Bootstrap minimal logging so any startup error is visible in the HA log.
     logging.basicConfig(

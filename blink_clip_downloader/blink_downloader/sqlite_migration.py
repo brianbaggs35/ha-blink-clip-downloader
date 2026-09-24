@@ -45,7 +45,7 @@ DEFAULT_LEGACY_DB_FILE = Path("/data/clip_library.db")
 
 
 async def migrate_legacy_sqlite(
-    db: ClipDatabase, sqlite_path: Path = DEFAULT_LEGACY_DB_FILE
+    db: ClipDatabase, sqlite_path: Path | None = None
 ) -> int:
     """Import clips/analysis_results/ai_usage_reset from *sqlite_path* into
     *db*, if the file exists — merging into any clips already present
@@ -66,6 +66,8 @@ async def migrate_legacy_sqlite(
     step. Returns the number of clips imported/backfilled (0 if nothing
     was done).
     """
+    # None looks the module default up at call time, so tests can redirect it.
+    sqlite_path = sqlite_path or DEFAULT_LEGACY_DB_FILE
     if not sqlite_path.exists():
         return 0
     try:

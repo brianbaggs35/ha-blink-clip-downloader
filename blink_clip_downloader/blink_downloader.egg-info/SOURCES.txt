@@ -184,6 +184,7 @@ tests/test_app.py
 tests/test_archiver.py
 tests/test_battery_monitor.py
 tests/test_config.py
+tests/test_data_dir.py
 tests/test_database.py
 tests/test_digest.py
 tests/test_downloader.py
