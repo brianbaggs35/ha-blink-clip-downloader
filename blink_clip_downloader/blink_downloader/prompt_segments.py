@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .security import describe_region
+
 if TYPE_CHECKING:
     from .vision import VisionHints
 
@@ -105,16 +107,31 @@ def anomaly_alert_segment(anomaly_score: float) -> str | None:
     )
 
 
-def short_event_segment(clip_duration: float) -> str | None:
+def short_event_segment(
+    clip_duration: float, assets_marked: bool = False
+) -> str | None:
     """Short-event hint — a code-computed signal from the clip's real
     duration (see SHORT_EVENT_DURATION_SECONDS) that a quick, single
     interaction is far more consistent with routine coming-and-going
     than with lingering, casing, or tampering. Framed as a hint the
     model can override, not a rule, since a genuinely short but
     visibly suspicious clip (e.g. a quick tamper-and-flee) must still
-    be flagged on its own visible content."""
+    be flagged on its own visible content.
+
+    *assets_marked* is this camera having assets marked on the Assets tab.
+    Carrying off a parcel or a bike is over in seconds, so "brief means
+    routine" is exactly the wrong prior at a marked parcel spot — the hint
+    says so rather than arguing against the PROTECTED ASSETS section.
+    """
     if not (0 < clip_duration <= SHORT_EVENT_DURATION_SECONDS):
         return None
+    caveat = (
+        " This does not apply to the marked protected assets: taking a parcel, "
+        "a bike or another marked item away takes only seconds, so brevity is "
+        "no reason to dismiss something being carried off from one of them."
+        if assets_marked
+        else ""
+    )
     return (
         "\n\nSHORT EVENT: This entire clip lasts only "
         f"{clip_duration:.0f} seconds. A brief, single interaction "
@@ -126,7 +143,7 @@ def short_event_segment(clip_duration: float) -> str | None:
         "read, not a verdict on its own — only set suspicious=true "
         "if the frames themselves clearly show concrete suspicious "
         "behavior (forced entry, lock tampering, casing, etc.), "
-        "not brevity alone."
+        "not brevity alone." + caveat
     )
 
 
@@ -271,6 +288,158 @@ def zone_motion_segment(
         "elsewhere in the frame, away from the protected vehicle's usual spot. "
         "Do not assume the vehicle is involved just because something moved "
         "somewhere in frame."
+    )
+
+
+#: Share of a clip's motion that must fall inside a marked asset's zone before
+#: the prompt says the activity was at it. Several assets can share one
+#: view, so this is a lower bar than the car zone's 50%, and below it the
+#: segment says nothing rather than arguing against the security evidence.
+ASSET_MOTION_MIN_SHARE: float = 0.2
+
+#: How the prompt describes each markable asset type, as a noun phrase.
+_ASSET_NOUNS: dict[str, str] = {
+    "door": "a door",
+    "window": "a window",
+    "garage": "a garage door",
+    "gate": "a gate",
+    "package_area": "where deliveries are left",
+    "mailbox": "a mailbox",
+    "bicycle": "a bike or scooter",
+    "equipment": "equipment",
+    "other": "a protected item",
+}
+
+#: What deserves suspicion at each kind of asset, in the order the section
+#: lists them. Grouped because several types share their rule, and only the
+#: rules for types actually marked on the camera are sent — a prompt that
+#: explains mailboxes to a camera watching a bike rack is noise.
+_ASSET_RULES: tuple[tuple[frozenset[str], str], ...] = (
+    (
+        frozenset({"door", "gate", "garage"}),
+        (
+            "Doors, gates and garage doors: trying a handle or lock, forcing, "
+            "prying, kicking or shouldering it, peering in through it, or staying "
+            "at it well after knocking or ringing: suspicious=true. Walking up, "
+            "knocking or ringing, dropping something off and leaving — or a "
+            "household member simply coming and going — is routine."
+        ),
+    ),
+    (
+        frozenset({"window"}),
+        (
+            "Windows: anyone touching, prying at, climbing through, or peering in "
+            "closely: suspicious=true."
+        ),
+    ),
+    (
+        frozenset({"package_area"}),
+        (
+            "Delivery spots: someone picking up and carrying off a parcel they did "
+            "not bring — especially hurriedly, or while glancing around — is "
+            "possible package theft: suspicious=true. A courier leaving a parcel, "
+            "or a household member collecting one, is routine."
+        ),
+    ),
+    (
+        frozenset({"mailbox"}),
+        (
+            "Mailboxes: someone other than a mail carrier opening it and taking "
+            "things out, or anyone damaging it: suspicious=true. Mail being "
+            "delivered is routine."
+        ),
+    ),
+    (
+        frozenset({"bicycle", "equipment", "other"}),
+        (
+            "Bikes, equipment and other marked items: anyone handling, unlocking, "
+            "moving, loading up or carrying one off, or an animal damaging one: "
+            "suspicious=true. Walking past without touching it is routine."
+        ),
+    ),
+)
+
+
+def _zone_location(zone: dict[str, Any]) -> str:
+    """Where in the frame a stored zone sits, as the prompt says it."""
+    if zone.get("shape") == "polygon":
+        xs = [p[0] for p in zone["points"]]
+        ys = [p[1] for p in zone["points"]]
+        bounds = (min(xs), min(ys), max(xs), max(ys))
+    else:
+        bounds = (zone["x_min"], zone["y_min"], zone["x_max"], zone["y_max"])
+    return describe_region(bounds, (1.0, 1.0))
+
+
+def _as_noun(name: str) -> str:
+    """*name* as it reads mid-sentence: "Front door" becomes "front door",
+    while "AC unit" and "BBQ" keep their capitals."""
+    if len(name) > 1 and name[0].isupper() and name[1].islower():
+        return name[0].lower() + name[1:]
+    return name
+
+
+def protected_assets_segment(assets: list[dict[str, Any]]) -> str | None:
+    """PROTECTED ASSETS: what the homeowner marked on this camera's view.
+
+    A spatial anchor for each ("in the lower left of the frame") plus the
+    rules for the kinds of asset present. Static per camera, which is why
+    ``BaseAnalyzer`` places it inside the prompt's cacheable prefix rather
+    than among the per-clip segments. Names are cleaned when stored (see
+    ``protected_assets.clean_text``) so none can close the quotes it is
+    wrapped in here. ``None`` on a camera with nothing marked, which leaves
+    its prompt exactly as it was before the Assets tab existed.
+    """
+    if not assets:
+        return None
+    lines = []
+    for asset in assets:
+        noun = _ASSET_NOUNS.get(asset["asset_type"], _ASSET_NOUNS["other"])
+        line = f'• "{asset["name"]}" ({noun}) — in {_zone_location(asset["zone"])}'
+        if asset.get("description"):
+            line += f"; looks like: {asset['description']}"
+        lines.append(line + ".")
+    kinds = {asset["asset_type"] for asset in assets}
+    rules = [rule for types, rule in _ASSET_RULES if types & kinds]
+    return (
+        "\n\nPROTECTED ASSETS: The homeowner has marked these on this camera's "
+        "view as the things they most want watched:\n"
+        + "\n".join(lines)
+        + "\nLook first at what happens at these. When something happens at "
+        "one, name it in your description (e.g. 'a person is standing at the "
+        f"{_as_noun(assets[0]['name'])}'), and if one looks missing, moved, open "
+        "or damaged, say so. What counts as suspicious at them:\n"
+        + "\n".join(f"• {rule}" for rule in rules)
+        + "\nMerely being visible near one — walking past, or standing near it "
+        "without touching it — is routine. Activity elsewhere in the frame is "
+        "judged exactly as it would be with nothing marked."
+    )
+
+
+def asset_motion_segment(shares: list[tuple[str, float]]) -> str | None:
+    """Which marked assets this clip's motion was concentrated at.
+
+    *shares* pairs each marked asset's name with the fraction of the clip's
+    motion inside its zone (see ``frame_motion.zone_motion_fraction``).
+    Positive-only on purpose: saying "little happened at the door" when
+    object tracking put someone there would argue against the evidence —
+    the same trap the car zone's own segment had to be fixed for.
+    """
+    notable = sorted(
+        ((name, share) for name, share in shares if share >= ASSET_MOTION_MIN_SHARE),
+        key=lambda item: -item[1],
+    )
+    if not notable:
+        return None
+    parts = [f'{share:.0%} at "{name}"' for name, share in notable]
+    listed = (
+        parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    )
+    return (
+        f"\n\nASSET MOTION: Of this clip's overall motion, {listed} — the "
+        "activity involved the marked "
+        + ("asset" if len(notable) == 1 else "assets")
+        + ", so look closely at what happened there."
     )
 
 

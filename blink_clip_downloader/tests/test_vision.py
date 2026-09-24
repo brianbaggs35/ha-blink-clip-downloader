@@ -1944,13 +1944,31 @@ async def test_contact_segmenter_returns_none_on_exception(
 def test_build_contact_hint_touching() -> None:
     hint = _build_contact_hint(ContactResult(True, 0.0), "dog")
     assert "touch or overlap" in hint
-    assert "dog's" in hint
+    assert "outlines of the dog and the vehicle" in hint
 
 
 def test_build_contact_hint_not_touching() -> None:
     hint = _build_contact_hint(ContactResult(False, 21.0), "person")
     assert "21 pixels" in hint
-    assert "person's" in hint
+    assert "outlines of the person and the vehicle" in hint
+
+
+def test_contact_and_depth_hints_name_a_marked_asset() -> None:
+    """A marked asset examined by these stages is not a vehicle, and the
+    camera may have none in view — the hint must say what was measured."""
+    target = 'asset marked "Bike"'
+    contact = _build_contact_hint(ContactResult(True, 0.0), "person", target)
+    assert 'the person and the asset marked "Bike"' in contact
+    assert "vehicle" not in contact
+    for comparison in (
+        DepthComparison(True, 10.0, 11.0),
+        DepthComparison(None, 100.0, 160.0),
+        DepthComparison(False, 200.0, 10.0),
+        DepthComparison(False, 10.0, 200.0),
+    ):
+        depth = _build_depth_hint(comparison, "person", target)
+        assert target in depth
+        assert "vehicle" not in depth
 
 
 # ------------------------------------------------------------------
@@ -3725,7 +3743,7 @@ def test_pair_stages_examine_whoever_is_at_the_car_not_the_nearest_to_the_camera
     contact nothing could confirm."""
     passer_by = DetectedObject("person", 0.9, (250.0, 60.0, 400.0, 355.0), 1, 2)
     at_the_door = DetectedObject("person", 0.9, (380.0, 140.0, 430.0, 292.0), 2, 3)
-    subject, _box, frame, track = VisionPipeline._select_pair(
+    subject, _box, frame, track, _asset_key = VisionPipeline._select_pair(
         _pair_hints(_CAR), [passer_by, at_the_door], None
     )  # type: ignore[misc]
     assert (subject, frame, track) == (at_the_door, 3, 2)
@@ -3762,7 +3780,7 @@ def test_pair_stages_keep_one_subjects_deepest_overlap_frame() -> None:
     approaching = DetectedObject("person", 0.9, (180.0, 150.0, 240.0, 292.0), 4, 0)
     at_the_car = DetectedObject("person", 0.9, (260.0, 150.0, 320.0, 300.0), 4, 1)
     leaving = DetectedObject("person", 0.9, (400.0, 150.0, 460.0, 292.0), 4, 2)
-    subject, _box, frame, _track = VisionPipeline._select_pair(
+    subject, _box, frame, _track, _asset_key = VisionPipeline._select_pair(
         _pair_hints(_CAR), [approaching, at_the_car, leaving], None
     )  # type: ignore[misc]
     assert (subject, frame) == (at_the_car, 1)

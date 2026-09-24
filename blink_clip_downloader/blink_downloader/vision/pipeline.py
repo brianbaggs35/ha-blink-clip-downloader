@@ -29,10 +29,12 @@ from ..security import (
     ProtectedAsset,
     Zone,
     box_gap,
+    build_marked_asset,
     build_tracks,
     resolve_vehicle_asset,
 )
 from ..security.geometry import GROUND_DEPTH_WEIGHT, box_foot_point
+from ..security.tracks import _ZONE_BOX_OVERLAP
 from ..security.vehicles import VehicleSignature
 from . import imaging
 from .audio import AudioTagger, AudioTags, build_audio_hint
@@ -83,6 +85,18 @@ def _in_front_gap(subject: Box, asset: Box) -> float:
 #: when choosing whom the pair stages examine — the security layer's own
 #: "near" distance, so both agree on who was at the car.
 _AT_ASSET_FEET = DetectorThresholds().near_feet
+
+#: Furthest, in feet, a subject may be from a marked asset for the pair
+#: stages to be pointed at them when nobody is actually at one — the
+#: security layer's own "approached the asset" distance. Beyond it the
+#: stages would be measuring a passer-by, and have nothing to add.
+_NEAR_MARKED_FEET = DetectorThresholds().approach_feet
+
+#: One chosen pair for the depth/contact/pose stages: the subject's sighting,
+#: the asset's box, which scan frame, the subject's track id, and which
+#: marked asset it was (``None`` for the protected vehicle or the legacy
+#: nearest-vehicle pair).
+_Pair = tuple[DetectedObject, Box, int, int | None, str | None]
 
 
 @dataclass
@@ -219,6 +233,15 @@ class VisionHints:
     #: clip identified the protected vehicle confidently enough to learn
     #: from (see :mod:`blink_downloader.security.vehicles`).
     vehicle_signature_update: VehicleSignature | None = None
+    #: Assets marked on the Assets tab for this camera, located by their
+    #: zones (see :func:`~blink_downloader.security.build_marked_asset`).
+    marked_assets: list[ProtectedAsset] = field(default_factory=list)
+    #: Which marked asset the depth/contact/pose stages examined, by key —
+    #: ``None`` when they examined the protected vehicle, or nothing.
+    examined_asset_key: str | None = None
+    #: How much each marked asset's own region changed between the first and
+    #: last scan frames, by key, for assets nobody stood in front of in either.
+    marked_asset_changes: dict[str, float] = field(default_factory=dict)
 
 
 class VisionPipeline:
@@ -252,6 +275,7 @@ class VisionPipeline:
         frame_interval: float = 2.0,
         vehicle_signature: VehicleSignature | None = None,
         clip_path: str = "",
+        marked_assets: list[dict[str, Any]] | None = None,
     ) -> VisionHints:
         """Run every enabled stage and return this clip's hints and evidence.
 
@@ -277,6 +301,12 @@ class VisionPipeline:
         below are the three pieces of evidence that decide *which* detected
         vehicle is the protected one — see
         :func:`~blink_downloader.security.vehicles.identify_protected_vehicle`.
+
+        *marked_assets* are this camera's enabled entries from the Assets tab
+        (see :mod:`blink_downloader.protected_assets`). They need no
+        detection of their own — each is placed by its zone — but they give
+        the pair stages somewhere else worth looking when someone is at the
+        front door rather than the car.
         """
         hints = VisionHints()
         if not frames:
@@ -300,6 +330,7 @@ class VisionPipeline:
                 car_zone=car_zone if car_protection_applies else None,
                 frame_interval=frame_interval,
                 vehicle_signature=vehicle_signature,
+                marked_assets=marked_assets or [],
             )
         else:
             hints.unavailable_sources.append(SOURCE_OBJECT_DETECTION)
@@ -391,8 +422,8 @@ class VisionPipeline:
         _LOGGER.debug(
             "Vision pipeline result: enhanced_detection=%s "
             "(detection=%r, tracking=%r, depth=%r, contact=%r, tracks=%d, "
-            "scan_frames=%d), audio=%s, face_recognition=%s "
-            "(approved=%d, other=%d, unrecognized_present=%s)",
+            "scan_frames=%d, marked_assets=%d, examined_asset=%s), audio=%s, "
+            "face_recognition=%s (approved=%d, other=%d, unrecognized_present=%s)",
             self._config.enhanced_detection_enabled,
             hints.detection_hint,
             hints.tracking_hint,
@@ -400,6 +431,8 @@ class VisionPipeline:
             hints.contact_hint,
             len(hints.tracks or []),
             hints.scan_frame_count,
+            len(hints.marked_assets),
+            hints.examined_asset_key or "-",
             len(hints.audio_tags.labels) if hints.audio_tags else 0,
             self._config.face_recognition_enabled,
             len(faces.approved_names) if faces else 0,
@@ -417,8 +450,10 @@ class VisionPipeline:
         car_zone: dict[str, Any] | None,
         frame_interval: float,
         vehicle_signature: VehicleSignature | None,
+        marked_assets: list[dict[str, Any]],
     ) -> None:
-        """Frame preprocessing, detection, tracking and vehicle identification."""
+        """Frame preprocessing, detection, tracking, vehicle identification,
+        and locating the camera's marked assets."""
         # Enhancement exists for the *prompt* images: CLAHE lifts a dark
         # night frame into something a vision-language model can read.
         hints.enhanced_frames = FrameEnhancer.enhance(frames)
@@ -497,6 +532,9 @@ class VisionPipeline:
             hints.asset = self._resolve_asset(
                 hints, scan_frames, camera, car_description, car_zone, vehicle_signature
             )
+            hints.marked_assets = self._locate_marked_assets(
+                camera, marked_assets, hints.frame_size
+            )
 
         zone_ref = (
             _car_zone_reference(car_zone, scan_frames[0])
@@ -510,6 +548,63 @@ class VisionPipeline:
         hints.tracking_hint = _build_tracking_hint(detections, len(scan_frames))
 
         await self._run_pair_stages(hints, scan_frames, detections, zone_ref)
+        hints.marked_asset_changes = self._marked_asset_changes(
+            scan_frames, hints.marked_assets, detections
+        )
+
+    @staticmethod
+    def _locate_marked_assets(
+        camera: str,
+        marked_assets: list[dict[str, Any]],
+        frame_size: tuple[float, float],
+    ) -> list[ProtectedAsset]:
+        """Place each of this camera's marked assets on the scan frames."""
+        located: list[ProtectedAsset] = []
+        for entry in marked_assets:
+            asset = build_marked_asset(
+                camera,
+                str(entry.get("id", "")),
+                str(entry.get("name", "")),
+                str(entry.get("asset_type", "")),
+                Zone.from_config(entry.get("zone")),
+                frame_size,
+            )
+            if asset is not None:
+                located.append(asset)
+        return located
+
+    def _marked_asset_changes(
+        self,
+        scan_frames: list[bytes],
+        marked_assets: list[ProtectedAsset],
+        detections: list[DetectedObject],
+    ) -> dict[str, float]:
+        """Before/after appearance change of each marked asset's region.
+
+        Only worth computing when a subject was in the clip at all — the
+        event built on it needs somebody to have been at the asset, and a
+        change nobody could have caused is the weather. Each comparison
+        carries the same clean-view precondition as the vehicle's own (see
+        :meth:`_asset_change`), and one that cannot be made — an undecodable
+        frame, a missing image library — is simply left out: one fewer
+        input for one asset, never a failed clip.
+        """
+        if len(scan_frames) < 2 or not marked_assets:
+            return {}
+        if not any(d.label in _SUBJECT_CLASSES for d in detections):
+            return {}
+        changes: dict[str, float] = {}
+        for asset in marked_assets:
+            # build_marked_asset only returns assets with a box.
+            assert asset.box is not None
+            try:
+                change = self._asset_change(scan_frames, asset.box, detections)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Appearance change failed for asset %r", asset.key)
+                continue
+            if change is not None:
+                changes[asset.key] = change
+        return changes
 
     def _resolve_asset(
         self,
@@ -634,8 +729,10 @@ class VisionPipeline:
             hints.not_applicable_sources.append(SOURCE_CONTACT_SEGMENTATION)
             hints.not_applicable_sources.append(SOURCE_POSE_ESTIMATION)
             return
-        subject, asset_box, frame_idx, track_id = pair
+        subject, asset_box, frame_idx, track_id, asset_key = pair
         hints.contact_track_id = track_id
+        hints.examined_asset_key = asset_key
+        target = self._pair_target(hints, asset_key)
 
         depth_result = await self._depth.compare(
             scan_frames[frame_idx], subject.box, asset_box
@@ -644,7 +741,7 @@ class VisionPipeline:
             hints.unavailable_sources.append(SOURCE_DEPTH_ESTIMATION)
         else:
             hints.depth_similar = depth_result.similar_depth
-            hints.depth_hint = _build_depth_hint(depth_result, subject.label)
+            hints.depth_hint = _build_depth_hint(depth_result, subject.label, target)
 
         contact_result = await self._segmenter.check_contact(
             scan_frames[frame_idx], subject.box, asset_box
@@ -653,7 +750,9 @@ class VisionPipeline:
             hints.unavailable_sources.append(SOURCE_CONTACT_SEGMENTATION)
         else:
             hints.contact_touching = contact_result.touching
-            hints.contact_hint = _build_contact_hint(contact_result, subject.label)
+            hints.contact_hint = _build_contact_hint(
+                contact_result, subject.label, target
+            )
 
         if self._config.pose_estimation_enabled:
             posture = await self._pose.analyze(
@@ -668,10 +767,23 @@ class VisionPipeline:
             hints.unavailable_sources.append(SOURCE_POSE_ESTIMATION)
 
         # Cheap, model-free "did the vehicle itself change" evidence, worth
-        # computing exactly when somebody was close enough to change it.
-        hints.asset_appearance_change = self._asset_change(
-            scan_frames, asset_box, detections
-        )
+        # computing exactly when somebody was close enough to change it. Only
+        # the vehicle's: it feeds the impact rule, which is the vehicle's
+        # alone, and every marked asset gets its own comparison separately
+        # (see _marked_asset_changes).
+        if asset_key is None:
+            hints.asset_appearance_change = self._asset_change(
+                scan_frames, asset_box, detections
+            )
+
+    @staticmethod
+    def _pair_target(hints: VisionHints, asset_key: str | None) -> str:
+        """What the pair stages' prompt hints call the thing they measured."""
+        if asset_key is not None:
+            for asset in hints.marked_assets:
+                if asset.key == asset_key:
+                    return f'asset marked "{asset.name}"'
+        return "vehicle"
 
     @staticmethod
     def _asset_change(
@@ -706,7 +818,7 @@ class VisionPipeline:
         hints: VisionHints,
         detections: list[DetectedObject],
         zone_ref: _ZoneReference | None,
-    ) -> tuple[DetectedObject, Box, int, int | None] | None:
+    ) -> _Pair | None:
         """Pick the subject/asset box pair the heavy stages should examine.
 
         Prefers the identified protected vehicle, so depth and contact are
@@ -714,47 +826,157 @@ class VisionPipeline:
         subject happened to stand nearest. Falls back to the legacy
         nearest-pair search when the security layer is switched off or found
         no asset.
+
+        A camera with marked assets adds one more place worth looking. The
+        stages examine one pair per clip, so the order is what someone is
+        *at*: a person at the car, then a person at a marked asset, then any
+        subject at either, and only then whoever is nearest the car — so a
+        visitor trying the front door is not left unexamined because a
+        parked car across the frame was nearer the camera's idea of "the
+        asset". On a camera with nothing marked this is exactly the old
+        choice.
         """
         asset = hints.asset
-        if asset is not None and asset.present and asset.box is not None:
-            car = asset.box
-            subjects = [d for d in detections if d.label in _SUBJECT_CLASSES]
-            if not subjects:
+        vehicle = asset if asset is not None and asset.present and asset.box else None
+        marked = hints.marked_assets
+        if vehicle is None and not marked:
+            legacy = _best_subject_vehicle_pair(detections, zone_ref)
+            if legacy is None:
                 return None
+            subject, legacy_vehicle, frame_idx = legacy
+            return (subject, legacy_vehicle.box, frame_idx, subject.track_id, None)
 
-            # Whom to examine: whoever stands nearest the car, then — only
-            # among that one subject's sightings, exactly as before — the
-            # moment their outline overlaps it most deeply. Choosing the
-            # subject by overlap too sent these stages to a passer-by near
-            # the camera, who covers far more of the car in the image than
-            # someone standing at its door, leaving the person actually at
-            # the car with a contact nothing could confirm.
-            #
-            # A person at the car outranks an animal at it. Theirs is the
-            # contact these stages can raise to suspicious or critical — an
-            # animal's stays noteworthy whatever confirms it (see
-            # security/detector.py's _contact_severity) — and pose only
-            # reads people. Examining the dog at a stranger's feet left the
-            # stranger's touch unconfirmed and the clip held below the alert
-            # band. Only *at* the car, though: a dog on the bonnet is still
-            # examined ahead of its owner across the lawn.
-            def rank(d: DetectedObject) -> tuple[bool, float, float]:
-                gap = _in_front_gap(d.box, car)
-                feet = asset.gap_feet(gap)
-                person_at_car = (
-                    d.label == PERSON_LABEL
-                    and feet is not None
-                    and feet <= _AT_ASSET_FEET
-                )
-                return (not person_at_car, gap, box_gap(d.box, car))
-
-            chosen = min(subjects, key=rank)
-            sightings = [d for d in subjects if d.track_id == chosen.track_id]
-            nearest = min(sightings, key=lambda d: box_gap(d.box, car))
-            return (nearest, car, nearest.frame_index, nearest.track_id)
-
-        legacy = _best_subject_vehicle_pair(detections, zone_ref)
-        if legacy is None:
+        subjects = [d for d in detections if d.label in _SUBJECT_CLASSES]
+        if not subjects:
             return None
-        subject, vehicle, frame_idx = legacy
-        return (subject, vehicle.box, frame_idx, subject.track_id)
+        people = [d for d in subjects if d.label == PERSON_LABEL]
+        frame_size = hints.frame_size
+
+        for candidates in (people, subjects):
+            if vehicle is not None and any(
+                _is_at(d, vehicle, frame_size) for d in candidates
+            ):
+                return _vehicle_pair(vehicle, subjects)
+            chosen = _marked_pair_at(marked, candidates, frame_size)
+            if chosen is not None:
+                return _examine(chosen[0], chosen[1], subjects)
+        if vehicle is not None:
+            return _vehicle_pair(vehicle, subjects)
+        near = _marked_pair_near(marked, subjects)
+        if near is None:
+            return None
+        return _examine(near[0], near[1], subjects)
+
+
+def _feet_from(subject: DetectedObject, asset: ProtectedAsset) -> float | None:
+    """How far *subject* stands in front of *asset*, in feet."""
+    # Only ever called for assets with a box: the vehicle is filtered on it,
+    # and build_marked_asset never returns one without.
+    assert asset.box is not None
+    return asset.gap_feet(_in_front_gap(subject.box, asset.box))
+
+
+def _is_at(
+    subject: DetectedObject,
+    asset: ProtectedAsset,
+    frame_size: tuple[float, float] | None,
+) -> bool:
+    """Whether *subject* is at *asset* rather than merely in frame with it.
+
+    Within the security layer's "near" distance, or — for a marked asset,
+    whose zone is the asset itself — covering it the way tracks.py's own
+    zone test counts as being in it. That second test is what finds someone
+    at a window, whose feet are well below the sill a ground-line distance
+    is measured to.
+    """
+    feet = _feet_from(subject, asset)
+    if feet is not None and feet <= _AT_ASSET_FEET:
+        return True
+    if not asset.marked or asset.zone is None or frame_size is None:
+        return False
+    return asset.zone.covered_share_of(subject.box, *frame_size) >= _ZONE_BOX_OVERLAP
+
+
+def _vehicle_pair(vehicle: ProtectedAsset, subjects: list[DetectedObject]) -> _Pair:
+    """The protected vehicle's pair: whoever stands nearest the car.
+
+    Then — only among that one subject's sightings, exactly as before — the
+    moment their outline overlaps it most deeply. Choosing the subject by
+    overlap too sent these stages to a passer-by near the camera, who covers
+    far more of the car in the image than someone standing at its door,
+    leaving the person actually at the car with a contact nothing could
+    confirm.
+
+    A person at the car outranks an animal at it. Theirs is the contact
+    these stages can raise to suspicious or critical — an animal's stays
+    noteworthy whatever confirms it (see security/detector.py's
+    _contact_severity) — and pose only reads people. Examining the dog at a
+    stranger's feet left the stranger's touch unconfirmed and the clip held
+    below the alert band. Only *at* the car, though: a dog on the bonnet is
+    still examined ahead of its owner across the lawn.
+    """
+    car = vehicle.box
+    assert car is not None
+
+    def rank(d: DetectedObject) -> tuple[bool, float, float]:
+        gap = _in_front_gap(d.box, car)
+        feet = vehicle.gap_feet(gap)
+        person_at_car = (
+            d.label == PERSON_LABEL and feet is not None and feet <= _AT_ASSET_FEET
+        )
+        return (not person_at_car, gap, box_gap(d.box, car))
+
+    chosen = min(subjects, key=rank)
+    sightings = [d for d in subjects if d.track_id == chosen.track_id]
+    nearest = min(sightings, key=lambda d: box_gap(d.box, car))
+    return (nearest, car, nearest.frame_index, nearest.track_id, None)
+
+
+def _marked_pair_at(
+    marked: list[ProtectedAsset],
+    candidates: list[DetectedObject],
+    frame_size: tuple[float, float] | None,
+) -> tuple[ProtectedAsset, DetectedObject] | None:
+    """The marked asset and subject to examine among those *at* one.
+
+    An asset whose handling means something (a bike, a window) before one
+    people are meant to touch (a door): the contact these stages can confirm
+    is evidence only at the former. Then the nearest.
+    """
+    best: tuple[tuple[bool, float], ProtectedAsset, DetectedObject] | None = None
+    for asset in marked:
+        for d in candidates:
+            if not _is_at(d, asset, frame_size):
+                continue
+            feet = _feet_from(d, asset)
+            key = (asset.handled_routinely, feet if feet is not None else 0.0)
+            if best is None or key < best[0]:
+                best = (key, asset, d)
+    return (best[1], best[2]) if best is not None else None
+
+
+def _marked_pair_near(
+    marked: list[ProtectedAsset], subjects: list[DetectedObject]
+) -> tuple[ProtectedAsset, DetectedObject] | None:
+    """The nearest subject to any marked asset, if near enough to matter."""
+    best: tuple[float, ProtectedAsset, DetectedObject] | None = None
+    for asset in marked:
+        for d in subjects:
+            feet = _feet_from(d, asset)
+            if feet is None or feet > _NEAR_MARKED_FEET:
+                continue
+            if best is None or feet < best[0]:
+                best = (feet, asset, d)
+    return (best[1], best[2]) if best is not None else None
+
+
+def _examine(
+    asset: ProtectedAsset, chosen: DetectedObject, subjects: list[DetectedObject]
+) -> _Pair:
+    """The pair for *chosen* at a marked *asset*: their sighting overlapping
+    it most deeply, the same moment the vehicle's pair examines."""
+    box = asset.box
+    assert box is not None
+    sightings = [d for d in subjects if d.track_id == chosen.track_id]
+    nearest = min(sightings, key=lambda d: box_gap(d.box, box))
+    return (nearest, box, nearest.frame_index, nearest.track_id, asset.key)
