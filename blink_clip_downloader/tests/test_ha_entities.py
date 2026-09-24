@@ -187,12 +187,34 @@ def test_clip_analyzed_event_data_flattens_the_result() -> None:
         "event_type": "asset_proximity",
         "evidence_quality": 0.43,
         "face_recognized": False,
+        "assets": [],
         "model": "claude-haiku-4-5",
         "path": "/share/blink-clips/a.mp4",
     }
     # The two big text fields stay out of the recorder.
     assert "response_text" not in data
     assert "prompt_text" not in data
+
+
+def test_clip_analyzed_event_data_names_the_marked_assets_involved() -> None:
+    """By the names given on the Assets tab, once each, in order — and not the
+    protected vehicle, whose "name" is just its description."""
+
+    def event(asset_name: str, asset_type: str) -> SimpleNamespace:
+        return SimpleNamespace(asset_name=asset_name, asset_type=asset_type)
+
+    result = SimpleNamespace(
+        clip_id="abc",
+        camera="Front Door",
+        security_events=[
+            event("", ""),
+            event("Mailbox", "mailbox"),
+            event("Silver Kia", "vehicle"),
+            event("Front door", "door"),
+            event("Mailbox", "mailbox"),
+        ],
+    )
+    assert clip_analyzed_event_data(result)["assets"] == ["Mailbox", "Front door"]
 
 
 def test_clip_analyzed_event_data_tolerates_a_missing_clip_row() -> None:

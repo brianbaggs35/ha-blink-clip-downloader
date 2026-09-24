@@ -127,6 +127,27 @@ test('marks assets on two cameras, with both tools, and all of them survive a re
   ])
 })
 
+test('Escape mid-drag abandons the drag, not the half-filled editor', async ({ page }) => {
+  await openTab(page)
+  await cameraCard(page, 'Front Door').getByRole('button', { name: 'Mark another asset' }).click()
+  await chooseType(page, 'Window')
+  const img = editor(page).locator('.zone-canvas-image')
+  await expect.poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  const box = await editor(page).getByTestId('zone-canvas-surface').boundingBox()
+  if (!box) throw new Error('no drawing surface')
+  await page.mouse.move(box.x + box.width * 0.4, box.y + box.height * 0.2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5, { steps: 4 })
+  await page.keyboard.press('Escape')
+  await page.mouse.up()
+  await expect(editor(page)).toBeVisible()
+  await expect(editor(page).getByPlaceholder('e.g. Front door')).toHaveValue('Window')
+  await expect(editor(page).getByRole('button', { name: 'Save asset' })).toBeDisabled()
+  // With no drag in progress, Escape is the dialog's again.
+  await page.keyboard.press('Escape')
+  await expect(editor(page)).toHaveCount(0)
+})
+
 test('a second asset of the same name on one camera is refused, saying why', async ({ page }) => {
   await openTab(page)
   await cameraCard(page, 'Front Door').getByRole('button', { name: 'Mark another asset' }).click()

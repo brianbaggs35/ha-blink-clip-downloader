@@ -402,3 +402,42 @@ describe('entity fields a user can mistype', () => {
     expect(template).toContain(String.raw`states("alarm_control_panel.brian's")`)
   })
 })
+
+describe('activity at a marked asset', () => {
+  type Parsed = {
+    triggers: { event_type: string }[]
+    conditions: { value_template: string }[]
+    actions: { data: { title: string; message: string } }[]
+  }
+  const parse = (overrides: RecipeValues = {}) => load(build('asset-activity-alert', overrides)) as Parsed
+
+  it('listens for analyzed clips about any marked asset by default, noteworthy and up', () => {
+    const parsed = parse()
+    expect(parsed.triggers[0].event_type).toBe('blink_clip_analyzed')
+    const templates = parsed.conditions.map((c) => c.value_template)
+    expect(templates[0]).toBe('{{ (trigger.event.data.assets | default([])) | count > 0 }}')
+    expect(templates[1]).toBe('{{ trigger.event.data.severity in ["noteworthy", "suspicious", "critical"] }}')
+    expect(templates).toHaveLength(2)
+  })
+
+  it('narrows to the chosen assets, by the names they were given', () => {
+    const [assets] = parse({ assets: ['Mailbox', "Kids' bikes"] }).conditions
+    expect(assets.value_template).toBe(
+      `{{ (trigger.event.data.assets | default([])) | select('in', ["Mailbox", "Kids' bikes"]) | list | count > 0 }}`,
+    )
+  })
+
+  it('drops the severity floor for anything at all, and can require a suspicious verdict', () => {
+    const everything = parse({ min_severity: 'routine' }).conditions.map((c) => c.value_template)
+    expect(everything.some((t) => t.includes('severity'))).toBe(false)
+    const critical = parse({ min_severity: 'critical', only_suspicious: true }).conditions.map((c) => c.value_template)
+    expect(critical).toContain('{{ trigger.event.data.severity in ["critical"] }}')
+    expect(critical).toContain('{{ trigger.event.data.is_suspicious }}')
+  })
+
+  it('names the assets in the notification', () => {
+    const { data } = parse().actions[0]
+    expect(data.title).toBe("🛡️ Blink: {{ trigger.event.data.assets | default([]) | join(', ') }}")
+    expect(data.message).toContain('{{ trigger.event.data.summary }}')
+  })
+})

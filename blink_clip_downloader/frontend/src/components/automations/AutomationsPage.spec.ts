@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AutomationsPage from './AutomationsPage.vue'
+import { asset } from '../assets/testing'
+import * as assetsApi from '../../api/assets'
 import * as clipsApi from '../../api/clips'
 import * as securityFeedApi from '../../api/securityFeed'
 
@@ -22,6 +24,29 @@ describe('AutomationsPage', () => {
       // Only in clip history — a camera since renamed or removed.
       { camera: 'Old Porch', total: 1, size_bytes: 1, today: 0, this_week: 0, last_seen: '' },
     ])
+    vi.spyOn(assetsApi, 'listAssets').mockResolvedValue({
+      assets: [
+        { ...asset(), name: 'Mailbox' },
+        { ...asset(), camera: 'Yard', name: 'Barbecue' },
+        { ...asset(), camera: 'Yard', name: 'Mailbox' },
+      ],
+      limits: { per_camera: 12, name: 48, description: 160 },
+      analysis_enabled: true,
+      detection_enabled: true,
+    })
+  })
+
+  it('offers each marked asset name once, in order', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'RecipeBuilder' }).props('assets')).toEqual(['Barbecue', 'Mailbox'])
+  })
+
+  it('offers no assets, rather than failing, when they cannot be read', async () => {
+    vi.spyOn(assetsApi, 'listAssets').mockRejectedValue(new Error('offline'))
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'RecipeBuilder' }).props('assets')).toEqual([])
   })
 
   it('opens on the automation builder', async () => {

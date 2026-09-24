@@ -89,7 +89,7 @@ function onPointerDown(e: PointerEvent) {
     }
   }
   ;(e.target as Element).setPointerCapture?.(e.pointerId)
-  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keydown', onKeydown, { capture: true })
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -125,17 +125,21 @@ function endGesture() {
   gesture.value = null
   draftRect.value = null
   draftPath.value = []
-  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keydown', onKeydown, { capture: true })
 }
 
+// Listened for on the window in the *capture* phase, only while a gesture
+// is in progress: the editor's Dialog closes on Escape from a listener on
+// the document, which a window listener in the ordinary bubble phase only
+// hears after the Dialog has already gone — taking the half-filled form with
+// it. Capturing first is what lets Escape abandon the drag and nothing else.
 function onKeydown(e: KeyboardEvent) {
   if (e.key !== 'Escape') return
-  // Abandon the gesture in progress, not the dialog around it.
   e.stopPropagation()
   endGesture()
 }
 
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, { capture: true }))
 
 /** What to draw: the gesture in progress, else the zone as it stands. */
 const shown = computed<AssetZone | null>(() => {

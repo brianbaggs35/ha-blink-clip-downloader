@@ -167,6 +167,20 @@ describe('AssetZoneCanvas', () => {
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 
+  it('keeps Escape from the dialog around it while drawing, and only then', async () => {
+    const wrapper = mountCanvas()
+    const dialogHeard = vi.fn()
+    document.addEventListener('keydown', dialogHeard)
+    pointer(wrapper, 'pointerdown', 40, 20)
+    pointer(wrapper, 'pointermove', 200, 120)
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(dialogHeard).not.toHaveBeenCalled()
+    // The gesture is over, so the next Escape is the dialog's again.
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(dialogHeard).toHaveBeenCalledTimes(1)
+    document.removeEventListener('keydown', dialogHeard)
+  })
+
   it('does nothing on a surface with no size yet', () => {
     vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue({ width: 0, height: 0 } as DOMRect)
     const wrapper = mountCanvas()
@@ -189,7 +203,7 @@ describe('AssetZoneCanvas', () => {
     const wrapper = mountCanvas()
     pointer(wrapper, 'pointerdown', 40, 20)
     wrapper.unmount()
-    expect(removed).toHaveBeenCalledWith('keydown', expect.any(Function))
+    expect(removed).toHaveBeenCalledWith('keydown', expect.any(Function), { capture: true })
   })
 
   it('describes the drawing area for each tool', async () => {
