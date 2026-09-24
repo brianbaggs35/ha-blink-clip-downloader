@@ -181,6 +181,20 @@ def clip_analyzed_event_data(
     security layer's numbers are what an automation can act on.
     """
     clip = clip or {}
+    # The assets marked on the Assets tab that the clip's security events
+    # were about, by the names the user gave them, in the order they came
+    # up — so an automation can act on "something happened at the Mailbox".
+    # The protected vehicle is left out: it has no name of its own, only its
+    # description, and every vehicle event already says which camera.
+    assets: list[str] = []
+    for event in getattr(result, "security_events", None) or []:
+        name = str(getattr(event, "asset_name", "") or "")
+        if (
+            name
+            and getattr(event, "asset_type", "") != "vehicle"
+            and name not in assets
+        ):
+            assets.append(name)
     return {
         "clip_id": str(getattr(result, "clip_id", "") or ""),
         "camera": str(getattr(result, "camera", "") or ""),
@@ -194,6 +208,7 @@ def clip_analyzed_event_data(
             float(getattr(result, "evidence_quality", 0.0) or 0.0), 2
         ),
         "face_recognized": bool(getattr(result, "approved_faces_seen", False)),
+        "assets": assets,
         "model": str(getattr(result, "model", "") or ""),
         "path": str(clip.get("path", "") or ""),
     }

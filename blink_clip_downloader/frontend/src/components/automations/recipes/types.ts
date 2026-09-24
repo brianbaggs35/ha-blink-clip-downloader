@@ -28,8 +28,9 @@ export interface RecipeField {
   step?: number
   suffix?: string
   placeholder?: string
-  /** Fill `options` at runtime from the live camera list. */
-  source?: 'cameras'
+  /** Fill `options` at runtime from the live camera list, or from the names
+   * of the assets marked on the Assets tab. */
+  source?: 'cameras' | 'assets'
 }
 
 /** What Home Assistant's config API can create directly, and under which

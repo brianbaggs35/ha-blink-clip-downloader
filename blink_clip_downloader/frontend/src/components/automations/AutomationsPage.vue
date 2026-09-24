@@ -13,6 +13,7 @@ import NotificationChannelsCard from './NotificationChannelsCard.vue'
 import RecipeBuilder from './RecipeBuilder.vue'
 import { AUTOMATION_RECIPES } from './recipes/automations'
 import { SCRIPT_RECIPES } from './recipes/scripts'
+import { listAssets } from '../../api/assets'
 import { getCameras } from '../../api/clips'
 import { getSecurityFeedCameras } from '../../api/securityFeed'
 
@@ -48,7 +49,23 @@ async function loadCameras() {
   }
 }
 
-onMounted(loadCameras)
+/** Every name in use on the Assets tab, once each — the same name on two
+ * cameras is one choice, since the event carries names, not ids. */
+const assets = ref<string[]>([])
+
+async function loadAssets() {
+  try {
+    const names = (await listAssets()).assets.map((asset) => asset.name)
+    assets.value = [...new Set(names)].sort((a, b) => a.localeCompare(b))
+  } catch {
+    // Same as cameras: an empty choice means "any asset".
+  }
+}
+
+onMounted(() => {
+  void loadCameras()
+  void loadAssets()
+})
 </script>
 
 <template>
@@ -76,7 +93,12 @@ onMounted(loadCameras)
           </TabList>
           <TabPanels>
             <TabPanel value="automations">
-              <RecipeBuilder :recipes="AUTOMATION_RECIPES" :cameras="cameras" storage-key="blink.automations.recipe" />
+              <RecipeBuilder
+                :recipes="AUTOMATION_RECIPES"
+                :cameras="cameras"
+                :assets="assets"
+                storage-key="blink.automations.recipe"
+              />
             </TabPanel>
             <TabPanel value="scripts">
               <RecipeBuilder :recipes="SCRIPT_RECIPES" :cameras="cameras" storage-key="blink.automations.script" />
