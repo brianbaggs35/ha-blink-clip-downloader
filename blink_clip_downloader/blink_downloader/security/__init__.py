@@ -19,7 +19,14 @@ whole security layer loads, runs, and is tested on an install with none of
 the optional computer-vision dependencies present.
 """
 
-from .assets import AssetLocation, AssetType, ProtectedAsset, resolve_vehicle_asset
+from .assets import (
+    MARKABLE_ASSET_TYPES,
+    AssetLocation,
+    AssetType,
+    ProtectedAsset,
+    build_marked_asset,
+    resolve_vehicle_asset,
+)
 from .detector import DetectionContext, DetectorThresholds, SecurityEventDetector
 from .events import (
     AUDIO_EVENTS,
@@ -81,6 +88,7 @@ __all__ = [
     "AUDIO_EVENTS",
     "BYPASS_BLOCKING_EVENTS",
     "CARRYABLE_LABELS",
+    "MARKABLE_ASSET_TYPES",
     "PERSON_LABEL",
     "SUBJECT_LABELS",
     "VEHICLE_LABELS",
@@ -113,6 +121,7 @@ __all__ = [
     "band_for_score",
     "box_gap",
     "box_iou",
+    "build_marked_asset",
     "build_security_segment",
     "build_tracks",
     "build_vehicle_identity_segment",

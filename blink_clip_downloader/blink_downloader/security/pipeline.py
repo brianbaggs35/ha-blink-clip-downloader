@@ -60,6 +60,13 @@ class ClipMeasurements:
     not_applicable_sources: list[str] | None = None
     is_night: bool = False
     approved_person_recognized: bool = False
+    #: Assets marked on the Assets tab for this camera, the marked asset the
+    #: depth/contact/pose stages examined (``None`` = the vehicle), and each
+    #: marked asset's before/after appearance change — see
+    #: :class:`~.detector.DetectionContext` for what each means.
+    marked_assets: list[ProtectedAsset] = field(default_factory=list)
+    examined_asset_key: str | None = None
+    marked_asset_changes: dict[str, float] = field(default_factory=dict)
     #: ``(class name, confidence)`` pairs from the optional audio stage.
     #: Plain tuples rather than that stage's own type, so this package
     #: still imports nothing from ``vision`` and needs no audio library to
@@ -125,6 +132,9 @@ def assess_clip(
             posture_reaching=measurements.posture_reaching,
             posture_arm_raised=measurements.posture_arm_raised,
             posture_crouching=measurements.posture_crouching,
+            marked_assets=measurements.marked_assets,
+            examined_asset_key=measurements.examined_asset_key,
+            marked_asset_changes=measurements.marked_asset_changes,
         )
     )
 

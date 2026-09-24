@@ -8,14 +8,22 @@ a camera with neither configured still has no asset.
 
 The generalization buys three concrete things: the event detector and risk
 scorer are written against "the asset" rather than "the car" (so they read
-correctly and need no rewrite when doors or package areas gain
-configuration); the real-world width table turns a pixel gap into an honest
-distance per asset type instead of hardcoding a car's six feet everywhere;
-and :class:`AssetLocation` makes explicit the difference between *we can
-see it*, *we know where it usually is*, and *something else is parked there
-and it appears to be gone* — a distinction the old "nearest vehicle wins"
-logic had no way to express, and the direct cause of a neighbour's car
-being treated as the protected one.
+correctly for the doors, package spots and bikes the Assets tab marks); the
+real-world width table turns a pixel gap into an honest distance per asset
+type instead of hardcoding a car's six feet everywhere; and
+:class:`AssetLocation` makes explicit the difference between *we can see
+it*, *we know where it usually is*, and *something else is parked there and
+it appears to be gone* — a distinction the old "nearest vehicle wins" logic
+had no way to express, and the direct cause of a neighbour's car being
+treated as the protected one.
+
+Assets marked on the Assets tab (see :func:`build_marked_asset`) are located
+by the zone the user drew rather than by detection: nothing in COCO is a
+front door or a package spot, and a fixture that never moves does not need
+finding. What *does* differ by type is what counts as ordinary use — a door
+is walked up to and touched all day, a bike on its rack is not — and the
+three properties at the bottom of :class:`ProtectedAsset` are where that is
+decided, so no rule in the detector has to branch on a type name.
 """
 
 from __future__ import annotations
@@ -39,10 +47,59 @@ class AssetType(StrEnum):
     DOOR = "door"
     WINDOW = "window"
     GARAGE = "garage"
+    GATE = "gate"
     PACKAGE_AREA = "package_area"
     MAILBOX = "mailbox"
+    BICYCLE = "bicycle"
+    EQUIPMENT = "equipment"
     CAMERA = "camera"
     OTHER = "other"
+
+
+#: The types a user can mark on the Assets tab. Vehicles have their own tab
+#: (identification, signatures), and ``CAMERA`` is not something anyone
+#: draws a zone around on its own frame.
+MARKABLE_ASSET_TYPES: tuple[AssetType, ...] = (
+    AssetType.DOOR,
+    AssetType.WINDOW,
+    AssetType.GARAGE,
+    AssetType.GATE,
+    AssetType.PACKAGE_AREA,
+    AssetType.MAILBOX,
+    AssetType.BICYCLE,
+    AssetType.EQUIPMENT,
+    AssetType.OTHER,
+)
+
+#: Assets people are *meant* to walk up to and touch: a visitor knocks on
+#: the door, a courier puts a parcel on the spot, the post goes in the box.
+#: Contact with one of these is its ordinary use, so the detector reports
+#: presence, closeness and lingering at them but never claims contact —
+#: summed, a delivery driver's confirmed touch of the front door scored in
+#: the eighties, which would have forced an alert on every parcel. What is
+#: concerning at a door (a handle tried, a lock forced) is judged by the AI
+#: model from the frames, which the prompt directs to it.
+_HANDLED_ROUTINELY: frozenset[AssetType] = frozenset(
+    {
+        AssetType.DOOR,
+        AssetType.GATE,
+        AssetType.GARAGE,
+        AssetType.PACKAGE_AREA,
+        AssetType.MAILBOX,
+    }
+)
+
+#: Assets that are part of the building and cannot be moved, so the zone
+#: drawn around one is exactly where it is rather than where it usually sits.
+_FIXTURES: frozenset[AssetType] = frozenset(
+    {
+        AssetType.DOOR,
+        AssetType.WINDOW,
+        AssetType.GARAGE,
+        AssetType.GATE,
+        AssetType.MAILBOX,
+    }
+)
 
 
 class AssetLocation(StrEnum):
@@ -73,8 +130,11 @@ _ASSET_WIDTH_FEET: dict[AssetType, float] = {
     AssetType.DOOR: 3.0,
     AssetType.WINDOW: 3.0,
     AssetType.GARAGE: 9.0,
+    AssetType.GATE: 4.0,
     AssetType.PACKAGE_AREA: 3.0,
     AssetType.MAILBOX: 1.0,
+    AssetType.BICYCLE: 5.5,
+    AssetType.EQUIPMENT: 3.0,
     AssetType.CAMERA: 0.5,
     AssetType.OTHER: 3.0,
 }
@@ -92,6 +152,15 @@ class ProtectedAsset:
     box: Box | None = None
     location: AssetLocation = AssetLocation.UNKNOWN
     identification: VehicleIdentification | None = None
+    #: Stable id of a marked asset (see :func:`build_marked_asset`), which is
+    #: how per-asset evidence — the depth/contact/pose stages' verdict, the
+    #: before/after appearance change — is matched back to the right one.
+    #: Empty for the protected vehicle, which is only ever one per clip.
+    key: str = ""
+    #: True when the user's own drawn zone *is* this asset rather than a
+    #: stand-in for something detection is expected to find. A vehicle's
+    #: zone marks where the car normally parks; a door's zone is the door.
+    marked: bool = False
 
     @property
     def located(self) -> bool:
@@ -125,6 +194,49 @@ class ProtectedAsset:
         return _ASSET_WIDTH_FEET.get(
             self.asset_type, _ASSET_WIDTH_FEET[AssetType.OTHER]
         )
+
+    @property
+    def handled_routinely(self) -> bool:
+        """True when touching this asset is its ordinary use (see
+        :data:`_HANDLED_ROUTINELY`), so contact with it is not evidence."""
+        return self.asset_type in _HANDLED_ROUTINELY
+
+    @property
+    def fixed(self) -> bool:
+        """True when this asset cannot move, so where it was marked is where
+        it is — a closeness measured against it is not a guess."""
+        return self.asset_type in _FIXTURES
+
+    @property
+    def impact_applies(self) -> bool:
+        """True when a strike on this asset is out of the ordinary.
+
+        Only the vehicle. The impact rule fires on a confirmed touch plus a
+        raised arm, a sudden speed-up, or the asset's own image changing —
+        and knocking on a door is exactly a raised arm at a confirmed touch,
+        while a door, gate or window opening changes its image completely.
+        An impact is also the one event that withholds the face-recognition
+        bypass (see ``BYPASS_BLOCKING_EVENTS``), so letting it fire on
+        doors would make every household member who knocks permanently
+        suspicious. A window being broken is what ``GLASS_BREAK_HEARD`` and
+        the model's own reading of the frames exist for.
+        """
+        return self.asset_type is AssetType.VEHICLE
+
+    @property
+    def located_exactly(self) -> bool:
+        """True when this asset's box is where it really is: detected in
+        these frames, or a fixture the user marked."""
+        return self.detected or (self.marked and self.fixed)
+
+    @property
+    def reference(self) -> str:
+        """How event details name this asset: its description for the
+        vehicle, the user's own name in quotes for a marked asset, so the
+        prompt's evidence lines match its PROTECTED ASSETS list verbatim."""
+        if self.marked and self.name:
+            return f'"{self.name}"'
+        return self.description or "the protected asset"
 
     def gap_feet(self, gap_pixels: float) -> float | None:
         """Convert a pixel gap to approximate feet using this asset as scale.
@@ -195,4 +307,41 @@ def resolve_vehicle_asset(
         box=box,
         location=location,
         identification=identification,
+    )
+
+
+def build_marked_asset(
+    camera: str,
+    key: str,
+    name: str,
+    asset_type: AssetType | str,
+    zone: Zone | None,
+    frame_size: tuple[float, float],
+) -> ProtectedAsset | None:
+    """Locate one asset marked on the Assets tab, or ``None`` if unusable.
+
+    Located by its zone alone — see the module docstring for why detection
+    plays no part — and always :attr:`AssetLocation.ZONE`: a front door does
+    not get driven away, and a bike that has been taken is exactly what the
+    before/after appearance change is there to notice, not a reason to stop
+    watching its spot. ``None`` for a missing zone, an unmeasurable frame, or
+    a type this build does not know, which every caller treats as "this
+    asset contributes nothing to this clip" rather than as an error.
+    """
+    if zone is None or frame_size[0] <= 0 or frame_size[1] <= 0:
+        return None
+    try:
+        kind = AssetType(asset_type)
+    except ValueError:
+        return None
+    return ProtectedAsset(
+        name=name,
+        asset_type=kind,
+        camera=camera,
+        description=name,
+        zone=zone,
+        box=zone.to_pixel_box(*frame_size),
+        location=AssetLocation.ZONE,
+        key=key,
+        marked=True,
     )
