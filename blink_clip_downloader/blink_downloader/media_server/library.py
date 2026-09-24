@@ -29,6 +29,11 @@ from .support import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# The file app.TRIGGER_FILE polls for between cycles — touched by Download
+# Now when no trigger_download callback was wired in. A copy rather than an
+# import because app.py imports this package, not the other way round.
+_TRIGGER_FILE = Path("/data/trigger_download")
+
 
 class LibraryRoutesMixin(StorageRoutesMixin):
     """Clips: list, fetch, stream, annotate, export, delete.
@@ -249,7 +254,7 @@ class LibraryRoutesMixin(StorageRoutesMixin):
             self._trigger_download()
             return web.json_response({"triggered": True})
         try:
-            Path("/data/trigger_download").touch()
+            _TRIGGER_FILE.touch()
         except OSError:
             pass
         return web.json_response({"triggered": True})

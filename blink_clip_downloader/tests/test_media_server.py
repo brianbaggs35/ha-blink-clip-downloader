@@ -953,10 +953,24 @@ async def test_download_now_triggers_callback(db: ClipDatabase, tmp_path: Path) 
 
 
 async def test_download_now_no_callback_touches_trigger_file(
-    client: TestClient, tmp_path: Path
+    client: TestClient, data_dir: Path
 ) -> None:
     resp = await client.post("/api/download-now")
     assert resp.status == 200
+    # The same file app.TRIGGER_FILE polls for between cycles.
+    assert (data_dir / "trigger_download").exists()
+
+
+async def test_download_now_no_callback_tolerates_an_unwritable_trigger_file(
+    client: TestClient, tmp_path: Path
+) -> None:
+    with patch(
+        "blink_downloader.media_server.library._TRIGGER_FILE",
+        tmp_path / "missing" / "trigger_download",
+    ):
+        resp = await client.post("/api/download-now")
+    assert resp.status == 200
+    assert await resp.json() == {"triggered": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1922,6 +1936,43 @@ async def test_moondream_install_returns_installing_or_already_installed(
     assert resp.status == 200
     data = await resp.json()
     assert data["status"] in ("installing", "already_installed")
+
+
+async def test_moondream_install_logs_a_packages_dir_it_cannot_create(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A packages directory that can't be created is logged rather than
+    failing the request; the install still starts."""
+    from blink_downloader.media_server import ai as ms
+
+    monkeypatch.setattr(ms, "_moondream_install_state", {"status": "idle", "log": ""})
+    not_a_dir = tmp_path / "not-a-dir"
+    not_a_dir.write_text("")
+
+    with (
+        patch(
+            "blink_downloader.media_server.ai._moondream_arch_supported",
+            return_value=True,
+        ),
+        patch(
+            "blink_downloader.media_server.ai._is_moondream_installed",
+            return_value=False,
+        ),
+        patch(
+            "blink_downloader.media_server.ai._MOONDREAM_PACKAGES_DIR",
+            not_a_dir / "moondream_packages",
+        ),
+        patch("asyncio.create_task", side_effect=lambda coro: coro.close()),
+        caplog.at_level("WARNING"),
+    ):
+        resp = await client.post("/api/ai/moondream/install")
+
+    assert resp.status == 200
+    assert await resp.json() == {"status": "installing"}
+    assert "Could not create moondream packages dir" in caplog.text
 
 
 async def test_moondream_install_already_installed(client: TestClient) -> None:

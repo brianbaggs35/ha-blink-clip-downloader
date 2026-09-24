@@ -1947,6 +1947,22 @@ async def test_connect_passes_through_password_with_symbols(dl, tmp_path):
     assert call_kwargs["login_data"]["password"] == "p@ss!w0rd#123$%^&*()"
 
 
+def test_hardware_id_is_still_used_when_it_cannot_be_persisted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unwritable HARDWARE_ID_FILE costs persistence, not the login: the
+    chosen id is still returned, and the failure is logged."""
+    with (
+        patch(
+            "blink_downloader.downloader.HARDWARE_ID_FILE",
+            tmp_path / "missing" / "hardware_id.txt",
+        ),
+        caplog.at_level("WARNING"),
+    ):
+        assert BlinkDownloader._get_or_create_hardware_id("CACHED-ID") == "CACHED-ID"
+    assert "Could not persist Blink hardware ID" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # disconnect()
 # ---------------------------------------------------------------------------
@@ -3564,6 +3580,24 @@ def test_load_camera_identities_handles_invalid_files(tmp_path: Path) -> None:
     identities_file.write_text("[]")
     with patch("blink_downloader.downloader.CAMERA_IDENTITIES_FILE", identities_file):
         assert BlinkDownloader._load_camera_identities() == {}
+
+
+def test_save_camera_identities_failure_keeps_the_known_identities(
+    dl: BlinkDownloader, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed write is logged, and the in-memory identities stay as they
+    were rather than getting ahead of what is on disk."""
+    dl._known_camera_identities = {"Front Door": "camera_id:100"}
+    with (
+        patch(
+            "blink_downloader.downloader.CAMERA_IDENTITIES_FILE",
+            tmp_path / "missing" / "camera_identities.json",
+        ),
+        caplog.at_level("WARNING"),
+    ):
+        dl._save_camera_identities({"Front Door": "camera_id:200"})
+    assert dl._known_camera_identities == {"Front Door": "camera_id:100"}
+    assert "Could not save Blink camera identities" in caplog.text
 
 
 async def test_refresh_device_topology_logs_camera_rename_migration_failure(

@@ -25,13 +25,14 @@ class DailyDigest:
         db: ClipDatabase,
         digest_time: str,
         enabled: bool,
-        last_digest_file: Path = _LAST_DIGEST_FILE,
+        last_digest_file: Path | None = None,
     ) -> None:
         self._notifier = notifier
         self._db = db
         self._digest_time = digest_time  # "HH:MM"
         self._enabled = enabled
-        self._state_file = last_digest_file
+        # None looks the module default up at call time, so tests can redirect it.
+        self._state_file = last_digest_file or _LAST_DIGEST_FILE
         self._last_sent: date | None = self._load_last_sent()
 
     # ------------------------------------------------------------------
