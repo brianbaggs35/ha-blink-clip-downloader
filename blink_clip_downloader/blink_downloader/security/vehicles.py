@@ -41,7 +41,8 @@ from .tracks import VEHICLE_LABELS, ObjectTrack, TrackPoint
 #: Weight each evidence source carries when all are available. Zone overlap
 #: dominates because it is the user's own explicit statement of where their
 #: vehicle is; the learned signals exist to break ties the zone cannot and
-#: to work at all when no zone was ever drawn.
+#: to carry on working if the zone is later cleared. They are only learned
+#: from confident identifications, which a camera with no zone never makes.
 _WEIGHT_ZONE = 0.5
 _WEIGHT_POSITION = 0.3
 _WEIGHT_APPEARANCE = 0.2
@@ -362,8 +363,8 @@ def identify_protected_vehicle(
     vision pipeline computed them. Every evidence source is optional; the
     score is the weighted mean of whichever are actually available, so a
     user who has drawn a zone but has no learned signature yet is judged
-    purely on the zone, exactly as before, while a user who never drew one
-    still gets the benefit of the learned parking position.
+    purely on the zone, exactly as before, while one who has since cleared
+    it still gets the benefit of the learned parking position.
 
     Returns an identification with ``protected=None`` when real evidence
     exists and no vehicle matches it — the protected car is simply not in

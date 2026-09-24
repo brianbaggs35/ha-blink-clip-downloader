@@ -629,9 +629,13 @@ per-camera AI prompt tuning):
   motion happened inside the zone vs. elsewhere, using true point-in-polygon
   matching for freeform zones) is added to the AI's evidence, and for
   Moondream providers it's used as a fallback proximity reference when a
-  clip's vehicle detection finds nothing at all. Clear the zone to skip it —
-  everything else (distance rules, description-based disambiguation) works
-  the same with or without one configured.
+  clip's vehicle detection finds nothing at all. With the enhanced
+  detection pipeline on, the zone is also how the structured security layer
+  knows **which** car is yours (see [Which car is
+  yours](#which-car-is-yours)) and where "entered the protected zone"
+  begins — so it is worth drawing even with a single car in view. Clear the
+  zone to skip it; the AI prompt's distance rules and description-based
+  disambiguation work the same either way.
 
 > **Priority:** `camera_configs.json`/`vehicle_settings.json` (both set via
 > the web UI) are the primary source for descriptions, custom prompts,
@@ -1069,6 +1073,10 @@ independent pieces of evidence, any of which may be missing:
 
 Only *confident* identifications teach the learned signature, because learning
 from a guess is how a signature drifts onto the neighbour's car and stays there.
+That makes the zone the thing to draw first: with no zone and nothing learned, a
+car alone in frame is assumed to be yours but only tentatively — every event
+about it carries reduced weight, and nothing is ever learned from it, since
+learning waits for a confident identification.
 The Vehicles tab shows what each camera has learned and lets you reset it — do
 that after buying a new car, rearranging where you park, or if identification has
 plainly latched onto the wrong vehicle.
@@ -1093,7 +1101,31 @@ overlaps it exactly like a person leaning on it. Three things separate them:
 - **Depth estimation.** When `ai_enhanced_detection_enabled` is on, the depth
   stage's verdict dominates — including its negative verdict. If it places the
   subject at a clearly different distance from the camera than the vehicle,
-  proximity and zone-entry events are suppressed outright.
+  proximity and zone-entry events are suppressed outright. A difference too
+  small to call either way counts as no depth evidence at all, not as proof
+  they were elsewhere.
+- **The far side of the car.** From a camera facing the car's passenger side,
+  the driver's door is behind the car, which hides the feet of anyone standing
+  there. When depth places such a person at the car's own distance with their
+  outline over it, they count as at the car. Feet in plain view in front of
+  the car are never overruled that way: depth often calls a passer-by who
+  overlaps a car in the image "similar", and a gap the camera can see
+  outweighs it.
+
+Depth, contact segmentation and pose each examine **one subject per clip**:
+whoever stands nearest the car's ground line, at the moment their outline
+overlaps it most. A person within about 3 feet of the car is examined ahead
+of any animal. Only a person's contact can raise a clip to suspicious or
+critical, and only a person has a pose to read, so a dog at a stranger's feet
+must not take the checks that would confirm the stranger's touch. A dog up
+on the car while its owner stands further off is still the one examined.
+
+A **possible impact** needs a confirmed contact plus something abrupt: a raised
+arm, the car's own image region changing, or a sharp speed-up at the car. The
+speed-up is measured against the person's own height, so it means the same on
+every lens. It has to be a jog or faster, rushing at the car or running from
+it. Getting out of a parked car and walking indoors at an ordinary pace is
+not one.
 
 #### What pose estimation adds
 
