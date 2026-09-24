@@ -190,6 +190,18 @@ tab points out photos captured at the old resolution.
   bypass withheld, since that is the one event it never excuses. The
   speed-up now has to happen at the car — rushing into it or bolting from
   it, both of which still raise a possible impact.
+- **Walking away from your own car could read as a possible impact.** How
+  sharply someone sped up was measured in frame widths per second, and a
+  frame spans twenty feet on a camera close to the car and sixty on a wide
+  one, so the bar a run cleared on a wide camera was cleared by a walk on a
+  close one. Getting out of a parked car and walking indoors — standing at
+  the car, then setting off at an ordinary 4.5 ft/s — was a sudden speed-up
+  at the car, and with the touch confirmed by depth estimation and
+  segmentation that made every homecoming a possible impact: a critical,
+  forced alert, with the face-recognition bypass withheld. The speed-up is
+  now measured in the person's own height per second, and has to be a jog
+  or faster (1.2 heights a second; an ordinary walk is about 0.8). Running
+  from the car, or rushing at it from a standstill, still raises one.
 - **The prompt could talk the AI model out of a real approach to the car.**
   When under half of a clip's pixel motion fell inside the car zone, the
   prompt told the model "do not assume the vehicle is involved". Someone

@@ -293,9 +293,20 @@ class ObjectTrack:
         return "moving down the frame" if dy > 0 else "moving up the frame"
 
     def max_speed_increase_at(self, target: Box) -> float:
-        """Largest *acceleration* between consecutive legs, in widths/second,
-        counting only a change of speed at *target* — on a leg arriving at
-        it or leaving it (a sighting whose outline meets it).
+        """Largest *acceleration* between consecutive legs, in the subject's
+        own heights per second, counting only a change of speed at *target*
+        — on a leg arriving at it or leaving it (a sighting whose outline
+        meets it).
+
+        Measured against the subject rather than the frame because a frame
+        width is no yardstick for a person's pace: it spans twenty feet on
+        a camera close to the car and sixty on a wide one, so a threshold
+        in widths per second that a run clears on the wide camera is
+        cleared by a walk on the close one. Someone's own height is at
+        their own distance from the camera, and it makes an ordinary walk
+        about 0.8 heights a second whatever the lens. The tallest sighting
+        is the one used, since the asset or the frame edge only ever makes
+        a box shorter than the person in it.
 
         Deliberately one-directional. Slowing to a stop is what everyone
         does on reaching a car, a door, or a gate, so treating any large
@@ -311,8 +322,8 @@ class ObjectTrack:
         alert, and their face-recognition bypass withheld. Zero for tracks
         with too few sightings to have two legs to compare.
         """
-        width = self.frame_size[0]
-        if width <= 0 or len(self.points) < 3:
+        height = max(p.box[3] - p.box[1] for p in self.points)
+        if height <= 0 or len(self.points) < 3:
             return 0.0
         at_target = [box_gap(p.box, target) <= 0 for p in self.points]
         # One speed per leg (sighting k to k+1); None where time stood still.
@@ -320,7 +331,7 @@ class ObjectTrack:
         for a, b in pairwise(self.points):
             dt = b.offset - a.offset
             (x1, y1), (x2, y2) = box_center(a.box), box_center(b.box)
-            legs.append(math.hypot(x2 - x1, y2 - y1) / width / dt if dt > 0 else None)
+            legs.append(math.hypot(x2 - x1, y2 - y1) / height / dt if dt > 0 else None)
         best = 0.0
         # The change of speed at sighting k is between the leg arriving
         # there and the leg leaving; it involves sightings k-1, k and k+1.

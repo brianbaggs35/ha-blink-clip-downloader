@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import pytest
@@ -325,13 +326,33 @@ def test_max_speed_increase_detects_a_sudden_rush() -> None:
     steady = _track([(0, 0, 10, 10), (64, 0, 74, 10), (128, 0, 138, 10)])
     lurching = _track([(0, 0, 10, 10), (10, 0, 20, 10), (300, 0, 310, 10)])
     assert steady.max_speed_increase_at(_TARGET) == pytest.approx(0.0)
-    # Well over the detector's abrupt_speed_change (0.12 widths/second).
-    assert lurching.max_speed_increase_at(_TARGET) > 0.2
+    # Well over the detector's abrupt_speed_change (1.2 heights/second).
+    assert lurching.max_speed_increase_at(_TARGET) > 2.0
 
 
 def test_max_speed_increase_counts_bolting_away_from_the_target() -> None:
     bolting = _track([(300, 0, 310, 10), (302, 0, 312, 10), (620, 0, 630, 10)])
-    assert bolting.max_speed_increase_at(_TARGET) > 0.2
+    assert bolting.max_speed_increase_at(_TARGET) > 2.0
+
+
+def test_max_speed_increase_is_in_the_subjects_own_heights() -> None:
+    """The same walk reads the same whatever the lens: 0.8 heights a second
+    from standing still, for a subject 150 px tall covering 240 px in a
+    two-second leg, in a narrow frame or a wide one."""
+    walk = [(300, 0, 360, 150)] * 2 + [(540, 0, 600, 150)]
+    narrow = _track(walk, frame_size=(640.0, 360.0))
+    wide = _track(walk, frame_size=(1920.0, 1080.0))
+    assert narrow.max_speed_increase_at(_TARGET) == pytest.approx(0.8)
+    assert wide.max_speed_increase_at(_TARGET) == pytest.approx(0.8)
+
+
+def test_max_speed_increase_scales_by_the_tallest_sighting() -> None:
+    """A car hides the legs of someone standing at it; the full-height
+    sighting walking away is the one that says how tall they are."""
+    hidden_legs = [(300, 0, 360, 90)] * 2 + [(540, 30, 600, 180)]
+    assert _track(hidden_legs).max_speed_increase_at(_TARGET) == pytest.approx(
+        math.hypot(240, 60) / 150 / 2
+    )
 
 
 def test_max_speed_increase_ignores_setting_off_away_from_the_target() -> None:
@@ -355,8 +376,8 @@ def test_max_speed_increase_needs_three_sightings() -> None:
     assert two.max_speed_increase_at(_TARGET) == 0.0
 
 
-def test_max_speed_increase_zero_width_frame() -> None:
-    track = _track([(0, 0, 10, 10)] * 3, frame_size=(0.0, 360.0))
+def test_max_speed_increase_zero_height_boxes() -> None:
+    track = _track([(0, 5, 10, 5)] * 3)
     assert track.max_speed_increase_at(_TARGET) == 0.0
 
 

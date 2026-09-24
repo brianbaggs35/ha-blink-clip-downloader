@@ -88,9 +88,14 @@ class DetectorThresholds:
     #: Total travel (frame widths) below which a track counts as having
     #: stayed put rather than crossed the scene.
     stationary_path: float = 0.35
-    #: Acceleration (frame widths per second) between consecutive legs that
-    #: reads as rushing at something rather than walking up to it.
-    abrupt_speed_change: float = 0.12
+    #: Speed-up between consecutive legs, in the subject's own heights per
+    #: second, that reads as rushing at the asset or bolting from it — a
+    #: jog or faster. An ordinary walk is about 0.8 heights a second (1.4 m/s
+    #: for someone 1.7 m tall) and a brisk one about 1.0, and standing at
+    #: the car and then walking off is a speed-up of exactly that much: the
+    #: shape of getting out of a parked car and going indoors, which must
+    #: not read as an impact.
+    abrupt_speed_change: float = 1.2
     #: Change (0.0-1.0) in the asset's own image region between before and
     #: after the interaction that reads as the asset itself being altered.
     appearance_change: float = 0.25
