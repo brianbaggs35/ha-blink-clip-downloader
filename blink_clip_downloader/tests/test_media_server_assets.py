@@ -162,6 +162,13 @@ async def test_create_stores_applies_and_keeps_the_frame(api: _Api) -> None:
     assert listed["assets"] == [asset]
 
 
+async def test_a_second_asset_is_drawn_on_the_cameras_frame(api: _Api) -> None:
+    await _create(api, clip_id="porch1")
+    bike = await _create(api, clip_id="", name="Bike", asset_type="bicycle")
+    assert bike["name"] == "Bike"
+    assert MediaServer._asset_snapshot_path("Porch").read_bytes() == JPEG
+
+
 async def test_create_takes_a_freeform_zone(api: _Api) -> None:
     asset = await _create(api, zone=POLYGON, asset_type="bicycle", name="Bike")
     assert asset["zone"] == POLYGON
@@ -222,6 +229,35 @@ async def test_create_is_capped_per_camera(
     assert "2 assets" in await resp.text()
     # Other cameras have their own allowance.
     await _create(api, camera="Yard", clip_id="yard1", name="Gate", asset_type="gate")
+
+
+async def test_names_are_unique_per_camera(api: _Api) -> None:
+    """The name is how events and the prompt refer to an asset."""
+    door = await _create(api, name="Front door")
+    resp = await api.client.post(
+        "/api/assets",
+        json={
+            "camera": "PORCH",
+            "name": "front DOOR",
+            "asset_type": "door",
+            "zone": RECT,
+            "clip_id": "porch1",
+        },
+    )
+    assert resp.status == 409
+    assert "already has an asset called “Front door”" in await resp.text()
+    # The same name on another camera is its own asset.
+    await _create(api, camera="Yard", clip_id="yard1", name="Front door")
+    # Renaming onto a taken name is refused; keeping one's own is not.
+    bike = await _create(api, name="Bike", asset_type="bicycle")
+    clash = await api.client.put(
+        f"/api/assets/{bike['id']}", json={"name": "Front Door"}
+    )
+    assert clash.status == 409
+    same = await api.client.put(
+        f"/api/assets/{door['id']}", json={"name": "Front Door"}
+    )
+    assert same.status == 200
 
 
 async def test_a_failed_frame_save_does_not_fail_the_asset(

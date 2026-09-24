@@ -17,6 +17,7 @@ import AiPage from './components/ai/AiPage.vue'
 import UsagePage from './components/usage/UsagePage.vue'
 import ModelsPage from './components/models/ModelsPage.vue'
 import VehiclesPage from './components/vehicles/VehiclesPage.vue'
+import AssetsPage from './components/assets/AssetsPage.vue'
 import BiometricsPage from './components/biometrics/BiometricsPage.vue'
 import StoragePage from './components/storage/StoragePage.vue'
 import PromptOverlay from './components/layout/PromptOverlay.vue'
@@ -117,6 +118,9 @@ onUnmounted(() => auth.stopPolling())
   </div>
   <div id="page-vehicles" class="page" :class="{ active: activeTab === 'vehicles' }">
     <VehiclesPage v-if="activeTab === 'vehicles'" />
+  </div>
+  <div id="page-assets" class="page" :class="{ active: activeTab === 'assets' }">
+    <AssetsPage v-if="activeTab === 'assets'" />
   </div>
   <div id="page-biometrics" class="page" :class="{ active: activeTab === 'biometrics' }">
     <BiometricsPage v-if="activeTab === 'biometrics'" />

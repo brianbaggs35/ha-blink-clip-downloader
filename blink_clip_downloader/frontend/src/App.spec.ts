@@ -60,6 +60,15 @@ describe('App', () => {
         else if (url.startsWith('/api/liveview/cameras')) body = { cameras: [] }
         else if (url.startsWith('/api/liveview/status')) body = { active: false }
         else if (url.startsWith('/api/vehicle/settings')) body = { car_description: '' }
+        else if (url.startsWith('/api/assets/activity')) body = { days: 7, activity: [] }
+        else if (url.startsWith('/api/assets')) {
+          body = {
+            assets: [],
+            limits: { per_camera: 12, name: 48, description: 160 },
+            analysis_enabled: false,
+            detection_enabled: false,
+          }
+        }
         else if (url.startsWith('/api/ai/faces/bypass-stats')) {
           body = { total_bypassed: 0, by_name: [], recent: [] }
         } else if (url.startsWith('/api/ai/faces')) body = { available: true, faces: [] }
@@ -163,6 +172,16 @@ describe('App', () => {
     await flushPromises()
     expect(wrapper.find('#page-vehicles').classes()).toContain('active')
     expect(wrapper.text()).toContain('Protected Vehicle Description')
+    wrapper.unmount()
+  })
+
+  it('switches to the Assets tab and mounts AssetsPage', async () => {
+    mockArrayAwareFetch()
+    const wrapper = mountApp()
+    await wrapper.find('[data-tab="assets"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('#page-assets').classes()).toContain('active')
+    expect(wrapper.find('#page-assets').text()).toContain('Mark the things you most want protected')
     wrapper.unmount()
   })
 

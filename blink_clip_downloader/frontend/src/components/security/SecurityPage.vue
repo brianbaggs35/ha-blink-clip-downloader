@@ -15,7 +15,7 @@ import AppIcon from '../icons/AppIcon.vue'
 import LoadingIndicator from '../layout/LoadingIndicator.vue'
 import SecurityEventDetail from './SecurityEventDetail.vue'
 import SecurityStatsBar from './SecurityStatsBar.vue'
-import { formatEventType, formatOffset, severityColor, severityTag } from './severity'
+import { assetOf, formatEventType, formatOffset, severityColor, severityTag } from './severity'
 
 const PAGE_SIZE = 25
 
@@ -359,6 +359,13 @@ const days = computed(() => {
                   </div>
                   <div class="security-row-tags">
                     <Tag :value="formatEventType(item.event_type)" :severity="severityTag(item.severity)" />
+                    <Tag
+                      v-if="assetOf(item)"
+                      :value="assetOf(item)!.label"
+                      :icon="assetOf(item)!.icon"
+                      severity="secondary"
+                      class="security-asset"
+                    />
                     <Tag
                       v-if="verdict(item)"
                       :value="verdict(item)!.label"

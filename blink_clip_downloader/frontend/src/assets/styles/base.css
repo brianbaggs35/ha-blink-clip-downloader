@@ -1584,12 +1584,13 @@ body.nav-collapsed {
   padding-bottom: 3rem;
 }
 
-/* Vehicles/Biometrics/Storage/Live View/Security Feed pad themselves
-   (.vehicles-page/.biometrics-page/.storage-page/.liveview-page/
-   .secfeed-page) — .page's own `overflow: hidden` still needs overriding
-   per page or their content has no way to scroll past the viewport, the
-   same gap #page-models had before it was added above. */
+/* Vehicles/Assets/Biometrics/Storage/Live View/Security Feed pad themselves
+   (.vehicles-page/.assets-page/.biometrics-page/.storage-page/
+   .liveview-page/.secfeed-page) — .page's own `overflow: hidden` still
+   needs overriding per page or their content has no way to scroll past the
+   viewport, the same gap #page-models had before it was added above. */
 #page-vehicles,
+#page-assets,
 #page-security,
 #page-biometrics,
 #page-storage,
