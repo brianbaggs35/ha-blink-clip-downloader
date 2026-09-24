@@ -184,7 +184,8 @@ def test_what_each_type_is_watched_for(
 def test_a_window_is_stood_at_from_the_ground_below_it() -> None:
     window = build_marked_asset("Porch", "w1", "Window", "window", WINDOW_ZONE, FRAME)
     door = _door()
-    assert window is not None and window.elevated is True
+    assert window is not None
+    assert window.elevated is True
     x1, y1, x2, y2 = window.box  # type: ignore[misc]
     assert window.standing_box == (x1, y2, x2, y2 + (y2 - y1))
     assert door.elevated is False

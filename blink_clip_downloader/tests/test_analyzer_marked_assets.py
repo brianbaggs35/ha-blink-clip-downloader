@@ -155,7 +155,8 @@ def test_short_clips_are_not_waved_through_at_marked_assets() -> None:
     marked = a._build_prompt("Porch", clip_duration=5.0)
     unmarked = a._build_prompt("Backyard", clip_duration=5.0)
     assert "brevity is no reason" in marked
-    assert "SHORT EVENT" in unmarked and "brevity is no reason" not in unmarked
+    assert "SHORT EVENT" in unmarked
+    assert "brevity is no reason" not in unmarked
 
 
 def test_a_calm_scene_baseline_is_not_offered_at_marked_assets() -> None:
@@ -443,10 +444,12 @@ def test_the_rules_sent_match_what_each_camera_has() -> None:
     a = _house()
     front = a._build_prompt("Front Door")
     garage = a._build_prompt("Garage")
-    assert "Doors, gates and garage doors" in front and "Mailboxes" in front
+    assert "Doors, gates and garage doors" in front
+    assert "Mailboxes" in front
     assert "Bikes, equipment and other marked items" not in front
     assert "Bikes, equipment and other marked items" in garage
-    assert "Mailboxes" not in garage and "Doors, gates" not in garage
+    assert "Mailboxes" not in garage
+    assert "Doors, gates" not in garage
 
 
 async def test_each_camera_hands_the_vision_pipeline_only_its_own_assets() -> None:

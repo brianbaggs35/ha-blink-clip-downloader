@@ -119,7 +119,8 @@ def test_normalize_asset_rejects_a_non_dict() -> None:
 
 def test_disabled_survives_normalization() -> None:
     asset = pa.normalize_asset(_asset(enabled=False))
-    assert asset is not None and asset["enabled"] is False
+    assert asset is not None
+    assert asset["enabled"] is False
 
 
 def test_parse_assets_keeps_good_entries_and_first_of_each_id() -> None:

@@ -146,15 +146,17 @@ function focusRow(id: string) {
               </span>
             </div>
             <div class="asset-actions">
-              <label class="watch-toggle">
+              <span class="watch-toggle">
                 <ToggleSwitch
                   :model-value="asset.enabled"
                   :disabled="busy.has(asset.id)"
                   :aria-label="`Watch ${asset.name}`"
                   @update:model-value="emit('toggle', asset, $event)"
                 />
-                <span class="watch-label">{{ asset.enabled ? 'Watching' : 'Off' }}</span>
-              </label>
+                <!-- The switch's own name and checked state already say this
+                     to a screen reader; the word is for the eye. -->
+                <span class="watch-label" aria-hidden="true">{{ asset.enabled ? 'Watching' : 'Off' }}</span>
+              </span>
               <Button
                 icon="pi pi-pencil"
                 text
@@ -333,7 +335,6 @@ function focusRow(id: string) {
   align-items: center;
   gap: 0.35rem;
   margin-right: 0.25rem;
-  cursor: pointer;
 }
 
 .watch-label {

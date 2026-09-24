@@ -400,46 +400,8 @@ class SecurityEventDetector:
         retreat), which differ only for an elevated asset."""
         standing = standing or profile
         events: list[SecurityEvent] = []
-        min_feet = asset.gap_feet(standing.min_gap)
-        # _asset_events only calls this for an asset with a box, which is
-        # the one thing gap_feet needs to produce a number.
-        assert min_feet is not None
-        near = min_feet <= self._t.near_feet
-
-        # Depth estimation is what separates "walked past the car" from
-        # "stood right at the car": in a 2D frame those look identical, and
-        # the depth map is the only evidence that says which one happened.
-        # A negative verdict is as useful as a positive one, so when depth
-        # places this subject at a clearly different distance from the
-        # camera than the asset, the proximity and zone rules below stand
-        # down entirely rather than reporting a closeness that only exists
-        # in the projection.
         depth_verdict = ctx.depth_similar if cv_applies else None
-        if depth_verdict is False:
-            near = False
-        elif (
-            depth_verdict is True
-            and profile.min_box_gap <= 0
-            and not near
-            and self._feet_could_be_hidden(track, profile, asset)
-        ):
-            # On the far side of the car — the driver's door, from a camera
-            # facing its passenger side — the car hides the subject's feet,
-            # so their box ends mid-car and the foot point reads as metres
-            # behind it. Depth placing them at the car's own distance with
-            # their outlines overlapping is being at the car, wherever the
-            # feet appear to be. Without it the same confirmed touch scored
-            # 69 on the far side against 86 on the near one, below the
-            # alert band.
-            #
-            # Only feet the car could be hiding, though. Feet in plain view
-            # in front of it are a measured distance, and depth calls a
-            # passer-by who overlaps the car in the image "similar" more
-            # often than not (10 of 13 real photos) — letting that override
-            # a visible gap put someone walking past five feet in front of
-            # the car "within 1 ft" of it and forced a critical alert.
-            min_feet = min(min_feet, self._t.close_feet)
-            near = True
+        min_feet, near = self._nearness(track, profile, standing, asset, depth_verdict)
 
         zone_event = self._zone_event(track, asset, ctx, depth_verdict)
         if zone_event is not None:
@@ -490,6 +452,55 @@ class SecurityEventDetector:
             self._contact_events(track, profile, standing, asset, ctx, cv_applies, near)
         )
         return events
+
+    def _nearness(
+        self,
+        track: ObjectTrack,
+        profile: ApproachProfile,
+        standing: ApproachProfile,
+        asset: ProtectedAsset,
+        depth_verdict: bool | None,
+    ) -> tuple[float, bool]:
+        """How close *track* came to *asset* in feet, and whether that was near.
+
+        Depth estimation is what separates "walked past the car" from
+        "stood right at the car": in a 2D frame those look identical, and
+        the depth map is the only evidence that says which one happened. A
+        negative verdict is as useful as a positive one, so when depth
+        places this subject at a clearly different distance from the camera
+        than the asset, the proximity and zone rules stand down entirely
+        rather than reporting a closeness that only exists in the
+        projection.
+
+        A positive one decides the far side of the car — the driver's door,
+        from a camera facing its passenger side — where the car hides the
+        subject's feet, so their box ends mid-car and the foot point reads
+        as metres behind it. Depth placing them at the car's own distance
+        with their outlines overlapping is being at the car, wherever the
+        feet appear to be. Without it the same confirmed touch scored 69 on
+        the far side against 86 on the near one, below the alert band. Only
+        feet the car could be hiding, though: feet in plain view in front of
+        it are a measured distance, and depth calls a passer-by who overlaps
+        the car in the image "similar" more often than not (10 of 13 real
+        photos) — letting that override a visible gap put someone walking
+        past five feet in front of the car "within 1 ft" of it and forced a
+        critical alert.
+        """
+        min_feet = asset.gap_feet(standing.min_gap)
+        # _asset_events only calls this for an asset with a box, which is
+        # the one thing gap_feet needs to produce a number.
+        assert min_feet is not None
+        if depth_verdict is False:
+            return min_feet, False
+        near = min_feet <= self._t.near_feet
+        if (
+            depth_verdict is True
+            and profile.min_box_gap <= 0
+            and not near
+            and self._feet_could_be_hidden(track, profile, asset)
+        ):
+            return min(min_feet, self._t.close_feet), True
+        return min_feet, near
 
     def _contact_events(
         self,

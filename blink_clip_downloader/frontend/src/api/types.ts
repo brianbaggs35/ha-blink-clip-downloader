@@ -423,7 +423,7 @@ export type AssetType =
   'door' | 'window' | 'garage' | 'gate' | 'package_area' | 'mailbox' | 'bicycle' | 'equipment' | 'other'
 
 /** A marked zone, normalized 0-1 — the same two shapes a car zone has. */
-export type AssetZone = CarZone
+export type AssetZone = CarZoneRect | CarZonePolygon
 
 export interface ProtectedAsset {
   id: string
