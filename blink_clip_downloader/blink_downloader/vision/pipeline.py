@@ -880,11 +880,14 @@ class VisionPipeline:
 
 
 def _feet_from(subject: DetectedObject, asset: ProtectedAsset) -> float | None:
-    """How far *subject* stands in front of *asset*, in feet."""
+    """How far *subject* stands in front of *asset*, in feet — measured to
+    where someone at it would stand, which for a window is the ground below
+    it (see ``ProtectedAsset.standing_box``), the same as the detector."""
+    standing = asset.standing_box
     # Only ever called for assets with a box: the vehicle is filtered on it,
     # and build_marked_asset never returns one without.
-    assert asset.box is not None
-    return asset.gap_feet(_in_front_gap(subject.box, asset.box))
+    assert standing is not None
+    return asset.gap_feet(_in_front_gap(subject.box, standing))
 
 
 def _is_at(

@@ -451,11 +451,16 @@ SCENARIOS: list[Scenario] = [
             "pose estimation",
             "face recognition",
         ],
-        # Nothing can separate "in front of the car" from "at the car" here,
-        # so the honest answer is an unconfirmed claim that never reaches the
-        # alert band on its own — not silence, and not a suspicious verdict.
+        # With no depth stage, the outline overlap alone once earned an
+        # unconfirmed "possible contact" here. But these feet are in plain
+        # view nearly six feet in front of the car's ground line — the same
+        # measured distance the proximity rule and the far-side rule already
+        # trust — and nobody touches a car from there. The zone entry still
+        # stands, so the clip is on record without claiming a touch.
         expect_severity=(Severity.ROUTINE, Severity.NOTEWORTHY),
         max_event_severity=Severity.NOTEWORTHY,
+        forbid_events={SecurityEventType.CONTACT_CANDIDATE},
+        expect_events={SecurityEventType.ZONE_ENTERED},
     ),
     # -- walking close past the car's front at night, no depth stages ----
     # Five noteworthy events from one overlap summed to 79 (a forced alert)
