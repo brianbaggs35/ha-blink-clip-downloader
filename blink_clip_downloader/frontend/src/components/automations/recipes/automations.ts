@@ -30,6 +30,7 @@ import {
   boolValue,
   duration,
   entityList,
+  jinjaList,
   jinjaString,
   joinLines,
   listValue,
@@ -376,6 +377,107 @@ const suspiciousAlert: Recipe = {
         },
       ),
     ]),
+}
+
+/** The severities the security layer can give a clip, lowest first — the
+ * same order as security/events.py's Severity. */
+const SEVERITIES = ['routine', 'noteworthy', 'suspicious', 'critical']
+
+const assetActivity: Recipe = {
+  id: 'asset-activity-alert',
+  create: { kind: 'automation', objectId: 'blink_asset_activity_alert' },
+  name: 'Activity at a marked asset',
+  group: 'Security',
+  icon: '🛡️',
+  description:
+    'Notifies when something happens at one of the assets marked on the Assets tab — the front door, the parcel spot, the bike — naming it the way you did.',
+  target: 'automations.yaml',
+  filename: 'blink-asset-activity.yaml',
+  fields: [
+    {
+      key: 'assets',
+      label: 'Assets',
+      type: 'multiselect',
+      default: [],
+      source: 'assets',
+      help: 'Leave empty for any marked asset. The per-asset events need Enhanced Detection switched on.',
+    },
+    {
+      key: 'min_severity',
+      label: 'Notify from',
+      type: 'select',
+      default: 'noteworthy',
+      options: [
+        { label: 'Anything at all', value: 'routine' },
+        { label: 'Noteworthy and up', value: 'noteworthy' },
+        { label: 'Suspicious and up', value: 'suspicious' },
+        { label: 'Critical only', value: 'critical' },
+      ],
+      help: "The clip's severity from the security layer. Noteworthy skips someone simply walking past.",
+    },
+    {
+      key: 'only_suspicious',
+      label: 'Only when the AI also calls it suspicious',
+      type: 'toggle',
+      default: false,
+      help: 'Leave off to hear about every visit to the asset, including a courier at the door.',
+    },
+    notifyField(),
+    criticalField,
+    snapshotField,
+    clickPathField,
+    pauseField,
+  ],
+  build: (v: RecipeValues) => {
+    const chosen = listValue(v, 'assets')
+    // Events from before an asset list existed have no `assets` key at all.
+    const involved = '(trigger.event.data.assets | default([]))'
+    const assetTest = chosen.length
+      ? `{{ ${involved} | select('in', ${jinjaList(chosen)}) | list | count > 0 }}`
+      : `{{ ${involved} | count > 0 }}`
+    const floor = Math.max(0, SEVERITIES.indexOf(stringValue(v, 'min_severity', 'noteworthy')))
+    return joinLines([
+      header(
+        'Blink – activity at a marked asset',
+        "Notifies when a clip's security events were about one of the assets marked on the Assets tab.",
+        'queued',
+        10,
+      ),
+      'triggers:',
+      '  - trigger: event',
+      `    event_type: ${CLIP_ANALYZED_EVENT}`,
+      conditionsBlock([
+        joinLines(['  - condition: template', `    value_template: ${yamlTemplate(assetTest, 4)}`]),
+        floor > 0
+          ? joinLines([
+              '  - condition: template',
+              `    value_template: ${yamlTemplate(
+                `{{ trigger.event.data.severity in ${jinjaList(SEVERITIES.slice(floor))} }}`,
+                4,
+              )}`,
+            ])
+          : '',
+        boolValue(v, 'only_suspicious')
+          ? joinLines([
+              '  - condition: template',
+              `    value_template: ${yamlTemplate('{{ trigger.event.data.is_suspicious }}', 4)}`,
+            ])
+          : '',
+        pauseSwitchCondition(stringValue(v, 'pause_entity')),
+      ]),
+      'actions:',
+      notifyAction(
+        stringValue(v, 'notify_service', 'notify.notify'),
+        "🛡️ Blink: {{ trigger.event.data.assets | default([]) | join(', ') }}",
+        '{{ trigger.event.data.camera }} — {{ trigger.event.data.summary }}',
+        {
+          critical: boolValue(v, 'critical'),
+          snapshot: boolValue(v, 'snapshot'),
+          clickPath: stringValue(v, 'click_path'),
+        },
+      ),
+    ])
+  },
 }
 
 const securityLights: Recipe = {
@@ -1426,6 +1528,7 @@ const cloudBackupDisconnected: Recipe = {
 
 export const AUTOMATION_RECIPES: Recipe[] = [
   suspiciousAlert,
+  assetActivity,
   securityLights,
   sirenOnSuspicious,
   castFeed,

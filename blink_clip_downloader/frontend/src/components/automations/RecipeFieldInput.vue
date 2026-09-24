@@ -11,18 +11,20 @@ import PvSelect from 'primevue/select'
 import ToggleSwitch from 'primevue/toggleswitch'
 import type { FieldValue, RecipeField } from './recipes/types'
 
-const props = defineProps<{ field: RecipeField; cameras: string[] }>()
+const props = withDefaults(defineProps<{ field: RecipeField; cameras: string[]; assets?: string[] }>(), {
+  assets: () => [],
+})
 const model = defineModel<FieldValue>({ required: true })
 
 const inputId = computed(() => `recipe-field-${props.field.key}`)
 
-/** A camera-sourced field takes the live camera list; everything else uses
- * the options the recipe declared. */
-const options = computed(() =>
-  props.field.source === 'cameras'
-    ? props.cameras.map((camera) => ({ label: camera, value: camera }))
-    : (props.field.options ?? []),
-)
+/** A camera- or asset-sourced field takes the live list; everything else
+ * uses the options the recipe declared. */
+const options = computed(() => {
+  if (props.field.source === 'cameras') return props.cameras.map((camera) => ({ label: camera, value: camera }))
+  if (props.field.source === 'assets') return props.assets.map((name) => ({ label: name, value: name }))
+  return props.field.options ?? []
+})
 
 // InputNumber rounds to whole numbers unless told otherwise, which would
 // quietly turn a 0.05-step confidence into 0 or 1.

@@ -3,11 +3,12 @@ import { mount } from '@vue/test-utils'
 import RecipeFieldInput from './RecipeFieldInput.vue'
 import type { FieldValue, RecipeField } from './recipes/types'
 
-function mountField(field: RecipeField, value: FieldValue, cameras: string[] = []) {
+function mountField(field: RecipeField, value: FieldValue, cameras: string[] = [], assets?: string[]) {
   const wrapper = mount(RecipeFieldInput, {
     props: {
       field,
       cameras,
+      ...(assets ? { assets } : {}),
       modelValue: value,
       // A real two-way harness: a no-op handler silently breaks any test
       // that expects a second interaction to build on the first.
@@ -151,6 +152,17 @@ describe('RecipeFieldInput', () => {
     )
     await wrapper.findComponent({ name: 'MultiSelect' }).vm.$emit('update:modelValue', ['Front Door'])
     expect(wrapper.props('modelValue')).toEqual(['Front Door'])
+  })
+
+  it('offers the marked assets to an asset-sourced field, and nothing without them', () => {
+    const field: RecipeField = { key: 'assets', label: 'Assets', type: 'multiselect', default: [], source: 'assets' }
+    const withAssets = mountField(field, [], ['Front Door'], ['Mailbox', 'Front door'])
+    expect(withAssets.findComponent({ name: 'MultiSelect' }).props('options')).toEqual([
+      { label: 'Mailbox', value: 'Mailbox' },
+      { label: 'Front door', value: 'Front door' },
+    ])
+    const without = mountField(field, [], ['Front Door'])
+    expect(without.findComponent({ name: 'MultiSelect' }).props('options')).toEqual([])
   })
 
   it('stores a select choice', async () => {

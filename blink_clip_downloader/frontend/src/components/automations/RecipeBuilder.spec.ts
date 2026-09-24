@@ -105,6 +105,24 @@ describe('RecipeBuilder', () => {
     expect(mountBuilder().findComponent({ name: 'CodeBlock' }).props('filename')).toBe('first.yaml')
   })
 
+  it('says so when nothing is marked for an asset-sourced field to offer', () => {
+    const withAssetField: Recipe[] = [
+      {
+        ...RECIPES[1],
+        fields: [{ key: 'assets', label: 'Assets', type: 'multiselect', default: [], source: 'assets' }],
+      },
+    ]
+    const empty = mount(RecipeBuilder, {
+      props: { recipes: withAssetField, cameras: [], storageKey: 'test.assets' },
+    })
+    expect(empty.text()).toContain('Nothing is marked on the Assets tab yet')
+    const marked = mount(RecipeBuilder, {
+      props: { recipes: withAssetField, cameras: [], assets: ['Mailbox'], storageKey: 'test.assets' },
+    })
+    expect(marked.text()).not.toContain('Nothing is marked on the Assets tab yet')
+    expect(marked.findComponent({ name: 'RecipeFieldInput' }).props('assets')).toEqual(['Mailbox'])
+  })
+
   it('says so when there are no cameras to filter on', () => {
     expect(mountBuilder(RECIPES, []).text()).toContain('No cameras to choose from yet')
     expect(mountBuilder(RECIPES, ['Front Door']).text()).not.toContain('No cameras to choose from yet')

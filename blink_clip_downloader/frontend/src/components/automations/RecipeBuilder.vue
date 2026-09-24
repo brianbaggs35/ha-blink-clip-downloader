@@ -11,12 +11,17 @@ import { createInHomeAssistant } from '../../api/haConfig'
 import { readLocal, writeLocal } from '../../localStorage'
 import { useToastStore } from '../../stores/toast'
 
-const props = defineProps<{
-  recipes: Recipe[]
-  cameras: string[]
-  /** Remembers which recipe was last open, per builder. */
-  storageKey: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    recipes: Recipe[]
+    cameras: string[]
+    /** Names of the assets marked on the Assets tab, for asset-sourced fields. */
+    assets?: string[]
+    /** Remembers which recipe was last open, per builder. */
+    storageKey: string
+  }>(),
+  { assets: () => [] },
+)
 
 /** Where each kind of output belongs, phrased as the click path rather than
  * just a filename — the file is the part people already know. */
@@ -149,6 +154,7 @@ async function createInHa(create: RecipeCreate) {
           v-model="values[field.key]"
           :field="field"
           :cameras="cameras"
+          :assets="assets"
         />
       </div>
 
@@ -161,6 +167,15 @@ async function createInHa(create: RecipeCreate) {
       >
         No cameras to choose from yet — the generated YAML will apply to every camera, which is usually what you want
         anyway.
+      </Message>
+      <Message
+        v-if="!assets.length && selected.fields.some((f) => f.source === 'assets')"
+        severity="info"
+        size="small"
+        :closable="false"
+        class="recipe-note"
+      >
+        Nothing is marked on the Assets tab yet. With no asset chosen, the automation covers every asset you mark later.
       </Message>
 
       <div class="recipe-actions">

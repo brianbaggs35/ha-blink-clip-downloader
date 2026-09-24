@@ -466,3 +466,26 @@ async def test_each_camera_hands_the_vision_pipeline_only_its_own_assets() -> No
         "Garage": ["Barbecue"],
         "Walkway": [],
     }
+
+
+@pytest.mark.parametrize(
+    ("detection", "security_layer", "expected"),
+    [(True, True, True), (True, False, False), (False, True, False)],
+)
+def test_object_detection_enabled_needs_detection_and_the_security_layer(
+    detection: bool, security_layer: bool, expected: bool
+) -> None:
+    """What the Assets tab tells its user about the per-asset checks."""
+    from blink_downloader.vision.pipeline import VisionConfig, VisionPipeline
+
+    a = _analyzer()
+    assert a.object_detection_enabled is False
+    a.attach_vision_pipeline(
+        VisionPipeline(
+            VisionConfig(
+                enhanced_detection_enabled=detection,
+                security_events_enabled=security_layer,
+            )
+        )
+    )
+    assert a.object_detection_enabled is expected
