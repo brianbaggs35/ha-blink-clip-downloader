@@ -384,6 +384,11 @@ tab points out photos captured at the old resolution.
   upload's source file and destination folder, and scoring the factors that
   depend on a clip's subjects — are now their own named pieces. No behavior
   changed.
+- Clip analysis now extracts its frames through the same ffmpeg helper the
+  Biometrics scan and the higher face-recognition resolutions use, instead
+  of its own copy of the command. Re-extracting "the same moments" at a
+  wider width is what lets face recognition vouch for a whole clip, so the
+  two can no longer drift apart. No behavior changed.
 
 ## 6.0.6
 
