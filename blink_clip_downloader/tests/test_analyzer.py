@@ -5472,7 +5472,7 @@ def test_build_prompt_zone_motion_low_fraction() -> None:
     assert "elsewhere in the frame" in prompt
 
 
-def _outcome_with(*event_types: str):
+def _outcome_with(*event_types: str, asset_type: str = "vehicle"):
     from blink_downloader.security import (
         RiskAssessment,
         SecurityEvent,
@@ -5489,6 +5489,7 @@ def _outcome_with(*event_types: str):
                     severity=Severity.NOTEWORTHY,
                     confidence=0.8,
                     detail=t,
+                    asset_type=asset_type,
                 )
                 for t in event_types
             ]
@@ -5510,6 +5511,23 @@ def test_build_prompt_low_zone_motion_defers_to_tracking_at_the_car() -> None:
     assert "20%" in prompt
     assert "placed a subject at the protected vehicle" in prompt
     assert "Do not assume the vehicle is involved" not in prompt
+
+
+def test_build_prompt_low_zone_motion_not_deferred_for_someone_at_a_marked_asset() -> (
+    None
+):
+    """The same event types fire at every asset marked on the Assets tab.
+    Someone ringing the doorbell on a camera that also watches the car was
+    at the door, not the car, so the car zone's hint must not claim tracking
+    put them at the vehicle."""
+    a = ClipAnalyzer(ollama_url="http://localhost:11434", model="llava", prompt="p")
+    prompt = a._build_prompt(
+        "Driveway",
+        zone_motion_fraction=0.2,
+        security=_outcome_with("zone_entered", "asset_proximity", asset_type="door"),
+    )
+    assert "placed a subject at the protected vehicle" not in prompt
+    assert "Do not assume the vehicle is involved" in prompt
 
 
 def test_build_prompt_low_zone_motion_unchanged_without_anyone_at_the_car() -> None:
