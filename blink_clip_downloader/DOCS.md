@@ -644,6 +644,65 @@ per-camera AI prompt tuning):
 > `options.json` serve as fallbacks for cameras/settings not yet configured
 > in the web UI.
 
+### Assets Tab — marking the things you want protected
+
+The **Assets** tab (between Vehicles and Biometrics) is for everything
+*else* on the property you want watched most closely: a front door, the spot
+where parcels are left, a mailbox, a gate, a garage door, a window, a bike,
+a barbecue or generator. Each camera gets a card; mark an asset by choosing
+what it is, giving it a name, and drawing it on that camera's frame — a
+rectangle, or a freeform outline traced like the Vehicles tab's lasso. A
+camera can hold up to twelve, a camera that sees the protected vehicle can
+have assets too, and every camera keeps its own.
+
+**It is entirely optional.** A camera with nothing marked is analysed
+exactly as it always was — same prompt, same frames, same protection. Marking
+assets adds to that; it never replaces it, and nothing outside a marked zone
+is judged any differently. What marking one adds, for that camera only:
+
+- **The AI is told what and where each asset is** — by the name you gave it,
+  what kind of thing it is, where it sits in the frame ("in the lower left
+  of the frame"), and the optional "what it looks like" description — along
+  with what counts as suspicious at that kind of thing and what is routine.
+  A door is walked up to all day, so knocking, ringing and deliveries are
+  routine while trying the handle or lingering is not; a bike or barbecue
+  is something nobody else should be handling at all. The model is asked to
+  name the asset in its description, so a notification reads "a person is
+  standing at the mailbox" rather than "a person is near the house".
+- **The frames it is shown are chosen for activity at your assets**, rather
+  than for whatever moved most anywhere in view — a car driving past on the
+  street no longer crowds out the moment someone reached the parcel spot —
+  and the prompt says which assets the clip's motion was concentrated at.
+- **A quiet verdict gets a second look.** With a second-opinion model set up
+  (`ai_escalation_provider`), a clip the first model called quiet is
+  double-checked on these cameras, as it already is on protected-vehicle
+  ones.
+- **The short-clip and calm-background hints no longer argue against a quick
+  grab.** Carrying off a parcel takes seconds, so "brief means routine" is
+  withheld at marked assets.
+- **With Enhanced Detection on, each asset gets the security layer's own
+  checks** (see [Structured Security Analysis](#structured-security-analysis)):
+  someone entering its area, standing at it, lingering, reaching for or
+  touching it, and — new — the asset's own area **looking different after
+  someone was at it** (`asset_disturbed`), which is the only evidence a
+  camera has that a parcel or a bike went missing. Every such event names the
+  asset, and the Security Events timeline shows which asset each clip was
+  about. Touching a door, gate, garage door, mailbox or parcel spot is its
+  ordinary use, so those never produce a contact event; contact with a bike,
+  window, piece of equipment or anything else is reported. A possible impact
+  remains a protected-vehicle event only — knocking on a door is exactly a
+  raised arm at a confirmed touch, and an impact withholds the face bypass.
+
+An approved household member recognized on the Biometrics tab is routine at
+any asset, exactly as they are elsewhere: collecting your own parcel does
+not raise an alert.
+
+Each card shows the camera's frame with every asset outlined, how many clips
+this week had an event at each, and a switch to stop watching one without
+deleting it. Names must be unique on a camera, because the name is how the
+analysis and every security event refer to it. Assets live in
+`/data/protected_assets.json` and follow a camera rename.
+
 ### Smart Security Brain (Anomaly Detection)
 
 The add-on builds a behavioural baseline for each camera over time, recording per-camera
@@ -674,7 +733,12 @@ time-of-day/frequency anomaly score above, it also learns what each camera's
 background normally looks like.
 
 - Each analysed clip's opening frame is reduced to a small grayscale thumbnail and
-  blended into a running per-camera baseline.
+  blended into a running per-camera baseline — two of them, in fact: one for
+  daylight colour frames and one for the monochrome infrared frames a Blink camera
+  switches to after dark. The same view by day and under infrared is two different
+  pictures, and a single average of both (as before 6.0.7) made most night clips read
+  as "differs from its usual background". Each builds its own history, so the night
+  baseline starts reporting once it has 20 night clips behind it.
 - Once a camera has built up enough history (20 clips), each new clip's opening frame
   is compared against that baseline. A frame that closely matches the camera's usual
   background nudges the AI toward a calm, routine read of the activity; a frame that
@@ -943,11 +1007,14 @@ temporal scan therefore takes its own evenly-spaced sample (capped at
 `subject_present`, `zone_entered`, `asset_approached`, `asset_proximity`,
 `loitering`, `retreat`, `asset_reach`, `contact_candidate`,
 `impact_candidate`, `retreat_after_contact`, `object_removed`,
-`object_added`, `animal_asset_interaction`, `multiple_subjects`,
-`camera_obstruction`.
+`object_added`, `animal_asset_interaction`, `asset_disturbed`,
+`multiple_subjects`, `camera_obstruction`.
 
 `asset_reach` requires `ai_pose_estimation_enabled`; everything else works
-from object detection alone.
+from object detection alone. The asset events apply to the protected
+vehicle and to each asset marked on the Assets tab, except
+`impact_candidate` (vehicle only) and `asset_disturbed` (marked assets
+only).
 
 Every rule under-claims on purpose. Sampled frames are seconds apart, boxes are
 approximations, and a 2D overlap is not contact — so where the evidence only
@@ -1730,14 +1797,19 @@ Notes on the two storage sensors:
 | Event | Fired | Data |
 |---|---|---|
 | `blink_clip_downloaded` | Each clip, as it lands on disk | `clip_id`, `camera`, `path`, `timestamp`, `size_bytes`, `duration`, `source` |
-| `blink_clip_analyzed` | Each finished AI analysis, suspicious or not | `clip_id`, `camera`, `is_suspicious`, `confidence`, `summary`, `risk_score`, `severity`, `event_type`, `evidence_quality`, `face_recognized`, `model`, `path` |
+| `blink_clip_analyzed` | Each finished AI analysis, suspicious or not | `clip_id`, `camera`, `is_suspicious`, `confidence`, `summary`, `risk_score`, `severity`, `event_type`, `evidence_quality`, `face_recognized`, `assets`, `model`, `path` |
 | `blink_camera_battery_low` | A camera transitions to low battery | `camera`, `battery_state`, `battery_level`, `battery_voltage` |
 
 `blink_clip_analyzed` fires for every completed analysis, not only the
 suspicious ones — filter on `is_suspicious` (and, if you use the structured
 security layer, `risk_score`) in the automation. The raw model response and
 the full prompt are deliberately left out: every fired event is stored in
-Home Assistant's recorder, and neither belongs there.
+Home Assistant's recorder, and neither belongs there. `assets` lists the
+assets marked on the [Assets tab](#assets-tab--marking-the-things-you-want-protected)
+that the clip's security events were about, by the names you gave them — so
+a condition like `{{ 'Mailbox' in trigger.event.data.assets }}` acts on
+activity at one asset in particular. It is empty with object detection off,
+since the per-asset events need it.
 
 `blink_camera_battery_low` fires on a genuine ok-to-low transition only, not
 once per poll while a battery stays low. It is independent of the add-on's own
