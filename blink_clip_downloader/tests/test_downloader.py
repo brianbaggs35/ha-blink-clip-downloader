@@ -22,13 +22,21 @@ from blinkpy.auth import (
 from requests.structures import CaseInsensitiveDict
 
 from blink_downloader.downloader import (
+    _LIST_CURSOR_MARGIN,
     AuthenticationError,
     BlinkDownloader,
     TwoFARequired,
+    _parse_clip_time,
+    _QuotaReachedError,
     probe_clip_duration,
 )
 from blink_downloader.storage import StorageManager
-from blink_downloader.tracker import ClipTracker
+from blink_downloader.tracker import (
+    GIVE_UP_AFTER,
+    GIVE_UP_AFTER_ATTEMPTS,
+    RETRY_BACKOFF_MAX,
+    ClipTracker,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -760,12 +768,28 @@ async def test_backfill_thumbnails_continues_past_a_generation_failure(dl, tmp_p
 # ---------------------------------------------------------------------------
 
 
+def _ok(clip: dict) -> dict:
+    """What a successful _download_clip returns, reduced to what tests read."""
+    return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+
+
+def _clip_at(sample_clip: dict, clip_id: int, created_at: datetime) -> dict:
+    return {**sample_clip, "id": clip_id, "created_at": created_at.isoformat()}
+
+
+def _backoff_elapsed(dl: BlinkDownloader, clip_id: str) -> None:
+    """Make a failed clip due for another try, as if its backoff had passed."""
+    dl._tracker._failures[clip_id].last_failed -= RETRY_BACKOFF_MAX
+
+
 async def test_download_new_clips_skips_already_tracked(dl, tracker, sample_clip):
     tracker.mark_downloaded(str(sample_clip["id"]))
     dl._tracker = tracker
 
     dl._blink = MagicMock()
-    with patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=[sample_clip])):
+    with patch.object(
+        dl, "_fetch_clip_list", AsyncMock(return_value=([sample_clip], True))
+    ):
         results = await dl.download_new_clips()
 
     assert results == []
@@ -781,10 +805,10 @@ async def test_download_new_clips_respects_max_clips(dl, sample_clip):
 
     async def _fake_download(clip, sem):
         downloaded.append(clip["id"])
-        return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+        return _ok(clip)
 
     with (
-        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=clips)),
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=(clips, True))),
         patch.object(dl, "_download_clip", side_effect=_fake_download),
     ):
         await dl.download_new_clips()
@@ -795,16 +819,18 @@ async def test_download_new_clips_respects_max_clips(dl, sample_clip):
 async def test_download_new_clips_uses_six_hour_lookback_on_fresh_tracker(
     dl, sample_clip
 ):
-    """With no last_download_time (fresh tracker — first run, or reconnect
-    after a reinstall), the Blink API since= filter must be a short 6-hour
+    """With no list cursor (fresh tracker — first run, or reconnect after a
+    reinstall), the Blink API since= filter must be a short 6-hour
     lookback, not a wider window that could pull in — and then, before the
     burst-analysis cap, would have auto-queued for AI analysis — a much
     larger backlog than a fresh reconnect should reasonably cost tokens on.
     """
-    assert dl._tracker.last_download_time is None
+    assert dl._tracker.list_cursor is None
     dl._blink = MagicMock()
 
-    with patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=[])) as mock_fetch:
+    with patch.object(
+        dl, "_fetch_clip_list", AsyncMock(return_value=([], True))
+    ) as mock_fetch:
         await dl.download_new_clips()
 
     since_arg = mock_fetch.call_args.args[0]
@@ -815,56 +841,443 @@ async def test_download_new_clips_uses_six_hour_lookback_on_fresh_tracker(
 
 
 async def test_download_new_clips_holds_cursor_when_backlog_remains(dl, sample_clip):
-    """When max_clips_per_poll truncates the backlog, the tracker cursor must
+    """When max_clips_per_poll truncates the backlog, the list cursor must
     not advance past the clips left undownloaded, or the Blink API's since=
     filter would permanently skip them on the next poll."""
     dl._config.max_clips_per_poll = 2
     dl._blink = MagicMock()
-    clips = [{**sample_clip, "id": i} for i in range(1, 6)]  # 5 new clips, limit 2
-
     original_since = datetime(2024, 1, 1, tzinfo=UTC)
-    dl._tracker.set_last_download_time(original_since)
+    oldest = datetime(2024, 1, 10, tzinfo=UTC)
+    # 5 new clips, limit 2: the last three (the oldest) are left over.
+    clips = [
+        _clip_at(sample_clip, i, oldest + timedelta(hours=5 - i)) for i in range(1, 6)
+    ]
+    dl._tracker.set_list_cursor(original_since)
 
     async def _fake_download(clip, sem):
         dl._tracker.mark_downloaded(str(clip["id"]), 100)
-        return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+        return _ok(clip)
 
     with (
-        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=clips)),
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=(clips, True))),
         patch.object(dl, "_download_clip", side_effect=_fake_download),
     ):
         await dl.download_new_clips()
 
-    # The cursor must be held back at the pre-poll `since`, not advanced to
-    # "now" (which is what mark_downloaded() would otherwise leave behind).
-    assert dl._tracker.last_download_time == original_since
+    # Held just before the oldest clip left over, which is still ahead of
+    # the pre-poll since= (so the next window is narrower, not frozen).
+    assert dl._tracker.list_cursor == oldest - _LIST_CURSOR_MARGIN
 
 
-async def test_download_new_clips_advances_cursor_when_backlog_cleared(dl, sample_clip):
-    """When every fetched clip is downloaded (no backlog), the cursor is free
-    to advance normally so the next poll's window moves forward."""
-    dl._config.max_clips_per_poll = 10
+async def test_download_new_clips_advances_cursor_to_just_before_the_list_request(
+    dl, sample_clip
+):
+    """With every listed clip downloaded, the next list starts a margin
+    before *this* list was requested, not when the downloads finished: a
+    clip Blink starts listing mid-download must fall inside the next
+    window, which is the third way the review found clips being lost."""
     dl._blink = MagicMock()
-    clips = [{**sample_clip, "id": i} for i in range(1, 4)]  # 3 new clips, limit 10
+    dl._tracker.set_list_cursor(datetime(2024, 1, 1, tzinfo=UTC))
+    clips = [{**sample_clip, "id": i} for i in range(1, 4)]
+    requested_at: list[datetime] = []
+
+    async def _fake_fetch(_since):
+        requested_at.append(datetime.now(UTC))
+        return clips, True
 
     async def _fake_download(clip, sem):
         dl._tracker.mark_downloaded(str(clip["id"]), 100)
-        return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+        return _ok(clip)
 
+    before = datetime.now(UTC)
     with (
-        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=clips)),
+        patch.object(dl, "_fetch_clip_list", side_effect=_fake_fetch),
         patch.object(dl, "_download_clip", side_effect=_fake_download),
     ):
         await dl.download_new_clips()
 
-    assert dl._tracker.last_download_time is not None
+    cursor = dl._tracker.list_cursor
+    assert cursor is not None
+    assert (
+        before - _LIST_CURSOR_MARGIN <= cursor <= requested_at[0] - _LIST_CURSOR_MARGIN
+    )
 
 
-async def test_download_new_clips_no_clips(dl):
+async def test_download_new_clips_retries_a_failed_clip_even_when_another_succeeds(
+    dl, sample_clip
+):
+    """The review's first case: one clip fails while another in the same
+    poll succeeds. The cursor must stop just before the failed clip, and
+    the next poll must ask for it and download it."""
     dl._blink = MagicMock()
-    with patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=[])):
+    since = datetime(2024, 1, 1, tzinfo=UTC)
+    dl._tracker.set_list_cursor(since)
+    failed_at = datetime(2024, 1, 5, 12, 0, tzinfo=UTC)
+    good = _clip_at(sample_clip, 1, datetime(2024, 1, 5, 13, 0, tzinfo=UTC))
+    bad = _clip_at(sample_clip, 2, failed_at)
+    fail_next = {"2"}
+
+    async def _fake_download(clip, sem):
+        if str(clip["id"]) in fail_next:
+            return None
+        dl._tracker.mark_downloaded(str(clip["id"]), 100)
+        return _ok(clip)
+
+    fetch = AsyncMock(return_value=([good, bad], True))
+    with (
+        patch.object(dl, "_fetch_clip_list", fetch),
+        patch.object(dl, "_download_clip", side_effect=_fake_download),
+    ):
+        first = await dl.download_new_clips()
+        assert [r["id"] for r in first] == ["1"]
+        assert dl._tracker.list_cursor == failed_at - _LIST_CURSOR_MARGIN
+        assert dl.download_retry_status() == {"retrying": 1, "given_up": 0}
+
+        fail_next.clear()
+        _backoff_elapsed(dl, "2")
+        second = await dl.download_new_clips()
+
+    assert fetch.await_args_list[1].args[0] == failed_at - _LIST_CURSOR_MARGIN
+    assert [r["id"] for r in second] == ["2"]
+    assert dl.download_retry_status() == {"retrying": 0, "given_up": 0}
+    # Nothing is owed any more, so the cursor catches up.
+    assert dl._tracker.list_cursor > failed_at
+
+
+async def test_download_new_clips_local_storage_does_not_undo_the_hold(
+    dl, sample_clip, tmp_path
+):
+    """The review's second case: download_local_storage_clips runs right
+    after download_new_clips in the same cycle, and its mark_downloaded()
+    calls used to move the cursor to "now", undoing the hold-back."""
+    dl._config.max_clips_per_poll = 1
+    dl._blink = MagicMock()
+    dl._tracker.set_list_cursor(datetime(2024, 1, 1, tzinfo=UTC))
+    oldest = datetime(2024, 1, 5, tzinfo=UTC)
+    clips = [
+        _clip_at(sample_clip, 1, oldest + timedelta(hours=1)),
+        _clip_at(sample_clip, 2, oldest),
+    ]
+
+    async def _fake_download(clip, sem):
+        dl._tracker.mark_downloaded(str(clip["id"]), 100)
+        return _ok(clip)
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=(clips, True))),
+        patch.object(dl, "_download_clip", side_effect=_fake_download),
+    ):
+        await dl.download_new_clips()
+    held_cursor = dl._tracker.list_cursor
+    assert held_cursor == oldest - _LIST_CURSOR_MARGIN
+
+    # A local-storage clip that is already on disk goes through the same
+    # mark_downloaded() a fresh one does.
+    item = MagicMock()
+    item.id = 4242
+    item.name = "Garage"
+    item.created_at = datetime(2024, 6, 1, 8, 0, tzinfo=UTC)
+    existing = dl._storage.resolve_path(
+        "Garage", item.created_at.astimezone(), "local_4242"
+    )
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_bytes(b"clip")
+    sync = MagicMock()
+    sync.local_storage = True
+    sync.update_local_storage_manifest = AsyncMock()
+    sync._local_storage = {"manifest": {item}}
+    dl._blink.sync = {"Network": sync}
+
+    await dl.download_local_storage_clips()
+
+    assert dl._tracker.is_downloaded("local_4242")
+    assert dl._tracker.list_cursor == held_cursor
+    assert ClipTracker(tmp_path / "tracker.json").list_cursor == held_cursor
+
+
+async def test_download_new_clips_gives_up_on_a_clip_that_never_downloads(
+    dl, sample_clip, caplog
+):
+    """A clip that will never download (deleted from Blink, broken media)
+    must not pin the cursor forever: once the tracker gives up on it, it is
+    logged once, stops holding the cursor, and is no longer requested."""
+    dl._blink = MagicMock()
+    since = datetime(2024, 1, 1, tzinfo=UTC)
+    dl._tracker.set_list_cursor(since)
+    bad = _clip_at(sample_clip, 7, datetime(2024, 1, 5, tzinfo=UTC))
+    record = dl._tracker.record_failed_attempt("7")
+    record.attempts = GIVE_UP_AFTER_ATTEMPTS - 1
+    record.first_failed -= GIVE_UP_AFTER
+    record.last_failed -= GIVE_UP_AFTER
+
+    download = AsyncMock(return_value=None)
+    listing = AsyncMock(return_value=([bad], True))
+    with (
+        patch.object(dl, "_fetch_clip_list", listing),
+        patch.object(dl, "_download_clip", download),
+        caplog.at_level(logging.WARNING, logger="blink_downloader.downloader"),
+    ):
+        await dl.download_new_clips()
+        assert "Giving up on clip 7 from 'Front Door'" in caplog.text
+        assert dl._tracker.has_given_up("7")
+        assert dl.download_retry_status() == {"retrying": 0, "given_up": 1}
+        # No longer owed, so nothing holds the cursor back.
+        assert dl._tracker.list_cursor > datetime.now(UTC) - 2 * _LIST_CURSOR_MARGIN
+
+        await dl.download_new_clips()
+
+    assert download.await_count == 1
+
+
+async def test_download_new_clips_waits_out_a_failed_clips_backoff(
+    dl, sample_clip, caplog
+):
+    """A clip that just failed is not tried again on the very next poll
+    (fast polling runs every 15 seconds, and every download in a poll
+    delays the alerts for the fresh ones), but it stays owed: it holds the
+    cursor back and counts as retrying until its backoff has passed."""
+    dl._blink = MagicMock()
+    dl._tracker.set_list_cursor(datetime(2024, 1, 1, tzinfo=UTC))
+    created = datetime(2024, 1, 5, tzinfo=UTC)
+    clip = _clip_at(sample_clip, 8, created)
+    download = AsyncMock(return_value=None)
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=([clip], True))),
+        patch.object(dl, "_download_clip", download),
+        caplog.at_level(logging.INFO, logger="blink_downloader.downloader"),
+    ):
+        await dl.download_new_clips()
+        assert "Clip 8 failed to download (attempt 1); trying again after" in (
+            caplog.text
+        )
+        await dl.download_new_clips()
+        assert download.await_count == 1
+        assert dl._tracker.list_cursor == created - _LIST_CURSOR_MARGIN
+        assert dl.download_retry_status() == {"retrying": 1, "given_up": 0}
+
+        _backoff_elapsed(dl, "8")
+        await dl.download_new_clips()
+
+    assert download.await_count == 2
+    assert dl._tracker._failures["8"].attempts == 2
+
+
+async def test_download_new_clips_tries_new_clips_before_retries(dl, sample_clip):
+    """With room for one download, a clip never tried goes before one that
+    has failed before, so a clip that keeps failing never takes the slot
+    a fresh event needs."""
+    dl._config.max_clips_per_poll = 1
+    dl._blink = MagicMock()
+    dl._tracker.set_list_cursor(datetime(2024, 1, 1, tzinfo=UTC))
+    retry = _clip_at(sample_clip, 1, datetime(2024, 1, 5, tzinfo=UTC))
+    fresh = _clip_at(sample_clip, 2, datetime(2024, 1, 5, 1, tzinfo=UTC))
+    dl._tracker.record_failed_attempt("1")
+    _backoff_elapsed(dl, "1")
+    tried: list[str] = []
+
+    async def _fake_download(clip, sem):
+        tried.append(str(clip["id"]))
+        dl._tracker.mark_downloaded(str(clip["id"]), 100)
+        return _ok(clip)
+
+    # Blink lists the retry first; it must still wait its turn.
+    with (
+        patch.object(
+            dl, "_fetch_clip_list", AsyncMock(return_value=([retry, fresh], True))
+        ),
+        patch.object(dl, "_download_clip", side_effect=_fake_download),
+    ):
+        await dl.download_new_clips()
+        assert tried == ["2"]
+        await dl.download_new_clips()
+
+    assert tried == ["2", "1"]
+
+
+async def test_download_new_clips_downloads_a_clip_listed_twice_once(dl, sample_clip):
+    """A clip filed mid-pagination can push one already returned onto the
+    next page as well; both copies downloading at once would write the same
+    temporary file."""
+    dl._blink = MagicMock()
+    download = AsyncMock(side_effect=lambda clip, sem: _ok(clip))
+
+    with (
+        patch.object(
+            dl,
+            "_fetch_clip_list",
+            AsyncMock(return_value=([sample_clip, dict(sample_clip)], True)),
+        ),
+        patch.object(dl, "_download_clip", download),
+    ):
         results = await dl.download_new_clips()
+
+    assert download.await_count == 1
+    assert len(results) == 1
+
+
+async def test_download_new_clips_holds_cursor_for_a_clip_stopped_by_quota(
+    dl, sample_clip
+):
+    """A clip the quota stopped was never tried: it holds the cursor like a
+    failure but is not counted towards giving up on it."""
+    dl._blink = MagicMock()
+    dl._tracker.set_list_cursor(datetime(2024, 1, 1, tzinfo=UTC))
+    created = datetime(2024, 1, 5, tzinfo=UTC)
+    clip = _clip_at(sample_clip, 3, created)
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=([clip], True))),
+        patch.object(
+            dl, "_download_clip", AsyncMock(side_effect=_QuotaReachedError("3"))
+        ),
+    ):
+        results = await dl.download_new_clips()
+
     assert results == []
+    assert dl._tracker.list_cursor == created - _LIST_CURSOR_MARGIN
+    assert "3" not in dl._tracker._failures
+    assert dl.download_retry_status()["retrying"] == 0
+
+
+async def test_download_new_clips_does_not_retry_a_clip_whose_file_landed(
+    dl, sample_clip
+):
+    """A download that finished and was recorded, followed by an error
+    (e.g. adding the library row), is not a failed download: nothing is
+    owed, so it neither counts towards giving up nor holds the cursor."""
+    dl._blink = MagicMock()
+    dl._tracker.set_list_cursor(datetime(2024, 1, 1, tzinfo=UTC))
+    clip = _clip_at(sample_clip, 4, datetime(2024, 1, 5, tzinfo=UTC))
+
+    async def _fake_download(clip, sem):
+        dl._tracker.mark_downloaded(str(clip["id"]), 100)
+        raise RuntimeError("database unavailable")
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=([clip], True))),
+        patch.object(dl, "_download_clip", side_effect=_fake_download),
+    ):
+        await dl.download_new_clips()
+
+    assert "4" not in dl._tracker._failures
+    assert dl._tracker.list_cursor > datetime(2024, 1, 5, tzinfo=UTC)
+
+
+async def test_download_new_clips_holds_cursor_when_the_list_was_cut_short(
+    dl, sample_clip
+):
+    """A list that stopped on an error says nothing about the clips it did
+    not return, so the cursor stays where it was even though every clip it
+    did return downloaded."""
+    dl._blink = MagicMock()
+    since = datetime(2024, 1, 1, tzinfo=UTC)
+    dl._tracker.set_list_cursor(since)
+
+    with (
+        patch.object(
+            dl, "_fetch_clip_list", AsyncMock(return_value=([sample_clip], False))
+        ),
+        patch.object(dl, "_download_clip", AsyncMock(return_value=_ok(sample_clip))),
+    ):
+        await dl.download_new_clips()
+
+    assert dl._tracker.list_cursor == since
+
+
+async def test_download_new_clips_holds_cursor_for_a_failed_clip_with_no_time(
+    dl, sample_clip
+):
+    """A failed clip whose created_at cannot be read gives no safe place
+    to stop short of, so the cursor stays at this poll's since=."""
+    dl._blink = MagicMock()
+    since = datetime(2024, 1, 1, tzinfo=UTC)
+    dl._tracker.set_list_cursor(since)
+    clip = {**sample_clip, "id": 5, "created_at": "not a time"}
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=([clip], True))),
+        patch.object(dl, "_download_clip", AsyncMock(return_value=None)),
+    ):
+        await dl.download_new_clips()
+
+    assert dl._tracker.list_cursor == since
+
+
+async def test_download_new_clips_never_moves_the_cursor_backwards(dl, sample_clip):
+    """A held clip filed before since= (Blink lists changed clips, so an old
+    one can reappear) must not drag the cursor back: since= returned it
+    this time and will again."""
+    dl._blink = MagicMock()
+    since = datetime(2024, 3, 1, tzinfo=UTC)
+    dl._tracker.set_list_cursor(since)
+    clip = _clip_at(sample_clip, 6, datetime(2024, 1, 1, tzinfo=UTC))
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=([clip], True))),
+        patch.object(dl, "_download_clip", AsyncMock(return_value=None)),
+    ):
+        await dl.download_new_clips()
+
+    assert dl._tracker.list_cursor == since
+
+
+async def test_download_new_clips_moves_cursor_on_an_empty_complete_list(dl):
+    """Nothing listed, and the list was complete: the cursor still moves up
+    so the next poll's window stays short, but the tracker file is not
+    rewritten for that alone -- it can hold up to 100,000 IDs and fast
+    polling asks every 15 seconds. A lagging cursor on disk only costs a
+    longer first list after a crash."""
+    dl._blink = MagicMock()
+    since = datetime(2024, 1, 1, tzinfo=UTC)
+    dl._tracker.set_list_cursor(since)
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=([], True))),
+        patch.object(dl._tracker, "save") as save,
+        patch.object(dl, "_persist_auth") as persist_auth,
+    ):
+        results = await dl.download_new_clips()
+
+    assert results == []
+    assert dl._tracker.list_cursor > since
+    save.assert_not_called()
+    persist_auth.assert_not_called()
+
+
+async def test_download_new_clips_saves_the_tracker_after_a_failed_download(
+    dl, sample_clip
+):
+    """A failure record has to survive a restart, or a clip that fails
+    once per run would never reach the point of being given up on."""
+    dl._blink = MagicMock()
+
+    with (
+        patch.object(
+            dl, "_fetch_clip_list", AsyncMock(return_value=([sample_clip], True))
+        ),
+        patch.object(dl, "_download_clip", AsyncMock(return_value=None)),
+        patch.object(dl._tracker, "save") as save,
+    ):
+        await dl.download_new_clips()
+
+    save.assert_called_once()
+
+
+async def test_download_new_clips_leaves_tracker_file_alone_when_nothing_changed(dl):
+    """A poll whose list failed, with nothing to download, leaves both the
+    cursor and the tracker file as they were."""
+    dl._blink = MagicMock()
+    dl._tracker.set_list_cursor(datetime(2024, 1, 1, tzinfo=UTC))
+
+    with (
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=([], False))),
+        patch.object(dl._tracker, "save") as save,
+    ):
+        await dl.download_new_clips()
+
+    assert dl._tracker.list_cursor == datetime(2024, 1, 1, tzinfo=UTC)
+    save.assert_not_called()
 
 
 async def test_download_new_clips_raises_without_connect(dl):
@@ -884,39 +1297,56 @@ async def test_download_new_clips_logs_and_skips_failed_clip(dl, sample_clip):
     async def _fake_download(clip, sem):
         if clip["id"] == 1:
             raise RuntimeError("network blip")
-        return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+        return _ok(clip)
 
     with (
-        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=clips)),
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=(clips, True))),
         patch.object(dl, "_download_clip", side_effect=_fake_download),
     ):
         results = await dl.download_new_clips()
 
     assert len(results) == 1
     assert results[0]["id"] == "2"
+    assert dl._tracker._failures["1"].attempts == 1
 
 
 async def test_download_new_clips_skips_clip_that_resolves_to_none(dl, sample_clip):
-    """A clip _download_clip legitimately skips (e.g. no media URL, or over
-    quota -- see its own early `return None`s) is neither an Exception nor a
-    dict; it must be silently left out of the batch's results, not raise or
-    get appended as-is."""
+    """A clip _download_clip could not fetch (no media URL, or every retry
+    failed -- see its own early `return None`s) is neither an Exception nor
+    a dict; it must be left out of the batch's results, not raise or get
+    appended as-is, and is counted as a failed attempt."""
     dl._blink = MagicMock()
     clips = [{**sample_clip, "id": 1}, {**sample_clip, "id": 2}]
 
     async def _fake_download(clip, sem):
         if clip["id"] == 1:
             return None
-        return {"id": str(clip["id"]), "camera": "Cam", "path": "/x", "timestamp": "t"}
+        return _ok(clip)
 
     with (
-        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=clips)),
+        patch.object(dl, "_fetch_clip_list", AsyncMock(return_value=(clips, True))),
         patch.object(dl, "_download_clip", side_effect=_fake_download),
     ):
         results = await dl.download_new_clips()
 
     assert len(results) == 1
     assert results[0]["id"] == "2"
+    assert dl._tracker._failures["1"].attempts == 1
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2024-06-01T08:30:00+00:00", datetime(2024, 6, 1, 8, 30, tzinfo=UTC)),
+        # No offset: Blink sends UTC, so it must compare as UTC.
+        ("2024-06-01T08:30:00", datetime(2024, 6, 1, 8, 30, tzinfo=UTC)),
+        ("", None),
+        (None, None),
+        ("yesterday", None),
+    ],
+)
+def test_parse_clip_time(raw, expected):
+    assert _parse_clip_time(raw) == expected
 
 
 async def test_download_clip_null_api_fields(dl, tmp_path):
@@ -1114,9 +1544,10 @@ async def test_download_clip_no_media_url_returns_none(dl):
     assert await dl._download_clip(clip, sem) is None
 
 
-async def test_download_clip_over_quota_returns_none(dl, tmp_path):
+async def test_download_clip_over_quota_raises_quota_reached(dl, tmp_path):
     """A clip is skipped once storage is over quota, without attempting a
-    network download."""
+    network download, and says so distinctly from a failed download so the
+    caller holds it for later without counting it as a failure."""
     clip = {
         "id": 2,
         "device_name": "Front Door",
@@ -1126,7 +1557,8 @@ async def test_download_clip_over_quota_returns_none(dl, tmp_path):
     }
     dl._storage.is_over_quota = MagicMock(return_value=True)  # type: ignore[method-assign]
     sem = asyncio.Semaphore(1)
-    assert await dl._download_clip(clip, sem) is None
+    with pytest.raises(_QuotaReachedError):
+        await dl._download_clip(clip, sem)
 
 
 async def test_download_clip_invalid_created_at_falls_back_to_now(dl, tmp_path):
@@ -2029,9 +2461,10 @@ async def test_fetch_clip_list_paginates(dl, sample_clip):
         "blink_downloader.downloader.blink_api.request_videos",
         side_effect=[{"media": full_page}, {"media": []}],
     ):
-        result = await dl._fetch_clip_list(datetime.now(UTC))
+        result, complete = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert len(result) == 25
+    assert complete
 
 
 async def test_fetch_clip_list_stops_on_partial_page(dl, sample_clip):
@@ -2047,10 +2480,11 @@ async def test_fetch_clip_list_stops_on_partial_page(dl, sample_clip):
         "blink_downloader.downloader.blink_api.request_videos",
         side_effect=[{"media": partial_page}],
     ) as mock_request:
-        result = await dl._fetch_clip_list(datetime.now(UTC))
+        result, complete = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert len(result) == 10
     assert mock_request.await_count == 1
+    assert complete
 
 
 async def test_fetch_clip_list_stops_at_max_pages_safety_cap(dl, sample_clip, caplog):
@@ -2073,11 +2507,13 @@ async def test_fetch_clip_list_stops_at_max_pages_safety_cap(dl, sample_clip, ca
         ) as mock_request,
         caplog.at_level("WARNING"),
     ):
-        result = await dl._fetch_clip_list(datetime.now(UTC))
+        result, complete = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert mock_request.await_count == 400
     assert len(result) == 400 * 25
     assert "safety cap" in caplog.text
+    # Holding the cursor would only fetch the same capped list forever.
+    assert complete
 
 
 async def test_fetch_clip_list_handles_unexpected_response_type(dl):
@@ -2091,9 +2527,10 @@ async def test_fetch_clip_list_handles_unexpected_response_type(dl):
         "blink_downloader.downloader.blink_api.request_videos",
         return_value=None,
     ):
-        result = await dl._fetch_clip_list(datetime.now(UTC))
+        result, complete = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert result == []
+    assert not complete
 
 
 async def test_fetch_clip_list_handles_api_error(dl):
@@ -2108,9 +2545,10 @@ async def test_fetch_clip_list_handles_api_error(dl):
         "blink_downloader.downloader.blink_api.request_videos",
         side_effect=Exception("HTTP 500"),
     ):
-        result = await dl._fetch_clip_list(datetime.now(UTC))
+        result, complete = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert result == []
+    assert not complete
 
 
 # ---------------------------------------------------------------------------
@@ -2162,9 +2600,10 @@ async def test_fetch_clip_list_still_swallows_non_auth_fatal_exceptions(dl):
         "blink_downloader.downloader.blink_api.request_videos",
         side_effect=ConnectionResetError("connection reset"),
     ):
-        result = await dl._fetch_clip_list(datetime.now(UTC))
+        result, complete = await dl._fetch_clip_list(datetime.now(UTC))
 
     assert result == []
+    assert not complete
 
 
 # ---------------------------------------------------------------------------

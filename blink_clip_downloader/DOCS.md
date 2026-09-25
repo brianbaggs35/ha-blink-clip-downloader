@@ -201,6 +201,37 @@ large batch of API tokens re-analyzing a backlog. Any clip is always
 analyzable on demand via **Analyze Now** (or **Bulk select → 🔬 Analyze
 selected** for several at once) regardless of this cap.
 
+#### How a clip is never skipped
+
+Each poll asks Blink for the clips listed since a bookmark, then moves the
+bookmark forward for the next poll. The bookmark only moves as far as is
+safe:
+
+- It moves to **ten minutes before this poll asked Blink for its list**, not
+  to when the downloads finished. Blink lists a clip only once it has
+  finished recording and uploading, so a clip that shows up while a poll is
+  still downloading is picked up by the next one. The overlap just repeats a
+  few clips that are already downloaded, which are skipped.
+- It never moves past a clip that is **still owed a download**: one that
+  failed (every `retry_attempts` retry used up, or no video link yet), one
+  left for a later poll by `max_clips_per_poll`, or one the storage quota
+  stopped. The next poll asks for that clip again.
+- If Blink's list stopped partway on an error, the bookmark stays where it
+  was, since the missing pages could have held anything.
+
+A failed clip is tried again a minute later, then after 2, 4, 8 minutes and
+so on, never more than an hour apart, and clips that have never been tried
+always go first. So a clip that keeps failing doesn't slow the download of
+new clips (or their alerts) on every poll. It is given up on only once it
+has failed at least **5 times** *and* its first failure is at least
+**6 hours** old, so a short outage never loses footage and one clip that
+will never download (broken on Blink's side) can't hold the bookmark back
+forever. A clip deleted in the Blink app drops out on its own. Giving up is logged as a warning naming the clip, its camera and
+when it was recorded. The Status tab's Blink Connection card shows
+**Retrying downloads** (clips that failed on the latest poll and will be
+asked for again) and **Downloads given up (7 days)** whenever either is
+above zero.
+
 ### Retention & Quota
 
 | Option | Default | Description |
@@ -224,7 +255,7 @@ selected** for several at once) regardless of this cap.
 |--------|---------|-------------|
 | `download_thumbnails` | `false` | Save a JPEG thumbnail (first frame, via ffmpeg) alongside each clip. Enabling this also gradually backfills thumbnails for clips downloaded earlier and for clips re-imported after an uninstall/reinstall (a few per poll cycle until the library is fully covered). |
 | `concurrent_downloads` | `3` | Parallel downloads (1–10) |
-| `retry_attempts` | `3` | Retries per failed download |
+| `retry_attempts` | `3` | Retries per failed download within one poll. A clip that still fails is asked for again on later polls — see [How a clip is never skipped](#how-a-clip-is-never-skipped) |
 | `retry_delay` | `5.0` | Base seconds between retries (multiplied by attempt number) |
 
 ### HA Notifications
@@ -1425,8 +1456,10 @@ from any browser without leaving Home Assistant.
 - **Status tab** — a per-camera battery strip at the top (Normal/Low, color-coded;
   click a camera to see its history — when it went low, when it recovered, and how
   long each low period lasted — see [Low-Battery Alerts](#low-battery-alerts)
-  above for the matching alert), Blink connection status, library stats,
-  per-camera breakdown, a 7-day activity chart, and an **AI Analysis** card
+  above for the matching alert), Blink connection status (with **Retrying
+  downloads** and **Downloads given up (7 days)** rows whenever a clip is
+  failing to download — see [How a clip is never skipped](#how-a-clip-is-never-skipped)),
+  library stats, per-camera breakdown, a 7-day activity chart, and an **AI Analysis** card
   showing provider name, online/offline status, model, pending queue count, and
   suspicious-clip count.
 - **AI tab** — AI provider configuration (with a Fetch Models picker for both the
@@ -1961,7 +1994,7 @@ Downloaded clips are saved under the `share` folder, accessible via:
 |------|-------------|
 | `/data/auth_credentials.json` | Cached Blink auth tokens (do not edit) |
 | `/data/blink_hardware_id.txt` | Stable device ID presented to Blink during login (do not edit) |
-| `/data/downloaded_clips.json` | Tracker of downloaded clip IDs |
+| `/data/downloaded_clips.json` | Tracker of downloaded clip IDs, the bookmark the next poll asks Blink for clips from, and the clips that are failing to download (kept 7 days) |
 | `/data/clip_manifest.json` | Newline-delimited JSON log of all downloads |
 | `/data/postgresql/17/main/` | Bundled PostgreSQL data directory powering the web UI and AI analysis |
 | `/data/stats.json` | Latest statistics snapshot |
@@ -1987,6 +2020,16 @@ Downloaded clips are saved under the `share` folder, accessible via:
 - Check the add-on log for authentication errors.
 - Verify your Blink credentials are correct.
 - Ensure `/share/` is writable (`share:rw` is set in the add-on's volume mapping).
+
+**The Status tab shows "Retrying downloads" or "Downloads given up"**
+- *Retrying* is normal after a network blip or a Blink outage and clears on
+  its own once the clip downloads. It is tried again at growing intervals,
+  never more than an hour apart.
+- *Given up* means a clip kept failing to download for over 6 hours.
+  Search the add-on log for `Giving up on clip`: each line names the camera
+  and when the clip was recorded, so you can find it in the Blink app. It is
+  usually a clip Blink deleted, or one whose video Blink never finished
+  processing.
 
 **2FA loop keeps triggering**
 - Your refresh token may have expired. Delete `/data/auth_credentials.json` and restart.

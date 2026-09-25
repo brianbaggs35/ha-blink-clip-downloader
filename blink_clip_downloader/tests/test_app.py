@@ -53,6 +53,19 @@ async def test_poll_cycle_no_new_clips(app):
     app._notifier.notify.assert_not_awaited()
 
 
+async def test_poll_cycle_publishes_download_retries_for_the_status_tab(app):
+    """Clips waiting on a retry, and clips given up on, reach /api/stats
+    after every poll, whether or not anything downloaded."""
+    app._downloader.download_retry_status = MagicMock(
+        return_value={"retrying": 2, "given_up": 1}
+    )
+    await app._poll_cycle()
+    assert app._media_server.extra_status["download_retries"] == {
+        "retrying": 2,
+        "given_up": 1,
+    }
+
+
 async def test_poll_cycle_refreshes_camera_state(app):
     """Every poll cycle must refresh Blink's own camera state (images,
     motion, battery, online status) — nothing else in the app does this,
