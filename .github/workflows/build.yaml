@@ -175,7 +175,7 @@ jobs:
         # A category of its own, per architecture: these are results for a
         # published release image, and must not overwrite ci.yaml's results
         # for the same commit (GitHub keys uploads by category).
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-release-${{ matrix.arch }}.sarif
           category: trivy-release-${{ matrix.arch }}
