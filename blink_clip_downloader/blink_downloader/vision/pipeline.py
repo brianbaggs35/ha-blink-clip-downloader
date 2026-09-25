@@ -941,9 +941,21 @@ def _vehicle_pair(vehicle: ProtectedAsset, subjects: list[DetectedObject]) -> _P
         return (not person_at_car, gap, box_gap(d.box, car))
 
     chosen = min(subjects, key=rank)
-    sightings = [d for d in subjects if d.track_id == chosen.track_id]
-    nearest = min(sightings, key=lambda d: box_gap(d.box, car))
+    nearest = min(_sightings_of(chosen, subjects), key=lambda d: box_gap(d.box, car))
     return (nearest, car, nearest.frame_index, nearest.track_id, None)
+
+
+def _sightings_of(
+    chosen: DetectedObject, subjects: list[DetectedObject]
+) -> list[DetectedObject]:
+    """Every sighting of *chosen*'s own track, or just *chosen* when it has
+    no track id. Untracked boxes all share ``None``, so grouping on it would
+    reopen the choice of *whom* to every untracked subject in the clip —
+    handing the stages back to the passer-by overlapping the car most, or
+    to the dog at a stranger's feet, whenever tracking lost the thread."""
+    if chosen.track_id is None:
+        return [chosen]
+    return [d for d in subjects if d.track_id == chosen.track_id]
 
 
 def _marked_pair_at(
@@ -991,6 +1003,5 @@ def _examine(
     it most deeply, the same moment the vehicle's pair examines."""
     box = asset.box
     assert box is not None
-    sightings = [d for d in subjects if d.track_id == chosen.track_id]
-    nearest = min(sightings, key=lambda d: box_gap(d.box, box))
+    nearest = min(_sightings_of(chosen, subjects), key=lambda d: box_gap(d.box, box))
     return (nearest, box, nearest.frame_index, nearest.track_id, asset.key)
