@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DOMWrapper, mount } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AppSidebar, { type TabName } from './AppSidebar.vue'
 import { useThemeStore } from '../../stores/theme'
@@ -8,6 +8,7 @@ import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { useToastStore } from '../../stores/toast'
 import { useCapabilitiesStore } from '../../stores/capabilities'
+import { useAccessStore } from '../../stores/access'
 
 function jsonResponse(body: unknown, ok = true) {
   return { ok, json: () => Promise.resolve(body), text: () => Promise.resolve('') } as Response
@@ -593,5 +594,51 @@ describe('AppSidebar', () => {
       await dialog.vm.$emit('update:visible', false)
       expect(dialog.props('visible')).toBe(false)
     })
+  })
+})
+
+describe('AppSidebar sign-out', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function stubAccess(via: string) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) =>
+        Promise.resolve(
+          jsonResponse(
+            url === '/api/access'
+              ? { login_enabled: via !== 'open', via, user: 'brian', access_token: 'tok' }
+              : { connected: true, available: true, faces: [] },
+          ),
+        ),
+      ),
+    )
+  }
+
+  it('offers Sign out to a browser signed in on the direct port', async () => {
+    stubAccess('session')
+    const wrapper = mountSidebar()
+    await flushPromises()
+    const button = wrapper.find('[data-testid="sign-out"]')
+    expect(button.exists()).toBe(true)
+    expect(button.attributes('title')).toBe('Sign out (brian)')
+
+    const access = useAccessStore()
+    const signOut = vi.spyOn(access, 'signOut').mockResolvedValue()
+    await button.trigger('click')
+    expect(signOut).toHaveBeenCalled()
+  })
+
+  it.each(['ingress', 'open'])('has no Sign out when reached via %s', async (via) => {
+    stubAccess(via)
+    const wrapper = mountSidebar()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="sign-out"]').exists()).toBe(false)
   })
 })

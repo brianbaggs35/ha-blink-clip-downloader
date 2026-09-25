@@ -58,6 +58,8 @@ blink_downloader/database/queues.py
 blink_downloader/database/schema.py
 blink_downloader/database/sql.py
 blink_downloader/media_server/__init__.py
+blink_downloader/media_server/access.py
+blink_downloader/media_server/access_control.py
 blink_downloader/media_server/ai.py
 blink_downloader/media_server/app_shell.py
 blink_downloader/media_server/assets.py
@@ -209,6 +211,7 @@ tests/test_live_view.py
 tests/test_main_logging.py
 tests/test_manifest.py
 tests/test_media_server.py
+tests/test_media_server_access.py
 tests/test_media_server_assets.py
 tests/test_media_server_routes.py
 tests/test_module_names.py

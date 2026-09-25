@@ -14,6 +14,11 @@ Usage:
     BLINK_DB_DSN=postgresql://postgres:postgres@localhost:5432/blink_clips_e2e \
         python3 scripts/standalone_server.py [port]
 
+A second server on port + 1 has Direct Access Sign-In on, for
+frontend/e2e/direct-access-signin.spec.ts: same database, sign-in checked by
+_e2e_verify_credentials (``e2e-user`` / ``e2e-password``) instead of
+Supervisor, which does not exist here.
+
 Requires `npm run build` (from frontend/) to have already produced
 blink_downloader/static/, and a reachable, already-created Postgres
 database at BLINK_DB_DSN (ClipDatabase.init() creates the schema, but not
@@ -882,6 +887,18 @@ def _seed_assets() -> None:
     )
 
 
+#: The one Home Assistant login the sign-in server accepts.
+_E2E_USERNAME = "e2e-user"
+_E2E_PASSWORD = "e2e-password"  # nosec B105 - a fixture for the e2e backend
+
+
+async def _e2e_verify_credentials(username: str, password: str) -> bool:
+    """Supervisor's /auth, standing in: nothing here runs under Supervisor.
+    Everything else about signing in — the form, the cookie, the lockout,
+    the token — is the real code in media_server/access.py."""
+    return username == _E2E_USERNAME and password == _E2E_PASSWORD
+
+
 async def _main() -> None:
     _configure_e2e_logging()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8199
@@ -956,6 +973,19 @@ async def _main() -> None:
     # After construction: MediaServer builds its own FaceEmbedder, and this
     # replaces only the model behind it — see _E2EFaceEmbedder.
     server._face_embedder = _E2EFaceEmbedder()
+    # Started before the main server: Playwright begins once the main one
+    # answers /health, and the sign-in spec must find this one up by then.
+    signin_server = MediaServer(
+        db=db,
+        port=port + 1,
+        analyzer=analyzer,
+        list_camera_names=_list_camera_names,
+        get_camera_snapshot=_camera_snapshot,
+        trigger_download=lambda: None,
+        direct_access_login=True,
+    )
+    signin_server._access.verify_credentials = _e2e_verify_credentials  # type: ignore[method-assign]
+    await signin_server.start()
     await server.start()
     print(f"Standalone e2e server ready on http://localhost:{port}/", flush=True)
 

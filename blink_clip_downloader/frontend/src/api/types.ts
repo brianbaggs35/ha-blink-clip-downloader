@@ -891,3 +891,19 @@ export interface BatteryStatus {
 }
 
 export type BatteryHistoryEntry = BatteryStatus
+
+// ---------------------------------------------------------------------------
+// Direct-port access (media_server/access.py)
+// ---------------------------------------------------------------------------
+
+/** How this page reached the add-on: "open" when Direct Access Sign-In is
+ * off, "ingress" from the Home Assistant sidebar, "session" when signed in
+ * on the direct port. `access_token` is what Home Assistant's own calls to
+ * the direct port carry — empty while sign-in is off, since nothing then
+ * needs one. */
+export interface AccessStatus {
+  login_enabled: boolean
+  via: 'open' | 'ingress' | 'session'
+  user: string | null
+  access_token: string
+}

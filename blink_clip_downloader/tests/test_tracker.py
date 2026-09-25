@@ -419,3 +419,10 @@ def test_failure_records_of_the_wrong_shape_are_ignored(tmp_path):
     t = ClipTracker(f)
     assert t.is_downloaded("a")
     assert t._failures == {}
+def test_has_history_reflects_an_earlier_run(tmp_path):
+    path = tmp_path / "tracker.json"
+    assert ClipTracker(path).has_history is False
+    tracker = ClipTracker(path)
+    tracker.mark_downloaded("clip-1")
+    tracker.save()
+    assert ClipTracker(path).has_history is True

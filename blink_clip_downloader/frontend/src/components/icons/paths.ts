@@ -110,6 +110,7 @@ export const ICONS = {
     ],
   },
   refresh: { paths: ['M21 12a9 9 0 1 1-2.6-6.35', 'M21 3v6h-6'] },
+  'sign-out': { paths: ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4', 'M16 17l5-5-5-5', 'M21 12H9'] },
   sync: { paths: ['M12 3v12', 'M7 10l5 5 5-5', 'M5 21h14'] },
   close: { paths: ['M18 6 6 18', 'M6 6l12 12'] },
   'error-circle': {

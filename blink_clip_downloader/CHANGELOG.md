@@ -66,6 +66,47 @@ The add-on now maps Home Assistant's `media` folder: the companion app
 fetches a picture only by a Home Assistant URL, and
 `/media/local/blink_clip_downloader/alerts/...` is one it fetches with its
 own sign-in. Pictures there are deleted after a week.
+### The direct-access port now asks you to sign in
+
+The web UI has always been on two doors: the **Blink Clips** panel in the
+Home Assistant sidebar, which Home Assistant only opens after you have signed
+in, and the direct-access port (`http://<ha-ip>:8099`), which answered
+anything on your network with no questions asked. That covered far more than
+browsing clips: any device on the network — or any web page someone in the
+house happened to open, sending requests in the background — could change the
+add-on's settings, arm or disarm the Sync Module, write automations and
+scripts into Home Assistant, or link Google Drive backups to an account of its
+own choosing.
+
+A new **Direct Access Sign-In** option, on by default, closes that door:
+
+- **The direct port shows a sign-in page.** Use your Home Assistant username
+  and password — the add-on asks Home Assistant to check them, so there is no
+  new password to manage. A browser stays signed in for 30 days, and a new
+  sign-out button at the bottom of the sidebar ends it sooner. Five wrong
+  passwords from one address make it wait 15 minutes.
+- **The sidebar panel never asks.** Nothing changes there.
+- **Changes have to come from the add-on's own page**, so a web page elsewhere
+  cannot use your signed-in browser to send commands.
+- **Home Assistant's own calls use an access token.** The Generic Camera
+  snapshot URLs and the Sync now, Arm/Disarm and Archive scripts from the
+  Automations tab are called by Home Assistant itself, which cannot sign in.
+  The Automations tab now puts a token into that YAML and those URLs for you,
+  and shows it at the top of the tab with a **Regenerate** button. The token
+  opens only those endpoints — never the library or the settings.
+- **The Security Feed iframe card** shows the sign-in page the first time;
+  sign in inside the card once. The card's URL needs the same host name you
+  open Home Assistant with, or the browser won't keep that sign-in.
+
+**If Home Assistant already uses port 8099** — Generic Camera tiles, or the
+Sync now, Arm/Disarm or Archive scripts — copy that YAML or URL from the
+Automations tab again after updating, so it includes the token. Home
+Assistant shows a one-time notification about this on the first start after
+the update. To keep the port open as before, turn off **Direct Access
+Sign-In** in the add-on's Configuration tab.
+
+The add-on now requests Home Assistant's `auth_api` permission, which is what
+lets it check a username and password.
 
 ## 6.0.7
 

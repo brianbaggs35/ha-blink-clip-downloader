@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { useToastStore } from '../../stores/toast'
+import { useAccessStore } from '../../stores/access'
 import RecipeBuilder from './RecipeBuilder.vue'
 import type { Recipe } from './recipes/types'
 import * as haConfig from '../../api/haConfig'
@@ -264,5 +265,14 @@ describe('RecipeBuilder', () => {
       await flushPromises()
       expect(wrapper.text()).not.toContain('now exists in Home Assistant')
     })
+  })
+
+  it('hands the access token to the recipe alongside its own fields', () => {
+    useAccessStore().accessToken = 'tok'
+    const echo: Recipe = { ...RECIPES[1], build: (v) => `token: ${v.access_token}\nname: ${v.name}` }
+    const wrapper = mountBuilder([echo])
+    const code = wrapper.findComponent({ name: 'CodeBlock' }).props('code') as string
+    expect(code).toContain('token: tok')
+    expect(code).toContain('name: alpha')
   })
 })

@@ -23,6 +23,9 @@ import { slugify, trimTrailingChar, yamlString } from './types'
 export interface DashboardOptions {
   cameras: string[]
   addonUrl: string
+  /** Added to each snapshot URL while Direct Access Sign-In is on, since
+   * Home Assistant fetches those itself and cannot sign in. Empty when off. */
+  accessToken: string
   columns: number
   viewTitle: string
   viewPath: string
@@ -41,6 +44,7 @@ export interface DashboardOptions {
 export const DEFAULT_DASHBOARD_OPTIONS: DashboardOptions = {
   cameras: [],
   addonUrl: ADDON_URL_DEFAULT,
+  accessToken: '',
   columns: 2,
   viewTitle: 'Blink Security',
   viewPath: 'security-feed',
@@ -56,9 +60,11 @@ function trimUrl(addonUrl: string): string {
 }
 
 /** The still-image URL for one camera, encoded for a camera name with
- * spaces or punctuation in it. */
-export function snapshotUrl(addonUrl: string, camera: string): string {
-  return `${trimUrl(addonUrl)}/api/security-feed/snapshot/${encodeURIComponent(camera)}`
+ * spaces or punctuation in it, carrying the access token when there is one
+ * (the Generic Camera dialog has no field for a header). */
+export function snapshotUrl(addonUrl: string, camera: string, accessToken = ''): string {
+  const url = `${trimUrl(addonUrl)}/api/security-feed/snapshot/${encodeURIComponent(camera)}`
+  return accessToken ? `${url}?token=${encodeURIComponent(accessToken)}` : url
 }
 
 /** The kiosk URL of this add-on's own Security Feed tab. */
@@ -83,7 +89,7 @@ export function cameraSetupSheet(options: DashboardOptions): string {
     '',
     ...cameras.flatMap((camera) => [
       `Name:             Blink ${camera}`,
-      `Still Image URL:  ${snapshotUrl(options.addonUrl, camera)}`,
+      `Still Image URL:  ${snapshotUrl(options.addonUrl, camera, options.accessToken)}`,
       `Resulting entity: ${cameraEntityId(camera)}`,
       '',
     ]),

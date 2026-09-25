@@ -10,6 +10,9 @@ import {
   apiPut,
   describeApiError,
 } from './client'
+import { goTo } from '../navigation'
+
+vi.mock('../navigation', () => ({ goTo: vi.fn(), loginUrl: () => '/login?next=%2F' }))
 
 function jsonResponse(body: unknown, ok = true, status = 200, statusText = 'OK') {
   return {
@@ -24,6 +27,7 @@ function jsonResponse(body: unknown, ok = true, status = 200, statusText = 'OK')
 describe('api client', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
+    vi.mocked(goTo).mockReset()
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -33,6 +37,25 @@ describe('api client', () => {
     vi.mocked(fetch).mockResolvedValue(jsonResponse({ ok: true }))
     await expect(api('/api/clips')).resolves.toEqual({ ok: true })
     expect(fetch).toHaveBeenCalledWith('/api/clips', {})
+  })
+
+  it('api(): an expired direct-port sign-in sends the browser to the login page', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({ error: 'Sign in', login_required: true }, false, 401, 'Unauthorized'),
+    )
+    await expect(api('/api/clips')).rejects.toMatchObject({ status: 401 })
+    expect(goTo).toHaveBeenCalledWith('/login?next=%2F')
+  })
+
+  it.each([
+    ['a 401 without the sign-in flag', jsonResponse({ error: 'nope' }, false, 401)],
+    ['a 401 whose body is not JSON', jsonResponse('Unauthorized', false, 401)],
+    ['a 401 whose body is JSON null', jsonResponse('null', false, 401)],
+    ['a 403 carrying the flag', jsonResponse({ login_required: true }, false, 403)],
+  ])('api(): %s does not navigate', async (_label, response) => {
+    vi.mocked(fetch).mockResolvedValue(response)
+    await expect(api('/api/clips')).rejects.toBeInstanceOf(ApiError)
+    expect(goTo).not.toHaveBeenCalled()
   })
 
   it('api(): throws ApiError with status + body text on failure', async () => {

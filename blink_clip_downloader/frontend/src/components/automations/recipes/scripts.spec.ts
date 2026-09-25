@@ -267,3 +267,24 @@ describe('entity fields a user can mistype', () => {
     }
   })
 })
+
+describe('the access token on rest_commands', () => {
+  type RestCommands = Record<string, { headers?: Record<string, string> }>
+  const RECIPES_CALLING_THE_ADDON = ['script-sync-now', 'script-arm-sync', 'script-archive-now']
+
+  it.each(RECIPES_CALLING_THE_ADDON)('%s sends it as a bearer header when sign-in is on', (id) => {
+    const parsed = load(build(id, { access_token: 'secret-token' })) as { rest_command: RestCommands }
+    const commands = Object.values(parsed.rest_command)
+    expect(commands.length).toBeGreaterThan(0)
+    for (const command of commands) {
+      expect(command.headers).toEqual({ Authorization: 'Bearer secret-token' })
+    }
+  })
+
+  it.each(RECIPES_CALLING_THE_ADDON)('%s has no headers when sign-in is off', (id) => {
+    const parsed = load(build(id)) as { rest_command: RestCommands }
+    for (const command of Object.values(parsed.rest_command)) {
+      expect(command.headers).toBeUndefined()
+    }
+  })
+})
