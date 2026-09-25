@@ -3070,6 +3070,8 @@ async def test_the_watcher_stays_off_with_nothing_to_hear(base_config) -> None:
 
     app._event_watcher.start.assert_not_awaited()
     assert not [t for t in app._bg_tasks if t.get_name() == "event_watcher"]
+
+
 async def _run_once_with_media_server(app, tracker_path):
     import dataclasses
 
