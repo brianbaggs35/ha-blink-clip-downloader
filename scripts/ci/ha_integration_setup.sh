@@ -119,6 +119,19 @@ cmd_prepare_addon_copy() {
   sed -i '/^options:/,/^schema:/ s|^  password: .*|  password: "ci-integration-not-a-real-password"|' \
     "$dest/config.yaml"
 
+  # This job reads the add-on's API over its direct port from inside the
+  # devcontainer (assert-persisted and the seeded-row checks), which is not
+  # Supervisor's ingress proxy and has no Home Assistant session to sign in
+  # with, so Direct Access Sign-In is turned off in this copy only. Ingress,
+  # which the browser checks go through, never asks either way.
+  sed -i '/^options:/,/^schema:/ s|^  direct_access_login: .*|  direct_access_login: false|' \
+    "$dest/config.yaml"
+  if ! grep -q '^  direct_access_login: false$' "$dest/config.yaml" ||
+    ! grep -q '^  direct_access_login: "bool"$' "$dest/config.yaml"; then
+    echo "Could not turn off direct_access_login in the CI copy of config.yaml." >&2
+    return 1
+  fi
+
   # The credentials must not have leaked into the schema: types there are
   # what Supervisor validates every user's options against, and a corrupted
   # one is invisible until discovery quietly never happens.

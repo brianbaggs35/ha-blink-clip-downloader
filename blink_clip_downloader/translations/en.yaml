@@ -109,6 +109,16 @@ configuration:
   media_server_port:
     name: Web UI Port
     description: TCP port for the clip library web server (default 8099).
+  direct_access_login:
+    name: Direct Access Sign-In
+    description: >-
+      Ask for a Home Assistant username and password when the web UI is
+      opened on the direct-access port. Opening it from the Home Assistant
+      sidebar never asks. Home Assistant's own cameras and scripts that use
+      this port carry an access token instead; the Automations tab adds it to
+      the YAML it generates. Only turn this off if you trust every device
+      that can reach the port, because anything on your network could then
+      change settings, disarm cameras or read clips.
   watch_ha_events:
     name: Watch HA Motion Events
     description: >-

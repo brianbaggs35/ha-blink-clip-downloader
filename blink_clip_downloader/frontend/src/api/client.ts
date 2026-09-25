@@ -1,4 +1,5 @@
 import { INGRESS_ROOT } from '../env'
+import { goTo, loginUrl } from '../navigation'
 
 export class ApiError extends Error {
   status: number
@@ -37,11 +38,23 @@ export function describeApiError(error: unknown, fallback: string): string {
   return typeof reason === 'string' && reason ? reason : fallback
 }
 
+/** True for the add-on's "sign in first" answer (media_server/access.py),
+ * which only ever comes back on the direct port when a sign-in expired. */
+function signInRequired(status: number, body: string): boolean {
+  if (status !== 401) return false
+  try {
+    return (JSON.parse(body) as { login_required?: unknown } | null)?.login_required === true
+  } catch {
+    return false
+  }
+}
+
 /** Thin typed fetch wrapper mirroring the pre-Vue UI's `api()` helper. */
 async function apiRequest<T>(path: string, opts: RequestInit = {}): Promise<{ data: T; headers: Headers }> {
   const res = await fetch(INGRESS_ROOT + path, opts)
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
+    if (signInRequired(res.status, text)) goTo(loginUrl())
     throw new ApiError(res.status, `${res.status}: ${text}`, text)
   }
   return { data: (await res.json()) as T, headers: res.headers }

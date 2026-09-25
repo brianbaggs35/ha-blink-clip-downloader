@@ -135,10 +135,12 @@ def _is_direct_port_kiosk(request: web.Request) -> bool:
       by anyone.
     * **Only the kiosk display mode qualifies**, not the ordinary UI.
 
-    What remains is a narrow clickjacking surface on a port that already
-    serves this UI to anyone who can reach it, with no authentication of its
-    own. Deleting the two lines above restores SAMEORIGIN everywhere, at the
-    cost of the iframe card no longer loading.
+    What remains is a narrow clickjacking surface on the kiosk page and, so
+    the card can sign in inside its frame, the login page it redirects to
+    (``/login?...&kiosk=1``, see access.py). With Direct Access Sign-In on,
+    the kiosk page itself only renders for a signed-in browser. Deleting
+    the two lines above restores SAMEORIGIN everywhere, at the cost of the
+    iframe card no longer loading.
     """
     if request.headers.get("X-Ingress-Path"):
         return False

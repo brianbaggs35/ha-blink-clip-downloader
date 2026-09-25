@@ -24,9 +24,49 @@ analysis engine that automatically flags suspicious activity.
 After starting, the clip library is accessible two ways:
 
 - **HA Sidebar** — a **Blink Clips** panel appears automatically (powered by HA
-  ingress; no extra port or auth needed).
+  ingress; no extra port or sign-in needed).
 - **Direct URL** — `http://<ha-ip>:8099` (requires the `8099/tcp` port mapping to
-  be forwarded).
+  be forwarded). Asks for your Home Assistant username and password — see
+  [Direct access sign-in](#direct-access-sign-in).
+
+### Direct access sign-in
+
+The sidebar panel is protected by Home Assistant itself: nobody reaches it
+without signing in to Home Assistant first. The direct port is different —
+anything on your network can reach it, and before 6.0.8 it answered
+everything, including changing settings, disarming cameras and writing
+automations into Home Assistant. With **Direct Access Sign-In** on (the
+default since 6.0.8):
+
+- **Opening the web UI on port 8099 shows a sign-in page.** Use the same
+  username and password you use for Home Assistant — the add-on asks Home
+  Assistant to check them, so there is no separate password to set up. You
+  stay signed in on that browser for 30 days, or until you press the sign-out
+  button at the bottom of the sidebar. Any Home Assistant user can sign in,
+  not only administrators, so anyone you have given a Home Assistant login can
+  use the add-on this way too.
+- **The sidebar panel never asks.** Home Assistant has already signed you in.
+- **Changes only come from the add-on's own page.** A web page on some other
+  site cannot use your signed-in browser to send commands to the add-on.
+- **Home Assistant's own calls carry an access token.** Generic Camera
+  snapshot URLs and the Sync now, Arm/Disarm and Archive scripts are called by
+  Home Assistant itself, which cannot sign in. The Automations tab adds the
+  token to the YAML and URLs it generates, and shows it (with a
+  **Regenerate** button) at the top of the tab. The token only opens those few
+  endpoints — never the library, the settings, or anything else.
+- **Five wrong passwords from one address** make that address wait 15 minutes
+  before trying again.
+
+**After updating from 6.0.7 or earlier**, anything that already pointed Home
+Assistant at port 8099 needs its YAML or URL copied from the Automations tab
+again, because it has no token yet. Home Assistant shows a one-time
+notification saying so. A Security Feed iframe card only needs you to sign in
+inside the card once.
+
+To keep the old open behavior — for example, a wall tablet that cannot type a
+password — turn off **Direct Access Sign-In** (`direct_access_login`) in the
+add-on's Configuration tab. Only do that if you trust every device that can
+reach the port.
 
 ---
 
@@ -284,6 +324,7 @@ above zero.
 |--------|---------|-------------|
 | `enable_media_server` | `true` | Start the built-in web UI |
 | `media_server_port` | `8099` | TCP port for the web UI (also the ingress port) |
+| `direct_access_login` | `true` | Ask for a Home Assistant username and password on the direct port. The sidebar panel never asks. See [Direct access sign-in](#direct-access-sign-in). |
 
 ### Event-Driven Instant Download
 
@@ -1977,6 +2018,10 @@ snapshot endpoint, which turns each Blink camera into a real `camera.*` entity:
 http://homeassistant.local:8099/api/security-feed/snapshot/Front%20Door
 ```
 
+With Direct Access Sign-In on, the URL also carries the add-on's access token
+(`...Front%20Door?token=<token>`) — copy it from the Dashboards builder, which
+fills it in for you.
+
 Add one Generic Camera per Blink camera (Settings → Devices & services → Add
 integration → Generic Camera; leave the stream source empty and turn *off*
 "limit refetch to url change"), and the Dashboards builder writes the matching
@@ -2005,7 +2050,12 @@ there and every embed follows.
 `vehicles`, `biometrics`, `storage`). This route needs no Home Assistant setup
 at all, but the *viewing browser* loads the add-on directly — so it needs to
 reach that port, and an `http://` add-on embedded in an `https://` dashboard is
-blocked by the browser as mixed content.
+blocked by the browser as mixed content. With Direct Access Sign-In on, the
+card shows the sign-in page the first time; sign in inside it once and it stays
+signed in for 30 days. Use the same host name in the card's URL as the one you
+open Home Assistant with (`homeassistant.local` for both, or the same IP
+address for both): browsers do not keep a sign-in made inside a card that
+comes from a different site, so a mismatch shows the sign-in page every time.
 
 ---
 
@@ -2053,6 +2103,7 @@ Downloaded clips are saved under the `share` folder, accessible via:
 | `/data/model_cache/` | Downloaded computer-vision models (YOLO, Depth Anything V2, SAM2, facenet-pytorch) — see **Disk Space** above |
 | `/data/google_drive_settings.json` | Google OAuth client ID/secret and backup policy, set via the Storage tab |
 | `/data/google_drive_credentials.json` | Cached Google Drive OAuth token and selected backup folder (do not edit) |
+| `/data/web_access.json` | The secret that signs direct-port sign-ins, and the access token Home Assistant's own calls carry (do not edit; delete it to sign every browser out and replace the token) |
 
 > All `/data/` files are stored inside the add-on's private data directory and are
 > automatically removed by the supervisor when the add-on is uninstalled.
@@ -2092,6 +2143,14 @@ Downloaded clips are saved under the `share` folder, accessible via:
 - The add-on uses HA ingress, which automatically proxies the panel URL. No manual
   port forwarding is needed for the sidebar panel.
 - If using direct access (`http://<ha-ip>:8099`), ensure port `8099/tcp` is exposed.
+
+**Port 8099 keeps showing a sign-in page, or Home Assistant's cameras/scripts get "Sign in"**
+- Sign in with a Home Assistant user's username and password (not your Blink
+  account). "Home Assistant couldn't be reached" means the add-on could not ask
+  Supervisor to check it — restart the add-on and try again.
+- A Generic Camera or `rest_command` set up before 6.0.8 has no access token:
+  copy its URL or YAML from the Automations tab again.
+- Or turn off `direct_access_login` to go back to an open port.
 
 **Clips from only one camera are downloading**
 - Check `camera_filter` — names must match exactly as shown in the Blink app.

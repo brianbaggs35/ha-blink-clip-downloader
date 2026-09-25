@@ -245,7 +245,9 @@ architecture.
     class). `MediaServer` is still **one class with an identical public
     API**, composed in `__init__.py` from **one mixin per tab of the web
     UI** — so the module to open is the one named after the tab you are
-    changing: `app_shell` (the SPA, `/health`, Blink auth), `library`,
+    changing: `app_shell` (the SPA, `/health`, Blink auth), `access`
+    (direct-port sign-in: the gate middleware, `/login`, the access
+    token — see below), `library`,
     `status`, `liveview`, `security_feed`, `ai`, `usage`,
     `camera_configs`, `vehicles`, `assets`, `security_events`, `sync_module`,
     `feedback`, `faces`, `finetune`, `storage`, `automations` — over
@@ -254,6 +256,25 @@ architecture.
     dependencies and runtime state every mixin reads, so each one
     type-checks alone).
     Things worth knowing before editing it:
+    - **Direct Access Sign-In (`direct_access_login`, on by default since
+      6.0.8) gates everything that is not ingress.** `access.py`'s
+      middleware lets through requests from Supervisor's ingress proxy
+      (`172.30.32.2`, matched on the TCP peer, never a header), `/health`,
+      `/login` and the favicon; a browser with a valid session cookie
+      (signed with a secret in `/data/web_access.json`; its writes must pass
+      a `Sec-Fetch-Site`/`Origin` same-origin check); and a request carrying
+      the access token, but **only** to `access_control.TOKEN_ROUTES` — the
+      endpoints the Automations tab's generated YAML has Home Assistant
+      call. A new endpoint that Home Assistant itself must reach has to be
+      added there (and `tests/test_media_server_access.py` fails if an entry
+      stops being a real route); anything else is deliberately unreachable
+      with the token. Sign-in asks Supervisor's `/auth` (hence `auth_api:
+      true` in `config.yaml`). `MediaServer(...)` defaults the option **off**,
+      so tests and `scripts/standalone_server.py`'s main e2e backend keep an
+      open port; that script starts a second server on port + 1 with it on
+      for `frontend/e2e/direct-access-signin.spec.ts`. The CI smoke test
+      and the HA-integration job turn it off, since both read the API over
+      the direct port with no session.
     - **Each mixin registers its own routes** via `_register_<area>_routes`,
       called by `_build_app`. Adding an endpoint is one file, not a handler
       here and a route line far away. `tests/test_media_server_routes.py`

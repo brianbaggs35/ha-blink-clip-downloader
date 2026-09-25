@@ -113,6 +113,17 @@ a detailed disk-space breakdown.
 4. Search for **Blink Clip Downloader** and click **Install**.
 5. Fill in your Blink credentials and click **Save**, then **Start**.
 
+### Opening the web UI
+
+Open **Blink Clips** from the Home Assistant sidebar — Home Assistant has
+already signed you in, so it never asks for anything. The same UI is also on
+the direct-access port (`http://<ha-ip>:8099`), which since 6.0.8 asks for your
+**Home Assistant** username and password first, so nothing else on your
+network can use it. Home Assistant's own cameras and scripts that call that
+port use an access token, which the Automations tab adds to the YAML it
+generates. See [Direct access sign-in](blink_clip_downloader/DOCS.md#direct-access-sign-in)
+for the details, including how to turn it off.
+
 ### Updating from 4.0.2 or earlier
 
 Expect this specific update to take roughly **10-20 minutes**, well beyond

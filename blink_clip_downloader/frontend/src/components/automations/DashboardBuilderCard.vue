@@ -17,8 +17,10 @@ import {
   dashboardYaml,
   kioskUrl,
 } from './recipes/dashboard'
+import { useAccessStore } from '../../stores/access'
 
 const props = defineProps<{ cameras: string[] }>()
+const access = useAccessStore()
 
 const MODES = [
   { label: 'Camera entities', value: 'cameras' },
@@ -47,6 +49,7 @@ const options = computed<DashboardOptions>(() => ({
   // options use.
   cameras: selectedCameras.value.length ? selectedCameras.value : props.cameras,
   addonUrl: addonUrl.value,
+  accessToken: access.accessToken,
   columns: columns.value,
   viewTitle: viewTitle.value,
   viewPath: viewPath.value,
@@ -184,6 +187,11 @@ const embedUrl = computed(() => kioskUrl(addonUrl.value))
         the Security Feed tab's own cameras, tiles per row and refresh interval, so change it there and the card
         follows. An <code>http://</code> add-on inside an <code>https://</code> dashboard is blocked as mixed content,
         so this route suits a local-only Home Assistant.
+      </p>
+      <p v-if="access.loginEnabled" class="dash-note" data-testid="dash-signin-note">
+        Direct Access Sign-In is on, so the card shows a sign-in form the first time. Sign in inside it once with your
+        Home Assistant account and it stays signed in for 30 days. Use the same host name as the address you open Home
+        Assistant with, or the browser won't keep the sign-in.
       </p>
     </template>
     <template v-if="delivery === 'raw'">

@@ -12,6 +12,9 @@ arch:
   - amd64
 init: false
 homeassistant_api: true
+# Lets the direct-access port check a Home Assistant username and password
+# through Supervisor's /auth endpoint (see direct_access_login below).
+auth_api: true
 
 # Ingress provides a secure panel entry in the HA sidebar at no extra port.
 ingress: true
@@ -116,6 +119,13 @@ options:
   enable_media_server: true
   # TCP port the web UI listens on for direct (non-ingress) access.
   media_server_port: 8099
+  # Ask for a Home Assistant username and password on the direct-access
+  # port above. The Home Assistant sidebar panel (ingress) never asks.
+  # Home Assistant's own cameras and scripts that call this port use an
+  # access token instead, which the Automations tab puts in the YAML it
+  # generates. Turn off only if every device that can reach the port is
+  # trusted: with it off, anything on your network can change settings.
+  direct_access_login: true
 
   # --- Event-driven instant download ---
   # Listen for HA motion events to trigger an immediate download without
@@ -596,6 +606,7 @@ schema:
   enable_library_db: "bool"
   enable_media_server: "bool"
   media_server_port: "int(1024,65535)"
+  direct_access_login: "bool"
   watch_ha_events: "bool"
   fast_poll_duration: "int(10,3600)"
   fast_poll_interval: "int(5,60)"

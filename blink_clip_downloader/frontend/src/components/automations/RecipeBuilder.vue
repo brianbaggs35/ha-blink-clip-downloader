@@ -10,6 +10,8 @@ import { type Recipe, type RecipeCreate, type RecipeValues, defaultValues } from
 import { createInHomeAssistant } from '../../api/haConfig'
 import { readLocal, writeLocal } from '../../localStorage'
 import { useToastStore } from '../../stores/toast'
+import { useAccessStore } from '../../stores/access'
+import { ACCESS_TOKEN_VALUE } from './recipes/shared'
 
 const props = withDefaults(
   defineProps<{
@@ -63,9 +65,13 @@ function reset() {
   values.value = defaultValues(selected.value)
 }
 
+const access = useAccessStore()
+
 const yaml = computed(() => {
   try {
-    return selected.value.build(values.value)
+    // The access token rides along with the form's own values, so a recipe
+    // that has Home Assistant call the direct port can authenticate it.
+    return selected.value.build({ ...values.value, [ACCESS_TOKEN_VALUE]: access.accessToken })
   } catch {
     // A half-typed field should never blank the page. The builders are pure
     // string assembly, so this is a backstop, not an expected path.

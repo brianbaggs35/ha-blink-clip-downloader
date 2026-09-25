@@ -93,6 +93,7 @@ cat > "$WORKDIR/data/options.json" <<'EOF'
   "event_cameras": [],
   "digest_enabled": false,
   "archive_enabled": false,
+  "direct_access_login": false,
   "log_level": "info"
 }
 EOF

@@ -3,6 +3,7 @@ import { load } from 'js-yaml'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import DashboardBuilderCard from './DashboardBuilderCard.vue'
+import { useAccessStore } from '../../stores/access'
 
 function mountCard(cameras: string[] = ['Front Door', 'Back Yard']) {
   return mount(DashboardBuilderCard, { props: { cameras } })
@@ -139,5 +140,24 @@ describe('DashboardBuilderCard', () => {
       const target = label.attributes('for')
       expect(wrapper.findAll(`#${target}`), `label for="${target}"`).toHaveLength(1)
     }
+  })
+
+  it('puts the access token into the snapshot URLs while sign-in is on', () => {
+    const access = useAccessStore()
+    access.loginEnabled = true
+    access.accessToken = 'tok'
+    const wrapper = mountCard()
+    const sheet = wrapper.findAllComponents({ name: 'CodeBlock' })[0].props('code') as string
+    expect(sheet).toContain('/snapshot/Front%20Door?token=tok')
+  })
+
+  it('tells the iframe route to sign in once, only while sign-in is on', async () => {
+    const wrapper = mountCard()
+    await wrapper.findComponent({ name: 'SelectButton' }).vm.$emit('update:modelValue', 'iframe')
+    expect(wrapper.find('[data-testid="dash-signin-note"]').exists()).toBe(false)
+
+    useAccessStore().loginEnabled = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-testid="dash-signin-note"]').text()).toContain('Sign in inside it once')
   })
 })

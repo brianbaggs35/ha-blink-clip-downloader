@@ -127,6 +127,18 @@ configuration:
     description: >-
       Port TCP du serveur Web de la bibliothèque de clips (par défaut
       8099).
+  direct_access_login:
+    name: Connexion pour l'accès direct
+    description: >-
+      Demande un nom d'utilisateur et un mot de passe Home Assistant quand
+      l'interface Web est ouverte par le port d'accès direct. L'ouverture
+      depuis la barre latérale de Home Assistant ne le demande jamais. Les
+      caméras et scripts de Home Assistant qui utilisent ce port emploient à
+      la place un jeton d'accès ; l'onglet Automatisations l'ajoute au YAML
+      qu'il génère. Ne désactivez cette option que si vous faites confiance à
+      chaque appareil pouvant atteindre le port : sinon, n'importe quel
+      appareil du réseau pourrait modifier les réglages, désarmer les caméras
+      ou consulter les clips.
   watch_ha_events:
     name: Surveiller les événements de mouvement HA
     description: >-

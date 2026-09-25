@@ -927,3 +927,13 @@ def test_an_upgrading_install_keeps_the_strategy_it_already_had() -> None:
             {"username": "u", "password": "p", "ai_frame_strategy": stored}
         )
         assert config.ai_frame_strategy == stored
+
+
+def test_direct_access_login_defaults_on_and_can_be_turned_off():
+    """On unless the user says otherwise — including for an options.json
+    written before the option existed."""
+    assert _parse_config({"username": "u", "password": "p"}).direct_access_login
+    off = _parse_config(
+        {"username": "u", "password": "p", "direct_access_login": False}
+    )
+    assert off.direct_access_login is False

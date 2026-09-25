@@ -30,6 +30,18 @@ describe('urls', () => {
     expect(snapshotUrl('', 'A')).toContain('homeassistant.local:8099')
   })
 
+  it('carries the access token, encoded, when there is one', () => {
+    expect(snapshotUrl('http://ha.local:8099', 'A', 'a+b/c')).toBe(
+      'http://ha.local:8099/api/security-feed/snapshot/A?token=a%2Bb%2Fc',
+    )
+  })
+
+  it('puts the token into every camera of the setup sheet', () => {
+    const sheet = cameraSetupSheet(options({ accessToken: 'tok' }))
+    expect(sheet).toContain('/snapshot/Front%20Door?token=tok')
+    expect(sheet).toContain('/snapshot/Back%20Yard?token=tok')
+  })
+
   it('builds the kiosk url the iframe card embeds', () => {
     expect(kioskUrl('http://ha.local:8099')).toBe('http://ha.local:8099/?kiosk=1&tab=securityfeed')
   })

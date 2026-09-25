@@ -121,6 +121,17 @@ configuration:
   media_server_port:
     name: Puerto de la interfaz web
     description: Puerto TCP del servidor web de la biblioteca de clips (por defecto 8099).
+  direct_access_login:
+    name: Inicio de sesión en el acceso directo
+    description: >-
+      Pide un usuario y una contraseña de Home Assistant cuando la interfaz
+      web se abre por el puerto de acceso directo. Al abrirla desde la barra
+      lateral de Home Assistant nunca se pide. Las cámaras y los scripts de
+      Home Assistant que usan este puerto llevan en su lugar un token de
+      acceso; la pestaña Automatizaciones lo añade al YAML que genera.
+      Desactívalo solo si confías en todos los dispositivos que pueden llegar
+      al puerto, porque cualquiera en tu red podría cambiar ajustes,
+      desarmar cámaras o ver clips.
   watch_ha_events:
     name: Vigilar eventos de movimiento de HA
     description: >-

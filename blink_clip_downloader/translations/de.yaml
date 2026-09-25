@@ -126,6 +126,17 @@ configuration:
   media_server_port:
     name: Web-UI-Port
     description: TCP-Port des Webservers der Clip-Bibliothek (Standard 8099).
+  direct_access_login:
+    name: Anmeldung beim Direktzugriff
+    description: >-
+      Fragt nach einem Home-Assistant-Benutzernamen und -Passwort, wenn die
+      Weboberfläche über den Direktzugriffs-Port geöffnet wird. Beim Öffnen
+      über die Home-Assistant-Seitenleiste wird nie gefragt. Kameras und
+      Skripte von Home Assistant, die diesen Port nutzen, verwenden
+      stattdessen ein Zugriffstoken; der Tab „Automationen“ fügt es in das
+      erzeugte YAML ein. Nur ausschalten, wenn du jedem Gerät vertraust, das
+      den Port erreicht – sonst könnte jedes Gerät im Netzwerk Einstellungen
+      ändern, Kameras deaktivieren oder Clips ansehen.
   watch_ha_events:
     name: HA-Bewegungsereignisse überwachen
     description: >-

@@ -53,6 +53,7 @@ import { useLibraryStore } from '../../stores/library'
 import { useRefreshStore } from '../../stores/refresh'
 import { useCapabilitiesStore } from '../../stores/capabilities'
 import { useNavCollapsedStore } from '../../stores/navCollapsed'
+import { useAccessStore } from '../../stores/access'
 import { apiPost } from '../../api/client'
 import { getCameras, getStats } from '../../api/clips'
 import { listFaces } from '../../api/faces'
@@ -61,6 +62,7 @@ const activeTab = defineModel<TabName>({ required: true })
 const emit = defineEmits<{ help: []; refresh: [] }>()
 
 const theme = useThemeStore()
+const access = useAccessStore()
 const toast = useToastStore()
 const connection = useConnectionStore()
 const library = useLibraryStore()
@@ -225,6 +227,7 @@ async function pollCameras() {
 }
 
 onMounted(() => {
+  void access.load()
   void pollConnection()
   void pollCameras()
   void pollFaceRecognitionAvailable()
@@ -368,6 +371,19 @@ onUnmounted(() => {
           aria-label="About this app"
           @click="showAbout = true"
         />
+        <Button
+          v-if="access.signedIn"
+          text
+          rounded
+          size="small"
+          severity="secondary"
+          :title="`Sign out (${access.user})`"
+          :aria-label="`Sign out ${access.user}`"
+          data-testid="sign-out"
+          @click="access.signOut()"
+        >
+          <template #icon><AppIcon name="sign-out" /></template>
+        </Button>
       </div>
       <div class="app-nav-action-row">
         <Button

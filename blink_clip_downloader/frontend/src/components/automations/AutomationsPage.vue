@@ -6,6 +6,7 @@ import TabList from 'primevue/tablist'
 import TabPanel from 'primevue/tabpanel'
 import TabPanels from 'primevue/tabpanels'
 import Tabs from 'primevue/tabs'
+import AccessTokenCard from './AccessTokenCard.vue'
 import BlueprintsCard from './BlueprintsCard.vue'
 import DashboardBuilderCard from './DashboardBuilderCard.vue'
 import EntityReferenceCard from './EntityReferenceCard.vue'
@@ -75,6 +76,8 @@ onMounted(() => {
       The add-on publishes sensors and fires events every poll cycle. Pick what you want below, set it up the way you
       want it, and copy the YAML straight into Home Assistant — no hand-editing of someone else's thresholds.
     </p>
+
+    <AccessTokenCard />
 
     <NotificationChannelsCard />
 

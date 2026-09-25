@@ -98,6 +98,13 @@ configuration:
   media_server_port:
     name: Web 界面端口
     description: 片段库 Web 服务器使用的 TCP 端口（默认 8099）。
+  direct_access_login:
+    name: 直接访问登录
+    description: >-
+      通过直接访问端口打开 Web 界面时，要求输入 Home Assistant 用户名和密码。
+      从 Home Assistant 侧边栏打开时从不要求登录。Home Assistant 自身调用此端口的摄像头和脚本改用访问令牌，
+      “自动化”标签页会把它加入生成的 YAML。只有在信任所有能访问此端口的设备时才关闭此项，
+      否则网络上的任何设备都能更改设置、撤防摄像头或查看片段。
   watch_ha_events:
     name: 监控 HA 动作事件
     description: >-
