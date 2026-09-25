@@ -255,6 +255,8 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             get_sync_module_snapshot=self._downloader.get_sync_module_snapshot,
             arm_sync_module=self._downloader.set_sync_module_armed,
             arm_camera=self._downloader.set_camera_armed,
+            direct_access_login=config.direct_access_login,
+            supervisor_token=config.supervisor_token,
         )
         self._event_watcher = HAEventWatcher(
             supervisor_token=config.supervisor_token,
@@ -699,6 +701,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # Must start before any blocking auth call so HA ingress always finds
         # port 8099 listening (avoids the "App not running, Start?" loop).
         if self._config.enable_media_server:
+            if self._media_server.prepare_access() and self._tracker.has_history:
+                self._bg_tasks.append(
+                    asyncio.create_task(
+                        self._announce_direct_access_login(),
+                        name="direct_access_notice",
+                    )
+                )
             self._bg_tasks.append(
                 asyncio.create_task(self._media_server.start(), name="media_server")
             )
@@ -770,6 +779,25 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         await self._finish_startup()
         await self._run_poll_loop()
         await self._shutdown()
+
+    async def _announce_direct_access_login(self) -> None:
+        """Tell an existing install, once, that the direct port now asks for
+        a sign-in, and what that means for anything already pointed at it."""
+        port = self._config.media_server_port
+        await self._notifier.announce(
+            f"The Blink Clips web UI on port {port} now asks for your Home "
+            "Assistant username and password. Opening it from the sidebar "
+            "doesn't change.\n\n"
+            f"If Home Assistant itself uses port {port} — Generic Camera "
+            "snapshots, the Sync now, Arm/Disarm or Archive scripts, or the "
+            "Security Feed card on a dashboard — open the Automations tab and "
+            "copy that YAML again: it now includes an access token. A "
+            "dashboard card only needs you to sign in inside it once.\n\n"
+            "To keep the old open behavior, turn off Direct Access Sign-In in "
+            "the add-on's Configuration tab.",
+            title="Blink Clips: direct-port sign-in is on",
+            notification_id="blink_direct_access_login",
+        )
 
     async def _run_poll_loop(self) -> None:
         """Poll Blink until shutdown, healing what can be healed in place.

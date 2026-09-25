@@ -84,6 +84,9 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     # --- Media server ---
     enable_media_server: bool = True
     media_server_port: int = 8099
+    # Require a Home Assistant sign-in on the direct port (ingress is never
+    # asked). See media_server/access.py.
+    direct_access_login: bool = True
 
     # --- Instant download on HA motion events ---
     watch_ha_events: bool = True
@@ -625,6 +628,7 @@ def _parse_media_server_kwargs(data: dict) -> dict[str, Any]:
         "media_server_port": max(
             1024, min(65535, int(data.get("media_server_port", 8099)))
         ),
+        "direct_access_login": bool(data.get("direct_access_login", True)),
         "watch_ha_events": bool(data.get("watch_ha_events", True)),
         "fast_poll_duration": max(
             10, min(3600, int(data.get("fast_poll_duration", 120)))

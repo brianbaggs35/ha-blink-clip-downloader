@@ -314,3 +314,31 @@ async def test_get_session_creates_session_when_none():
         session = notifier._get_session()
     MockCS.assert_called_once_with()
     assert session is mock_session
+
+
+# ---------------------------------------------------------------------------
+# announce
+# ---------------------------------------------------------------------------
+
+
+async def test_announce_ignores_notify_ha_and_carries_an_id():
+    """A notice someone must act on is not gated on per-clip notifications,
+    and reposting it replaces the earlier copy rather than stacking."""
+    notifier = HANotifier("tok", enabled=False, title="Test")
+    resp = _make_mock_resp(200)
+    notifier._session = _make_mock_session(resp)
+
+    assert await notifier.announce("Body", title="Heads up", notification_id="x_1")
+
+    url = notifier._session.post.call_args[0][0]
+    assert url.endswith("/services/persistent_notification/create")
+    assert notifier._session.post.call_args.kwargs["json"] == {
+        "message": "Body",
+        "title": "Heads up",
+        "notification_id": "x_1",
+    }
+
+
+async def test_announce_without_a_token_returns_false():
+    notifier = HANotifier("", enabled=True, title="Test")
+    assert await notifier.announce("Body", title="T", notification_id="x") is False

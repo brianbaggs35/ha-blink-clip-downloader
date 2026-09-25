@@ -52,6 +52,20 @@ class HANotifier:
             {"message": message, "title": title or self._title},
         )
 
+    async def announce(self, message: str, title: str, notification_id: str) -> bool:
+        """Create a persistent notification whatever ``notify_ha`` says.
+
+        For the rare notice someone has to act on after an update, which
+        should not depend on having opted in to a notification per clip.
+        *notification_id* replaces an earlier copy instead of stacking.
+        """
+        if not self._token:
+            return False
+        return await self._post(
+            f"{_HA_API}/services/persistent_notification/create",
+            {"message": message, "title": title, "notification_id": notification_id},
+        )
+
     async def fire_event(self, event_type: str, event_data: dict[str, Any]) -> bool:
         """Fire a custom HA event."""
         if not self._token:

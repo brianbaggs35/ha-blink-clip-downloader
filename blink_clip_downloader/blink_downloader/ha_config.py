@@ -48,8 +48,8 @@ _KINDS: dict[str, str] = {
 #: than assumed, because the id is the last segment of the URL this posts to
 #: — an id of ``../../../addons/self/options`` would otherwise resolve to a
 #: different Supervisor endpoint entirely, called with this add-on's own
-#: Supervisor token, and the add-on's port 8099 is reachable without Home
-#: Assistant's authentication in front of it.
+#: Supervisor token, and the add-on's port 8099 can be reachable without
+#: Home Assistant's authentication in front of it (Direct Access Sign-In off).
 _OBJECT_ID = re.compile(r"^[a-z0-9_]{1,64}$")
 
 

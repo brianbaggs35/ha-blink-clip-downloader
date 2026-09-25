@@ -6,7 +6,7 @@
  * joinLines() drops it without leaving a gap in the YAML.
  */
 
-import { duration, jinjaList, yamlString, yamlTemplate } from './types'
+import { type RecipeValues, duration, jinjaList, stringValue, yamlString, yamlTemplate } from './types'
 
 /** The add-on's own entities, in one place — these strings are a contract
  * with ha_entities.py, not free text (see that module's docstring). */
@@ -25,6 +25,20 @@ export const BATTERY_LOW_EVENT = 'blink_camera_battery_low'
  * Supervisor API URL, which carries this same marker.
  */
 export const ADDON_URL_DEFAULT = 'http://homeassistant.local:8099' // NOSONAR
+
+/** The value key RecipeBuilder adds the add-on's access token under — not a
+ * form field, so no recipe lists it, but every recipe whose YAML has Home
+ * Assistant call the direct port reads it. Empty while Direct Access
+ * Sign-In is off (see media_server/access.py). */
+export const ACCESS_TOKEN_VALUE = 'access_token'
+
+/** The `headers:` block a rest_command needs to reach the direct port while
+ * Direct Access Sign-In is on, or '' when it is off and none is needed. */
+export function restCommandAuth(v: RecipeValues): string {
+  const token = stringValue(v, ACCESS_TOKEN_VALUE)
+  if (!token) return ''
+  return ['    headers:', `      Authorization: ${yamlString(`Bearer ${token}`)}`].join('\n')
+}
 
 interface NotifyOptions {
   /** Break through silent mode on the Companion app. */

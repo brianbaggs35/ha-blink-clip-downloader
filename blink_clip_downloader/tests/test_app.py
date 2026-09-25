@@ -3070,3 +3070,63 @@ async def test_the_watcher_stays_off_with_nothing_to_hear(base_config) -> None:
 
     app._event_watcher.start.assert_not_awaited()
     assert not [t for t in app._bg_tasks if t.get_name() == "event_watcher"]
+async def _run_once_with_media_server(app, tracker_path):
+    import dataclasses
+
+    from blink_downloader.tracker import ClipTracker
+
+    app._config = dataclasses.replace(
+        app._config, enable_media_server=True, media_server_port=8123
+    )
+    app._tracker = ClipTracker(tracker_path)
+    app._media_server.start = AsyncMock()
+    app._live_view.start = AsyncMock()
+    app._notifier.announce = AsyncMock(return_value=True)
+
+    async def _fake_poll():
+        await asyncio.sleep(0)
+        app._running = False
+
+    app._poll_cycle = _fake_poll
+    app._wait_with_trigger_check = AsyncMock()
+    await app.run()
+
+
+async def test_run_tells_an_existing_install_once_that_sign_in_is_on(app, tmp_path):
+    """The first start with direct-port sign-in, on an install that has run
+    before, says what changed for anything Home Assistant points at 8099."""
+    tracker_path = tmp_path / "tracker.json"
+    tracker_path.write_text("{}")
+
+    await _run_once_with_media_server(app, tracker_path)
+
+    app._notifier.announce.assert_awaited_once()
+    message = app._notifier.announce.call_args.args[0]
+    assert "port 8123 now asks for your Home Assistant username" in message
+    assert "Automations tab" in message
+    assert (
+        app._notifier.announce.call_args.kwargs["notification_id"]
+        == "blink_direct_access_login"
+    )
+
+    # The secrets exist now, so the next start says nothing.
+    app._running = True
+    await _run_once_with_media_server(app, tracker_path)
+    app._notifier.announce.assert_not_awaited()
+
+
+async def test_run_says_nothing_to_a_fresh_install(app, tmp_path):
+    await _run_once_with_media_server(app, tmp_path / "never-written.json")
+    app._notifier.announce.assert_not_awaited()
+
+
+async def test_run_says_nothing_with_sign_in_off(app, tmp_path):
+    import dataclasses
+
+    tracker_path = tmp_path / "tracker.json"
+    tracker_path.write_text("{}")
+    app._media_server._access.enabled = False
+    app._config = dataclasses.replace(app._config, direct_access_login=False)
+
+    await _run_once_with_media_server(app, tracker_path)
+    app._notifier.announce.assert_not_awaited()

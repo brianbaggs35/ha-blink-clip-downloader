@@ -6,6 +6,7 @@ the split follows the UI rather than the file's old line numbering, so the
 module to open is the one named after the tab you are changing:
 
     app_shell        the SPA, its assets, /health, Blink auth state
+    access           direct-port sign-in, the login page, the access token
     library          clips: list, stream, thumbnail, star, tag, export
     status           cameras, statistics, activity, battery
     liveview         one live session at a time, and its HLS output
@@ -23,7 +24,8 @@ module to open is the one named after the tab you are changing:
     storage          archived clips and Google Drive backup
     automations      writing HA config objects, notification tests
 
-over :mod:`.support` (middleware, JSON parsing, paging, shared strings) and
+over :mod:`.support` (middleware, JSON parsing, paging, shared strings),
+:mod:`.access_control` (the sign-in rules, with no routing in them) and
 :mod:`.core` (the state every mixin reads, declared once).
 
 Each mixin registers its own routes, so adding an endpoint is one file
@@ -45,6 +47,8 @@ from ..database import ClipDatabase
 from ..face_enrollment import FaceCandidateStore
 from ..ffmpeg_output import ANALYSIS_FRAME_WIDTH
 from ..vision import FaceEmbedder
+from .access import AccessRoutesMixin
+from .access_control import AccessControl
 from .ai import AiRoutesMixin
 from .app_shell import AppShellMixin
 from .assets import AssetsRoutesMixin
@@ -79,6 +83,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class MediaServer(
     AppShellMixin,
+    AccessRoutesMixin,
     LibraryRoutesMixin,
     StatusRoutesMixin,
     LiveViewRoutesMixin,
@@ -119,7 +124,7 @@ class MediaServer(
     # anywhere in this comment: Sonar treats the bare word as a directive
     # wherever it appears, and prose following it reads as malformed
     # syntax — which is what the *second* round of this cost.)
-    def __init__(
+    def __init__(  # nosec B107 - supervisor_token="" means no Supervisor
         self,  # NOSONAR
         db: ClipDatabase,
         port: int,
@@ -144,6 +149,8 @@ class MediaServer(
         get_sync_module_snapshot: Callable[[], list[dict[str, Any]]] | None = None,
         arm_sync_module: Callable[[str, bool], Awaitable[bool | None]] | None = None,
         arm_camera: Callable[[str, bool], Awaitable[bool | None]] | None = None,
+        direct_access_login: bool = False,
+        supervisor_token: str = "",
     ) -> None:
         self._db = db
         self._port = port
@@ -194,6 +201,12 @@ class MediaServer(
         # Faces a Biometrics scan found, held until the user enrolls some —
         # see face_enrollment.py for why the browser only ever gets ids.
         self._face_candidates = FaceCandidateStore()
+        # Who may use the direct port (see access.py). Off unless app.py
+        # turns it on from direct_access_login, so tests and the e2e
+        # backend that build a MediaServer directly keep an open port.
+        self._access = AccessControl(
+            enabled=direct_access_login, supervisor_token=supervisor_token
+        )
         self._runner: web.AppRunner | None = None
         self._camera_configs_lock = asyncio.Lock()
         self.extra_status: dict = {}
@@ -207,6 +220,17 @@ class MediaServer(
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+
+    def prepare_access(self) -> bool:
+        """Load or create the sign-in secrets before the server starts.
+
+        Returns True when they were created just now — the first start with
+        direct-port sign-in available, which app.py uses to tell an existing
+        install what changed. Does nothing with sign-in off.
+        """
+        if not self._access.enabled:
+            return False
+        return self._access.load_or_create()
 
     async def start(self) -> None:
         app = self._build_app()
@@ -249,9 +273,11 @@ class MediaServer(
         bounding request size.
         """
         app = web.Application(
-            middlewares=[_security_middleware], client_max_size=10 * 1024 * 1024
+            middlewares=[_security_middleware, self._access_middleware()],
+            client_max_size=10 * 1024 * 1024,
         )
         self._register_core_routes(app)
+        self._register_access_routes(app)
         self._register_library_routes(app)
         self._register_status_routes(app)
         self._register_liveview_routes(app)

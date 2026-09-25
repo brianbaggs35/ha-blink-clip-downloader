@@ -83,6 +83,11 @@ class ClipTracker:
     # Public API
     # ------------------------------------------------------------------
 
+    @property
+    def has_history(self) -> bool:
+        """True when a tracker file from an earlier run exists on disk."""
+        return self._file.exists()
+
     def is_downloaded(self, clip_id: str) -> bool:
         """Return True if *clip_id* has already been downloaded."""
         return clip_id in self._downloaded

@@ -22,6 +22,7 @@ from aiohttp import web
 from ..database import ClipDatabase
 from ..face_enrollment import FaceCandidateStore
 from ..vision import FaceEmbedder
+from .access_control import AccessControl
 
 if TYPE_CHECKING:
     from ..analysis_queue import AnalysisQueue
@@ -66,6 +67,7 @@ class _MediaServerBase:
     _arm_camera: Callable[[str, bool], Awaitable[bool | None]] | None
 
     # Runtime state.
+    _access: AccessControl
     _face_embedder: FaceEmbedder
     _face_candidates: FaceCandidateStore
     _runner: web.AppRunner | None

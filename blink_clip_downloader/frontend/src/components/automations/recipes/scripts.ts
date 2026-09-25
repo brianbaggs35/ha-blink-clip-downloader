@@ -6,7 +6,14 @@
  * different, so every recipe says where in its `target`.
  */
 
-import { ADDON_URL_DEFAULT, CLOUD_STORAGE_SENSOR, LOCAL_STORAGE_SENSOR, STATUS_SENSOR, castViewActions } from './shared'
+import {
+  ADDON_URL_DEFAULT,
+  CLOUD_STORAGE_SENSOR,
+  LOCAL_STORAGE_SENSOR,
+  STATUS_SENSOR,
+  castViewActions,
+  restCommandAuth,
+} from './shared'
 import {
   type Recipe,
   type RecipeValues,
@@ -57,6 +64,7 @@ const syncNow: Recipe = {
       '  blink_sync_now:',
       `    url: ${yamlString(downloadNowUrl)}`,
       '    method: post',
+      restCommandAuth(v),
       '    timeout: 30',
       '\n# scripts.yaml (or under script: in configuration.yaml)',
       'blink_sync_now:',
@@ -421,12 +429,14 @@ const armSyncModule: Recipe = {
       '    method: post',
       '    content_type: "application/json"',
       `    payload: ${yamlString('{"armed": true}')}`,
+      restCommandAuth(v),
       '    timeout: 30',
       '  blink_sync_disarm:',
       `    url: ${yamlString(armUrl)}`,
       '    method: post',
       '    content_type: "application/json"',
       `    payload: ${yamlString('{"armed": false}')}`,
+      restCommandAuth(v),
       '    timeout: 30',
       '\n# scripts.yaml — a button-friendly wrapper around each one.',
       'blink_arm_sync_module:',
@@ -471,6 +481,7 @@ const archiveNow: Recipe = {
       '  blink_archive_now:',
       `    url: ${yamlString(archiveUrl)}`,
       '    method: post',
+      restCommandAuth(v),
       '    timeout: 120',
       '\n# scripts.yaml',
       'blink_archive_now:',
