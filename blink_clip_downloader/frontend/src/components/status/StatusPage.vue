@@ -40,6 +40,11 @@ const diskClass = computed(() => {
   return 'ok'
 })
 const frameStats = computed(() => aiStatus.value?.analysis_stats)
+const downloadRetries = computed(() => stats.value?.download_retries)
+
+function clipCount(n: number): string {
+  return `${n} clip${n === 1 ? '' : 's'}`
+}
 
 // Mount and the shared refresh signal both call this, with no inherent
 // ordering — and that signal fires from other tabs' actions, not just a
@@ -122,6 +127,19 @@ watch(() => refresh.tick, load)
             <div v-if="stats?.last_download" class="status-row">
               <span class="lbl">Last download</span>
               <span class="val wrap">{{ fmtTs(stats.last_download) }}</span>
+            </div>
+            <div v-if="downloadRetries?.retrying" class="status-row" data-testid="download-retrying">
+              <span class="lbl">Retrying downloads</span>
+              <span class="val warn">{{ clipCount(downloadRetries.retrying) }}</span>
+            </div>
+            <div
+              v-if="downloadRetries?.given_up"
+              class="status-row"
+              data-testid="download-given-up"
+              title="Blink never delivered these clips after more than 6 hours of retries. The add-on log names each one."
+            >
+              <span class="lbl">Downloads given up (7 days)</span>
+              <span class="val err">{{ clipCount(downloadRetries.given_up) }}</span>
             </div>
           </template>
         </Card>

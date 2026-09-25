@@ -140,6 +140,43 @@ describe('StatusPage', () => {
     expect(lastDownloadRow.find('.val').classes()).toContain('wrap')
   })
 
+  it('hides the download retry rows when nothing is owed', async () => {
+    const wrapper = mount(StatusPage)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="download-retrying"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="download-given-up"]').exists()).toBe(false)
+  })
+
+  it('shows clips waiting on a retry and clips given up on', async () => {
+    Object.assign(STATS, { download_retries: { retrying: 2, given_up: 1 } })
+    try {
+      const wrapper = mount(StatusPage)
+      await flushPromises()
+      const retrying = wrapper.find('[data-testid="download-retrying"]')
+      expect(retrying.text()).toContain('Retrying downloads')
+      expect(retrying.find('.val').text()).toBe('2 clips')
+      expect(retrying.find('.val').classes()).toContain('warn')
+      const givenUp = wrapper.find('[data-testid="download-given-up"]')
+      expect(givenUp.text()).toContain('Downloads given up (7 days)')
+      expect(givenUp.find('.val').text()).toBe('1 clip')
+      expect(givenUp.find('.val').classes()).toContain('err')
+    } finally {
+      delete (STATS as Record<string, unknown>).download_retries
+    }
+  })
+
+  it('shows only the row that has something in it', async () => {
+    Object.assign(STATS, { download_retries: { retrying: 0, given_up: 3 } })
+    try {
+      const wrapper = mount(StatusPage)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="download-retrying"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="download-given-up"] .val').text()).toBe('3 clips')
+    } finally {
+      delete (STATS as Record<string, unknown>).download_retries
+    }
+  })
+
   it('reports connectivity to the shared connection store', async () => {
     const wrapper = mount(StatusPage)
     await flushPromises()

@@ -60,6 +60,14 @@ export interface DiskStats {
   quota_gb: number
 }
 
+// Clips the downloader is still owed, from the latest poll (tracker.py).
+export interface DownloadRetries {
+  // Failed in the latest poll; asked for again on the next one.
+  retrying: number
+  // Kept failing for over 6 hours and stopped being asked for, last 7 days.
+  given_up: number
+}
+
 export interface LibraryStats {
   total_count: number
   starred_count: number
@@ -74,6 +82,7 @@ export interface LibraryStats {
   account_id?: string
   last_download?: string
   next_poll?: string
+  download_retries?: DownloadRetries
   [key: string]: unknown
 }
 
