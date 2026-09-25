@@ -1,11 +1,11 @@
-"""Home Assistant WebSocket listener that triggers instant downloads on motion."""
+"""Home Assistant WebSocket listener: Blink motion, and taps on alert buttons."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import aiohttp
 
@@ -15,6 +15,9 @@ _LOGGER = logging.getLogger(__name__)
 # exposed externally and does not terminate TLS, so ws:// is correct here.
 _WS_URL = "ws://supervisor/core/websocket"  # NOSONAR
 _RECONNECT_DELAY = 30  # seconds before reconnecting after a drop
+# Fired by the companion app when a button on one of its notifications is
+# tapped; the button's ``action`` string rides along in the event data.
+NOTIFICATION_ACTION_EVENT = "mobile_app_notification_action"
 
 
 class HAEventWatcher:
@@ -26,6 +29,13 @@ class HAEventWatcher:
     When the same entity flips back to "off" (motion cleared), the optional
     *on_motion_cleared* callback is called, enabling a post-motion delayed
     download to capture the clip after Blink has had time to upload it.
+
+    With *on_notification_action*, it also hears the companion app's
+    notification buttons (the "Not a threat" button on alerts — see
+    ``alert_actions.py``) and passes each tapped action string on. Either
+    half can run without the other: *watch_motion* False subscribes to the
+    button event alone, so turning off event-driven downloads does not also
+    turn off the button.
     """
 
     def __init__(
@@ -34,10 +44,18 @@ class HAEventWatcher:
         on_motion: Callable[[str], None],
         on_motion_cleared: Callable[[str], None] | None = None,
         event_cameras: list[str] | None = None,
+        *,
+        watch_motion: bool = True,
+        on_notification_action: Callable[[str], Awaitable[object]] | None = None,
     ) -> None:
         self._token = supervisor_token
         self._on_motion = on_motion
         self._on_motion_cleared = on_motion_cleared
+        self._watch_motion = watch_motion
+        self._on_notification_action = on_notification_action
+        # Handlers still running; held so they are not garbage-collected
+        # mid-flight (the event loop keeps only weak references to tasks).
+        self._action_tasks: set[asyncio.Task[object]] = set()
         # Lower-cased set of cameras to watch; empty = all Blink cameras.
         self._event_cameras: set[str] = (
             {c.lower() for c in event_cameras} if event_cameras else set()
@@ -45,6 +63,11 @@ class HAEventWatcher:
         self._running = False
         self._session: aiohttp.ClientSession | None = None
         self._msg_id = 0
+
+    @property
+    def has_work(self) -> bool:
+        """True when there is anything to subscribe to at all."""
+        return self._watch_motion or self._on_notification_action is not None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -119,17 +142,19 @@ class HAEventWatcher:
             if raw.get("type") != "auth_ok":
                 raise ValueError(f"HA WebSocket auth failed: {raw}")
 
-            _LOGGER.info("HA WebSocket authenticated; subscribing to state_changed")
-
             # Step 3: subscribe.
-            self._msg_id += 1
-            await ws.send_json(
-                {
-                    "id": self._msg_id,
-                    "type": "subscribe_events",
-                    "event_type": "state_changed",
-                }
-            )
+            for event_type in self._event_types():
+                _LOGGER.info(
+                    "HA WebSocket authenticated; subscribing to %s", event_type
+                )
+                self._msg_id += 1
+                await ws.send_json(
+                    {
+                        "id": self._msg_id,
+                        "type": "subscribe_events",
+                        "event_type": event_type,
+                    }
+                )
 
             # Step 4: consume events.
             async for msg in ws:
@@ -144,7 +169,11 @@ class HAEventWatcher:
             except json.JSONDecodeError:
                 return False
             if data.get("type") == "event":
-                self._handle_state_changed(data.get("event", {}))
+                event = data.get("event", {})
+                if event.get("event_type") == NOTIFICATION_ACTION_EVENT:
+                    self._handle_notification_action(event)
+                else:
+                    self._handle_state_changed(event)
             return False
         if msg.type in (
             aiohttp.WSMsgType.ERROR,
@@ -155,9 +184,37 @@ class HAEventWatcher:
             return True
         return False
 
+    def _event_types(self) -> list[str]:
+        """The events this watcher subscribes to, per what it was asked to do."""
+        types = ["state_changed"] if self._watch_motion else []
+        if self._on_notification_action is not None:
+            types.append(NOTIFICATION_ACTION_EVENT)
+        return types
+
     # ------------------------------------------------------------------
     # Internal: event parsing
     # ------------------------------------------------------------------
+
+    def _handle_notification_action(self, event: dict) -> None:
+        """Hand a tapped button's action string to its handler, off this loop.
+
+        Run as a task so a slow database write never holds up the event
+        stream — motion events arriving meanwhile still trigger fast polls.
+        """
+        handler = self._on_notification_action
+        action = (event.get("data") or {}).get("action")
+        if handler is None or not isinstance(action, str) or not action:
+            return
+        task: asyncio.Task[object] = asyncio.ensure_future(handler(action))
+        self._action_tasks.add(task)
+        task.add_done_callback(self._action_done)
+
+    def _action_done(self, task: asyncio.Task[object]) -> None:
+        self._action_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            _LOGGER.warning(
+                "Handling a notification action failed: %s", task.exception()
+            )
 
     def _handle_state_changed(self, event: dict) -> None:
         if event.get("event_type") != "state_changed":

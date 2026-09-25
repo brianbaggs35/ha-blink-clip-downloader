@@ -334,6 +334,26 @@ architecture.
     `alias`/`name`, and several recipe aliases embed the threshold the
     user chose, so the entity id is not predictable from the recipe at
     all (see `created_name`).
+  - Rich alerts (6.0.8) — what a suspicious-activity alert carries beyond
+    its text, gathered by `rich_alerts.py`'s `RichAlertBuilder` and sent by
+    `notification_channels.py`. `alert_media.py` picks the key frame (the
+    most prominent detected person, then vehicle, else the busiest frame)
+    and stores the phone's copy under `/media/local/...`, because the
+    companion app fetches a picture only by a Home Assistant URL;
+    `ha_links.py` builds the open-the-clip link through Home Assistant
+    (`/app/<slug>/clip/<id>` on 2026.2+, the panel before that — never port
+    8099); `alert_actions.py` signs the **Not a threat** button per clip
+    and records it through `verdict_feedback.py`, the same function the
+    Library's thumbs-down route uses. The tap arrives as a
+    `mobile_app_notification_action` event, which is why `event_watcher.py`
+    also runs when `watch_ha_events` is off. Two rules: **every part fails
+    on its own and the alert still goes out** (a push Home Assistant
+    rejects is resent as plain text, a failed Discord upload without the
+    picture), and **HA persistent notifications stay text only** (Brian's
+    call). A `mobile_app_target` that is not a `mobile_app_*` companion app
+    gets the plain push it always got. The frontend half is
+    `composables/useClipDeepLink.ts`: `?clip=<id>`, or the route Home
+    Assistant's panel reports over its postMessage protocol.
   - `event_watcher.py`, `notifier.py`, `notification_channels.py`,
     `digest.py`, `battery_monitor.py`, `archiver.py`, `storage.py`,
     `library_scanner.py`, `tracker.py`, `manifest.py` — supporting modules

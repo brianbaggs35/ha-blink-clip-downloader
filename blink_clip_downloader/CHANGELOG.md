@@ -25,6 +25,48 @@
   **Downloads given up (7 days)** whenever a clip is failing to download,
   so it no longer only shows up in the log.
 
+### Rich alerts: the key frame, a tap to the clip, and "Not a threat"
+
+Suspicious-activity alerts can now be judged from a lock screen.
+
+- **The key frame.** Companion app pushes, email and Discord now carry a
+  picture of the clip's key moment: the frame where object detection saw the
+  most prominent person (then vehicle, then anything else), or, without
+  detection, the frame with the most motion. Never simply the first frame,
+  which is usually the empty scene just before someone walks in. Email shows
+  it inline and Discord as the embed image; both carry the picture itself,
+  so neither has to reach the add-on. The new `alert_include_image` option
+  (on by default) turns pictures off everywhere.
+- **Tap to open the clip.** Tapping a companion app alert opens the clip in
+  the Blink Clips panel, through Home Assistant, so it works away from home
+  and never uses port 8099. On Home Assistant 2026.2 and later that is the
+  exact clip; older versions open the panel. Email gets an **Open clip**
+  link and Discord's title links to the clip, using the external (or
+  internal) URL set in Home Assistant.
+- **Not a threat.** Companion app alerts get a **Not a threat** button that
+  records the same feedback as the Library's thumbs-down, so dismissing a
+  false alarm from the lock screen trains that camera's feedback learning.
+  A locked phone asks to be unlocked first. The tap comes back through Home
+  Assistant's own event, and each button is signed for its clip, so nothing
+  else can mark clips that way. It works whether or not `watch_ha_events` is
+  on.
+- **When it happened.** Every alert says when the clip was recorded, in Home
+  Assistant's time zone (`Recorded: Thu 24 Sep 2026, 21:03:04 CDT`), instead
+  of the UTC time it was analyzed. Discord's timestamp is the recorded time
+  too.
+
+Nothing that worked before changes. A `mobile_app_target` that is not a
+companion app (a notify group, say) keeps getting plain text, a push Home
+Assistant refuses is resent as plain text, and a Discord upload that fails
+is resent without the picture. Home Assistant persistent notifications stay
+text only. A picture, link or button that cannot be produced is left out
+and the alert goes out without it.
+
+The add-on now maps Home Assistant's `media` folder: the companion app
+fetches a picture only by a Home Assistant URL, and
+`/media/local/blink_clip_downloader/alerts/...` is one it fetches with its
+own sign-in. Pictures there are deleted after a week.
+
 ## 6.0.7
 
 ### New Assets tab: mark what you want protected on each camera

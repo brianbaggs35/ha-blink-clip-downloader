@@ -624,6 +624,13 @@ configuration:
     description: >-
       Publica un mensaje de Discord con los detalles del clip cuando se
       detecta actividad sospechosa.
+  alert_include_image:
+    name: Incluir fotograma clave en las alertas
+    description: >-
+      Adjunta una imagen del momento clave del clip a las alertas de Discord,
+      correo electrónico y la app móvil. Desactívalo para que las imágenes de
+      las cámaras no lleguen a esos servicios; el enlace al clip y el botón
+      "No es una amenaza" se siguen incluyendo.
   notify_ha_suspicious:
     name: Activar alertas de Home Assistant
     description: >-

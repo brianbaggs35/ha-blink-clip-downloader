@@ -634,6 +634,13 @@ configuration:
     description: >-
       Postet eine Discord-Nachricht mit Clip-Details, wenn verdächtige
       Aktivität erkannt wird.
+  alert_include_image:
+    name: Schlüsselbild in Warnungen einfügen
+    description: >-
+      Hängt ein Bild des entscheidenden Moments des Clips an Discord-,
+      E-Mail- und Mobile-App-Warnungen an. Deaktivieren, um Kamerabilder von
+      diesen Diensten fernzuhalten; der Link zum Clip und die Schaltfläche
+      „Keine Bedrohung“ bleiben erhalten.
   notify_ha_suspicious:
     name: Home Assistant-Warnungen aktivieren
     description: >-

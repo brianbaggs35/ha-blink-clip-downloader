@@ -275,6 +275,18 @@ without an audio hint rather than waiting for it. A camera with audio recording
 switched off in the Blink app is detected and skipped without troubling the model.
 Full details in [the docs](blink_clip_downloader/DOCS.md#audio-analysis-and-privacy).
 
+## Alerts you can act on from your phone
+
+A suspicious-activity alert on the Home Assistant companion app, by email or on
+Discord shows the clip's key moment (the frame where the person is, not the empty
+scene before they walked in) and says when the clip was recorded in your own time
+zone. Tapping it opens that clip in the add-on's panel, through Home Assistant, so it
+works away from home without opening any port. On the phone, **Not a threat**
+dismisses a false alarm and teaches that camera the same way the Library's
+thumbs-down does. Home Assistant's own persistent notifications stay text only.
+Turn the pictures off with `alert_include_image`. Details are in
+[the docs](blink_clip_downloader/DOCS.md#what-a-suspicious-activity-alert-carries).
+
 ## Cached prompts/tokens
 
 Only OpenAI and Anthropic support this. This is enabled by default and helps with the

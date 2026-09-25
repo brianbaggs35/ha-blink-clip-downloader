@@ -377,6 +377,13 @@ async def test_process_pending_dispatches_suspicious(db: ClipDatabase) -> None:
     dispatcher.dispatch.assert_awaited_once()
     call_args = dispatcher.dispatch.call_args
     assert call_args[0][0].is_suspicious is True
+    # The alert reports when the clip was recorded, not when it was analyzed.
+    assert call_args[0][1] == {
+        "id": "c1",
+        "camera": "Front Door",
+        "path": "/clips/c1.mp4",
+        "timestamp": "2024-06-01T08:00:00+00:00",
+    }
 
 
 async def test_process_one_keeps_completed_status_when_dispatch_fails(

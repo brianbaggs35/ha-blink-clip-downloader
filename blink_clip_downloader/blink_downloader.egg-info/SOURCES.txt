@@ -1,6 +1,8 @@
 pyproject.toml
 blink_downloader/__init__.py
 blink_downloader/__main__.py
+blink_downloader/alert_actions.py
+blink_downloader/alert_media.py
 blink_downloader/analysis_queue.py
 blink_downloader/app.py
 blink_downloader/archiver.py
@@ -16,6 +18,7 @@ blink_downloader/gdrive_client.py
 blink_downloader/gdrive_queue.py
 blink_downloader/ha_config.py
 blink_downloader/ha_entities.py
+blink_downloader/ha_links.py
 blink_downloader/library_scanner.py
 blink_downloader/live_view.py
 blink_downloader/manifest.py
@@ -25,9 +28,11 @@ blink_downloader/notification_channels.py
 blink_downloader/notifier.py
 blink_downloader/prompt_segments.py
 blink_downloader/protected_assets.py
+blink_downloader/rich_alerts.py
 blink_downloader/sqlite_migration.py
 blink_downloader/storage.py
 blink_downloader/tracker.py
+blink_downloader/verdict_feedback.py
 blink_downloader.egg-info/PKG-INFO
 blink_downloader.egg-info/SOURCES.txt
 blink_downloader.egg-info/dependency_links.txt
@@ -88,8 +93,8 @@ blink_downloader/static/favicon.svg
 blink_downloader/static/index.html
 blink_downloader/static/assets/index-D1gMJO4t.css
 blink_downloader/static/assets/index-D1gMJO4t.css.gz
-blink_downloader/static/assets/index-D_hHTL4u.js
-blink_downloader/static/assets/index-D_hHTL4u.js.gz
+blink_downloader/static/assets/index-_CwuRhrb.js
+blink_downloader/static/assets/index-_CwuRhrb.js.gz
 blink_downloader/static/assets/inter-cyrillic-400-normal-HOLc17fK.woff
 blink_downloader/static/assets/inter-cyrillic-400-normal-obahsSVq.woff2
 blink_downloader/static/assets/inter-cyrillic-500-normal-BasfLYem.woff2
@@ -177,6 +182,8 @@ blink_downloader/vision/imaging.py
 blink_downloader/vision/pipeline.py
 blink_downloader/vision/pose.py
 blink_downloader/vision/runtime.py
+tests/test_alert_actions.py
+tests/test_alert_media.py
 tests/test_analysis_queue.py
 tests/test_analyzer.py
 tests/test_analyzer_marked_assets.py
@@ -196,6 +203,7 @@ tests/test_gdrive_client.py
 tests/test_gdrive_queue.py
 tests/test_ha_config.py
 tests/test_ha_entities.py
+tests/test_ha_links.py
 tests/test_library_scanner.py
 tests/test_live_view.py
 tests/test_main_logging.py
@@ -208,6 +216,7 @@ tests/test_notification_channels.py
 tests/test_notifier.py
 tests/test_only_release_workflow_publishes.py
 tests/test_protected_assets.py
+tests/test_rich_alerts.py
 tests/test_scene_baseline_lighting.py
 tests/test_security_assets.py
 tests/test_security_detector.py
@@ -226,6 +235,7 @@ tests/test_sqlite_migration.py
 tests/test_storage.py
 tests/test_tracker.py
 tests/test_upgrade_from_previous_release.py
+tests/test_verdict_feedback.py
 tests/test_vision.py
 tests/test_vision_audio.py
 tests/test_vision_marked_assets.py

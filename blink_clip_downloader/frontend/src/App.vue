@@ -26,6 +26,7 @@ import { useAuthStore } from './stores/auth'
 import { useDateFilterStore } from './stores/dateFilter'
 import { useNavCollapsedStore } from './stores/navCollapsed'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts'
+import { useClipDeepLink } from './composables/useClipDeepLink'
 
 const activeTab = ref<TabName>(initialTab())
 const helpOpen = ref(false)
@@ -78,6 +79,10 @@ watchEffect(() => {
 document.body.classList.toggle('kiosk', kiosk)
 
 useKeyboardShortcuts(helpOpen)
+// An alert's "open the clip" link (see composables/useClipDeepLink.ts).
+// Registered here rather than in LibraryPage so its onMounted runs after
+// the Library's own, whose clip-viewer watcher has to exist to hear it.
+useClipDeepLink()
 
 onMounted(() => auth.startPolling())
 onUnmounted(() => auth.stopPolling())
