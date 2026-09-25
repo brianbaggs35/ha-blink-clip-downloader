@@ -429,6 +429,11 @@ class AppConfig:  # pylint: disable=too-many-instance-attributes
     smtp_enabled: bool = False
     discord_webhook_url: str = ""
     discord_enabled: bool = False
+    # Attach the alert's key frame (the clip's most telling moment) to
+    # Discord, email and companion-app alerts. On by default: the picture is
+    # most of what lets an alert be judged from a lock screen. Off keeps
+    # every image off third-party services, links and buttons still included.
+    alert_include_image: bool = True
     # Separate from notify_ha (below): that one fires on every new-clip
     # download plus the daily digest and system events (2FA/auth/storage),
     # opt-in noise some users want and others don't. This fires only for
@@ -862,6 +867,7 @@ def _parse_extended_notification_kwargs(data: dict) -> dict[str, Any]:
         "smtp_enabled": bool(data.get("smtp_enabled", False)),
         "discord_webhook_url": str(data.get("discord_webhook_url", "") or "").strip(),
         "discord_enabled": bool(data.get("discord_enabled", False)),
+        "alert_include_image": bool(data.get("alert_include_image", True)),
         "notify_ha_suspicious": bool(data.get("notify_ha_suspicious", False)),
         "battery_alerts_enabled": bool(data.get("battery_alerts_enabled", False)),
     }

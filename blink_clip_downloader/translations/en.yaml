@@ -559,6 +559,12 @@ configuration:
     description: >-
       Post a Discord message with clip details when suspicious activity is
       detected.
+  alert_include_image:
+    name: Include Key Frame in Alerts
+    description: >-
+      Attach a picture of the clip's key moment to Discord, email and mobile
+      app alerts. Turn off to keep camera images out of those services; the
+      link to the clip and the Not a threat button are still included.
   notify_ha_suspicious:
     name: Enable Home Assistant Alerts
     description: >-

@@ -759,6 +759,29 @@ def test_notification_channels_default_disabled():
     assert cfg.notify_ha_suspicious is False
 
 
+def test_alert_pictures_are_on_unless_turned_off():
+    """An upgrading install's options.json has no such key, and gets them."""
+    assert _parse_config({"username": "u", "password": "p"}).alert_include_image
+    cfg = _parse_config(
+        {"username": "u", "password": "p", "alert_include_image": False}
+    )
+    assert cfg.alert_include_image is False
+    shipped = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text()
+    )
+    assert shipped["options"]["alert_include_image"] is True
+
+
+def test_the_media_folder_is_mapped_for_alert_pictures():
+    """The companion app fetches an alert's picture from Home Assistant's
+    media folder; without the map, AlertImageStore finds no mount and every
+    phone alert goes out with no picture."""
+    shipped = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text()
+    )
+    assert {"type": "media", "read_only": False} in shipped["map"]
+
+
 def test_notify_ha_suspicious_enabled():
     """Independent of notify_ha — see notification_channels.py's dispatch()."""
     cfg = _parse_config(

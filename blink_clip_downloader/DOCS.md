@@ -1376,6 +1376,50 @@ through four independent channels. The **Automations** tab has a
 verify credentials are correct before actually enabling a channel for real
 alerts.
 
+### What a suspicious-activity alert carries
+
+Besides the camera, confidence, risk and summary, an alert says when the clip
+was **recorded**, in your Home Assistant time zone (for example
+`Recorded: Thu 24 Sep 2026, 21:03:04 CDT`), rather than when it happened to be
+analyzed. Each channel then adds what it can:
+
+| Channel | Picture | Open the clip | Not a threat |
+|---------|---------|---------------|--------------|
+| Companion app push (`mobile_app_*` target) | Yes | Tap the notification | Button |
+| Email | Inline, with an **Open clip** link | Link | — |
+| Discord | Embed image; the title links to the clip | Link | — |
+| HA persistent notification | — (text only) | — | — |
+
+- **The picture** is the clip's key moment, not its first frame: the frame
+  where object detection saw the most prominent person (then vehicle, then
+  anything else), or, without detection, the frame with the most motion.
+  Turn it off with `alert_include_image` below to keep camera images out of
+  Discord, your email provider and the push service; links and the button
+  stay.
+- **Opening the clip** goes through Home Assistant, so it works away from
+  home wherever Home Assistant does, and never through port 8099. On Home
+  Assistant 2026.2 and later it opens that exact clip in the Blink Clips
+  panel; on older versions it opens the panel. Email and Discord links use
+  the external URL (or, failing that, the internal URL) set under
+  *Settings → System → Network*; with neither set they have no link.
+- **Not a threat** records exactly what the Library's thumbs-down does on a
+  flagged clip, so the camera's feedback learning hears about the false
+  alarms you dismiss from your lock screen. A locked phone asks to be
+  unlocked first. The tap comes back to the add-on through Home Assistant,
+  and each button is signed for its own clip, so nothing else can mark a clip
+  this way.
+
+The picture reaches the companion app through Home Assistant's media folder
+(`/media/blink_clip_downloader/alerts`, served to the app as
+`/media/local/...` with its own sign-in). Pictures are kept for a week, then
+deleted. A `mobile_app_target` that is not a companion app (a notify group,
+say) keeps getting plain text, and if Home Assistant ever refuses the richer
+push, the plain one is sent instead.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `alert_include_image` | `true` | Attach the clip's key frame to companion app, email and Discord alerts |
+
 ### HA Mobile App Push
 
 | Option | Default | Description |
@@ -1420,6 +1464,7 @@ specifically, without the per-download noise `notify_ha` also produces. Like
 `notify_ha`, this shows in HA's own notification panel, not as a phone push
 — enable `mobile_app_enabled` above (in [HA Mobile App
 Push](#ha-mobile-app-push)) for an actual push notification to your phone.
+It stays text only: no picture, link or button.
 
 ### Low-Battery Alerts
 
@@ -2087,6 +2132,22 @@ never returns results**
 - For email, confirm SMTP credentials and that `smtp_recipients` is populated.
 - For mobile app, ensure `mobile_app_target` matches your HA mobile app entity name
   exactly (e.g. `mobile_app_my_phone`).
+
+**Phone alerts arrive without a picture, or tapping one does not open the clip**
+- The picture needs Home Assistant's media folder, which the add-on maps from
+  6.0.8 on; if you configured `media_dirs` yourself, keep a `local` entry
+  pointing at `/media`. The add-on log says "Could not store the alert
+  picture" when writing it failed.
+- Opening the exact clip needs Home Assistant 2026.2 or later; older versions
+  open the Blink Clips panel instead.
+- Email and Discord links need an external or internal URL under *Settings →
+  System → Network*.
+
+**Tapping Not a threat does nothing**
+- The tap reaches the add-on over its Home Assistant WebSocket connection
+  (whether or not `watch_ha_events` is on), which opens once Blink sign-in has
+  succeeded. The button is only offered to a `mobile_app_*` target. The add-on
+  log shows "marked not a threat from a phone alert" for each one it records.
 
 **Anomaly detection is flagging everything as suspicious**
 - The anomaly baseline requires approximately 30 events per camera to activate. On a

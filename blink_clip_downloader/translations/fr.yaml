@@ -633,6 +633,13 @@ configuration:
     description: >-
       Publie un message Discord avec les détails du clip lorsqu'une
       activité suspecte est détectée.
+  alert_include_image:
+    name: Inclure l'image clé dans les alertes
+    description: >-
+      Joint une image du moment clé du clip aux alertes Discord, e-mail et
+      application mobile. Désactivez pour que les images des caméras ne
+      soient pas envoyées à ces services ; le lien vers le clip et le bouton
+      « Pas une menace » restent inclus.
   notify_ha_suspicious:
     name: Activer les alertes Home Assistant
     description: >-

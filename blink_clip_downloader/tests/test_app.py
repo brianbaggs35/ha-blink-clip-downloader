@@ -2991,3 +2991,82 @@ def test_init_hands_marked_assets_to_the_analyzer(
 
     analyzer = mock_create_analyzer.return_value
     analyzer.update_protected_assets.assert_called_once_with([asset])
+
+
+# ---------------------------------------------------------------------------
+# Rich alerts: the "Not a threat" button's wiring
+# ---------------------------------------------------------------------------
+
+
+def _app_with(base_config, **changes) -> BlinkClipDownloaderApp:
+    import dataclasses
+
+    return BlinkClipDownloaderApp(dataclasses.replace(base_config, **changes))
+
+
+def test_the_watcher_hears_the_button_only_for_a_companion_app_target(
+    base_config,
+) -> None:
+    phone = _app_with(
+        base_config, mobile_app_enabled=True, mobile_app_target="mobile_app_pixel"
+    )
+    assert (
+        phone._event_watcher._on_notification_action
+        == phone._alert_action_handler.handle
+    )
+
+    group = _app_with(
+        base_config, mobile_app_enabled=True, mobile_app_target="family_group"
+    )
+    assert group._event_watcher._on_notification_action is None
+
+    off = _app_with(
+        base_config, mobile_app_enabled=False, mobile_app_target="mobile_app_pixel"
+    )
+    assert off._event_watcher._on_notification_action is None
+
+
+def test_the_dispatcher_builds_rich_alerts_with_the_configured_image_choice(
+    base_config,
+) -> None:
+    app = _app_with(base_config, alert_include_image=False)
+    rich = app._alert_dispatcher._rich
+    assert rich is not None
+    assert rich._include_image is False
+    assert rich._signer is app._alert_action_signer
+
+
+async def test_the_watcher_starts_for_the_button_alone(base_config) -> None:
+    """Turning off event-driven downloads must not also turn off the button:
+    the watcher still starts, subscribed to the button's event only."""
+    app = _app_with(
+        base_config,
+        watch_ha_events=False,
+        supervisor_token="tok",
+        mobile_app_enabled=True,
+        mobile_app_target="mobile_app_pixel",
+    )
+    app._notifier.update_sensor = AsyncMock(return_value=True)
+    app._event_watcher.start = AsyncMock()
+    assert app._event_watcher._event_types() == ["mobile_app_notification_action"]
+
+    await app._finish_startup()
+    await asyncio.gather(*app._bg_tasks)
+
+    app._event_watcher.start.assert_awaited_once()
+
+
+async def test_the_watcher_stays_off_with_nothing_to_hear(base_config) -> None:
+    app = _app_with(
+        base_config,
+        watch_ha_events=False,
+        supervisor_token="tok",
+        mobile_app_enabled=False,
+    )
+    app._notifier.update_sensor = AsyncMock(return_value=True)
+    app._event_watcher.start = AsyncMock()
+
+    await app._finish_startup()
+
+    app._event_watcher.start.assert_not_awaited()
+    assert not [t for t in app._bg_tasks if t.get_name() == "event_watcher"]

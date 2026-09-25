@@ -232,7 +232,7 @@ class AnalysisQueue:
         # of an already-analyzed clip and, worse, silently drop the alert
         # for a genuinely suspicious clip without surfacing the error.
         try:
-            await self._maybe_dispatch_alert(item, clip_id, result)
+            await self._maybe_dispatch_alert(item, clip_id, result, clip_timestamp)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning(
                 "Clip %s was analyzed successfully but alert dispatch failed: %s",
@@ -288,7 +288,11 @@ class AnalysisQueue:
             )
 
     async def _maybe_dispatch_alert(
-        self, item: dict[str, Any], clip_id: str, result: Any
+        self,
+        item: dict[str, Any],
+        clip_id: str,
+        result: Any,
+        clip_timestamp: str = "",
     ) -> None:
         effective_threshold = await self._db.get_effective_confidence_threshold(
             item["camera"], self._min_confidence
@@ -311,6 +315,9 @@ class AnalysisQueue:
                 "id": clip_id,
                 "camera": item["camera"],
                 "path": item["clip_path"],
+                # When the clip was recorded, which an alert reports in local
+                # time — not when it happened to be analyzed.
+                "timestamp": clip_timestamp,
             }
             await self._dispatcher.dispatch(result, clip_data)
 

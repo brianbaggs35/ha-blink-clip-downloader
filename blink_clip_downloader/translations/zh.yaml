@@ -459,6 +459,11 @@ configuration:
   discord_enabled:
     name: 启用 Discord 提醒
     description: 检测到可疑活动时，发布包含片段详情的 Discord 消息。
+  alert_include_image:
+    name: 在提醒中附带关键帧
+    description: >-
+      在 Discord、电子邮件和移动应用提醒中附带片段关键时刻的图片。关闭后摄像头图像不会发送到这些服务；
+      片段链接和"不是威胁"按钮仍会保留。
   notify_ha_suspicious:
     name: 启用 Home Assistant 提醒
     description: >-

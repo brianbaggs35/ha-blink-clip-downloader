@@ -23,6 +23,10 @@ map:
     read_only: false
   - type: data
     read_only: false
+  # Only for alert pictures: the companion app can fetch an image only by a
+  # Home Assistant URL, and /media/local/... is one it fetches signed in.
+  - type: media
+    read_only: false
 
 # Direct-access port (optional alternative to ingress).
 ports:
@@ -547,6 +551,8 @@ options:
   discord_webhook_url: ""
   # Enable Discord alerts for suspicious clips.
   discord_enabled: false
+  # Attach the clip's key frame to Discord, email and mobile app alerts.
+  alert_include_image: true
   # Create a Home Assistant persistent notification for suspicious clips —
   # independent of notify_ha above, which covers new-clip-downloaded, the
   # daily digest, and system events (2FA/auth/storage) and can be too noisy
@@ -669,6 +675,7 @@ schema:
   smtp_enabled: "bool"
   discord_webhook_url: "str?"
   discord_enabled: "bool"
+  alert_include_image: "bool"
   notify_ha_suspicious: "bool"
   battery_alerts_enabled: "bool"
   log_level: "list(debug|info|warning|error)"
