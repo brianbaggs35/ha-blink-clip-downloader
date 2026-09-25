@@ -1046,6 +1046,9 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             return
 
         downloaded = await self._downloader.download_new_clips()
+        self._media_server.extra_status["download_retries"] = (
+            self._downloader.download_retry_status()
+        )
 
         # Augment with clips from the Sync Module's USB local storage.
         if self._config.download_local_storage:

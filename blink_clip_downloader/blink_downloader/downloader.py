@@ -30,7 +30,7 @@ from blinkpy.camera import BlinkCamera
 from .config import AppConfig
 from .database import ClipDatabase
 from .storage import StorageManager
-from .tracker import ClipTracker
+from .tracker import GIVE_UP_AFTER, ClipTracker, as_utc
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +54,15 @@ _PAGE_SIZE = 25
 # otherwise loop forever. Far beyond any realistic single-poll backlog
 # (max_clips_per_poll itself caps at 500).
 _MAX_PAGES = 400
+# How far before the moment a clip list is requested the next request's
+# since= starts. Blink lists a clip only once it has finished recording and
+# uploading, some time after the created_at it carries, and its clock and
+# this host's are never exactly in step, so a request made at 12:00:00 can
+# miss a clip filed at 11:59:30 that appears at 12:00:20. Starting the next
+# request ten minutes earlier asks for it again. The overlap costs only a
+# few repeated entries, which is_downloaded() filters out, so this is
+# generous rather than tight.
+_LIST_CURSOR_MARGIN = timedelta(minutes=10)
 # Download stream chunk size (64 KiB).
 _CHUNK_SIZE = 65_536
 # ffprobe subprocess timeout for probe_clip_duration() below.
@@ -122,6 +131,14 @@ class AuthenticationError(Exception):
     """Raised on unrecoverable login failure."""
 
 
+class _QuotaReachedError(Exception):
+    """Raised by ``_download_clip`` when the storage quota stopped it.
+
+    A clip that was never tried is not a failed download: it holds the
+    clip-list cursor back without counting towards giving up on it.
+    """
+
+
 class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
     """Handles Blink authentication and streaming clip downloads."""
 
@@ -166,6 +183,10 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         # duration the API never reported, so that warning is logged per
         # add-on run rather than per poll cycle.
         self._unknown_duration_warned = False
+        # Clips the latest clip list still owed a download that have failed
+        # before and are being retried, for the Status tab
+        # (download_retry_status).
+        self._retrying_count = 0
 
     # ------------------------------------------------------------------
     # Public: web-UI 2FA submission
@@ -898,11 +919,14 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         """Fetch and download all clips not yet in the tracker.
 
         Returns a list of result dicts for each successfully downloaded clip.
+        Afterwards the tracker's list cursor (the since= of the next clip
+        list) moves up to just before this list was requested, but never
+        past a clip still owed a download (see _next_list_cursor).
         """
         if self._blink is None:
             raise RuntimeError("Call connect() before download_new_clips()")
 
-        # Determine since-time: last download, or a short lookback on first
+        # Determine since-time: the list cursor, or a short lookback on first
         # run/reconnect (fresh tracker — e.g. a reinstall or re-authing the
         # Blink account). Deliberately short (not e.g. 24h): a busy account
         # reconnecting after time away could otherwise have a large backlog
@@ -911,58 +935,166 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         # covers "what happened while I was setting this back up" without
         # risking a multi-hour, multi-token backlog; anything older is still
         # reachable manually via Analyze Now once downloaded.
-        since = self._tracker.last_download_time
+        since = self._tracker.list_cursor
         if since is None:
             since = datetime.now(UTC) - timedelta(hours=6)
 
-        clips = await self._fetch_clip_list(since)
+        # Taken before the request rather than after the downloads: a clip
+        # Blink starts listing while this poll is still downloading must
+        # fall inside the next poll's window, not behind it.
+        listed_at = datetime.now(UTC)
+        clips, complete = await self._fetch_clip_list(since)
+        owed = self._owed_clips(clips)
         if not clips:
             _LOGGER.debug("No new clips from Blink API")
-            return []
-
-        new_clips = [
-            c for c in clips if not self._tracker.is_downloaded(str(c.get("id", "")))
-        ]
-        if not new_clips:
+        elif not owed:
             _LOGGER.debug("All %d clip(s) already downloaded", len(clips))
-            return []
 
-        has_backlog = len(new_clips) > self._config.max_clips_per_poll
-        new_clips = new_clips[: self._config.max_clips_per_poll]
-        _LOGGER.info("Downloading %d new clip(s)", len(new_clips))
+        # A clip that failed recently waits out its backoff (see
+        # ClipTracker.retry_due), and never-tried clips go first: they are
+        # the newest events and the likeliest to succeed, so a clip that
+        # keeps failing never takes their download slots.
+        due = [c for c in owed if self._tracker.retry_due(str(c.get("id", "")))]
+        due.sort(key=lambda c: self._tracker.is_retrying(str(c.get("id", ""))))
+        batch = due[: self._config.max_clips_per_poll]
+        if len(due) > len(batch):
+            _LOGGER.info(
+                "Backlog remains after this poll (max_clips_per_poll=%d); "
+                "%d clip(s) left for the next poll",
+                self._config.max_clips_per_poll,
+                len(due) - len(batch),
+            )
 
+        results = await self._download_batch(batch) if batch else []
+
+        # Whatever is still owed holds the cursor back: clips beyond the
+        # cap, clips waiting out a backoff, clips the quota stopped, and
+        # clips that failed just now but have not been given up on.
+        held = [c for c in owed if self._is_owed(str(c.get("id", "")))]
+        self._retrying_count = sum(
+            1 for c in held if self._tracker.is_retrying(str(c.get("id", "")))
+        )
+        self._tracker.set_list_cursor(
+            self._next_list_cursor(since, listed_at, complete, held)
+        )
+        if batch:
+            # Only when something was downloaded or failed. The cursor moves
+            # on every poll, and saving for that alone would rewrite a file
+            # of up to 100,000 IDs every 15 seconds while fast polling. A
+            # cursor on disk that lags is always safe, costing only a longer
+            # first list after a crash, and a clean shutdown saves it anyway.
+            self._tracker.save()
+            self._persist_auth()
+        return results
+
+    def _owed_clips(self, clips: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The listed clips still needing a download, each clip once.
+
+        A clip filed while the list is being paged through can push one
+        already returned onto the next page too; downloading both copies at
+        once would write the same temporary file twice.
+        """
+        seen: set[str] = set()
+        owed: list[dict[str, Any]] = []
+        for clip in clips:
+            clip_id = str(clip.get("id", ""))
+            if clip_id in seen or not self._is_owed(clip_id):
+                continue
+            seen.add(clip_id)
+            owed.append(clip)
+        return owed
+
+    def _is_owed(self, clip_id: str) -> bool:
+        """Whether *clip_id* still needs downloading: not done, not given up."""
+        return not self._tracker.is_downloaded(
+            clip_id
+        ) and not self._tracker.has_given_up(clip_id)
+
+    async def _download_batch(
+        self, batch: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Download *batch* concurrently and return the successful results.
+
+        A clip that fails is recorded with the tracker, which decides when
+        it is next tried and when it is given up on; a clip the storage
+        quota stopped was never tried, so it is not.
+        """
+        _LOGGER.info("Downloading %d new clip(s)", len(batch))
         semaphore = asyncio.Semaphore(self._config.concurrent_downloads)
-        tasks = [self._download_clip(clip, semaphore) for clip in new_clips]
+        tasks = [self._download_clip(clip, semaphore) for clip in batch]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         results: list[dict[str, Any]] = []
-        for clip, result in zip(new_clips, raw_results):
+        for clip, result in zip(batch, raw_results):
+            if isinstance(result, dict):
+                results.append(result)
+                continue
+            if isinstance(result, _QuotaReachedError):
+                continue
             if isinstance(result, Exception):
                 _LOGGER.error("Failed to download clip %s: %s", clip.get("id"), result)
-            elif isinstance(result, dict):
-                results.append(result)
-
-        if has_backlog:
-            # mark_downloaded() advances the tracker's cursor to "now" for
-            # every clip downloaded above, but max_clips_per_poll left some
-            # older clips in `clips` undownloaded. If the cursor were allowed
-            # to advance, the next poll's since= filter would start after
-            # those clips' creation time and the Blink API would never
-            # return them again — permanently dropping backlog. Holding the
-            # cursor at this poll's `since` means the next poll re-fetches
-            # the same window; already-downloaded clips are filtered out via
-            # is_downloaded() as usual, so only the real backlog remains.
-            self._tracker.set_last_download_time(since)
-            _LOGGER.info(
-                "Backlog remains after this poll (max_clips_per_poll=%d); "
-                "holding download cursor at %s",
-                self._config.max_clips_per_poll,
-                since.isoformat(),
-            )
-
-        self._tracker.save()
-        self._persist_auth()
+            clip_id = str(clip.get("id", ""))
+            if self._tracker.is_downloaded(clip_id):
+                # The download itself finished and something after it
+                # raised (e.g. adding the library row): nothing to refetch.
+                continue
+            record = self._tracker.record_failed_attempt(clip_id)
+            if record.given_up:
+                _LOGGER.warning(
+                    "Giving up on clip %s from %r recorded %s: it has kept "
+                    "failing to download for over %d hours and will not be "
+                    "requested again",
+                    clip_id,
+                    clip.get("device_name", "unknown"),
+                    clip.get("created_at", "at an unknown time"),
+                    int(GIVE_UP_AFTER.total_seconds() // 3600),
+                )
+            else:
+                _LOGGER.info(
+                    "Clip %s failed to download (attempt %d); trying again after %s",
+                    clip_id,
+                    record.attempts,
+                    record.next_try.isoformat(timespec="seconds"),
+                )
         return results
+
+    @staticmethod
+    def _next_list_cursor(
+        since: datetime,
+        listed_at: datetime,
+        complete: bool,
+        held: list[dict[str, Any]],
+    ) -> datetime:
+        """Where the next clip list starts: its since= for request_videos.
+
+        Normally just before this list was requested (_LIST_CURSOR_MARGIN).
+        Never past a clip in *held*, one still owed a download, or the next
+        list would start after it and Blink would never return it again.
+        Never earlier than *since*, which returned every held clip this time
+        and so will again. A list cut short by an error says nothing about
+        what it failed to return, so it leaves the cursor at *since*, as
+        does a held clip whose created_at cannot be read.
+        """
+        if not complete:
+            return since
+        cursor = listed_at - _LIST_CURSOR_MARGIN
+        for clip in held:
+            created = _parse_clip_time(clip.get("created_at"))
+            if created is None:
+                return since
+            cursor = min(cursor, created - _LIST_CURSOR_MARGIN)
+        return max(cursor, since)
+
+    def download_retry_status(self) -> dict[str, int]:
+        """Clips still being retried as of the latest poll, and clips given up on.
+
+        Shown on the Status tab so a failing download is visible rather than
+        only in the log.
+        """
+        return {
+            "retrying": self._retrying_count,
+            "given_up": self._tracker.given_up_count,
+        }
 
     # ------------------------------------------------------------------
     # Public: Sync Module local storage (USB drive)
@@ -1166,8 +1298,15 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
     # Internal: clip list
     # ------------------------------------------------------------------
 
-    async def _fetch_clip_list(self, since: datetime) -> list[dict[str, Any]]:
+    async def _fetch_clip_list(
+        self, since: datetime
+    ) -> tuple[list[dict[str, Any]], bool]:
         """Retrieve the paginated clip list from Blink.
+
+        Returns the filtered clips and whether the list is complete: False
+        when a page request failed or came back malformed, so the clips it
+        would have held are unknown and the caller must not move its cursor
+        past them.
 
         blinkpy >= 0.22 returns the parsed JSON dict directly from
         request_videos() (via auth.query → validate_response with
@@ -1177,6 +1316,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
         clips: list[dict[str, Any]] = []
         since_epoch = since.timestamp()
         page = 0
+        complete = True
 
         while True:
             try:
@@ -1192,6 +1332,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     # so app.py's poll loop can reconnect instead of
                     # silently retrying the same broken refresh forever.
                     raise
+                complete = False
                 break
 
             if not isinstance(data, dict):
@@ -1199,6 +1340,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                     "request_videos returned unexpected type %s; stopping pagination",
                     type(data).__name__,
                 )
+                complete = False
                 break
 
             media: list[dict] = data.get("media") or []
@@ -1210,6 +1352,9 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 break
             page += 1
             if page >= _MAX_PAGES:
+                # Still counted as complete. This cap exists for an API that
+                # never ends a list, and holding the cursor would only ask
+                # for the same capped list again on every poll, forever.
                 _LOGGER.warning(
                     "request_videos pagination hit the %d-page safety cap; "
                     "stopping early with %d clip(s) collected so far",
@@ -1219,7 +1364,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 break
 
         clips = self._apply_filters(clips)
-        return clips
+        return clips, complete
 
     def _apply_filters(self, clips: list[dict]) -> list[dict]:
         """Apply camera whitelist, motion-only, time-window, and deleted filters."""
@@ -1327,7 +1472,7 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
 
             if await asyncio.to_thread(self._storage.is_over_quota):
                 _LOGGER.warning("Storage quota reached, skipping clip %s", clip_id)
-                return None
+                raise _QuotaReachedError(clip_id)
 
             # The on-disk date folder/filename must reflect the *local*
             # calendar day, not raw UTC (Blink's created_at is always UTC,
@@ -1748,3 +1893,11 @@ class BlinkDownloader:  # pylint: disable=too-many-instance-attributes
                 cookie_jar=aiohttp.CookieJar(unsafe=True)
             )
         return self._session
+
+
+def _parse_clip_time(raw: Any) -> datetime | None:
+    """Parse a clip-list ``created_at`` as UTC, or None when it cannot be read."""
+    try:
+        return as_utc(datetime.fromisoformat(str(raw)))
+    except ValueError:
+        return None

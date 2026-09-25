@@ -62,6 +62,10 @@ Periodically polls the Blink API for new clips and saves them to `/share/blink-c
 quotas, Home Assistant notifications, per-camera battery monitoring with low-battery
 alerts, and much more.
 
+A clip that fails to download is asked for again until it arrives, so a network blip, a
+busy burst of motion or a full `max_clips_per_poll` never silently drops footage. Clips waiting on a retry, and the rare clip that is still failing after six hours
+and is given up on, are shown on the web UI's Status tab.
+
 ## System Requirements
 
 Runs on any **Home Assistant OS or Supervised** install (not Core-only —
