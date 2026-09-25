@@ -3774,6 +3774,19 @@ def test_pair_stages_examine_the_person_at_the_car_before_their_dog() -> None:
     assert subject is stranger_at_door
 
 
+def test_pair_stages_keep_an_untracked_choice_to_its_own_sighting() -> None:
+    """Untracked boxes all carry ``track_id=None``. Gathering "that subject's
+    sightings" by it gathered every untracked subject, and the deepest
+    overlap among them was the passer-by's — undoing the choice of whom to
+    examine whenever tracking had not assigned ids."""
+    passer_by = DetectedObject("person", 0.9, (250.0, 60.0, 400.0, 355.0), None, 2)
+    at_the_door = DetectedObject("person", 0.9, (380.0, 140.0, 430.0, 292.0), None, 3)
+    subject, _box, frame, track, _asset_key = VisionPipeline._select_pair(
+        _pair_hints(_CAR), [passer_by, at_the_door], None
+    )  # type: ignore[misc]
+    assert (subject, frame, track) == (at_the_door, 3, None)
+
+
 def test_pair_stages_keep_one_subjects_deepest_overlap_frame() -> None:
     """Only the choice of *whom* changed: with one subject, the frame is
     still the one where their outline overlaps the car most deeply."""

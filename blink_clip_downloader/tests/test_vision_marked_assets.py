@@ -227,6 +227,20 @@ def test_the_deepest_overlapping_sighting_is_the_one_examined() -> None:
     assert (pair[0], pair[2]) == (at_it, 1)
 
 
+def test_an_untracked_person_at_an_asset_is_not_swapped_for_an_untracked_dog() -> None:
+    """With no track ids, "the chosen person's sightings" must be just the
+    one chosen: every untracked box shares ``None``, and the dog lying
+    across the bike overlaps it more deeply than the person handling it."""
+    bike = _marked("bike1", "Bike", "bicycle", BIKE_ZONE)
+    person = DetectedObject("person", 0.9, AT_BIKE, None, 0)
+    dog = DetectedObject("dog", 0.8, (135.0, 230.0, 210.0, 298.0), None, 0)
+    pair = VisionPipeline._select_pair(
+        _hints(car=False, marked=[bike]), [dog, person], None
+    )
+    assert pair is not None
+    assert (pair[0], pair[4]) == (person, "bike1")
+
+
 def test_pair_target_names_what_was_measured() -> None:
     door = _marked("door1", "Front door", "door", DOOR_ZONE)
     hints = _hints(marked=[door])
