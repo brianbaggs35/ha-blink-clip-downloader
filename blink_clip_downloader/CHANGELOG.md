@@ -2,29 +2,6 @@
 
 ## 6.0.8
 
-### Bug fixes
-
-- **Some clips were never downloaded.** Each poll asks Blink for the clips
-  listed since a bookmark, and any successful download moved that bookmark
-  to "now". So three kinds of clip fell behind it and were never asked for
-  again: one that failed (every retry used up, or no video link yet) while
-  another clip in the same poll succeeded; the backlog `max_clips_per_poll`
-  had held back for the next poll, which the Sync Module local-storage step
-  then undid by moving the bookmark again in the same cycle; and any clip
-  Blink listed while the poll was still downloading, most likely during a
-  burst of activity, which is when it matters most. The bookmark now moves
-  to ten minutes before the poll asked Blink for its list, never past a clip
-  that is still owed a download, and not at all when Blink's list stopped
-  partway on an error. A failed clip is tried again a minute later, then at
-  doubling intervals up to an hour, with clips never tried going first so a
-  failing one can't slow the alerts for new ones. It is given up on only
-  after at least 5 attempts and 6 hours, with a warning in the log naming
-  its camera and recording time, so a clip broken on Blink's side can't hold
-  the bookmark back forever.
-- The Status tab's Blink Connection card shows **Retrying downloads** and
-  **Downloads given up (7 days)** whenever a clip is failing to download,
-  so it no longer only shows up in the log.
-
 ### Rich alerts: the key frame, a tap to the clip, and "Not a threat"
 
 Suspicious-activity alerts can now be judged from a lock screen.
@@ -107,6 +84,29 @@ Sign-In** in the add-on's Configuration tab.
 
 The add-on now requests Home Assistant's `auth_api` permission, which is what
 lets it check a username and password.
+
+### Bug fixes
+
+- **Some clips were never downloaded.** Each poll asks Blink for the clips
+  listed since a bookmark, and any successful download moved that bookmark
+  to "now". So three kinds of clip fell behind it and were never asked for
+  again: one that failed (every retry used up, or no video link yet) while
+  another clip in the same poll succeeded; the backlog `max_clips_per_poll`
+  had held back for the next poll, which the Sync Module local-storage step
+  then undid by moving the bookmark again in the same cycle; and any clip
+  Blink listed while the poll was still downloading, most likely during a
+  burst of activity, which is when it matters most. The bookmark now moves
+  to ten minutes before the poll asked Blink for its list, never past a clip
+  that is still owed a download, and not at all when Blink's list stopped
+  partway on an error. A failed clip is tried again a minute later, then at
+  doubling intervals up to an hour, with clips never tried going first so a
+  failing one can't slow the alerts for new ones. It is given up on only
+  after at least 5 attempts and 6 hours, with a warning in the log naming
+  its camera and recording time, so a clip broken on Blink's side can't hold
+  the bookmark back forever.
+- The Status tab's Blink Connection card shows **Retrying downloads** and
+  **Downloads given up (7 days)** whenever a clip is failing to download,
+  so it no longer only shows up in the log.
 
 ## 6.0.7
 
