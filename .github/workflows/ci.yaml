@@ -551,7 +551,7 @@ jobs:
         # the whole job is skipped for them (see the job's `if:` above), so
         # no token-less upload attempt is possible.
         if: ${{ !env.ACT }}
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-results-${{ matrix.arch }}.sarif
           category: trivy-image-${{ matrix.arch }}
