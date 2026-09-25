@@ -574,3 +574,155 @@ async def test_connect_and_watch_invalid_json_text_is_skipped() -> None:
     w._session = _mock_session(fake_ws)
     await w._connect_and_watch()
     cb.assert_not_called()
+
+
+# ------------------------------------------------------------------
+# Notification actions (the "Not a threat" button on phone alerts)
+# ------------------------------------------------------------------
+
+
+def _action_message(action: object) -> MagicMock:
+    import aiohttp
+
+    return _make_ws_message(
+        aiohttp.WSMsgType.TEXT,
+        {
+            "type": "event",
+            "event": {
+                "event_type": "mobile_app_notification_action",
+                "data": {"action": action},
+            },
+        },
+    )
+
+
+def test_has_work_reflects_what_the_watcher_was_asked_to_do() -> None:
+    assert HAEventWatcher("tok", on_motion=MagicMock()).has_work is True
+    assert (
+        HAEventWatcher("tok", on_motion=MagicMock(), watch_motion=False).has_work
+        is False
+    )
+    assert (
+        HAEventWatcher(
+            "tok",
+            on_motion=MagicMock(),
+            watch_motion=False,
+            on_notification_action=AsyncMock(),
+        ).has_work
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "watch_motion,expected",
+    [
+        (True, ["state_changed", "mobile_app_notification_action"]),
+        (False, ["mobile_app_notification_action"]),
+    ],
+)
+async def test_subscribes_to_the_button_event_with_or_without_motion(
+    watch_motion: bool, expected: list[str]
+) -> None:
+    import aiohttp
+
+    w = HAEventWatcher(
+        "tok",
+        on_motion=MagicMock(),
+        watch_motion=watch_motion,
+        on_notification_action=AsyncMock(),
+    )
+    w._running = True
+    fake_ws = _FakeWS(
+        receive_jsons=[{"type": "auth_required"}, {"type": "auth_ok"}],
+        ws_messages=[_make_ws_message(aiohttp.WSMsgType.CLOSE)],
+    )
+    w._session = _mock_session(fake_ws)
+
+    await w._connect_and_watch()
+
+    subscribed = [
+        call.args[0]["event_type"]
+        for call in fake_ws.send_json.call_args_list
+        if call.args[0].get("type") == "subscribe_events"
+    ]
+    assert subscribed == expected
+
+
+async def test_a_tapped_button_reaches_its_handler() -> None:
+    import asyncio
+
+    import aiohttp
+
+    handler = AsyncMock(return_value=True)
+    motion = MagicMock()
+    w = HAEventWatcher("tok", on_motion=motion, on_notification_action=handler)
+    w._running = True
+    fake_ws = _FakeWS(
+        receive_jsons=[{"type": "auth_required"}, {"type": "auth_ok"}],
+        ws_messages=[
+            _action_message("BLINK_NOT_A_THREAT_x_c1"),
+            _make_ws_message(aiohttp.WSMsgType.CLOSE),
+        ],
+    )
+    w._session = _mock_session(fake_ws)
+
+    await w._connect_and_watch()
+    # One turn to run the handler task, one for its done-callback.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    handler.assert_awaited_once_with("BLINK_NOT_A_THREAT_x_c1")
+    motion.assert_not_called()
+    assert not w._action_tasks
+
+
+@pytest.mark.parametrize("action", [None, "", 42])
+def test_an_action_event_without_a_usable_action_is_ignored(action: object) -> None:
+    handler = AsyncMock()
+    w = HAEventWatcher("tok", on_motion=MagicMock(), on_notification_action=handler)
+    assert w._handle_ws_message(_action_message(action)) is False
+    handler.assert_not_called()
+
+
+def test_an_action_event_is_ignored_when_nothing_handles_actions() -> None:
+    motion = MagicMock()
+    w = HAEventWatcher("tok", on_motion=motion)
+    assert w._handle_ws_message(_action_message("A")) is False
+    motion.assert_not_called()
+
+
+async def test_a_failing_handler_is_logged_and_the_watcher_carries_on(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import asyncio
+
+    w = HAEventWatcher(
+        "tok",
+        on_motion=MagicMock(),
+        on_notification_action=AsyncMock(side_effect=RuntimeError("db down")),
+    )
+    w._handle_ws_message(_action_message("A"))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert "Handling a notification action failed: db down" in caplog.text
+    assert not w._action_tasks
+
+
+async def test_a_cancelled_handler_is_not_reported_as_a_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import asyncio
+
+    async def slow(_action: str) -> None:
+        await asyncio.Event().wait()
+
+    w = HAEventWatcher("tok", on_motion=MagicMock(), on_notification_action=slow)
+    w._handle_ws_message(_action_message("A"))
+    (task,) = w._action_tasks
+    task.cancel()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert not w._action_tasks
+    assert "failed" not in caplog.text

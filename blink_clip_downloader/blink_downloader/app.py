@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .alert_actions import AlertActionHandler, AlertActionSigner
+from .alert_media import AlertImageStore
 from .analysis_queue import AnalysisQueue
 from .analyzer import (
     AnalyzerSettings,
@@ -37,6 +39,7 @@ from .gdrive_client import GDriveClient
 from .gdrive_queue import GDriveUploadQueue
 from .ha_config import HAConfigWriter
 from .ha_entities import HAEntityPublisher
+from .ha_links import HALinkResolver
 from .library_scanner import import_existing_clips
 from .live_view import LiveViewManager
 from .manifest import ClipManifest
@@ -44,6 +47,7 @@ from .media_server import MediaServer
 from .notification_channels import NotificationDispatcher
 from .notifier import HANotifier
 from .protected_assets import read_assets
+from .rich_alerts import RichAlertBuilder
 from .sqlite_migration import migrate_legacy_sqlite
 from .storage import StorageManager
 from .tracker import ClipTracker
@@ -178,6 +182,13 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._analyzer: BaseAnalyzer | None = None
         self._analysis_queue: AnalysisQueue | None = None
         self._auto_analysis_disabled_cameras: set[str] = set()
+        # The "Not a threat" button on phone alerts: signed per clip so only
+        # buttons this add-on sent count, and answered over the Home
+        # Assistant WebSocket (see _event_watcher below), never port 8099.
+        self._alert_action_signer = AlertActionSigner()
+        self._alert_action_handler = AlertActionHandler(
+            self._db, self._alert_action_signer
+        )
         # Constructed unconditionally (not gated by ai_analysis_enabled) so the
         # web UI's "Send Test Email" button works even before AI analysis —
         # and therefore real suspicious-activity alerts — is turned on.
@@ -195,6 +206,12 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             discord_webhook_url=config.discord_webhook_url,
             discord_enabled=config.discord_enabled,
             ha_notify_enabled=config.notify_ha_suspicious,
+            rich=RichAlertBuilder(
+                links=HALinkResolver(config.supervisor_token),
+                image_store=AlertImageStore(),
+                signer=self._alert_action_signer,
+                include_image=config.alert_include_image,
+            ),
         )
         self._battery_monitor = BatteryMonitor(
             db=self._db,
@@ -244,6 +261,15 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             on_motion=self._on_blink_motion,
             on_motion_cleared=self._on_blink_motion_cleared,
             event_cameras=config.event_cameras,
+            watch_motion=config.watch_ha_events,
+            # Only a companion-app target ever gets the button (see
+            # notification_channels.py), so only then is there a tap to hear.
+            on_notification_action=(
+                self._alert_action_handler.handle
+                if config.mobile_app_enabled
+                and config.mobile_app_target.startswith("mobile_app_")
+                else None
+            ),
         )
 
         self._running = False
@@ -844,7 +870,10 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         # restart before they exist again.
         await self._publish_storage_sensors(disk)
 
-        if self._config.watch_ha_events and self._config.supervisor_token:
+        # Motion watching as before, or on its own for the alert button.
+        if self._config.supervisor_token and (
+            self._config.watch_ha_events or self._event_watcher.has_work
+        ):
             self._bg_tasks.append(
                 asyncio.create_task(self._event_watcher.start(), name="event_watcher")
             )

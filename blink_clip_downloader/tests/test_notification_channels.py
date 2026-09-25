@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Any
+import email
+import email.policy
+import json
+from email.message import EmailMessage
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 
 from blink_downloader.analyzer import AnalysisResult
 from blink_downloader.notification_channels import NotificationDispatcher
+from blink_downloader.rich_alerts import AlertExtras
+
+
+def _sent_email(send: AsyncMock) -> EmailMessage:
+    """Parse the message a mocked aiosmtplib.send was handed."""
+    raw = bytes(send.call_args.args[0])
+    return cast(
+        EmailMessage, email.message_from_bytes(raw, policy=email.policy.default)
+    )
 
 
 def _mock_session(**overrides: Any) -> MagicMock:
@@ -919,3 +932,374 @@ async def test_alert_body_omits_the_assessment_when_there_is_none() -> None:
     ):
         await dispatcher.dispatch(_make_result(True), {"camera": "Driveway"})
     assert "Risk:" not in sent[0][1]
+
+
+# ------------------------------------------------------------------
+# Rich alerts: picture, clip link, "Not a threat" and recorded time
+# ------------------------------------------------------------------
+
+_EXTRAS = AlertExtras(
+    clip_id="c1",
+    recorded_local="Thu 24 Sep 2026, 21:03:04 CDT",
+    recorded_iso="2026-09-25T02:03:04+00:00",
+    image=b"\xff\xd8JPEG\xff\xd9",
+    image_url="/media/local/blink_clip_downloader/alerts/c1.jpg",
+    open_path="/app/abc_blink/clip/c1",
+    open_url="https://ha.example/app/abc_blink/clip/c1",
+    not_a_threat_action="BLINK_NOT_A_THREAT_0123456789abcdef_c1",
+)
+
+
+def _status_response(status: int) -> AsyncMock:
+    resp = AsyncMock()
+    resp.status = status
+    resp.__aenter__ = AsyncMock(return_value=resp)
+    resp.__aexit__ = AsyncMock(return_value=False)
+    return resp
+
+
+def _rich_builder(extras: AlertExtras = _EXTRAS) -> MagicMock:
+    builder = MagicMock()
+    builder.build = AsyncMock(return_value=extras)
+    builder.close = AsyncMock()
+    return builder
+
+
+async def test_dispatch_hands_every_channel_the_alerts_extras() -> None:
+    builder = _rich_builder()
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_enabled=True,
+        mobile_app_target="mobile_app_phone",
+        smtp_enabled=True,
+        smtp_host="smtp.test.com",
+        smtp_recipients=["a@b.com"],
+        discord_enabled=True,
+        discord_webhook_url="https://discord.com/hook",
+        ha_notify_enabled=True,
+        rich=builder,
+    )
+    dispatcher.send_mobile = AsyncMock(return_value=True)
+    dispatcher.send_email = AsyncMock(return_value=True)
+    dispatcher.send_discord = AsyncMock(return_value=True)
+    dispatcher.send_ha_notification = AsyncMock(return_value=True)
+    clip = {"id": "c1", "camera": "Front Door", "path": "/c1.mp4"}
+
+    await dispatcher.dispatch(_make_result(), clip)
+
+    builder.build.assert_awaited_once()
+    assert builder.build.call_args.kwargs == {
+        "attach_image": True,
+        "phone": True,
+        "external_link": True,
+    }
+    assert dispatcher.send_mobile.call_args.kwargs["extras"] is _EXTRAS
+    assert dispatcher.send_email.call_args.kwargs["extras"] is _EXTRAS
+    assert dispatcher.send_discord.call_args.kwargs["extras"] is _EXTRAS
+    # The persistent notification stays text: no extras reach it.
+    assert dispatcher.send_ha_notification.call_args.kwargs == {}
+    body = dispatcher.send_mobile.call_args.args[1]
+    assert body.endswith("Recorded: Thu 24 Sep 2026, 21:03:04 CDT")
+    assert "Time:" not in body
+
+
+async def test_dispatch_asks_only_for_what_the_enabled_channels_use() -> None:
+    builder = _rich_builder()
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_enabled=True,
+        mobile_app_target="family_group",  # a notify group, not the app
+        rich=builder,
+    )
+    dispatcher.send_mobile = AsyncMock(return_value=True)
+
+    await dispatcher.dispatch(_make_result(), {"id": "c1"})
+
+    assert builder.build.call_args.kwargs == {
+        "attach_image": False,
+        "phone": False,
+        "external_link": False,
+    }
+
+
+async def test_a_failing_builder_still_sends_the_plain_alert(caplog) -> None:
+    builder = _rich_builder()
+    builder.build = AsyncMock(side_effect=RuntimeError("boom"))
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_enabled=True,
+        mobile_app_target="mobile_app_phone",
+        rich=builder,
+    )
+    dispatcher.send_mobile = AsyncMock(return_value=True)
+
+    await dispatcher.dispatch(_make_result(), {"id": "c1"})
+
+    dispatcher.send_mobile.assert_awaited_once()
+    assert dispatcher.send_mobile.call_args.kwargs["extras"] == AlertExtras(
+        clip_id="c1"
+    )
+    assert "its extras failed" in caplog.text
+
+
+async def test_without_a_recorded_time_the_analysis_time_is_local() -> None:
+    dispatcher = NotificationDispatcher(ha_notify_enabled=True, supervisor_token="t")
+    dispatcher.send_ha_notification = AsyncMock(return_value=True)
+
+    await dispatcher.dispatch(_make_result(), {"id": "c1"})
+
+    body = dispatcher.send_ha_notification.call_args.args[1]
+    assert "\nAnalyzed: " in body
+    assert "2024" in body
+
+
+async def test_an_unparseable_analysis_time_is_shown_as_it_is() -> None:
+    dispatcher = NotificationDispatcher(ha_notify_enabled=True, supervisor_token="t")
+    dispatcher.send_ha_notification = AsyncMock(return_value=True)
+    result = _make_result()
+    result.analyzed_at = "sometime"
+
+    await dispatcher.dispatch(result, {"id": "c1"})
+
+    assert dispatcher.send_ha_notification.call_args.args[1].endswith("Time: sometime")
+
+
+async def test_close_also_closes_the_rich_builder() -> None:
+    builder = _rich_builder()
+    await NotificationDispatcher(rich=builder).close()
+    builder.close.assert_awaited_once()
+
+
+async def test_a_companion_app_push_carries_picture_tap_target_and_button() -> None:
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_target="mobile_app_phone",
+        mobile_app_enabled=True,
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(return_value=_status_response(200))
+    )
+
+    assert await dispatcher.send_mobile("Alert", "Body", extras=_EXTRAS) is True
+
+    payload = dispatcher._session.post.call_args.kwargs["json"]
+    assert payload["title"] == "Alert" and payload["message"] == "Body"
+    assert payload["data"] == {
+        "image": "/media/local/blink_clip_downloader/alerts/c1.jpg",
+        "url": "/app/abc_blink/clip/c1",
+        "clickAction": "/app/abc_blink/clip/c1",
+        "actions": [
+            {
+                "action": "BLINK_NOT_A_THREAT_0123456789abcdef_c1",
+                "title": "Not a threat",
+                "authenticationRequired": True,
+            }
+        ],
+        "tag": "blink-clip-c1",
+    }
+
+
+async def test_a_rejected_rich_push_is_resent_as_plain_text(caplog) -> None:
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_target="mobile_app_phone",
+        mobile_app_enabled=True,
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(side_effect=[_status_response(400), _status_response(200)])
+    )
+
+    assert await dispatcher.send_mobile("Alert", "Body", extras=_EXTRAS) is True
+
+    first, second = dispatcher._session.post.call_args_list
+    assert "data" in first.kwargs["json"]
+    assert second.kwargs["json"] == {"title": "Alert", "message": "Body"}
+    assert "resending it as plain text" in caplog.text
+
+
+async def test_a_rich_push_that_cannot_be_sent_at_all_is_not_retried() -> None:
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_target="mobile_app_phone",
+        mobile_app_enabled=True,
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(side_effect=aiohttp.ClientError("down"))
+    )
+
+    assert await dispatcher.send_mobile("Alert", "Body", extras=_EXTRAS) is False
+    assert dispatcher._session.post.call_count == 1
+
+
+async def test_a_push_to_anything_but_the_companion_app_stays_plain() -> None:
+    """Another notify platform may reject a key it does not know, and a
+    group would forward it to every member — so they get what they always
+    got."""
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_target="family_phones",
+        mobile_app_enabled=True,
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(return_value=_status_response(200))
+    )
+
+    assert await dispatcher.send_mobile("Alert", "Body", extras=_EXTRAS) is True
+    assert dispatcher._session.post.call_args.kwargs["json"] == {
+        "title": "Alert",
+        "message": "Body",
+    }
+
+
+async def test_extras_with_nothing_in_them_send_a_plain_push() -> None:
+    dispatcher = NotificationDispatcher(
+        supervisor_token="tok",
+        mobile_app_target="mobile_app_phone",
+        mobile_app_enabled=True,
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(return_value=_status_response(200))
+    )
+
+    await dispatcher.send_mobile("Alert", "Body", extras=AlertExtras(clip_id="c1"))
+
+    assert "data" not in dispatcher._session.post.call_args.kwargs["json"]
+
+
+def test_companion_app_data_leaves_out_what_it_lacks() -> None:
+    dispatcher = NotificationDispatcher(mobile_app_target="mobile_app_phone")
+    only_button = AlertExtras(not_a_threat_action="A")
+    assert dispatcher._companion_app_data(only_button) == {
+        "actions": [
+            {"action": "A", "title": "Not a threat", "authenticationRequired": True}
+        ]
+    }
+    assert dispatcher._companion_app_data(None) == {}
+
+
+async def test_an_email_with_extras_shows_the_picture_and_links_the_clip() -> None:
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=True,
+        smtp_host="smtp.test.com",
+        smtp_recipients=["a@b.com"],
+        smtp_sender="alerts@test.com",
+    )
+    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
+        assert await dispatcher.send_email(
+            "Alert — Front", "Camera: <Front>", extras=_EXTRAS
+        )
+
+    sent = _sent_email(mock_send)
+    assert sent["Subject"] == "Alert — Front"
+    assert sent["To"] == "a@b.com"
+    parts = {part.get_content_type(): part for part in sent.walk()}
+    text = parts["text/plain"].get_content()
+    assert "Open clip: https://ha.example/app/abc_blink/clip/c1" in text
+    page = parts["text/html"].get_content()
+    assert "Camera: &lt;Front&gt;" in page
+    assert 'href="https://ha.example/app/abc_blink/clip/c1"' in page
+    image = parts["image/jpeg"]
+    assert image.get_content() == _EXTRAS.image
+    assert image["Content-Disposition"].startswith("inline")
+    assert f'src="cid:{image["Content-ID"][1:-1]}"' in page
+
+
+async def test_an_email_with_only_a_link_has_no_image_part() -> None:
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=True, smtp_host="smtp.test.com", smtp_recipients=["a@b.com"]
+    )
+    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
+        await dispatcher.send_email(
+            "Alert", "Body", extras=AlertExtras(open_url="https://ha/x")
+        )
+
+    types = [part.get_content_type() for part in _sent_email(mock_send).walk()]
+    assert "image/jpeg" not in types
+    assert "text/html" in types
+
+
+async def test_an_email_with_only_a_picture_has_no_link() -> None:
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=True, smtp_host="smtp.test.com", smtp_recipients=["a@b.com"]
+    )
+    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
+        await dispatcher.send_email(
+            "Alert", "Body", extras=AlertExtras(image=b"\xff\xd8J\xff\xd9")
+        )
+
+    parts = {part.get_content_type(): part for part in _sent_email(mock_send).walk()}
+    assert "Open clip" not in parts["text/plain"].get_content()
+    assert "href=" not in parts["text/html"].get_content()
+    assert "image/jpeg" in parts
+
+
+async def test_an_email_with_empty_extras_stays_plain_text() -> None:
+    from email.mime.text import MIMEText
+
+    dispatcher = NotificationDispatcher(
+        smtp_enabled=True, smtp_host="smtp.test.com", smtp_recipients=["a@b.com"]
+    )
+    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send:
+        await dispatcher.send_email("Alert", "Body", extras=AlertExtras(clip_id="c1"))
+
+    assert isinstance(mock_send.call_args.args[0], MIMEText)
+
+
+async def test_a_discord_alert_uploads_the_picture_and_links_the_clip() -> None:
+    dispatcher = NotificationDispatcher(
+        discord_enabled=True, discord_webhook_url="https://discord.com/hook"
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(return_value=_status_response(200))
+    )
+
+    assert await dispatcher.send_discord(
+        "Alert", "Person", "Front Door", 0.9, extras=_EXTRAS
+    )
+
+    kwargs = dispatcher._session.post.call_args.kwargs
+    assert "json" not in kwargs
+    form = kwargs["data"]
+    assert isinstance(form, aiohttp.FormData)
+    fields = {f[0]["name"]: f for f in form._fields}
+    payload = json.loads(fields["payload_json"][2])
+    embed = payload["embeds"][0]
+    assert embed["image"] == {"url": "attachment://keyframe.jpg"}
+    assert embed["url"] == "https://ha.example/app/abc_blink/clip/c1"
+    assert embed["timestamp"] == "2026-09-25T02:03:04+00:00"
+    assert fields["files[0]"][0]["filename"] == "keyframe.jpg"
+    assert fields["files[0]"][2] == _EXTRAS.image
+
+
+async def test_a_rejected_discord_picture_is_resent_without_it(caplog) -> None:
+    dispatcher = NotificationDispatcher(
+        discord_enabled=True, discord_webhook_url="https://discord.com/hook"
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(side_effect=[_status_response(413), _status_response(204)])
+    )
+
+    assert await dispatcher.send_discord("Alert", "Person", "Cam", 0.9, extras=_EXTRAS)
+
+    retry = dispatcher._session.post.call_args_list[1].kwargs
+    embed = retry["json"]["embeds"][0]
+    assert "image" not in embed
+    assert embed["url"] == "https://ha.example/app/abc_blink/clip/c1"
+    assert "resending without it" in caplog.text
+
+
+async def test_a_discord_alert_with_a_link_but_no_picture_posts_json() -> None:
+    dispatcher = NotificationDispatcher(
+        discord_enabled=True, discord_webhook_url="https://discord.com/hook"
+    )
+    dispatcher._session = _mock_session(
+        post=MagicMock(return_value=_status_response(204))
+    )
+
+    await dispatcher.send_discord(
+        "Alert", "Person", "Cam", 0.9, extras=AlertExtras(open_url="https://ha/x")
+    )
+
+    embed = dispatcher._session.post.call_args.kwargs["json"]["embeds"][0]
+    assert embed["url"] == "https://ha/x"
+    assert "image" not in embed

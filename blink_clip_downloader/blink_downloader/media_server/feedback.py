@@ -12,6 +12,7 @@ import logging
 
 from aiohttp import web
 
+from ..verdict_feedback import record_verdict_feedback
 from .core import _MediaServerBase
 from .support import (
     _AI_FEEDBACK_ROUTE,
@@ -64,56 +65,28 @@ class FeedbackRoutesMixin(_MediaServerBase):
         except Exception:  # noqa: BLE001
             raise web.HTTPBadRequest(text=_INVALID_JSON_BODY)
 
-        result = await self._db.get_analysis_for_clip(clip_id)
-        if not result:
-            return web.json_response(
-                {"error": "Clip has not been analyzed yet"}, status=400
-            )
-
-        # correct=False always means the single is_suspicious boolean was
-        # wrong — there is no third option, so the corrected value is fully
-        # determined by the original one. Derive it whenever the caller
-        # doesn't explicitly override it, rather than leaving it null: the
-        # Moondream fine-tuning training-example builder
-        # (_handle_finetune_train) falls back to original_suspicious for a
-        # null corrected_suspicious, which silently trained toward the
-        # *wrong* label for exactly the case this is meant to fix (e.g. a
-        # false positive marked incorrect with no explicit correction).
-        if not correct and corrected_suspicious is None:
-            corrected_suspicious = not result["is_suspicious"]
-
-        # A bare thumbs-down with no typed note carries no reusable signal
-        # for get_prompt_corrections (see database.py), which only folds in
-        # rows with a non-empty correction_note. Synthesize one from the
-        # direction of the correction so every "incorrect" rating still
-        # becomes usable few-shot guidance for future clips on this camera.
-        if not correct and not correction_note.strip():
-            correction_note = (
-                "Reviewer marked this as ordinary, routine activity that "
-                "was incorrectly flagged suspicious."
-                if result["is_suspicious"]
-                else "Reviewer marked this as genuinely suspicious activity "
-                "that was incorrectly cleared."
-            )
-
+        # The derivations (the corrected label, the synthesized note) live in
+        # verdict_feedback.py, shared with the "Not a threat" button on
+        # phone alerts so both write exactly the same row.
         try:
-            await self._db.add_feedback(
-                clip_id=clip_id,
-                camera=result["camera"],
-                analysis_result_id=result.get("id"),
-                original_suspicious=bool(result["is_suspicious"]),
-                original_confidence=float(result["confidence"]),
+            saved = await record_verdict_feedback(
+                self._db,
+                clip_id,
                 correct=correct,
                 correction_note=correction_note,
                 corrected_suspicious=corrected_suspicious,
             )
-            return web.json_response({"saved": True})
         except Exception as exc:  # noqa: BLE001
             # Mirrors _handle_ai_analyze_now's error handling — an unexpected
             # DB failure here must surface as clean JSON, not aiohttp's
             # generic HTML 500 page.
             _LOGGER.warning("Feedback submit failed for clip %s: %s", clip_id, exc)
             return web.json_response({"error": str(exc)}, status=500)
+        if not saved:
+            return web.json_response(
+                {"error": "Clip has not been analyzed yet"}, status=400
+            )
+        return web.json_response({"saved": True})
 
     async def _handle_ai_feedback_delete(self, request: web.Request) -> web.Response:
         """Fully retract stored feedback for a clip (see ClipDatabase.delete_feedback).
