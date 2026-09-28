@@ -43,6 +43,7 @@ The add-on now maps Home Assistant's `media` folder: the companion app
 fetches a picture only by a Home Assistant URL, and
 `/media/local/blink_clip_downloader/alerts/...` is one it fetches with its
 own sign-in. Pictures there are deleted after a week.
+
 ### The direct-access port now asks you to sign in
 
 The web UI has always been on two doors: the **Blink Clips** panel in the

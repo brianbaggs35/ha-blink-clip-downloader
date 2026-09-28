@@ -109,10 +109,15 @@ def _is_cross_site(request: web.Request) -> bool:
     browsers that predate it. A client sending neither (curl, a script) is
     not a browser being tricked into anything, so it is let through — it
     still needed a valid session cookie to get here.
+
+    A browser's ``Sec-Fetch-Site`` is final: behind a reverse proxy that
+    terminates TLS or rewrites ``Host``, ``Origin`` no longer matches the
+    scheme and host this server sees, and consulting it anyway refused
+    every write — the sign-in form's included — from the add-on's own page.
     """
     fetch_site = request.headers.get("Sec-Fetch-Site")
-    if fetch_site is not None and fetch_site not in ("same-origin", "none"):
-        return True
+    if fetch_site is not None:
+        return fetch_site not in ("same-origin", "none")
     origin = request.headers.get("Origin")
     if origin is None:
         return False
