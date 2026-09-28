@@ -37,8 +37,10 @@ from .core import _MediaServerBase
 
 _LOGGER = logging.getLogger(__name__)
 
+#: The sign-in page, which is also where the form posts.
+_LOGIN_PATH = "/login"
 #: Reachable without signing in at all.
-_PUBLIC_PATHS = frozenset({"/health", "/login", "/favicon.svg"})
+_PUBLIC_PATHS = frozenset({"/health", _LOGIN_PATH, "/favicon.svg"})
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -122,8 +124,8 @@ class AccessRoutesMixin(_MediaServerBase):
 
     def _register_access_routes(self, app: web.Application) -> None:
         """Register this area's routes on *app*."""
-        app.router.add_get("/login", self._handle_login_page)
-        app.router.add_post("/login", self._handle_login_submit)
+        app.router.add_get(_LOGIN_PATH, self._handle_login_page)
+        app.router.add_post(_LOGIN_PATH, self._handle_login_submit)
         app.router.add_post("/logout", self._handle_logout)
         app.router.add_get("/api/access", self._handle_access_status)
         app.router.add_post(
@@ -159,25 +161,32 @@ class AccessRoutesMixin(_MediaServerBase):
             via, user = self._identify(request)
             request[ACCESS_VIA] = via
             request[ACCESS_USER] = user
-            if via in ("open", "ingress") or request.path in _PUBLIC_PATHS:
-                return await handler(request)
-            if via == "session":
-                if request.method not in _SAFE_METHODS and _is_cross_site(request):
-                    return web.json_response({"error": _CROSS_SITE_WRITE}, status=403)
-                return await handler(request)
-            if via == "token":
-                method = "GET" if request.method == "HEAD" else request.method
-                if (method, _route_pattern(request)) in TOKEN_ROUTES:
-                    return await handler(request)
-                return web.json_response({"error": _TOKEN_NOT_ALLOWED}, status=403)
-            return self._sign_in_required(request)
+            refusal = self._refusal(request, via)
+            if refusal is not None:
+                return refusal
+            return await handler(request)
 
         return access_middleware
+
+    def _refusal(self, request: web.Request, via: str) -> web.StreamResponse | None:
+        """The response turning this request away, or None to let it through."""
+        if via in ("open", "ingress") or request.path in _PUBLIC_PATHS:
+            return None
+        if via == "session":
+            if request.method not in _SAFE_METHODS and _is_cross_site(request):
+                return web.json_response({"error": _CROSS_SITE_WRITE}, status=403)
+            return None
+        if via == "token":
+            method = "GET" if request.method == "HEAD" else request.method
+            if (method, _route_pattern(request)) in TOKEN_ROUTES:
+                return None
+            return web.json_response({"error": _TOKEN_NOT_ALLOWED}, status=403)
+        return self._sign_in_required(request)
 
     def _sign_in_required(self, request: web.Request) -> web.StreamResponse:
         """The login page for a page load, a 401 for anything else."""
         if request.method in ("GET", "HEAD") and not request.path.startswith("/api/"):
-            location = "/login?next=" + quote(request.path_qs, safe="")
+            location = f"{_LOGIN_PATH}?next=" + quote(request.path_qs, safe="")
             if request.query.get("kiosk") == "1":
                 location += "&kiosk=1"
             return _redirect(location)
@@ -189,7 +198,9 @@ class AccessRoutesMixin(_MediaServerBase):
     # Login page
     # ------------------------------------------------------------------
 
-    async def _handle_login_page(self, request: web.Request) -> web.StreamResponse:
+    async def _handle_login_page(  # NOSONAR
+        self, request: web.Request
+    ) -> web.StreamResponse:
         if request[ACCESS_VIA] in ("open", "ingress", "session"):
             return _redirect(_safe_next(request.query.get("next", "/")))
         return self._login_page(request, request.query.get("next", "/"))
@@ -259,7 +270,7 @@ class AccessRoutesMixin(_MediaServerBase):
         )
         return response
 
-    async def _handle_logout(self, _request: web.Request) -> web.Response:
+    async def _handle_logout(self, _request: web.Request) -> web.Response:  # NOSONAR
         response = web.json_response({"signed_out": True})
         response.del_cookie(SESSION_COOKIE, path="/")
         return response
@@ -273,7 +284,7 @@ class AccessRoutesMixin(_MediaServerBase):
         status: int = 200,
     ) -> web.Response:
         """The sign-in form: plain HTML, so it works before any script loads."""
-        action = "/login"
+        action = _LOGIN_PATH
         if request.query.get("kiosk") == "1" or "kiosk=1" in target:
             action += "?kiosk=1"
         error_html = (
@@ -293,7 +304,9 @@ class AccessRoutesMixin(_MediaServerBase):
     # Status and token
     # ------------------------------------------------------------------
 
-    async def _handle_access_status(self, request: web.Request) -> web.Response:
+    async def _handle_access_status(  # NOSONAR
+        self, request: web.Request
+    ) -> web.Response:
         """How this page was let in, and the token for generated YAML.
 
         The token is only included while sign-in is on — with it off, no
@@ -307,7 +320,7 @@ class AccessRoutesMixin(_MediaServerBase):
         }
         return web.json_response(body)
 
-    async def _handle_access_token_regenerate(
+    async def _handle_access_token_regenerate(  # NOSONAR
         self, _request: web.Request
     ) -> web.Response:
         if not self._access.enabled:

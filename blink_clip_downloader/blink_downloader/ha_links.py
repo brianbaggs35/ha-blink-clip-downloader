@@ -135,13 +135,8 @@ class HALinkResolver:
         try:
             addon = await self._get_json(f"{_SUPERVISOR}/addons/self/info")
             config = await self._get_json(f"{_SUPERVISOR}/core/api/config")
-        except (
-            aiohttp.ClientError,
-            OSError,
-            TimeoutError,
-            ValueError,
-            TypeError,
-        ) as exc:
+        # OSError covers TimeoutError, which is what a slow answer raises.
+        except (aiohttp.ClientError, OSError, ValueError, TypeError) as exc:
             _LOGGER.warning("Could not look up Home Assistant links: %s", exc)
             return None
         slug = str((addon.get("data") or {}).get("slug") or "")

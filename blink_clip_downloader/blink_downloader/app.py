@@ -206,12 +206,14 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
             discord_webhook_url=config.discord_webhook_url,
             discord_enabled=config.discord_enabled,
             ha_notify_enabled=config.notify_ha_suspicious,
-            rich=RichAlertBuilder(
+        )
+        self._alert_dispatcher.attach_rich_alerts(
+            RichAlertBuilder(
                 links=HALinkResolver(config.supervisor_token),
                 image_store=AlertImageStore(),
                 signer=self._alert_action_signer,
                 include_image=config.alert_include_image,
-            ),
+            )
         )
         self._battery_monitor = BatteryMonitor(
             db=self._db,

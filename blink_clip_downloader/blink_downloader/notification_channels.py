@@ -35,6 +35,35 @@ _NOT_A_THREAT_TITLE = "Not a threat"
 _KEY_FRAME_FILENAME = "keyframe.jpg"
 
 
+def _discord_fields(
+    camera: str,
+    confidence: float | None,
+    risk: float | None,
+    severity: str,
+    risk_override: bool,
+) -> list[dict[str, Any]]:
+    """The inline facts under a Discord alert's description."""
+    fields: list[dict[str, Any]] = [{"name": "Camera", "value": camera, "inline": True}]
+    if confidence is not None:
+        fields.append(
+            {"name": "Confidence", "value": f"{confidence:.0%}", "inline": True}
+        )
+    if risk is not None:
+        label = f"{risk:.0f}/100"
+        if severity:
+            label += f" ({severity})"
+        fields.append({"name": "Risk", "value": label, "inline": True})
+    if risk_override:
+        fields.append(
+            {
+                "name": "Why",
+                "value": "Flagged on detection evidence, not by the AI model.",
+                "inline": False,
+            }
+        )
+    return fields
+
+
 class NotificationDispatcher:
     """Sends suspicious-activity alerts via mobile, email, and Discord."""
 
@@ -55,7 +84,6 @@ class NotificationDispatcher:
         discord_webhook_url: str = "",
         discord_enabled: bool = False,
         ha_notify_enabled: bool = False,
-        rich: RichAlertBuilder | None = None,
     ) -> None:
         self._token = supervisor_token
         self._mobile_target = mobile_app_target
@@ -72,8 +100,12 @@ class NotificationDispatcher:
         self._ha_notify_enabled = ha_notify_enabled
         # Builds each alert's picture, clip link and "Not a threat" button
         # (see rich_alerts.py). None sends the plain text alerts alone.
-        self._rich = rich
+        self._rich: RichAlertBuilder | None = None
         self._session: aiohttp.ClientSession | None = None
+
+    def attach_rich_alerts(self, builder: RichAlertBuilder) -> None:
+        """Send each alert with the extras *builder* gathers (rich_alerts.py)."""
+        self._rich = builder
 
     @property
     def smtp_configured(self) -> bool:
@@ -523,51 +555,20 @@ class NotificationDispatcher:
         # "Confidence: 0%"/"100%" on an event that isn't a probabilistic AI
         # verdict; it still counts as "high urgency" for the embed color.
         color = 0xFF0000 if confidence is None or confidence > 0.7 else 0xFF8C00
-        fields = [{"name": "Camera", "value": camera, "inline": True}]
-        if confidence is not None:
-            fields.append(
-                {"name": "Confidence", "value": f"{confidence:.0%}", "inline": True}
-            )
-        if risk is not None:
-            label = f"{risk:.0f}/100"
-            if severity:
-                label += f" ({severity})"
-            fields.append({"name": "Risk", "value": label, "inline": True})
-        if risk_override:
-            fields.append(
-                {
-                    "name": "Why",
-                    "value": "Flagged on detection evidence, not by the AI model.",
-                    "inline": False,
-                }
-            )
         embed: dict[str, Any] = {
             "title": title,
             "description": description,
             "color": color,
-            "fields": fields,
+            "fields": _discord_fields(
+                camera, confidence, risk, severity, risk_override
+            ),
             "timestamp": (extras.recorded_iso if extras else "")
             or datetime.now(UTC).isoformat(),
         }
         if extras is not None and extras.open_url:
             embed["url"] = extras.open_url
-        payload = {"embeds": [embed]}
         image = extras.image if extras is not None else None
-        if image is None:
-            status = await self._post_discord(payload)
-        else:
-            embed["image"] = {"url": f"attachment://{_KEY_FRAME_FILENAME}"}
-            status = await self._post_discord(payload, image)
-            if status is not None and status >= 400:
-                # Whatever Discord disliked about the upload, the alert
-                # itself still has to arrive.
-                _LOGGER.warning(
-                    "Discord rejected the alert's picture (HTTP %d); "
-                    "resending without it",
-                    status,
-                )
-                del embed["image"]
-                status = await self._post_discord(payload)
+        status = await self._post_discord_embed(embed, image)
         if status is None:
             return False
         if status < 400:
@@ -575,6 +576,28 @@ class NotificationDispatcher:
             return True
         _LOGGER.warning("Discord webhook returned HTTP %d", status)
         return False
+
+    async def _post_discord_embed(
+        self, embed: dict[str, Any], image: bytes | None
+    ) -> int | None:
+        """Post *embed*, with *image* as its picture when there is one.
+
+        Whatever Discord dislikes about an upload, the alert itself still
+        has to arrive, so a rejected picture is resent without it.
+        """
+        payload = {"embeds": [embed]}
+        if image is None:
+            return await self._post_discord(payload)
+        embed["image"] = {"url": f"attachment://{_KEY_FRAME_FILENAME}"}
+        status = await self._post_discord(payload, image)
+        if status is None or status < 400:
+            return status
+        _LOGGER.warning(
+            "Discord rejected the alert's picture (HTTP %d); resending without it",
+            status,
+        )
+        del embed["image"]
+        return await self._post_discord(payload)
 
     async def _post_discord(
         self, payload: dict[str, Any], image: bytes | None = None
