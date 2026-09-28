@@ -389,6 +389,26 @@ async def test_cross_site_writes_are_refused_even_when_signed_in(
     assert (await client.get("/api/access", headers=headers)).status == 200
 
 
+async def test_behind_a_tls_proxy_the_browsers_same_origin_is_believed(
+    make_client: Any,
+) -> None:
+    # A reverse proxy terminating TLS: the browser's Origin is https while
+    # this server sees http. Sec-Fetch-Site is the browser's own verdict.
+    server = _server()
+    server._access.verify_credentials = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    client = await make_client(server)
+    headers = {"Sec-Fetch-Site": "same-origin", "Origin": "https://blink.example"}
+    login = await client.post(
+        "/login",
+        data={"username": "brian", "password": "pw"},
+        headers=headers,
+        allow_redirects=False,
+    )
+    assert login.status == 303
+    resp = await client.post("/api/download-now", headers=headers)
+    assert resp.status == 200
+
+
 async def test_a_forged_or_expired_cookie_is_anonymous(make_client: Any) -> None:
     server = _server()
     client = await make_client(server)

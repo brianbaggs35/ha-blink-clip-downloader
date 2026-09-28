@@ -266,8 +266,9 @@ new clips (or their alerts) on every poll. It is given up on only once it
 has failed at least **5 times** *and* its first failure is at least
 **6 hours** old, so a short outage never loses footage and one clip that
 will never download (broken on Blink's side) can't hold the bookmark back
-forever. A clip deleted in the Blink app drops out on its own. Giving up is logged as a warning naming the clip, its camera and
-when it was recorded. The Status tab's Blink Connection card shows
+forever. A clip deleted in the Blink app drops out on its own. Giving up
+is logged as a warning naming the clip, its camera and when it was
+recorded. The Status tab's Blink Connection card shows
 **Retrying downloads** (clips that failed on the latest poll and will be
 asked for again) and **Downloads given up (7 days)** whenever either is
 above zero.
