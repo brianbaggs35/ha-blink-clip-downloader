@@ -52,6 +52,17 @@ def format_local_time(instant: datetime) -> str:
     return instant.astimezone().strftime(_LOCAL_TIME_FORMAT).strip()
 
 
+def _recorded_times(clip: dict[str, Any]) -> dict[str, str]:
+    """When *clip* was recorded, local and ISO; empty when it doesn't say."""
+    recorded = parse_instant(str(clip.get("timestamp") or ""))
+    if recorded is None:
+        return {}
+    return {
+        "recorded_local": format_local_time(recorded),
+        "recorded_iso": recorded.isoformat(),
+    }
+
+
 @dataclass(frozen=True)
 class AlertExtras:
     """What an alert carries besides its text; every field may be empty."""
@@ -113,26 +124,52 @@ class RichAlertBuilder:
         enabled channel will use.
         """
         clip_id = str(clip.get("id") or result.clip_id or "")
-        recorded = parse_instant(str(clip.get("timestamp") or ""))
-        extras: dict[str, Any] = {"clip_id": clip_id}
-        if recorded is not None:
-            extras["recorded_local"] = format_local_time(recorded)
-            extras["recorded_iso"] = recorded.isoformat()
-
-        want_picture = self._include_image and (
-            attach_image or (phone and self._image_store is not None)
+        extras: dict[str, Any] = {"clip_id": clip_id, **_recorded_times(clip)}
+        extras.update(
+            await self._picture_extras(
+                result, clip, clip_id, attach_image=attach_image, phone=phone
+            )
         )
-        image = await self._picture(str(clip.get("path") or ""), result, want_picture)
-        store = self._image_store
-        if image is not None:
-            if attach_image:
-                extras["image"] = image
-            if phone and store is not None:
-                extras["image_url"] = await self._guard(
-                    "the phone picture", asyncio.to_thread(store.save, clip_id, image)
-                )
+        extras.update(
+            await self._link_extras(clip_id, phone=phone, external_link=external_link)
+        )
+        return AlertExtras(**extras)
 
-        if self._links is not None and clip_id:
+    async def _picture_extras(
+        self,
+        result: AnalysisResult,
+        clip: dict[str, Any],
+        clip_id: str,
+        *,
+        attach_image: bool,
+        phone: bool,
+    ) -> dict[str, Any]:
+        """The key frame, as bytes to attach and/or a stored copy's URL."""
+        store = self._image_store if phone else None
+        clip_path = str(clip.get("path") or "")
+        wanted = attach_image or store is not None
+        if not self._include_image or not wanted or not clip_path:
+            return {}
+        image = await self._guard("the key frame", self._key_frame(clip_path, result))
+        if image is None:
+            return {}
+        extras: dict[str, Any] = {}
+        if attach_image:
+            extras["image"] = image
+        if store is not None:
+            extras["image_url"] = await self._guard(
+                "the phone picture", asyncio.to_thread(store.save, clip_id, image)
+            )
+        return extras
+
+    async def _link_extras(
+        self, clip_id: str, *, phone: bool, external_link: bool
+    ) -> dict[str, Any]:
+        """Where the clip opens, and the phone's "Not a threat" button."""
+        if not clip_id:
+            return {}
+        extras: dict[str, Any] = {}
+        if self._links is not None:
             if phone:
                 extras["open_path"] = await self._guard(
                     "the clip link", self._links.clip_path(clip_id)
@@ -141,16 +178,9 @@ class RichAlertBuilder:
                 extras["open_url"] = await self._guard(
                     "the clip link", self._links.clip_url(clip_id)
                 )
-        if phone and self._signer is not None and clip_id:
+        if phone and self._signer is not None:
             extras["not_a_threat_action"] = self._signer.action_for(clip_id)
-        return AlertExtras(**extras)
-
-    async def _picture(
-        self, clip_path: str, result: AnalysisResult, wanted: bool
-    ) -> bytes | None:
-        if not wanted or not clip_path:
-            return None
-        return await self._guard("the key frame", self._key_frame(clip_path, result))
+        return extras
 
     @staticmethod
     async def _guard[T](what: str, pending: Awaitable[T | None]) -> T | None:

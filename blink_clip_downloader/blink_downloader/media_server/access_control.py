@@ -25,7 +25,6 @@ own:
 from __future__ import annotations
 
 import base64
-import binascii
 import hashlib
 import hmac
 import json
@@ -42,8 +41,9 @@ _LOGGER = logging.getLogger(__name__)
 #: Supervisor's ingress proxy. Every request from the sidebar panel comes
 #: from this address, and only after Home Assistant has signed the user in.
 #: Matched against the TCP peer, never a header, since any client can send
-#: a header.
-INGRESS_PROXY_IP = "172.30.32.2"
+#: a header. Fixed by Supervisor, which documents it as the one address an
+#: ingress add-on should accept — not a deployment detail to configure.
+INGRESS_PROXY_IP = "172.30.32.2"  # NOSONAR
 
 #: The session-signing secret and the access token, created on first use.
 ACCESS_FILE = Path("/data/web_access.json")
@@ -213,7 +213,7 @@ class AccessControl:
         try:
             expires = int(expires_part)
             username = _unb64(user_part).decode()
-        except (ValueError, binascii.Error, UnicodeDecodeError):
+        except ValueError:  # binascii.Error and UnicodeDecodeError included
             return None
         if expires <= (time.time() if now is None else now):
             return None

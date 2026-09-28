@@ -37,7 +37,8 @@ export const ACCESS_TOKEN_VALUE = 'access_token'
 export function restCommandAuth(v: RecipeValues): string {
   const token = stringValue(v, ACCESS_TOKEN_VALUE)
   if (!token) return ''
-  return ['    headers:', `      Authorization: ${yamlString(`Bearer ${token}`)}`].join('\n')
+  const authorization = yamlString(`Bearer ${token}`)
+  return ['    headers:', `      Authorization: ${authorization}`].join('\n')
 }
 
 interface NotifyOptions {

@@ -118,8 +118,10 @@ async def test_nothing_is_fetched_for_a_part_no_channel_will_use() -> None:
         _result(), _CLIP, attach_image=False, phone=False, external_link=False
     )
 
-    assert extras.image is None and extras.image_url is None
-    assert extras.open_path is None and extras.open_url is None
+    assert extras.image is None
+    assert extras.image_url is None
+    assert extras.open_path is None
+    assert extras.open_url is None
     assert extras.not_a_threat_action is None
     parts["key_frame"].assert_not_awaited()
     parts["links"].clip_path.assert_not_awaited()
@@ -160,8 +162,11 @@ async def test_images_can_be_turned_off_leaving_links_and_the_button() -> None:
         _result(), _CLIP, attach_image=True, phone=True, external_link=True
     )
 
-    assert extras.image is None and extras.image_url is None
-    assert extras.open_url and extras.open_path and extras.not_a_threat_action
+    assert extras.image is None
+    assert extras.image_url is None
+    assert extras.open_url
+    assert extras.open_path
+    assert extras.not_a_threat_action
     parts["key_frame"].assert_not_awaited()
 
 
@@ -220,7 +225,8 @@ async def test_a_clip_with_no_file_or_time_gets_no_picture_or_time() -> None:
     )
 
     assert extras.image is None
-    assert extras.recorded_local == "" and extras.recorded_iso == ""
+    assert extras.recorded_local == ""
+    assert extras.recorded_iso == ""
     parts["key_frame"].assert_not_awaited()
 
 
@@ -244,7 +250,8 @@ async def test_no_links_or_button_without_a_clip_id() -> None:
         result, {}, attach_image=False, phone=True, external_link=True
     )
 
-    assert extras.open_path is None and extras.open_url is None
+    assert extras.open_path is None
+    assert extras.open_url is None
     assert extras.not_a_threat_action is None
     parts["links"].clip_path.assert_not_awaited()
 
@@ -257,7 +264,8 @@ async def test_without_links_or_signer_the_rest_still_builds() -> None:
     )
 
     assert extras.image == b"JPEG"
-    assert extras.open_path is None and extras.not_a_threat_action is None
+    assert extras.open_path is None
+    assert extras.not_a_threat_action is None
 
 
 async def test_close_closes_the_link_resolver() -> None:

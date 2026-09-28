@@ -977,8 +977,8 @@ async def test_dispatch_hands_every_channel_the_alerts_extras() -> None:
         discord_enabled=True,
         discord_webhook_url="https://discord.com/hook",
         ha_notify_enabled=True,
-        rich=builder,
     )
+    dispatcher.attach_rich_alerts(builder)
     dispatcher.send_mobile = AsyncMock(return_value=True)
     dispatcher.send_email = AsyncMock(return_value=True)
     dispatcher.send_discord = AsyncMock(return_value=True)
@@ -1009,8 +1009,8 @@ async def test_dispatch_asks_only_for_what_the_enabled_channels_use() -> None:
         supervisor_token="tok",
         mobile_app_enabled=True,
         mobile_app_target="family_group",  # a notify group, not the app
-        rich=builder,
     )
+    dispatcher.attach_rich_alerts(builder)
     dispatcher.send_mobile = AsyncMock(return_value=True)
 
     await dispatcher.dispatch(_make_result(), {"id": "c1"})
@@ -1029,8 +1029,8 @@ async def test_a_failing_builder_still_sends_the_plain_alert(caplog) -> None:
         supervisor_token="tok",
         mobile_app_enabled=True,
         mobile_app_target="mobile_app_phone",
-        rich=builder,
     )
+    dispatcher.attach_rich_alerts(builder)
     dispatcher.send_mobile = AsyncMock(return_value=True)
 
     await dispatcher.dispatch(_make_result(), {"id": "c1"})
@@ -1066,7 +1066,9 @@ async def test_an_unparseable_analysis_time_is_shown_as_it_is() -> None:
 
 async def test_close_also_closes_the_rich_builder() -> None:
     builder = _rich_builder()
-    await NotificationDispatcher(rich=builder).close()
+    dispatcher = NotificationDispatcher()
+    dispatcher.attach_rich_alerts(builder)
+    await dispatcher.close()
     builder.close.assert_awaited_once()
 
 
@@ -1083,7 +1085,8 @@ async def test_a_companion_app_push_carries_picture_tap_target_and_button() -> N
     assert await dispatcher.send_mobile("Alert", "Body", extras=_EXTRAS) is True
 
     payload = dispatcher._session.post.call_args.kwargs["json"]
-    assert payload["title"] == "Alert" and payload["message"] == "Body"
+    assert payload["title"] == "Alert"
+    assert payload["message"] == "Body"
     assert payload["data"] == {
         "image": "/media/local/blink_clip_downloader/alerts/c1.jpg",
         "url": "/app/abc_blink/clip/c1",
