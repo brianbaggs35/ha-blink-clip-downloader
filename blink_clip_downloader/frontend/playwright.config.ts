@@ -1,10 +1,16 @@
 import { defineConfig, devices } from '@playwright/test'
+import { SIGNED_IN_STATE } from './e2e/signin-state'
 
 // Distinct from tests/conftest.py's blink_clips_test — lets this suite run
 // locally alongside `pytest` against the same Postgres instance without
 // the two colliding.
 const DB_DSN = process.env.E2E_DATABASE_DSN ?? 'postgresql://postgres:postgres@localhost:5432/blink_clips_e2e'
 const PORT = 8199
+// BLINK_E2E_SIGNIN=1 runs the whole suite behind Direct Access Sign-In: the
+// backend asks for a sign-in on its main port (scripts/standalone_server.py)
+// and e2e/global-signin.ts signs in once, so each spec meets the app as a
+// browser on the add-on's direct port would. Off by default.
+const SIGNED_IN = process.env.BLINK_E2E_SIGNIN === '1'
 
 // Real interaction tests against a real (seeded) backend — see
 // scripts/standalone_server.py. Distinct from ../e2e/, which smoke-tests
@@ -12,6 +18,11 @@ const PORT = 8199
 // specific web UI workflows actually working end to end.
 export default defineConfig({
   testDir: './e2e',
+  // That spec is about signing in on a second, separate server, from a
+  // browser that starts signed out; with everything else already signed in it
+  // has nothing left to say.
+  testIgnore: SIGNED_IN ? /direct-access-signin\.spec\.ts$/ : undefined,
+  globalSetup: SIGNED_IN ? './e2e/global-signin.ts' : undefined,
   // The backend is one shared standalone server + database for the whole
   // run (not spun up fresh per test), so tests must not run concurrently
   // against it — two tests mutating/asserting on the same seeded clip at
@@ -24,6 +35,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['github'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: `http://localhost:${PORT}`,
+    storageState: SIGNED_IN ? SIGNED_IN_STATE : undefined,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
@@ -43,7 +55,7 @@ export default defineConfig({
     // expect.
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
-    env: { BLINK_DB_DSN: DB_DSN, BLINK_E2E: '1' },
+    env: { BLINK_DB_DSN: DB_DSN, BLINK_E2E: '1', ...(SIGNED_IN ? { BLINK_E2E_SIGNIN: '1' } : {}) },
     stdout: 'pipe',
     stderr: 'pipe',
   },

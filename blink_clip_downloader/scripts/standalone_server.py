@@ -19,6 +19,11 @@ frontend/e2e/direct-access-signin.spec.ts: same database, sign-in checked by
 _e2e_verify_credentials (``e2e-user`` / ``e2e-password``) instead of
 Supervisor, which does not exist here.
 
+With BLINK_E2E_SIGNIN=1 the main server asks for a sign-in as well, so the
+whole suite can run the way a browser on the direct port would meet it, with
+frontend/e2e/global-signin.ts signing in once up front. Off by default: the
+suite proves the UI, and the sign-in has its own specs.
+
 Requires `npm run build` (from frontend/) to have already produced
 blink_downloader/static/, and a reachable, already-created Postgres
 database at BLINK_DB_DSN (ClipDatabase.init() creates the schema, but not
@@ -952,9 +957,12 @@ async def _main() -> None:
     # which nothing here does.
     gdrive = GDriveClient()
     sync_module = _FakeSyncModule()
+    # BLINK_E2E_SIGNIN=1: see the module docstring.
+    signin_on = os.environ.get("BLINK_E2E_SIGNIN") == "1"
     server = MediaServer(
         db=db,
         port=port,
+        direct_access_login=signin_on,
         two_fa_callback=fake_auth.submit_two_fa,
         auth_state_getter=fake_auth.status,
         analyzer=analyzer,
@@ -973,6 +981,8 @@ async def _main() -> None:
     # After construction: MediaServer builds its own FaceEmbedder, and this
     # replaces only the model behind it — see _E2EFaceEmbedder.
     server._face_embedder = _E2EFaceEmbedder()
+    if signin_on:
+        server._access.verify_credentials = _e2e_verify_credentials  # type: ignore[method-assign]
     # Started before the main server: Playwright begins once the main one
     # answers /health, and the sign-in spec must find this one up by then.
     signin_server = MediaServer(
