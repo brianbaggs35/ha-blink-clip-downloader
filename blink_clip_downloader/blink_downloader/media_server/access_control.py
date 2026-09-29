@@ -257,6 +257,13 @@ class AccessControl:
         answer to be had — no Supervisor, unreachable, or refusing the
         add-on (``auth_api`` missing from config.yaml) — which the login
         page reports differently from a wrong password.
+
+        The add-on identifies itself with ``X-Supervisor-Token``, not the
+        ``Authorization: Bearer`` every other Supervisor call here uses:
+        this endpoint takes the *user's* credentials as Basic auth, JSON or a
+        form, so an ``Authorization`` header on it is read as those
+        credentials and not as the add-on's token. Supervisor's documentation
+        gives ``X-Supervisor-Token`` for this endpoint for that reason.
         """
         if not self.can_verify:
             return None
@@ -266,7 +273,7 @@ class AccessControl:
                 session.post(
                     _SUPERVISOR_AUTH_URL,
                     json={"username": username, "password": password},
-                    headers={"Authorization": f"Bearer {self._supervisor_token}"},
+                    headers={"X-Supervisor-Token": self._supervisor_token},
                 ) as resp,
             ):
                 if resp.status == 200:

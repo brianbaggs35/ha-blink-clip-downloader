@@ -177,9 +177,18 @@ async def fake_supervisor(
         seen.append(
             {
                 "body": await request.json(),
-                "auth": request.headers.get("Authorization"),
+                "token": request.headers.get("X-Supervisor-Token"),
+                "authorization": request.headers.get("Authorization"),
             }
         )
+        # Supervisor's /auth reads an Authorization header as the *user's*
+        # Basic credentials, so a Bearer token there is not the add-on
+        # identifying itself and the call fails; the add-on's token has to
+        # arrive in X-Supervisor-Token.
+        if "Authorization" in request.headers:
+            return web.Response(status=500)
+        if request.headers.get("X-Supervisor-Token") != "sup-token":
+            return web.Response(status=401)
         return web.Response(status=status["code"])
 
     app = web.Application()
@@ -204,7 +213,8 @@ async def test_verify_credentials_asks_supervisor(fake_supervisor: Any) -> None:
     assert await control.verify_credentials("brian", "pw") is True
     assert fake_supervisor.seen[0] == {
         "body": {"username": "brian", "password": "pw"},
-        "auth": "Bearer sup-token",
+        "token": "sup-token",
+        "authorization": None,
     }
     await fake_supervisor(401)
     assert await control.verify_credentials("brian", "wrong") is False
