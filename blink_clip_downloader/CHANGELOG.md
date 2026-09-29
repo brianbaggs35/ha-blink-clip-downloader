@@ -121,6 +121,7 @@ lets it check a username and password.
 - Updated vitest to 5.0.2
 - Updated eslint-plugin-vue to 10.11.1
 - Updated typescript-eslint to 8.71.0
+- Updated vite to 8.3.1
 
 ## 6.0.7
 
