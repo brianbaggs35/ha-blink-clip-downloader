@@ -112,6 +112,7 @@ lets it check a username and password.
 ### Dependency Updates
 
 - Updated openai to 3.20.0
+- Updated anthropic to 1.9.0
 
 ## 6.0.7
 
