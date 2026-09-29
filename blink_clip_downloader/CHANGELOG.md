@@ -115,6 +115,7 @@ lets it check a username and password.
 - Updated anthropic to 1.9.0
 - Updated python-slugify to 9.1.2
 - Updated ultralytics to 8.4.165
+- Updated primeicons to 8.0.2
 
 ## 6.0.7
 
