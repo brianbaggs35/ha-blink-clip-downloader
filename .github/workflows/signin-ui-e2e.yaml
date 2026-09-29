@@ -1,0 +1,112 @@
+---
+name: UI E2E behind sign-in
+
+# Runs the whole frontend/e2e/ Playwright suite against a backend that asks
+# for Direct Access Sign-In on its main port, with every spec starting from a
+# signed-in browser (BLINK_E2E_SIGNIN=1: scripts/standalone_server.py turns
+# the gate on, frontend/e2e/global-signin.ts signs in once).
+#
+# ci.yaml's frontend-e2e job proves the UI with the gate off, and the sign-in
+# has its own specs and smoke jobs; what neither shows is the *whole app*
+# working for a browser that had to sign in first -- every tab, the clip
+# player's range requests, downloads, the Live View player -- and a request
+# that quietly stopped carrying the session cookie would only ever show up
+# here. Kept apart from ci.yaml so it cannot hold up or fail the existing
+# jobs. Not a coverage run: ci.yaml's job owns that.
+on:
+  push:
+    branches:
+      - feature-version-6-0-8
+  workflow_dispatch:
+
+concurrency:
+  group: signin-ui-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  frontend-e2e-signed-in:
+    name: Frontend E2E Tests behind sign-in (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VITE_PRIMEVUE_LICENSE_KEY: ${{ secrets.PRIMEVUE_LICENSE_KEY }}
+      BLINK_E2E_SIGNIN: "1"
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: blink_clips_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install project with test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "blink_clip_downloader[test]"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: blink_clip_downloader/frontend/package-lock.json
+
+      - name: Update npm
+        run: npm install -g npm@12.0.2
+
+      - name: Install frontend dependencies
+        working-directory: blink_clip_downloader/frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: blink_clip_downloader/frontend
+        run: npx playwright install --with-deps chromium
+
+      # standalone_server.py's seeding shells out to ffmpeg for a real short
+      # video (see ci.yaml's frontend-e2e job for what depends on it).
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      # test:e2e does not build, and the standalone backend serves the real
+      # static output -- without it every page 500s at page.goto().
+      - name: Build the frontend
+        working-directory: blink_clip_downloader/frontend
+        run: npm run build
+
+      - name: Run the Playwright suite behind sign-in
+        working-directory: blink_clip_downloader/frontend
+        env:
+          E2E_DATABASE_DSN: postgresql://postgres:postgres@localhost:5432/blink_clips_e2e
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-signed-in
+          path: blink_clip_downloader/frontend/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
