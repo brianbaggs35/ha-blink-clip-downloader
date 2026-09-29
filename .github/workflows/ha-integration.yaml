@@ -16,6 +16,11 @@ name: HA Supervisor Integration Test
 # through that real ingress proxy - the actual app<->Home Assistant
 # integration boundary, not just "the container runs."
 #
+# The add-on runs with Direct Access Sign-In at its shipped default (on), so
+# this is also the only job that checks the sign-in against a real Supervisor:
+# that ingress is recognised and never asked to sign in, and that a real Home
+# Assistant user can sign in on the direct port (assert-signin).
+#
 # Known upstream risk factors this job is built to tolerate, not eliminate
 # (see scripts/ci/ha_integration_setup.sh for the specific mitigations):
 # https://github.com/home-assistant/supervisor/issues/3976 (local add-on
@@ -329,6 +334,16 @@ jobs:
         run: >-
           node ha_integration_smoke.mjs
           "http://127.0.0.1:${HA_PORT}" "$ADDON_SLUG" "$ADDON_PANEL_TITLE" "$ADDON_NAME"
+
+      # Direct Access Sign-In against a real Supervisor, which the add-on
+      # has at its shipped default (on) here. The sweep above already proved
+      # ingress is never asked to sign in; this is the other half: that the
+      # direct port does ask, and that a real Home Assistant user (the owner
+      # the sweep onboarded) can get past it through Supervisor's /auth. Not
+      # possible any earlier -- the user does not exist until onboarding --
+      # and nothing else in CI has a Supervisor to ask.
+      - name: Verify the direct port asks for a Home Assistant sign-in
+        run: scripts/ci/ha_integration_setup.sh assert-signin
 
       # Deliberately *after* the sweep above, which verifies every tab in
       # its empty state — that is a real condition worth holding onto, and

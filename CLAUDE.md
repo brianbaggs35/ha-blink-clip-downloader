@@ -273,18 +273,23 @@ architecture.
       so tests and `scripts/standalone_server.py`'s main e2e backend keep an
       open port; that script starts a second server on port + 1 with it on
       for `frontend/e2e/direct-access-signin.spec.ts`. The CI smoke test
-      and the HA-integration job turn it off, since both read the API over
-      the direct port with no session — so a separate `signin-smoke-test`
-      job in `ci.yaml` boots the built image with the option left at its
+      turns it off, since it reads the API over the direct port with no
+      session — so a separate `signin-smoke-test` job in `ci.yaml` (one per
+      architecture) boots the built image with the option left at its
       shipped default (on) and runs `e2e/signin_smoke.mjs`: the gate over a
       real published port, the login page under the served CSP, and the
       token opening only its few endpoints. It cannot show a sign-in
-      *succeeding*, which goes through Supervisor's `/auth` and needs a
-      real Supervisor. That call identifies the add-on with
-      `X-Supervisor-Token`, **not** `Authorization: Bearer` like every other
-      Supervisor call here: `/auth` reads an `Authorization` header as the
-      user's own Basic credentials (`tests/test_media_server_access.py`'s
-      fake Supervisor rejects the Bearer form for that reason).
+      *succeeding*, which goes through Supervisor's `/auth`; the
+      HA-integration job can, because it has a real Supervisor and a real
+      onboarded owner and leaves the option at its default too. Its
+      `assert-signin` step signs that owner in on the direct port, prints
+      how `/auth` answers to each way of sending the add-on's token, and
+      the ingress sweep asserts `/api/access` reports `via: "ingress"`. The
+      call identifies the add-on with `X-Supervisor-Token`, **not**
+      `Authorization: Bearer` like every other Supervisor call here:
+      `/auth` reads an `Authorization` header as the user's own Basic
+      credentials (`tests/test_media_server_access.py`'s fake Supervisor
+      rejects the Bearer form for that reason).
     - **Each mixin registers its own routes** via `_register_<area>_routes`,
       called by `_build_app`. Adding an endpoint is one file, not a handler
       here and a route line far away. `tests/test_media_server_routes.py`
