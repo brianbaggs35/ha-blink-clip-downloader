@@ -15,6 +15,18 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
     if (response.status() !== 303) {
       throw new Error(`Signing in on ${baseURL} returned HTTP ${response.status()}, not 303`)
     }
+    // A 303 alone proves nothing: with the gate off /login redirects home
+    // just the same, sets no cookie, and the whole suite would then "pass
+    // behind sign-in" without ever having been behind it. Ask the backend who
+    // it thinks this browser is instead.
+    const who = (await (await api.get('/api/access')).json()) as {
+      login_enabled?: boolean
+      via?: string
+      user?: string | null
+    }
+    if (who.login_enabled !== true || who.via !== 'session' || who.user !== E2E_LOGIN.username) {
+      throw new Error(`BLINK_E2E_SIGNIN=1, but ${baseURL} does not see a signed-in session: ${JSON.stringify(who)}`)
+    }
     await api.storageState({ path: SIGNED_IN_STATE })
   } finally {
     await api.dispose()

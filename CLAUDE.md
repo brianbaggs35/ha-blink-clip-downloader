@@ -289,7 +289,18 @@ architecture.
       `Authorization: Bearer` like every other Supervisor call here:
       `/auth` reads an `Authorization` header as the user's own Basic
       credentials (`tests/test_media_server_access.py`'s fake Supervisor
-      rejects the Bearer form for that reason).
+      rejects the Bearer form for that reason). Real Supervisor confirms it:
+      with the token in `X-Supervisor-Token` the owner's password gets a
+      200, and with `Authorization: Bearer` the *same* correct password gets
+      a 401 — which the add-on would have shown as "wrong password".
+      `BLINK_E2E_SIGNIN=1` runs the whole Playwright suite behind the gate
+      (`.github/workflows/signin-ui-e2e.yaml`; `standalone_server.py` turns
+      it on, `frontend/e2e/global-signin.ts` signs in once). That setup
+      asks `/api/access` who the browser is and refuses to continue unless
+      it says a signed-in session: a 303 from `/login` alone proves nothing,
+      because a server with the gate **off** answers a login the same way,
+      and the suite would then pass "behind sign-in" without ever being
+      behind it.
     - **Each mixin registers its own routes** via `_register_<area>_routes`,
       called by `_build_app`. Adding an endpoint is one file, not a handler
       here and a route line far away. `tests/test_media_server_routes.py`

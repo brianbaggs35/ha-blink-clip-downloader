@@ -997,7 +997,11 @@ async def _main() -> None:
     signin_server._access.verify_credentials = _e2e_verify_credentials  # type: ignore[method-assign]
     await signin_server.start()
     await server.start()
-    print(f"Standalone e2e server ready on http://localhost:{port}/", flush=True)
+    print(
+        f"Standalone e2e server ready on http://localhost:{port}/"
+        + (" (Direct Access Sign-In on)" if signin_on else ""),
+        flush=True,
+    )
 
     # Runs until killed — Playwright's webServer config owns this process's
     # lifecycle (see frontend/playwright.config.ts).
