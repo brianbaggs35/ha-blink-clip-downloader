@@ -120,6 +120,7 @@ lets it check a username and password.
 - Updated @vitest/coverage-v8 to 5.0.2
 - Updated vitest to 5.0.2
 - Updated eslint-plugin-vue to 10.11.1
+- Updated typescript-eslint to 8.71.0
 
 ## 6.0.7
 
