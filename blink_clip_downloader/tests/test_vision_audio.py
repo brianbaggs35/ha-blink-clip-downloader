@@ -808,6 +808,294 @@ async def test_scores_are_independent_per_sound_not_shares_of_one_budget(
 
 
 # --------------------------------------------------------------------------
+# The same paths, without ffmpeg
+# --------------------------------------------------------------------------
+#
+# The real-file tests above are what prove ffmpeg still behaves the way this
+# stage assumes, and they are skipped wherever ffmpeg is not installed.
+# Everything the stage does once ffmpeg has answered -- the silence gate, the
+# background model load, the classification, the time budget -- needs no
+# ffmpeg to exercise, so these drive it with canned audio and a fake
+# subprocess. They keep those branches covered on a machine without ffmpeg
+# instead of leaving them to whichever CI image happens to have it.
+
+
+def _audible(seconds: float = 2.0) -> np.ndarray:
+    """A plainly audible tone, well above the silence gate."""
+    t = np.arange(int(_SAMPLE_RATE * seconds)) / _SAMPLE_RATE
+    return (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+
+def _inaudible(seconds: float = 2.0) -> np.ndarray:
+    """Digital zero: what a camera with its microphone off still records."""
+    return np.zeros(int(_SAMPLE_RATE * seconds), dtype=np.float32)
+
+
+def _tagger_hearing(
+    samples: np.ndarray, monkeypatch: pytest.MonkeyPatch
+) -> AudioTagger:
+    """A tagger whose extraction yields *samples*, as if ffmpeg had decoded them."""
+    tagger = AudioTagger()
+    monkeypatch.setattr(tagger, "extract_audio", AsyncMock(return_value=samples))
+    return tagger
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout"),
+    [(1, b""), (0, b""), (1, b"\x00" * 8)],
+    ids=["no-audio-track", "empty-output", "failed-with-output"],
+)
+async def test_ffmpeg_finding_no_usable_audio_means_no_tags(
+    returncode: int, stdout: bytes, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A clip with no audio track makes ffmpeg exit non-zero with nothing on
+    stdout, which is the signal; a non-zero exit is never trusted for its
+    output, and a clean exit with nothing decoded has nothing to classify."""
+    proc = MagicMock()
+    proc.returncode = returncode
+    proc.communicate = AsyncMock(return_value=(stdout, b""))
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        caplog.at_level(logging.DEBUG, logger="blink_downloader.vision.audio"),
+    ):
+        assert await AudioTagger().extract_audio("/mute.mp4") is None
+    assert "No audio track in /mute.mp4" in caplog.text
+
+
+async def test_a_whole_number_of_samples_is_decoded_exactly(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    expected = np.array([0.0, 0.25, -0.5, 1.0], dtype=np.float32)
+    proc = MagicMock()
+    proc.returncode = 0
+    proc.communicate = AsyncMock(return_value=(expected.tobytes(), b""))
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        caplog.at_level(logging.WARNING, logger="blink_downloader.vision.audio"),
+    ):
+        samples = await AudioTagger().extract_audio("/tone.mp4")
+
+    assert samples is not None
+    assert samples.dtype == np.float32
+    assert np.array_equal(samples, expected)
+    assert "mid-sample" not in caplog.text
+
+
+async def test_a_trailing_partial_sample_is_dropped_and_the_rest_kept(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The complete samples before a torn one are still worth classifying."""
+    expected = np.array([0.5, -0.5, 0.25, 0.0], dtype=np.float32)
+    proc = MagicMock()
+    proc.returncode = 0
+    proc.communicate = AsyncMock(return_value=(expected.tobytes() + b"\x01\x02", b""))
+    with (
+        patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)),
+        caplog.at_level(logging.WARNING, logger="blink_downloader.vision.audio"),
+    ):
+        samples = await AudioTagger().extract_audio("/torn.mp4")
+
+    assert samples is not None
+    assert np.array_equal(samples, expected)
+    assert "ended mid-sample (18 bytes); using the 4 complete samples" in caplog.text
+
+
+async def test_a_silent_track_is_not_classified_and_says_where_to_look(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    module = _fake_transformers([{"label": "Speech", "score": 0.99}])
+    monkeypatch.setitem(sys.modules, "transformers", module)
+    tagger = _tagger_hearing(_inaudible(), monkeypatch)
+
+    with caplog.at_level(logging.INFO, logger="blink_downloader.vision.audio"):
+        assert await tagger.tag("/silent.mp4") is None
+
+    module.pipeline.assert_not_called()
+    # Not even a model load is started for a clip with nothing to classify.
+    assert tagger._load_task is None
+    # And it names the setting to check, because the cause lives in a
+    # different app entirely.
+    assert "Blink app" in caplog.text
+
+
+async def test_the_no_sound_notice_is_said_once_not_per_clip(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Every clip from a muted camera is silent, so an unguarded notice would
+    be one log line per clip forever; later clips only get the debug line."""
+    tagger = _tagger_hearing(_inaudible(), monkeypatch)
+    with caplog.at_level(logging.DEBUG, logger="blink_downloader.vision.audio"):
+        for _ in range(3):
+            assert await tagger.tag("/silent.mp4") is None
+
+    assert caplog.text.count("Blink app") == 1
+    assert caplog.text.count("carries no audible sound") == 3
+    notice = [r for r in caplog.records if "Blink app" in r.getMessage()]
+    assert [r.levelno for r in notice] == [logging.INFO]
+
+
+async def test_a_loaded_model_is_ready_without_starting_another_load() -> None:
+    tagger = AudioTagger()
+    tagger._pipe = MagicMock()
+    assert tagger._model_ready() is True
+    assert tagger._load_task is None
+
+
+async def test_an_unloaded_model_starts_one_background_load_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first ask kicks off the load and answers "not yet"; asking again
+    while it is in flight starts nothing new; once it has finished without
+    leaving a model behind (a failed load) the next ask tries again."""
+    tagger = AudioTagger()
+    release = asyncio.Event()
+
+    async def slow_load() -> bool:
+        await release.wait()
+        return False
+
+    monkeypatch.setattr(tagger, "ensure_ready", slow_load)
+
+    assert tagger._model_ready() is False
+    first = tagger._load_task
+    assert first is not None
+    assert not first.done()
+
+    assert tagger._model_ready() is False
+    assert tagger._load_task is first
+
+    release.set()
+    assert await first is False
+    assert tagger._model_ready() is False
+    assert tagger._load_task is not first
+    assert tagger._load_task is not None
+    await tagger._load_task  # reaped, so nothing is left pending
+
+
+async def test_a_clip_is_analyzed_without_audio_while_the_model_loads(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A clip's verdict never waits on the model download."""
+    tagger = _tagger_hearing(_audible(), monkeypatch)
+    monkeypatch.setattr(tagger, "ensure_ready", AsyncMock(return_value=False))
+
+    with caplog.at_level(logging.DEBUG, logger="blink_downloader.vision.audio"):
+        assert await tagger.tag("/tone.mp4") is None
+
+    assert "Audio model not loaded yet, skipping /tone.mp4" in caplog.text
+    assert tagger._load_task is not None
+    assert await tagger._load_task is False
+
+
+async def test_tags_audio_filtered_sorted_and_capped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        _fake_transformers(
+            [
+                {"label": "Inside, small room", "score": 0.95},  # irrelevant
+                {"label": "Speech", "score": 0.44},
+                {"label": "Shout", "score": 0.61},
+                {"label": "Glass", "score": 0.20},
+                {"label": "Music", "score": 0.50},  # irrelevant
+                {"label": "Dog", "score": 0.02},  # below the floor
+                {"label": "Car", "score": 0.19},
+            ]
+        ),
+    )
+    tagger = _tagger_hearing(_audible(), monkeypatch)
+    assert await tagger.ensure_ready() is True
+
+    tags = await tagger.tag("/tone.mp4")
+
+    assert tags is not None
+    assert len(tags.labels) == _MAX_LABELS
+    assert [label for label, _ in tags.labels] == ["Shout", "Speech", "Glass"]
+
+
+async def test_the_model_is_handed_a_writable_16khz_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """frombuffer aliases the bytes ffmpeg wrote, so the decoded track is
+    read-only; torch warns on (and can refuse) a non-writable buffer, so the
+    window that leaves this module has to be a copy."""
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
+    seen: dict[str, Any] = {}
+    module = MagicMock()
+
+    def build(**_kw):
+        def run(inputs, **_call):
+            seen.update(inputs)
+            return [{"label": "Shout", "score": 0.8}]
+
+        return run
+
+    module.pipeline.side_effect = build
+    monkeypatch.setitem(sys.modules, "transformers", module)
+    decoded = np.frombuffer(_audible().tobytes(), dtype=np.float32)
+    assert not decoded.flags.writeable
+    tagger = _tagger_hearing(decoded, monkeypatch)
+    assert await tagger.ensure_ready() is True
+
+    assert await tagger.tag("/tone.mp4") is not None
+
+    assert seen["sampling_rate"] == _SAMPLE_RATE
+    assert seen["raw"].flags.writeable
+
+
+async def test_a_classifier_that_fails_gives_no_tags_rather_than_an_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(
+        "blink_downloader.vision.runtime.torch_cpu_compatible", lambda: True
+    )
+    module = MagicMock()
+
+    def explode(**_kw):
+        def run(_inp, **_call):
+            raise RuntimeError("inference blew up")
+
+        return run
+
+    module.pipeline.side_effect = explode
+    monkeypatch.setitem(sys.modules, "transformers", module)
+    tagger = _tagger_hearing(_audible(), monkeypatch)
+    assert await tagger.ensure_ready() is True
+
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.vision.audio"):
+        assert await tagger.tag("/tone.mp4") is None
+
+    assert "Audio classification failed: inference blew up" in caplog.text
+
+
+async def test_a_stage_that_outlasts_its_budget_is_abandoned(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A hard ceiling on what this stage can cost one clip: the verdict goes
+    ahead without the hint, and says so."""
+    monkeypatch.setattr("blink_downloader.vision.audio._STAGE_BUDGET", 0.05)
+    tagger = AudioTagger()
+
+    async def never_returns(_path: str) -> None:
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(tagger, "_tag", never_returns)
+
+    with caplog.at_level(logging.WARNING, logger="blink_downloader.vision.audio"):
+        assert await tagger.tag("/slow.mp4") is None
+
+    assert "exceeded its" in caplog.text
+    assert "/slow.mp4" in caplog.text
+
+
+# --------------------------------------------------------------------------
 # Wiring into the vision pipeline
 # --------------------------------------------------------------------------
 
