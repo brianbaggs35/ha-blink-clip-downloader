@@ -114,6 +114,7 @@ lets it check a username and password.
 - Updated openai to 3.20.0
 - Updated anthropic to 1.9.0
 - Updated python-slugify to 9.1.2
+- Updated ultralytics to 8.4.165
 
 ## 6.0.7
 
