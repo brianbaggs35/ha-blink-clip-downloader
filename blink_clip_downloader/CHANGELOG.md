@@ -109,6 +109,10 @@ lets it check a username and password.
   **Downloads given up (7 days)** whenever a clip is failing to download,
   so it no longer only shows up in the log.
 
+### Dependency Updates
+
+- Updated openai to 3.20.0
+
 ## 6.0.7
 
 ### New Assets tab: mark what you want protected on each camera
