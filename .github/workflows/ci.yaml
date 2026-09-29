@@ -936,3 +936,146 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f addon || true
+
+  signin-smoke-test-aarch64:
+    name: Sign-in Smoke Test (aarch64)
+    runs-on: ubuntu-24.04-arm
+    needs: build
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Update npm
+        run: npm install -g npm@12.0.2
+
+      - name: Install e2e dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Download built image artifact
+        # Skipped under `act` -- see the `build` job's upload step for why.
+        if: ${{ !env.ACT }}
+        uses: actions/download-artifact@v8
+        with:
+          name: addon-image-aarch64
+
+      - name: Load Docker image
+        # Under `act`, the `build` job already loaded this image into the
+        # shared host Docker daemon, so there's no tarball to load here.
+        if: ${{ !env.ACT }}
+        run: docker load -i addon-image.tar
+
+      - name: Create data directories
+        # The same options as the smoke-test job, minus the one line that
+        # turns sign-in off: the default has to be what is being tested.
+        run: |
+          mkdir -p signin-smoke/data signin-smoke/share
+          cat > signin-smoke/data/options.json <<'JSON'
+          {
+            "username": "test@example.com",
+            "password": "test-password",
+            "download_path": "/share/blink-clips",
+            "poll_interval": 300,
+            "max_clips_per_poll": 1,
+            "retention_days": 1,
+            "max_storage_gb": 1.0,
+            "camera_filter": [],
+            "download_thumbnails": false,
+            "concurrent_downloads": 1,
+            "retry_attempts": 1,
+            "retry_delay": 1.0,
+            "notify_ha": false,
+            "create_clip_manifest": false,
+            "enable_library_db": true,
+            "enable_media_server": true,
+            "watch_ha_events": false,
+            "fast_poll_duration": 120,
+            "fast_poll_interval": 15,
+            "post_motion_delay": 30,
+            "event_cameras": [],
+            "digest_enabled": false,
+            "archive_enabled": false,
+            "log_level": "info"
+          }
+          JSON
+          if grep -q direct_access_login signin-smoke/data/options.json; then
+            echo "options.json must not set direct_access_login: the default is under test." >&2
+            exit 1
+          fi
+
+      - name: Run container
+        run: |
+          docker run -d --name addon \
+            -e TZ=UTC \
+            -p 8099:8099 \
+            -v "${{ github.workspace }}/signin-smoke/data:/data" \
+            -v "${{ github.workspace }}/signin-smoke/share:/share" \
+            ${{ env.ADDON_IMAGE }}:${{ env.TAG }}
+
+      - name: Wait for the media server
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS http://localhost:8099/health; then
+              echo "Media server is up"
+              exit 0
+            fi
+            echo "Media server not reachable yet (attempt $i/20), retrying..."
+            sleep 3
+          done
+          echo "Media server never became reachable on port 8099"
+          docker logs addon
+          exit 1
+
+      - name: Sign-in secrets are private to the container
+        run: |
+          mode=$(docker exec addon stat -c %a /data/web_access.json)
+          echo "/data/web_access.json mode: $mode"
+          test "$mode" = "600"
+
+      - name: Playwright sign-in check
+        working-directory: e2e
+        run: |
+          token=$(docker exec addon cat /data/web_access.json | jq -r .access_token)
+          test -n "$token" -a "$token" != "null"
+          echo "::add-mask::$token"
+          node signin_smoke.mjs http://localhost:8099 "$token"
+
+      - name: Verify container is still healthy after the check
+        run: |
+          if ! docker ps \
+            --filter "name=addon" \
+            --filter "status=running" \
+            | grep addon; then
+            echo "Container is no longer running after the sign-in check"
+            docker logs addon
+            exit 1
+          fi
+
+          if docker logs addon 2>&1 | grep -q "Traceback (most recent call last)"; then
+            echo "Found an unhandled exception in container logs:"
+            docker logs addon
+            exit 1
+          fi
+
+          echo "Container still running with no unhandled exceptions"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs addon || true
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f addon || true
