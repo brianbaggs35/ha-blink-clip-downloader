@@ -274,7 +274,17 @@ architecture.
       open port; that script starts a second server on port + 1 with it on
       for `frontend/e2e/direct-access-signin.spec.ts`. The CI smoke test
       and the HA-integration job turn it off, since both read the API over
-      the direct port with no session.
+      the direct port with no session — so a separate `signin-smoke-test`
+      job in `ci.yaml` boots the built image with the option left at its
+      shipped default (on) and runs `e2e/signin_smoke.mjs`: the gate over a
+      real published port, the login page under the served CSP, and the
+      token opening only its few endpoints. It cannot show a sign-in
+      *succeeding*, which goes through Supervisor's `/auth` and needs a
+      real Supervisor. That call identifies the add-on with
+      `X-Supervisor-Token`, **not** `Authorization: Bearer` like every other
+      Supervisor call here: `/auth` reads an `Authorization` header as the
+      user's own Basic credentials (`tests/test_media_server_access.py`'s
+      fake Supervisor rejects the Bearer form for that reason).
     - **Each mixin registers its own routes** via `_register_<area>_routes`,
       called by `_build_app`. Adding an endpoint is one file, not a handler
       here and a route line far away. `tests/test_media_server_routes.py`
@@ -924,9 +934,10 @@ backend API shape change breaking a frontend type) that a "only run if X
 changed" rule would miss.
 
 This mirrors the `lint` and `test` jobs in `.github/workflows/ci.yaml` — if
-these are clean locally, CI's lint/test jobs will pass. (CI also has `build`
-and `smoke-test` jobs that build/run the actual Docker image — including the
-frontend build — and a Playwright e2e smoke check in `e2e/`; those aren't
+these are clean locally, CI's lint/test jobs will pass. (CI also has `build`,
+`smoke-test` and `signin-smoke-test` jobs that build/run the actual Docker
+image — including the frontend build — and Playwright e2e smoke checks in
+`e2e/`; those aren't
 practical to run per-change but are worth being aware of if a change touches
 `Dockerfile`, `rootfs/run.sh`, `frontend/vite.config.ts`, or add-on startup
 behavior. The `build` job also Trivy-scans the built image on both arches,
