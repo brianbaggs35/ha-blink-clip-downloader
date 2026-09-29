@@ -119,6 +119,7 @@ lets it check a username and password.
 - Updated @types/node to 26.6.3
 - Updated @vitest/coverage-v8 to 5.0.2
 - Updated vitest to 5.0.2
+- Updated eslint-plugin-vue to 10.11.1
 
 ## 6.0.7
 
