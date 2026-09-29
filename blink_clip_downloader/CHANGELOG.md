@@ -117,6 +117,8 @@ lets it check a username and password.
 - Updated ultralytics to 8.4.165
 - Updated primeicons to 8.0.2
 - Updated @types/node to 26.6.3
+- Updated @vitest/coverage-v8 to 5.0.2
+- Updated vitest to 5.0.2
 
 ## 6.0.7
 
