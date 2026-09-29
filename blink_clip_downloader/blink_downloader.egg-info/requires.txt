@@ -18,7 +18,7 @@ pytest-cov>=7.1.0
 aioresponses>=0.7.9
 
 [vision]
-ultralytics<9,>=8.4.155
+ultralytics<9,>=8.4.165
 opencv-python-headless<6,>=5.0.0.93
 transformers<6,>=5.17.0
 facenet-pytorch<3,>=2.6.0
