@@ -619,7 +619,19 @@ async function checkIngressApi(page, issuesList) {
     // structured security layer. All
     // are GETs -- this must not mutate anything the persistence marker and
     // the restart assertions downstream depend on.
+    //
+    // /api/access is the one that answers for Direct Access Sign-In, which
+    // this job leaves at its shipped default (on): a request that reached the
+    // add-on through Supervisor's ingress proxy must be recognised as ingress
+    // (and so never asked to sign in) by the address it arrived from. If that
+    // ever stopped holding, every other endpoint below would come back 401
+    // too, but this one says why.
     const endpoints = [
+      [
+        "/api/access",
+        (b) => b.login_enabled === true && b.via === "ingress",
+        'sign-in on and this request recognised as "ingress"',
+      ],
       ["/api/stats", (b) => typeof b.total_count === "number", "total_count"],
       ["/api/clips?limit=1", (b) => Array.isArray(b), "an array of clips"],
       ["/api/cameras", (b) => typeof b === "object" && b !== null, "an object"],

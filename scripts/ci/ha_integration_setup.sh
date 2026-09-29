@@ -119,16 +119,19 @@ cmd_prepare_addon_copy() {
   sed -i '/^options:/,/^schema:/ s|^  password: .*|  password: "ci-integration-not-a-real-password"|' \
     "$dest/config.yaml"
 
-  # This job reads the add-on's API over its direct port from inside the
-  # devcontainer (assert-persisted and the seeded-row checks), which is not
-  # Supervisor's ingress proxy and has no Home Assistant session to sign in
-  # with, so Direct Access Sign-In is turned off in this copy only. Ingress,
-  # which the browser checks go through, never asks either way.
-  sed -i '/^options:/,/^schema:/ s|^  direct_access_login: .*|  direct_access_login: false|' \
-    "$dest/config.yaml"
-  if ! grep -q '^  direct_access_login: false$' "$dest/config.yaml" ||
+  # Direct Access Sign-In is deliberately left at its shipped default (on)
+  # in this copy, so this job tests the add-on the way a user's install
+  # starts. The browser checks go through Supervisor's ingress proxy, which
+  # is never asked to sign in, so they also prove ingress is still
+  # recognised as ingress with the gate up; the few reads this job makes
+  # over the direct port sign in as the Home Assistant owner the smoke
+  # script onboards (addon_get); and assert-signin checks the sign-in
+  # itself, which is the only place in CI that Supervisor's real /auth runs.
+  # This guards the default rather than setting it, so nobody can quietly
+  # turn it back off here and lose all of that.
+  if ! grep -q '^  direct_access_login: true$' "$dest/config.yaml" ||
     ! grep -q '^  direct_access_login: "bool"$' "$dest/config.yaml"; then
-    echo "Could not turn off direct_access_login in the CI copy of config.yaml." >&2
+    echo "The CI copy of config.yaml must keep direct_access_login: true, its shipped default." >&2
     return 1
   fi
 
@@ -176,6 +179,44 @@ cmd_prepare_addon_copy() {
 
 ha_cli() {
   docker exec "$CONTAINER_NAME" ha "$@"
+}
+
+# The direct port asks for a Home Assistant sign-in (Direct Access Sign-In:
+# on by default, and left on in this job's copy of the add-on), so a read
+# over it signs in the way a person does -- as the owner that
+# e2e/ha_integration_smoke.mjs onboards (its OWNER constant, and
+# ha_integration_seeded.mjs's), through the add-on's own login form, which
+# hands the username and password to Supervisor's /auth.
+OWNER_USERNAME="${HA_OWNER_USERNAME:-ci-integration-test}"
+OWNER_PASSWORD="${HA_OWNER_PASSWORD:-ci-integration-test-password-1}"
+
+# POSTs the sign-in form, leaving the session cookie in the jar named by $1,
+# and prints the HTTP status: 303 is a sign-in, anything else is not. $2
+# replaces the password, for a deliberately wrong one.
+addon_sign_in() {
+  local jar="$1" password="${2:-$OWNER_PASSWORD}"
+  curl -s -o /dev/null -w '%{http_code}' --max-time 30 -c "$jar" \
+    --data-urlencode "username=${OWNER_USERNAME}" \
+    --data-urlencode "password=${password}" \
+    "http://127.0.0.1:${ADDON_PORT}/login"
+}
+
+# GET <path> from the direct port as the signed-in owner; the body on
+# stdout. Fails, and says why on stderr, if the sign-in or the read does,
+# so a caller that ends in `|| true` still leaves the reason in the log.
+addon_get() {
+  local path="$1" jar status rc
+  jar="$(mktemp)"
+  status="$(addon_sign_in "$jar")"
+  if [[ "$status" != "303" ]]; then
+    echo "Signing in to the add-on's direct port returned HTTP ${status:-<no response>}, not 303." >&2
+    rm -f "$jar"
+    return 1
+  fi
+  curl -sf --max-time 30 -b "$jar" "http://127.0.0.1:${ADDON_PORT}${path}"
+  rc=$?
+  rm -f "$jar"
+  return $rc
 }
 
 # Supervisor-level add-on metadata (ingress_panel) isn't exposed via any
@@ -536,11 +577,11 @@ cmd_assert_persisted() {
   #
   # Read over the add-on's own direct port rather than through ingress:
   # this runs after the browser is gone, and the direct port is already
-  # proven reachable by cmd_start's readiness probe.
+  # proven reachable by cmd_start's readiness probe. Signed in as the owner,
+  # since that port asks for it (see addon_get).
   local expected="${1:?expected marker value required}"
   local body
-  body="$(curl -sf --max-time 30 \
-    "http://127.0.0.1:${ADDON_PORT}/api/storage/gdrive/settings" || true)"
+  body="$(addon_get /api/storage/gdrive/settings || true)"
   if [[ "$body" != *"$expected"* ]]; then
     echo "Settings written before the restart did not survive it." >&2
     echo "  expected to find: $expected" >&2
@@ -749,6 +790,10 @@ if not data.get("ingress"):
 # homeassistant_api: the Automations tab notification round trip.
 if not data.get("homeassistant_api"):
     problems.append("homeassistant_api was not granted")
+# auth_api: without it Supervisor refuses /auth to this add-on, and every
+# sign-in on the direct port comes back as "could not be reached".
+if not data.get("auth_api"):
+    problems.append("auth_api was not granted")
 # A started add-on Supervisor considers broken still answers its port.
 state = data.get("state")
 if state != "started":
@@ -764,7 +809,114 @@ for line in problems:
     printf '  - %s\n' "$problems" >&2
     return 1
   fi
-  echo "OK: Supervisor granted ingress + homeassistant_api and reports the add-on started"
+  echo "OK: Supervisor granted ingress + homeassistant_api + auth_api and reports the add-on started"
+}
+
+# The script cmd_assert_signin runs inside the add-on's container, where
+# SUPERVISOR_TOKEN is the add-on's own. Printed, not asserted, here: the
+# caller decides which lines must hold.
+_supervisor_auth_probe() {
+  cat <<'PY'
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+username, password = sys.argv[1], sys.argv[2]
+token = os.environ["SUPERVISOR_TOKEN"]
+
+
+def post(headers, secret):
+    request = urllib.request.Request(
+        "http://supervisor/auth",
+        data=json.dumps({"username": username, "password": secret}).encode(),
+        headers={"Content-Type": "application/json", **headers},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as reply:
+            return reply.status
+    except urllib.error.HTTPError as err:
+        return err.code
+
+
+print("token-right", post({"X-Supervisor-Token": token}, password))
+print("token-wrong", post({"X-Supervisor-Token": token}, "definitely-not-it"))
+print("bearer-right", post({"Authorization": "Bearer " + token}, password))
+PY
+}
+
+cmd_assert_signin() {
+  # Direct Access Sign-In against a real Supervisor -- the half of the
+  # feature nothing else in CI can reach. The unit tests stand in for
+  # Supervisor's /auth, the Docker smoke tests have no Supervisor to ask,
+  # and the ingress checks never sign in at all. Here the add-on is
+  # installed the way a user's is, the option is at its shipped default,
+  # and the owner the smoke script onboarded is a real Home Assistant user.
+  local base="http://127.0.0.1:${ADDON_PORT}" container probe jar code reply
+
+  container="$(addon_container)" || return 1
+
+  # First, Supervisor's /auth on its own, from inside the add-on with the
+  # add-on's own token, and with the token sent both ways. /auth reads an
+  # Authorization header as the *user's* Basic credentials, so the add-on
+  # identifies itself with X-Supervisor-Token there (see
+  # AccessControl.verify_credentials); the Bearer line is printed as
+  # evidence for that choice, not asserted, so a Supervisor that changes its
+  # mind shows up in this log instead of only as failed sign-ins.
+  probe="$(_supervisor_auth_probe \
+    | docker exec -i "$CONTAINER_NAME" docker exec -i "$container" \
+      python3 - "$OWNER_USERNAME" "$OWNER_PASSWORD" 2>&1)"
+  echo "Supervisor's /auth, called from inside the add-on:"
+  printf '%s\n' "$probe" | sed 's/^/  /'
+  if ! grep -qx 'token-right 200' <<<"$probe"; then
+    echo "Supervisor did not accept the owner's real password with X-Supervisor-Token." >&2
+    echo "  The add-on's direct-port sign-in cannot work as written." >&2
+    return 1
+  fi
+  if ! grep -Eqx 'token-wrong (400|401)' <<<"$probe"; then
+    echo "Supervisor did not refuse a wrong password with a 400/401." >&2
+    return 1
+  fi
+
+  # Then the add-on's own behaviour on top of it.
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${base}/api/clips?limit=1")"
+  if [[ "$code" != "401" ]]; then
+    echo "An anonymous API call to the direct port returned HTTP ${code}, expected 401." >&2
+    return 1
+  fi
+  reply="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 30 "${base}/")"
+  if [[ "$reply" != "303 "*"/login?next="* ]]; then
+    echo "An anonymous page load was not sent to the login page: '${reply}'" >&2
+    return 1
+  fi
+
+  jar="$(mktemp)"
+  code="$(addon_sign_in "$jar" "definitely-not-it")"
+  if [[ "$code" != "401" ]]; then
+    echo "A wrong password returned HTTP ${code}, expected 401." >&2
+    rm -f "$jar"
+    return 1
+  fi
+  code="$(addon_sign_in "$jar")"
+  if [[ "$code" != "303" ]]; then
+    echo "Signing in as the owner returned HTTP ${code}, expected 303." >&2
+    echo "  (503 means the add-on could not get an answer from Supervisor.)" >&2
+    echo "  The add-on's log, sign-in lines:" >&2
+    ha_cli apps logs "$ADDON_SLUG" 2>&1 | grep -iE 'sign-in|Supervisor' | tail -10 | sed 's/^/    /' >&2
+    rm -f "$jar"
+    return 1
+  fi
+  reply="$(curl -sf --max-time 30 -b "$jar" "${base}/api/access" || true)"
+  rm -f "$jar"
+  if ! jq -e --arg user "$OWNER_USERNAME" \
+    '.login_enabled == true and .via == "session" and .user == $user' \
+    >/dev/null 2>&1 <<<"$reply"; then
+    echo "The signed-in session was not recognised: '${reply:0:200}'" >&2
+    return 1
+  fi
+  echo "OK: the direct port refuses anonymous callers and signs in a real Home Assistant user through Supervisor"
 }
 
 # The add-on's own container, as Supervisor named it. Derived rather than
@@ -1063,7 +1215,7 @@ cmd_assert_asset_persisted() {
   # assert-clip-starred.
   local name="${1:?asset name required}"
   local body
-  body="$(curl -sf --max-time 30 "http://127.0.0.1:${ADDON_PORT}/api/assets" || true)"
+  body="$(addon_get /api/assets || true)"
   if [[ "$body" != *"\"name\": \"${name}\""* || "$body" != *"\"camera\": \"Front Door\""* ]]; then
     echo "The asset marked through the UI before the restart did not survive it." >&2
     echo "  expected an asset named: ${name}, on Front Door" >&2
@@ -1084,10 +1236,10 @@ cmd_assert_seed_survived() {
   # other check in this job.
   #
   # Over the add-on's own port rather than ingress: this runs after the
-  # browser is gone, exactly as assert-persisted does.
+  # browser is gone, exactly as assert-persisted does, and signed in as the
+  # owner for the same reason.
   local body
-  body="$(curl -sf --max-time 30 \
-    "http://127.0.0.1:${ADDON_PORT}/api/clips?limit=50" || true)"
+  body="$(addon_get '/api/clips?limit=50' || true)"
   if [[ "$body" != *"ci-seed-1"* ]]; then
     echo "The clips seeded before the restart are gone." >&2
     echo "  The PostgreSQL cluster under /data was not carried across the" >&2
@@ -1146,6 +1298,7 @@ case "${1:-}" in
     cmd_assert_option_rejected "$@"
     ;;
   assert-capabilities) cmd_assert_capabilities ;;
+  assert-signin) cmd_assert_signin ;;
   seed-data) cmd_seed_data ;;
   seed-media) cmd_seed_media ;;
   assert-seed-survived) cmd_assert_seed_survived ;;
@@ -1166,7 +1319,7 @@ case "${1:-}" in
     cmd_diagnostics "$@"
     ;;
   *)
-    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-option-rejected <key> <value>|assert-capabilities|seed-data|assert-seed-survived|assert-clip-starred <clip>|assert-asset-persisted <name>|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
+    echo "Usage: $0 {prepare-addon-copy|wait-docker|serve-local-image <tar>|wait-core|discover|install|start|restart|assert-clean-log|assert-persisted <value>|assert-version <version>|enable-ingress-panel|set-option <key> <value>|assert-option-rejected <key> <value>|assert-capabilities|assert-signin|seed-data|assert-seed-survived|assert-clip-starred <clip>|assert-asset-persisted <name>|assert-log-contains <pattern> [description]|diagnostics <dir>}" >&2
     exit 64
     ;;
 esac
