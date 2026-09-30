@@ -44,7 +44,7 @@ async function detect(file: File, row: PhotoResult) {
 
 // One photo at a time, for the same reason clips are scanned one at a
 // time: detection runs on the add-on's CPU, shared with clip analysis.
-async function onSelect(event: FileUploadSelectEvent) {
+function onSelect(event: FileUploadSelectEvent) {
   const files = (event.files ?? []) as File[]
   // The list below reports each photo; clearing the picker keeps it from
   // repeating the names, and lets the same photo be chosen again.
@@ -53,7 +53,10 @@ async function onSelect(event: FileUploadSelectEvent) {
     results.value.unshift({ key: nextKey++, name: file.name, status: 'working', message: 'Looking for faces…' })
     return results.value[0]
   })
-  for (const [index, file] of files.entries()) await detect(file, rows[index])
+  return files.reduce<Promise<void>>(
+    (previous, file, index) => previous.then(() => detect(file, rows[index])),
+    Promise.resolve(),
+  )
 }
 </script>
 

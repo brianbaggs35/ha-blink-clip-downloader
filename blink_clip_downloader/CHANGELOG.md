@@ -15,9 +15,14 @@
   from `/api/tags`, recommends Gemma 4 31B and GLM-5.3-Flash when available,
   and checks each model's documented capability metadata.
 
-### Fixed a sonarqube security issue
+### Fixed SonarQube findings
 
-Fixed a security issue reported by sonarqube.
+- Confined vehicle-zone fallback thumbnails to the configured clip storage
+  directory before reading or serving them.
+- Kept multi-photo face detection and bulk clip analysis sequential while
+  removing unexpected `await`-in-loop warnings. This preserves CPU/provider
+  concurrency limits and continues processing the rest of a bulk analysis if
+  one clip fails.
 
 ## 6.0.8
 
