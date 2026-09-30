@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
@@ -41,6 +42,7 @@ class _MediaServerBase:
     # Injected dependencies.
     _db: ClipDatabase
     _port: int
+    _clip_storage_dir: Path
     _trigger_download: Callable[[], None] | None
     _two_fa_callback: Callable[[str], int] | None
     _auth_state_getter: Callable[[], dict] | None

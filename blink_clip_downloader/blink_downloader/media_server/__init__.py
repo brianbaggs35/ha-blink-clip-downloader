@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
@@ -151,9 +152,11 @@ class MediaServer(
         arm_camera: Callable[[str, bool], Awaitable[bool | None]] | None = None,
         direct_access_login: bool = False,
         supervisor_token: str = "",
+        clip_storage_dir: Path = Path("/share/blink-clips"),
     ) -> None:
         self._db = db
         self._port = port
+        self._clip_storage_dir = clip_storage_dir
         self._trigger_download = trigger_download
         self._two_fa_callback = two_fa_callback
         self._auth_state_getter = auth_state_getter
