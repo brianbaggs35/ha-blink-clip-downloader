@@ -339,7 +339,9 @@ test('the L keyboard shortcut toggles loop with its own confirmation toast', asy
   await expect(loop).not.toBeChecked()
 })
 
-test('prev/next nav buttons and arrow keys move between clips in the same sort order as the grid', async ({ page }) => {
+test('prev/next nav buttons and arrow keys move between clips in the same sort order as the grid @standalone', async ({
+  page,
+}) => {
   // e2e-clip-000 (0h ago) and e2e-clip-001 (1h ago) are adjacent under the
   // default "newest first" sort — real, seeded ordering, not a mock.
   await page.locator('.clip-card[data-id="e2e-clip-000"]').click()
@@ -358,7 +360,7 @@ test('prev/next nav buttons and arrow keys move between clips in the same sort o
   await expect(modal.locator('.modal-title')).toContainText('Front Door')
 })
 
-test('the download link and video-unavailable fallback point at the real clip stream', async ({ page }) => {
+test('the download link and video-unavailable fallback point at the real clip stream @standalone', async ({ page }) => {
   // None of the seeded distribution clips have a real file on disk (only a
   // dedicated archiving-test clip does — see standalone_server.py), so
   // Video.js reliably hits its error path here, exercising the fallback UI

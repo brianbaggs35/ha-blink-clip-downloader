@@ -15,6 +15,9 @@ name: HA Supervisor Integration Test
 # register its ingress panel in the HA sidebar, and serve real content
 # through that real ingress proxy - the actual app<->Home Assistant
 # integration boundary, not just "the container runs."
+# After the production and durability assertions, this job also runs the
+# existing frontend Playwright interaction suite through ingress, using
+# deterministic CI-only substitutes for unavailable Blink services.
 #
 # The add-on runs with Direct Access Sign-In at its shipped default (on), so
 # this is also the only job that checks the sign-in against a real Supervisor:
@@ -162,7 +165,9 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: e2e/package-lock.json
+          cache-dependency-path: |
+            e2e/package-lock.json
+            blink_clip_downloader/frontend/package-lock.json
 
       - name: Update npm
         run: npm install -g npm@12.0.2
@@ -435,6 +440,48 @@ jobs:
       - name: Check the add-on's log for unexpected errors
         run: scripts/ci/ha_integration_setup.sh assert-clean-log
 
+      # These settings expose the AI and Biometrics UI to the existing
+      # interaction specs. They are applied only after every assertion of
+      # the shipped/default production configuration has finished.
+      - name: Configure deterministic frontend E2E capabilities
+        run: scripts/ci/ha_integration_setup.sh configure-frontend-e2e-options
+
+      - name: Restart with frontend E2E capabilities enabled
+        run: scripts/ci/ha_integration_setup.sh restart
+
+      # Only the external Blink-facing collaborators are replaced, and only
+      # in this final CI phase. API routes, database, media server, browser,
+      # and every request through Home Assistant ingress remain real.
+      - name: Enable CI-only external-service fixtures
+        run: scripts/ci/ha_integration_setup.sh enable-frontend-e2e-fixtures
+
+      # The regular frontend Playwright suite has fixtures specifically for
+      # the standalone backend. Seed those same fixtures into the real
+      # add-on's bundled PostgreSQL after the final app restart, so
+      # restart-triggered work runs before the browser data is loaded.
+      - name: Seed fixtures for the frontend Playwright suite
+        run: scripts/ci/ha_integration_setup.sh seed-frontend-e2e
+
+      - name: Install frontend Playwright dependencies
+        working-directory: blink_clip_downloader/frontend
+        run: npm ci
+
+      - name: Install frontend Playwright browser
+        working-directory: blink_clip_downloader/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Resolve signed-in Home Assistant ingress for Playwright
+        working-directory: blink_clip_downloader/frontend
+        run: |
+          node e2e/ha-supervisor-setup.mjs \
+            "http://127.0.0.1:${HA_PORT}" "$ADDON_SLUG" "$ADDON_PANEL_TITLE"
+
+      - name: Run HA-specific Playwright specs through real ingress
+        working-directory: blink_clip_downloader/frontend
+        env:
+          BLINK_E2E_HA: "1"
+        run: npm run test:e2e:ha
+
       - name: Collect diagnostics
         if: failure()
         run: |
@@ -448,6 +495,8 @@ jobs:
           path: |
             ha-integration-diagnostics
             e2e/ha-integration-failure-*.png
+            blink_clip_downloader/frontend/playwright-report
+            blink_clip_downloader/frontend/test-results
           retention-days: 7
           if-no-files-found: ignore
 

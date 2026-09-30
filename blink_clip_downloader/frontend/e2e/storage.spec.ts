@@ -17,7 +17,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector('.app-nav-tab.active[data-tab="storage"]')
 })
 
-test('lists all seeded archives with their clip counts', async ({ page }) => {
+test('lists all seeded archives with their clip counts @standalone', async ({ page }) => {
   const panels = page.locator('.archive-panel')
   await expect(panels).toHaveCount(3)
   await expect(panels.filter({ hasText: '2024-01-e2e.zip' })).toContainText('2 clips')
@@ -25,7 +25,7 @@ test('lists all seeded archives with their clip counts', async ({ page }) => {
   await expect(panels.filter({ hasText: '2024-03-e2e.zip' })).toContainText('2 clips')
 })
 
-test('expanding an archive groups its clips by camera', async ({ page }) => {
+test('expanding an archive groups its clips by camera @standalone', async ({ page }) => {
   const multiPanel = page.locator('.archive-panel', { hasText: '2024-01-e2e.zip' })
   await multiPanel.locator('.archive-panel-header').click()
   await expect(multiPanel.getByText('Front Door (1 clip)')).toBeVisible()
@@ -33,7 +33,7 @@ test('expanding an archive groups its clips by camera', async ({ page }) => {
   await expect(multiPanel.getByText('Not backed up')).toHaveCount(2)
 })
 
-test('an archive expands from the keyboard alone, with focus reaching it by Tab', async ({ page }) => {
+test('an archive expands from the keyboard alone, with focus reaching it by Tab @standalone', async ({ page }) => {
   // The expand control is a real <button>, so the browser supplies focus,
   // the role and both activation keys rather than the component
   // re-implementing them. jsdom cannot show this (it never synthesizes a
@@ -52,7 +52,7 @@ test('an archive expands from the keyboard alone, with focus reaching it by Tab'
   await expect(header).toHaveAttribute('aria-expanded', 'false')
 })
 
-test('filtering by camera narrows both the archive list and its counts', async ({ page }) => {
+test('filtering by camera narrows both the archive list and its counts @standalone', async ({ page }) => {
   await page.getByRole('combobox', { name: 'Filter by camera' }).click()
   await page.getByRole('option', { name: 'Front Door' }).click()
 
@@ -68,7 +68,7 @@ test('filtering by camera narrows both the archive list and its counts', async (
   await expect(panels).toHaveCount(3)
 })
 
-test('declining the delete-archive confirmation leaves the archive untouched', async ({ page }) => {
+test('declining the delete-archive confirmation leaves the archive untouched @standalone', async ({ page }) => {
   const multiPanel = page.locator('.archive-panel', { hasText: '2024-01-e2e.zip' })
   await multiPanel.getByRole('button', { name: 'Delete archive' }).click()
   await expect(page.getByText('Delete archive?')).toBeVisible()
@@ -92,7 +92,9 @@ test('shows an error message when archived clips fail to load', async ({ page })
   await expect(page.getByText('Failed to load archived clips.')).toBeVisible()
 })
 
-test('the camera filter dropdown degrades silently when its camera list fails to load', async ({ page }) => {
+test('the camera filter dropdown degrades silently when its camera list fails to load @standalone', async ({
+  page,
+}) => {
   await page.route('**/api/cameras', (route) =>
     route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) }),
   )
@@ -104,7 +106,7 @@ test('the camera filter dropdown degrades silently when its camera list fails to
   await expect(page.getByRole('combobox', { name: 'Filter by camera' })).toContainText('All cameras')
 })
 
-test('a date range with no matching archives shows the filtered-empty state, and Clear filters restores the list', async ({
+test('a date range with no matching archives shows the filtered-empty state, and Clear filters restores the list @standalone', async ({
   page,
 }) => {
   const panels = page.locator('.archive-panel')
@@ -133,7 +135,9 @@ test('a date range with no matching archives shows the filtered-empty state, and
 // spec file -- see standalone_server.py's _ARCHIVE_CLIPS comment) depends
 // on 2024-01 still having both. Must run after the three tests above that
 // do still need it at its original 2-clip state (list/expand/filter).
-test('deleting one clip from a multi-clip archive keeps the group, decrementing its count', async ({ page }) => {
+test('deleting one clip from a multi-clip archive keeps the group, decrementing its count @standalone', async ({
+  page,
+}) => {
   const multiPanel = page.locator('.archive-panel', { hasText: '2024-01-e2e.zip' })
   await multiPanel.locator('.archive-panel-header').click()
 
@@ -173,7 +177,7 @@ test('shows an error toast when Run Archiving Now fails', async ({ page }) => {
 // standalone_server.py. Deliberately deletes straight from the collapsed
 // panel header, without expanding it first, since the button lives there
 // rather than inside the (lazily-fetched) clip list.
-test('deleting an entire archive removes every clip in it and the panel itself', async ({ page }) => {
+test('deleting an entire archive removes every clip in it and the panel itself @standalone', async ({ page }) => {
   const bulkPanel = page.locator('.archive-panel', { hasText: '2024-03-e2e.zip' })
   await expect(bulkPanel).toContainText('2 clips')
 
@@ -195,7 +199,7 @@ test('deleting an entire archive removes every clip in it and the panel itself',
   await expect(page.getByText('2024-03-e2e.zip')).toHaveCount(0)
 })
 
-test('deleting the only clip in an archive removes the whole group', async ({ page }) => {
+test('deleting the only clip in an archive removes the whole group @standalone', async ({ page }) => {
   const soloPanel = page.locator('.archive-panel', { hasText: '2024-02-e2e.zip' })
   await soloPanel.locator('.archive-panel-header').click()
   // exact: true -- otherwise this also matches the archive-level "Delete

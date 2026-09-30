@@ -189,7 +189,7 @@ test('stepping to the next clip from a Security-opened modal stays where it was'
   await expect(modal).toBeVisible()
 })
 
-test('a clip analyzed before 6.0.0 shows no security row rather than a broken one', async ({ page }) => {
+test('a clip analyzed before 6.0.0 shows no security row rather than a broken one @standalone', async ({ page }) => {
   // Every clip in an upgrading install predates the security layer: its
   // analysis row has the new columns at their defaults and no events at
   // all. The timeline is built from security_events, so such a clip simply

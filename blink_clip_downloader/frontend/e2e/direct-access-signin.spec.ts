@@ -1,20 +1,26 @@
 import { test, expect } from './coverage-fixtures'
 
-// Direct Access Sign-In, against the second server scripts/standalone_server.py
-// starts on the main port + 1 with the option on. Its sign-in check stands in
-// for Supervisor's /auth (e2e-user / e2e-password); the form, cookie, gate
-// and access token are the real code in media_server/access.py.
+// Direct Access Sign-In against the standalone secondary server, or the real
+// add-on direct port in HA mode. In both cases the form, cookie, gate and
+// access token are the real code in media_server/access.py.
 //
 // Every other spec runs against the main server, where sign-in is off — the
 // same as an add-on with the option turned off — so nothing here can change
 // what they see.
-const SIGNIN_URL = 'http://localhost:8200'
+const HA_SUPERVISOR = process.env.BLINK_E2E_HA === '1'
+const SIGNIN_URL = HA_SUPERVISOR ? process.env.HA_E2E_DIRECT_URL : 'http://localhost:8200'
+const SIGNIN_USERNAME = HA_SUPERVISOR ? process.env.HA_E2E_USERNAME : 'e2e-user'
+const SIGNIN_PASSWORD = HA_SUPERVISOR ? process.env.HA_E2E_PASSWORD : 'e2e-password'
+
+if (!SIGNIN_URL || !SIGNIN_USERNAME || !SIGNIN_PASSWORD) {
+  throw new Error('HA direct-access E2E mode requires its direct URL and test credentials')
+}
 
 async function signIn(page: import('@playwright/test').Page, next = '/') {
   await page.goto(`${SIGNIN_URL}${next}`)
   await expect(page).toHaveURL(/\/login\?next=/)
-  await page.getByLabel('Username').fill('e2e-user')
-  await page.getByLabel('Password').fill('e2e-password')
+  await page.getByLabel('Username').fill(SIGNIN_USERNAME)
+  await page.getByLabel('Password').fill(SIGNIN_PASSWORD)
   await page.getByRole('button', { name: 'Sign in' }).click()
 }
 
@@ -29,14 +35,14 @@ test('the direct port asks for a Home Assistant sign-in before showing anything'
   await expect(page.getByRole('heading', { name: 'Blink Clips' })).toBeVisible()
   await expect(page.getByText('Sign in with your Home Assistant account')).toBeVisible()
 
-  await page.getByLabel('Username').fill('e2e-user')
+  await page.getByLabel('Username').fill(SIGNIN_USERNAME)
   await page.getByLabel('Password').fill('not-the-password')
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page.getByRole('alert')).toHaveText("That username and password didn't match a Home Assistant user.")
   // The username is kept, so only the password needs typing again.
-  await expect(page.getByLabel('Username')).toHaveValue('e2e-user')
+  await expect(page.getByLabel('Username')).toHaveValue(SIGNIN_USERNAME)
 
-  await page.getByLabel('Password').fill('e2e-password')
+  await page.getByLabel('Password').fill(SIGNIN_PASSWORD)
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page).toHaveURL(`${SIGNIN_URL}/?tab=status`)
   await expect(page.locator('.app-nav-tab.active[data-tab="status"]')).toBeVisible()
@@ -92,8 +98,8 @@ test('a dashboard card embedding the kiosk view can sign in inside its frame', a
   // Frameable, unlike the ordinary login page, or the card would be blank.
   expect(response?.headers()['x-frame-options']).toBeUndefined()
 
-  await page.getByLabel('Username').fill('e2e-user')
-  await page.getByLabel('Password').fill('e2e-password')
+  await page.getByLabel('Username').fill(SIGNIN_USERNAME)
+  await page.getByLabel('Password').fill(SIGNIN_PASSWORD)
   await page.getByRole('button', { name: 'Sign in' }).click()
   await expect(page).toHaveURL(`${SIGNIN_URL}/?kiosk=1&tab=securityfeed`)
   // Kiosk mode: the Security Feed alone, with no navigation to sign out from.

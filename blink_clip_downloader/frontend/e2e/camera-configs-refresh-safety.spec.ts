@@ -1,4 +1,4 @@
-import { test, expect } from './coverage-fixtures'
+import { appPathname, test, expect } from './coverage-fixtures'
 import type { Page } from '@playwright/test'
 
 // CameraConfigsSection has to defend a form someone is typing in against
@@ -27,7 +27,7 @@ async function countGets(page: Page) {
   const counts = { configs: 0, status: 0 }
   page.on('request', (request) => {
     if (request.method() !== 'GET') return
-    const path = new URL(request.url()).pathname
+    const path = appPathname(request.url())
     if (path === '/api/ai/camera-configs') counts.configs += 1
     if (path === '/api/ai/status') counts.status += 1
   })

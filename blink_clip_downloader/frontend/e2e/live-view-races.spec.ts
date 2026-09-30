@@ -1,4 +1,4 @@
-import { test, expect } from './coverage-fixtures'
+import { appPathname, test, expect } from './coverage-fixtures'
 import type { Page, Route } from '@playwright/test'
 
 // Starting a live view is slow enough that the user can act again before
@@ -26,13 +26,13 @@ function holdStart(page: Page, onStart?: (route: Route) => Promise<boolean>) {
   const seen = { starts: 0, stops: [] as string[] }
   void page.route('**/api/liveview/**', async (route) => {
     const url = new URL(route.request().url())
-    if (url.pathname === '/api/liveview/stop' && route.request().method() === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/stop' && route.request().method() === 'POST') {
       const body = route.request().postDataJSON() as { session_id?: string } | null
       seen.stops.push(body?.session_id ?? '')
       await route.fulfill({ status: 200, contentType: 'application/json', body: '{"stopped": true}' })
       return
     }
-    if (url.pathname === '/api/liveview/start' && route.request().method() === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/start' && route.request().method() === 'POST') {
       seen.starts += 1
       await gate
       if (onStart && (await onStart(route))) return
@@ -53,7 +53,7 @@ async function openLiveView(page: Page) {
 const STARTING = 'Starting live view…'
 const REAL_START_ERROR = /This camera does not support live view/
 
-test('a start that fails after the tab was left does not shout about it', async ({ page }) => {
+test('a start that fails after the tab was left does not shout about it @standalone', async ({ page }) => {
   const { seen, release } = holdStart(page)
   await openLiveView(page)
 
@@ -75,7 +75,7 @@ test('a start that fails after the tab was left does not shout about it', async 
   await expect(page.locator('.app-nav-tab.active[data-tab="status"]')).toBeVisible()
 })
 
-test('a start that succeeds after the tab was left is torn down, not leaked', async ({ page }) => {
+test('a start that succeeds after the tab was left is torn down, not leaked @standalone', async ({ page }) => {
   // The real backend cannot start a session here, so this one is mocked --
   // the point is what the *client* does with a session it asked for and no
   // longer wants, which is the half that leaks a live slot when wrong.
@@ -103,7 +103,7 @@ test('a start that succeeds after the tab was left is torn down, not leaked', as
   await expect.poll(() => seen.stops).toContain('orphan-session')
 })
 
-test('picking a second camera mid-start leaves only the newer attempt', async ({ page }) => {
+test('picking a second camera mid-start leaves only the newer attempt @standalone', async ({ page }) => {
   const { seen, release } = holdStart(page)
   await openLiveView(page)
 

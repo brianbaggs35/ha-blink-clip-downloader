@@ -1,4 +1,4 @@
-import { test, expect } from './coverage-fixtures'
+import { appPathname, test, expect } from './coverage-fixtures'
 
 // Live View is otherwise entirely out of e2e reach — actually starting a
 // session needs a real Blink live-stream feeding a real ffmpeg process,
@@ -14,7 +14,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector('.app-nav-tab.active[data-tab="liveview"]')
 })
 
-test('lists every seeded camera and starts with no camera selected', async ({ page }) => {
+test('lists every seeded camera and starts with no camera selected @standalone', async ({ page }) => {
   for (const camera of ['Front Door', 'Backyard', 'Garage']) {
     await expect(page.getByRole('button', { name: camera, exact: true })).toBeVisible()
   }
@@ -22,7 +22,7 @@ test('lists every seeded camera and starts with no camera selected', async ({ pa
   await expect(page.getByRole('button', { name: '■ Stop' })).toHaveCount(0)
 })
 
-test('selecting a camera shows a starting placeholder, then a real error toast and resets to the picker', async ({
+test('selecting a camera shows a starting placeholder, then a real error toast and resets to the picker @standalone', async ({
   page,
 }) => {
   await page.getByRole('button', { name: 'Front Door', exact: true }).click()
@@ -33,7 +33,9 @@ test('selecting a camera shows a starting placeholder, then a real error toast a
   await expect(page.getByRole('button', { name: '■ Stop' })).toHaveCount(0)
 })
 
-test('selecting a different camera after a failed start attempts a fresh session for the new one', async ({ page }) => {
+test('selecting a different camera after a failed start attempts a fresh session for the new one @standalone', async ({
+  page,
+}) => {
   await page.getByRole('button', { name: 'Front Door', exact: true }).click()
   await expect(page.getByText(/This camera does not support live view/)).toBeVisible()
 
@@ -72,7 +74,7 @@ test('shows the no-cameras message when the account has none', async ({ page }) 
 test('adopts an already-active session on mount, without needing a camera click', async ({ page }) => {
   await page.route('**/api/liveview/**', async (route) => {
     const url = new URL(route.request().url())
-    if (url.pathname === '/api/liveview/cameras') {
+    if (appPathname(url.toString()) === '/api/liveview/cameras') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -80,7 +82,7 @@ test('adopts an already-active session on mount, without needing a camera click'
       })
       return
     }
-    if (url.pathname === '/api/liveview/status') {
+    if (appPathname(url.toString()) === '/api/liveview/status') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -88,11 +90,11 @@ test('adopts an already-active session on mount, without needing a camera click'
       })
       return
     }
-    if (url.pathname === '/api/liveview/heartbeat' && route.request().method() === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/heartbeat' && route.request().method() === 'POST') {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
       return
     }
-    if (url.pathname.startsWith('/api/liveview/hls/')) {
+    if (appPathname(url.toString()).startsWith('/api/liveview/hls/')) {
       await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
       return
     }
@@ -116,7 +118,7 @@ test('shows a toast when stopping the live view session fails', async ({ page })
     const url = new URL(request.url())
     const method = request.method()
 
-    if (url.pathname === '/api/liveview/cameras') {
+    if (appPathname(url.toString()) === '/api/liveview/cameras') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -124,11 +126,11 @@ test('shows a toast when stopping the live view session fails', async ({ page })
       })
       return
     }
-    if (url.pathname === '/api/liveview/status') {
+    if (appPathname(url.toString()) === '/api/liveview/status') {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ active: false }) })
       return
     }
-    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/start' && method === 'POST') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -136,15 +138,15 @@ test('shows a toast when stopping the live view session fails', async ({ page })
       })
       return
     }
-    if (url.pathname === '/api/liveview/stop' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/stop' && method === 'POST') {
       await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'mocked' }) })
       return
     }
-    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/heartbeat' && method === 'POST') {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
       return
     }
-    if (url.pathname.startsWith('/api/liveview/hls/')) {
+    if (appPathname(url.toString()).startsWith('/api/liveview/hls/')) {
       await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
       return
     }
@@ -171,7 +173,7 @@ test('renders and stops a mocked live session without a real Blink account', asy
     const url = new URL(request.url())
     const method = request.method()
 
-    if (url.pathname === '/api/liveview/cameras') {
+    if (appPathname(url.toString()) === '/api/liveview/cameras') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -179,7 +181,7 @@ test('renders and stops a mocked live session without a real Blink account', asy
       })
       return
     }
-    if (url.pathname === '/api/liveview/status') {
+    if (appPathname(url.toString()) === '/api/liveview/status') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -191,7 +193,7 @@ test('renders and stops a mocked live session without a real Blink account', asy
       })
       return
     }
-    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/start' && method === 'POST') {
       active = true
       await route.fulfill({
         status: 200,
@@ -200,7 +202,7 @@ test('renders and stops a mocked live session without a real Blink account', asy
       })
       return
     }
-    if (url.pathname === '/api/liveview/stop' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/stop' && method === 'POST') {
       active = false
       await route.fulfill({
         status: 200,
@@ -209,7 +211,7 @@ test('renders and stops a mocked live session without a real Blink account', asy
       })
       return
     }
-    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/heartbeat' && method === 'POST') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -217,7 +219,7 @@ test('renders and stops a mocked live session without a real Blink account', asy
       })
       return
     }
-    if (url.pathname.startsWith('/api/liveview/hls/')) {
+    if (appPathname(url.toString()).startsWith('/api/liveview/hls/')) {
       await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
       return
     }
@@ -250,11 +252,11 @@ test('a session that starts out "starting" is picked up as soon as it goes live'
     const json = (body: unknown) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
 
-    if (url.pathname === '/api/liveview/cameras') return json({ cameras: ['Front Door'] })
-    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/cameras') return json({ cameras: ['Front Door'] })
+    if (appPathname(url.toString()) === '/api/liveview/start' && method === 'POST') {
       return json({ active: true, session_id: 'slow-session', camera: 'Front Door', state: 'starting' })
     }
-    if (url.pathname === '/api/liveview/status') {
+    if (appPathname(url.toString()) === '/api/liveview/status') {
       polls++
       return json({
         active: true,
@@ -263,9 +265,9 @@ test('a session that starts out "starting" is picked up as soon as it goes live'
         state: polls > STILL_STARTING_POLLS ? 'live' : 'starting',
       })
     }
-    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') return json({ ok: true })
-    if (url.pathname === '/api/liveview/stop' && method === 'POST') return json({ stopped: true })
-    if (url.pathname.startsWith('/api/liveview/hls/')) {
+    if (appPathname(url.toString()) === '/api/liveview/heartbeat' && method === 'POST') return json({ ok: true })
+    if (appPathname(url.toString()) === '/api/liveview/stop' && method === 'POST') return json({ stopped: true })
+    if (appPathname(url.toString()).startsWith('/api/liveview/hls/')) {
       return route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
     }
     await route.fallback()
@@ -305,7 +307,7 @@ test('switching cameras while a session is active tears down the old one and sta
     const url = new URL(request.url())
     const method = request.method()
 
-    if (url.pathname === '/api/liveview/cameras') {
+    if (appPathname(url.toString()) === '/api/liveview/cameras') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -313,7 +315,7 @@ test('switching cameras while a session is active tears down the old one and sta
       })
       return
     }
-    if (url.pathname === '/api/liveview/status') {
+    if (appPathname(url.toString()) === '/api/liveview/status') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -325,7 +327,7 @@ test('switching cameras while a session is active tears down the old one and sta
       })
       return
     }
-    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/start' && method === 'POST') {
       const body = request.postDataJSON() as { camera: string }
       currentCamera = body.camera
       sessionSeq++
@@ -336,16 +338,16 @@ test('switching cameras while a session is active tears down the old one and sta
       })
       return
     }
-    if (url.pathname === '/api/liveview/stop' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/stop' && method === 'POST') {
       currentCamera = null
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ stopped: true }) })
       return
     }
-    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/heartbeat' && method === 'POST') {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
       return
     }
-    if (url.pathname.startsWith('/api/liveview/hls/')) {
+    if (appPathname(url.toString()).startsWith('/api/liveview/hls/')) {
       await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
       return
     }
@@ -374,7 +376,7 @@ test('the server ending a session with an error surfaces it and resets to the pi
     const url = new URL(request.url())
     const method = request.method()
 
-    if (url.pathname === '/api/liveview/cameras') {
+    if (appPathname(url.toString()) === '/api/liveview/cameras') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -382,7 +384,7 @@ test('the server ending a session with an error surfaces it and resets to the pi
       })
       return
     }
-    if (url.pathname === '/api/liveview/status') {
+    if (appPathname(url.toString()) === '/api/liveview/status') {
       let body: unknown = { active: false }
       if (sessionState === 'live') {
         body = { active: true, session_id: 'mock-session', camera: 'Front Door', state: 'live' }
@@ -392,7 +394,7 @@ test('the server ending a session with an error surfaces it and resets to the pi
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
       return
     }
-    if (url.pathname === '/api/liveview/start' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/start' && method === 'POST') {
       sessionState = 'live'
       await route.fulfill({
         status: 200,
@@ -401,11 +403,11 @@ test('the server ending a session with an error surfaces it and resets to the pi
       })
       return
     }
-    if (url.pathname === '/api/liveview/heartbeat' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/liveview/heartbeat' && method === 'POST') {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
       return
     }
-    if (url.pathname.startsWith('/api/liveview/hls/')) {
+    if (appPathname(url.toString()).startsWith('/api/liveview/hls/')) {
       await route.fulfill({ status: 200, contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n' })
       return
     }

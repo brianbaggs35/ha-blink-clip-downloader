@@ -1,4 +1,4 @@
-import { test, expect } from './coverage-fixtures'
+import { appPathname, test, expect } from './coverage-fixtures'
 
 type JsonValue = Record<string, unknown> | unknown[]
 
@@ -55,15 +55,15 @@ async function mockGDriveApi(
     const url = new URL(request.url())
     const method = request.method()
 
-    if (url.pathname === '/api/storage/gdrive/settings' && method === 'GET') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/settings' && method === 'GET') {
       await fulfillJson(route, { client_id: 'e2e-client', has_client_secret: true, backup_policy: 'archived_only' })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/settings' && method === 'PUT') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/settings' && method === 'PUT') {
       await fulfillJson(route, { saved: true })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/status') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/status') {
       await fulfillJson(route, {
         configured: true,
         connected,
@@ -75,14 +75,14 @@ async function mockGDriveApi(
       })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/pause' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/pause' && method === 'POST') {
       const body = JSON.parse(request.postData() ?? '{}') as { paused?: boolean }
       uploadsPaused = Boolean(body.paused)
       if (!uploadsPaused) pauseReason = ''
       await fulfillJson(route, { paused: uploadsPaused })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/connect' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/connect' && method === 'POST') {
       connectPhase = 'pending'
       await fulfillJson(route, {
         phase: 'pending',
@@ -92,7 +92,7 @@ async function mockGDriveApi(
       })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/connect-status' && method === 'GET') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/connect-status' && method === 'GET') {
       if (connectPhase === 'pending') {
         connectPhase = 'connected'
         connected = true
@@ -100,7 +100,7 @@ async function mockGDriveApi(
       await fulfillJson(route, connectPhase === 'connected' ? { phase: 'connected' } : { phase: connectPhase })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/quota') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/quota') {
       await fulfillJson(route, {
         available: true,
         limit: 10_000_000_000,
@@ -109,14 +109,14 @@ async function mockGDriveApi(
       })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/queue/failed/clear' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/queue/failed/clear' && method === 'POST') {
       const body = JSON.parse(request.postData() ?? '{}') as { clip_id?: string }
       const before = failedUploads.length
       failedUploads = body.clip_id ? failedUploads.filter((f) => f.clip_id !== body.clip_id) : []
       await fulfillJson(route, { cleared: before - failedUploads.length })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/queue/failed') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/queue/failed') {
       const limit = Number(url.searchParams.get('limit') ?? 25)
       const offset = Number(url.searchParams.get('offset') ?? 0)
       await fulfillJson(route, {
@@ -125,7 +125,7 @@ async function mockGDriveApi(
       })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/queue') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/queue') {
       await fulfillJson(route, {
         connected,
         uploads_paused: uploadsPaused,
@@ -139,36 +139,36 @@ async function mockGDriveApi(
       })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/folders' && method === 'GET') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/folders' && method === 'GET') {
       await fulfillJson(route, { folders })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/folders' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/folders' && method === 'POST') {
       const body = request.postDataJSON() as { name: string }
       const newFolder = { id: 'folder-new', name: body.name, modified_time: '' }
       folders = [...folders, newFolder]
       await fulfillJson(route, newFolder)
       return
     }
-    if (url.pathname === '/api/storage/gdrive/folder' && method === 'PUT') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/folder' && method === 'PUT') {
       const body = request.postDataJSON() as { folder_id: string; folder_name: string }
       folder = { id: body.folder_id, name: body.folder_name }
       await fulfillJson(route, { saved: true })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/retry' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/retry' && method === 'POST') {
       await fulfillJson(route, { retried: 1 })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/backup-now' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/backup-now' && method === 'POST') {
       await fulfillJson(route, { enqueued: 3 })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/upload' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/upload' && method === 'POST') {
       await fulfillJson(route, { enqueued: 1 })
       return
     }
-    if (url.pathname === '/api/storage/gdrive/disconnect' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/storage/gdrive/disconnect' && method === 'POST') {
       connected = false
       await fulfillJson(route, { disconnected: true })
       return
@@ -589,32 +589,32 @@ test('exercises mocked Moondream fine-tuning controls without cloud credentials'
     const url = new URL(request.url())
     const method = request.method()
 
-    if (url.pathname === '/api/ai/finetune' && method === 'GET') {
+    if (appPathname(url.toString()) === '/api/ai/finetune' && method === 'GET') {
       await fulfillJson(route, { enabled: true, finetunes })
       return
     }
-    if (url.pathname === '/api/ai/finetune' && method === 'POST') {
+    if (appPathname(url.toString()) === '/api/ai/finetune' && method === 'POST') {
       finetunes = [{ finetune_id: 'e2e-finetune', name: 'E2E Fine-tune' }]
       await fulfillJson(route, { finetune_id: 'e2e-finetune' })
       return
     }
-    if (url.pathname === '/api/ai/finetune/e2e-finetune/train') {
+    if (appPathname(url.toString()) === '/api/ai/finetune/e2e-finetune/train') {
       await fulfillJson(route, { trained: 2 })
       return
     }
-    if (url.pathname === '/api/ai/finetune/e2e-finetune/save-checkpoint') {
+    if (appPathname(url.toString()) === '/api/ai/finetune/e2e-finetune/save-checkpoint') {
       await fulfillJson(route, { saved: true })
       return
     }
-    if (url.pathname === '/api/ai/finetune/e2e-finetune/checkpoints') {
+    if (appPathname(url.toString()) === '/api/ai/finetune/e2e-finetune/checkpoints') {
       await fulfillJson(route, { enabled: true, checkpoints: [{ step: 4 }, { step: 8 }] })
       return
     }
-    if (url.pathname === '/api/ai/finetune/e2e-finetune/activate') {
+    if (appPathname(url.toString()) === '/api/ai/finetune/e2e-finetune/activate') {
       await fulfillJson(route, { activated: true, model: 'e2e-finetune-step-8' })
       return
     }
-    if (url.pathname === '/api/ai/finetune/e2e-finetune' && method === 'DELETE') {
+    if (appPathname(url.toString()) === '/api/ai/finetune/e2e-finetune' && method === 'DELETE') {
       finetunes = []
       await fulfillJson(route, { deleted: true })
       return
@@ -730,7 +730,7 @@ test('pages through a long failed-upload list, and clears it', async ({ page }) 
   await expect(failed).toHaveCount(0)
 })
 
-test('deleting an archive says how many Google Drive backups went with it', async ({ page }) => {
+test('deleting an archive says how many Google Drive backups went with it @standalone', async ({ page }) => {
   // Whether the backups actually went is the one part of this a user cannot
   // see from the Storage tab, and "Archive deleted" alone implied something
   // it might not have done. The DELETE is intercepted rather than let

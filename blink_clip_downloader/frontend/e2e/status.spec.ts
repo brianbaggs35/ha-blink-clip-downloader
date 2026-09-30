@@ -51,7 +51,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector('.app-nav-tab.active[data-tab="status"]')
 })
 
-test('shows disconnected (no live Blink session) and the seeded library totals', async ({ page }) => {
+test('shows disconnected (no live Blink session) and the seeded library totals @standalone', async ({ page }) => {
   const connectionCard = page.locator('.p-card', { hasText: 'Blink Connection' })
   await expect(connectionCard.getByText('Disconnected')).toBeVisible()
 
@@ -61,7 +61,7 @@ test('shows disconnected (no live Blink session) and the seeded library totals',
   await expect(libraryCard.locator('.status-row', { hasText: 'Archived' })).toContainText('5')
 })
 
-test('shows every seeded camera with its total clip count', async ({ page }) => {
+test('shows every seeded camera with its total clip count @standalone', async ({ page }) => {
   const camerasCard = page.locator('.p-card', { hasText: 'Cameras (4)' })
   await expect(camerasCard).toBeVisible()
   await expect(camerasCard.locator('.status-row', { hasText: 'Front Door' })).toContainText('4 clips')

@@ -1,4 +1,4 @@
-import { test, expect } from './coverage-fixtures'
+import { appApiUrl, test, expect } from './coverage-fixtures'
 
 const AUTH_ENDPOINT = '/api/auth/2fa'
 
@@ -6,12 +6,12 @@ test.beforeEach(async ({ page }) => {
   // Any six-digit code other than the simulated valid/error codes puts the
   // standalone server into its needs_2fa state without adding a test-only
   // control endpoint.
-  await page.request.post(AUTH_ENDPOINT, { data: { code: '000000' } })
+  await page.request.post(appApiUrl(AUTH_ENDPOINT), { data: { code: '000000' } })
 })
 
 test.afterEach(async ({ page }) => {
   // Leave the shared backend connected for the next spec file.
-  await page.request.post(AUTH_ENDPOINT, { data: { code: '123456' } })
+  await page.request.post(appApiUrl(AUTH_ENDPOINT), { data: { code: '123456' } })
 })
 
 test('shows 2FA, rejects a wrong code, then accepts a valid code', async ({ page }) => {
@@ -38,7 +38,7 @@ test('shows 2FA, rejects a wrong code, then accepts a valid code', async ({ page
 
 test('shows and dismisses an authentication error banner', async ({ page }) => {
   // The fake server reserves 999999 for a deterministic full-auth failure.
-  await page.request.post(AUTH_ENDPOINT, { data: { code: '999999' } })
+  await page.request.post(appApiUrl(AUTH_ENDPOINT), { data: { code: '999999' } })
   await page.goto('/')
 
   const banner = page.locator('.auth-error-banner.show')
