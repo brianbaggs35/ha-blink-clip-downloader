@@ -228,11 +228,20 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
             clips = await self._db.get_clips(
                 ClipFilters(camera=camera), limit=1, sort="newest"
             )
-            fallback = (
-                Path(clips[0]["file_path"]).with_suffix(".jpg") if clips else None
-            )
-            if not fallback or not fallback.exists():
+            if not clips:
                 raise web.HTTPNotFound(text="No snapshot saved for this camera")
+            try:
+                fallback = Path(clips[0]["file_path"]).with_suffix(".jpg")
+                fallback = fallback.resolve(strict=True)
+                fallback.relative_to(self._clip_storage_dir.resolve())
+            except (FileNotFoundError, ValueError):
+                _LOGGER.warning(
+                    "Ignoring vehicle zone thumbnail outside clip storage for %s",
+                    camera,
+                )
+                raise web.HTTPNotFound(
+                    text="No snapshot saved for this camera"
+                ) from None
             try:
                 self._VEHICLE_ZONE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
                 snapshot_path = self._vehicle_zone_snapshot_path(camera)
@@ -253,12 +262,24 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
     def _vehicle_zone_snapshot_path(cls, camera: str) -> Path:
         slug = re.sub(r"[^a-z0-9]+", "-", camera.lower()).strip("-") or "camera"
         suffix = hashlib.sha256(camera.encode("utf-8")).hexdigest()[:10]
-        return cls._VEHICLE_ZONE_SNAPSHOTS_DIR / f"{slug}-{suffix}.jpg"
+        return cls._confined_vehicle_zone_snapshot_path(f"{slug}-{suffix}.jpg")
 
     @classmethod
     def _legacy_vehicle_zone_snapshot_path(cls, camera: str) -> Path:
         slug = re.sub(r"[^a-z0-9]+", "-", camera.lower()).strip("-") or "camera"
-        return cls._VEHICLE_ZONE_SNAPSHOTS_DIR / f"{slug}.jpg"
+        return cls._confined_vehicle_zone_snapshot_path(f"{slug}.jpg")
+
+    @classmethod
+    def _confined_vehicle_zone_snapshot_path(cls, filename: str) -> Path:
+        snapshot_dir = cls._VEHICLE_ZONE_SNAPSHOTS_DIR
+        path = snapshot_dir / filename
+        try:
+            path.resolve().relative_to(snapshot_dir.resolve())
+        except ValueError as exc:
+            raise ValueError(
+                "Vehicle zone snapshot path escapes its directory"
+            ) from exc
+        return path
 
     def _migrate_vehicle_zone_snapshot(self, old_name: str, new_name: str) -> None:
         old_snapshot = self._vehicle_zone_snapshot_path(old_name)

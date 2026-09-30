@@ -962,6 +962,7 @@ async def _main() -> None:
     server = MediaServer(
         db=db,
         port=port,
+        clip_storage_dir=data_dir,
         direct_access_login=signin_on,
         two_fa_callback=fake_auth.submit_two_fa,
         auth_state_getter=fake_auth.status,
@@ -988,6 +989,7 @@ async def _main() -> None:
     signin_server = MediaServer(
         db=db,
         port=port + 1,
+        clip_storage_dir=data_dir,
         analyzer=analyzer,
         list_camera_names=_list_camera_names,
         get_camera_snapshot=_camera_snapshot,
