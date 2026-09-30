@@ -5614,6 +5614,21 @@ def test_vehicle_zone_snapshot_path_slugifies_the_camera_name() -> None:
         assert traversal_path.parent == snapshots_dir
 
 
+def test_confined_vehicle_zone_snapshot_path_rejects_traversal(
+    tmp_path: Path,
+) -> None:
+    snapshots_dir = tmp_path / "snapshots"
+    snapshots_dir.mkdir()
+    with (
+        patch(
+            "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+            new=snapshots_dir,
+        ),
+        pytest.raises(ValueError, match="escapes its directory"),
+    ):
+        MediaServer._confined_vehicle_zone_snapshot_path("../outside.jpg")
+
+
 def test_vehicle_zone_snapshot_path_rejects_symlinks_outside_directory(
     tmp_path: Path,
 ) -> None:
