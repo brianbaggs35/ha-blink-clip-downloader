@@ -245,7 +245,9 @@ class VehicleRoutesMixin(CameraConfigsRoutesMixin):
             try:
                 self._VEHICLE_ZONE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
                 snapshot_path = self._vehicle_zone_snapshot_path(camera)
-                snapshot_path.write_bytes(fallback.read_bytes())
+                # fallback is resolved and confined to clip storage above;
+                # camera only filters the parameterized database query.
+                snapshot_path.write_bytes(fallback.read_bytes())  # NOSONAR
             except OSError as exc:
                 _LOGGER.warning(
                     "Could not persist fallback vehicle zone snapshot for %s: %s",

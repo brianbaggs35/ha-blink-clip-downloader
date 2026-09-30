@@ -610,6 +610,49 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('continues bulk analysis after an individual clip fails', async () => {
+    const manyClips = [clip({ id: 'c1' }), clip({ id: 'c2' })]
+    mockFetch(
+      {
+        '/api/ai/status': { ...AI_STATUS, enabled: true },
+        '/api/ai/analyze/': { summary: 'ok', is_suspicious: false, confidence: 0.5 },
+      },
+      manyClips,
+    )
+    const fallbackFetch = vi.mocked(fetch).getMockImplementation()!
+    const analyzeRequests: string[] = []
+    vi.mocked(fetch).mockImplementation((input: URL | RequestInfo, opts?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith('/api/ai/analyze/')) {
+        analyzeRequests.push(url)
+        if (url.endsWith('/c1')) return Promise.reject(new Error('temporary provider failure'))
+      }
+      return fallbackFetch(input, opts)
+    })
+
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Select all'))!
+      .trigger('click')
+    const confirmStore = useConfirmStore()
+    const clickPromise = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Analyze selected'))!
+      .trigger('click')
+    await flushPromises()
+    confirmStore.settle(true)
+    await clickPromise
+    await flushPromises()
+
+    expect(analyzeRequests).toEqual(['/api/ai/analyze/c1', '/api/ai/analyze/c2'])
+    expect(useToastStore().message).toBe('Analyzed 1/2 clip(s)')
+    expect(useToastStore().isError).toBe(true)
+    wrapper.unmount()
+  })
+
   it('bulk analyze does nothing without confirmation, and is not offered when AI is disabled', async () => {
     mockFetch()
     const wrapper = mountLibrary()
