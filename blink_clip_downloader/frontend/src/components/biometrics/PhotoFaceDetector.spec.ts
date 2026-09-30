@@ -61,6 +61,32 @@ describe('PhotoFaceDetector', () => {
     expect(wrapper.emitted('found')).toHaveLength(1)
   })
 
+  it('detects selected photos sequentially', async () => {
+    let resolveFirst!: (response: Response) => void
+    vi.mocked(fetch).mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFirst = resolve
+        }),
+    )
+    const wrapper = mountDetector()
+    const files = ['group.jpg', 'me.jpg'].map((name) => new File(['x'], name, { type: 'image/jpeg' }))
+    await wrapper.findComponent(FileUpload).vm.$emit('select', {
+      originalEvent: new Event('change'),
+      files,
+    })
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    resolveFirst(jsonResponse({ faces: [candidate('a')] }))
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(wrapper.emitted('found')).toEqual([
+      [[candidate('a')], 'group.jpg'],
+      [[candidate('me')], 'me.jpg'],
+    ])
+  })
+
   it('explains a photo the server could not read, or a failed request', async () => {
     const wrapper = mountDetector()
     await choose(wrapper, 'heic.jpg', 'broken.jpg', 'offline.jpg')

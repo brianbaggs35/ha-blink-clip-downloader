@@ -446,15 +446,19 @@ async function bulkAnalyze() {
   bulkAnalyzing.value = true
   let succeeded = 0
   try {
-    for (const id of ids) {
-      try {
-        await analyzeClipNow(id)
-        succeeded++
-      } catch {
-        // One clip failing (e.g. a transient provider error) must not abort
-        // the rest of the batch — matches bulkDelete's per-item .catch().
-      }
-    }
+    await ids.reduce<Promise<void>>(
+      (previous, id) =>
+        previous
+          .then(() => analyzeClipNow(id))
+          .then(() => {
+            succeeded++
+          })
+          .catch(() => {
+            // One clip failing (e.g. a transient provider error) must not abort
+            // the rest of the batch — matches bulkDelete's per-item .catch().
+          }),
+      Promise.resolve(),
+    )
     toast.show(`Analyzed ${succeeded}/${ids.length} clip(s)`, succeeded < ids.length)
   } finally {
     bulkAnalyzing.value = false

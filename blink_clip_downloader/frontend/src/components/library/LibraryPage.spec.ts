@@ -561,6 +561,55 @@ describe('LibraryPage', () => {
     wrapper.unmount()
   })
 
+  it('waits for each bulk analysis before starting the next clip', async () => {
+    const manyClips = [clip({ id: 'c1' }), clip({ id: 'c2' })]
+    mockFetch(
+      {
+        '/api/ai/status': { ...AI_STATUS, enabled: true },
+        '/api/ai/analyze/': { summary: 'ok', is_suspicious: false, confidence: 0.5 },
+      },
+      manyClips,
+    )
+    const fallbackFetch = vi.mocked(fetch).getMockImplementation()!
+    let resolveFirst!: (response: Response) => void
+    const analyzeRequests: string[] = []
+    vi.mocked(fetch).mockImplementation((input: URL | RequestInfo, opts?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith('/api/ai/analyze/')) {
+        analyzeRequests.push(url)
+        if (url.endsWith('/c1')) {
+          return new Promise<Response>((resolve) => {
+            resolveFirst = resolve
+          })
+        }
+      }
+      return fallbackFetch(input, opts)
+    })
+
+    const wrapper = mountLibrary()
+    await flushPromises()
+    await findByText(wrapper, 'Select').trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Select all'))!
+      .trigger('click')
+    const confirmStore = useConfirmStore()
+    const clickPromise = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Analyze selected'))!
+      .trigger('click')
+    await flushPromises()
+    confirmStore.settle(true)
+    await flushPromises()
+    expect(analyzeRequests).toEqual(['/api/ai/analyze/c1'])
+
+    resolveFirst(jsonResponse({ summary: 'ok', is_suspicious: false, confidence: 0.5 }))
+    await flushPromises()
+    expect(analyzeRequests).toEqual(['/api/ai/analyze/c1', '/api/ai/analyze/c2'])
+    await clickPromise
+    wrapper.unmount()
+  })
+
   it('bulk analyze does nothing without confirmation, and is not offered when AI is disabled', async () => {
     mockFetch()
     const wrapper = mountLibrary()
