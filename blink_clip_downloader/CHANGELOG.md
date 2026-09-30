@@ -18,7 +18,10 @@
 ### Fixed SonarQube findings
 
 - Confined vehicle-zone fallback thumbnails to the configured clip storage
-  directory before reading or serving them.
+  directory before reading or serving them. Sonar's remaining taint warning
+  is suppressed at the checked read: the camera name only filters a
+  parameterized database query, and the resolved thumbnail is verified to
+  remain inside the configured storage directory first.
 - Kept multi-photo face detection and bulk clip analysis sequential while
   removing unexpected `await`-in-loop warnings. This preserves CPU/provider
   concurrency limits and continues processing the rest of a bulk analysis if
