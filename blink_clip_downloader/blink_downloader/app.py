@@ -239,6 +239,7 @@ class BlinkClipDownloaderApp:  # pylint: disable=too-many-instance-attributes,to
         self._media_server = MediaServer(
             db=self._db,
             port=config.media_server_port,
+            clip_storage_dir=config.download_path,
             trigger_download=self._trigger_immediate_download,
             two_fa_callback=(
                 self._e2e_fixtures.auth.submit_two_fa

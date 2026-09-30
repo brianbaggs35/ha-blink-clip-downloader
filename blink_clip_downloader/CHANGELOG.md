@@ -15,6 +15,10 @@
   from `/api/tags`, recommends Gemma 4 31B and GLM-5.3-Flash when available,
   and checks each model's documented capability metadata.
 
+### Fixed a sonarqube security issue
+
+Fixed a security issue reported by sonarqube.
+
 ## 6.0.8
 
 ### Rich alerts: the key frame, a tap to the clip, and "Not a threat"

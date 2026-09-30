@@ -130,7 +130,7 @@ async def client(
     (assets_dir / "index.js").write_text("// built JS bundle stand-in")
     monkeypatch.setattr(media_server_app_shell, "_STATIC_DIR", static_dir)
 
-    server = MediaServer(db=db, port=0)
+    server = MediaServer(db=db, port=0, clip_storage_dir=tmp_path)
     app = server._build_app()
     # Inject the server instance so handlers can reference self._db etc.
     # We expose the server via the app's router directly.
@@ -5598,17 +5598,37 @@ def _make_clip_with_thumb(
 
 
 def test_vehicle_zone_snapshot_path_slugifies_the_camera_name() -> None:
+    snapshots_dir = Path("/data/vehicle_zone_snapshots")
     with patch(
         "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
-        new=Path("/data/vehicle_zone_snapshots"),
+        new=snapshots_dir,
     ):
         camera_path = MediaServer._vehicle_zone_snapshot_path("Front Door Cam!")
         empty_path = MediaServer._vehicle_zone_snapshot_path("")
-        assert camera_path.parent == Path("/data/vehicle_zone_snapshots")
+        traversal_path = MediaServer._vehicle_zone_snapshot_path("../../outside")
+        assert camera_path.parent == snapshots_dir
         assert camera_path.name.startswith("front-door-cam-")
         assert camera_path.suffix == ".jpg"
         assert empty_path.name.startswith("camera-")
         assert empty_path.suffix == ".jpg"
+        assert traversal_path.parent == snapshots_dir
+
+
+def test_vehicle_zone_snapshot_path_rejects_symlinks_outside_directory(
+    tmp_path: Path,
+) -> None:
+    snapshots_dir = tmp_path / "snapshots"
+    snapshots_dir.mkdir()
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"not a snapshot")
+    with patch(
+        "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+        new=snapshots_dir,
+    ):
+        snapshot_path = MediaServer._vehicle_zone_snapshot_path("Driveway")
+        snapshot_path.symlink_to(outside)
+        with pytest.raises(ValueError, match="escapes its directory"):
+            MediaServer._vehicle_zone_snapshot_path("Driveway")
 
 
 async def test_vehicle_zone_put_saves_zone_snapshot_and_updates_analyzer(
@@ -6176,6 +6196,22 @@ async def test_vehicle_zone_snapshot_get_falls_back_to_newest_clip_thumbnail(
         snapshot = MediaServer._vehicle_zone_snapshot_path("Front Door")
         assert snapshot.exists()
         assert snapshot.read_bytes() == (tmp_path / "z1.jpg").read_bytes()
+
+
+async def test_vehicle_zone_snapshot_get_rejects_thumbnail_outside_clip_storage(
+    client: TestClient, db: ClipDatabase, tmp_path: Path
+) -> None:
+    outside_dir = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside_dir.mkdir()
+    await db.add_clip(_make_clip_with_thumb(outside_dir, "outside"))
+    snapshots_dir = tmp_path / "snapshots"
+    with patch(
+        "blink_downloader.media_server.MediaServer._VEHICLE_ZONE_SNAPSHOTS_DIR",
+        new=snapshots_dir,
+    ):
+        resp = await client.get("/api/vehicle/zone-snapshot/Front Door")
+        assert resp.status == 404
+        assert not MediaServer._vehicle_zone_snapshot_path("Front Door").exists()
 
 
 async def test_vehicle_zone_snapshot_get_fallback_serves_even_if_persist_fails(
